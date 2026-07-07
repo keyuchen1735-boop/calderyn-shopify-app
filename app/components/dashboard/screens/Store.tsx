@@ -273,7 +273,13 @@ export default function Store({ app }: { app: DashboardCtx }) {
       await refresh();
       reloadPreview();
       if (!aliveRef.current) return;
-      const donePhase: BuildPhase = { kind: "done", status: receipt.status };
+      // This JSON generate path only ever returns a terminal generation status;
+      // the multipart intent statuses (needs_intent/products_added) never reach here.
+      const doneStatus =
+        receipt.status === "needs_intent" || receipt.status === "products_added"
+          ? "draft"
+          : receipt.status;
+      const donePhase: BuildPhase = { kind: "done", status: doneStatus };
       setBuildPhase(donePhase);
       setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: donePhase } : x)));
       const reply =

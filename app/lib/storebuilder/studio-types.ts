@@ -115,11 +115,39 @@ export interface StudioState {
  *  request can never bill an arbitrary model. */
 export type StudioDesignModel = "sonnet" | "opus";
 
+/** A draft product created from a chat-box image attachment. `imageError` is set
+ *  when the product row was written but its image failed to attach — a partial add
+ *  the caller must surface (a retry would mint a duplicate), never a silent success. */
+export interface StudioAddedProduct {
+  id: string;
+  title: string;
+  imageError?: string;
+}
+
+/** The model's decision for images that travelled with the prompt. */
+export interface StudioAttachmentIntent {
+  /** The images depict the merchant's own products → added as draft products. */
+  addAsProducts: boolean;
+  /** The images are style references the store's design drew from. */
+  useAsReference: boolean;
+}
+
 /** POST {action:"generate"} response. A hard failure (nothing produced at all)
  *  surfaces as a 502; "failed" here is a SOFT-degraded success — a publishable
  *  draft was written, but the AI was unavailable so every page fell back to a
- *  deterministic starter layout that ignores the brief. */
+ *  deterministic starter layout that ignores the brief.
+ *
+ *  When images travel with the prompt (multipart) the server first decides intent:
+ *  - "needs_intent": it couldn't tell what to do with the images and is asking the
+ *    merchant — no run, no products, no `runId`.
+ *  - "products_added": the images became draft products with no generation — no `runId`.
+ *  `runId` is present only when a generation actually ran; `intent`/`products` are
+ *  present only on the multipart path (the plain JSON path returns just runId+status). */
 export interface StudioGenerateReceipt {
-  runId: string;
-  status: "draft" | "no_products" | "failed";
+  runId?: string;
+  status: "draft" | "no_products" | "failed" | "needs_intent" | "products_added";
+  /** The model's intent decision for attached images (multipart path only). */
+  intent?: StudioAttachmentIntent;
+  /** Draft products created from attachments on this request (present when any). */
+  products?: StudioAddedProduct[];
 }

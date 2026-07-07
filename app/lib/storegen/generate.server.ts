@@ -3,7 +3,9 @@
 // (one Haiku call → store_settings), Stage 2 = one Haiku call per doc kind, each independently
 // parsed → assembled/validated → or fall back. Never publishes (drafts only). Per-run token
 // budget (rule 6); every fallback/drop recorded (rule 12).
+import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropic, digestModel } from "~/lib/assistant/anthropic.server";
+import { toBase64ImageBlock, type AttachmentImage } from "./attachment-intent.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { saveDraft } from "~/lib/storebuilder/page-document.server";
 import { getStoreSettings, saveStoreSettings, hasStoreSettings } from "~/lib/storefront/settings.server";
@@ -50,6 +52,10 @@ export interface GenerateInput {
   /** Merchant's design-model choice for the home HTML call; defaults to storegenHtmlModel().
    *  Brand + block-plan calls stay on the cheap model regardless. */
   designModel?: StudioDesignModel;
+  /** Untrusted merchant-attached STYLE references. Attached as image blocks to the brand
+   *  (stage 1) and home-HTML calls only — palette/mood/type direction, never embedded; the
+   *  block-plan collection/pdp calls stay text-only. */
+  referenceImages?: AttachmentImage[];
 }
 export type GenerateStatus = "draft" | "no_products" | "failed";
 export interface GenerateResult { runId: string; status: GenerateStatus; tokenCost: number; docs: Record<string, BlockDocument> }
@@ -80,18 +86,33 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   // that merely returns junk still counts as a success (parsing handles it).
   let llmAttempts = 0;
   let llmOk = 0;
+  // Style-reference image blocks the brand + home calls attach (see call()).
+  // Built once here (a bad media type is dropped) so both calls share them and
+  // the base64 is encoded a single time upstream.
+  const refImageBlocks: Anthropic.ImageBlockParam[] = [];
+  for (const img of input.referenceImages ?? []) {
+    const block = toBase64ImageBlock(img);
+    if (block) refImageBlocks.push(block);
+  }
+  const hasReferences = refImageBlocks.length > 0;
   // An empty catalog with no brief gives the model nothing to work with — the
   // result would match the deterministic fallback anyway, so skip the paid
   // calls entirely (this is also the auto-build path for brand-new shops).
-  const skipLlm = products.length === 0 && collections.length === 0 && !input.brief;
+  // Reference images ARE real input, so their presence keeps the calls on.
+  const skipLlm = products.length === 0 && collections.length === 0 && !input.brief && !hasReferences;
   const client = getAnthropic();
 
-  async function call(system: string, user: string, opts?: { model?: string; maxTokens?: number }): Promise<string | null> {
+  async function call(system: string, user: string, opts?: { model?: string; maxTokens?: number; images?: Anthropic.ImageBlockParam[] }): Promise<string | null> {
     if (skipLlm) return null;
     if (budgetHit || tokenCost >= TOKEN_BUDGET) { budgetHit = true; return null; }
     llmAttempts += 1;
     try {
-      const msg = await client.messages.create({ model: opts?.model ?? model, max_tokens: opts?.maxTokens ?? 1500, system, messages: [{ role: "user", content: user }] });
+      // Text-only stays a plain string (byte-identical to before); when images
+      // are attached the content becomes a text block + the image blocks.
+      const content: Anthropic.MessageParam["content"] = opts?.images && opts.images.length > 0
+        ? [{ type: "text", text: user }, ...opts.images]
+        : user;
+      const msg = await client.messages.create({ model: opts?.model ?? model, max_tokens: opts?.maxTokens ?? 1500, system, messages: [{ role: "user", content }] });
       const u = (msg as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
       tokenCost += (u?.input_tokens ?? 0) + (u?.output_tokens ?? 0);
       if (tokenCost >= TOKEN_BUDGET) budgetHit = true;
@@ -105,7 +126,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
 
   // Stage 1 — brand. The brief (when present) drives the store's identity here, not just the
   // per-doc copy below — otherwise a free-text prompt could only ever change page text.
-  const brandText = await call(BRAND_SYSTEM_PROMPT, buildBrandUserMessage(menu, input.mode === "brief" ? input.brief : undefined));
+  const brandText = await call(BRAND_SYSTEM_PROMPT, buildBrandUserMessage(menu, input.mode === "brief" ? input.brief : undefined, hasReferences), { images: refImageBlocks });
   let brand: BrandPlan | null = (brandText && parseBrandPlan(brandText)) || null;
   if (!brand) {
     // Model unreachable or junk: brand from what the shop already has (its
@@ -157,9 +178,10 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
 
   async function buildPage(pageKey: PageKey, kind: DocKind): Promise<{ pageKey: PageKey; doc: BlockDocument; proposal: unknown }> {
     if (pageKey === "home") {
-      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu), {
+      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu, hasReferences), {
         model: input.designModel ? DESIGN_MODEL_IDS[input.designModel] : storegenHtmlModel(),
         maxTokens: 8000,
+        images: refImageBlocks,
       });
       // Strip an accidental ```html fence, then require real markup: a reply with no tags (junk,
       // refusal, JSON) is a miss → fall back to the designed hollow store rather than render text.

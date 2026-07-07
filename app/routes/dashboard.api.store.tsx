@@ -9,12 +9,21 @@ import {
   publishStudioStore,
 } from "~/lib/storebuilder/studio.server";
 import { decideExperiment, startExperiment } from "~/lib/experiments/store-experiment.server";
-import { generateStore } from "~/lib/storegen/generate.server";
+import { generateStore, type GenerateResult } from "~/lib/storegen/generate.server";
+import { classifyAttachmentIntent, type AttachmentImage } from "~/lib/storegen/attachment-intent.server";
 import { assertCanGenerate } from "~/lib/storegen/guard.server";
+import { createProduct } from "~/lib/catalog/catalog.server";
+import { uploadProductMedia } from "~/lib/catalog/media.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { isUuid } from "~/lib/ids";
-import type { StudioDesignModel, StudioVibe } from "~/lib/storebuilder/studio-types";
+import type {
+  StudioDesignModel,
+  StudioVibe,
+  StudioGenerateReceipt,
+  StudioAddedProduct,
+} from "~/lib/storebuilder/studio-types";
 import { quotaTrusted } from "~/lib/ai-quota.server";
+import type { DashboardSession } from "~/lib/dashboard/session.server";
 
 // Store studio read model: brand settings, home hero copy, preview products,
 // draft/published flags, and the latest generation run.
@@ -36,10 +45,182 @@ function heroText(v: unknown): string | null {
   return t.length <= HERO_TEXT_MAX ? t : null;
 }
 
+// Attachment limits for the multipart generate path. The Anthropic image API
+// caps a single image at ~5MB AFTER base64 inflation; base64 grows raw bytes by
+// ~4/3, so the RAW (pre-inflation) cap must be lower: 3,932,160 bytes (3.75 MiB)
+// inflates to ~5 MiB of base64 and stays under the per-image ceiling. Reject at
+// this raw size before buffering/encoding the body.
+const MAX_IMAGE_BYTES = 3_932_160;
+const MAX_IMAGES = 4;
+const IMAGE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+/** An attachment buffered once and reused for classification, the vision
+ *  reference blocks, and the draft-product upload. */
+interface BufferedImage {
+  filename: string;
+  contentType: string;
+  bytes: Uint8Array;
+  dataBase64: string;
+}
+
+/** "red-ceramic_mug.v2.jpg" → "Red ceramic mug v2" — a starter title for a draft
+ *  product created from a chat-box image attachment. Server twin of the client's
+ *  productTitleFromFilename (store-client.ts); reimplemented here so the server
+ *  path pulls in no client module. */
+function productTitleFromFilename(filename: string): string {
+  const stem = filename.replace(/\.[a-z0-9]+$/i, "");
+  const words = stem.replace(/[-_.]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!words) return "New product";
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Turn one attachment into a draft catalog product: create the draft row, then
+ *  attach the image. A media failure leaves the imageless draft and records
+ *  `imageError` — never a rollback (a retry would mint a duplicate) and never
+ *  hidden (rule 12). Mirrors the client's addProductFromImage semantics. */
+async function createDraftProductFromImage(shopId: string, img: BufferedImage): Promise<StudioAddedProduct> {
+  const title = productTitleFromFilename(img.filename);
+  const { id } = await createProduct(shopId, { title, status: "draft", variants: [{}] });
+  try {
+    await uploadProductMedia(shopId, id, { bytes: img.bytes, filename: img.filename, contentType: img.contentType });
+  } catch (err) {
+    console.error(`[dashboard.api.store] product media upload failed for ${id}`, err);
+    return { id, title, imageError: err instanceof Error ? err.message : "image upload failed" };
+  }
+  return { id, title };
+}
+
+/** Real generation — awaited deliberately, can take several seconds. Any throw
+ *  becomes the 502 both entry points share; the SOFT-degraded "failed" status
+ *  comes back inside a successful result, not as a throw. */
+async function runGenerate(
+  shopId: string,
+  brief: string | undefined,
+  designModel: StudioDesignModel | undefined,
+  referenceImages?: AttachmentImage[],
+): Promise<GenerateResult> {
+  try {
+    return await generateStore({
+      shopId,
+      mode: brief ? "brief" : "catalog",
+      brief,
+      designModel,
+      ...(referenceImages && referenceImages.length > 0 ? { referenceImages } : {}),
+    });
+  } catch (err) {
+    console.error("[dashboard.api.store] store generation failed", err);
+    throw new CalderynError({
+      code: "generation_failed",
+      status: 502,
+      message: "Store generation failed. Please try again.",
+    });
+  }
+}
+
+/**
+ * Multipart generate: the studio chat sends the brief + attached images together.
+ * Validates every attachment at the boundary (422 before any model spend), runs
+ * the shared generate guard, then lets the model DECIDE what the images are for
+ * (add-as-products / style-reference / both) and acts on that decision
+ * deterministically. A null decision is surfaced as "needs_intent" — the route
+ * never silently drafts products off an ambiguous attachment (rule 12).
+ */
+async function handleMultipartGenerate(request: Request, session: DashboardSession): Promise<Response> {
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return jsonError(422, "invalid_form");
+  }
+  if (form.get("action") !== "generate") return jsonError(422, "unknown_action");
+
+  const briefField = form.get("brief");
+  if (briefField !== null && typeof briefField !== "string") return jsonError(422, "invalid_brief");
+  const modelField = form.get("model");
+  if (modelField !== null && modelField !== "sonnet" && modelField !== "opus") {
+    return jsonError(422, "invalid_model", "Model must be sonnet or opus.");
+  }
+  const designModel = (typeof modelField === "string" ? modelField : undefined) as StudioDesignModel | undefined;
+  const rawBrief = typeof briefField === "string" ? briefField : undefined;
+
+  // Validate every attachment BEFORE any model spend (rule: never trust body shapes).
+  const entries = form.getAll("image");
+  if (entries.length > MAX_IMAGES) {
+    return jsonError(422, "too_many_images", "Attach at most 4 images.");
+  }
+  const files: File[] = [];
+  for (const entry of entries) {
+    if (!(entry instanceof File) || entry.size === 0) {
+      return jsonError(422, "invalid_image", "Each attachment must be an image file.");
+    }
+    if (!IMAGE_MEDIA_TYPES.has(entry.type)) {
+      return jsonError(422, "unsupported_media_type", "Images must be PNG, JPEG, WebP or GIF.");
+    }
+    if (entry.size > MAX_IMAGE_BYTES) {
+      return jsonError(422, "image_too_large", "Each image must be under 3.75 MB.");
+    }
+    files.push(entry);
+  }
+
+  return dashboardJson(async () => {
+    // Same guard order + shared budget as the JSON path (same-origin + session
+    // already run above) — BEFORE any paid model call.
+    await assertCanGenerate(session.shopId, rawBrief, { trusted: quotaTrusted(session) });
+    const brief = rawBrief && rawBrief.trim() ? rawBrief.trim() : undefined;
+
+    // Multipart with no attachments behaves exactly like the JSON generate path.
+    if (files.length === 0) {
+      const result = await runGenerate(session.shopId, brief, designModel);
+      return { runId: result.runId, status: result.status } satisfies StudioGenerateReceipt;
+    }
+
+    // Buffer + base64-encode each image once; reused across the three consumers.
+    const images: BufferedImage[] = await Promise.all(
+      files.map(async (f) => {
+        const bytes = new Uint8Array(await f.arrayBuffer());
+        return { filename: f.name, contentType: f.type, bytes, dataBase64: Buffer.from(bytes).toString("base64") };
+      }),
+    );
+    const asAttachmentImages = (): AttachmentImage[] =>
+      images.map((i) => ({ mediaType: i.contentType, dataBase64: i.dataBase64 }));
+
+    const intent = await classifyAttachmentIntent({ brief: brief ?? null, images: asAttachmentImages() });
+    // Couldn't tell what to do → ask the merchant. No generation, no products.
+    if (!intent) return { status: "needs_intent" } satisfies StudioGenerateReceipt;
+
+    // Create products FIRST (draft rows), THEN generate — the generator re-reads
+    // the catalog, so the new drafts land in the snapshot it designs around.
+    const products: StudioAddedProduct[] = [];
+    if (intent.addAsProducts) {
+      for (const img of images) products.push(await createDraftProductFromImage(session.shopId, img));
+    }
+
+    if (intent.useAsReference) {
+      const result = await runGenerate(session.shopId, brief, designModel, asAttachmentImages());
+      return {
+        runId: result.runId,
+        status: result.status,
+        intent,
+        ...(products.length > 0 ? { products } : {}),
+      } satisfies StudioGenerateReceipt;
+    }
+
+    // Products only — no generation ran.
+    return { status: "products_added", intent, products } satisfies StudioGenerateReceipt;
+  });
+}
+
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);
   const session = await requireDashboardSession(request);
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
+
+  // Images travel with the prompt as multipart/form-data; every other studio
+  // action (and a plain generate) stays JSON, so the JSON path below is untouched.
+  const contentType = request.headers.get("Content-Type") ?? "";
+  if (contentType.includes("multipart/form-data")) {
+    return handleMultipartGenerate(request, session);
+  }
 
   let body: unknown;
   try {
@@ -88,23 +269,8 @@ export async function action({ request }: ActionFunctionArgs) {
         // shop gets one coherent budget across both paid entry points.
         await assertCanGenerate(session.shopId, rawBrief, { trusted: quotaTrusted(session) });
         const brief = rawBrief && rawBrief.trim() ? rawBrief.trim() : undefined;
-        try {
-          // Real generation — can take several seconds; awaited deliberately.
-          const result = await generateStore({
-            shopId: session.shopId,
-            mode: brief ? "brief" : "catalog",
-            brief,
-            designModel,
-          });
-          return { runId: result.runId, status: result.status };
-        } catch (err) {
-          console.error("[dashboard.api.store] store generation failed", err);
-          throw new CalderynError({
-            code: "generation_failed",
-            status: 502,
-            message: "Store generation failed. Please try again.",
-          });
-        }
+        const result = await runGenerate(session.shopId, brief, designModel);
+        return { runId: result.runId, status: result.status };
       });
     }
 
