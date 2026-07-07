@@ -40,6 +40,9 @@ function fakeSb() {
         lts[col] = val;
         return chain;
       };
+      // resolveWeatherAlert matches entity_ref by jsonb containment; the fake
+      // has no alerts table, so it only needs to keep the chain intact.
+      chain.contains = () => chain;
       const matches = (r: Record<string, unknown>) =>
         Object.entries(eqs).every(([k, v]) => r[k] === v) &&
         Object.entries(ins).every(([k, vals]) => vals.includes(r[k])) &&

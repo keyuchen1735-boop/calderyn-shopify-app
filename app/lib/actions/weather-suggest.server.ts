@@ -271,28 +271,43 @@ export async function runWeatherSuggestForShop(
   // attribution/apply.server.ts) — so refresh the active row explicitly and
   // insert only when none exists. The cron is this detector's only writer, so
   // there is no concurrent-writer race.
+  //
+  // Rows are written against the BASE alerts schema — the UI reads
+  // v_alerts_view, which derives title from entity_ref->>'title', the campaign
+  // join from entity_ref->>'campaign_id', narrative from claude_narrative, and
+  // evidence from the alert_context join.
   const entityRef = {
     kind: "weather_move",
     source_campaign_id: suggestion.sourceCampaignId,
     dest_campaign_id: suggestion.destCampaignId,
+    campaign_id: suggestion.sourceCampaignId,
+    title: `Weather favors ${suggestion.destRegion} — shift ${dollars(suggestion.amountCents)}/day`,
+  };
+  // The match key is the campaign pair only — title/campaign_id are display
+  // fields that change with the amount, so lookups use jsonb containment.
+  const matchRef = {
+    kind: "weather_move",
+    source_campaign_id: suggestion.sourceCampaignId,
+    dest_campaign_id: suggestion.destCampaignId,
+  };
+  const evidence = {
+    source_region: suggestion.sourceRegion,
+    dest_region: suggestion.destRegion,
+    source_score: suggestion.sourceScore,
+    dest_score: suggestion.destScore,
+    amount_cents_per_day: suggestion.amountCents,
+    suggested_on: today,
+    // Lets the Alerts detail act on the underlying prediction directly
+    // (arm / apply / dismiss) instead of only deep-linking to the Weather tab.
+    suggestion_id: String((inserted![0] as { id: unknown }).id),
   };
   const alertPatch = {
     severity: "low",
     // DB column is dollars; rowToAlert multiplies by 100 to get cents.
     dollar_impact: +(suggestion.amountCents / 100).toFixed(2),
-    evidence: {
-      source_region: suggestion.sourceRegion,
-      dest_region: suggestion.destRegion,
-      source_score: suggestion.sourceScore,
-      dest_score: suggestion.destScore,
-      amount_cents_per_day: suggestion.amountCents,
-      suggested_on: today,
-      // Lets the Alerts detail act on the underlying prediction directly
-      // (arm / apply / dismiss) instead of only deep-linking to the Weather tab.
-      suggestion_id: String((inserted![0] as { id: unknown }).id),
-    },
-    title: `Weather favors ${suggestion.destRegion} — shift ${dollars(suggestion.amountCents)}/day`,
-    narrative: suggestion.narrative,
+    claude_narrative: suggestion.narrative,
+    entity_ref: entityRef,
+    day_bucket: today,
   };
   try {
     const { data: active, error: findErr } = await sb
@@ -300,22 +315,43 @@ export async function runWeatherSuggestForShop(
       .select("id")
       .eq("shop_id", shopId)
       .eq("detector_id", "weather_reallocation")
-      .eq("entity_ref", JSON.stringify(entityRef))
+      .contains("entity_ref", matchRef)
       .in("status", ["open", "acknowledged", "snoozed"])
       .maybeSingle();
     if (findErr) throw findErr;
-    const { error: writeErr } = active
-      ? await sb.from("alerts").update(alertPatch).eq("id", active.id).eq("shop_id", shopId)
-      : await sb.from("alerts").insert({
+    if (active) {
+      const { error: updErr } = await sb
+        .from("alerts")
+        .update({ ...alertPatch, last_seen_at: new Date().toISOString() })
+        .eq("id", active.id)
+        .eq("shop_id", shopId);
+      if (updErr) throw updErr;
+      const { error: ctxErr } = await sb
+        .from("alert_context")
+        .update({ evidence })
+        .eq("alert_id", active.id)
+        .eq("shop_id", shopId);
+      if (ctxErr) throw ctxErr;
+    } else {
+      const { data: created, error: insErr } = await sb
+        .from("alerts")
+        .insert({
           shop_id: shopId,
           detector_id: "weather_reallocation",
           status: "open",
-          entity_ref: entityRef,
-          created_at: new Date().toISOString(),
           claude_rank: 500,
           ...alertPatch,
-        });
-    if (writeErr) throw writeErr;
+        })
+        .select("id")
+        .single();
+      if (insErr) throw insErr;
+      const { error: ctxErr } = await sb.from("alert_context").insert({
+        alert_id: (created as { id: unknown }).id,
+        shop_id: shopId,
+        evidence,
+      });
+      if (ctxErr) throw ctxErr;
+    }
   } catch (alertErr) {
     // Suggestion row is already written; a failed alert mirror must be loud
     // but must not roll back the prediction itself.
@@ -336,7 +372,9 @@ export async function resolveWeatherAlert(
   sourceCampaignId: string,
   destCampaignId: string,
 ): Promise<void> {
-  const entityRef = {
+  // Containment, not equality: entity_ref also carries display fields
+  // (title, campaign_id) that must not affect the match.
+  const matchRef = {
     kind: "weather_move",
     source_campaign_id: sourceCampaignId,
     dest_campaign_id: destCampaignId,
@@ -346,7 +384,7 @@ export async function resolveWeatherAlert(
     .update({ status: "resolved", resolved_at: new Date().toISOString() })
     .eq("shop_id", shopId)
     .eq("detector_id", "weather_reallocation")
-    .eq("entity_ref", JSON.stringify(entityRef))
+    .contains("entity_ref", matchRef)
     .in("status", ["open", "acknowledged", "snoozed"]);
   if (error) console.error("[weather-suggest] alert resolve failed", error);
 }
