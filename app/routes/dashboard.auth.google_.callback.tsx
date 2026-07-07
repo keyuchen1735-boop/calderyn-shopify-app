@@ -141,8 +141,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   // Path 3: brand-new user - send them to name-your-store with a signed token.
+  // Carry the validated destination through so a first-time Google user's
+  // connector-consent (or any) deep link still resumes after they name their
+  // store and finish onboarding — it was only preserved for returning users.
   const token = signGoogleSignup({ sub, email });
-  return redirect(`/dashboard/auth/google/store?t=${encodeURIComponent(token)}`, {
+  const storeUrl =
+    dest === "/dashboard"
+      ? `/dashboard/auth/google/store?t=${encodeURIComponent(token)}`
+      : `/dashboard/auth/google/store?t=${encodeURIComponent(token)}&return_to=${encodeURIComponent(dest)}`;
+  return redirect(storeUrl, {
     headers: { "Set-Cookie": CLEAR_GOAUTH },
   });
 }
