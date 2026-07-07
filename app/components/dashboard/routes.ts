@@ -22,6 +22,8 @@ function seg(nav: NavState): string {
       return param ? `campaigns/${encodeURIComponent(param)}` : "campaigns";
     case "analytics":
       return sub === "live" ? "analytics/live" : "analytics";
+    case "search":
+      return "search";
     case "orders":
       return sub && sub !== "orders" ? `orders/${sub}` : "orders";
     case "catalog":
@@ -102,6 +104,8 @@ export function parsePath(pathname: string): NavState | null {
     case "analytics":
       if (!b) return { screen: "analytics", param: null, sub: "perf" };
       return is(ANALYTICS_SUBTABS, b) ? { screen: "analytics", param: null, sub: b } : null;
+    case "search":
+      return b ? null : { screen: "search", param: null, sub: null };
     case "orders":
       if (!b) return { screen: "orders", param: null, sub: "orders" };
       return is(ORDERS_SUBTABS, b) ? { screen: "orders", param: null, sub: b } : null;

@@ -62,6 +62,7 @@ import ScreenShipping from "./screens/Shipping";
 import ScreenPayments from "./screens/Payments";
 import ScreenStore from "./screens/Store";
 import ScreenDiscover from "./screens/Discover";
+import ScreenSearch from "./screens/Search";
 import ScreenPurchaseOrders from "./screens/PurchaseOrders";
 import ScreenTransfers from "./screens/Transfers";
 
@@ -81,6 +82,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { id: "autopilot", label: "Autopilot", icon: "bolt" },
       { id: "campaigns", label: "Campaigns", icon: "megaphone" },
       { id: "analytics", label: "Analytics", icon: "chart" },
+      { id: "search", label: "Search", icon: "search" },
     ],
   },
   {
@@ -146,6 +148,7 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   alerts: ScreenAlerts,
   campaigns: ScreenCampaigns,
   analytics: ScreenAnalytics,
+  search: ScreenSearch,
   inventory: ScreenInventory,
   catalog: ScreenCatalog,
   collections: ScreenCollections,

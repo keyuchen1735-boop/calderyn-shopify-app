@@ -2327,3 +2327,96 @@
 @media (prefers-reduced-motion: reduce) {
   .cd-su-3dcard, .cd-su-row:hover .cd-su-3dcard { transition: none; transform: perspective(220px) rotateX(16deg) rotateY(-18deg); }
 }
+
+/* ============ Search (SEO / AIO) screen ============
+   Calm, text-forward surface. Composes the shared cd-card / cd-field / cd-input
+   primitives; only the metric, list, SERP-preview and check styles are new. All
+   colors resolve from the theme tokens except the SERP title link, which uses
+   Google's recognizable result blue (paired for light and dark) so the preview
+   reads as a faithful picture of how the page appears in search. */
+.cd-seo__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.cd-seo__head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cd-seo__title { font-size: calc(22px * var(--type-scale)); font-weight: 600; letter-spacing: -0.02em; color: var(--text-1); margin: 0; }
+.cd-seo__lede { font-size: calc(13.5px * var(--type-scale)); color: var(--text-2); margin: 0; letter-spacing: -0.006em; }
+
+/* Store-health metric: number-forward, tone driven by score. */
+.cd-seo__health { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; flex: 0 0 auto; }
+.cd-seo__health-lab { font-size: calc(11.5px * var(--type-scale)); color: var(--text-3); font-weight: 500; letter-spacing: -0.002em; }
+.cd-seo__health-val { display: flex; align-items: baseline; gap: 2px; }
+.cd-seo__health-val b { font-size: calc(30px * var(--type-scale)); font-weight: 680; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.cd-seo__health-val i { font-size: calc(14px * var(--type-scale)); font-style: normal; font-weight: 550; color: var(--text-3); }
+.cd-seo__health[data-tone="success"] b { color: var(--green); }
+.cd-seo__health[data-tone="warn"] b { color: var(--orange); }
+.cd-seo__health[data-tone="neutral"] b { color: var(--text-1); }
+
+/* Two info cards. */
+.cd-seo__cards { display: grid; grid-template-columns: 1fr 1fr; gap: calc(14px * var(--density)); }
+.cd-seo__card-head { display: flex; align-items: center; gap: 8px; font-size: calc(13.5px * var(--type-scale)); font-weight: 600; color: var(--text-1); letter-spacing: -0.006em; }
+.cd-seo__card-head svg { color: var(--accent); opacity: 0.9; }
+.cd-seo__card-sub { font-size: calc(13px * var(--type-scale)); color: var(--text-2); line-height: 1.5; margin: 9px 0 0; letter-spacing: -0.004em; }
+.cd-seo__strong { color: var(--text-1); font-weight: 650; font-variant-numeric: tabular-nums; }
+.cd-seo__card-foot { display: flex; align-items: center; gap: 10px; margin-top: 13px; }
+.cd-seo__soon { font-size: calc(11.5px * var(--type-scale)); color: var(--text-3); }
+
+/* Section = heading + its card, with a tight gap between them. */
+.cd-seo__section { display: flex; flex-direction: column; gap: calc(11px * var(--density)); }
+
+/* "Every page looks good" reassurance. */
+.cd-seo__allgood { display: flex; align-items: center; gap: 10px; font-size: calc(13.5px * var(--type-scale)); color: var(--text-1); }
+.cd-seo__allgood-ic { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--green-bg); color: var(--green); flex: 0 0 auto; }
+
+/* Needs-attention rows: one soft hairline between rows, never boxed per row. */
+.cd-seo__rows { display: flex; flex-direction: column; }
+.cd-seo__row { display: flex; align-items: center; gap: 14px; padding: calc(13px * var(--density)) calc(18px * var(--density)); }
+.cd-seo__row + .cd-seo__row { border-top: 0.5px solid var(--hairline-strong); }
+.cd-seo__row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cd-seo__row-title { font-size: calc(13.5px * var(--type-scale)); font-weight: 550; color: var(--text-1); letter-spacing: -0.006em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cd-seo__row-issue { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); letter-spacing: -0.003em; }
+.cd-seo__edited { color: var(--text-3); }
+
+/* Product editor. */
+.cd-seo__back { display: inline-flex; align-items: center; gap: 3px; align-self: flex-start; background: none; border: none; padding: 0; margin: 0; cursor: pointer; color: var(--text-2); font-family: inherit; font-size: calc(13px * var(--type-scale)); font-weight: 500; letter-spacing: -0.006em; transition: color 0.15s ease; }
+.cd-seo__back:hover { color: var(--text-1); }
+.cd-seo__back svg { color: currentColor; }
+
+/* Google result preview: the merchant's page as it appears in search. */
+.cd-serp { max-width: 600px; display: flex; flex-direction: column; gap: 3px; }
+.cd-serp__url { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); letter-spacing: -0.002em; overflow-wrap: anywhere; }
+.cd-serp__title { font-size: calc(18px * var(--type-scale)); line-height: 1.3; font-weight: 500; letter-spacing: -0.006em; color: #1a0dab; }
+.cd-serp__desc { font-size: calc(13px * var(--type-scale)); line-height: 1.5; color: var(--text-2); margin-top: 1px; letter-spacing: -0.003em; }
+.cd-root.cd-dark .cd-serp__title { color: #8ab4f8; }
+
+/* Plain-language health checks. */
+.cd-seo__checkhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cd-seo__health-inline { font-size: calc(13px * var(--type-scale)); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cd-seo__health-inline[data-tone="success"] { color: var(--green); }
+.cd-seo__health-inline[data-tone="warn"] { color: var(--orange); }
+.cd-seo__health-inline[data-tone="neutral"] { color: var(--text-2); }
+.cd-seo__checks { display: flex; flex-direction: column; }
+.cd-seo__check { display: flex; align-items: flex-start; gap: 11px; padding: calc(12px * var(--density)) calc(18px * var(--density)); }
+.cd-seo__check + .cd-seo__check { border-top: 0.5px solid var(--hairline); }
+.cd-seo__check-ic { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; flex: 0 0 auto; margin-top: 1px; }
+.cd-seo__check[data-status="pass"] .cd-seo__check-ic { background: var(--green-bg); color: var(--green); }
+.cd-seo__check[data-status="warn"] .cd-seo__check-ic { background: var(--orange-bg); color: var(--orange); }
+.cd-seo__check[data-status="fail"] .cd-seo__check-ic { background: var(--red-bg); color: var(--red); }
+.cd-seo__check-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cd-seo__check-label { font-size: calc(13px * var(--type-scale)); color: var(--text-1); font-weight: 480; letter-spacing: -0.004em; }
+.cd-seo__check-hint { font-size: calc(12px * var(--type-scale)); color: var(--text-2); line-height: 1.45; letter-spacing: -0.002em; }
+
+/* Action rows + the hand-edit form. */
+.cd-seo__actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.cd-seo__form { display: flex; flex-direction: column; gap: 14px; }
+.cd-seo__count { align-self: flex-end; font-size: calc(11px * var(--type-scale)); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.cd-seo__count[data-over="1"] { color: var(--orange); }
+
+/* Inline settings. */
+.cd-seo__setrow { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.cd-seo__setinfo { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cd-seo__setlabel { font-size: calc(13.5px * var(--type-scale)); font-weight: 550; color: var(--text-1); letter-spacing: -0.006em; }
+.cd-seo__sethint { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); line-height: 1.5; max-width: 52ch; letter-spacing: -0.003em; }
+.cd-seo__setdiv { height: 0.5px; background: var(--hairline-strong); opacity: 0.5; margin: 16px 0; }
+.cd-seo__setblock { display: flex; flex-direction: column; gap: 11px; }
+
+@media (max-width: 620px) {
+  .cd-seo__cards { grid-template-columns: 1fr; }
+}
