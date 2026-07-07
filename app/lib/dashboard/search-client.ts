@@ -23,3 +23,8 @@ export const fetchSearchOverview = (): Promise<SearchOverviewVM> =>
 
 export const updateSettings = (patch: Partial<SeoSettings>) =>
   apiSend<{ settings: SeoSettings }>("POST", "/dashboard/api/search", { action: "updateSettings", ...patch });
+
+// Ask Calderyn to draft a store description from the shop's own catalog + identity.
+// Returns the suggestion for the merchant to review and save; it is not persisted.
+export const suggestDescription = () =>
+  apiSend<{ description: string }>("POST", "/dashboard/api/search", { action: "suggestDescription" });

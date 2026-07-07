@@ -10,11 +10,19 @@ const {
   requireSameOriginMock,
   getSeoSettingsMock,
   upsertSeoSettingsMock,
+  getStoreSettingsMock,
+  listCollectionsMock,
+  listProductsMock,
+  buildStoreDescriptionMock,
 } = vi.hoisted(() => ({
   requireDashboardSessionMock: vi.fn().mockResolvedValue({ shopId: "shop1", userId: "u1", shopDomain: null, sessionId: "s1" }),
   requireSameOriginMock: vi.fn(),
   getSeoSettingsMock: vi.fn().mockResolvedValue({ allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null }),
   upsertSeoSettingsMock: vi.fn().mockResolvedValue({ allowSearchEngines: true, allowAiCrawlers: false, orgName: "Ember", orgDescription: null }),
+  getStoreSettingsMock: vi.fn().mockResolvedValue({ storeName: "Ember", voiceTagline: "Candles." }),
+  listCollectionsMock: vi.fn().mockResolvedValue([{ handle: "soy", title: "Soy Candles" }]),
+  listProductsMock: vi.fn().mockResolvedValue([{ id: "p1", handle: "cedar", title: "Cedar" }]),
+  buildStoreDescriptionMock: vi.fn().mockReturnValue("Ember sells Soy Candles. Candles."),
 }));
 
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: requireDashboardSessionMock }));
@@ -27,6 +35,11 @@ vi.mock("~/lib/seo/seo-store.server", () => ({
   getSeoSettings: getSeoSettingsMock,
   upsertSeoSettings: upsertSeoSettingsMock,
 }));
+vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: getStoreSettingsMock }));
+vi.mock("~/lib/storefront/catalog.server", () => ({
+  getCatalog: () => ({ listCollections: listCollectionsMock, listProducts: listProductsMock, getProduct: async () => null }),
+}));
+vi.mock("~/lib/seo/writer.server", () => ({ buildStoreDescription: buildStoreDescriptionMock }));
 
 function req(body?: unknown, method = "POST") {
   return new Request("https://app.x/dashboard/api/search", {
@@ -85,5 +98,18 @@ describe("dashboard.api.search action", () => {
   it("422s an unknown action", async () => {
     const res = (await action({ request: req({ action: "nope" }) } as never)) as Response;
     expect(res.status).toBe(422);
+  });
+  it("suggestDescription composes from collection titles and returns the draft without saving", async () => {
+    const res = (await action({ request: req({ action: "suggestDescription" }) } as never)) as Response;
+    expect(res.status).toBe(200);
+    // Collections present → their titles are the subjects; no settings write.
+    expect(buildStoreDescriptionMock).toHaveBeenCalledWith({ storeName: "Ember", voiceTagline: "Candles." }, ["Soy Candles"]);
+    expect(upsertSeoSettingsMock).not.toHaveBeenCalled();
+    expect((await res.json()).description).toBe("Ember sells Soy Candles. Candles.");
+  });
+  it("suggestDescription falls back to product titles when there are no collections", async () => {
+    listCollectionsMock.mockResolvedValueOnce([]);
+    await action({ request: req({ action: "suggestDescription" }) } as never);
+    expect(buildStoreDescriptionMock).toHaveBeenCalledWith(expect.anything(), ["Cedar"]);
   });
 });

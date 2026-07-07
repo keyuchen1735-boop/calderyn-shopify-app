@@ -35,6 +35,42 @@ function buildOffers(product: StoreProduct, url: string): JsonLd | null {
   return aggregateOfferNode({ lowCents: low, highCents: high, currency, offerCount: sellable.length, anyAvailable: available });
 }
 
+// Store-description hard cap: mirrors the seo_settings org_description bound so a
+// suggested line is always within what the field + server will accept.
+const STORE_DESC_MAX = 200;
+
+// Join a short list into natural prose: "A", "A and B", "A, B, and C".
+function listPhrase(items: string[]): string {
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+/** Deterministic one-line store description tuned for search + AI answers: names
+ *  the store and what it sells (from collection or product names), then folds in
+ *  the store's own tagline. No Claude dependency — a merchant can then edit it.
+ *  `subjects` should be the store's collection titles, falling back to a few
+ *  product titles when the catalog has no collections. */
+export function buildStoreDescription(store: StoreSettings, subjects: string[]): string {
+  const name = store.storeName.trim() || "This store";
+  const tagline = plainText(store.voiceTagline ?? "").trim();
+  const seen = new Set<string>();
+  const picks = subjects
+    .map((s) => s.trim())
+    .filter((s) => s && !seen.has(s.toLowerCase()) && seen.add(s.toLowerCase()))
+    .slice(0, 3);
+
+  const opener = picks.length ? `${name} sells ${listPhrase(picks)}.` : `${name} is an online store.`;
+  // A tagline that just repeats the store name adds nothing; only append real copy.
+  const closer =
+    tagline && !tagline.toLowerCase().includes(name.toLowerCase())
+      ? /[.!?]$/.test(tagline)
+        ? tagline
+        : `${tagline}.`
+      : "Shop the full range online.";
+  return clampText(`${opener} ${closer}`, STORE_DESC_MAX);
+}
+
 export function buildProductDraft(product: StoreProduct, store: StoreSettings, origin: string): SeoDraft {
   const canonical = `${origin}/storefront/products/${product.handle}`;
   const description = productDescription(product, store);
