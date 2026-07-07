@@ -7,6 +7,13 @@ export interface OrderRow {
   buyerEmail: string | null;
   itemCount: number;
   totalCents: number;
+  /**
+   * Cents still refundable = captured − already-refunded (from the transaction ledger). Equals
+   * totalCents for a fully-paid, un-refunded order; less on a partially-refunded one. The refund
+   * modal drives its "Full refund" figure and partial cap off THIS, not the gross totalCents, so it
+   * can't advertise more than is actually refundable (which the server would then 422).
+   */
+  remainingRefundableCents: number;
   currency: string;
   attribution: string | null;
   state: string;

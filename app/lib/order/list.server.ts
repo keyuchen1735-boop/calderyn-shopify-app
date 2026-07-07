@@ -61,8 +61,8 @@ export async function listOrders(shopId: string): Promise<OrderRow[]> {
   const rows = data ?? [];
 
   const orderIds = rows.map((r) => String(r.id));
-  // Both follow-ups depend only on the rows already fetched — run them together.
-  const [lineCounts, emails] = await Promise.all([
+  // All three follow-ups depend only on the rows already fetched — run them together.
+  const [lineCounts, emails, remainingByOrder] = await Promise.all([
     (async () => {
       const counts = new Map<string, number>();
       if (orderIds.length === 0) return counts;
@@ -82,20 +82,58 @@ export async function listOrders(shopId: string): Promise<OrderRow[]> {
       shopId,
       rows.map((r) => String(r.buyer_id ?? "")),
     ),
+    remainingRefundableByOrder(shopId, orderIds),
   ]);
 
-  return rows.map((r) => ({
-    id: String(r.id),
-    ref: formatOrderRef(String(r.id)),
-    buyerEmail: emails.get(String(r.buyer_id)) ?? null,
-    itemCount: lineCounts.get(String(r.id)) ?? 0,
-    totalCents: Number(r.total_cents ?? 0),
-    currency: String(r.currency ?? "usd"),
-    attribution: attributionLabel(r.attribution),
-    state: String(r.state),
-    financialStatus: String(r.financial_status ?? "pending"),
-    createdAt: String(r.created_at),
-  }));
+  return rows.map((r) => {
+    const id = String(r.id);
+    const totalCents = Number(r.total_cents ?? 0);
+    return {
+      id,
+      ref: formatOrderRef(id),
+      buyerEmail: emails.get(String(r.buyer_id)) ?? null,
+      itemCount: lineCounts.get(id) ?? 0,
+      totalCents,
+      // Fall back to the gross total when the order carries no capture ledger row (e.g. a
+      // non-Calderyn-charged order that never reaches the refund modal anyway).
+      remainingRefundableCents: remainingByOrder.get(id) ?? totalCents,
+      currency: String(r.currency ?? "usd"),
+      attribution: attributionLabel(r.attribution),
+      state: String(r.state),
+      financialStatus: String(r.financial_status ?? "pending"),
+      createdAt: String(r.created_at),
+    };
+  });
+}
+
+/**
+ * Remaining refundable cents per order = captured − already-refunded, from the SIGNED
+ * transaction_ledger (capture positive, refund negative), keyed by order_ref (the OLTP order id).
+ * Only orders that carry at least one capture row appear in the map; callers fall back to the gross
+ * total for the rest. Batched in one shop-scoped read over the fetched order ids.
+ */
+async function remainingRefundableByOrder(
+  shopId: string,
+  orderIds: string[],
+): Promise<Map<string, number>> {
+  const remaining = new Map<string, number>();
+  if (orderIds.length === 0) return remaining;
+  const { data, error } = await getSupabase()
+    .from("transaction_ledger")
+    .select("order_ref, kind, amount_cents")
+    .eq("shop_id", shopId)
+    .in("order_ref", orderIds)
+    .in("kind", ["capture", "refund"]);
+  if (error) throw new Error(`transaction_ledger read failed: ${error.message}`);
+  for (const l of data ?? []) {
+    const ref = String(l.order_ref ?? "");
+    if (!ref) continue;
+    // capture is positive, refund negative — the running sum IS the remaining refundable amount.
+    remaining.set(ref, (remaining.get(ref) ?? 0) + Number(l.amount_cents ?? 0));
+  }
+  // Floor at 0 so a rounding/over-refund edge never advertises a negative refundable amount.
+  for (const [ref, cents] of remaining) remaining.set(ref, Math.max(0, cents));
+  return remaining;
 }
 
 /** Open baskets: carts still in `cart` state that have at least one line. */
