@@ -16,6 +16,18 @@ export interface ForecastView {
   homeRegion: RegionCode | null;
 }
 
+/** Coarse sky condition for a region's 3-day window, for icon-led cards. */
+export type WeatherCondition = "snow" | "rain" | "showers" | "clear";
+
+// Derived from the 3-day precip/snow totals we already fetch; switch to
+// Open-Meteo's daily weathercode if cloud/fog nuance ever matters.
+export function conditionFor(f: Pick<RegionForecast, "precipMm" | "snowCm">): WeatherCondition {
+  if (f.snowCm >= 1) return "snow";
+  if (f.precipMm >= 10) return "rain";
+  if (f.precipMm >= 2) return "showers";
+  return "clear";
+}
+
 export function buildForecastView(
   forecasts: Map<RegionCode, RegionForecast>,
   merchant: MerchantLocation | null,

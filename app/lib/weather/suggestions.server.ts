@@ -32,7 +32,7 @@ export async function loadWeatherSuggestions(
     sb.from("guardrail_config").select("weather_sensitivity").eq("shop_id", shopId).maybeSingle(),
     sb
       .from("weather_suggestion")
-      .select("id, narrative, amount_cents, expires_on")
+      .select("id, narrative, amount_cents, expires_on, source_region, dest_region")
       .eq("shop_id", shopId)
       .eq("status", "pending")
       .gte("suggested_on", windowStart)
@@ -41,7 +41,7 @@ export async function loadWeatherSuggestions(
       .limit(1),
     sb
       .from("weather_suggestion")
-      .select("id, narrative, amount_cents, expires_on")
+      .select("id, narrative, amount_cents, expires_on, source_region, dest_region")
       .eq("shop_id", shopId)
       .eq("status", "armed")
       .order("amount_cents", { ascending: false }),
@@ -60,6 +60,8 @@ export async function loadWeatherSuggestions(
     amountCents: Number(r.amount_cents),
     status,
     expiresOn: String(r.expires_on),
+    sourceRegion: String(r.source_region),
+    destRegion: String(r.dest_region),
   });
 
   return [

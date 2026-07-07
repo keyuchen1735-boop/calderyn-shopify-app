@@ -62,6 +62,17 @@ export function absTime(iso: string): string {
   });
 }
 
+/** "2026-07-02" → "Jul 2" (UTC — date-only strings are UTC days). */
+export function shortDate(date: string): string {
+  const t = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(t)) return date;
+  return new Date(t).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 export function moneyK(cents: number): string {
   const d = cents / 100;
   if (Math.abs(d) >= 1000) return (d < 0 ? "-$" : "$") + (Math.abs(d) / 1000).toFixed(1) + "k";

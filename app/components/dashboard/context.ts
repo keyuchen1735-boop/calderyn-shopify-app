@@ -155,6 +155,12 @@ export interface DashboardCtx {
     },
   ) => Promise<{ ok: boolean; receipt: ApproveReceipt | null }>;
   undoAction: (entry: AuditVM) => void;
+  /** Act on a weather prediction (Weather tab or its mirrored alert): apply
+   *  now, arm for weather-triggered execution, or dismiss. Owns the API call,
+   *  the toasts, resolving the mirrored alert locally, and the Customers
+   *  session-cache write-through. Resolves false on failure so callers can
+   *  roll back optimistic UI. */
+  weatherIntent: (suggestionId: string, intent: "apply" | "arm" | "dismiss") => Promise<boolean>;
   pushAdDraft: (name: string) => void;
 
   // --- chrome ---

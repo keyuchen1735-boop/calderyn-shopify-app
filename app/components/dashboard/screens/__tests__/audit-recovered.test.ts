@@ -67,6 +67,7 @@ function makeApp(audit: AuditVM[]): DashboardCtx {
     liveOn: false,
     setLiveOn: () => {},
     executeAction: async () => ({ ok: true, receipt: null }),
+    weatherIntent: async () => true,
     undoAction: () => {},
     pushAdDraft: () => {},
     toast: () => {},

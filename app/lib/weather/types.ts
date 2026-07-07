@@ -7,6 +7,9 @@ export interface WeatherSuggestionDTO {
   status: "pending" | "armed";
   /** Last day the armed trigger may fire (forecast horizon). */
   expiresOn: string;
+  /** Region whose budget is cut / raised — drives the icon-led flow row. */
+  sourceRegion: string;
+  destRegion: string;
 }
 
 /** Per-region forecast card for the Weather segments tab. */
@@ -26,3 +29,8 @@ export interface WeatherForecastDTO {
   homeRegion: string | null;
   hasLocation: boolean;
 }
+
+/** Sensitivity dial at/above this: predictions arm and execute unattended. */
+export const WEATHER_AUTO_THRESHOLD = 100;
+export const isWeatherAuto = (sensitivity: number): boolean =>
+  sensitivity >= WEATHER_AUTO_THRESHOLD;

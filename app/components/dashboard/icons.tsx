@@ -19,6 +19,7 @@ import {
   Check,
   Clock,
   CloudRain,
+  CloudSun,
   Coins,
   CreditCard,
   Download,
@@ -51,9 +52,12 @@ import {
   Radar,
   Rocket,
   RotateCcw,
+  LocateFixed,
+  MapPin,
   Scissors,
   Search,
   Settings,
+  Snowflake,
   ShieldCheck,
   ShoppingBag,
   SlidersHorizontal,
@@ -157,6 +161,10 @@ export const CD_ICONS: Record<string, LucideIcon> = {
   phone: Smartphone,
   grid: LayoutGrid,
   external: ExternalLink,
+  cloudSun: CloudSun,
+  snowflake: Snowflake,
+  mapPin: MapPin,
+  locate: LocateFixed,
 };
 
 export function CDIcon({
