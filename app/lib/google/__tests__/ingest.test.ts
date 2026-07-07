@@ -75,7 +75,7 @@ describe("backfillGoogle", () => {
           name: "Search - Brand",
           status: "ENABLED",
           advertising_channel_type: "SEARCH",
-          start_date: "2026-01-01",
+          start_date_time: "2026-01-01",
         },
         campaign_budget: { amount_micros: "50000000" },
         customer: { currency_code: "USD" },

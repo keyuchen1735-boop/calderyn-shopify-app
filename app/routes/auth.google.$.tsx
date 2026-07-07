@@ -14,6 +14,7 @@ import {
 } from "~/lib/meta/oauth-state.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { encrypt } from "~/lib/crypto.server";
+import { ingestOnConnect } from "~/lib/ads/manual-sync.server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
@@ -207,6 +208,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     { onConflict: "shop_id,kind" },
   );
   if (integ.error) throw new Response(integ.error.message, { status: 500 });
+
+  // Ingest the account's campaigns + 90-day spend immediately, so the merchant
+  // lands on a Connected integration with data instead of a "Syncing" row that
+  // waits for the next hourly cron tick. Best-effort: a backfill failure is
+  // recorded as sync_status='error' (surfaced in Settings, retried by the cron)
+  // and never blocks the connect redirect.
+  await ingestOnConnect(sb, shopId);
 
   if (returnCtx.popup) return redirect(popupResultUrl({ provider: "Google Ads", status: "connected" }));
   return redirect(embeddedReturnUrl(await postOAuthPath(sb, shopId), { google: "connected" }, returnCtx));

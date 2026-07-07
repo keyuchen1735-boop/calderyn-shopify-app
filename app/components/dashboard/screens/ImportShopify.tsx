@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, SectionTitle } from "../ui";
 import { CDIcon } from "../icons";
-import { SettingsSubTabs } from "../subtabs";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError, IMPORT_IN_PROGRESS } from "~/lib/dashboard/client";
 
@@ -71,7 +70,6 @@ export default function ImportShopify({ app }: { app: DashboardCtx }) {
         <header className="cd-screen-head" data-screen-label="Import from Shopify">
           <h1 className="cd-h1">Import from Shopify</h1>
         </header>
-        <SettingsSubTabs app={app} />
         <Card>
           <p className="cd-caption">
             Connect your Shopify store and your products, collections, stock, and order
@@ -99,8 +97,6 @@ export default function ImportShopify({ app }: { app: DashboardCtx }) {
           <h1 className="cd-h1">Import from Shopify</h1>
         </div>
       </header>
-
-      <SettingsSubTabs app={app} />
 
       <Card>
         <p className="cd-caption" style={{ marginBottom: 12 }}>

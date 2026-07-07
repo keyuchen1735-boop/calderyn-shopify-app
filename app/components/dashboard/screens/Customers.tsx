@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Card, Btn, Placeholder, Segmented, TableSkeleton } from "../ui";
-import { SubTabs } from "../subtabs";
 import { money, timeAgo } from "../format";
 import { CDIcon } from "../icons";
 import { DashboardApiError, putGuardrails } from "~/lib/dashboard/client";
@@ -522,8 +521,9 @@ export default function Customers({ app }: { app: DashboardCtx }) {
     return <DetailView app={app} detail={detail} loading={detailLoading} />;
   }
 
+  // Subtab navigation lives in the sidebar rail; this screen renders the view
+  // for the active sub only.
   const sub = app.nav.sub ?? "directory";
-  const count = (n: number | undefined) => (n == null ? null : String(n));
 
   const segmentsPresent = page
     ? SEGMENT_ORDER.filter((s) => page.customers.some((c) => c.segment === s))
@@ -549,36 +549,6 @@ export default function Customers({ app }: { app: DashboardCtx }) {
           <h1 className="cd-h1">Customers</h1>
         </div>
       </header>
-
-      <SubTabs
-        app={app}
-        activeKey={sub}
-        tabs={[
-          {
-            key: "directory",
-            label: "Directory",
-            screen: "customers",
-            sub: "directory",
-            // stats.customers is an exact head-count; the list itself is
-            // capped at the 200 most-recent buyers.
-            count: count(page?.stats.customers),
-          },
-          {
-            key: "segments",
-            label: "Segments",
-            screen: "customers",
-            sub: "segments",
-            count: count(page?.segments.length),
-          },
-          {
-            key: "weather",
-            label: "Weather",
-            screen: "customers",
-            sub: "weather",
-            count: wx.length > 0 ? String(wx.length) : null,
-          },
-        ]}
-      />
 
       {!page ? (
         <Card pad={false}>

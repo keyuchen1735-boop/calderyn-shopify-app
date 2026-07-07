@@ -43,7 +43,6 @@ import {
 } from "~/lib/mcp-connect-guide";
 import { GuardrailField } from "../GuardrailField";
 import { BusinessHoursEditor } from "../BusinessHoursEditor";
-import { SettingsSubTabs } from "../subtabs";
 
 type PillTone = "neutral" | "success" | "critical" | "accent" | "warn";
 
@@ -151,7 +150,10 @@ const CONNECTION_TONE: Record<string, PillTone> = {
 };
 const CONNECTION_LABEL: Record<string, string> = {
   connected: "Connected",
-  pending: "Pending",
+  // Credential is stored; the first data pull is still running (flips to
+  // "Connected" once the sync succeeds). "Syncing" reads as in-progress rather
+  // than a stalled "Pending".
+  pending: "Syncing",
   disconnected: "Disconnected",
   reauth: "Reconnect needed",
 };
@@ -644,8 +646,6 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   return (
     <div className="cd-screen" style={{ maxWidth: 760 }}>
       <ScreenHeader title="Settings" />
-
-      <SettingsSubTabs app={app} />
 
       {sub === "general" && (
         <SettingsCard>

@@ -1,7 +1,8 @@
 // TDD coverage for the Google Ads connector transforms.
 
 import { describe, it, expect } from "vitest";
-import { transformCampaign, transformReportRow } from "../transform";
+import { transformCampaign, transformReportRow, snakeKeysDeep } from "../transform";
+import type { GoogleCampaignPayload, GoogleReportRow } from "../types";
 
 const SHOP = "00000000-0000-0000-0000-000000000002";
 
@@ -14,7 +15,7 @@ describe("transformCampaign (google)", () => {
           name: "Search - Branded",
           status: "ENABLED",
           advertising_channel_type: "SEARCH",
-          start_date: "2026-03-15",
+          start_date_time: "2026-03-15",
         },
         campaign_budget: { amount_micros: "50000000" }, // $50.00 -> 5000 cents
         customer: { currency_code: "USD" },
@@ -121,5 +122,80 @@ describe("transformReportRow (google)", () => {
       SHOP,
     );
     expect(out.conversions).toBe(4);
+  });
+});
+
+describe("snakeKeysDeep", () => {
+  it("rewrites nested camelCase keys to snake_case", () => {
+    expect(
+      snakeKeysDeep({
+        campaign: { startDateTime: "2026-03-15", advertisingChannelType: "SEARCH" },
+        campaignBudget: { amountMicros: "50000000" },
+        customer: { currencyCode: "USD" },
+      }),
+    ).toEqual({
+      campaign: { start_date_time: "2026-03-15", advertising_channel_type: "SEARCH" },
+      campaign_budget: { amount_micros: "50000000" },
+      customer: { currency_code: "USD" },
+    });
+  });
+
+  it("recurses through arrays and is a no-op on already-snake_case input", () => {
+    const snake = [{ metrics: { cost_micros: "10" } }];
+    expect(snakeKeysDeep(snake)).toEqual(snake);
+  });
+
+  it("passes primitives through untouched", () => {
+    expect(snakeKeysDeep("x")).toBe("x");
+    expect(snakeKeysDeep(null)).toBeNull();
+    expect(snakeKeysDeep(7)).toBe(7);
+  });
+});
+
+// The Google Ads REST endpoint returns camelCase; ingest normalizes it via
+// snakeKeysDeep before the transforms run. These assert the two compose so a
+// real camelCase API response maps to correct spend/budget/date values.
+describe("camelCase API response → normalize → transform", () => {
+  it("maps a camelCase campaign row end to end", () => {
+    const apiRow = {
+      campaign: {
+        id: "111",
+        name: "Search - Brand",
+        status: "ENABLED",
+        advertisingChannelType: "SEARCH",
+        startDateTime: "2026-01-01",
+      },
+      campaignBudget: { amountMicros: "50000000" },
+      customer: { currencyCode: "USD" },
+    };
+    const out = transformCampaign(snakeKeysDeep(apiRow) as GoogleCampaignPayload, SHOP);
+    expect(out).toMatchObject({
+      external_id: "111",
+      objective: "SEARCH",
+      daily_budget_cents: 5000,
+      currency: "USD",
+      created_at_source: "2026-01-01",
+    });
+  });
+
+  it("maps a camelCase report row's money fields correctly", () => {
+    const apiRow = {
+      campaign: { id: "111" },
+      metrics: {
+        costMicros: "12340000",
+        impressions: "1500",
+        clicks: "38",
+        conversions: "4",
+        conversionsValue: "199.95",
+      },
+      segments: { date: "2026-04-15" },
+    };
+    const out = transformReportRow(snakeKeysDeep(apiRow) as GoogleReportRow, SHOP);
+    expect(out).toMatchObject({
+      spend_cents: 1234,
+      impressions: 1500,
+      revenue_attrib_cents: 19995,
+      day: "2026-04-15",
+    });
   });
 });
