@@ -9,6 +9,7 @@ import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getRunningExperiment, assignArm } from "~/lib/experiments/store-experiment.server";
 import { peekVisitorId } from "~/lib/storefront/visitor-cookie.server";
+import { detectAiBot, logAiCrawl } from "~/lib/seo/crawlers.server";
 import type { StudioVibe } from "~/lib/storebuilder/studio-types";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
@@ -60,6 +61,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // Public, multi-tenant entry: resolve the tenant from the request, then scope
   // every downstream read by this shopId (no Postgres RLS on this surface).
   const shopId = await resolveStorefrontShop(request);
+  // AIO signal: record when a known AI assistant crawler reads any storefront page.
+  const aiBot = detectAiBot(request.headers.get("user-agent"));
+  if (aiBot) void logAiCrawl(shopId, aiBot);
   const settings = await getStoreSettings(shopId);
   const experimentVibe = await resolveLayoutExperimentVibe(shopId, request);
   const collections = await loadNavCollections(shopId);
