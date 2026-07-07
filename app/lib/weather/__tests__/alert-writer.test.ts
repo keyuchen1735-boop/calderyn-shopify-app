@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { writeWeatherAlert } from "../alert-writer.server";
 import type { WeatherAlertDraft } from "../drafts";
 
@@ -10,7 +11,7 @@ const draft: WeatherAlertDraft = {
 describe("writeWeatherAlert", () => {
   it("calls the RPC with the mapped column args and returns the id", async () => {
     const rpc = vi.fn().mockResolvedValue({ data: "alert-1", error: null });
-    const sb = { rpc } as unknown as import("@supabase/supabase-js").SupabaseClient;
+    const sb = { rpc } as unknown as SupabaseClient;
     const id = await writeWeatherAlert(sb, "shop-1", "2026-07-07", draft);
     expect(id).toBe("alert-1");
     expect(rpc).toHaveBeenCalledWith("upsert_weather_alert", {
