@@ -7,39 +7,49 @@ import { meta as productMeta } from "../storefront.products.$handle";
 
 type Tag = Record<string, unknown>;
 
-// Child metas read the tenant's store name off the layout match (matches arg),
-// the way Remix supplies it at runtime.
-const MATCHES = [
-  { id: "routes/storefront", data: { settings: { storeName: "Acme Goods" } } },
-];
-
 function assertSeoTags(tags: Tag[]) {
   expect(tags.some((t) => "title" in t && typeof t.title === "string" && t.title.length > 0)).toBe(true);
   expect(tags.some((t) => t.name === "description")).toBe(true);
   expect(tags.some((t) => t.property === "og:title")).toBe(true);
 }
 
+// Home/collection/product metas are now pure passthroughs of the seoMeta the loader
+// already built (see app/lib/seo). These fixtures stand in for that loader output the
+// way Remix supplies it at runtime via the `data` arg.
 describe("storefront SEO meta", () => {
   it("layout meta has title + description + og:title", () => {
     assertSeoTags(layoutMeta({ data: { settings: { storeName: "Acme Goods" } } } as never) as Tag[]);
   });
 
-  it("home meta has title + description + og:title", () => {
-    const tags = homeMeta({ matches: MATCHES } as never) as Tag[];
+  it("home meta passes through the loader-built seoMeta", () => {
+    const seoMeta = [
+      { title: "Acme Goods" },
+      { name: "description", content: "Browse Acme Goods." },
+      { property: "og:title", content: "Acme Goods" },
+    ];
+    const tags = homeMeta({ data: { doc: null, data: null, seoMeta } } as never) as Tag[];
     assertSeoTags(tags);
     expect(JSON.stringify(tags)).toContain("Acme Goods");
   });
 
-  it("collection meta uses the collection title", () => {
+  it("home meta falls back to a bare title when there is no loader data yet", () => {
+    expect(homeMeta({} as never)).toEqual([{ title: "Store" }]);
+  });
+
+  it("collection meta passes through the loader-built seoMeta", () => {
+    const seoMeta = [
+      { title: "Apparel · Acme Goods" },
+      { name: "description", content: "Browse Apparel at Acme Goods." },
+      { property: "og:title", content: "Apparel · Acme Goods" },
+    ];
     const tags = collectionMeta({
-      data: { handle: "apparel", title: "Apparel", products: [] },
-      matches: MATCHES,
+      data: { handle: "apparel", title: "Apparel", products: [], seoMeta },
     } as never) as Tag[];
     assertSeoTags(tags);
     expect(JSON.stringify(tags)).toContain("Apparel");
   });
 
-  it("product meta uses the product title", () => {
+  it("product meta passes through the loader-built seoMeta", () => {
     const product = {
       id: "p1",
       handle: "zip-hoodie",
@@ -49,7 +59,12 @@ describe("storefront SEO meta", () => {
       variants: [],
       collections: ["apparel"],
     };
-    const tags = productMeta({ data: { product }, matches: MATCHES } as never) as Tag[];
+    const seoMeta = [
+      { title: "Zip Hoodie · Acme Goods" },
+      { name: "description", content: "Fleece-lined zip hoodie." },
+      { property: "og:title", content: "Zip Hoodie · Acme Goods" },
+    ];
+    const tags = productMeta({ data: { product, seoMeta } } as never) as Tag[];
     assertSeoTags(tags);
     expect(JSON.stringify(tags)).toContain("Zip Hoodie");
   });

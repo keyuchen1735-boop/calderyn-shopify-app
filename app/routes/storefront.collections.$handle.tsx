@@ -1,25 +1,20 @@
 // app/routes/storefront.collections.$handle.tsx
-import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, MetaDescriptor } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { formatMoney } from "~/lib/storefront/money";
-import { storeNameFromMatches } from "~/lib/storefront/meta";
+import { getStoreSettings } from "~/lib/storefront/settings.server";
+import { buildCollectionDraft } from "~/lib/seo/writer.server";
+import { metaFromDraft } from "~/lib/seo/render.server";
+import { storefrontOrigin } from "~/lib/seo/origin.server";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
 
-export const meta: MetaFunction<typeof loader> = ({ data, matches }) => {
-  const store = storeNameFromMatches(matches);
-  const title = data ? `${data.title} — ${store}` : `Collection — ${store}`;
-  return [
-    { title },
-    { name: "description", content: data ? `Browse ${data.title} at ${store}.` : "Browse this collection." },
-    { property: "og:title", content: title },
-  ];
-};
+export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Collection" }];
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
@@ -42,7 +37,19 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const record = { collection: { handle, title } };
   const data = doc ? await resolveRenderData(doc, shopId, catalog, record) : null;
   const track = await trackStorefrontEvent(request, shopId, "page_view");
-  return json({ handle, title, products, doc, data, record }, { headers: track });
+  // SEO/AIO meta + CollectionPage JSON-LD. Failure-isolated (see the PDP/home routes):
+  // a settings-fetch hiccup must never 500 a collection page that would otherwise render
+  // fine. StoreCollection carries no description field today, so the writer always falls
+  // back to its own "<title> from <store>" template.
+  let seoMeta: MetaDescriptor[];
+  try {
+    const settings = await getStoreSettings(shopId);
+    seoMeta = metaFromDraft(buildCollectionDraft({ handle, title, description: null }, settings, storefrontOrigin(request)));
+  } catch (err) {
+    console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
+    seoMeta = [{ title }];
+  }
+  return json({ handle, title, products, doc, data, record, seoMeta }, { headers: track });
 }
 
 export default function StorefrontCollection() {

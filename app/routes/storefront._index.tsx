@@ -1,5 +1,5 @@
 // app/routes/storefront._index.tsx
-import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type { LoaderFunctionArgs, MetaFunction, MetaDescriptor } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { getCatalog } from "~/lib/storefront/catalog.server";
@@ -11,19 +11,14 @@ import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
 import { renderBlocks } from "~/lib/storebuilder/render";
-import { storeNameFromMatches } from "~/lib/storefront/meta";
+import { getStoreSettings } from "~/lib/storefront/settings.server";
+import { buildHomeDraft } from "~/lib/seo/writer.server";
+import { metaFromDraft } from "~/lib/seo/render.server";
+import { storefrontOrigin } from "~/lib/seo/origin.server";
 import type { BlockDocument } from "~/lib/storebuilder/types";
 import type { StudioVibe } from "~/lib/storebuilder/studio-types";
 
-export const meta: MetaFunction = ({ matches }) => {
-  const store = storeNameFromMatches(matches);
-  const title = `Shop all — ${store}`;
-  return [
-    { title },
-    { name: "description", content: `Browse every product at ${store}.` },
-    { property: "og:title", content: title },
-  ];
-};
+export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Store" }];
 
 interface ExperimentArm {
   /** Set only on arm b — the champion doc renders when this is null. */
@@ -91,7 +86,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
     experimentId: arm.experimentId,
     variantKey: arm.variantKey,
   }, visitor);
-  return json({ doc, data }, { headers: track });
+  // SEO/AIO meta + Organization/WebSite JSON-LD. Failure-isolated like the experiment
+  // lookup above: a settings-fetch hiccup must never 500 a home page that would
+  // otherwise render fine.
+  let seoMeta: MetaDescriptor[];
+  try {
+    const settings = await getStoreSettings(shopId);
+    seoMeta = metaFromDraft(buildHomeDraft(settings, storefrontOrigin(request)));
+  } catch (err) {
+    console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
+    seoMeta = [{ title: "Store" }];
+  }
+  return json({ doc, data, seoMeta }, { headers: track });
 }
 
 export default function StorefrontHome() {
