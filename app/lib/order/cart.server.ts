@@ -14,6 +14,22 @@ import { DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import type { StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 import type { QuoteLine, PricedLine } from "~/lib/commerce/types";
 
+/**
+ * Thrown by addCartLine when a variant can't be added because it no longer resolves in the catalog
+ * or is unavailable (sold out / archived) — the common race of a buyer clicking Add after stock ran
+ * out while the PDP was open. The add-to-cart route catches it and redirects back to the PDP with a
+ * friendly "sold out" notice instead of surfacing a raw 500. Extends Error so existing catch-alls
+ * still handle it.
+ */
+export class VariantUnavailableError extends Error {
+  readonly variantId: string;
+  constructor(variantId: string, reason: "not_found" | "unavailable") {
+    super(`variant ${variantId} ${reason === "not_found" ? "not found" : "is not available"}`);
+    this.name = "VariantUnavailableError";
+    this.variantId = variantId;
+  }
+}
+
 /** The demo shell has no shop row; its sentinel id can never key the uuid cart
  *  tables. Fail with a named error here (defense in depth) so any cart entry
  *  point that forgets its route-level browse-only guard surfaces a clear
@@ -126,10 +142,10 @@ export async function addCartLine(
 
   const resolved = await resolveVariant(shopId, variantId);
   if (!resolved) {
-    throw new Error(`variant ${variantId} not found in catalog for shop ${shopId}`);
+    throw new VariantUnavailableError(variantId, "not_found");
   }
   if (!resolved.variant.available) {
-    throw new Error(`variant ${variantId} is not available and cannot be added to a cart`);
+    throw new VariantUnavailableError(variantId, "unavailable");
   }
 
   const sb = getSupabase();

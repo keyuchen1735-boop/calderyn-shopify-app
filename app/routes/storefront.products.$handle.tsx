@@ -1,14 +1,14 @@
 // app/routes/storefront.products.$handle.tsx
 import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, useLoaderData } from "@remix-run/react";
+import { Form, useLoaderData, useSearchParams } from "@remix-run/react";
 import { useState } from "react";
 import { DeliveryPromise } from "~/components/storefront/DeliveryPromise";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId, commitCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
-import { buildCart, addCartLine } from "~/lib/order/cart.server";
+import { buildCart, addCartLine, VariantUnavailableError } from "~/lib/order/cart.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { formatMoney } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
@@ -72,8 +72,20 @@ export async function action({ request }: ActionFunctionArgs) {
     cartId = (await buildCart(shopId)).id;
     headers.append("Set-Cookie", await commitCartId(cartId));
   }
-  // addCartLine snapshots price/currency/title and increments on a repeat variant.
-  const line = await addCartLine(shopId, cartId, variantId, 1);
+  // addCartLine snapshots price/currency/title and increments on a repeat variant. A variant that
+  // sold out / was archived while the PDP was open (or a stale/crafted variant id) throws
+  // VariantUnavailableError — catch it and bounce back to the PDP with a friendly notice instead of
+  // a raw 500. Any other error is a genuine fault and propagates.
+  let line;
+  try {
+    line = await addCartLine(shopId, cartId, variantId, 1);
+  } catch (err) {
+    if (err instanceof VariantUnavailableError) {
+      const url = new URL(request.url);
+      return redirect(`${url.pathname}?unavailable=1`, { headers });
+    }
+    throw err;
+  }
 
   // Record the owning PRODUCT id (not the variant id) so storefront_event.product_id
   // holds the same id kind that page_view writes — a variant id here would silently
@@ -89,6 +101,9 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function StorefrontProduct() {
   const { product, doc, data, record, demo } = useLoaderData<typeof loader>();
+  const [searchParams] = useSearchParams();
+  // Set by the action when an add-to-cart hit a now-unavailable variant (sold out / archived).
+  const unavailable = searchParams.get("unavailable") === "1";
   const firstVariantId = product.variants[0]?.id ?? "";
   const [selectedVariantId, setSelectedVariantId] = useState(firstVariantId);
 
@@ -115,6 +130,11 @@ export default function StorefrontProduct() {
       </div>
       <div className="cd-pdp__info">
         <h1>{product.title}</h1>
+        {unavailable ? (
+          <p className="cd-pdp__notice" role="status">
+            Sorry, that item just sold out. Please choose another option.
+          </p>
+        ) : null}
         <p>{product.description}</p>
         <ul className="cd-pdp__variants">
           {product.variants.map((v) => (
