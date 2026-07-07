@@ -1,37 +1,17 @@
-// Search - the merchant SEO/AIO surface (Store > Search Optimization). Every storefront
-// page is already optimized live (the engine writes meta + structured data on
-// each render), so this screen shows the proof instead of asserting it: a real
-// Google result and an example AI answer for one of the store's own products,
-// then the two controls a merchant actually has. Seeds from the screen cache for
-// instant paint, then refetches.
+// Preferences - the merchant SEO/AIO surface (Store > Preferences). Every
+// storefront page is already written for search + AI the moment it publishes;
+// this screen is just the two switches a merchant actually controls: whether
+// search engines and AI assistants may read the store, plus an optional store
+// description. Seeds from the screen cache for instant paint, then refetches.
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, Btn, Toggle, Placeholder, TableSkeleton } from "../ui";
-import { CDIcon } from "../icons";
 import { cachedScreenData, cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { fetchSearchOverview, updateSettings, type SearchOverviewVM } from "~/lib/dashboard/search-client";
 
 // Store-description hard cap: mirrors the server's own bound (see
 // dashboard.api.search.tsx), so a save can never be rejected for length.
 const DESCRIPTION_MAX = 200;
-
-// The engine's meta title is "<product> · <store>"; the bare product name reads
-// better inside a spoken AI answer. Split on the writer's own separator, falling
-// back to the whole title when it is absent (a long title that dropped the store).
-function productName(metaTitle: string): string {
-  const i = metaTitle.indexOf(" · ");
-  return i > 0 ? metaTitle.slice(0, i) : metaTitle;
-}
-
-// A canonical URL as a Google-style breadcrumb: no protocol, path split into
-// crumbs. Relative canonicals (import-only shops with no storefront slug) simply
-// render without a host.
-function breadcrumbUrl(url: string): string {
-  const parts = url.replace(/^https?:\/\//, "").split("/").filter(Boolean);
-  if (parts.length === 0) return url;
-  const [host, ...rest] = parts;
-  return rest.length ? `${host} › ${rest.join(" › ")}` : host;
-}
 
 // Shared by the initial mount and the Retry button, so a failed load and a
 // successful retry both funnel through one place: cache and show the fresh
@@ -52,16 +32,16 @@ export async function loadSearchOverview(
   }
 }
 
-// Shared by the AI-access Toggle and its own test: persists the one real
-// choice on this screen, leaving the toast + refresh side effects to the
-// caller so the same function drives the UI and is directly testable.
-export async function saveAllowAiCrawlers(
-  next: boolean,
+// Shared by a settings Toggle and its own test: persists one boolean setting,
+// leaving the toast + refresh side effects to the caller so the same function
+// drives the UI and is directly testable.
+export async function saveSetting(
+  patch: { allowSearchEngines: boolean } | { allowAiCrawlers: boolean },
   onSaved: () => void,
   onError: () => void,
 ): Promise<void> {
   try {
-    await updateSettings({ allowAiCrawlers: next });
+    await updateSettings(patch);
     onSaved();
   } catch {
     onError();
@@ -74,6 +54,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
     cachedScreenData<SearchOverviewVM>(SCREEN_CACHE_KEYS.search),
   );
   const [loadError, setLoadError] = useState(false);
+  const [savingSearch, setSavingSearch] = useState(false);
   const [savingCrawlers, setSavingCrawlers] = useState(false);
   // Seeded straight from the same cache read as `data` (not just the effect
   // below) so a cache hit paints the field on the very first render, matching
@@ -112,10 +93,26 @@ export default function Search({ app }: { app: DashboardCtx }) {
     );
   }
 
+  async function onToggleSearch(next: boolean) {
+    setSavingSearch(true);
+    await saveSetting(
+      { allowSearchEngines: next },
+      () => {
+        toast(
+          next ? "Search engines can find your store." : "Search engines asked not to list your store.",
+          "check",
+        );
+        refresh();
+      },
+      () => toast("Could not update", "warn", "critical"),
+    );
+    setSavingSearch(false);
+  }
+
   async function onToggleCrawlers(next: boolean) {
     setSavingCrawlers(true);
-    await saveAllowAiCrawlers(
-      next,
+    await saveSetting(
+      { allowAiCrawlers: next },
       () => {
         toast(
           next ? "AI assistants can read your store." : "AI assistants asked not to read your store.",
@@ -155,68 +152,36 @@ export default function Search({ app }: { app: DashboardCtx }) {
     return <TableSkeleton />;
   }
 
-  const { settings, preview } = data;
-  const sample = preview.sample;
+  const { settings } = data;
 
   return (
     <div className="cd-screen cd-seo">
       <header className="cd-seo__head">
         <div className="cd-seo__head-text">
-          <h1 className="cd-seo__title">Search Optimization</h1>
+          <h1 className="cd-seo__title">Preferences</h1>
+          <p className="cd-seo__lede">Your products are optimized automatically. Choose who can find your store.</p>
         </div>
       </header>
-
-      <section className="cd-seo__section">
-        <Card>
-          {sample ? (
-            <div className="cd-seo__panels">
-              <div className="cd-seo__panel">
-                <div className="cd-seo__panel-head">
-                  <CDIcon name="search" size={15} strokeWidth={1.9} />
-                  On Google
-                </div>
-                <div className="cd-serp">
-                  <div className="cd-serp__url">{breadcrumbUrl(sample.url)}</div>
-                  <div className="cd-serp__title">{sample.title}</div>
-                  <div className="cd-serp__desc">{sample.description}</div>
-                </div>
-              </div>
-              <div className="cd-seo__panel">
-                <div className="cd-seo__panel-head">
-                  <CDIcon name="assist" size={15} strokeWidth={1.9} />
-                  On AI assistants
-                </div>
-                <div className="cd-seo__chat">
-                  <div className="cd-seo__ask">Where can I buy {productName(sample.title)}?</div>
-                  <div className="cd-seo__answer">
-                    <span className="cd-seo__answer-store">{preview.storeName}</span> sells{" "}
-                    {productName(sample.title)}.
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="cd-seo__empty">
-              <span className="cd-seo__empty-ic">
-                <CDIcon name="search" size={20} />
-              </span>
-              <div className="cd-seo__empty-title">
-                Add a product and you&rsquo;ll see exactly how it appears here.
-              </div>
-              <p className="cd-seo__empty-sub">
-                Every product page is written for Google and AI assistants the moment you publish it.
-              </p>
-            </div>
-          )}
-        </Card>
-      </section>
 
       <section className="cd-seo__section">
         <Card pad={false}>
           <div className="cd-seo__set">
             <div className="cd-seo__row">
               <div className="cd-seo__info">
-                <div className="cd-seo__label">Let AI assistants read my store</div>
+                <div className="cd-seo__label">Search engines (SEO)</div>
+                <div className="cd-seo__hint">So people find your store on Google.</div>
+              </div>
+              <Toggle
+                value={settings.allowSearchEngines}
+                onChange={onToggleSearch}
+                disabled={savingSearch}
+                ariaLabel="Let search engines find my store"
+              />
+            </div>
+            <div className="cd-seo__row">
+              <div className="cd-seo__info">
+                <div className="cd-seo__label">AI assistants (AIO)</div>
+                <div className="cd-seo__hint">So ChatGPT and Perplexity can recommend your store.</div>
               </div>
               <Toggle
                 value={settings.allowAiCrawlers}
@@ -228,6 +193,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">Store description</div>
+                <div className="cd-seo__hint">One line about your store, used in search and AI answers.</div>
               </div>
               <div className="cd-seo__control">
                 <div className="cd-seo__inputwrap">

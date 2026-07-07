@@ -13,7 +13,7 @@ import { scoreDraft } from "./score.server";
 import { applyOverride } from "./override";
 import { getSeoOverride, listSeoOverrides, getSeoSettings, type SeoSettings } from "./seo-store.server";
 import { getGscState, getRankingsSince, summariseGoogleCard, detectSlips, RANKING_CARD_WINDOW_DAYS, type GoogleCardVM } from "./google-search-console.server";
-import { sellablePrice, sellableVariants } from "./pricing";
+import { sellablePrice } from "./pricing";
 import { isUuid } from "~/lib/ids";
 import type { HealthReport } from "./types";
 
@@ -64,34 +64,6 @@ export async function getShopStorefrontOrigin(shopId: string): Promise<string> {
   if (error) throw error;
   const slug = typeof data?.org_slug === "string" ? data.org_slug.trim() : "";
   return slug ? `https://${tenantDomain(slug)}` : "";
-}
-
-export interface SearchPreview {
-  storeName: string;
-  productCount: number;
-  /** The auto-written SEO for one real product — the same draft the storefront
-   *  serves. Null only when the catalog is empty (the screen shows an empty
-   *  state instead). */
-  sample: { title: string; url: string; description: string } | null;
-}
-
-/** Small, concrete preview for the Search screen: the store name, the live
- *  product count, and one sample product's engine-written meta title, canonical
- *  URL and description. Prefers a sellable product so the sample is a real buyable
- *  page; falls back to the first product so any non-empty catalog still previews. */
-export async function buildSearchPreview(shopId: string): Promise<SearchPreview> {
-  const [products, store, origin] = await Promise.all([
-    getCatalog().listProducts(shopId),
-    getStoreSettings(shopId),
-    getShopStorefrontOrigin(shopId),
-  ]);
-  const sampleProduct = products.find((p) => sellableVariants(p).length > 0) ?? products[0] ?? null;
-  let sample: SearchPreview["sample"] = null;
-  if (sampleProduct) {
-    const draft = buildProductDraft(sampleProduct, store, origin);
-    sample = { title: draft.title, url: draft.canonical, description: draft.description };
-  }
-  return { storeName: store.storeName, productCount: products.length, sample };
 }
 
 async function summariseAiCrawls(shopId: string): Promise<{ rows: AiCrawlRow[]; total: number }> {

@@ -9,9 +9,11 @@ function xmlEscape(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
-export function buildRobotsTxt(origin: string, allowAiCrawlers = true): string {
-  // Standard search crawlers are always welcome (Allow: /). Only the AI-bot
-  // blocks flip: allow => cite this store; deny => ask them not to crawl.
+export function buildRobotsTxt(origin: string, allowAiCrawlers = true, allowSearchEngines = true): string {
+  // Two independent switches. The `User-agent: *` rule governs standard search
+  // crawlers (Google, Bing, ...); the per-AI-bot blocks govern AI assistants.
+  // Each flips allow (Allow: /) vs deny (Disallow: /) on its own.
+  const searchRule = allowSearchEngines ? "Allow: /" : "Disallow: /";
   const aiRule = allowAiCrawlers ? "Allow: /" : "Disallow: /";
   const aiBlocks = AI_BOT_NAMES.map((b) => `User-agent: ${b}\n${aiRule}`).join("\n\n");
   const heading = allowAiCrawlers
@@ -19,7 +21,7 @@ export function buildRobotsTxt(origin: string, allowAiCrawlers = true): string {
     : "# AI assistants are asked not to crawl this store.";
   return [
     "User-agent: *",
-    "Allow: /",
+    searchRule,
     "",
     heading,
     aiBlocks,

@@ -11,7 +11,6 @@ const {
   getSeoSettingsMock,
   getProductSeoDetailMock,
   getShopStorefrontOriginMock,
-  buildSearchPreviewMock,
   upsertSeoOverrideMock,
   deleteSeoOverrideMock,
   upsertSeoSettingsMock,
@@ -22,7 +21,7 @@ const {
 } = vi.hoisted(() => ({
   requireDashboardSessionMock: vi.fn().mockResolvedValue({ shopId: "shop1", userId: "u1", shopDomain: null, sessionId: "s1" }),
   requireSameOriginMock: vi.fn(),
-  getSeoSettingsMock: vi.fn().mockResolvedValue({ allowAiCrawlers: true, orgName: null, orgDescription: null }),
+  getSeoSettingsMock: vi.fn().mockResolvedValue({ allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null }),
   getProductSeoDetailMock: vi.fn().mockResolvedValue({
     id: "p1",
     handle: "cedar",
@@ -33,18 +32,9 @@ const {
     aiSummary: "s",
   }),
   getShopStorefrontOriginMock: vi.fn().mockResolvedValue("https://ember.calderyncompany.com"),
-  buildSearchPreviewMock: vi.fn().mockResolvedValue({
-    storeName: "Ember",
-    productCount: 2,
-    sample: {
-      title: "Cedar Jacket · Ember",
-      url: "https://ember.calderyncompany.com/storefront/products/cedar",
-      description: "A warm cedar jacket from Ember.",
-    },
-  }),
   upsertSeoOverrideMock: vi.fn().mockResolvedValue(undefined),
   deleteSeoOverrideMock: vi.fn().mockResolvedValue(undefined),
-  upsertSeoSettingsMock: vi.fn().mockResolvedValue({ allowAiCrawlers: false, orgName: "Ember", orgDescription: null }),
+  upsertSeoSettingsMock: vi.fn().mockResolvedValue({ allowSearchEngines: true, allowAiCrawlers: false, orgName: "Ember", orgDescription: null }),
   createOAuthStateMock: vi.fn().mockResolvedValue("nonce-state"),
   buildConnectUrlMock: vi.fn().mockReturnValue("https://accounts.google.com/o/oauth2/v2/auth?state=nonce-state"),
   disconnectGscMock: vi.fn().mockResolvedValue(undefined),
@@ -61,7 +51,6 @@ vi.mock("~/lib/dashboard/http.server", () => ({
 vi.mock("~/lib/seo/overview.server", () => ({
   getProductSeoDetail: getProductSeoDetailMock,
   getShopStorefrontOrigin: getShopStorefrontOriginMock,
-  buildSearchPreview: buildSearchPreviewMock,
 }));
 vi.mock("~/lib/seo/seo-store.server", () => ({
   getSeoSettings: getSeoSettingsMock,
@@ -87,22 +76,13 @@ function req(body?: unknown, method = "POST") {
 beforeEach(() => { vi.clearAllMocks(); });
 
 describe("dashboard.api.search loader", () => {
-  it("returns this shop's SEO settings plus the live preview", async () => {
+  it("returns just this shop's SEO settings", async () => {
     const res = (await loader({ request: req(undefined, "GET") } as never)) as Response;
     expect(res.status).toBe(200);
     expect(getSeoSettingsMock).toHaveBeenCalledWith("shop1");
-    expect(buildSearchPreviewMock).toHaveBeenCalledWith("shop1");
     const body = await res.json();
-    expect(body.settings).toEqual({ allowAiCrawlers: true, orgName: null, orgDescription: null });
-    expect(body.preview).toEqual({
-      storeName: "Ember",
-      productCount: 2,
-      sample: {
-        title: "Cedar Jacket · Ember",
-        url: "https://ember.calderyncompany.com/storefront/products/cedar",
-        description: "A warm cedar jacket from Ember.",
-      },
-    });
+    expect(body.settings).toEqual({ allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null });
+    expect(body.preview).toBeUndefined();
   });
 });
 
@@ -145,6 +125,11 @@ describe("dashboard.api.search action", () => {
     const res = (await action({ request: req({ action: "updateSettings", allowAiCrawlers: false }) } as never)) as Response;
     expect(res.status).toBe(200);
     expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { allowAiCrawlers: false });
+  });
+  it("updateSettings forwards the search-engine flag independently", async () => {
+    const res = (await action({ request: req({ action: "updateSettings", allowSearchEngines: false }) } as never)) as Response;
+    expect(res.status).toBe(200);
+    expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { allowSearchEngines: false });
   });
   it("updateSettings 422s an over-long store name without writing", async () => {
     const res = (await action({ request: req({ action: "updateSettings", orgName: "x".repeat(81) }) } as never)) as Response;

@@ -15,6 +15,7 @@ export interface NeedsAttentionRow {
 }
 export interface AiCrawlRow { botName: string; hits: number; }
 export interface SeoSettings {
+  allowSearchEngines: boolean;
   allowAiCrawlers: boolean;
   orgName: string | null;
   orgDescription: string | null;
@@ -49,26 +50,12 @@ export interface ProductSeoDetailVM {
 
 export const fetchSearch = () => apiGet<SeoOverviewVM>("/dashboard/api/search");
 
-// Browser-safe mirror of SearchPreview in overview.server.ts (a .server module
-// cannot be imported into the client bundle) — keep in sync by hand.
-export interface SearchPreviewSample {
-  title: string;
-  url: string;
-  description: string;
-}
-export interface SearchPreview {
-  storeName: string;
-  productCount: number;
-  sample: SearchPreviewSample | null;
-}
 export interface SearchOverviewVM {
   settings: SeoSettings;
-  preview: SearchPreview;
 }
 
-// The Search screen's own read: this shop's settings plus a small live preview
-// (store name, product count, one sample product's auto-written SEO). The loader
-// returns { settings, preview } for a GET; the whole payload is cached as-is.
+// The Preferences screen's own read: just this shop's SEO settings. The loader
+// returns { settings } for a GET; the whole payload is cached as-is.
 export const fetchSearchOverview = (): Promise<SearchOverviewVM> =>
   apiGet<SearchOverviewVM>("/dashboard/api/search");
 

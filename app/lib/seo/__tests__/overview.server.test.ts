@@ -39,7 +39,7 @@ vi.mock("../../storefront/settings.server", () => ({ getStoreSettings: async () 
 vi.mock("../seo-store.server", () => ({
   listSeoOverrides: async () => new Map(),
   getSeoOverride: async () => null,
-  getSeoSettings: async () => ({ allowAiCrawlers: true, orgName: null, orgDescription: null }),
+  getSeoSettings: async () => ({ allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null }),
 }));
 const { getGscStateMock, getRankingsSinceMock } = vi.hoisted(() => ({
   getGscStateMock: vi.fn(),

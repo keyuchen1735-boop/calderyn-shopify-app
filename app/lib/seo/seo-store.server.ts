@@ -10,6 +10,7 @@ import { isUuid } from "~/lib/ids";
 export type SeoEntityType = "product" | "home" | "collection";
 
 export interface SeoSettings {
+  allowSearchEngines: boolean;
   allowAiCrawlers: boolean;
   orgName: string | null;
   orgDescription: string | null;
@@ -23,6 +24,7 @@ export interface SeoOverride {
 }
 
 const DEFAULT_SETTINGS: SeoSettings = {
+  allowSearchEngines: true,
   allowAiCrawlers: true,
   orgName: null,
   orgDescription: null,
@@ -32,13 +34,14 @@ export async function getSeoSettings(shopId: string): Promise<SeoSettings> {
   if (!isUuid(shopId)) return { ...DEFAULT_SETTINGS };
   const { data, error } = await getSupabase()
     .from("seo_settings")
-    .select("allow_ai_crawlers, org_name, org_description")
+    .select("allow_search_engines, allow_ai_crawlers, org_name, org_description")
     .eq("shop_id", shopId)
     .maybeSingle();
   if (error) throw error;
   if (!data) return { ...DEFAULT_SETTINGS };
   return {
     // Present-but-false must survive; only a truly missing column falls to default.
+    allowSearchEngines: data.allow_search_engines !== false,
     allowAiCrawlers: data.allow_ai_crawlers !== false,
     orgName: (data.org_name as string | null) ?? null,
     orgDescription: (data.org_description as string | null) ?? null,
@@ -48,6 +51,7 @@ export async function getSeoSettings(shopId: string): Promise<SeoSettings> {
 export async function upsertSeoSettings(shopId: string, patch: Partial<SeoSettings>): Promise<SeoSettings> {
   if (!isUuid(shopId)) throw new Error(`upsertSeoSettings requires a real (uuid) shop_id, got ${shopId}`);
   const row: Record<string, unknown> = { shop_id: shopId, updated_at: new Date().toISOString() };
+  if (patch.allowSearchEngines !== undefined) row.allow_search_engines = patch.allowSearchEngines;
   if (patch.allowAiCrawlers !== undefined) row.allow_ai_crawlers = patch.allowAiCrawlers;
   if (patch.orgName !== undefined) row.org_name = patch.orgName;
   if (patch.orgDescription !== undefined) row.org_description = patch.orgDescription;

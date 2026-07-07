@@ -2371,64 +2371,18 @@
   .cd-su-3dcard, .cd-su-row:hover .cd-su-3dcard { transition: none; transform: perspective(220px) rotateX(16deg) rotateY(-18deg); }
 }
 
-/* ============ Search (SEO / AIO) screen ============
-   Calm, text-forward settings surface. It proves what the engine already does
-   (one product's auto-written Google result beside an example AI answer), then
-   exposes the two real controls as a divided settings group. Composes the shared
-   cd-card / cd-input / cd-toggle primitives; every color resolves from the theme
-   tokens except the Google result title link, which uses Google's own result blue
-   (paired for light and dark) so the snippet reads as a faithful picture of the
-   page in search. */
+/* ============ Preferences (SEO / AIO) screen ============
+   Calm, text-forward settings surface: a short lede, then the controls a merchant
+   actually has as a divided settings group (search-engine access, AI-assistant
+   access, store description). Composes the shared cd-card / cd-input / cd-toggle
+   primitives; every color resolves from the theme tokens. */
 .cd-seo__head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
 .cd-seo__head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .cd-seo__title { font-size: calc(22px * var(--type-scale)); font-weight: 640; letter-spacing: -0.02em; color: var(--text-1); margin: 0; }
 .cd-seo__lede { font-size: calc(13.5px * var(--type-scale)); color: var(--text-2); margin: 0; letter-spacing: -0.006em; max-width: 62ch; }
 
-/* Live cue: a small dot + the real page count. Reassures the merchant the engine
-   is already running, without a hero metric. The ring pulses on transform +
-   opacity only (GPU-friendly) and holds a static ring under reduced motion. */
-.cd-seo__live { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; margin-top: 3px; font-size: calc(12.5px * var(--type-scale)); font-weight: 500; color: var(--text-2); letter-spacing: -0.004em; }
-.cd-seo__live-dot { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex: 0 0 auto; }
-.cd-seo__live-dot::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; background: var(--green); opacity: 0.2; }
-@media (prefers-reduced-motion: no-preference) {
-  .cd-seo__live-dot::after { animation: cd-seo-pulse 2.6s ease-in-out infinite; }
-}
-@keyframes cd-seo-pulse { 0%, 100% { transform: scale(1); opacity: 0.2; } 50% { transform: scale(1.55); opacity: 0.06; } }
-
 /* Section = a plain heading + its card. */
 .cd-seo__section { display: flex; flex-direction: column; gap: calc(10px * var(--density)); }
-.cd-seo__h2 { font-size: calc(14.5px * var(--type-scale)); font-weight: 620; letter-spacing: -0.01em; color: var(--text-1); margin: 0; }
-
-/* "How you appear": two preview panels sharing one card, split by a hairline. */
-.cd-seo__panels { display: grid; grid-template-columns: 1fr 1fr; align-items: stretch; }
-.cd-seo__panel { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
-.cd-seo__panel:first-child { padding-right: calc(26px * var(--density)); }
-.cd-seo__panel:last-child { padding-left: calc(26px * var(--density)); border-left: 1px solid var(--hairline); }
-.cd-seo__panel-head { display: inline-flex; align-items: center; gap: 7px; font-size: calc(12.5px * var(--type-scale)); font-weight: 600; color: var(--text-2); letter-spacing: -0.004em; }
-.cd-seo__panel-head svg { color: var(--text-3); }
-
-/* Example AI answer: restrained chat, one question bubble + a plain-text reply
-   that names the store and product. No bubbles-as-decoration, no gradients. */
-.cd-seo__chat { display: flex; flex-direction: column; gap: 9px; }
-.cd-seo__ask { align-self: flex-end; max-width: 90%; background: var(--gray-bg); color: var(--text-1); font-size: calc(12.5px * var(--type-scale)); line-height: 1.45; padding: 8px 12px; border-radius: 13px 13px 3px 13px; letter-spacing: -0.004em; }
-.cd-seo__answer { align-self: flex-start; color: var(--text-1); font-size: calc(13px * var(--type-scale)); line-height: 1.52; letter-spacing: -0.004em; }
-.cd-seo__answer-store { font-weight: 640; }
-
-/* Caption tying both previews together, set off by a hairline. */
-.cd-seo__note { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); line-height: 1.5; margin: calc(16px * var(--density)) 0 0; padding-top: calc(15px * var(--density)); border-top: 1px solid var(--hairline); letter-spacing: -0.003em; max-width: 76ch; }
-
-/* Empty state (no products yet): teaches, never scolds. */
-.cd-seo__empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 9px; padding: calc(20px * var(--density)) 0; }
-.cd-seo__empty-ic { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 12px; background: var(--gray-bg); color: var(--text-2); }
-.cd-seo__empty-title { font-size: calc(14px * var(--type-scale)); font-weight: 580; color: var(--text-1); letter-spacing: -0.008em; max-width: 42ch; }
-.cd-seo__empty-sub { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); line-height: 1.5; margin: 0; max-width: 46ch; letter-spacing: -0.003em; }
-
-/* Google result preview: the merchant's page as it appears in search. */
-.cd-serp { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.cd-serp__url { font-size: calc(12px * var(--type-scale)); color: var(--text-2); letter-spacing: -0.002em; overflow-wrap: anywhere; }
-.cd-serp__title { font-size: calc(16px * var(--type-scale)); line-height: 1.3; font-weight: 500; letter-spacing: -0.006em; color: #1a0dab; overflow-wrap: anywhere; }
-.cd-serp__desc { font-size: calc(12.5px * var(--type-scale)); line-height: 1.5; color: var(--text-2); margin-top: 1px; letter-spacing: -0.003em; }
-.cd-root.cd-dark .cd-serp__title { color: #8ab4f8; }
 
 /* Settings: divided rows in one card, never a box per control. */
 .cd-seo__set { display: flex; flex-direction: column; }
@@ -2442,11 +2396,6 @@
 .cd-seo__input { width: min(320px, 44vw); padding-right: 54px; }
 .cd-seo__count { position: absolute; right: 11px; font-size: calc(10.5px * var(--type-scale)); color: var(--text-3); font-variant-numeric: tabular-nums; pointer-events: none; }
 
-@media (max-width: 720px) {
-  .cd-seo__panels { grid-template-columns: 1fr; }
-  .cd-seo__panel:first-child { padding-right: 0; padding-bottom: calc(16px * var(--density)); }
-  .cd-seo__panel:last-child { padding-left: 0; padding-top: calc(16px * var(--density)); border-left: none; border-top: 1px solid var(--hairline); }
-}
 @media (max-width: 560px) {
   .cd-seo__row { flex-direction: column; align-items: stretch; gap: 12px; }
   .cd-seo__control { justify-content: space-between; }

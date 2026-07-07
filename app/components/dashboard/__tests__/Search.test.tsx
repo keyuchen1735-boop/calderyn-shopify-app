@@ -9,7 +9,7 @@ vi.mock("~/lib/dashboard/search-client", () => ({
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
-import Search, { loadSearchOverview, saveAllowAiCrawlers } from "../screens/Search";
+import Search, { loadSearchOverview, saveSetting } from "../screens/Search";
 // eslint-disable-next-line import/first
 import { cacheScreenData, clearScreenCache, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 // eslint-disable-next-line import/first
@@ -22,19 +22,8 @@ import { fetchSearchOverview, updateSettings } from "~/lib/dashboard/search-clie
 import type { SeoSettings, SearchOverviewVM } from "~/lib/dashboard/search-client";
 
 const app = { toast: () => {}, navigate: () => {} } as unknown as DashboardCtx;
-const settings: SeoSettings = { allowAiCrawlers: true, orgName: null, orgDescription: null };
-const overview: SearchOverviewVM = {
-  settings,
-  preview: {
-    storeName: "Ember",
-    productCount: 3,
-    sample: {
-      title: "Cedar Jacket · Ember",
-      url: "https://ember.calderyncompany.com/storefront/products/cedar-jacket",
-      description: "A warm cedar jacket from Ember, in stock now.",
-    },
-  },
-};
+const settings: SeoSettings = { allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null };
+const overview: SearchOverviewVM = { settings };
 
 beforeEach(() => {
   clearScreenCache();
@@ -42,32 +31,20 @@ beforeEach(() => {
 });
 
 describe("Search screen (smoke)", () => {
-  it("renders the header, both live previews, and the AI-access toggle without crashing", () => {
+  it("renders the Preferences header and both access toggles without crashing", () => {
     cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
     const html = renderToStaticMarkup(<Search app={app} />);
-    expect(html).toContain("Search Optimization");
-    // Google snippet + AI-answer previews, both built from the real sample product.
-    expect(html).toContain("On Google");
-    expect(html).toContain("On AI assistants");
-    expect(html).toContain("Cedar Jacket");
-    expect(html).toContain("Where can I buy Cedar Jacket");
-    expect(html).toContain("Let AI assistants read my store");
-    expect(html).toContain('role="switch"');
+    expect(html).toContain("Preferences");
+    // The two plain enable-rows a merchant controls.
+    expect(html).toContain("Search engines (SEO)");
+    expect(html).toContain("AI assistants (AIO)");
+    // Two switches (search + AI); the description field has none.
+    expect(html.match(/role="switch"/g)?.length).toBe(2);
   });
 
   it("shows the skeleton before any data is cached", () => {
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("cd-skel");
-  });
-
-  it("teaches an empty state (no Google snippet) when the catalog has no products yet", () => {
-    cacheScreenData(SCREEN_CACHE_KEYS.search, {
-      settings,
-      preview: { storeName: "Ember", productCount: 0, sample: null },
-    });
-    const html = renderToStaticMarkup(<Search app={app} />);
-    expect(html).toContain("exactly how it appears here");
-    expect(html).not.toContain("On Google");
   });
 
   it("seeds the optional store-description field from settings.orgDescription", () => {
@@ -117,14 +94,14 @@ describe("Search overview load/retry", () => {
   });
 });
 
-describe("Search AI-access toggle", () => {
-  it("toggling calls updateSettings with the new allowAiCrawlers flag and reports success", async () => {
+describe("Search access toggles", () => {
+  it("saves the AI-access flag and reports success", async () => {
     vi.mocked(updateSettings).mockResolvedValueOnce({
       settings: { ...settings, allowAiCrawlers: false },
     });
     let saved = 0;
-    await saveAllowAiCrawlers(
-      false,
+    await saveSetting(
+      { allowAiCrawlers: false },
       () => {
         saved++;
       },
@@ -134,11 +111,27 @@ describe("Search AI-access toggle", () => {
     expect(saved).toBe(1);
   });
 
+  it("saves the search-engine flag and reports success", async () => {
+    vi.mocked(updateSettings).mockResolvedValueOnce({
+      settings: { ...settings, allowSearchEngines: false },
+    });
+    let saved = 0;
+    await saveSetting(
+      { allowSearchEngines: false },
+      () => {
+        saved++;
+      },
+      () => {},
+    );
+    expect(updateSettings).toHaveBeenCalledWith({ allowSearchEngines: false });
+    expect(saved).toBe(1);
+  });
+
   it("reports an error instead of saved when the request fails", async () => {
     vi.mocked(updateSettings).mockRejectedValueOnce(new Error("network down"));
     let errored = 0;
-    await saveAllowAiCrawlers(
-      true,
+    await saveSetting(
+      { allowAiCrawlers: true },
       () => {},
       () => {
         errored++;

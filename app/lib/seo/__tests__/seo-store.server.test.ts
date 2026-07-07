@@ -56,7 +56,7 @@ import {
 } from "../seo-store.server";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";
-const DEFAULTS = { allowAiCrawlers: true, orgName: null, orgDescription: null };
+const DEFAULTS = { allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null };
 
 beforeEach(() => { store.seo_settings = []; store.seo_page = []; forcedError = null; });
 
@@ -68,15 +68,19 @@ describe("getSeoSettings", () => {
     expect(await getSeoSettings("demo-shop")).toEqual(DEFAULTS);
   });
   it("maps a stored row and ignores the dormant allow_ai_training column", async () => {
-    store.seo_settings.push({ shop_id: SHOP, allow_ai_crawlers: false, allow_ai_training: true, org_name: "Ember", org_description: "Candles" });
-    expect(await getSeoSettings(SHOP)).toEqual({ allowAiCrawlers: false, orgName: "Ember", orgDescription: "Candles" });
+    store.seo_settings.push({ shop_id: SHOP, allow_search_engines: true, allow_ai_crawlers: false, allow_ai_training: true, org_name: "Ember", org_description: "Candles" });
+    expect(await getSeoSettings(SHOP)).toEqual({ allowSearchEngines: true, allowAiCrawlers: false, orgName: "Ember", orgDescription: "Candles" });
+  });
+  it("maps the search-engine switch off when the column is false", async () => {
+    store.seo_settings.push({ shop_id: SHOP, allow_search_engines: false, allow_ai_crawlers: true, org_name: null, org_description: null });
+    expect((await getSeoSettings(SHOP)).allowSearchEngines).toBe(false);
   });
 });
 
 describe("upsertSeoSettings", () => {
   it("writes only the patched columns and returns the merged settings", async () => {
     const out = await upsertSeoSettings(SHOP, { allowAiCrawlers: false, orgName: "Ember" });
-    expect(out).toEqual({ allowAiCrawlers: false, orgName: "Ember", orgDescription: null });
+    expect(out).toEqual({ allowSearchEngines: true, allowAiCrawlers: false, orgName: "Ember", orgDescription: null });
     const out2 = await upsertSeoSettings(SHOP, { orgDescription: "Small-batch candles" });
     expect(out2.orgDescription).toBe("Small-batch candles");
     expect(out2.allowAiCrawlers).toBe(false); // preserved from the first patch
@@ -98,7 +102,7 @@ describe("seo_page overrides", () => {
     expect(store.seo_page.filter((r) => r.entity_id === "p1")).toHaveLength(1);
     expect((await getSeoOverride(SHOP, "product", "p1"))?.metaTitle).toBe("Two");
   });
-  it("listSeoOverrides keys by `${type}:${id}`", async () => {
+  it("listSeoOverrides keys entries by type:id", async () => {
     await upsertSeoOverride(SHOP, { entityType: "product", entityId: "p1", metaTitle: "T", metaDescription: "D" });
     await upsertSeoOverride(SHOP, { entityType: "home", entityId: "home", metaTitle: "H", metaDescription: "D" });
     const map = await listSeoOverrides(SHOP);

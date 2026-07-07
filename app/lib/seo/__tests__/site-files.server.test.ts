@@ -55,6 +55,14 @@ describe("buildRobotsTxt", () => {
     expect(txt).toContain("User-agent: *\nAllow: /");
     expect(txt).toContain(`Sitemap: ${ORIGIN}/sitemap.xml`);
   });
+
+  it("disallows generic crawlers when allowSearchEngines is false, independently of the AI switch", () => {
+    // AI on, search off: the `User-agent: *` block flips to Disallow while the AI
+    // bots stay allowed — the two switches are independent.
+    const txt = buildRobotsTxt(ORIGIN, true, false);
+    expect(txt).toContain("User-agent: *\nDisallow: /");
+    expect(txt).toContain(`User-agent: GPTBot\nAllow: /`);
+  });
 });
 
 describe("buildSitemapXml", () => {
