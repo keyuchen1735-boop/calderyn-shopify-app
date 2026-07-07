@@ -344,12 +344,11 @@ export default function Search({ app }: { app: DashboardCtx }) {
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">
-                  <span className="cd-seo__step">3</span>Choose &ldquo;HTML tag&rdquo; and copy the code
+                  <span className="cd-seo__step">3</span>Choose &ldquo;HTML tag&rdquo; and copy the whole line
                 </div>
                 <div className="cd-seo__hint">
-                  Google shows a few ways to prove it&rsquo;s your store. Click <b>HTML tag</b>. It shows a line
-                  containing <code className="cd-seo__inline">content=&quot;&hellip;&quot;</code>. Copy just the text
-                  between those quotes.
+                  Google shows a few ways to prove it&rsquo;s your store. Click <b>HTML tag</b>, then copy the whole
+                  line of code it shows. You don&rsquo;t need to trim it.
                 </div>
               </div>
             </div>
@@ -360,8 +359,8 @@ export default function Search({ app }: { app: DashboardCtx }) {
                   <span className="cd-seo__step">4</span>Paste the code here, then verify
                 </div>
                 <div className="cd-seo__hint">
-                  Paste Google&rsquo;s code below and click Save. Calderyn adds it to your store instantly. Then go
-                  back to Google and click its blue <b>Verify</b> button.
+                  Paste what you copied below and click Save. The whole tag or just the code both work; Calderyn sorts
+                  it out and adds it to your store. Then go back to Google and click its blue <b>Verify</b> button.
                 </div>
               </div>
               <div className="cd-seo__control">
