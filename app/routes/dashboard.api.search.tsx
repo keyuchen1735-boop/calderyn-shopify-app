@@ -2,16 +2,11 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
-import { getProductSeoDetail, getShopStorefrontOrigin } from "~/lib/seo/overview.server";
-import { getSeoSettings, upsertSeoOverride, deleteSeoOverride, upsertSeoSettings } from "~/lib/seo/seo-store.server";
-import { getCatalog } from "~/lib/storefront/catalog.server";
-import { getSupabase } from "~/lib/supabase.server";
-import { createOAuthState } from "~/lib/meta/oauth-state.server";
-import { buildConnectUrl, disconnect as disconnectGsc } from "~/lib/seo/google-search-console.server";
+import { getSeoSettings, upsertSeoSettings } from "~/lib/seo/seo-store.server";
 
-// The Preferences screen (see Search.tsx) exposes only the two real controls a
-// merchant has — search-engine access and AI-assistant access — plus an optional
-// store description. The loader hands back just this shop's SEO settings.
+// The Preferences screen (see Search.tsx) exposes only the controls a merchant
+// has — search-engine access, AI-assistant access, and an optional store
+// description. The loader hands back just this shop's SEO settings.
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request); // auth gate; settings are this shop's own data
   return dashboardJson(async () => ({ settings: await getSeoSettings(session.shopId) }));
@@ -19,20 +14,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 interface SearchBody {
   action?: string;
-  handle?: string;
-  entityId?: string;
-  metaTitle?: string;
-  metaDescription?: string;
   allowSearchEngines?: boolean;
   allowAiCrawlers?: boolean;
   orgName?: string | null;
   orgDescription?: string | null;
 }
 
-// Generous bounds so a merchant is never blocked mid-edit (the engine's own
-// validator uses tighter SERP limits for scoring, not gating).
-const TITLE_MAX = 70;
-const DESC_MAX = 200;
 // Store-identity bounds. Clamp at the boundary so a crafted request can't persist
 // an unbounded org name/description into seo_settings.
 const ORG_NAME_MAX = 80;
@@ -47,47 +34,6 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!body || typeof body.action !== "string") return jsonError(422, "bad_request", "action is required");
 
   switch (body.action) {
-    case "detail": {
-      if (!body.handle) return jsonError(422, "bad_request", "handle is required");
-      const handle = body.handle;
-      return dashboardJson(async () =>
-        getProductSeoDetail(session.shopId, handle, await getShopStorefrontOrigin(session.shopId)),
-      );
-    }
-    case "saveOverride": {
-      if (!body.entityId) return jsonError(422, "bad_request", "entityId is required");
-      if (typeof body.metaTitle !== "string" || typeof body.metaDescription !== "string") {
-        return jsonError(422, "bad_request", "metaTitle and metaDescription are required");
-      }
-      const metaTitle = body.metaTitle.trim();
-      const metaDescription = body.metaDescription.trim();
-      if (!metaTitle || metaTitle.length > TITLE_MAX) return jsonError(422, "bad_request", `title must be 1 to ${TITLE_MAX} characters`);
-      if (!metaDescription || metaDescription.length > DESC_MAX) return jsonError(422, "bad_request", `description must be 1 to ${DESC_MAX} characters`);
-      const entityId = body.entityId;
-      // Confirm the entity is a real product of THIS shop before writing a seo_page
-      // row: a crafted entityId must never create an override for another tenant's
-      // (or a non-existent) product. Resolve against the shop-scoped catalog.
-      const products = await getCatalog().listProducts(session.shopId);
-      if (!products.some((p) => p.id === entityId)) return jsonError(422, "bad_request", "unknown product");
-      return dashboardJson(async () => {
-        await upsertSeoOverride(session.shopId, {
-          entityType: "product",
-          entityId,
-          metaTitle,
-          metaDescription,
-          updatedBy: session.userId,
-        });
-        return { ok: true };
-      });
-    }
-    case "resetOverride": {
-      if (!body.entityId) return jsonError(422, "bad_request", "entityId is required");
-      const entityId = body.entityId;
-      return dashboardJson(async () => {
-        await deleteSeoOverride(session.shopId, "product", entityId);
-        return { ok: true };
-      });
-    }
     case "updateSettings": {
       const patch: Record<string, unknown> = {};
       if (typeof body.allowSearchEngines === "boolean") patch.allowSearchEngines = body.allowSearchEngines;
@@ -106,19 +52,6 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       if (Object.keys(patch).length === 0) return jsonError(422, "bad_request", "no settings to update");
       return dashboardJson(async () => ({ settings: await upsertSeoSettings(session.shopId, patch) }));
-    }
-    case "connectGoogle": {
-      // Mint a single-use CSRF nonce bound to this shop; the callback consumes it.
-      const state = await createOAuthState(getSupabase(), session.shopId, { dashboard: true });
-      const url = buildConnectUrl(session.shopId, state);
-      if (!url) return jsonError(503, "google_unavailable", "Google connection is not configured");
-      return dashboardJson(async () => ({ url }));
-    }
-    case "disconnectGoogle": {
-      return dashboardJson(async () => {
-        await disconnectGsc(session.shopId);
-        return { ok: true };
-      });
     }
     default:
       return jsonError(422, "bad_request", `unknown action: ${body.action}`);
