@@ -48,6 +48,7 @@ img, svg { vertical-align: middle; }
 .inset-0 { inset: 0; }
 .bottom-0 { bottom: 0; }
 .bottom-5 { bottom: 1.25rem; }
+.top-5 { top: 1.25rem; }
 .left-2 { left: 0.5rem; }
 .right-2 { right: 0.5rem; }
 .left-1\/2 { left: 50%; }

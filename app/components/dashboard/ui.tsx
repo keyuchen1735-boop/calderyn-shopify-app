@@ -748,7 +748,7 @@ export function ScoreBar({ score }: { score: number }) {
 /* ---------- Toast ---------- */
 export function ToastHost({ toasts }: { toasts: Toast[] }) {
   return (
-    <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
+    <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
       {toasts.map((t) => (
         <div key={t.id} className="cd-toast">
           <CDIcon
