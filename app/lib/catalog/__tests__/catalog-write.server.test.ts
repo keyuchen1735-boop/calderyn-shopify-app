@@ -60,6 +60,17 @@ describe("createProduct", () => {
     expect(seedInitialStock).toHaveBeenCalledWith("shop1", "p1", 5);
   });
 
+  it("projects sku_dim BEFORE seeding stock (inventory_level_fact.sku_id FKs sku_dim.id)", async () => {
+    const { createProduct } = await import("../catalog.server");
+    await createProduct("shop1", {
+      title: "Tee", status: "active", variants: [{ sku: "T-S", retailPriceCents: 1999, inventoryOnHand: 5 }],
+    });
+    // seedInitialStock -> projectLevelFact writes inventory_level_fact with
+    // sku_id = variant id, whose FK targets sku_dim.id. sku_dim is only populated
+    // by projectProductToSkuDim, so it MUST run first or the seed 500s (FK 23503).
+    expect(project.mock.invocationCallOrder[0]).toBeLessThan(seedInitialStock.mock.invocationCallOrder[0]);
+  });
+
   it("tracks a new physical variant that was given a stock number, so entered stock gates availability", async () => {
     const { createProduct } = await import("../catalog.server");
     await createProduct("shop1", {

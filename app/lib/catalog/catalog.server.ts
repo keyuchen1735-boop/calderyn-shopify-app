@@ -301,9 +301,23 @@ function trackedForNewVariant(v: VariantInput): boolean {
   return v.inventoryOnHand !== undefined;
 }
 
-async function writeProductChildren(shopId: string, productId: string, input: ProductInput): Promise<void> {
+// A newly-inserted variant's starting stock, applied to the inventory ledger only
+// AFTER sku_dim is projected (inventory_level_fact.sku_id has an FK to sku_dim.id).
+interface StockSeed { variantId: string; onHand: number }
+
+// Back each new variant's starting stock with a real ledger balance so the
+// cannot-oversell engine can reserve against it — a "live" product with an
+// unbacked inventory_on_hand can't actually be sold. seedInitialStock no-ops when
+// stock is 0. Must run only after projectProductToSkuDim, or the level-fact write
+// fails the sku_id FK.
+async function applyStockSeeds(shopId: string, seeds: StockSeed[]): Promise<void> {
+  for (const s of seeds) await seedInitialStock(shopId, s.variantId, s.onHand);
+}
+
+async function writeProductChildren(shopId: string, productId: string, input: ProductInput): Promise<StockSeed[]> {
   const sb = getSupabase();
   const perOption = await writeOptions(sb, productId, input.options ?? []);
+  const seeds: StockSeed[] = [];
 
   // Variants + their option-value links.
   for (const [i, v] of input.variants.entries()) {
@@ -336,10 +350,11 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
       const { error: lErr } = await sb.from("variant_option_value").insert(links);
       if (lErr) throw lErr;
     }
-    // Back the variant's starting stock with a real ledger balance so the
-    // cannot-oversell engine can reserve against it — a "live" product with an
-    // unbacked inventory_on_hand can't actually be sold. No-op when stock is 0.
-    await seedInitialStock(shopId, variantId, v.inventoryOnHand ?? 0);
+    // Defer backing the variant's starting stock with a real ledger balance:
+    // seeding writes inventory_level_fact (sku_id -> sku_dim.id FK), and sku_dim
+    // isn't projected until AFTER this whole write completes, so seeding here
+    // would violate the FK. The caller seeds once sku_dim exists.
+    seeds.push({ variantId, onHand: v.inventoryOnHand ?? 0 });
   }
 
   // Collections — only the shop's own (filters out stale/duplicate/foreign ids).
@@ -348,6 +363,8 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
     const { error: cErr } = await sb.from("product_collection").insert(collectionIds.map((collection_id) => ({ product_id: productId, collection_id })));
     if (cErr) throw cErr;
   }
+
+  return seeds;
 }
 
 // Writes the full product graph, then projects sku_dim. Supabase has no client
@@ -373,8 +390,9 @@ export async function createProduct(shopId: string, input: ProductInput): Promis
     if ((pErr as { code?: string }).code !== "23505" || attempt === 2) throw pErr;
   }
 
-  await writeProductChildren(shopId, productId, input);
+  const seeds = await writeProductChildren(shopId, productId, input);
   await projectProductToSkuDim(productId);
+  await applyStockSeeds(shopId, seeds);
   return { id: productId };
 }
 
@@ -438,6 +456,7 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
   const { error: delErr } = keepIds.length ? await baseDel.notIn("id", keepIds) : await baseDel;
   if (delErr) throw delErr;
 
+  const seeds: StockSeed[] = [];
   for (const [i, v] of input.variants.entries()) {
     // inventory_policy is intentionally NOT written here: the editor never surfaces
     // it (getProduct doesn't select it; VariantDraft has no field), so writing
@@ -472,8 +491,10 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       variantId = String(ins.id);
       // A brand-new variant added during an edit needs its starting stock backed
       // in the ledger too (existing variants keep their own balances — never
-      // re-seeded from the flat column here). No-op when stock is 0.
-      await seedInitialStock(shopId, variantId, v.inventoryOnHand ?? 0);
+      // re-seeded from the flat column here). Deferred until after sku_dim is
+      // projected below, since the ledger seed writes inventory_level_fact whose
+      // sku_id FKs sku_dim.id. No-op when stock is 0.
+      seeds.push({ variantId, onHand: v.inventoryOnHand ?? 0 });
     }
     // Persist shipping dimensions + requirements for this variant (update path).
     const { error: shErr } = await sb.from("variant_shipping").upsert({
@@ -501,6 +522,7 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
   }
 
   await projectProductToSkuDim(productId);
+  await applyStockSeeds(shopId, seeds);
 }
 
 export async function setProductStatus(shopId: string, productId: string, status: ProductStatus): Promise<void> {
