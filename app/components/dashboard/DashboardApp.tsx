@@ -635,18 +635,22 @@ export default function DashboardApp({
     client.fetchCalibration().then(setCalibration).catch(() => {});
   }, []);
 
-  // Nav-rail autopilot switch: same guardrail mutation Settings uses, applied
-  // only after the server confirms (no optimistic flip on a kill switch).
+  // Nav-rail autopilot switch: same guardrail mutation Settings uses. The switch
+  // flips optimistically so it reacts instantly; if the PUT fails we revert to
+  // the prior state and surface the error, so the UI never lies about autopilot.
   const [apSaving, setApSaving] = useState(false);
   const toggleAutopilot = useCallback(async () => {
     if (!guardrails || apSaving) return;
+    const prev = guardrails;
     const next = !guardrails.autopilot_enabled;
+    setGuardrails({ ...guardrails, autopilot_enabled: next }); // optimistic flip
     setApSaving(true);
     try {
       const updated = await client.putGuardrails({ autopilot_enabled: next });
       setGuardrails(updated);
       toast(next ? "Autopilot on" : "Autopilot paused", next ? "bolt" : "pause");
     } catch (err) {
+      setGuardrails(prev); // revert — the server never accepted the change
       const msg = err instanceof DashboardApiError ? err.message : "Couldn't update autopilot.";
       toast(msg, "warn", "critical");
     } finally {
