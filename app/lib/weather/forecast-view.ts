@@ -28,10 +28,21 @@ export function conditionFor(f: Pick<RegionForecast, "precipMm" | "snowCm">): We
   return "clear";
 }
 
+/** Demand tier cut-points — single source for the card pills AND the map
+ *  marker emphasis, so retuning thresholds can't desync the two. */
+export type DemandTier = "high" | "up" | "typical";
+
+export function demandTier(score: number): DemandTier {
+  if (score >= 0.45) return "high";
+  if (score >= 0.2) return "up";
+  return "typical";
+}
+
 /** The favorability score in plain shopper language, for the region cards. */
 export function demandLabel(score: number): { label: string; tone: "success" | "neutral" } {
-  if (score >= 0.45) return { label: "More shoppers online", tone: "success" };
-  if (score >= 0.2) return { label: "Slightly more online", tone: "neutral" };
+  const tier = demandTier(score);
+  if (tier === "high") return { label: "More shoppers online", tone: "success" };
+  if (tier === "up") return { label: "Slightly more online", tone: "neutral" };
   return { label: "Typical demand", tone: "neutral" };
 }
 

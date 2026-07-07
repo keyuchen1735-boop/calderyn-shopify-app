@@ -607,6 +607,7 @@ export default function Customers({ app }: { app: DashboardCtx }) {
           toast={toast}
           mode={wxMode}
           onMode={onWeatherMode}
+          dark={app.t.dark ?? true}
         />
       ) : (
         <>
