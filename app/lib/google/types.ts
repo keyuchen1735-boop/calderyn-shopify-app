@@ -26,7 +26,9 @@ export interface GoogleCampaignPayload {
     name?: string;
     status?: string; // 'ENABLED' | 'PAUSED' | 'REMOVED'
     advertising_channel_type?: string;
-    start_date?: string | null;
+    // v23 renamed start_date -> start_date_time (REST: startDateTime, normalized
+    // to snake_case at the ingest boundary — see snakeKeysDeep).
+    start_date_time?: string | null;
   };
   campaign_budget?: {
     amount_micros?: string | number | null;
