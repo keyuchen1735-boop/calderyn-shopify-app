@@ -271,6 +271,10 @@ export interface GuardrailConfig {
   autopilot_max_inventory_units_per_move: number | null;
   /** Weather-reallocation aggressiveness dial (0..100 percent). 0 = feature OFF. */
   weather_sensitivity: number;
+  /** Merchant home location (both set, or both null = unknown). Refines the
+   *  home region's weather forecast point. */
+  merchant_lat: number | null;
+  merchant_lon: number | null;
 }
 
 /** Why a merchant rejected a calibration proposal. Used by the feedback

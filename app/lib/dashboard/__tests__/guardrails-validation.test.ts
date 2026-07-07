@@ -195,4 +195,19 @@ describe("validateGuardrailPatch", () => {
     expect(validateGuardrailPatch({ weather_sensitivity: 12.5 })).toBe("invalid_weather_sensitivity");
     expect(validateGuardrailPatch({ weather_sensitivity: NaN })).toBe("invalid_weather_sensitivity");
   });
+
+  it("merchant location: valid coordinate pair, or null pair to clear", () => {
+    expect(validateGuardrailPatch({ merchant_lat: 47.61, merchant_lon: -122.33 })).toBeNull();
+    expect(validateGuardrailPatch({ merchant_lat: null, merchant_lon: null })).toBeNull();
+  });
+
+  it("merchant location: rejects out-of-range, NaN, and a half-set pair", () => {
+    expect(validateGuardrailPatch({ merchant_lat: 91, merchant_lon: 0 })).toBe("invalid_merchant_location");
+    expect(validateGuardrailPatch({ merchant_lat: 0, merchant_lon: -181 })).toBe("invalid_merchant_location");
+    expect(validateGuardrailPatch({ merchant_lat: NaN, merchant_lon: 0 })).toBe("invalid_merchant_location");
+    // Lat without lon (and vice versa) is meaningless — reject rather than store half a location.
+    expect(validateGuardrailPatch({ merchant_lat: 47.61 })).toBe("invalid_merchant_location");
+    expect(validateGuardrailPatch({ merchant_lon: -122.33 })).toBe("invalid_merchant_location");
+    expect(validateGuardrailPatch({ merchant_lat: 47.61, merchant_lon: null })).toBe("invalid_merchant_location");
+  });
 });

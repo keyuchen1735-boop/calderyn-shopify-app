@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as HttpServer from "~/lib/dashboard/http.server";
 
-const { requireSameOrigin, requireDashboardSession, executeReallocation } = vi.hoisted(() => ({
-  requireSameOrigin: vi.fn(),
-  requireDashboardSession: vi.fn(async () => ({ shopId: "shop-1" })),
-  executeReallocation: vi.fn(async () => ({ outcome: "succeeded" })),
-}));
+const { requireSameOrigin, requireDashboardSession, executeReallocation, resolveWeatherAlert } =
+  vi.hoisted(() => ({
+    requireSameOrigin: vi.fn(),
+    requireDashboardSession: vi.fn(async () => ({ shopId: "shop-1" })),
+    executeReallocation: vi.fn(async () => ({ outcome: "succeeded" })),
+    resolveWeatherAlert: vi.fn(async () => undefined),
+  }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession }));
+vi.mock("~/lib/actions/weather-suggest.server", () => ({ resolveWeatherAlert }));
 vi.mock("~/lib/dashboard/http.server", async () => {
-  const actual = await vi.importActual<typeof import("~/lib/dashboard/http.server")>("~/lib/dashboard/http.server");
+  const actual = await vi.importActual<typeof HttpServer>("~/lib/dashboard/http.server");
   return { ...actual, requireSameOrigin };
 });
 vi.mock("~/lib/actions/reallocate.server", () => ({ executeReallocation }));
@@ -23,9 +27,11 @@ vi.mock("~/lib/supabase.server", () => ({
       let mode: "select" | "update" = "select";
       let patch: Record<string, unknown> = {};
       const chain: Record<string, unknown> = {};
+      const ins: Record<string, unknown[]> = {};
       chain.select = () => chain;
       chain.update = (p: Record<string, unknown>) => { mode = "update"; patch = p; return chain; };
       chain.eq = (col: string, val: unknown) => { eqs[col] = val; return chain; };
+      chain.in = (col: string, vals: unknown[]) => { ins[col] = vals; return chain; };
       // Apply eq preconditions; on a matching UPDATE, mutate the shared row.
       // Returns the row (or null when a precondition — e.g. status='pending' —
       // fails), faithfully modelling a conditional UPDATE ... RETURNING.
@@ -35,6 +41,7 @@ vi.mock("~/lib/supabase.server", () => ({
         if (eqs.id !== undefined && row.id !== eqs.id) return null;
         if (eqs.shop_id !== undefined && row.shop_id !== eqs.shop_id) return null;
         if (eqs.status !== undefined && row.status !== eqs.status) return null;
+        if (ins.status !== undefined && !ins.status.includes(row.status)) return null;
         if (mode === "update") Object.assign(row, patch);
         return row;
       };
@@ -95,6 +102,34 @@ describe("weather-reallocation action", () => {
     expect(executeReallocation).not.toHaveBeenCalled();
     expect(res.status).toBe(200);
     expect(suggestion!.status).toBe("dismissed");
+  });
+
+  it("disarms an armed suggestion via dismiss (armed must always be cancellable)", async () => {
+    suggestion!.status = "armed";
+    const res = await post({ suggestionId: "sg1", intent: "dismiss" });
+    expect(res.status).toBe(200);
+    expect(suggestion!.status).toBe("dismissed");
+    expect(resolveWeatherAlert).toHaveBeenCalled();
+  });
+
+  it("applies an armed suggestion immediately (fire early)", async () => {
+    suggestion!.status = "armed";
+    const res = await post({ suggestionId: "sg1", intent: "apply" });
+    expect(res.status).toBe(200);
+    expect(suggestion!.status).toBe("applied");
+  });
+
+  it("arms a pending suggestion for weather-triggered execution (no budget moves now)", async () => {
+    const res = await post({ suggestionId: "sg1", intent: "arm" });
+    expect(executeReallocation).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(suggestion!.status).toBe("armed");
+  });
+
+  it("409s arming a non-pending suggestion", async () => {
+    suggestion!.status = "applied";
+    const res = await post({ suggestionId: "sg1", intent: "arm" });
+    expect(res.status).toBe(409);
   });
 
   it("409s a non-pending suggestion (already applied) and does not execute", async () => {
