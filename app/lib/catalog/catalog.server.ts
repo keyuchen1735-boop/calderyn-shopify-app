@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { getSupabase } from "../supabase.server";
 import { CalderynError } from "../calderyn.server";
 import { projectProductToSkuDim } from "./project-sku-dim.server";
+import { seedInitialStock } from "../inventory/engine.server";
 import { collectionHandle, productHandleBase } from "./handle";
 import type { ProductInput, ProductStatus, ProductSummary, ProductDetail } from "./types";
 
@@ -322,6 +323,10 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
       const { error: lErr } = await sb.from("variant_option_value").insert(links);
       if (lErr) throw lErr;
     }
+    // Back the variant's starting stock with a real ledger balance so the
+    // cannot-oversell engine can reserve against it — a "live" product with an
+    // unbacked inventory_on_hand can't actually be sold. No-op when stock is 0.
+    await seedInitialStock(shopId, variantId, v.inventoryOnHand ?? 0);
   }
 
   // Collections — only the shop's own (filters out stale/duplicate/foreign ids).
@@ -417,6 +422,10 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       const { data: ins, error: iErr } = await sb.from("variant_dim").insert({ shop_id: shopId, product_id: productId, ...fields }).select("id").single();
       if (iErr) throw iErr;
       variantId = String(ins.id);
+      // A brand-new variant added during an edit needs its starting stock backed
+      // in the ledger too (existing variants keep their own balances — never
+      // re-seeded from the flat column here). No-op when stock is 0.
+      await seedInitialStock(shopId, variantId, v.inventoryOnHand ?? 0);
     }
     // Persist shipping dimensions + requirements for this variant (update path).
     const { error: shErr } = await sb.from("variant_shipping").upsert({

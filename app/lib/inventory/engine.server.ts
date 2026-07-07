@@ -64,6 +64,52 @@ async function reprojectCheckout(shopId: string, checkoutRef: string): Promise<v
   }
 }
 
+// A new owned shop starts with no location_dim row (locations arrive via import
+// or the demo seed), so a dashboard-created product needs one before its stock
+// can live in the ledger. Returns the shop's primary location — lowest priority,
+// then oldest — creating a default "Primary" one when the shop has none.
+export async function ensurePrimaryLocation(shopId: string): Promise<string> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("location_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .order("priority", { ascending: true })
+    .order("created_at", { ascending: true })
+    .limit(1);
+  if (error) throw error;
+  if (data && data.length) return String(data[0].id);
+  const { data: created, error: cErr } = await sb
+    .from("location_dim")
+    .insert({ shop_id: shopId, name: "Primary", active: true, priority: 0 })
+    .select("id")
+    .single();
+  if (cErr) throw cErr;
+  return String(created.id);
+}
+
+// Seed a newly created variant's starting on-hand into the owned ledger so the
+// cannot-oversell engine (and checkout) can actually reserve against it. The
+// product editor writes only the flat variant_dim.inventory_on_hand column;
+// without this a "live" product has no balance row and every sale 422s. Idempotent:
+// skips zero quantities and any (variant, location) that already has a balance
+// row, so a re-save or a later hand-adjusted count is never stomped.
+export async function seedInitialStock(shopId: string, variantId: string, onHand: number): Promise<void> {
+  const qty = Math.max(0, Math.trunc(onHand));
+  if (qty <= 0) return;
+  const locationId = await ensurePrimaryLocation(shopId);
+  const { data: existing, error } = await getSupabase()
+    .from("inventory_balance")
+    .select("variant_id")
+    .eq("shop_id", shopId)
+    .eq("variant_id", variantId)
+    .eq("location_id", locationId)
+    .limit(1);
+  if (error) throw error;
+  if (existing && existing.length) return;
+  await adjustStock(shopId, variantId, locationId, qty, "initial");
+}
+
 export async function adjustStock(shopId: string, variantId: string, locationId: string, newOnHand: number, reason?: string): Promise<void> {
   const { error } = await getSupabase().rpc("inventory_adjust", {
     p_shop_id: shopId, p_variant_id: variantId, p_location_id: locationId,
