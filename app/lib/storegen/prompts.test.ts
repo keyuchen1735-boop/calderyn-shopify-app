@@ -1,6 +1,6 @@
 // app/lib/storegen/prompts.test.ts
 import { describe, it, expect } from "vitest";
-import { BRAND_SYSTEM_PROMPT, docSystemPrompt, buildDocUserMessage } from "./prompts";
+import { BRAND_SYSTEM_PROMPT, docSystemPrompt, buildDocUserMessage, HOME_HTML_SYSTEM_PROMPT } from "./prompts";
 import { PALETTE_LIBRARY } from "./block-plan";
 
 describe("generator prompts", () => {
@@ -38,6 +38,30 @@ describe("generator prompts", () => {
       expect(p).toContain("Welcome to our store");
       expect(p).toContain("No exclamation marks");
     }
+  });
+  it("the AI-HTML home prompt teaches both fx channels with their hard caps", () => {
+    const p = HOME_HTML_SYSTEM_PROMPT;
+    // both channels (plus the shader colour companion) are named
+    expect(p).toContain("data-fx-shader");
+    expect(p).toContain("data-fx-motion");
+    expect(p).toContain("data-fx-colors");
+    // the exact caps the runtime enforces
+    expect(p).toContain("4000"); // shader source cap
+    expect(p).toContain("2000"); // motion JSON cap
+    expect(p).toContain("Max 2 shader hosts");
+    expect(p).toContain("Max 8 motion hosts");
+  });
+  it("the AI-HTML home prompt encodes the quoting, fallback and reserved-attribute rules", () => {
+    const p = HOME_HTML_SYSTEM_PROMPT;
+    // single-quote the attribute so the inner JSON double quotes survive
+    expect(p).toMatch(/single-quote/i);
+    expect(p).toContain("data-fx-motion='{");
+    // the page must stay complete once every fx attribute is stripped
+    expect(p).toContain("stripped");
+    expect(p).toMatch(/fallback/i);
+    expect(p).toContain("designed CSS background");
+    // the runtime-reserved marker must never be emitted by the model
+    expect(p).toContain("Never emit data-fx-hydrated");
   });
   it("the user message wraps the catalog + brief as untrusted and includes real ids", () => {
     const msg = buildDocUserMessage("home", {
