@@ -742,7 +742,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
                 className="cd-canvas-frame"
                 title="Store preview"
                 src={previewSrc}
-                sandbox="allow-same-origin"
+                sandbox="allow-same-origin allow-scripts"
               />
               <div className="cd-canvas-veil" data-on={building ? "1" : "0"} aria-hidden="true">
                 {/* Branded storefront skeleton: paints instantly on Build so a generation reads as

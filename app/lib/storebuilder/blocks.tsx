@@ -3,9 +3,10 @@
 // ponytail: hand-rolled validators (repo has no Zod) matching the boundary-validation style
 // in app/lib/buyer/identity.server.ts. Validators are tolerant — fill defaults, coerce — and
 // throw only on irrecoverable shape (renderBlocks/validateDocument catch and skip).
-import { createElement } from "react";
+import { createElement, useEffect, useRef } from "react";
 import type { BlockMeta, RenderContext } from "./types";
 import { STOREFRONT_LINKS } from "./links";
+import { hydrateStoreFx } from "./fx/hydrate";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 import { formatMoney } from "~/lib/storefront/money";
 
@@ -125,16 +126,31 @@ interface RawHtmlProps { html: string }
 // the persistence boundary (saveDraft → sanitizeStoreHtml); this block renders it verbatim and must
 // NEVER be handed un-sanitized html. validateProps stays a cheap string/length coerce so no
 // sanitizer is pulled into the client bundle.
+// Mounts the sanitized markup, then hydrates its data-fx-shader / data-fx-motion
+// effect channels client-side (the effect is a no-op on the server and skips when
+// html is empty). Re-keyed on props.html so a regenerated home tears down the old
+// effects before hydrating the new markup.
+function RawHtmlBlock({ props }: { props: RawHtmlProps; ctx: RenderContext }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    return hydrateStoreFx(el);
+  }, [props.html]);
+  if (!props.html) return null;
+  return createElement("div", {
+    ref,
+    className: "cd-block cd-block--rawhtml",
+    dangerouslySetInnerHTML: { __html: props.html },
+  });
+}
 const rawHtml: BlockMeta<RawHtmlProps> = {
   type: "rawHtml", flavor: "static", allowedDocKinds: ["singleton", "template"],
   defaultProps: { html: "" },
   defaultLayout: { x: 0, y: 0, w: 12, h: 12 },
   validateProps: (raw) => ({ html: str(asRecord(raw).html).slice(0, 100000) }),
   catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
-  Component: ({ props }) =>
-    props.html
-      ? createElement("div", { className: "cd-block cd-block--rawhtml", dangerouslySetInnerHTML: { __html: props.html } })
-      : null,
+  Component: RawHtmlBlock,
 };
 
 // ── dynamic ───────────────────────────────────────────────────────────────

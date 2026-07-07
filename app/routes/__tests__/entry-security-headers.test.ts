@@ -82,9 +82,12 @@ describe("applySecurityHeaders", () => {
     const csp = headers.get("Content-Security-Policy") ?? "";
     expect(csp).toContain("frame-ancestors 'self'");
     expect(csp).not.toContain("frame-ancestors 'none'");
-    // Display-only + script-free: block scripts even on a top-level load, so the
-    // isolation doesn't rest solely on the parent iframe's sandbox attribute.
-    expect(csp).toContain("script-src 'none'");
+    // First-party scripts run here: the preview displays sanitized store HTML and
+    // hydrates the shader/motion effect runtimes, plus Remix's inline hydration.
+    // Model script is stripped by the sanitizer and remote script stays blocked,
+    // so the policy is self + inline only and the old blanket 'none' is gone.
+    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
+    expect(csp).not.toContain("script-src 'none'");
     // Still hardened like every other non-embedded surface.
     expect(csp).toContain("object-src 'none'");
   });
