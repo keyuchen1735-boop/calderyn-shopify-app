@@ -24,6 +24,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
     error: url.searchParams.get("error"),
     email: url.searchParams.get("email") ?? "",
     store: url.searchParams.get("store") ?? "",
+    // Threaded connector/deep-link destination; carried through signup +
+    // onboarding so an interrupted flow resumes. Validated server-side on use.
+    returnTo: url.searchParams.get("return_to") ?? "",
     // OAuth provider flows must start on the public apex (their callback host),
     // not this app.* origin — see GoogleButton.
     authBase: publicBaseUrl(),
@@ -31,7 +34,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export default function SignupPage() {
-  const { error, email, store, authBase } = useLoaderData<typeof loader>();
+  const { error, email, store, returnTo, authBase } = useLoaderData<typeof loader>();
   return (
     <AuthShell>
       <h1 className="cd-auth-title">Create account</h1>
@@ -40,6 +43,7 @@ export default function SignupPage() {
       <GoogleButton label="Sign up with Google" baseUrl={authBase} />
       <div className="cd-auth-divider">or</div>
       <AuthForm action="/dashboard/signup">
+        {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
         <label className="cd-auth-label" htmlFor="store">
           Store name
         </label>
