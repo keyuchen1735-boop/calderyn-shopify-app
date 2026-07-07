@@ -28,6 +28,13 @@ export function conditionFor(f: Pick<RegionForecast, "precipMm" | "snowCm">): We
   return "clear";
 }
 
+/** The favorability score in plain shopper language, for the region cards. */
+export function demandLabel(score: number): { label: string; tone: "success" | "neutral" } {
+  if (score >= 0.45) return { label: "More shoppers online", tone: "success" };
+  if (score >= 0.2) return { label: "Slightly more online", tone: "neutral" };
+  return { label: "Typical demand", tone: "neutral" };
+}
+
 // Harsher weather ranks first; a region with no forecast ranks mildest.
 const CONDITION_RANK: Record<WeatherCondition, number> = {
   snow: 3,

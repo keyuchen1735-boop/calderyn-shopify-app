@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildForecastView, conditionFor, sortMoves, type WeatherCondition } from "../forecast-view";
+import { buildForecastView, conditionFor, demandLabel, sortMoves, type WeatherCondition } from "../forecast-view";
 import type { RegionCode } from "../../ads/actions";
 import type { RegionForecast } from "../score";
 
@@ -84,5 +84,13 @@ describe("sortMoves", () => {
       cond,
     );
     expect(out.map((m) => m.id)).toEqual(["showers", "unknown"]);
+  });
+});
+
+describe("demandLabel", () => {
+  it("turns the abstract score into plain shopper language", () => {
+    expect(demandLabel(0.5)).toEqual({ label: "More shoppers online", tone: "success" });
+    expect(demandLabel(0.3)).toEqual({ label: "Slightly more online", tone: "neutral" });
+    expect(demandLabel(0.05)).toEqual({ label: "Typical demand", tone: "neutral" });
   });
 });
