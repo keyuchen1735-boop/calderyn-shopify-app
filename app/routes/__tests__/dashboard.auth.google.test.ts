@@ -307,6 +307,23 @@ describe("google callback loader", () => {
       expect(res.status).toBe(302);
       expect(res.headers.get("Location")).toContain("/dashboard/auth/google/store?t=");
     });
+
+    it("threads a validated return_to into the name-your-store URL for a first-time user", async () => {
+      const nonce = "testnonce";
+      mockExchangeCodeForIdToken.mockResolvedValue("id_token_value");
+      mockVerifyIdToken.mockResolvedValue({ sub: "gsub", email: "new@e.com", emailVerified: true });
+      mockFindUserByGoogleSub.mockResolvedValue(null);
+      mockFindUserByEmail.mockResolvedValue(null);
+      mockSignGoogleSignup.mockReturnValue("signed.tok");
+
+      const { loader } = await import("../dashboard.auth.google_.callback");
+      const req = callbackRequest(
+        { code: "code", state: nonce },
+        `${nonce}:${encodeURIComponent("/dashboard/connect?t=abc")}`,
+      );
+      const res = (await loader({ request: req, params: {}, context: {} } as never)) as Response;
+      expect(res.headers.get("Location")).toContain(`return_to=${encodeURIComponent("/dashboard/connect?t=abc")}`);
+    });
   });
 });
 
@@ -343,6 +360,32 @@ describe("google store action", () => {
     expect(mockCreateGoogleUser).toHaveBeenCalledWith("u@e.com", "gsub");
     expect(mockProvisionOwnedShop).toHaveBeenCalledWith("Acme Store");
     expect(mockLinkMembership).toHaveBeenCalledWith("u1", "shop1", "owner");
+  });
+
+  it("does not 500 on a replayed token — a duplicate account routes to sign-in", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockVerifyGoogleSignup.mockReturnValue({ sub: "gsub", email: "u@e.com" });
+    // First submit already created the account; the replay's insert collides.
+    mockCreateGoogleUser.mockRejectedValue({ code: "23505", message: "duplicate key value" });
+    const { action } = await import("../dashboard.auth.google_.store");
+    const res = (await action({ request: storePost({ t: "valid.token", store: "Acme" }), params: {}, context: {} } as never)) as Response;
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: "account_exists" });
+    // The first submit's real account is NOT rolled back.
+    expect(mockDeleteUser).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("threads a validated return_to into the onboarding redirect on success", async () => {
+    mockVerifyGoogleSignup.mockReturnValue({ sub: "gsub", email: "u@e.com" });
+    mockCreateGoogleUser.mockResolvedValue({ id: "u1" });
+    const { action } = await import("../dashboard.auth.google_.store");
+    const res = (await action({
+      request: storePost({ t: "valid.token", store: "Acme", return_to: "/dashboard/connect?t=abc" }),
+      params: {},
+      context: {},
+    } as never)) as Response;
+    expect(res.headers.get("Location")).toBe(`/dashboard/onboarding?return_to=${encodeURIComponent("/dashboard/connect?t=abc")}`);
   });
 
   it("deletes the created user and returns a retryable error when provisionOwnedShop fails", async () => {

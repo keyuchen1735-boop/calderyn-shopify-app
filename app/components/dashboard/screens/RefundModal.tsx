@@ -34,12 +34,16 @@ export default function RefundModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Drive every figure off what is ACTUALLY refundable (captured − already-refunded), not the gross
+  // order total — otherwise a partially-refunded order advertises more than the server will allow
+  // and a partial between the true remaining and the gross total client-passes but 422s server-side.
+  const refundableCents = order.remainingRefundableCents;
   const partialCents = Math.round(Number(dollars) * 100);
-  const invalidPartial = !full && (!Number.isFinite(partialCents) || partialCents <= 0 || partialCents > order.totalCents);
+  const invalidPartial = !full && (!Number.isFinite(partialCents) || partialCents <= 0 || partialCents > refundableCents);
 
   const submit = async () => {
     if (invalidPartial) {
-      app.toast("Enter a partial amount between $0 and the order total.", "warn");
+      app.toast(`Enter a partial amount between $0 and ${money(refundableCents, order.currency)}.`, "warn");
       return;
     }
     setBusy(true);
@@ -49,7 +53,7 @@ export default function RefundModal({
         idempotencyKey,
       });
       app.toast(
-        `Refunded ${money(res.amountCents)} — order is now ${res.orderState.replace("_", " ")}.`,
+        `Refunded ${money(res.amountCents, order.currency)} — order is now ${res.orderState.replace("_", " ")}.`,
         "check",
       );
       onDone();
@@ -86,7 +90,10 @@ export default function RefundModal({
         <Card>
           <div className="cd-h2" style={{ marginBottom: 4 }}>Refund {order.ref}</div>
           <div className="cd-caption" style={{ marginBottom: 12 }}>
-            Order total {money(order.totalCents)}. A refund is sent back through Stripe and cannot be undone.
+            {refundableCents < order.totalCents
+              ? `Order total ${money(order.totalCents, order.currency)} · ${money(refundableCents, order.currency)} still refundable. `
+              : `Order total ${money(order.totalCents, order.currency)}. `}
+            A refund is sent back through Stripe and cannot be undone.
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label className="cd-field">
@@ -96,7 +103,7 @@ export default function RefundModal({
                 value={full ? "full" : "partial"}
                 onChange={(e) => setFull(e.target.value === "full")}
               >
-                <option value="full">Full refund ({money(order.totalCents)})</option>
+                <option value="full">Full refund ({money(refundableCents, order.currency)})</option>
                 <option value="partial">Partial refund</option>
               </select>
             </label>

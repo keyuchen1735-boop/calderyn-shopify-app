@@ -3,11 +3,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const project = vi.fn().mockResolvedValue(undefined);
 vi.mock("../project-sku-dim.server", () => ({ projectProductToSkuDim: project }));
 
+// The ledger seed is exercised in inventory-seed.server.test.ts; here we only
+// assert createProduct wires the variant's starting stock through to it.
+const seedInitialStock = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../inventory/engine.server", () => ({ seedInitialStock }));
+
 const single = vi.fn().mockResolvedValue({ data: { id: "p1" }, error: null });
 // One insert mock that supports both `.insert(x).select("id").single()` (product /
 // option / variant) and `await .insert(x)` (link tables), so the create path's
 // variant insert (which chains select().single()) works.
-const insert = vi.fn(() => ({
+const insert = vi.fn((_payload?: Record<string, unknown>) => ({
   select: () => ({ single }),
   then: (resolve: (r: { error: null }) => unknown) => resolve({ error: null }),
 }));
@@ -17,7 +22,7 @@ vi.mock("~/lib/supabase.server", () => ({
   }),
 }));
 
-beforeEach(() => { project.mockClear(); insert.mockClear(); });
+beforeEach(() => { project.mockClear(); insert.mockClear(); seedInitialStock.mockClear(); });
 
 describe("validateProductInput", () => {
   it("rejects a product with no variants", async () => {
@@ -27,6 +32,15 @@ describe("validateProductInput", () => {
   });
 });
 
+// The variant_dim insert is the one insert payload that carries inventory_tracked.
+function variantInsertPayload(): Record<string, unknown> {
+  const call = insert.mock.calls
+    .map((c) => c[0] as Record<string, unknown>)
+    .find((a) => a && "inventory_tracked" in a);
+  if (!call) throw new Error("no variant insert captured");
+  return call;
+}
+
 describe("createProduct", () => {
   it("creates the product and re-projects sku_dim", async () => {
     const { createProduct } = await import("../catalog.server");
@@ -35,5 +49,70 @@ describe("createProduct", () => {
     });
     expect(res.id).toBe("p1");
     expect(project).toHaveBeenCalledWith("p1");
+  });
+
+  it("seeds the new variant's starting stock into the owned inventory ledger", async () => {
+    const { createProduct } = await import("../catalog.server");
+    await createProduct("shop1", {
+      title: "Tee", status: "active", variants: [{ sku: "T-S", retailPriceCents: 1999, inventoryOnHand: 5 }],
+    });
+    // The variant insert mock returns id "p1"; its starting stock must flow to the ledger.
+    expect(seedInitialStock).toHaveBeenCalledWith("shop1", "p1", 5);
+  });
+
+  it("projects sku_dim BEFORE seeding stock (inventory_level_fact.sku_id FKs sku_dim.id)", async () => {
+    const { createProduct } = await import("../catalog.server");
+    await createProduct("shop1", {
+      title: "Tee", status: "active", variants: [{ sku: "T-S", retailPriceCents: 1999, inventoryOnHand: 5 }],
+    });
+    // seedInitialStock -> projectLevelFact writes inventory_level_fact with
+    // sku_id = variant id, whose FK targets sku_dim.id. sku_dim is only populated
+    // by projectProductToSkuDim, so it MUST run first or the seed 500s (FK 23503).
+    expect(project.mock.invocationCallOrder[0]).toBeLessThan(seedInitialStock.mock.invocationCallOrder[0]);
+  });
+
+  it("tracks a new physical variant that was given a stock number, so entered stock gates availability", async () => {
+    const { createProduct } = await import("../catalog.server");
+    await createProduct("shop1", {
+      title: "Tee", status: "active",
+      variants: [{ retailPriceCents: 1999, inventoryOnHand: 5, requiresShipping: true }],
+    });
+    expect(variantInsertPayload().inventory_tracked).toBe(true);
+  });
+
+  it("tracks a physical variant whose stock is explicitly 0 (so it shows sold out, not always-available)", async () => {
+    const { createProduct } = await import("../catalog.server");
+    await createProduct("shop1", {
+      title: "Tee", status: "active",
+      variants: [{ retailPriceCents: 1999, inventoryOnHand: 0, requiresShipping: true }],
+    });
+    expect(variantInsertPayload().inventory_tracked).toBe(true);
+  });
+
+  it("leaves a digital (no-shipping) variant untracked — stays always available", async () => {
+    const { createProduct } = await import("../catalog.server");
+    await createProduct("shop1", {
+      title: "Ebook", status: "active",
+      variants: [{ retailPriceCents: 999, requiresShipping: false }],
+    });
+    expect(variantInsertPayload().inventory_tracked).toBe(false);
+  });
+
+  it("leaves a variant with blank stock untracked (make-to-order)", async () => {
+    const { createProduct } = await import("../catalog.server");
+    await createProduct("shop1", {
+      title: "Mug", status: "active",
+      variants: [{ retailPriceCents: 1500, requiresShipping: true }],
+    });
+    expect(variantInsertPayload().inventory_tracked).toBe(false);
+  });
+
+  it("honours an explicit inventoryTracked from the caller", async () => {
+    const { createProduct } = await import("../catalog.server");
+    await createProduct("shop1", {
+      title: "Tee", status: "active",
+      variants: [{ retailPriceCents: 1999, inventoryOnHand: 5, requiresShipping: true, inventoryTracked: false }],
+    });
+    expect(variantInsertPayload().inventory_tracked).toBe(false);
   });
 });

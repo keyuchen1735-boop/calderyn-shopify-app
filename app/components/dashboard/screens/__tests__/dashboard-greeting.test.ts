@@ -21,6 +21,7 @@ const ctx: DashboardCtx = {
   t: {},
   shopDomain: "test.myshopify.com",
   storeLabel: "test.myshopify.com",
+  orgSlug: null,
   demoMode: false,
   canDeleteAccount: false,
   // Established-store hint so the greeting path (not the setup guide's static
@@ -44,6 +45,7 @@ const ctx: DashboardCtx = {
   liveOn: true,
   setLiveOn: () => {},
   executeAction: async () => ({ ok: true, receipt: null }),
+  weatherIntent: async () => true,
   undoAction: () => {},
   pushAdDraft: () => {},
   toast: () => {},

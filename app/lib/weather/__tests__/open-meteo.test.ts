@@ -44,3 +44,18 @@ describe("fetchRegionForecasts", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("per-day forecasts", () => {
+  it("exposes each forecast day (date + numbers) alongside the window aggregate", async () => {
+    const loc = fakeLocation([12, 20, 30], [8, 10, 20], [9, 0, 3], [1.5, 0, 0], [36000, 36000, 36000]);
+    (loc.daily as Record<string, unknown>).time = ["2026-07-07", "2026-07-08", "2026-07-09"];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([loc]), { status: 200 })));
+
+    const out = await fetchRegionForecasts([{ region: "us-west", lat: 1, lon: 1 }]);
+    expect(out.get("us-west")!.days).toEqual([
+      { date: "2026-07-07", avgTempC: 10, precipMm: 9, snowCm: 1.5 },
+      { date: "2026-07-08", avgTempC: 15, precipMm: 0, snowCm: 0 },
+      { date: "2026-07-09", avgTempC: 25, precipMm: 3, snowCm: 0 },
+    ]);
+  });
+});

@@ -65,4 +65,23 @@ describe("owned-tenant helpers", () => {
     const { resolveShopForUser } = await import("../tenant.server");
     expect(await resolveShopForUser("u1")).toBe("shop1");
   });
+
+  it("linkMembershipIdempotent inserts a new membership", async () => {
+    insertMembership.mockResolvedValueOnce({ error: null });
+    const { linkMembershipIdempotent } = await import("../tenant.server");
+    await expect(linkMembershipIdempotent("u1", "shop1", "owner")).resolves.toBeUndefined();
+    expect(insertMembership).toHaveBeenCalledWith({ user_id: "u1", shop_id: "shop1", role: "owner" });
+  });
+
+  it("linkMembershipIdempotent treats a 23505 duplicate as success (re-connect)", async () => {
+    insertMembership.mockResolvedValueOnce({ error: { code: "23505", message: "duplicate key value" } });
+    const { linkMembershipIdempotent } = await import("../tenant.server");
+    await expect(linkMembershipIdempotent("u1", "shop1")).resolves.toBeUndefined();
+  });
+
+  it("linkMembershipIdempotent still throws on a non-duplicate error", async () => {
+    insertMembership.mockResolvedValueOnce({ error: { code: "42501", message: "permission denied" } });
+    const { linkMembershipIdempotent } = await import("../tenant.server");
+    await expect(linkMembershipIdempotent("u1", "shop1")).rejects.toMatchObject({ code: "42501" });
+  });
 });

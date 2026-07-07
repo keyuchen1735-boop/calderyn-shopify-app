@@ -5,6 +5,8 @@ import { useGSAP } from "@gsap/react";
 
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
+import { applyWeatherSuggestion, type CustomersPage } from "~/lib/dashboard/customers-client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { bootDashboardData } from "~/lib/dashboard/boot";
 import { warmScreenCaches } from "~/lib/dashboard/prefetch";
 import { presentActionOutcome } from "~/lib/action-outcome";
@@ -116,7 +118,6 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
         label: "Orders",
         icon: "doc",
         children: [
-          { key: "orders", label: "Orders", screen: "orders", sub: "orders" },
           { key: "labels", label: "Shipping charges", screen: "orders", sub: "labels" },
           { key: "drafts", label: "Draft carts", screen: "orders", sub: "drafts" },
           { key: "abandoned", label: "Abandoned", screen: "orders", sub: "abandoned" },
@@ -127,7 +128,6 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
         label: "Products",
         icon: "tag",
         children: [
-          { key: "catalog", label: "Products", screen: "catalog" },
           { key: "inventory", label: "Inventory", screen: "inventory" },
           { key: "po", label: "Purchase orders", screen: "products-po" },
           { key: "transfers", label: "Transfers", screen: "products-transfers" },
@@ -229,10 +229,11 @@ function childIsActive(child: NavChild, nav: NavState): boolean {
   return eff === child.screen;
 }
 
-// Where a parent row navigates: its first child's view (the section default).
+// Where a parent row navigates: its own landing view. The parent row itself
+// represents the section's default screen, so the child list only carries the
+// section's other sub-views (no child duplicates the parent).
 function parentTarget(item: NavItem): { screen: ScreenId; sub: string | null } {
-  const first = item.children?.[0];
-  return first ? { screen: first.screen, sub: first.sub ?? null } : { screen: item.id, sub: null };
+  return { screen: item.id, sub: NAV_DEFAULT_SUB[item.id] ?? null };
 }
 
 // On phones the sidebar collapses to a bottom tab bar. These four ride the bar;
@@ -302,6 +303,7 @@ export default function DashboardApp({
   authBase = "",
   shopDomain,
   storeLabel,
+  orgSlug = null,
   demoMode = false,
   hasCatalog,
   canDeleteAccount = false,
@@ -309,6 +311,8 @@ export default function DashboardApp({
   authBase?: string;
   shopDomain: string | null;
   storeLabel: string;
+  /** Real tenant slug for storefront links (null for legacy Shopify sessions). */
+  orgSlug?: string | null;
   demoMode?: boolean;
   /** Loader-side product-existence hint — seeds Home's first paint (see
    *  DashboardCtx.hasCatalog). Required so the loader stays the single owner
@@ -794,6 +798,7 @@ export default function DashboardApp({
       const campId = opts?.campaignId ?? alert.campaign_id;
       if (
         (kind === "pause_campaign" ||
+          kind === "resume_campaign" ||
           kind === "reduce_campaign_budget" ||
           kind === "increase_campaign_budget") &&
         campId
@@ -846,6 +851,7 @@ export default function DashboardApp({
               cs.map((c) => {
                 if (c.id !== campId) return c;
                 if (kind === "pause_campaign") return { ...c, status: "paused" };
+                if (kind === "resume_campaign") return { ...c, status: "active" };
                 return { ...c, daily_budget_cents: targetBudget ?? c.daily_budget_cents };
               }),
             );
@@ -1090,6 +1096,59 @@ export default function DashboardApp({
     [toast],
   );
 
+  // ----- act on a weather prediction (Weather tab or its mirrored alert) -----
+  const weatherIntent = useCallback(
+    async (suggestionId: string, intent: "apply" | "arm" | "dismiss") => {
+      try {
+        await applyWeatherSuggestion(suggestionId, intent);
+      } catch {
+        toast("Could not update the suggestion", "x", "critical");
+        return false;
+      }
+      // The server resolves the mirrored alert on every intent (an armed move
+      // lives on the Weather tab, with Disarm, until the trigger fires) —
+      // mirror that locally so both surfaces agree without a refetch.
+      setAlerts((as) =>
+        as.map((a) =>
+          a.evidence?.suggestion_id === suggestionId && a.status === "open"
+            ? { ...a, status: "resolved" }
+            : a,
+        ),
+      );
+      // Write through the Customers session cache so a tab-switch doesn't
+      // reseed the stale pre-action suggestion list.
+      const cached = cachedScreenData<CustomersPage>(SCREEN_CACHE_KEYS.customers);
+      if (cached?.weatherSuggestions) {
+        cacheScreenData(SCREEN_CACHE_KEYS.customers, {
+          ...cached,
+          weatherSuggestions:
+            intent === "arm"
+              ? cached.weatherSuggestions.map((s) =>
+                  s.id === suggestionId ? { ...s, status: "armed" as const } : s,
+                )
+              : cached.weatherSuggestions.filter((s) => s.id !== suggestionId),
+        });
+      }
+      if (intent === "apply") {
+        // Budget moved — pull the authoritative audit row in.
+        client
+          .fetchAudit()
+          .then((au) => setAudit(au))
+          .catch(() => {});
+      }
+      toast(
+        intent === "apply"
+          ? "Budget shifted"
+          : intent === "arm"
+            ? "Scheduled — runs when the forecast confirms"
+            : "Move rejected",
+        "check",
+      );
+      return true;
+    },
+    [toast],
+  );
+
   const pushAdDraft = useCallback(
     (name: string) => {
       const entry: AuditVM = {
@@ -1140,6 +1199,7 @@ export default function DashboardApp({
     authBase,
     shopDomain,
     storeLabel,
+    orgSlug,
     demoMode,
     hasCatalog,
     canDeleteAccount,
@@ -1163,6 +1223,7 @@ export default function DashboardApp({
     setLiveOn,
     executeAction,
     undoAction,
+    weatherIntent,
     pushAdDraft,
     toast,
     relTime,

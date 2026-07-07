@@ -13,7 +13,7 @@ import { generateStore } from "~/lib/storegen/generate.server";
 import { assertCanGenerate } from "~/lib/storegen/guard.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { isUuid } from "~/lib/ids";
-import type { StudioVibe } from "~/lib/storebuilder/studio-types";
+import type { StudioDesignModel, StudioVibe } from "~/lib/storebuilder/studio-types";
 import { quotaTrusted } from "~/lib/ai-quota.server";
 
 // Store studio read model: brand settings, home hero copy, preview products,
@@ -77,6 +77,10 @@ export async function action({ request }: ActionFunctionArgs) {
       if (b.brief !== undefined && typeof b.brief !== "string") {
         return jsonError(422, "invalid_brief");
       }
+      if (b.model !== undefined && b.model !== "sonnet" && b.model !== "opus") {
+        return jsonError(422, "invalid_model", "Model must be sonnet or opus.");
+      }
+      const designModel = b.model as StudioDesignModel | undefined;
       const rawBrief = typeof b.brief === "string" ? b.brief : undefined;
       return dashboardJson(async () => {
         // Brief cap, burst limit, mid-test refusal AND the daily AI quota are
@@ -90,6 +94,7 @@ export async function action({ request }: ActionFunctionArgs) {
             shopId: session.shopId,
             mode: brief ? "brief" : "catalog",
             brief,
+            designModel,
           });
           return { runId: result.runId, status: result.status };
         } catch (err) {

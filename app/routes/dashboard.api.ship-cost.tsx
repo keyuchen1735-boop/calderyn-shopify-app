@@ -13,7 +13,6 @@ import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin, rateLimit } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { saveTypedPeriodTotal, setManualOverride } from "~/lib/ship-cost/inputs.server";
-import { missingWeightPct } from "~/lib/ship-cost/missing-weight";
 
 const MODES = ["auto", "force_measured", "force_reconciled"];
 
@@ -21,17 +20,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const sb = getSupabase();
   return dashboardJson(async () => {
-    const [{ data: settingsRow }, { data: orderRows }] = await Promise.all([
+    // Count over the FULL order history, not a PostgREST-clamped 1000-row slice:
+    // a large shop's missing-weight % was computed from an arbitrary subset. HEAD
+    // count queries aggregate server-side and are not row-capped. "Missing" mirrors
+    // missingWeightPct: grams_sum IS NULL OR <= 0.
+    const [{ data: settingsRow }, { count: total }, { count: missing }] = await Promise.all([
       sb.from("shop_settings").select("ship_cost_mode").eq("shop_id", session.shopId).maybeSingle(),
-      sb.from("v_order_ship_features").select("grams_sum").eq("shop_id", session.shopId),
+      sb.from("v_order_ship_features").select("*", { count: "exact", head: true }).eq("shop_id", session.shopId),
+      sb
+        .from("v_order_ship_features")
+        .select("*", { count: "exact", head: true })
+        .eq("shop_id", session.shopId)
+        .or("grams_sum.is.null,grams_sum.lte.0"),
     ]);
+    const totalN = total ?? 0;
     return {
       ship_mode: (settingsRow?.ship_cost_mode as string | null) ?? "auto",
-      missing_weight_pct: missingWeightPct(
-        ((orderRows ?? []) as { grams_sum: number | null }[]).map((o) => ({
-          gramsSum: o.grams_sum ?? null,
-        })),
-      ),
+      missing_weight_pct: totalN > 0 ? Math.round(((missing ?? 0) / totalN) * 100) : 0,
     };
   });
 }

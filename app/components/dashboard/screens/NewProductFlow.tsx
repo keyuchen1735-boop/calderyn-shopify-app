@@ -18,7 +18,7 @@ import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { buildVariantMatrix } from "~/lib/catalog/variant-matrix";
 import { dollarsToCents, nonNegInt, parseOptionRows, posInt } from "~/lib/catalog/product-form";
-import { productHandleBase } from "~/lib/catalog/handle";
+import { storefrontListingUrl } from "~/lib/storefront/listing-url";
 import {
   draftPlanFromPrompt,
   parseListingPrompt,
@@ -403,6 +403,12 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
       }
       case "set_stock":
         setStock(String(op.stock));
+        // Per-combo stock overrides the base at save, so a prompt-set stock clears
+        // them — otherwise the confirmed change never reaches a variant that
+        // already has a stock cell (mirrors set_price).
+        setCells((cur) =>
+          Object.fromEntries(Object.entries(cur).map(([k, c]) => [k, { ...c, stock: "" }])),
+        );
         break;
       case "set_description":
         setDesc(op.description);
@@ -503,9 +509,11 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
     }
     if (drafting || saving) return;
 
-    // "Fresh" = nothing worth preserving yet. A merchant mid-manual-entry
-    // (price typed, no title) must never have their form clobbered by a draft.
-    const fresh = !title.trim() && !price.trim() && !desc.trim() && opts.length === 0;
+    // "Fresh" = nothing worth preserving yet. A merchant mid-manual-entry must
+    // never have their form clobbered by a draft — this includes stock and tags
+    // (set behind "Shipping & extras"), not just title/price/description/options.
+    const fresh =
+      !title.trim() && !price.trim() && !desc.trim() && opts.length === 0 && !stock.trim() && !tags.trim();
     if (!fresh) {
       // Known intents apply instantly and free of API spend.
       const local = parseListingPrompt(p, {
@@ -564,13 +572,22 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
       return;
     }
     const baseCents = dollarsToCents(price);
-    const anyPrice =
-      (baseCents !== undefined && baseCents > 0) ||
-      Object.values(cells).some((c) => Number(c.price) > 0);
-    if (status === "active" && !anyPrice) {
-      app.toast("Add a price before putting it on sale.", "warn");
-      setStep("basics");
-      return;
+    const matrix = buildVariantMatrix(parsedOpts, []);
+    // Effective per-variant price = its cell price, else the base price. An active
+    // product must have EVERY variant priced above $0 — otherwise the ones that
+    // fall through to a blank base are saved unpriced and are silently unbuyable
+    // on the storefront (the merchant thinks the whole product is on sale).
+    if (status === "active") {
+      const unpriced = matrix.some((v) => {
+        const label = (v.optionValues ?? []).join(" / ");
+        const eff = dollarsToCents(cells[label]?.price ?? "") ?? baseCents;
+        return eff === undefined || eff <= 0;
+      });
+      if (unpriced) {
+        app.toast("Give every variant a price before putting it on sale.", "warn");
+        setStep("basics");
+        return;
+      }
     }
     setSaving(true);
     try {
@@ -585,7 +602,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
             ...(shipInts.heightMm !== undefined ? { heightMm: shipInts.heightMm } : {}),
           }
         : {};
-      const variants = buildVariantMatrix(parsedOpts, []).map((v) => {
+      const variants = matrix.map((v) => {
         const label = (v.optionValues ?? []).join(" / ");
         const cell = cells[label];
         return {
@@ -633,8 +650,9 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
   const sizeValues = sizeOpt ? sizeOpt.values.split(",").map((s) => s.trim()).filter(Boolean) : [];
   const priceText = Number(price) > 0 ? `$${Number(price).toFixed(2)}` : "$0.00";
   const stepIdx = STEP_ORDER.findIndex((s) => s.id === step);
-  const storeSlug = (app.storeLabel || "your store").toLowerCase().replace(/[^a-z0-9]+/g, "");
-  const listingUrl = `${storeSlug}.calderyncompany.com/products/${productHandleBase(title)}`;
+  // The tenant's real storefront listing URL — real org_slug + /storefront path,
+  // so the previewed link resolves to the live store (not a re-derived slug).
+  const listingUrl = storefrontListingUrl(app.orgSlug, app.storeLabel, title);
 
   const readiness = [
     { label: "Title", done: Boolean(title.trim()) },

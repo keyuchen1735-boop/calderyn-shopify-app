@@ -139,6 +139,22 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
 
   const soldOut = isSoldOut(alert);
 
+  // Weather predictions mirror into the feed as weather_reallocation alerts
+  // (pending ones only — armed/auto moves live on the Weather tab); their
+  // actions run against the underlying suggestion row, not an ActionKind
+  // executor. Legacy rows without a suggestion_id deep-link to the Weather tab.
+  const isWeather = alert.detector_id === "weather_reallocation";
+  const weatherSuggestionId = alert.evidence?.suggestion_id ?? "";
+  const runWeather = async (intent: "apply" | "arm" | "dismiss") => {
+    if (busy || resolved) return;
+    setBusy(true);
+    try {
+      await app.weatherIntent(weatherSuggestionId, intent);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const deepLinkDomain = app.shopDomain; // string | null; narrowed to string by the guard below
 
   // The one-line "Fix" is the primary recommended action's label: the
@@ -232,11 +248,63 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
         {alert.narrative}
       </div>
       {resolved ? (
-        <p className="cd-caption" style={{ marginTop: 10 }}>
-          This alert was resolved with{" "}
-          <b style={{ color: "var(--text-1)" }}>{resolvedLabel}</b>. The action is logged in
-          your audit history and can be reverted there.
-        </p>
+        isWeather ? (
+          // Schedule/reject write no audit row, and a scheduled move's control
+          // (Cancel) lives on the Weather tab — don't point at Audit.
+          <p className="cd-caption" style={{ marginTop: 10 }}>
+            Handled. Scheduled moves stay visible — and can be cancelled — on the Weather tab.
+          </p>
+        ) : (
+          <p className="cd-caption" style={{ marginTop: 10 }}>
+            This alert was resolved with{" "}
+            <b style={{ color: "var(--text-1)" }}>{resolvedLabel}</b>. The action is logged in
+            your audit history and can be reverted there.
+          </p>
+        )
+      ) : isWeather ? (
+        <div className="flex flex-col gap-2" style={{ marginTop: 12 }}>
+          {weatherSuggestionId ? (
+            <>
+              <button
+                disabled={busy}
+                aria-busy={busy}
+                className="cd-action-btn rec"
+                onClick={() => runWeather("arm")}
+              >
+                <CDIcon name="bolt" size={16} strokeWidth={1.9} />
+                <span className="flex-1 text-left">Schedule — runs when the forecast confirms</span>
+                <span className="cd-rec-tag">Recommended</span>
+              </button>
+              <button
+                disabled={busy}
+                aria-busy={busy}
+                className="cd-action-btn"
+                onClick={() => runWeather("apply")}
+              >
+                <CDIcon name="swap" size={16} strokeWidth={1.9} />
+                <span className="flex-1 text-left">
+                  Approve — shift {money(alert.dollar_impact)}/day now
+                </span>
+              </button>
+              <button
+                disabled={busy}
+                className="cd-action-btn"
+                onClick={() => runWeather("dismiss")}
+              >
+                <CDIcon name="x" size={16} strokeWidth={1.9} />
+                <span className="flex-1 text-left">Reject</span>
+              </button>
+            </>
+          ) : (
+            <button
+              className="cd-action-btn"
+              onClick={() => app.navigate("customers", null, "weather")}
+            >
+              <CDIcon name="rain" size={16} strokeWidth={1.9} />
+              <span className="flex-1 text-left">Review on the Weather tab</span>
+            </button>
+          )}
+        </div>
       ) : (
         <>
           {fixLabel && (

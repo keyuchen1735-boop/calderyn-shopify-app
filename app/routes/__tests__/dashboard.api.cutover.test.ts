@@ -29,8 +29,10 @@ vi.mock("~/lib/cutover/org-mode.server", () => ({
 }));
 
 const checkGoLiveGates = vi.fn();
+const paymentCleared = vi.fn();
 vi.mock("~/lib/cutover/go-live.server", () => ({
   checkGoLiveGates: (shopId: string) => checkGoLiveGates(shopId),
+  paymentCleared: (checks: unknown) => paymentCleared(checks),
 }));
 
 const PASSING_GATES = { pass: true, checks: [] };
@@ -43,6 +45,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   getOrgMode.mockResolvedValue("dual_run");
   checkGoLiveGates.mockResolvedValue(PASSING_GATES);
+  paymentCleared.mockReturnValue(true);
 });
 
 describe("cutover route", () => {
@@ -53,10 +56,11 @@ describe("cutover route", () => {
     expect(await res.json()).toEqual({
       mode: "dual_run",
       allowed: ["live", "mirror"],
-      gates: PASSING_GATES,
+      gates: { ...PASSING_GATES, paymentCleared: true },
     });
     expect(getOrgMode).toHaveBeenCalledWith("shop1");
     expect(checkGoLiveGates).toHaveBeenCalledWith("shop1");
+    expect(paymentCleared).toHaveBeenCalledWith(PASSING_GATES.checks);
   });
 
   it("POST transitions and returns the fresh status", async () => {

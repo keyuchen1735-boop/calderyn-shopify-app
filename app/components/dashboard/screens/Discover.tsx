@@ -1,7 +1,7 @@
 // app/components/dashboard/screens/Discover.tsx
-// Ranked viral-product feed — the Store Builder's cold-start front door. Seeds
-// from the screen cache for instant paint, then refetches. Picking a product
-// writes the owned catalog + supplier link and generates a draft store.
+// Ranked viral-product feed — a subtab under the Store surface. Seeds from the
+// screen cache for instant paint, then refetches. Picking a product writes the
+// owned catalog + supplier link and generates a draft store.
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, Btn, Pill, Placeholder, TableSkeleton } from "../ui";
@@ -54,65 +54,66 @@ export default function Discover({ app }: { app: DashboardCtx }) {
     }
   }
 
-  if (!data) return <TableSkeleton />;
-  if (!data.items.length) {
-    return (
-      <Placeholder
-        icon="sparkle"
-        title="No trending products yet"
-        sub="The nightly sourcing run hasn't populated the feed. Check back shortly."
-      />
-    );
-  }
-
   return (
-    <Card pad={false}>
-      <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
-        <span>Product</span>
-        <span>Virality</span>
-        <span>Cost</span>
-        <span>Suggested</span>
-        <span>Margin</span>
-        <span />
-      </div>
-      {data.items.map((it) => (
-        <div key={it.sourceProductId} className="cd-trow" style={{ gridTemplateColumns: GRID }}>
-          <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {it.imageUrl && (
-              <img
-                src={it.imageUrl}
-                alt=""
-                width={28}
-                height={28}
-                style={{ borderRadius: 6, objectFit: "cover" }}
-              />
-            )}
-            <span>
-              {it.title}
-              <small style={{ display: "block", opacity: 0.6 }}>
-                {it.supplierName} · {it.leadTimeDays}d lead
-              </small>
-            </span>
-          </span>
-          <span>
-            <Pill tone={scoreTone(it.score)}>{it.score}</Pill>
-          </span>
-          <span>{money(it.unitCostCents)}</span>
-          <span>{money(it.suggestedRetailCents)}</span>
-          <span>{Math.round(it.marginPct * 100)}%</span>
-          <span>
-            <Btn
-              small
-              kind="primary"
-              icon="sparkle"
-              onClick={() => pick(it.sourceProductId)}
-              disabled={picking === it.sourceProductId}
-            >
-              {picking === it.sourceProductId ? "Adding…" : "Sell this"}
-            </Btn>
-          </span>
-        </div>
-      ))}
-    </Card>
+    <div className="cd-screen" data-screen-label="Discover">
+      {!data ? (
+        <TableSkeleton />
+      ) : !data.items.length ? (
+        <Placeholder
+          icon="sparkle"
+          title="No trending products yet"
+          sub="The nightly sourcing run hasn't populated the feed. Check back shortly."
+        />
+      ) : (
+        <Card pad={false}>
+          <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
+            <span>Product</span>
+            <span>Virality</span>
+            <span>Cost</span>
+            <span>Suggested</span>
+            <span>Margin</span>
+            <span />
+          </div>
+          {data.items.map((it) => (
+            <div key={it.sourceProductId} className="cd-trow" style={{ gridTemplateColumns: GRID }}>
+              <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {it.imageUrl && (
+                  <img
+                    src={it.imageUrl}
+                    alt=""
+                    width={28}
+                    height={28}
+                    style={{ borderRadius: 6, objectFit: "cover" }}
+                  />
+                )}
+                <span>
+                  {it.title}
+                  <small style={{ display: "block", opacity: 0.6 }}>
+                    {it.supplierName} · {it.leadTimeDays}d lead
+                  </small>
+                </span>
+              </span>
+              <span>
+                <Pill tone={scoreTone(it.score)}>{it.score}</Pill>
+              </span>
+              <span>{money(it.unitCostCents)}</span>
+              <span>{money(it.suggestedRetailCents)}</span>
+              <span>{Math.round(it.marginPct * 100)}%</span>
+              <span>
+                <Btn
+                  small
+                  kind="primary"
+                  icon="sparkle"
+                  onClick={() => pick(it.sourceProductId)}
+                  disabled={picking === it.sourceProductId}
+                >
+                  {picking === it.sourceProductId ? "Adding…" : "Sell this"}
+                </Btn>
+              </span>
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
   );
 }

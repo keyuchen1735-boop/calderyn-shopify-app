@@ -8,6 +8,7 @@ import { getCatalog } from "~/lib/storefront/catalog.server";
 import { saveDraft } from "~/lib/storebuilder/page-document.server";
 import { getStoreSettings, saveStoreSettings, hasStoreSettings } from "~/lib/storefront/settings.server";
 import type { BlockDocument, DocKind, PageKey } from "~/lib/storebuilder/types";
+import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import type { ValidIds } from "~/lib/storebuilder/validate";
 import { parseBlockPlan, parseBrandPlan, type BrandPlan } from "./block-plan";
 import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUserMessage, HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage, type CatalogMenu } from "./prompts";
@@ -30,13 +31,26 @@ function storegenModel(): string {
 function storegenHtmlModel(): string {
   return process.env.STOREGEN_HTML_MODEL || "claude-sonnet-5";
 }
+/** Concrete model ids behind the merchant's design-model picker. Keyed, not free-form:
+ *  the request can only ever select from this allowlist. */
+const DESIGN_MODEL_IDS: Record<StudioDesignModel, string> = {
+  sonnet: "claude-sonnet-5",
+  opus: "claude-opus-4-8",
+};
 const PAGES: { pageKey: PageKey; kind: DocKind }[] = [
   { pageKey: "home", kind: "singleton" },
   { pageKey: "collection", kind: "template" },
   { pageKey: "pdp", kind: "template" },
 ];
 
-export interface GenerateInput { shopId: string; mode: "brief" | "catalog"; brief?: string }
+export interface GenerateInput {
+  shopId: string;
+  mode: "brief" | "catalog";
+  brief?: string;
+  /** Merchant's design-model choice for the home HTML call; defaults to storegenHtmlModel().
+   *  Brand + block-plan calls stay on the cheap model regardless. */
+  designModel?: StudioDesignModel;
+}
 export type GenerateStatus = "draft" | "no_products" | "failed";
 export interface GenerateResult { runId: string; status: GenerateStatus; tokenCost: number; docs: Record<string, BlockDocument> }
 
@@ -143,7 +157,10 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
 
   async function buildPage(pageKey: PageKey, kind: DocKind): Promise<{ pageKey: PageKey; doc: BlockDocument; proposal: unknown }> {
     if (pageKey === "home") {
-      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu), { model: storegenHtmlModel(), maxTokens: 8000 });
+      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu), {
+        model: input.designModel ? DESIGN_MODEL_IDS[input.designModel] : storegenHtmlModel(),
+        maxTokens: 8000,
+      });
       // Strip an accidental ```html fence, then require real markup: a reply with no tags (junk,
       // refusal, JSON) is a miss → fall back to the designed hollow store rather than render text.
       const stripped = raw ? raw.replace(/^```(?:html)?\s*/i, "").replace(/```\s*$/i, "").trim() : "";

@@ -13,7 +13,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActionKind, DetectorId } from "../types";
 import { DETECTOR_TO_ACTIONS } from "../labels";
 import {
-  calibrationPct, clampToDayAnchor, DETECTION_COLD, detectionFactor, pairConfidence, smooth,
+  calibrationPct, clampToDayAnchor, DETECTION_COLD, detectionFactor, HAS_EXECUTOR, pairConfidence, smooth,
 } from "./confidence";
 import { graduationVerdict } from "./graduation";
 import { loadPairOutcomeTallies } from "./outcomes.server";
@@ -31,12 +31,12 @@ export function computeWeights(
   detectorFires: Record<string, number>,
 ): { detector: string; action: ActionKind; weight: number }[] {
   const out: { detector: string; action: ActionKind; weight: number }[] = [];
-  // Only detectors with a real, calibratable action participate in the weight
-  // universe. Baseline catalog/inventory detectors offer just "snooze_alert"
-  // (informational, never graduates to autopilot), so they must not dilute the
-  // shop's calibration percentage.
+  // Only detectors with a GRADUATABLE action participate in the weight universe.
+  // An action with no executor (snooze_alert, and levers like issue_refund /
+  // the free-ship kinds) scores 0 confidence forever, so including it would cap
+  // the shop headline structurally below 100 and Autopilot could never graduate.
   const detectors = (Object.keys(DETECTOR_TO_ACTIONS) as DetectorId[]).filter((d) =>
-    DETECTOR_TO_ACTIONS[d].some((a) => a !== "snooze_alert"),
+    DETECTOR_TO_ACTIONS[d].some((a) => HAS_EXECUTOR.has(a)),
   );
   let totalDetectorWeight = 0;
   const detWeight: Record<string, number> = {};
@@ -46,7 +46,10 @@ export function computeWeights(
     totalDetectorWeight += w;
   }
   for (const d of detectors) {
-    const actions = DETECTOR_TO_ACTIONS[d];
+    // Only the graduatable actions carry weight — a non-executor action would
+    // contribute weight at 0 confidence and drag the weighted average down.
+    const actions = DETECTOR_TO_ACTIONS[d].filter((a) => HAS_EXECUTOR.has(a));
+    if (actions.length === 0) continue;
     const dShare = detWeight[d] / totalDetectorWeight;
     actions.forEach((action, i) => {
       // rank-decay: first action RANK_DECAY of the share, remainder split evenly

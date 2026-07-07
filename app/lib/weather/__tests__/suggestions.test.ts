@@ -10,6 +10,10 @@ interface Row {
   status: string;
   narrative: string;
   amount_cents: number;
+  expires_on: string;
+  source_region: string;
+  dest_region: string;
+  applied_at?: string | null;
 }
 
 // In-memory stand-in that honors the filters/orders/limit the loader applies,
@@ -28,7 +32,9 @@ function fakeSb(opts: { sensitivity: number | null; rows: Row[] }): SupabaseClie
         return chain;
       },
       gte: (col: keyof Row, val: string) => {
-        filters.push((r) => String(r[col]) >= val);
+        // NULL never satisfies >= in SQL — a legacy applied row without an
+        // applied_at must not surface as executed history.
+        filters.push((r) => r[col] != null && String(r[col]) >= val);
         return chain;
       },
       order: (col: keyof Row, o?: { ascending?: boolean }) => {
@@ -51,7 +57,9 @@ function fakeSb(opts: { sensitivity: number | null; rows: Row[] }): SupabaseClie
           .filter((r) => filters.every((f) => f(r)))
           .sort((a, b) => {
             for (const o of orders) {
-              const cmp = a[o.col] < b[o.col] ? -1 : a[o.col] > b[o.col] ? 1 : 0;
+              const av = a[o.col] ?? "";
+              const bv = b[o.col] ?? "";
+              const cmp = av < bv ? -1 : av > bv ? 1 : 0;
               if (cmp !== 0) return o.ascending ? cmp : -cmp;
             }
             return 0;
@@ -73,6 +81,9 @@ const row = (over: Partial<Row>): Row => ({
   status: "pending",
   narrative: "shift",
   amount_cents: 3000,
+  expires_on: "2026-07-09",
+  source_region: "us-west",
+  dest_region: "us-east",
   ...over,
 });
 
@@ -81,7 +92,17 @@ describe("loadWeatherSuggestions", () => {
     // Cron wrote it on the 6th; a merchant looks at 9pm ET = 01:00 UTC on the 7th.
     const sb = fakeSb({ sensitivity: 50, rows: [row({})] });
     const out = await loadWeatherSuggestions("shop-1", sb, new Date("2026-07-07T01:00:00Z"));
-    expect(out).toEqual([{ id: "sg1", narrative: "shift", amountCents: 3000 }]);
+    expect(out).toEqual([
+      {
+        id: "sg1",
+        narrative: "shift",
+        amountCents: 3000,
+        status: "pending",
+        expiresOn: "2026-07-09",
+        sourceRegion: "us-west",
+        destRegion: "us-east",
+      },
+    ]);
   });
 
   it("drops suggestions older than the forecast horizon", async () => {
@@ -142,5 +163,46 @@ describe("loadWeatherSuggestions", () => {
     expect(await loadWeatherSuggestions("shop-1", off, new Date("2026-07-06T12:00:00Z"))).toEqual([]);
     const noCfg = fakeSb({ sensitivity: null, rows: [row({})] });
     expect(await loadWeatherSuggestions("shop-1", noCfg, new Date("2026-07-06T12:00:00Z"))).toEqual([]);
+  });
+
+  it("keeps armed rows visible even when the dial is off (scheduled moves stay in sight)", async () => {
+    // The next cron sweep disarms them, but until then a scheduled money move
+    // (and its Disarm control) must not vanish from the panel.
+    const sb = fakeSb({ sensitivity: 0, rows: [row({ id: "armed1", status: "armed" })] });
+    const out = await loadWeatherSuggestions("shop-1", sb, new Date("2026-07-06T12:00:00Z"));
+    expect(out.map((s) => [s.id, s.status])).toEqual([["armed1", "armed"]]);
+  });
+});
+
+describe("executed history", () => {
+  it("includes recently executed moves (newest first) so the panel shows what ran and when", async () => {
+    const sb = fakeSb({
+      sensitivity: 100,
+      rows: [
+        row({ id: "ran2", status: "applied", applied_at: "2026-07-06T09:00:00Z" }),
+        row({
+          id: "ran1",
+          suggested_on: "2026-07-07",
+          status: "applied",
+          applied_at: "2026-07-07T08:00:00Z",
+        }),
+        row({ id: "stale", suggested_on: "2026-05-01", status: "applied", applied_at: "2026-05-02T09:00:00Z" }),
+      ],
+    });
+    const out = await loadWeatherSuggestions("shop-1", sb, new Date("2026-07-07T12:00:00Z"));
+    const ran = out.filter((s) => s.status === "applied");
+    expect(ran.map((s) => [s.id, s.executedAt])).toEqual([
+      ["ran1", "2026-07-07T08:00:00Z"],
+      ["ran2", "2026-07-06T09:00:00Z"],
+    ]);
+  });
+
+  it("keeps executed history visible even when the dial is at zero", async () => {
+    const sb = fakeSb({
+      sensitivity: 0,
+      rows: [row({ id: "ran", status: "applied", applied_at: "2026-07-06T09:00:00Z" })],
+    });
+    const out = await loadWeatherSuggestions("shop-1", sb, new Date("2026-07-07T12:00:00Z"));
+    expect(out.map((s) => s.id)).toEqual(["ran"]);
   });
 });

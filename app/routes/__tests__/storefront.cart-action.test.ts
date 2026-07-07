@@ -8,10 +8,24 @@ const buildCart = vi.fn();
 const addCartLine = vi.fn();
 const resolveStorefrontShop = vi.fn();
 
+// Real class so the route's `err instanceof VariantUnavailableError` branch is exercised. Defined
+// via vi.hoisted so it exists when the (hoisted) vi.mock factory below references it.
+const { VariantUnavailableError } = vi.hoisted(() => ({
+  VariantUnavailableError: class VariantUnavailableError extends Error {
+    readonly variantId: string;
+    constructor(variantId: string) {
+      super(`variant ${variantId} is not available`);
+      this.name = "VariantUnavailableError";
+      this.variantId = variantId;
+    }
+  },
+}));
+
 vi.mock("~/lib/order/cart.server", () => ({
   buildCart: (...a: unknown[]) => buildCart(...a),
   addCartLine: (...a: unknown[]) => addCartLine(...a),
   priceCart: vi.fn(),
+  VariantUnavailableError,
 }));
 vi.mock("~/lib/storefront/shop.server", () => ({
   resolveStorefrontShop: (...a: unknown[]) => resolveStorefrontShop(...a),
@@ -78,6 +92,20 @@ describe("PDP add-to-cart action", () => {
     expect((err as Response).status).toBe(400);
     expect(buildCart).not.toHaveBeenCalled();
     expect(addCartLine).not.toHaveBeenCalled();
+  });
+
+  it("redirects back to the PDP with a sold-out notice when the variant is unavailable (no 500)", async () => {
+    addCartLine.mockRejectedValueOnce(new VariantUnavailableError("v-soldout"));
+    const res = await action(args(postForm({ variantId: "v-soldout" })));
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/storefront/products/tee?unavailable=1");
+  });
+
+  it("still propagates an unexpected addCartLine failure (genuine fault, not a sold-out redirect)", async () => {
+    addCartLine.mockRejectedValueOnce(new Error("db exploded"));
+    const err = await action(args(postForm({ variantId: "v-1" }))).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toMatch(/db exploded/);
   });
 
   it("demo shell is browse-only: bounces back to the PDP without touching the cart", async () => {

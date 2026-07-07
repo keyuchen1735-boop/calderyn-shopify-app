@@ -2,8 +2,9 @@ import { randomBytes } from "node:crypto";
 import { getSupabase } from "../supabase.server";
 import { CalderynError } from "../calderyn.server";
 import { projectProductToSkuDim } from "./project-sku-dim.server";
+import { seedInitialStock } from "../inventory/engine.server";
 import { collectionHandle, productHandleBase } from "./handle";
-import type { ProductInput, ProductStatus, ProductSummary, ProductDetail } from "./types";
+import type { ProductInput, ProductStatus, ProductSummary, ProductDetail, VariantInput } from "./types";
 
 type Supa = ReturnType<typeof getSupabase>;
 
@@ -287,9 +288,36 @@ async function ownedCollectionIds(sb: Supa, shopId: string, ids: string[] | unde
   return (data ?? []).map((r: { id: string }) => String(r.id));
 }
 
-async function writeProductChildren(shopId: string, productId: string, input: ProductInput): Promise<void> {
+// Whether a NEW variant should be inventory-tracked. Tracked means entered stock
+// gates storefront availability (a tracked variant is sold out at 0). We track a
+// physical variant the merchant gave a stock number (including 0); a digital
+// product (requiresShipping === false) or one left with blank stock stays
+// untracked = always available (make-to-order / digital). An explicit
+// inventoryTracked from the caller always wins. Applied only to newly-created
+// variants — an existing variant keeps its stored flag (never silently flipped).
+function trackedForNewVariant(v: VariantInput): boolean {
+  if (v.inventoryTracked !== undefined) return v.inventoryTracked;
+  if (v.requiresShipping === false) return false;
+  return v.inventoryOnHand !== undefined;
+}
+
+// A newly-inserted variant's starting stock, applied to the inventory ledger only
+// AFTER sku_dim is projected (inventory_level_fact.sku_id has an FK to sku_dim.id).
+interface StockSeed { variantId: string; onHand: number }
+
+// Back each new variant's starting stock with a real ledger balance so the
+// cannot-oversell engine can reserve against it — a "live" product with an
+// unbacked inventory_on_hand can't actually be sold. seedInitialStock no-ops when
+// stock is 0. Must run only after projectProductToSkuDim, or the level-fact write
+// fails the sku_id FK.
+async function applyStockSeeds(shopId: string, seeds: StockSeed[]): Promise<void> {
+  for (const s of seeds) await seedInitialStock(shopId, s.variantId, s.onHand);
+}
+
+async function writeProductChildren(shopId: string, productId: string, input: ProductInput): Promise<StockSeed[]> {
   const sb = getSupabase();
   const perOption = await writeOptions(sb, productId, input.options ?? []);
+  const seeds: StockSeed[] = [];
 
   // Variants + their option-value links.
   for (const [i, v] of input.variants.entries()) {
@@ -298,7 +326,7 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
       .insert({
         shop_id: shopId, product_id: productId, sku: v.sku ?? null, title: v.title ?? "Default",
         retail_price_cents: v.retailPriceCents ?? null, unit_cost_cents: v.unitCostCents ?? null,
-        inventory_policy: v.inventoryPolicy ?? null, inventory_tracked: v.inventoryTracked ?? null,
+        inventory_policy: v.inventoryPolicy ?? null, inventory_tracked: trackedForNewVariant(v),
         inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
       })
       .select("id")
@@ -322,6 +350,11 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
       const { error: lErr } = await sb.from("variant_option_value").insert(links);
       if (lErr) throw lErr;
     }
+    // Defer backing the variant's starting stock with a real ledger balance:
+    // seeding writes inventory_level_fact (sku_id -> sku_dim.id FK), and sku_dim
+    // isn't projected until AFTER this whole write completes, so seeding here
+    // would violate the FK. The caller seeds once sku_dim exists.
+    seeds.push({ variantId, onHand: v.inventoryOnHand ?? 0 });
   }
 
   // Collections — only the shop's own (filters out stale/duplicate/foreign ids).
@@ -330,6 +363,8 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
     const { error: cErr } = await sb.from("product_collection").insert(collectionIds.map((collection_id) => ({ product_id: productId, collection_id })));
     if (cErr) throw cErr;
   }
+
+  return seeds;
 }
 
 // Writes the full product graph, then projects sku_dim. Supabase has no client
@@ -355,8 +390,9 @@ export async function createProduct(shopId: string, input: ProductInput): Promis
     if ((pErr as { code?: string }).code !== "23505" || attempt === 2) throw pErr;
   }
 
-  await writeProductChildren(shopId, productId, input);
+  const seeds = await writeProductChildren(shopId, productId, input);
   await projectProductToSkuDim(productId);
+  await applyStockSeeds(shopId, seeds);
   return { id: productId };
 }
 
@@ -381,17 +417,46 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
   if (error) throw error;
   if (!updated?.length) notFound();
 
+  // Guard BEFORE any destructive child write: inventory_balance.variant_id (and
+  // buyer holds) reference variant_dim ON DELETE CASCADE, so removing a variant
+  // that still has on-hand or reserved units would silently wipe live stock and
+  // orphan held reservations. Refuse the edit and tell the merchant to clear that
+  // stock first. Runs first so a block leaves options/collections/variants intact.
+  const keepIds = input.variants.map((v) => v.id).filter((id): id is string => Boolean(id));
+  const removedSel = sb.from("variant_dim").select("id").eq("shop_id", shopId).eq("product_id", productId);
+  const { data: removedRows, error: remErr } = keepIds.length ? await removedSel.notIn("id", keepIds) : await removedSel;
+  if (remErr) throw remErr;
+  const removedIds = (removedRows ?? []).map((r: Record<string, unknown>) => String(r.id));
+  if (removedIds.length) {
+    const { data: balances, error: balErr } = await sb
+      .from("inventory_balance")
+      .select("variant_id, on_hand, reserved")
+      .eq("shop_id", shopId)
+      .in("variant_id", removedIds);
+    if (balErr) throw balErr;
+    const hasLiveStock = (balances ?? []).some(
+      (b: Record<string, unknown>) => Number(b.on_hand ?? 0) > 0 || Number(b.reserved ?? 0) > 0,
+    );
+    if (hasLiveStock) {
+      throw new CalderynError({
+        code: "variant_has_stock",
+        status: 409,
+        message: "Clear on-hand and reserved stock before removing a variant.",
+      });
+    }
+  }
+
   // Options/values + collections: safe to wipe + rewrite (no external refs).
   await sb.from("product_option").delete().eq("product_id", productId); // cascades option_values
   await sb.from("product_collection").delete().eq("product_id", productId);
   const perOption = await writeOptions(sb, productId, input.options ?? []);
 
   // Variants: delete only the ones the merchant removed; keep the rest by id.
-  const keepIds = input.variants.map((v) => v.id).filter((id): id is string => Boolean(id));
   const baseDel = sb.from("variant_dim").delete().eq("product_id", productId);
   const { error: delErr } = keepIds.length ? await baseDel.notIn("id", keepIds) : await baseDel;
   if (delErr) throw delErr;
 
+  const seeds: StockSeed[] = [];
   for (const [i, v] of input.variants.entries()) {
     // inventory_policy is intentionally NOT written here: the editor never surfaces
     // it (getProduct doesn't select it; VariantDraft has no field), so writing
@@ -414,9 +479,22 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       if (uErr) throw uErr;
       if (!upd?.length) continue;
     } else {
-      const { data: ins, error: iErr } = await sb.from("variant_dim").insert({ shop_id: shopId, product_id: productId, ...fields }).select("id").single();
+      // New variant added during an edit: derive the tracked flag (fields keeps
+      // v.inventoryTracked ?? null, which preserves an existing variant's stored
+      // flag on the update branch above but would wrongly leave a new one untracked).
+      const { data: ins, error: iErr } = await sb
+        .from("variant_dim")
+        .insert({ shop_id: shopId, product_id: productId, ...fields, inventory_tracked: trackedForNewVariant(v) })
+        .select("id")
+        .single();
       if (iErr) throw iErr;
       variantId = String(ins.id);
+      // A brand-new variant added during an edit needs its starting stock backed
+      // in the ledger too (existing variants keep their own balances — never
+      // re-seeded from the flat column here). Deferred until after sku_dim is
+      // projected below, since the ledger seed writes inventory_level_fact whose
+      // sku_id FKs sku_dim.id. No-op when stock is 0.
+      seeds.push({ variantId, onHand: v.inventoryOnHand ?? 0 });
     }
     // Persist shipping dimensions + requirements for this variant (update path).
     const { error: shErr } = await sb.from("variant_shipping").upsert({
@@ -444,6 +522,7 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
   }
 
   await projectProductToSkuDim(productId);
+  await applyStockSeeds(shopId, seeds);
 }
 
 export async function setProductStatus(shopId: string, productId: string, status: ProductStatus): Promise<void> {
@@ -461,10 +540,18 @@ export async function listCollections(shopId: string): Promise<Array<{ id: strin
 }
 
 export async function createCollection(shopId: string, title: string): Promise<{ id: string }> {
-  const handle = collectionHandle(title);
-  const { data, error } = await getSupabase().from("collection_dim").insert({ shop_id: shopId, title: title.trim(), handle }).select("id").single();
-  if (error) throw error;
-  return { id: String(data.id) };
+  const sb = getSupabase();
+  const base = collectionHandle(title);
+  // Distinct titles can slugify to the same handle (e.g. "Summer Sale" and
+  // "summer sale!"), which collides with unique(shop_id, handle). Retry with a
+  // random suffix on 23505 (mirroring productHandle) instead of an opaque 500.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const handle = attempt === 0 ? base : `${base}-${randomBytes(3).toString("hex")}`;
+    const { data, error } = await sb.from("collection_dim").insert({ shop_id: shopId, title: title.trim(), handle }).select("id").single();
+    if (!error) return { id: String(data.id) };
+    if ((error as { code?: string }).code !== "23505" || attempt === 2) throw error;
+  }
+  throw new CalderynError({ code: "handle_conflict", status: 409, message: "could not allocate a unique collection handle" });
 }
 
 export async function setVariantPrice(

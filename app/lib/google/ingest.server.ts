@@ -14,6 +14,7 @@ import { googleClientForShop, isReauthError } from "./client.server";
 import {
   transformCampaign,
   transformReportRow,
+  snakeKeysDeep,
 } from "./transform";
 import type { GoogleCampaignPayload, GoogleReportRow } from "./types";
 import { backfillAds, pollAdsDaily } from "../ads/ingest.server";
@@ -26,7 +27,7 @@ const CAMPAIGN_GAQL = `
     campaign.name,
     campaign.status,
     campaign.advertising_channel_type,
-    campaign.start_date,
+    campaign.start_date_time,
     campaign_budget.amount_micros,
     customer.currency_code
   FROM campaign
@@ -85,18 +86,23 @@ export function googleSource(
   return {
     async fetchCampaigns() {
       const raw = await client.search(CAMPAIGN_GAQL);
+      // Archive the response verbatim, then normalize its keys before mapping:
+      // the Google Ads REST endpoint returns camelCase (metrics.costMicros,
+      // campaign.startDateTime), while the transforms read snake_case. snakeKeysDeep
+      // bridges both conventions so a real API response and a snake_case test
+      // fixture both transform correctly.
       await insertRawPoll(shopId, "campaigns", { data: raw }, sb);
-      return (raw as GoogleCampaignPayload[]).map((r) => transformCampaign(r, shopId));
+      return (snakeKeysDeep(raw) as GoogleCampaignPayload[]).map((r) => transformCampaign(r, shopId));
     },
     async fetchBackfillSpend() {
       const raw = await client.search(REPORT_GAQL_90D);
       await insertRawPoll(shopId, "report", { data: raw }, sb);
-      return (raw as GoogleReportRow[]).map((r) => transformReportRow(r, shopId));
+      return (snakeKeysDeep(raw) as GoogleReportRow[]).map((r) => transformReportRow(r, shopId));
     },
     async fetchDailySpend(day: string) {
       const raw = await client.search(reportGaqlForDay(day));
       await insertRawPoll(shopId, "report", { data: raw, day }, sb);
-      return (raw as GoogleReportRow[]).map((r) => transformReportRow(r, shopId));
+      return (snakeKeysDeep(raw) as GoogleReportRow[]).map((r) => transformReportRow(r, shopId));
     },
   };
 }

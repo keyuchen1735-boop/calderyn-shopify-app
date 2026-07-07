@@ -18,7 +18,7 @@ export function isValidEmail(raw: string): boolean {
 
 export async function findUserByEmail(
   email: string,
-): Promise<{ id: string; passwordHash: string; onboardedAt: string | null } | null> {
+): Promise<{ id: string; passwordHash: string | null; onboardedAt: string | null } | null> {
   const { data, error } = await getSupabase()
     .from("users")
     .select("id, password_hash, onboarded_at")
@@ -28,7 +28,9 @@ export async function findUserByEmail(
   if (!data) return null;
   return {
     id: String(data.id),
-    passwordHash: String(data.password_hash),
+    // Google-only accounts have a NULL password_hash — keep it null (not the
+    // literal string "null") so credential checks can spend equal CPU on it.
+    passwordHash: data.password_hash == null ? null : String(data.password_hash),
     onboardedAt: (data.onboarded_at as string | null) ?? null,
   };
 }
@@ -56,7 +58,12 @@ export async function verifyUserCredentials(
   password: string,
 ): Promise<{ id: string } | null> {
   const user = await findUserByEmail(email);
-  if (!user) {
+  // Unknown email OR a passwordless (Google-only) account: spend the same scrypt
+  // CPU against a dummy hash so response timing can't tell either case apart from
+  // a real password account. Without this, a Google-only account skipped scrypt
+  // entirely (its NULL hash fails the format check) and answered noticeably
+  // faster, enumerating which addresses are Google sign-in accounts.
+  if (!user || user.passwordHash == null) {
     verifyPassword(password, DUMMY_HASH); // burn comparable CPU; ignore result
     return null;
   }
@@ -85,7 +92,11 @@ export async function findUserByGoogleSub(
 export async function setGoogleSub(userId: string, sub: string): Promise<void> {
   const { error } = await getSupabase()
     .from("users")
-    .update({ google_sub: sub, updated_at: new Date().toISOString() })
+    // Linking a Google identity proves Google-verified mailbox ownership (the
+    // sign-in callback only links after asserting emailVerified), so mark the
+    // email verified — otherwise a password user who never clicked the verify
+    // link stays trapped at the verify gate even after signing in with Google.
+    .update({ google_sub: sub, email_verified: true, updated_at: new Date().toISOString() })
     .eq("id", userId);
   if (error) throw error;
 }

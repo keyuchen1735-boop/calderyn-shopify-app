@@ -12,6 +12,10 @@ export interface CommerceSessionInput {
   totalCents: number;
   currency: string;
   confirmationToken: string;
+  /** Where Stripe sends the payer afterward (absolute URLs). Defaults to the buyer
+   *  storefront confirmation/cart pages; merchant-facing flows (the go-live payment
+   *  probe) override this to return to the dashboard instead. */
+  returnUrls?: { success: string; cancel: string };
 }
 
 /**
@@ -42,8 +46,9 @@ export async function createCommerceCheckoutSession(
     }],
     metadata: { shop_id: shopId, order_ref: input.orderId },
     payment_intent_data: { metadata: { shop_id: shopId, order_ref: input.orderId } },
-    success_url: `${base}/storefront/checkout/confirmation/${input.confirmationToken}`,
-    cancel_url: `${base}/storefront/cart`,
+    success_url:
+      input.returnUrls?.success ?? `${base}/storefront/checkout/confirmation/${input.confirmationToken}`,
+    cancel_url: input.returnUrls?.cancel ?? `${base}/storefront/cart`,
   });
   if (!session.url) throw new Error(`Stripe Checkout Session ${session.id} returned no url`);
   return { sessionId: session.id, url: session.url };

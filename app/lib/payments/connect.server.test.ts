@@ -42,8 +42,11 @@ import {
   expressLoginLink,
   startOnboarding,
   syncAccountStatus,
+  applyAccountUpdate,
   billingStatus,
 } from "./connect.server";
+// eslint-disable-next-line import/first -- follows vi.mock like the import above; type-only, erased at build
+import type Stripe from "stripe";
 
 const ROW = {
   shop_id: "shop-1",
@@ -285,6 +288,42 @@ describe("syncAccountStatus", () => {
     h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
     h.accountsRetrieve.mockResolvedValue({ charges_enabled: true, payouts_enabled: true, details_submitted: true });
     await syncAccountStatus("shop-1");
+    expect((h.updateEq.mock.calls[0][0] as Record<string, unknown>).onboarded_at).toBeUndefined();
+  });
+});
+
+describe("applyAccountUpdate (account.updated webhook re-sync)", () => {
+  const evtAccount = (over: Partial<Stripe.Account> = {}) =>
+    ({ id: "acct_1", charges_enabled: true, payouts_enabled: true, details_submitted: true, ...over }) as Stripe.Account;
+
+  it("writes the event's flags and stamps onboarded_at on the async-enable transition", async () => {
+    // The stored row is still pending (charges not yet enabled, onboarded_at null); the account was
+    // enabled asynchronously and Stripe delivered account.updated with the now-live flags.
+    h.maybeSingle.mockResolvedValue({ data: { shop_id: "shop-1", onboarded_at: null }, error: null });
+
+    const applied = await applyAccountUpdate(evtAccount());
+
+    expect(applied).toBe(true);
+    const payload = h.updateEq.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload).toMatchObject({ charges_enabled: true, payouts_enabled: true, details_submitted: true });
+    expect(payload.onboarded_at).toEqual(expect.any(String)); // stamped on first full enable
+  });
+
+  it("returns false and writes nothing when the account is not linked to any shop", async () => {
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    expect(await applyAccountUpdate(evtAccount())).toBe(false);
+    expect(h.updateEq).not.toHaveBeenCalled();
+  });
+
+  it("does not stamp onboarded_at when the account is only partially enabled", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { shop_id: "shop-1", onboarded_at: null }, error: null });
+    await applyAccountUpdate(evtAccount({ payouts_enabled: false }));
+    expect((h.updateEq.mock.calls[0][0] as Record<string, unknown>).onboarded_at).toBeUndefined();
+  });
+
+  it("does not overwrite an existing onboarded_at on a later account.updated", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { shop_id: "shop-1", onboarded_at: "2026-07-01T00:00:00.000Z" }, error: null });
+    await applyAccountUpdate(evtAccount());
     expect((h.updateEq.mock.calls[0][0] as Record<string, unknown>).onboarded_at).toBeUndefined();
   });
 });

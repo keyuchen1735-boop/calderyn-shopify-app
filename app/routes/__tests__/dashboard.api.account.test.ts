@@ -6,10 +6,11 @@ import type * as SessionServer from "~/lib/dashboard/session.server";
 import { action } from "../dashboard.api.account";
 
 // Spies live in vi.hoisted so the mock factories below can close over them.
-const { sessionMock, deleteAccountMock, rateLimitMock } = vi.hoisted(() => ({
+const { sessionMock, deleteAccountMock, rateLimitMock, isShowcaseMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   deleteAccountMock: vi.fn(),
   rateLimitMock: vi.fn(),
+  isShowcaseMock: vi.fn(),
 }));
 
 // Keep the real cookie helpers (clearSessionCookieHeader) — only the session
@@ -24,6 +25,9 @@ vi.mock("~/lib/auth/delete-account.server", () => ({
 vi.mock("~/lib/rate-limit.server", () => ({
   rateLimit: (...a: unknown[]) => rateLimitMock(...a),
   clientIpKey: () => "ip",
+}));
+vi.mock("~/lib/demo/showcase.server", () => ({
+  isShowcaseShop: (...a: unknown[]) => isShowcaseMock(...a),
 }));
 // delete-account.server is mocked, but the route's transitive imports still pull
 // supabase.server at load — stub it so no real client init runs in tests.
@@ -50,6 +54,7 @@ beforeEach(() => {
   sessionMock.mockReset().mockResolvedValue({ userId: "u1", shopId: "shop1", shopDomain: null });
   deleteAccountMock.mockReset().mockResolvedValue({ shopDeleted: true });
   rateLimitMock.mockReset().mockResolvedValue(true);
+  isShowcaseMock.mockReset().mockResolvedValue(false);
   // requireSameOrigin reads this to build its allowlist.
   process.env.DASHBOARD_PUBLIC_URL = ORIGIN;
 });
@@ -93,6 +98,14 @@ describe("POST /dashboard/api/account (delete)", () => {
       (e) => e as Response,
     );
     expect(res.status).toBe(403);
+    expect(deleteAccountMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to delete a demo/showcase shop (shared login can't self-destruct)", async () => {
+    isShowcaseMock.mockResolvedValue(true);
+    const res = await run(post({ intent: "delete", confirm: "DELETE" }));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("demo_shop_protected");
     expect(deleteAccountMock).not.toHaveBeenCalled();
   });
 

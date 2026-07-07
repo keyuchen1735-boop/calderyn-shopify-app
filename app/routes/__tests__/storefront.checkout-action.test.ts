@@ -7,6 +7,19 @@ const resolveStorefrontShop = vi.fn();
 const priceCart = vi.fn();
 const createCheckout = vi.fn();
 
+// Real class so the route's `err instanceof OutOfStockError` branch (-> 409) is exercised. Defined
+// via vi.hoisted so it exists when the (hoisted) vi.mock factory below references it.
+const { OutOfStockError } = vi.hoisted(() => ({
+  OutOfStockError: class OutOfStockError extends Error {
+    readonly variantIds: string[];
+    constructor(variantIds: string[]) {
+      super(`out of stock: ${variantIds.join(", ")}`);
+      this.name = "OutOfStockError";
+      this.variantIds = variantIds;
+    }
+  },
+}));
+
 vi.mock("~/lib/storefront/shop.server", () => ({
   resolveStorefrontShop: (...a: unknown[]) => resolveStorefrontShop(...a),
   DEMO_SHOP_ID: "demo-shop",
@@ -16,6 +29,7 @@ vi.mock("~/lib/order/cart.server", () => ({
 }));
 vi.mock("~/lib/order/checkout.server", () => ({
   createCheckout: (...a: unknown[]) => createCheckout(...a),
+  OutOfStockError,
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
@@ -145,6 +159,26 @@ describe("checkout action validation (fail visibly)", () => {
     expect((res as Response).headers.get("Location")).toBe("/storefront/cart");
     expect(createCheckout).not.toHaveBeenCalled();
   });
+
+  it("rejects a non-ISO country BEFORE any Stripe call (400, no checkout)", async () => {
+    // A free-text / autofilled full name that is not a 2-letter code and not a known alias.
+    const res = await action(actionArgs(await postForm({ ...GOOD_FIELDS, country: "Freedonia" }, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(400);
+    expect((await (res as Response).json()).error).toMatch(/valid country/);
+    expect(createCheckout).not.toHaveBeenCalled();
+  });
+
+  it("normalizes a common full country name to its ISO alpha-2 code before checkout", async () => {
+    const res = await action(actionArgs(await postForm({ ...GOOD_FIELDS, country: "United States" }, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(200);
+    expect(createCheckout.mock.calls[0][2].address.country).toBe("US");
+  });
+
+  it("upper-cases a lower-case 2-letter code before checkout", async () => {
+    const res = await action(actionArgs(await postForm({ ...GOOD_FIELDS, country: "gb" }, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(200);
+    expect(createCheckout.mock.calls[0][2].address.country).toBe("GB");
+  });
 });
 
 describe("checkout action happy path", () => {
@@ -193,6 +227,19 @@ describe("checkout action happy path", () => {
     const req = await postForm({ ...GOOD_FIELDS, marketing: "on" }, { cookie: await cartCookie() });
     await action(actionArgs(req));
     expect(createCheckout.mock.calls[0][2].consent.marketingOptIn).toBe(true);
+  });
+
+  it("maps an out-of-stock checkout to an actionable 409 (not a generic 502)", async () => {
+    createCheckout.mockRejectedValueOnce(new OutOfStockError(["v1"]));
+    const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(409);
+    expect((await (res as Response).json()).error).toMatch(/sold out/);
+  });
+
+  it("still maps an unexpected checkout failure to a 502", async () => {
+    createCheckout.mockRejectedValueOnce(new Error("stripe network blip"));
+    const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(502);
   });
 });
 

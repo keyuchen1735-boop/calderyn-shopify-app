@@ -70,6 +70,7 @@ export interface DashboardTheme {
 /** Action kinds an alert can be resolved with (mirrors the prototype). */
 export type ActionKind =
   | "pause_campaign"
+  | "resume_campaign"
   | "reduce_campaign_budget"
   | "increase_campaign_budget"
   | "exclude_geo"
@@ -88,6 +89,10 @@ export interface DashboardCtx {
   shopDomain: string | null;
   /** Human-readable store label: display_name, shop_domain, or "Your store" fallback. */
   storeLabel: string;
+  /** Real tenant slug for the storefront subdomain (native shops); null for
+   *  legacy Shopify sessions. Storefront links must use this, never a slug
+   *  re-derived from storeLabel (which drops dashes + the unique suffix). */
+  orgSlug: string | null;
   /** True for seeded demo shops (shops.demo_mode) — gates the Settings demo-reset card. */
   demoMode: boolean;
   /** True for first-party (email / Google) accounts — gates the Settings
@@ -157,6 +162,12 @@ export interface DashboardCtx {
     },
   ) => Promise<{ ok: boolean; receipt: ApproveReceipt | null }>;
   undoAction: (entry: AuditVM) => void;
+  /** Act on a weather prediction (Weather tab or its mirrored alert): apply
+   *  now, arm for weather-triggered execution, or dismiss. Owns the API call,
+   *  the toasts, resolving the mirrored alert locally, and the Customers
+   *  session-cache write-through. Resolves false on failure so callers can
+   *  roll back optimistic UI. */
+  weatherIntent: (suggestionId: string, intent: "apply" | "arm" | "dismiss") => Promise<boolean>;
   pushAdDraft: (name: string) => void;
 
   // --- chrome ---

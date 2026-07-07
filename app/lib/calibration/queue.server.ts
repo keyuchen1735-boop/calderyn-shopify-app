@@ -3,7 +3,7 @@
 // pair_calibration rows, then calls this to produce the ranked proposal list.
 
 import type { ActionKind, Alert, QueueProposal } from "../types";
-import { recommendedAction } from "../labels";
+import { recommendedAction, DETECTOR_TO_ACTIONS } from "../labels";
 import { pairConfidence, NO_BRAINER } from "./confidence";
 import { transferPlanFromEvidence } from "../shopify/inventory.server";
 import { derivePoQuantity } from "../po/draft.server";
@@ -28,6 +28,22 @@ import { isValidRegion } from "../ads/actions";
  * Keep in sync with the executor preconditions in routes/app.alerts.$id.tsx and
  * actions/execute.server.ts.
  */
+// Action kinds the queue can actually execute inline (the non-default cases in
+// queueActionRunnable). A first-choice action in this set that is non-runnable is
+// merely missing this alert's data (e.g. exclude_geo with no campaign), so the
+// queue falls back to the detector's next runnable action. An action NOT in this
+// set (reallocate_budget and the other review/deep-link kinds) has no queue
+// executor by design and stays off the queue rather than triggering a fallback.
+const QUEUE_EXECUTABLE: ReadonlySet<ActionKind> = new Set<ActionKind>([
+  "pause_campaign",
+  "resume_campaign",
+  "reduce_campaign_budget",
+  "increase_campaign_budget",
+  "exclude_geo",
+  "reallocate_inventory",
+  "create_po_draft",
+]);
+
 function queueActionRunnable(action: ActionKind, a: Alert): boolean {
   const ev = a.evidence ?? {};
   const campaignId =
@@ -103,14 +119,28 @@ export function buildActionQueue(
   for (const a of alerts) {
     if (rejectedAlertIds.has(a.id)) continue;
     const hasCampaign = Boolean(a.campaign_id);
-    const action = recommendedAction(a.detector_id, { hasCampaign });
-    if (!action) continue;
+    const primary = recommendedAction(a.detector_id, { hasCampaign });
+    if (!primary) continue;
 
     // Rule 12: never surface an Approve button the queue can't actually run on
     // this alert's data (missing campaign/region, no transfer plan, no reorder
     // qty, or a kind with no inline queue executor). Such proposals 422 on
-    // approve; skip them rather than offer a dead button.
-    if (!queueActionRunnable(action, a)) continue;
+    // approve. But when the FIRST-choice action is a real queue kind that this
+    // alert simply lacks the data for (e.g. exclude_geo with no campaign/region),
+    // fall back to the detector's next runnable action (e.g. reallocate_inventory)
+    // instead of dropping the whole alert — the Alerts screen already falls back,
+    // so otherwise the two surfaces disagree and the fallback pair never
+    // calibrates. A review/deep-link primary (no queue executor) is not a data
+    // gap and intentionally stays off the queue.
+    let action = primary;
+    if (!queueActionRunnable(action, a)) {
+      if (!QUEUE_EXECUTABLE.has(primary)) continue;
+      const fallback = (DETECTOR_TO_ACTIONS[a.detector_id] ?? []).find(
+        (cand) => cand !== "snooze_alert" && cand !== primary && queueActionRunnable(cand, a),
+      );
+      if (!fallback) continue;
+      action = fallback;
+    }
 
     const pairKey = `${a.detector_id}:${action}`;
     const isMuted = mutedPairs.has(pairKey);

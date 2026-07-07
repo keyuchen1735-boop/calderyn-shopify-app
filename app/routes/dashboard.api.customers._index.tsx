@@ -7,8 +7,8 @@ import { loadWeatherSuggestions } from "~/lib/weather/suggestions.server";
 
 // Customer-directory read model for the dashboard Customers screen: headline
 // stats, the buyer list with computed segments, the segment definitions, and
-// the pending weather-reallocation suggestions still inside their forecast
-// horizon.
+// the weather predictions (freshest pending + all armed) still inside their
+// forecast horizon.
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => {

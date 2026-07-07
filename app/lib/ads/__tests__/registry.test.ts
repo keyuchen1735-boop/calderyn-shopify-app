@@ -35,4 +35,15 @@ describe("adaptersForShops", () => {
     const sb = sbReturning([{ shop_id: "s1", kind: "quickbooks", sync_status: "live" }]);
     expect(await adaptersForShops(sb)).toHaveLength(0);
   });
+
+  it("retries an errored row, surfaced as 'pending' so the runner re-backfills", async () => {
+    const sb = sbReturning([{ shop_id: "s1", kind: "google_ads", sync_status: "error" }]);
+    const work = await adaptersForShops(sb);
+    expect(work).toHaveLength(1);
+    // 'error' is normalized to 'pending' so the sync does a full backfill, not a
+    // one-day poll — otherwise a never-succeeded account would recover with a
+    // single day of data.
+    expect(work[0]).toMatchObject({ shopId: "s1", status: "pending" });
+    expect(work[0].adapter.platform).toBe("google");
+  });
 });

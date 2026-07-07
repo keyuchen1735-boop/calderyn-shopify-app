@@ -20,6 +20,8 @@ const store = vi.hoisted(() => {
     // Empty = no connected payout account -> createPaymentIntent takes the
     // platform-charge path (the #11 routing decision is tested in connect.server.test.ts).
     stripe_connected_account: [],
+    // Drives the oversell-protection read: only variants with inventory_tracked=true are reserved.
+    variant_dim: [],
   };
 
   class Builder {
@@ -28,6 +30,7 @@ const store = vi.hoisted(() => {
     private vals: Row = {};
     private conflict: string[] = [];
     private filters: Array<[string, unknown]> = [];
+    private inFilters: Array<[string, unknown[]]> = [];
     private wantSingle = false;
     private readonly table: string;
 
@@ -55,6 +58,10 @@ const store = vi.hoisted(() => {
     }
     eq(col: string, val: unknown) {
       this.filters.push([col, val]);
+      return this;
+    }
+    in(col: string, vals: unknown[]) {
+      this.inFilters.push([col, vals]);
       return this;
     }
     single() {
@@ -97,12 +104,15 @@ const store = vi.hoisted(() => {
         });
         return this.wrap(rows);
       }
+      const matches = (r: Row) =>
+        this.filters.every(([c, v]) => r[c] === v) &&
+        this.inFilters.every(([c, vals]) => vals.includes(r[c]));
       if (this.op === "update") {
-        const matched = t.filter((r) => this.filters.every(([c, v]) => r[c] === v));
+        const matched = t.filter(matches);
         for (const r of matched) Object.assign(r, this.vals);
         return this.wrap(matched);
       }
-      const matched = t.filter((r) => this.filters.every(([c, v]) => r[c] === v));
+      const matched = t.filter(matches);
       return this.wrap(matched);
     }
   }
@@ -113,6 +123,11 @@ const store = vi.hoisted(() => {
 
 const stripe = vi.hoisted(() => ({ piCreate: vi.fn() }));
 const quote = vi.hoisted(() => ({ quoteCart: vi.fn() }));
+// Oversell protection: createCheckout reserves TRACKED lines via the inventory engine before the
+// PI, cancels + releases on a stockout. The engine RPCs are unit-tested in the inventory suite;
+// here we assert the WIRING (which lines get reserved, and the cancel+release+throw on stockout).
+const engine = vi.hoisted(() => ({ reserveStock: vi.fn(), releaseReservation: vi.fn() }));
+const order = vi.hoisted(() => ({ transitionOrder: vi.fn() }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
 vi.mock("stripe", () => ({
@@ -121,9 +136,19 @@ vi.mock("stripe", () => ({
   },
 }));
 vi.mock("~/lib/commerce/quote.server", () => ({ quoteCart: quote.quoteCart }));
+vi.mock("~/lib/inventory/engine.server", () => ({
+  reserveStock: engine.reserveStock,
+  releaseReservation: engine.releaseReservation,
+}));
+vi.mock("~/lib/order/order.server", () => ({ transitionOrder: order.transitionOrder }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
-import { createCheckout } from "./checkout.server";
+import { createCheckout, OutOfStockError } from "./checkout.server";
+
+/** Seed a variant_dim row so the oversell read can classify a line as tracked/untracked. */
+function seedVariant(shopId: string, variantId: string, inventoryTracked: boolean | null) {
+  store.db.variant_dim.push({ id: variantId, shop_id: shopId, inventory_tracked: inventoryTracked });
+}
 
 function seedCartLine(shopId: string, cartId: string, line: Partial<Record<string, unknown>>) {
   if (!store.db.cart.some((c) => c.id === cartId)) {
@@ -151,6 +176,10 @@ beforeEach(() => {
     client_secret: "pi_1_secret_abc",
     status: "requires_payment_method",
   });
+  // Default: every reserve succeeds (stock available). Individual tests override for stockout.
+  engine.reserveStock.mockResolvedValue({ ok: true, allocation: [{ locationId: "loc-1", qty: 1 }] });
+  engine.releaseReservation.mockResolvedValue(undefined);
+  order.transitionOrder.mockResolvedValue({ id: "t-1", toState: "cancelled" });
 });
 
 describe("createCheckout", () => {
@@ -294,5 +323,66 @@ describe("createCheckout", () => {
     expect(stripe.piCreate).toHaveBeenCalledWith(
       expect.objectContaining({ amount: 4578, currency: "usd" }),
     );
+  });
+
+  it("reserves TRACKED lines only (keyed on the order id) before opening the PI, skipping untracked/digital lines", async () => {
+    // Two lines: a tracked physical variant and an untracked digital one. Only the tracked line
+    // holds ledger stock; reserving the untracked one would 422 a valid sale, so it must be skipped.
+    seedCartLine("shop-1", "cart-mix", { variant_id: "v-tracked", quantity: 2, unit_price_cents: 1000 });
+    store.db.cart_line.push({
+      id: "cart_line-digital",
+      shop_id: "shop-1",
+      cart_id: "cart-mix",
+      variant_id: "v-digital",
+      quantity: 1,
+      unit_price_cents: 500,
+      currency: "usd",
+      title_snapshot: "Gift Card",
+    });
+    seedVariant("shop-1", "v-tracked", true);
+    seedVariant("shop-1", "v-digital", false);
+
+    const out = await createCheckout("shop-1", "cart-mix", { email: "b@example.com" });
+
+    // Exactly one reserve — for the tracked line, keyed on the new order id, not the digital line.
+    expect(engine.reserveStock).toHaveBeenCalledTimes(1);
+    expect(engine.reserveStock).toHaveBeenCalledWith("shop-1", "v-tracked", 2, out.orderId, null);
+    // Sale proceeds: order created, PI opened, nothing released/cancelled.
+    expect(store.db.orders).toHaveLength(1);
+    expect(stripe.piCreate).toHaveBeenCalledTimes(1);
+    expect(engine.releaseReservation).not.toHaveBeenCalled();
+    expect(order.transitionOrder).not.toHaveBeenCalled();
+  });
+
+  it("cancels the order + releases holds + throws OutOfStockError on a stockout, and never opens a PI", async () => {
+    seedCartLine("shop-1", "cart-oos", { variant_id: "v-tracked", quantity: 5, unit_price_cents: 1000 });
+    seedVariant("shop-1", "v-tracked", true);
+    // The last unit sold between add-to-cart and checkout: reserve returns a not-ok result.
+    engine.reserveStock.mockResolvedValueOnce({ ok: false, reason: "insufficient_stock" });
+
+    await expect(createCheckout("shop-1", "cart-oos", { email: "b@example.com" })).rejects.toBeInstanceOf(
+      OutOfStockError,
+    );
+
+    // Partial holds freed (by order id) and the just-born order cancelled — no orphan pending order.
+    expect(engine.releaseReservation).toHaveBeenCalledWith("shop-1", store.db.orders[0].id);
+    expect(order.transitionOrder).toHaveBeenCalledWith(
+      "shop-1",
+      store.db.orders[0].id,
+      "cancelled",
+      "checkout:out_of_stock",
+    );
+    // Critically: NO PaymentIntent for stock that no longer exists (no charge on a sold-out cart).
+    expect(stripe.piCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not reserve or 422 when no line is tracked (all untracked/digital)", async () => {
+    seedCartLine("shop-1", "cart-untracked", { variant_id: "v-digital", quantity: 1, unit_price_cents: 900 });
+    seedVariant("shop-1", "v-digital", null); // null inventory_tracked = not tracked
+
+    await createCheckout("shop-1", "cart-untracked", { email: "b@example.com" });
+
+    expect(engine.reserveStock).not.toHaveBeenCalled();
+    expect(stripe.piCreate).toHaveBeenCalledTimes(1);
   });
 });

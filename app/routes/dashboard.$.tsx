@@ -62,7 +62,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const [shopRes, productRes] = await Promise.all([
     sb
       .from("shops")
-      .select("display_name, shop_domain, demo_mode")
+      .select("display_name, shop_domain, demo_mode, org_slug")
       .eq("id", session.shopId)
       .maybeSingle(),
     // Existence probe: does the shop have any catalog product? Home keys its
@@ -82,6 +82,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     authBase: publicBaseUrl(),
     shopDomain: session.shopDomain,
     storeLabel,
+    // Real tenant slug for the storefront subdomain (native shops). The client
+    // builds storefront links from this — never a slug re-derived from the
+    // display name, which drops the dashes + unique suffix and 404s.
+    orgSlug: (data?.org_slug as string | null) ?? null,
     demoMode: data?.demo_mode === true,
     hasCatalog,
     // First-party (email / Google) accounts can self-delete from Settings;
@@ -91,7 +95,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export default function DashboardRoute() {
-  const { authBase, shopDomain, storeLabel, demoMode, hasCatalog, canDeleteAccount } =
+  const { authBase, shopDomain, storeLabel, orgSlug, demoMode, hasCatalog, canDeleteAccount } =
     useLoaderData<typeof loader>();
   // Class boundary catches client-side render throws in the SPA subtree
   // (e.g. a partial poll row reaching `.toFixed`) and recovers in place.
@@ -101,6 +105,7 @@ export default function DashboardRoute() {
         authBase={authBase}
         shopDomain={shopDomain}
         storeLabel={storeLabel}
+        orgSlug={orgSlug}
         demoMode={demoMode}
         hasCatalog={hasCatalog}
         canDeleteAccount={canDeleteAccount}

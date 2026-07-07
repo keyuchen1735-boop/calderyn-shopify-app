@@ -50,7 +50,7 @@ describe("applySecurityHeaders", () => {
       "strict-origin-when-cross-origin",
     );
     expect(headers.get("Permissions-Policy")).toBe(
-      "camera=(), microphone=(), geolocation=(), browsing-topics=(), usb=(), interest-cohort=()",
+      "camera=(), microphone=(), geolocation=(self), browsing-topics=(), usb=(), interest-cohort=()",
     );
     expect(headers.get("X-Permitted-Cross-Domain-Policies")).toBe("none");
     expect(headers.get("X-DNS-Prefetch-Control")).toBe("off");

@@ -777,7 +777,7 @@
     padding: 11px 18px; font-size: 13.5px; font-weight: 500; letter-spacing: -0.008em;
     animation: cd-toast-in 0.35s cubic-bezier(0.22, 1, 0.36, 1);
   }
-  @keyframes cd-toast-in { from { opacity: 0; transform: translateY(12px) scale(0.96); } to { opacity: 1; transform: none; } }
+  @keyframes cd-toast-in { from { opacity: 0; transform: translateY(-12px) scale(0.96); } to { opacity: 1; transform: none; } }
   .cd-ph-icon {
     width: 44px; height: 44px; border-radius: 50%; background: var(--gray-bg); color: var(--text-3);
     display: flex; align-items: center; justify-content: center;
@@ -1851,6 +1851,9 @@
 .cd-composer-tool { border: 0; background: transparent; color: var(--text-3); cursor: pointer; width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; }
 .cd-composer-tool:hover { color: var(--text-1); background: var(--hairline); }
 .cd-composer-tool:disabled { opacity: 0.45; cursor: default; }
+.cd-composer-model { border: 0; background: transparent; color: var(--text-3); font: inherit; font-size: 11.5px; height: 28px; padding: 0 4px; border-radius: 8px; cursor: pointer; }
+.cd-composer-model:hover { color: var(--text-1); background: var(--hairline); }
+.cd-rail[data-drop="1"] .cd-composer { box-shadow: var(--shadow-pop), 0 0 0 2px var(--accent); }
 
 .cd-bub { max-width: 94%; font-size: 13px; line-height: 1.55; }
 .cd-bub-user { align-self: flex-end; background: var(--accent); color: var(--on-accent); padding: 9px 14px; border-radius: 15px 15px 4px 15px; font-weight: 500; }

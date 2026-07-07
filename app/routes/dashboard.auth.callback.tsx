@@ -13,7 +13,12 @@ import {
   verifyShopifyHmac,
   exchangeCodeForToken,
 } from "~/lib/dashboard/shopify-oauth.server";
-import { createSession, sessionCookieHeader } from "~/lib/dashboard/session.server";
+import {
+  createSession,
+  createSessionForUser,
+  getSessionFromRequest,
+  sessionCookieHeader,
+} from "~/lib/dashboard/session.server";
 import {
   jsonError,
   rateLimit,
@@ -182,7 +187,25 @@ export async function loader({ request }: LoaderFunctionArgs) {
     });
   }
 
-  const { raw } = await createSession(shop);
+  // A first-party user who signed up natively and then clicked "Connect Shopify"
+  // in onboarding still carries their dashboard session through this round-trip.
+  // Link the just-connected shop to that user and keep them signed in AS that
+  // user — otherwise createSession(shop) mints a shop-only session, overwrites
+  // their cookie, and orphans the account from the very store its data imports
+  // into (the user's membership would stay only on their empty owned shop). A
+  // plain Shopify connect (no first-party session) keeps the shop-scoped session.
+  const existing = await getSessionFromRequest(request).catch((err) => {
+    console.error("[dashboard.auth.callback] session read failed; treating as shop connect", err);
+    return null;
+  });
+  let raw: string;
+  if (existing?.userId) {
+    const { linkMembershipIdempotent } = await import("~/lib/auth/tenant.server");
+    await linkMembershipIdempotent(existing.userId, shopId, "owner");
+    ({ raw } = await createSessionForUser(existing.userId, shopId));
+  } else {
+    ({ raw } = await createSession(shop));
+  }
   const headers = new Headers();
   headers.append("Set-Cookie", sessionCookieHeader(raw));
   // Remember the shop so a bounce-back error page can offer a retry that
