@@ -49,7 +49,9 @@ export async function loadWeatherSuggestions(
 
   return (rowsRes.data ?? []).map((r) => ({
     id: String(r.id),
-    narrative: String(r.narrative),
+    // Guard against a NULL narrative surfacing to the merchant as the literal
+    // text "null" (String(null) === "null").
+    narrative: r.narrative == null ? "" : String(r.narrative),
     amountCents: Number(r.amount_cents),
   }));
 }
