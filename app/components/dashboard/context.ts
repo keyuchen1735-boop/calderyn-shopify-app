@@ -86,6 +86,10 @@ export interface DashboardCtx {
   shopDomain: string | null;
   /** Human-readable store label: display_name, shop_domain, or "Your store" fallback. */
   storeLabel: string;
+  /** Real tenant slug for the storefront subdomain (native shops); null for
+   *  legacy Shopify sessions. Storefront links must use this, never a slug
+   *  re-derived from storeLabel (which drops dashes + the unique suffix). */
+  orgSlug: string | null;
   /** True for seeded demo shops (shops.demo_mode) — gates the Settings demo-reset card. */
   demoMode: boolean;
   /** True for first-party (email / Google) accounts — gates the Settings

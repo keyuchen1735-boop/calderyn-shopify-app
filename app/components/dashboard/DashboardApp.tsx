@@ -189,6 +189,7 @@ export default function DashboardApp({
   authBase = "",
   shopDomain,
   storeLabel,
+  orgSlug = null,
   demoMode = false,
   hasCatalog,
   canDeleteAccount = false,
@@ -196,6 +197,8 @@ export default function DashboardApp({
   authBase?: string;
   shopDomain: string | null;
   storeLabel: string;
+  /** Real tenant slug for storefront links (null for legacy Shopify sessions). */
+  orgSlug?: string | null;
   demoMode?: boolean;
   /** Loader-side product-existence hint — seeds Home's first paint (see
    *  DashboardCtx.hasCatalog). Required so the loader stays the single owner
@@ -1027,6 +1030,7 @@ export default function DashboardApp({
     authBase,
     shopDomain,
     storeLabel,
+    orgSlug,
     demoMode,
     hasCatalog,
     canDeleteAccount,
