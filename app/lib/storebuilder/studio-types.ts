@@ -115,11 +115,59 @@ export interface StudioState {
  *  request can never bill an arbitrary model. */
 export type StudioDesignModel = "sonnet" | "opus";
 
+/** Image media types the multipart generate path accepts (what the Anthropic
+ *  image API takes) — the single allowlist for BOTH sides: the composer screens
+ *  staged files against it, the route 422s anything else. One source of truth
+ *  so a type the client stages can never dead-end at the server. */
+export const STUDIO_IMAGE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"] as const;
+
+/** One entry PER attached image on the add-as-products path — every image is
+ *  accounted for, in attachment order:
+ *  - `id` set, no error fields → created with its image.
+ *  - `id` + `imageError` → the product row was written but its image failed to
+ *    attach — a partial add the caller must surface (a retry would mint a
+ *    duplicate product), never a silent success.
+ *  - `error`, no `id` → the product row itself failed to create; nothing exists
+ *    for this attachment (safe to retry just this one). */
+export interface StudioAddedProduct {
+  /** Absent only when creation itself failed (see `error`). */
+  id?: string;
+  title: string;
+  imageError?: string;
+  error?: string;
+}
+
+/** The model's decision for images that travelled with the prompt. */
+export interface StudioAttachmentIntent {
+  /** The images depict the merchant's own products → added as draft products. */
+  addAsProducts: boolean;
+  /** The images are style references the store's design drew from. */
+  useAsReference: boolean;
+}
+
 /** POST {action:"generate"} response. A hard failure (nothing produced at all)
  *  surfaces as a 502; "failed" here is a SOFT-degraded success — a publishable
  *  draft was written, but the AI was unavailable so every page fell back to a
- *  deterministic starter layout that ignores the brief. */
+ *  deterministic starter layout that ignores the brief.
+ *
+ *  When images travel with the prompt (multipart) the server first decides intent:
+ *  - "needs_intent": it couldn't tell what to do with the images and is asking the
+ *    merchant — no run, no products, no `runId`.
+ *  - "products_added": the images became draft products with no generation — no `runId`.
+ *  - "failed" WITH `products` and NO `runId`: products were created, then the
+ *    generation call itself threw — both facts in one honest receipt (the pure
+ *    JSON path and the products-free reference path keep their 502 instead).
+ *  `runId` is present only when a generation actually ran; `intent`/`products` are
+ *  present only on the multipart path (the plain JSON path returns just runId+status). */
 export interface StudioGenerateReceipt {
-  runId: string;
-  status: "draft" | "no_products" | "failed";
+  runId?: string;
+  status: "draft" | "no_products" | "failed" | "needs_intent" | "products_added";
+  /** The model's intent decision for attached images (multipart path only). */
+  intent?: StudioAttachmentIntent;
+  /** One entry per attached image on the add-as-products path (see StudioAddedProduct). */
+  products?: StudioAddedProduct[];
+  /** Best-effort attribution: the generation ran, but every call that carried the
+   *  merchant's reference images failed while text-only calls succeeded — the
+   *  produced design never saw the references. */
+  referencesUnread?: true;
 }

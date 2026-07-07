@@ -222,6 +222,95 @@ describe("generateStore", () => {
     expect(saveDraftMock).toHaveBeenCalledTimes(3); // every doc still written via fallback
   });
 
+  it("attaches reference image blocks to the brand + home calls only (block plans stay text-only)", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand
+      .mockResolvedValueOnce(reply('<div class="ai-store"><h1>Hi</h1></div>')) // home HTML
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"collectionGrid","props":{},"layout":{}}]}')) // collection
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}')); // pdp
+    const result = await generateStore({
+      shopId: realShop,
+      mode: "brief",
+      brief: "match this mood",
+      referenceImages: [{ mediaType: "image/png", dataBase64: "aGk=" }],
+    });
+    // Vision calls succeeded, so the best-effort "references never seen" flag stays off.
+    expect(result.referencesUnread).toBeUndefined();
+    const contents = createMock.mock.calls.map((c) => c[0].messages[0].content);
+    // brand + home carry the image block; collection + pdp are plain strings.
+    const withImage = contents.filter(
+      (content: unknown) =>
+        Array.isArray(content) && content.some((b: { type: string }) => b.type === "image"),
+    );
+    expect(withImage).toHaveLength(2);
+    const textOnly = contents.filter((content: unknown) => typeof content === "string");
+    expect(textOnly).toHaveLength(2);
+    // The attached block carries the merchant's base64 through untouched.
+    const anImageBlock = (withImage[0] as Array<{ type: string; source?: { data?: string } }>).find(
+      (b) => b.type === "image",
+    );
+    expect(anImageBlock?.source?.data).toBe("aGk=");
+  });
+
+  it("drops a reference image with an unsupported media type (never sent to the API)", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'))
+      .mockResolvedValue(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}'));
+    await generateStore({
+      shopId: realShop,
+      mode: "brief",
+      brief: "match this",
+      referenceImages: [{ mediaType: "image/tiff", dataBase64: "nope" }],
+    });
+    // The only reference image had a bad type → no call carries an image block.
+    const anyImage = createMock.mock.calls.some((c) => {
+      const content = c[0].messages[0].content;
+      return Array.isArray(content) && content.some((b: { type: string }) => b.type === "image");
+    });
+    expect(anyImage).toBe(false);
+  });
+
+  it("sends every call as a plain string when no reference images are attached (unchanged)", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'))
+      .mockResolvedValue(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}'));
+    await generateStore({ shopId: realShop, mode: "brief", brief: "no images here" });
+    for (const c of createMock.mock.calls) {
+      expect(typeof c[0].messages[0].content).toBe("string");
+    }
+  });
+
+  it("flags referencesUnread when every vision call errors but a text-only call succeeds", async () => {
+    // The two image-carrying calls (brand + home) fail; the text-only block-plan
+    // calls succeed → the run stays "draft" but the design never saw the
+    // merchant's references — the flag lets the studio say so (best-effort).
+    createMock.mockImplementation(async (params: { messages: { content: unknown }[] }) =>
+      Array.isArray(params.messages[0].content)
+        ? Promise.reject(new Error("vision down"))
+        : reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}'),
+    );
+    const result = await generateStore({
+      shopId: realShop,
+      mode: "brief",
+      brief: "match this",
+      referenceImages: [{ mediaType: "image/png", dataBase64: "aGk=" }],
+    });
+    expect(result.referencesUnread).toBe(true);
+    expect(result.status).toBe("draft"); // partially degraded run still drafts
+  });
+
+  it("does not flag referencesUnread when every call fails ('failed' is the stronger signal)", async () => {
+    createMock.mockImplementation(() => Promise.reject(new Error("all down")));
+    const result = await generateStore({
+      shopId: realShop,
+      mode: "brief",
+      brief: "match this",
+      referenceImages: [{ mediaType: "image/png", dataBase64: "aGk=" }],
+    });
+    expect(result.status).toBe("failed");
+    expect(result.referencesUnread).toBeUndefined();
+  });
+
   it("builds the three pages concurrently — home does not block collection/pdp (latency)", async () => {
     // Regression guard for the parallel Stage 2: the three page calls must be in flight together.
     // Each doc call blocks until all three have started; if the generator ever re-serializes them,

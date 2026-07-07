@@ -5,7 +5,7 @@
 // can never be flipped back to "running" by a later, unrelated build.
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from "react";
 import { CDIcon } from "../icons";
-import { buildStep } from "../screens/store-logic";
+import { buildStep, canSendComposer } from "../screens/store-logic";
 import BuildStepsCard from "./BuildStepsCard";
 import type { ChatMsg } from "./chat-types";
 import type { StudioDesignModel } from "~/lib/dashboard/store-client";
@@ -90,6 +90,8 @@ export default function ChatRail({
   busy,
   attaching,
   onAttachFiles,
+  attachments,
+  onRemoveAttachment,
   model,
   onModelChange,
 }: {
@@ -100,6 +102,9 @@ export default function ChatRail({
   busy: boolean;
   attaching: boolean;
   onAttachFiles: (files: File[]) => void;
+  /** Images staged in the composer, shown as removable chips above the textarea. */
+  attachments: { id: string; url: string; name: string }[];
+  onRemoveAttachment: (id: string) => void;
   model: StudioDesignModel;
   onModelChange: (m: StudioDesignModel) => void;
 }) {
@@ -115,8 +120,9 @@ export default function ChatRail({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
 
+  const canSend = canSendComposer({ prompt, attachmentCount: attachments.length, busy, attaching });
   const send = () => {
-    if (!prompt.trim() || busy) return;
+    if (!canSend) return;
     onSend();
   };
 
@@ -175,6 +181,24 @@ export default function ChatRail({
       </div>
       <div className="cd-rail-foot">
         <div className="cd-composer">
+          {attachments.length > 0 && (
+            <div className="cd-composer-chips">
+              {attachments.map((a) => (
+                <div key={a.id} className="cd-composer-chip">
+                  <img src={a.url} alt="" />
+                  <span>{a.name}</span>
+                  <button
+                    type="button"
+                    className="cd-composer-chip-x"
+                    aria-label={`Remove ${a.name}`}
+                    onClick={() => onRemoveAttachment(a.id)}
+                  >
+                    <CDIcon name="x" size={12} strokeWidth={2.2} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             className="cd-composer-in"
             rows={2}
@@ -217,7 +241,7 @@ export default function ChatRail({
               type="button"
               className="cd-composer-send"
               aria-label="Send"
-              disabled={!prompt.trim() || busy}
+              disabled={!canSend}
               onClick={send}
             >
               <CDIcon name="arrowUp" size={14} strokeWidth={2.2} />

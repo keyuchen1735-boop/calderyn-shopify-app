@@ -3,7 +3,9 @@
 // (one Haiku call → store_settings), Stage 2 = one Haiku call per doc kind, each independently
 // parsed → assembled/validated → or fall back. Never publishes (drafts only). Per-run token
 // budget (rule 6); every fallback/drop recorded (rule 12).
+import type Anthropic from "@anthropic-ai/sdk";
 import { getAnthropic, digestModel } from "~/lib/assistant/anthropic.server";
+import { toBase64ImageBlock, type AttachmentImage } from "./attachment-intent.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { saveDraft } from "~/lib/storebuilder/page-document.server";
 import { getStoreSettings, saveStoreSettings, hasStoreSettings } from "~/lib/storefront/settings.server";
@@ -50,9 +52,23 @@ export interface GenerateInput {
   /** Merchant's design-model choice for the home HTML call; defaults to storegenHtmlModel().
    *  Brand + block-plan calls stay on the cheap model regardless. */
   designModel?: StudioDesignModel;
+  /** Untrusted merchant-attached STYLE references. Attached as image blocks to the brand
+   *  (stage 1) and home-HTML calls only — palette/mood/type direction, never embedded; the
+   *  block-plan collection/pdp calls stay text-only. */
+  referenceImages?: AttachmentImage[];
 }
 export type GenerateStatus = "draft" | "no_products" | "failed";
-export interface GenerateResult { runId: string; status: GenerateStatus; tokenCost: number; docs: Record<string, BlockDocument> }
+export interface GenerateResult {
+  runId: string;
+  status: GenerateStatus;
+  tokenCost: number;
+  docs: Record<string, BlockDocument>;
+  /** Best-effort attribution (only ever set when referenceImages were provided):
+   *  every vision-bearing call (brand + home) errored while at least one
+   *  text-only call succeeded — the produced design never saw the references.
+   *  Absent on an all-calls-failed run (status "failed" is the stronger signal). */
+  referencesUnread?: true;
+}
 
 function textOf(msg: { content: { type: string; text?: string }[] }): string {
   return msg.content.map((b) => (b.type === "text" ? b.text ?? "" : "")).join("").trim();
@@ -80,22 +96,46 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   // that merely returns junk still counts as a success (parsing handles it).
   let llmAttempts = 0;
   let llmOk = 0;
+  // Vision-bearing calls (the two that carry reference image blocks) tracked
+  // separately: when they all error but a text-only call succeeds, the design
+  // was produced WITHOUT ever seeing the references — surfaced as
+  // referencesUnread so the studio can tell the merchant (rule 12).
+  let visionAttempts = 0;
+  let visionOk = 0;
+  // Style-reference image blocks the brand + home calls attach (see call()).
+  // Built once here (a bad media type is dropped) so both calls share them and
+  // the base64 is encoded a single time upstream.
+  const refImageBlocks: Anthropic.ImageBlockParam[] = [];
+  for (const img of input.referenceImages ?? []) {
+    const block = toBase64ImageBlock(img);
+    if (block) refImageBlocks.push(block);
+  }
+  const hasReferences = refImageBlocks.length > 0;
   // An empty catalog with no brief gives the model nothing to work with — the
   // result would match the deterministic fallback anyway, so skip the paid
   // calls entirely (this is also the auto-build path for brand-new shops).
-  const skipLlm = products.length === 0 && collections.length === 0 && !input.brief;
+  // Reference images ARE real input, so their presence keeps the calls on.
+  const skipLlm = products.length === 0 && collections.length === 0 && !input.brief && !hasReferences;
   const client = getAnthropic();
 
-  async function call(system: string, user: string, opts?: { model?: string; maxTokens?: number }): Promise<string | null> {
+  async function call(system: string, user: string, opts?: { model?: string; maxTokens?: number; images?: Anthropic.ImageBlockParam[] }): Promise<string | null> {
     if (skipLlm) return null;
     if (budgetHit || tokenCost >= TOKEN_BUDGET) { budgetHit = true; return null; }
     llmAttempts += 1;
+    const isVision = !!(opts?.images && opts.images.length > 0);
+    if (isVision) visionAttempts += 1;
     try {
-      const msg = await client.messages.create({ model: opts?.model ?? model, max_tokens: opts?.maxTokens ?? 1500, system, messages: [{ role: "user", content: user }] });
+      // Text-only stays a plain string (byte-identical to before); when images
+      // are attached the content becomes a text block + the image blocks.
+      const content: Anthropic.MessageParam["content"] = isVision && opts?.images
+        ? [{ type: "text", text: user }, ...opts.images]
+        : user;
+      const msg = await client.messages.create({ model: opts?.model ?? model, max_tokens: opts?.maxTokens ?? 1500, system, messages: [{ role: "user", content }] });
       const u = (msg as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
       tokenCost += (u?.input_tokens ?? 0) + (u?.output_tokens ?? 0);
       if (tokenCost >= TOKEN_BUDGET) budgetHit = true;
       llmOk += 1;
+      if (isVision) visionOk += 1;
       return textOf(msg);
     } catch (err) {
       console.error("[storegen] Claude call failed; using deterministic fallback", err);
@@ -105,7 +145,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
 
   // Stage 1 — brand. The brief (when present) drives the store's identity here, not just the
   // per-doc copy below — otherwise a free-text prompt could only ever change page text.
-  const brandText = await call(BRAND_SYSTEM_PROMPT, buildBrandUserMessage(menu, input.mode === "brief" ? input.brief : undefined));
+  const brandText = await call(BRAND_SYSTEM_PROMPT, buildBrandUserMessage(menu, input.mode === "brief" ? input.brief : undefined, hasReferences), { images: refImageBlocks });
   let brand: BrandPlan | null = (brandText && parseBrandPlan(brandText)) || null;
   if (!brand) {
     // Model unreachable or junk: brand from what the shop already has (its
@@ -157,12 +197,13 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
 
   async function buildPage(pageKey: PageKey, kind: DocKind): Promise<{ pageKey: PageKey; doc: BlockDocument; proposal: unknown }> {
     if (pageKey === "home") {
-      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu), {
+      const raw = await call(HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage(brandPlan, briefArg, menu, hasReferences), {
         model: input.designModel ? DESIGN_MODEL_IDS[input.designModel] : storegenHtmlModel(),
         // 12000, not 8000: with the fx channels in the prompt, Sonnet's full home
         // pages regularly ran to exactly 8000 and truncated mid-section (verified
         // against live generations); Opus finishes near 4000 either way.
         maxTokens: 12000,
+        images: refImageBlocks,
       });
       // Strip an accidental ```html fence, then require real markup: a reply with no tags (junk,
       // refusal, JSON) is a miss → fall back to the designed hollow store rather than render text.
@@ -204,7 +245,12 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   // generic layout off as their design (rule 12).
   const degraded = llmAttempts > 0 && llmOk === 0;
   const status: GenerateStatus = degraded ? "failed" : products.length === 0 ? "no_products" : "draft";
+  // Best-effort attribution: references were attached and every call carrying
+  // them errored while a text-only call succeeded — the run "worked" but the
+  // design never saw the references. Not set on an all-failed run (status
+  // "failed" already tells the merchant the AI was unreachable).
+  const referencesUnread = hasReferences && visionAttempts > 0 && visionOk === 0 && llmOk > 0;
   await recordProposal(input.shopId, runId, proposals);
   await recordGeneration({ shopId: input.shopId, runId, source: input.mode, briefText: input.brief ?? null, model, status, tokenCost });
-  return { runId, status, tokenCost, docs };
+  return { runId, status, tokenCost, docs, ...(referencesUnread ? { referencesUnread: true as const } : {}) };
 }
