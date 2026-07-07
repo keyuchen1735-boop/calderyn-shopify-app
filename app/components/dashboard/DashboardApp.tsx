@@ -117,7 +117,6 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
         label: "Orders",
         icon: "doc",
         children: [
-          { key: "orders", label: "Orders", screen: "orders", sub: "orders" },
           { key: "labels", label: "Shipping charges", screen: "orders", sub: "labels" },
           { key: "drafts", label: "Draft carts", screen: "orders", sub: "drafts" },
           { key: "abandoned", label: "Abandoned", screen: "orders", sub: "abandoned" },
@@ -128,7 +127,6 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
         label: "Products",
         icon: "tag",
         children: [
-          { key: "catalog", label: "Products", screen: "catalog" },
           { key: "inventory", label: "Inventory", screen: "inventory" },
           { key: "po", label: "Purchase orders", screen: "products-po" },
           { key: "transfers", label: "Transfers", screen: "products-transfers" },
@@ -227,10 +225,11 @@ function childIsActive(child: NavChild, nav: NavState): boolean {
   return eff === child.screen;
 }
 
-// Where a parent row navigates: its first child's view (the section default).
+// Where a parent row navigates: its own landing view. The parent row itself
+// represents the section's default screen, so the child list only carries the
+// section's other sub-views (no child duplicates the parent).
 function parentTarget(item: NavItem): { screen: ScreenId; sub: string | null } {
-  const first = item.children?.[0];
-  return first ? { screen: first.screen, sub: first.sub ?? null } : { screen: item.id, sub: null };
+  return { screen: item.id, sub: NAV_DEFAULT_SUB[item.id] ?? null };
 }
 
 // On phones the sidebar collapses to a bottom tab bar. These four ride the bar;
