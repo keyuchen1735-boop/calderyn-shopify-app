@@ -27,11 +27,31 @@ export async function uploadProductMedia(
   const { error: upErr } = await sb.storage.from(PRODUCT_MEDIA_BUCKET).upload(storagePath, file.bytes, { contentType: file.contentType, upsert: false });
   if (upErr) throw upErr;
 
-  // First image of a product is primary.
-  const { count } = await sb.from("product_media").select("id", { count: "exact", head: true }).eq("product_id", productId);
+  // First BUCKET image of a product is primary. Count only rows with a
+  // storage_path: an imported product also carries hidden external-URL rows
+  // (storage_path NULL, is_primary=true) that getProduct/the editor never show,
+  // so counting them would persist the merchant's first uploaded image as
+  // non-primary while the editor badges it "Main".
+  const { count } = await sb
+    .from("product_media")
+    .select("id", { count: "exact", head: true })
+    .eq("product_id", productId)
+    .not("storage_path", "is", null);
+  const isPrimary = (count ?? 0) === 0;
+  // When this upload becomes primary, demote any prior primary (e.g. the imported
+  // external image) so there is exactly one primary and it matches what the editor
+  // shows — otherwise the storefront keeps serving the old external image first.
+  if (isPrimary) {
+    const { error: demoteErr } = await sb
+      .from("product_media")
+      .update({ is_primary: false })
+      .eq("product_id", productId)
+      .eq("is_primary", true);
+    if (demoteErr) throw demoteErr;
+  }
   const { data, error } = await sb
     .from("product_media")
-    .insert({ product_id: productId, storage_path: storagePath, position: count ?? 0, is_primary: (count ?? 0) === 0 })
+    .insert({ product_id: productId, storage_path: storagePath, position: count ?? 0, is_primary: isPrimary })
     .select("id")
     .single();
   if (error) throw error;
