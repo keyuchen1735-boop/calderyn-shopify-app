@@ -3,12 +3,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { computeWeights, recomputeShopCalibration } from "../recompute.server";
 
 describe("computeWeights", () => {
-  it("splits each detector's weight across its legal actions with rank-decay", () => {
+  it("splits each detector's weight across its GRADUATABLE actions with rank-decay", () => {
     const w = computeWeights({ campaign_below_breakeven: 10 });
-    // campaign_below_breakeven -> [pause_campaign, reduce_campaign_budget, snooze_alert]
+    // campaign_below_breakeven -> [pause_campaign, reduce_campaign_budget, snooze_alert].
+    // snooze_alert has no executor (never graduates), so it must be OUT of the
+    // weight universe — otherwise its 0-confidence weight caps the shop headline.
     const pause = w.find((x) => x.action === "pause_campaign");
-    const snooze = w.find((x) => x.action === "snooze_alert");
-    expect(pause!.weight).toBeGreaterThan(snooze!.weight); // first action ranked higher
+    const reduce = w.find((x) => x.action === "reduce_campaign_budget");
+    expect(w.find((x) => x.action === "snooze_alert")).toBeUndefined();
+    expect(pause!.weight).toBeGreaterThan(reduce!.weight); // first action ranked higher
     const total = w.reduce((s, x) => s + x.weight, 0);
     expect(total).toBeGreaterThan(0);
   });
@@ -34,11 +37,14 @@ describe("recomputeShopCalibration", () => {
     expect(res.display).toBeLessThanOrEqual(100);
     expect(updates[0]).toHaveProperty("calibration_pct", res.display);
     expect(updates[0]).toHaveProperty("calibration_updated_at");
-    // Emergent-baseline canary: cold-start must land in low-to-mid range (Task 10 measures live value).
+    // Emergent-baseline canary: cold-start must land mid-range, and reaching 100
+    // must stay POSSIBLE (the executor-only weight universe removed the structural
+    // cap that used to hold the baseline near ~36).
     // Kills always-0 regression:
     expect(res.display).toBeGreaterThan(0);
-    // Kills always-50/always-100 regression (foundation baseline observed ~36):
-    expect(res.display).toBeLessThan(50);
+    // Kills always-100 and always-50 regressions:
+    expect(res.display).toBeLessThan(100);
+    expect(res.display).not.toBe(50);
     // Cold start with null prev: smooth is a no-op, so display must equal raw:
     expect(res.display).toBe(res.raw);
   });
@@ -59,14 +65,13 @@ describe("recomputeShopCalibration", () => {
       },
     ];
 
-    // raw is 35 with the full executor catalog (exclude_geo/push_creative_draft
-    // pairs are real now, not zeros); prev 34 keeps the smoothed move inside the
-    // dead-band so the forced path is what makes it visible.
+    // raw is 49 with the executor-only weight universe; prev 48 keeps the smoothed
+    // move inside the dead-band so the forced path is what makes it visible.
     const normal = await recomputeShopCalibration("shop-visible-1", {
       sb: makeStubSb({
         pairRows,
         detectorFires: { campaign_scaling_opportunity: 5 },
-        prevPct: 34,
+        prevPct: 48,
         onShopUpdate: (patch) => normalUpdates.push(patch),
       }),
     }, { skipPeerPrior: true });
@@ -75,16 +80,16 @@ describe("recomputeShopCalibration", () => {
       sb: makeStubSb({
         pairRows,
         detectorFires: { campaign_scaling_opportunity: 5 },
-        prevPct: 34,
+        prevPct: 48,
         onShopUpdate: (patch) => forcedUpdates.push(patch),
       }),
     }, { skipPeerPrior: true, forceVisibleStep: true });
 
-    expect(normal.raw).toBe(35);
-    expect(normal.display).toBe(34);
-    expect(forced.raw).toBe(35);
-    expect(forced.display).toBe(35);
-    expect(forcedUpdates[0]).toHaveProperty("calibration_pct", 35);
+    expect(normal.raw).toBe(49);
+    expect(normal.display).toBe(48);
+    expect(forced.raw).toBe(49);
+    expect(forced.display).toBe(49);
+    expect(forcedUpdates[0]).toHaveProperty("calibration_pct", 49);
   });
 });
 
