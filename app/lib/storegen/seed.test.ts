@@ -30,6 +30,22 @@ describe("parseSeedPlan", () => {
     expect(p!.products[0].iconHint).toBe("package");
     expect(p!.products[0].phTone).toBe("neutral");
   });
+  it("dedupes duplicate collection titles", () => {
+    const raw = JSON.parse(good);
+    raw.collections = [{ title: "Trail Gear" }, { title: "Trail Gear" }, { title: "Camp Kitchen" }];
+    const p = parseSeedPlan(JSON.stringify(raw));
+    expect(p!.collections.map((c) => c.title)).toEqual(["Trail Gear", "Camp Kitchen"]);
+    expect(p!.products).toHaveLength(3);
+  });
+  it("defaults a non-finite priceCents to 2900 and clamps a negative price to the floor", () => {
+    // JSON cannot carry a literal NaN; 1e999 parses to Infinity, hitting the same
+    // Number.isFinite guard a NaN would.
+    const raw = good.replace('"priceCents":14800', '"priceCents":1e999').replace('"priceCents":6400', '"priceCents":-100');
+    const p = parseSeedPlan(raw);
+    expect(p).not.toBeNull();
+    expect(p!.products[0].priceCents).toBe(2900);
+    expect(p!.products[1].priceCents).toBe(500);
+  });
   it("drops a product whose collection is not in the plan, clamps price into range", () => {
     const raw = JSON.parse(good);
     raw.products[1].collection = "Nonexistent";

@@ -40,12 +40,19 @@ export function parseSeedPlan(raw: string): SeedPlan | null {
   const parsed = asRecord(parseJson(raw));
   if (!Array.isArray(parsed.collections) || !Array.isArray(parsed.products)) return null;
 
-  const collections = parsed.collections
-    .map(asRecord)
-    .filter((c): c is { title: string } => typeof c.title === "string" && c.title.trim().length > 0)
-    .slice(0, 3)
-    .map((c) => ({ title: clip(c.title.trim(), 60) }));
-  const titles = new Set(collections.map((c) => c.title));
+  // Dedupe titles before the slice: the array feeds the collection writer directly, so a
+  // duplicated title must collapse here, not just in the lookup set.
+  const titles = new Set<string>();
+  const collections: { title: string }[] = [];
+  for (const entry of parsed.collections) {
+    const c = asRecord(entry);
+    if (typeof c.title !== "string" || !c.title.trim()) continue;
+    const title = clip(c.title.trim(), 60);
+    if (titles.has(title)) continue;
+    titles.add(title);
+    collections.push({ title });
+    if (collections.length === 3) break;
+  }
 
   const products: SeedProduct[] = [];
   for (const entry of parsed.products.slice(0, 9)) {
