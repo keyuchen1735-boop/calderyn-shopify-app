@@ -2464,6 +2464,11 @@
 .mapcn-pin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; background: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
 .mapcn-popup { position: relative; max-width: 248px; border-radius: 10px; border: 0.5px solid var(--hairline-strong); background: var(--card-solid); color: var(--text-1); padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); animation: mapcn-in 0.2s ease-out; }
 .mapcn-tooltip { pointer-events: none; border-radius: 8px; padding: 4px 8px; font-size: 11.5px; background: var(--card-solid); color: var(--text-1); border: 0.5px solid var(--hairline-strong); box-shadow: 0 4px 14px rgba(0,0,0,0.16); text-wrap: balance; animation: mapcn-in 0.2s ease-out; }
+/* MapLibre wraps popups/tooltips in its own white sheet + tip arrow; the
+   themed .mapcn-popup / .mapcn-tooltip cards own their surface, so the stock
+   chrome must not show behind them. */
+.mapcn .maplibregl-popup-content { background: none; padding: 0; box-shadow: none; border-radius: 0; }
+.mapcn .maplibregl-popup-tip { display: none; }
 @keyframes mapcn-in { from { opacity: 0; transform: scale(0.95); } }
 .mapcn-label { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 10px; font-weight: 600; color: var(--text-1); text-shadow: 0 0 3px var(--card-solid); }
 .mapcn-label-top { bottom: 100%; margin-bottom: 4px; }
