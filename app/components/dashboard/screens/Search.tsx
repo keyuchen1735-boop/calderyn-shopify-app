@@ -451,20 +451,20 @@ export default function Search({ app }: { app: DashboardCtx }) {
                     </a>
                   ) : (
                     <b>Sitemaps</b>
-                  )}{" "}
-                  in Google, paste this link, then <b>Submit</b>.
+                  )}
+                  . Your store address is already filled in, so just type this in the box and <b>Submit</b>.
                 </div>
               </div>
               <div className="cd-seo__control">
                 {data.sitemapUrl ? (
                   <>
-                    <code className="cd-seo__url">{data.sitemapUrl}</code>
-                    <Btn kind="secondary" small onClick={() => copyLink(data.sitemapUrl!, "sitemap")}>
+                    <code className="cd-seo__url">sitemap.xml</code>
+                    <Btn kind="secondary" small onClick={() => copyLink("sitemap.xml", "sitemap")}>
                       {copied === "sitemap" ? "Copied" : "Copy"}
                     </Btn>
                   </>
                 ) : (
-                  <span className="cd-seo__hint">Publish your storefront first to get this link.</span>
+                  <span className="cd-seo__hint">Publish your storefront first to enable this.</span>
                 )}
               </div>
             </div>

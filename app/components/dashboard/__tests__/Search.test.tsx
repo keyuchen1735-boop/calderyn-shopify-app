@@ -62,14 +62,15 @@ describe("Search screen (smoke)", () => {
     cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("Get found on Google");
-    // Step 2 shows the site address to register; step 5 shows the sitemap link.
-    expect(html).toContain("https://demo.calderyncompany.com/sitemap.xml");
-    expect(html).toContain("https://demo.calderyncompany.com<"); // site URL chip (no /sitemap.xml)
+    // Step 2 shows the site address to register (root, no /sitemap.xml).
+    expect(html).toContain("https://demo.calderyncompany.com<"); // site URL chip
     expect(html).toContain("URL prefix");
     expect(html).toContain("HTML tag");
     expect(html).toContain("Paste code here");
     expect(html).toContain("Open Google");
-    // Step 5 "Sitemaps" is a deep link into this property's Search Console page.
+    // Step 5 gives the RELATIVE path (Google pre-fills the domain) + a deep link
+    // into this property's Sitemaps page in Search Console.
+    expect(html).toContain(">sitemap.xml<");
     expect(html).toContain("search-console/sitemaps?resource_id=");
   });
 
