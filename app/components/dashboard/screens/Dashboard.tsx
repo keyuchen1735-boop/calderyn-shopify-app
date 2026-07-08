@@ -441,7 +441,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           >
             <LiveMark on={live.visitors_now > 0} />
             <span className="cd-live-visitors-n tabular-nums">{live.visitors_now}</span>
-            <span className="cd-live-visitors-l">live now</span>
+            <span className="cd-live-visitors-l">{live.visitors_now === 1 ? "store visitor" : "store visitors"}</span>
           </div>
         )}
       </header>
