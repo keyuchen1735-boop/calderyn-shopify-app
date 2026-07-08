@@ -340,10 +340,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
       <section className="cd-seo__section">
         <div className="cd-seo__head-text">
           <h2 className="cd-seo__h2">Get found on Google</h2>
-          <p className="cd-seo__lede">
-            Follow these five steps once, in order, and Google will start showing your store. It&rsquo;s free and takes
-            about five minutes.
-          </p>
+          <p className="cd-seo__lede">Do this once and Google starts showing your store. Free, about 5 minutes.</p>
         </div>
         <Card pad={false}>
           <div className="cd-seo__set">
@@ -352,10 +349,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
                 <div className="cd-seo__label">
                   <span className="cd-seo__step">1</span>Open Google Search Console
                 </div>
-                <div className="cd-seo__hint">
-                  It opens in a new tab. If it asks you to sign in, use any Google account. If you&rsquo;re already
-                  signed in, you&rsquo;ll go straight in.
-                </div>
+                <div className="cd-seo__hint">Opens in a new tab. Sign in with a Google account if it asks.</div>
               </div>
               <div className="cd-seo__control">
                 <a
@@ -376,8 +370,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
                   <span className="cd-seo__step">2</span>Enter your store address
                 </div>
                 <div className="cd-seo__hint">
-                  Google asks how to find your site. Click the box labelled <b>URL prefix</b>, paste the address below,
-                  then click <b>Continue</b>.
+                  Click <b>URL prefix</b>, paste your store address, then <b>Continue</b>.
                 </div>
               </div>
               <div className="cd-seo__control">
@@ -397,11 +390,10 @@ export default function Search({ app }: { app: DashboardCtx }) {
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">
-                  <span className="cd-seo__step">3</span>Choose &ldquo;HTML tag&rdquo; and copy the whole line
+                  <span className="cd-seo__step">3</span>Choose &ldquo;HTML tag&rdquo; and copy it
                 </div>
                 <div className="cd-seo__hint">
-                  Google shows a few ways to prove it&rsquo;s your store. Click <b>HTML tag</b>, then copy the whole
-                  line of code it shows. You don&rsquo;t need to trim it.
+                  Click <b>HTML tag</b>, then copy the whole line of code Google shows.
                 </div>
               </div>
             </div>
@@ -409,11 +401,10 @@ export default function Search({ app }: { app: DashboardCtx }) {
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">
-                  <span className="cd-seo__step">4</span>Paste the code here, then verify
+                  <span className="cd-seo__step">4</span>Paste the code, then verify
                 </div>
                 <div className="cd-seo__hint">
-                  Paste what you copied below and click Save. The whole tag or just the code both work; Calderyn sorts
-                  it out and adds it to your store. Then go back to Google and click its blue <b>Verify</b> button.
+                  Paste it, click Save, then click <b>Verify</b> back in Google.
                 </div>
               </div>
               <div className="cd-seo__control">
@@ -436,7 +427,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
               <div className="cd-seo__row cd-seo__row--slim">
                 <span className="cd-seo__ok">
                   <CDIcon name="check" size={14} strokeWidth={2} />
-                  Saved and live on your store. Now click <b>Verify</b> back in Google.
+                  Saved and live. Now click <b>Verify</b> in Google.
                 </span>
               </div>
             ) : null}
@@ -447,8 +438,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
                   <span className="cd-seo__step">5</span>Hand Google your page list
                 </div>
                 <div className="cd-seo__hint">
-                  Once verified, open <b>Sitemaps</b> in Google&rsquo;s left menu, paste the link below, and click
-                  <b> Submit</b>. That&rsquo;s your whole store in one link.
+                  Once verified, open <b>Sitemaps</b> in Google, paste this link, then <b>Submit</b>.
                 </div>
               </div>
               <div className="cd-seo__control">
