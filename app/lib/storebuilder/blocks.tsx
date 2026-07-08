@@ -9,6 +9,7 @@ import { STOREFRONT_LINKS } from "./links";
 import { hydrateStoreFx } from "./fx/hydrate";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 import { formatMoney } from "~/lib/storefront/money";
+import { productCardMedia } from "./product-card";
 
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
@@ -183,7 +184,7 @@ const productGrid: BlockMeta<ProductGridProps> = {
       createElement("div", { className: "cd-store__grid" },
         gridProducts(props.source, ctx).map((p) =>
           createElement("a", { key: p.id, className: "cd-product-card", href: links.product(p.handle) },
-            p.images[0] ? createElement("img", { className: "cd-product-card__img", src: p.images[0].url, alt: p.images[0].alt ?? p.title }) : null,
+            productCardMedia(p),
             createElement("span", { className: "cd-product-card__title" }, p.title),
             createElement("span", { className: "cd-product-card__price" }, money(p)))))); },
 };

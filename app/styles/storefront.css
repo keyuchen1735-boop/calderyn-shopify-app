@@ -184,6 +184,34 @@ a { color: inherit; }
   .cd-product-card { transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
   .cd-product-card:hover { transform: translateY(-3px); box-shadow: var(--cd-shadow-card-hover); }
 }
+/* Placeholder media tile: deterministic per-product gradient + glyph (no image yet). */
+.cd-product-card__ph {
+  width: 100%; aspect-ratio: 1 / 1; border-radius: calc(var(--cd-radius) - 2px);
+  display: grid; place-items: center; position: relative; overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 18% 12%, hsl(var(--ph-hue) 60% 84%), transparent 60%),
+    linear-gradient(var(--ph-angle), hsl(var(--ph-hue) 46% 68%), hsl(calc(var(--ph-hue) + 45) 52% 84%));
+}
+.cd-product-card__ph-icon { width: 34%; height: 34%; color: hsl(var(--ph-hue) 45% 28%); opacity: 0.85; }
+.cd-store[data-vibe="bold"] .cd-product-card__ph {
+  background: linear-gradient(var(--ph-angle), hsl(var(--ph-hue) 70% 52%) 50%, hsl(calc(var(--ph-hue) + 60) 68% 42%) 50.5%);
+}
+.cd-store[data-vibe="bold"] .cd-product-card__ph-icon { color: hsl(var(--ph-hue) 60% 92%); }
+/* Slow sheen signals "image loading" rather than "image missing". Always animates while the
+   tile is shown; there is no per-tile generation state on the storefront read path. */
+.cd-product-card__ph::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.30) 50%, transparent 60%);
+  transform: translateX(-100%); animation: cd-ph-sheen 3s ease-in-out infinite;
+}
+@keyframes cd-ph-sheen { to { transform: translateX(100%); } }
+/* Generated image lands -> gentle crossfade in. */
+.cd-product-card__img { animation: cd-img-in 0.5s ease; }
+@keyframes cd-img-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .cd-product-card__ph::after { animation: none; }
+  .cd-product-card__img { animation: none; }
+}
 
 /* ---- collection cards (home collectionList block) -------------------------------------------- */
 .cd-block--collections { padding: 2.25rem 0 2.75rem; }

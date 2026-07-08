@@ -9,6 +9,7 @@ import type { BlockMeta, RenderContext } from "./types";
 import { STOREFRONT_LINKS } from "./links";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 import { formatMoney as money } from "~/lib/storefront/money";
+import { productCardMedia } from "./product-card";
 
 const asRecord = (v: unknown): Record<string, unknown> => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
 const recProduct = (ctx: RenderContext): StoreProduct | undefined => ctx.record?.product;
@@ -104,7 +105,7 @@ const collectionGrid: BlockMeta = {
     return createElement("div", { className: "cd-block cd-store__grid" },
       products.map((p) =>
         createElement("a", { key: p.id, className: "cd-product-card", href: links.product(p.handle) },
-          p.images[0] ? createElement("img", { className: "cd-product-card__img", src: p.images[0].url, alt: p.images[0].alt ?? p.title }) : null,
+          productCardMedia(p),
           createElement("span", { className: "cd-product-card__title" }, p.title),
           createElement("span", { className: "cd-product-card__price" }, p.variants[0] ? money(p.variants[0].priceCents, p.variants[0].currency) : ""))));
   },
