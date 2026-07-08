@@ -7,22 +7,21 @@ import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 import { buildStoreDescription } from "~/lib/seo/writer.server";
-import { shopRegionCondition } from "~/lib/weather/shop-region.server";
 
 // The Preferences screen (see Search.tsx) exposes the controls a merchant has —
 // search-engine access, AI-assistant access, weather-aware ordering, a store
 // description, and the "Get found on Google" helper. The loader hands back this
 // shop's SEO settings plus its live sitemap URL (null until the shop has a
-// storefront slug) and its current weather status (null when unresolvable).
+// storefront slug). Weather-aware ordering is resolved per-visitor at serve
+// time, so there is no shop-level weather status to return here.
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request); // auth gate; settings are this shop's own data
   return dashboardJson(async () => {
-    const [settings, origin, weatherStatus] = await Promise.all([
+    const [settings, origin] = await Promise.all([
       getSeoSettings(session.shopId),
       getShopStorefrontOrigin(session.shopId),
-      shopRegionCondition(session.shopId),
     ]);
-    return { settings, sitemapUrl: origin ? `${origin}/sitemap.xml` : null, weatherStatus };
+    return { settings, sitemapUrl: origin ? `${origin}/sitemap.xml` : null };
   });
 }
 

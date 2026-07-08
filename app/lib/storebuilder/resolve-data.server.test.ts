@@ -39,4 +39,24 @@ describe("resolveRenderData", () => {
     const data = await resolveRenderData(doc, "shop", fakeCatalog(), { collection: { handle: "winter", title: "Winter" } });
     expect(data.productsByCollection.winter).toHaveLength(1);
   });
+
+  it("floats weather-relevant products to the top of the all-products grid for the visitor's condition", async () => {
+    const prod = (id: string, title: string): StoreProduct => ({
+      id, handle: `h-${id}`, title, description: "", images: [], variants: [], collections: [],
+    });
+    const catalog: StorefrontCatalog = {
+      listCollections: async () => [],
+      listProducts: async () => [prod("mug", "Coffee Mug"), prod("rain", "Rain Jacket")], // neutral first by default
+      getProduct: async () => prod("mug", "Coffee Mug"),
+    };
+    const doc: BlockDocument = { kind: "singleton", pageKey: "home", blocks: [
+      { id: "g", type: "productGrid", layout: { x: 0, y: 0, w: 12, h: 6 }, props: { source: { kind: "all" } } },
+    ] };
+    // storm → the Rain Jacket (storm cue in its title) floats above the neutral mug.
+    const stormy = await resolveRenderData(doc, "shop", catalog, undefined, "storm");
+    expect(stormy.allProducts.map((x) => x.id)).toEqual(["rain", "mug"]);
+    // neutral (default) → order unchanged.
+    const mild = await resolveRenderData(doc, "shop", catalog);
+    expect(mild.allProducts.map((x) => x.id)).toEqual(["mug", "rain"]);
+  });
 });

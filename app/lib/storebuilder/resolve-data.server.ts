@@ -4,10 +4,16 @@
 import type { StorefrontCatalog } from "~/lib/storefront/catalog";
 import type { BlockDocument, RenderData, RenderContext } from "./types";
 import { getBlockMeta } from "./registry";
+import { boostByWeather, type WeatherCondition } from "~/lib/weather/affinity";
 
 export async function resolveRenderData(
   doc: BlockDocument, shopId: string, catalog: StorefrontCatalog,
   record?: RenderContext["record"],
+  // Visitor's current weather condition (resolved from their request in the
+  // loader). Floats weather-relevant products to the top of the all-products and
+  // collection grids for THIS shopper; "neutral" is a no-op. Curated explicit-id
+  // grids (productsById) are never reordered — the merchant hand-picked them.
+  weatherCondition: WeatherCondition = "neutral",
 ): Promise<RenderData> {
   // Gather refs across all blocks.
   const collectionHandles = new Set<string>();
@@ -35,14 +41,17 @@ export async function resolveRenderData(
 
   const wantsCollectionsList = collectionHandles.delete("*");
   const collections = wantsCollectionsList ? await catalog.listCollections(shopId) : [];
-  const allProducts = needsAll ? await catalog.listProducts(shopId) : [];
+  const allProducts = boostByWeather(needsAll ? await catalog.listProducts(shopId) : [], weatherCondition);
 
   // Null-prototype dictionaries: keys are catalog refs carried from the stored document (not
   // re-validated at render time), so a ref like "__proto__" must land as a plain own key, never
   // touch the prototype chain.
   const productsByCollection: Record<string, Awaited<ReturnType<StorefrontCatalog["listProducts"]>>> = Object.create(null);
   await Promise.all([...collectionHandles].map(async (handle) => {
-    productsByCollection[handle] = await catalog.listProducts(shopId, { collection: handle });
+    productsByCollection[handle] = boostByWeather(
+      await catalog.listProducts(shopId, { collection: handle }),
+      weatherCondition,
+    );
   }));
 
   const productsById: Record<string, Awaited<ReturnType<StorefrontCatalog["getProduct"]>> & object> = Object.create(null);
