@@ -14,16 +14,6 @@ import { fetchSearchOverview, updateSettings, suggestDescription, type SearchOve
 // dashboard.api.search.tsx), so a save can never be rejected for length.
 const DESCRIPTION_MAX = 200;
 
-// Pure so it's directly testable: the one caption line shown under the toggle.
-// The boost is per-VISITOR (each shopper's own local weather, read from their
-// request), so there is no single shop region to display, and no setup for the
-// merchant. The line just explains what the switch does.
-export function weatherStatusLine(weatherMerchandising: boolean): string {
-  return weatherMerchandising
-    ? "Each shopper sees products matched to their own local weather, automatically. No setup needed."
-    : "Off. Your storefront shows products in your normal order for everyone.";
-}
-
 // Shared by the initial mount and the Retry button, so a failed load and a
 // successful retry both funnel through one place: cache and show the fresh
 // payload on success, or flag the friendly error state on failure.
@@ -236,7 +226,6 @@ export default function Search({ app }: { app: DashboardCtx }) {
   const sitemapsConsoleUrl = siteUrl
     ? `https://search.google.com/search-console/sitemaps?resource_id=${encodeURIComponent(`${siteUrl}/`)}`
     : null;
-  const weatherStatusText = weatherStatusLine(settings.weatherMerchandising);
 
   return (
     <div className="cd-screen cd-seo">
@@ -288,9 +277,6 @@ export default function Search({ app }: { app: DashboardCtx }) {
                 disabled={savingWeather}
                 ariaLabel="Turn on weather-aware product ordering"
               />
-            </div>
-            <div className="cd-seo__row">
-              <span className="cd-seo__hint">{weatherStatusText}</span>
             </div>
             <div className="cd-seo__row">
               <div className="cd-seo__info">
