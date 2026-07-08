@@ -61,9 +61,12 @@ export async function action({ request }: ActionFunctionArgs) {
       // url on failure). The sanitizer keeps <img> with inline position:absolute (style/data-* ride
       // the "*" allowedAttributes; no allowedStyles filter), so the absolute-cover hero survives.
       const { url } = await persistExternalImage(shopId, out.url, "generated", "generated");
+      // Function replacer: its return value is inserted literally, so `$`-sequences in `url` (the
+      // persist failure path hands back the raw provider url, which may carry `$` in query params)
+      // are never reinterpreted as String.replace substitution patterns.
       const patched = html.replace(
         HERO_MARKER_RE,
-        `<img data-cd-hero-media src="${url}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" />`,
+        () => `<img data-cd-hero-media src="${url}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" />`,
       );
       raw.props = { ...(raw.props as object), html: sanitizeStoreHtml(patched) };
       await saveDraft(shopId, "home", home);

@@ -66,6 +66,15 @@ describe("image fill action", () => {
     expect(enhanceMock).not.toHaveBeenCalled();
     expect(await (res as Response).json()).toMatchObject({ done: true, remaining: 0 });
   });
+  it("hero failure with a pending product still advances the loop with one product", async () => {
+    loadDraftMock.mockResolvedValue({ kind: "singleton", pageKey: "home", blocks: [{ id: "b1", type: "rawHtml", props: { html: "<div data-cd-hero-media></div>" }, layout: {} }] });
+    providerMock.mockRejectedValue(new Error("credits"));
+    listProductsMock.mockResolvedValue([product("a")]);
+    const body = await (await action({ request: req(), params: {}, context: {} } as never) as Response).json();
+    expect(enhanceMock).toHaveBeenCalledTimes(1);
+    expect(body).toMatchObject({ done: true, kind: "product", heroFailed: true, remaining: 0 });
+    expect(saveDraftMock).not.toHaveBeenCalled();
+  });
   it("hero generation failure is non-fatal: reports heroFailed and moves on (rule 12)", async () => {
     loadDraftMock.mockResolvedValue({ kind: "singleton", pageKey: "home", blocks: [{ id: "b1", type: "rawHtml", props: { html: "<div data-cd-hero-media></div>" }, layout: {} }] });
     providerMock.mockRejectedValue(new Error("credits"));
