@@ -3,6 +3,119 @@
 Long-lived brain for the unattended nightly run. Records false positives (do NOT
 re-flag), recurring bug patterns, fixes that worked, and gate/CI gotchas.
 
+## 2026-07-08
+
+### Triage — ~192 commits (`3a2f3af`..`db67e73`); a GENUINE companion nightly PR #391 existed
+Huge batch since last night's base `3a2f3af`: **SEO/Search subsystem** (seo_page/seo_settings, sitemap/robots/
+llms.txt, "Get found on Google" helper — NOTE the GSC OAuth + `cron.seo-rankings` + rankings-sync (Plan C) were
+ADDED then RIPPED OUT same window by `eaefb22`, so that whole OAuth/cron risk surface is MOOT — don't hunt it);
+**weather merchandising** (region_weather table + boostByWeather + cron.weather-merch + visitor-geo weather +
+1758-line mapcn-map.tsx/maplibre dep); **storegen** AI-HTML store builder (shaders/GSAP fx, design-model picker,
+attachments); **native inventory ledger + checkout gating**; **analytics refund netting**; auth/verify hardening;
+ad-connect instant ingest. Fanned out **5 read-only bug-hunters** (money/inventory · SEO/GSC · weather/storefront
+· storegen · auth/ads) + **1 verifier of companion PR #391**. 3 clusters → NONE; **2 real landed bugs fixed** →
+**PR #392** (draft), branch `fix/nightly-2026-07-08`, commits `b053b71` · `2f0e2a7`.
+
+- **Companion nightly PR #391 (author Mezoh, base == our main `db67e73`) was GENUINE** — 6 fixes, ALL verified
+  correct end-to-end (commerce.server UPPERCASE `IMPORTED_SALE_STATE_FILTER` for GraphQL-migrated financial_status
+  + PostgREST case-sensitivity; backfill migration seeding inventory_balance for pre-ledger native variants;
+  refund emitNativeRefundFact channel='test' skip; affinity substring→word-prefix; confirmation getCartState
+  guard; weather-forecast cache LRU-bound). Posted a review comment: confirmed the 6 correct + flagged the ONE
+  adjacent miss (see bug #2 below, which our PR #392 fixes) + an affinity test-gap nit.
+
+### Bug #1 fixed — same-day PARTIAL refund vanishes from the live "Sales today" snapshot
+- **`app/lib/dashboard/live-analytics.server.ts`** `buildLiveSnapshot`. Regression from `07aee9a` (refund now
+  stamps `orders.financial_status='partially_refunded'|'refunded'`). The live snapshot filters
+  `.eq("financial_status","paid")` and sums GROSS `total_cents` with NO netting → a same-day order given a partial
+  refund flips out of the `paid` filter and drops ENTIRELY: full gross gone from `total_sales_today_cents`,
+  `orders_today` decrements, lines/session leave `top_products`/`purchased_sessions`. $100 order + $10 partial =
+  should net $90, showed $0. Fix: mirror the reviewed 30-day model (`commerce.server.ts`) — filter
+  `.in(["paid","partially_refunded","refunded"])` (keep sale in gross) + subtract today's native refunds
+  (`refund_fact.subtotal_cents`, `external_id like gid://calderyn/%`, `processed_at>=todayStart`). Full refund nets
+  to 0; partial nets its actual cents.
+- **Lesson (a `financial_status`/`state` stamp added for one consumer breaks another that filters on it):** when a
+  commit starts writing a NEW status value (partially_refunded) so surface A stops over-counting, audit EVERY
+  reader that filters on that column. A reader doing `.eq(col,"paid")` + GROSS-sum silently DROPS the newly-stamped
+  row instead of netting it. Same family as 2026-07-06's DTO-narrowing-breaks-consumer, at the write→reader seam on
+  the money path. The correct pattern already existed in the 30-day model — mirror it, don't invent netting.
+
+### Bug #2 fixed — `imported_refund` paging miscounts at the 1000-row boundary (no stable tiebreak)
+- **`app/lib/analytics/commerce.server.ts`** `readWindowImportedRefundCents`. Paged `imported_refund` (cap 10k)
+  ordered ONLY by `processed_at desc`, no unique secondary sort → rows sharing a `processed_at` at a 1000-row page
+  boundary can be skipped/duplicated → wrong refund total → wrong NET sales on the migrated-order money path. Fix:
+  add `.order("id", { ascending: true })` (imported_refund.id is the uuid PK). This is the SAME class #391 fixed in
+  the two sibling readers (`readWindowImportedOrders` already had it; #391 added it to `readWindowNativeRefundCents`)
+  — #391 left the THIRD reader inconsistent. Deliberately did NOT touch `readWindowNativeRefundCents` (disjoint hunk;
+  #391 owns it) so the two PRs don't conflict.
+- **Lesson (paged-read stable tiebreak is a house invariant here):** every `readPaged(...).order(nonUniqueCol)` in
+  this codebase MUST add `.order("id")` as a secondary sort, or it skips/dupes across the 1000-row clamp. When a
+  companion PR fixes this for SOME readers in a file, grep the file for the remaining `.range(`/`readPaged` callers
+  ordered by a non-unique column and check them all — they travel in packs.
+
+### Found but NOT auto-fixed (surfaced in PR #392 / carried from #391 — act on these if they recur)
+- **Storegen create-before-generate ordering is inert + comment is FALSE** (`dashboard.api.store.tsx` ~L242): the
+  "add-as-products AND use-as-reference" path creates products as `status:"draft"` then runs `generateStore`, with a
+  comment claiming "the generator re-reads the catalog, so the new drafts land in the snapshot it designs around."
+  But `generateStore` reads the **active-only** owned catalog (`catalog.owned.server.ts` `.eq("status","active")`),
+  so the drafts are excluded — the design ignores the new items and they can't render on the public grid until
+  activated. Not fixed: honest fix is a comment correction OR a behavior change (activate/feed ids) that shouldn't
+  ship unattended. LOW severity (drafts are private by design).
+- #391's own deferred list (do not re-fix, maintainer call): `account.updated` webhook has no event-ordering guard
+  (connect.server.ts — a stale/redelivered snapshot can regress charges_enabled true→false); checkout retry
+  (storefront.checkout.tsx:274 createCheckout) stacks 30-min stock holds; cron.weather-suggest 1000-row clamp skips
+  shops at scale; already_armed guard races the execute-sweep; storegen streaming fallback always 429s (both paths
+  call assertCanGenerate, checkAiQuota consumes the 20s cooldown on the first); preview iframe sandbox widened to
+  allow-same-origin+allow-scripts (dashboard-preview ONLY — public storefront still frame-ancestors 'none', so NOT a
+  public XSS hole); `updateProduct` (catalog.server.ts:469) doesn't reconcile the ledger on an existing-variant
+  inventory_on_hand edit.
+
+### False positives cleared this run (do NOT re-flag)
+- **SEO subsystem (whole cluster CLEAN):** every live table (seo_settings, seo_page, seo_ai_crawl_daily + log_ai_crawl
+  RPC) has a migration + shop-scoped RLS; onConflict targets match real unique indexes; sitemap `<loc>` xmlEscaped,
+  robots from a fixed bot list, google-site-verification through `cleanGoogleToken` (capped 200) via a Remix meta
+  descriptor (HTML-escaped); sitemap capped at MAX_STOREFRONT_PRODUCTS=250 (no 1000-clamp truncation); api.search
+  has requireSameOrigin+requireDashboardSession, shop from session, no `.server` leak into Search.tsx; the
+  "self-heal token on read" is a pure in-memory `cleanGoogleToken`, NOT a loader-side write. `seo_ranking`/
+  `seo_google_credential`/`gsc_*` columns are now DEAD schema (Plan C removed) — harmless.
+- **Weather merch (CLEAN):** region_weather has a migration + service-role-only writes; cron.weather-merch
+  idempotent (upsert on 4 global rows) + surfaces Open-Meteo errors (502); boostByWeather is a pure stable
+  partition (never drops/dupes, output length == input); listProducts capped at 250 (no pager); missing
+  region_weather → `.maybeSingle()` → "neutral" (fails safe, no storefront 500); visitor geo from spoofable
+  x-vercel-ip-* headers but only drives cosmetic ordering (presence-guarded, no `Number(null)===0` trap);
+  mapcn-map.tsx is React.lazy'd, no `.server` import, no provenance/postMessage/HMR markers.
+- **Storegen security (CLEAN):** every rawHtml write goes saveDraft→sanitizeDocHtml→sanitizeStoreHtml (double-
+  sanitize invariant holds); fx channels are safe on the PUBLIC storefront (data-fx-shader = GPU-sandboxed WebGL,
+  4000-char cap, CSS fallback; data-fx-motion = boundary-validated reject-don't-coerce, filter/clipPath capped CSS
+  strings, not executable); the widened script-src+allow-scripts sandbox is scoped to `/dashboard/store/preview`
+  ONLY (public storefront falls through to frame-ancestors 'none'); attachments media-type allowlisted at route +
+  toBase64ImageBlock, never persisted into rawHtml; single AI-quota charge per generation, retries can't mint
+  duplicate drafts (client only offers Try-again when gotReceipt===false). Store.tsx ships a browser-visible
+  "Add Anthropic credits" string — borderline hygiene but reads as real product copy about a feature failure; the
+  verifier only bars "generated by claude"-style provenance markers, so it does NOT trip. Not a bug.
+- **Auth/ads (CLEAN):** return_to always validated via `safeDashboardReturnTo` (rejects //, \, ://, control chars)
+  at every sink incl. re-validation on the onboarding action; verify-on-POST is genuinely single-use (atomic
+  `update .is("used_at",null)`), GET uses non-consuming peek; `069f2e7` sets email_verified:true only DOWNSTREAM of
+  the Path-2 `if(!emailVerified)` guard (does NOT regress the hijack protection); ad ingest-at-connect is idempotent
+  with cron (upsert onConflict shop_id,platform,external_id + campaign_id,day); google v23 camelCase/`snakeKeysDeep`
+  mapping correct; meta reject-zero-accounts fails closed; billing/demo-reset/verify rate-limit helpers sound
+  (Math.max(0,count-1) no underflow). Non-atomic read-then-decrement on the fail-open limiters = negligible.
+- **#391's 6 fixes** — all verified correct (see above). Bundled `.order("id")` add to readWindowNativeRefundCents
+  is valid (refund_fact has uuid PK).
+
+### Gate / environment
+- `npm ci` exit 0. BOTH fixes ralph-looped green on iteration 1. Final tree (`2f0e2a7`): setup 0 · typecheck 0 ·
+  lint 0 (13 pre-existing warnings in untouched test files, none on touched) · build 0 (verifier: **264** client
+  files clean) · vitest **632 files / 4782 passed / 12 skipped / 0 failed**.
+- **CI STILL RED on `main` (runner infra, NOT code)** — same as 2026-07-07. GitHub Actions `CI` (jobs `Node gate` +
+  `Python engine tests`) fails on `main` tip `db67e73`, on feature branches, on #391's branch, AND on our #392 —
+  `get_job_logs` returns **HTTP 404** (runner never executed). Do NOT treat #392's red CI as a regression; the LOCAL
+  gate is authoritative. Did NOT re-kick (no code fix turns runner-infra green). Documented the caveat in the #392 body.
+- **Vercel preview DID build+deploy** for #392 (Building→Ready/DEPLOYED) — so the app builds on Vercel even while
+  GH-Actions CI infra is down. Routine bot comment, no action.
+- `gh` CLI STILL absent — use GitHub MCP (`mcp__github__*`). `list_pull_requests` full-body output overflows the
+  tool-result cap (~93k chars) → it saves to a file; use `minimal_output:true` or parse the saved file. `actions_list`
+  needs `method:"list_workflow_runs"` and also overflows → parse the saved file with python.
+
 ## 2026-07-07
 
 ### Triage — 96 commits (`c11d629`..`3a2f3af`); a GENUINE companion nightly PR #353 existed
