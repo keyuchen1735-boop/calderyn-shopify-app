@@ -2237,6 +2237,22 @@
   .cd-home { padding: calc(40px * var(--density)) calc(32px * var(--density)) 96px; }
 }
 .cd-home > header .cd-sub { margin-top: 5px; }
+/* Home header: greeting on the left, the live-visitor pill pinned top-right. */
+.cd-home-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.cd-home-head-t { min-width: 0; }
+.cd-live-visitors {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px;
+  margin-top: 6px; padding: 5px 12px 5px 9px;
+  border: 0.5px solid var(--hairline-strong); border-radius: 99px;
+  background: var(--card-solid); box-shadow: var(--shadow-card);
+  font-size: 12px; color: var(--text-2); white-space: nowrap;
+}
+.cd-live-visitors-n { font-weight: 650; color: var(--text-1); font-variant-numeric: tabular-nums; }
+.cd-live-visitors-l { color: var(--text-3); }
+@media (max-width: 767px) {
+  .cd-live-visitors { padding: 4px 10px 4px 8px; }
+  .cd-live-visitors-l { display: none; }
+}
 
 /* live status = the brand mark in miniature; ink when on, muted when idle */
 .cd-live-mark { display: inline-flex; flex: 0 0 auto; color: var(--text-3); }
