@@ -88,6 +88,28 @@ export class DashboardErrorBoundary extends Component<Props, State> {
     return { error };
   }
 
+  componentDidMount() {
+    // The dashboard is a self-driven SPA whose back/forward handler lives inside
+    // DashboardApp — which this boundary unmounts the instant it shows the
+    // fallback. So once an error is caught, popstate no longer reaches the SPA
+    // and the fallback would stick until a full reload. Listen here too and drop
+    // the caught error on navigation, remounting the subtree fresh (it re-derives
+    // the screen from the URL and refetches) so back/forward recovers in place.
+    if (typeof window !== "undefined") {
+      window.addEventListener("popstate", this.handlePopState);
+    }
+  }
+
+  componentWillUnmount() {
+    if (typeof window !== "undefined") {
+      window.removeEventListener("popstate", this.handlePopState);
+    }
+  }
+
+  handlePopState = () => {
+    if (this.state.error) this.setState({ error: null });
+  };
+
   componentDidCatch(error: Error, info: ErrorInfo) {
     // The SPA otherwise swallows render errors; surface them for prod debugging.
     console.error("Dashboard render error:", error, info.componentStack);
