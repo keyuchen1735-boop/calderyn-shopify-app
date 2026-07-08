@@ -14,6 +14,26 @@ import { fetchSearchOverview, updateSettings, suggestDescription, type SearchOve
 // dashboard.api.search.tsx), so a save can never be rejected for length.
 const DESCRIPTION_MAX = 200;
 
+const CONDITION_LABEL: Record<"sun" | "storm" | "neutral", string> = {
+  sun: "sunny",
+  storm: "cold & wet",
+  neutral: "mild",
+};
+
+// Pure so it's directly testable: turns the shop's resolved weather status plus
+// the merchant's own toggle into the one caption line shown under the toggle.
+export function weatherStatusLine(
+  status: SearchOverviewVM["weatherStatus"],
+  weatherMerchandising: boolean,
+): string {
+  if (!status) return "Set a store location to match your storefront to the local weather.";
+  const label = CONDITION_LABEL[status.condition];
+  if (!weatherMerchandising) return `Local forecast: ${label}. Turn on to feature matching products.`;
+  if (status.condition === "sun") return "Sunny forecast in your region, featuring warm-weather products first.";
+  if (status.condition === "storm") return "Cold, wet forecast in your region, featuring rain & warm-layer products first.";
+  return "Mild forecast in your region, no weather change to your ordering right now.";
+}
+
 // Shared by the initial mount and the Retry button, so a failed load and a
 // successful retry both funnel through one place: cache and show the fresh
 // payload on success, or flag the friendly error state on failure.
@@ -37,7 +57,7 @@ export async function loadSearchOverview(
 // leaving the toast + refresh side effects to the caller so the same function
 // drives the UI and is directly testable.
 export async function saveSetting(
-  patch: { allowSearchEngines: boolean } | { allowAiCrawlers: boolean },
+  patch: { allowSearchEngines: boolean } | { allowAiCrawlers: boolean } | { weatherMerchandising: boolean },
   onSaved: () => void,
   onError: () => void,
 ): Promise<void> {
@@ -57,6 +77,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
   const [loadError, setLoadError] = useState(false);
   const [savingSearch, setSavingSearch] = useState(false);
   const [savingCrawlers, setSavingCrawlers] = useState(false);
+  const [savingWeather, setSavingWeather] = useState(false);
   // Seeded straight from the same cache read as `data` (not just the effect
   // below) so a cache hit paints the field on the very first render, matching
   // what renderToStaticMarkup produces server-side (effects never run there).
@@ -132,6 +153,19 @@ export default function Search({ app }: { app: DashboardCtx }) {
       () => toast("Could not update", "warn", "critical"),
     );
     setSavingCrawlers(false);
+  }
+
+  async function onToggleWeather(next: boolean) {
+    setSavingWeather(true);
+    await saveSetting(
+      { weatherMerchandising: next },
+      () => {
+        toast(next ? "Weather-aware ordering is on." : "Weather-aware ordering is off.", "check");
+        refresh();
+      },
+      () => toast("Could not update", "warn", "critical"),
+    );
+    setSavingWeather(false);
   }
 
   async function onSaveDescription() {
@@ -212,6 +246,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
   const sitemapsConsoleUrl = siteUrl
     ? `https://search.google.com/search-console/sitemaps?resource_id=${encodeURIComponent(`${siteUrl}/`)}`
     : null;
+  const weatherStatusText = weatherStatusLine(data.weatherStatus, settings.weatherMerchandising);
 
   return (
     <div className="cd-screen cd-seo">
@@ -248,6 +283,24 @@ export default function Search({ app }: { app: DashboardCtx }) {
                 disabled={savingCrawlers}
                 ariaLabel="Let AI assistants read my store"
               />
+            </div>
+            <div className="cd-seo__row">
+              <div className="cd-seo__info">
+                <div className="cd-seo__label">Weather-aware ordering</div>
+                <div className="cd-seo__hint">
+                  Automatically float weather-relevant products to the top of your storefront collections when the
+                  local forecast calls for them.
+                </div>
+              </div>
+              <Toggle
+                value={settings.weatherMerchandising}
+                onChange={onToggleWeather}
+                disabled={savingWeather}
+                ariaLabel="Turn on weather-aware product ordering"
+              />
+            </div>
+            <div className="cd-seo__row">
+              <span className="cd-seo__hint">{weatherStatusText}</span>
             </div>
             <div className="cd-seo__row">
               <div className="cd-seo__info">

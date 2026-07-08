@@ -56,7 +56,7 @@ import {
 } from "../seo-store.server";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";
-const DEFAULTS = { allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null, googleSiteVerification: null };
+const DEFAULTS = { allowSearchEngines: true, allowAiCrawlers: true, weatherMerchandising: true, orgName: null, orgDescription: null, googleSiteVerification: null };
 
 beforeEach(() => { store.seo_settings = []; store.seo_page = []; forcedError = null; });
 
@@ -69,18 +69,22 @@ describe("getSeoSettings", () => {
   });
   it("maps a stored row and ignores the dormant allow_ai_training column", async () => {
     store.seo_settings.push({ shop_id: SHOP, allow_search_engines: true, allow_ai_crawlers: false, allow_ai_training: true, org_name: "Ember", org_description: "Candles", google_site_verification: "tok-123" });
-    expect(await getSeoSettings(SHOP)).toEqual({ allowSearchEngines: true, allowAiCrawlers: false, orgName: "Ember", orgDescription: "Candles", googleSiteVerification: "tok-123" });
+    expect(await getSeoSettings(SHOP)).toEqual({ allowSearchEngines: true, allowAiCrawlers: false, weatherMerchandising: true, orgName: "Ember", orgDescription: "Candles", googleSiteVerification: "tok-123" });
   });
   it("maps the search-engine switch off when the column is false", async () => {
     store.seo_settings.push({ shop_id: SHOP, allow_search_engines: false, allow_ai_crawlers: true, org_name: null, org_description: null });
     expect((await getSeoSettings(SHOP)).allowSearchEngines).toBe(false);
+  });
+  it("maps the weather-merchandising switch off when the column is false", async () => {
+    store.seo_settings.push({ shop_id: SHOP, allow_search_engines: true, allow_ai_crawlers: true, weather_merchandising: false, org_name: null, org_description: null });
+    expect((await getSeoSettings(SHOP)).weatherMerchandising).toBe(false);
   });
 });
 
 describe("upsertSeoSettings", () => {
   it("writes only the patched columns and returns the merged settings", async () => {
     const out = await upsertSeoSettings(SHOP, { allowAiCrawlers: false, orgName: "Ember" });
-    expect(out).toEqual({ allowSearchEngines: true, allowAiCrawlers: false, orgName: "Ember", orgDescription: null, googleSiteVerification: null });
+    expect(out).toEqual({ allowSearchEngines: true, allowAiCrawlers: false, weatherMerchandising: true, orgName: "Ember", orgDescription: null, googleSiteVerification: null });
     const out2 = await upsertSeoSettings(SHOP, { orgDescription: "Small-batch candles" });
     expect(out2.orgDescription).toBe("Small-batch candles");
     expect(out2.allowAiCrawlers).toBe(false); // preserved from the first patch
@@ -93,6 +97,12 @@ describe("upsertSeoSettings", () => {
   });
   it("throws for a non-uuid shop", async () => {
     await expect(upsertSeoSettings("demo-shop", { allowAiCrawlers: false })).rejects.toThrow();
+  });
+  it("round-trips the weather-merchandising toggle", async () => {
+    await upsertSeoSettings(SHOP, { weatherMerchandising: false });
+    expect((await getSeoSettings(SHOP)).weatherMerchandising).toBe(false);
+    await upsertSeoSettings(SHOP, { weatherMerchandising: true });
+    expect((await getSeoSettings(SHOP)).weatherMerchandising).toBe(true);
   });
 });
 

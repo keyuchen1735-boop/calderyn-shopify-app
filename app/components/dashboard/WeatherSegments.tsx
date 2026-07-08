@@ -1,7 +1,7 @@
 // Weather segments panel: icon-led per-region forecast, the merchant's home
 // location ask, and forecast-driven budget predictions (arm to execute when
 // the weather trigger verifies, or apply immediately).
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
 import { Card, Btn, Pill, Segmented } from "./ui";
 import { money, shortDate } from "./format";
 import { CDIcon } from "./icons";
@@ -11,15 +11,25 @@ import {
   type WeatherForecastDTO,
   type WeatherSuggestionDTO,
 } from "~/lib/dashboard/customers-client";
-import { conditionFor, demandLabel, sortMoves, type WeatherCondition } from "~/lib/weather/forecast-view";
+import {
+  conditionFor,
+  demandLabel,
+  demandTier,
+  sortMoves,
+  type WeatherCondition,
+} from "~/lib/weather/forecast-view";
 import { explainMove } from "~/lib/weather/explain";
 import type { WeatherMode } from "~/lib/weather/types";
+import type { RegionMapView } from "./WeatherRegionMap";
+
+// Own chunk: keeps maplibre-gl (~230KB gz) out of the main dashboard bundle.
+const WeatherRegionMap = lazy(() => import("./WeatherRegionMap"));
 
 const REGION_LABEL: Record<string, string> = {
-  "us-west": "West",
-  "us-central": "Central",
-  "us-south": "South",
-  "us-east": "East",
+  "us-west": "US West",
+  "us-central": "US Central",
+  "us-south": "US South",
+  "us-east": "US East",
 };
 
 const COND_ICON: Record<WeatherCondition, string> = {
@@ -77,6 +87,7 @@ export function WeatherSegments({
   toast,
   mode,
   onMode,
+  dark = true,
 }: {
   suggestions: WeatherSuggestionDTO[];
   onIntent: (id: string, intent: "apply" | "arm" | "dismiss") => void;
@@ -85,6 +96,8 @@ export function WeatherSegments({
    *  (predictions arm and execute unattended). */
   mode: WeatherMode;
   onMode: (next: WeatherMode) => void;
+  /** Dashboard night-mode flag — drives the map basemap style. */
+  dark?: boolean;
 }) {
   const auto = mode === "auto";
   const [forecast, setForecast] = useState<WeatherForecastDTO | null>(null);
@@ -145,6 +158,27 @@ export function WeatherSegments({
   const [dayKey, setDayKey] = useState("0");
   const days = forecast?.regions.find((r) => r.days && r.days.length > 0)?.days ?? [];
   const dayIdx = days.length > 0 ? Math.min(Number(dayKey), days.length - 1) : null;
+
+  // One per-region view feeds both the map markers and the card grid, so the
+  // day-narrowing rule and demand tiers can't drift between the two surfaces.
+  const regionViews = (forecast?.regions ?? []).map((r) => {
+    const disp = dayIdx !== null ? r.days?.[dayIdx] ?? r : r;
+    const cond = conditionFor(disp);
+    const view: RegionMapView & { cond: WeatherCondition; disp: typeof disp; score: number } = {
+      region: r.region,
+      label: REGION_LABEL[r.region] ?? r.region,
+      home: forecast?.homeRegion === r.region,
+      icon: COND_ICON[cond],
+      color: COND_COLOR[cond],
+      tempF: fahrenheit(disp.avgTempC),
+      tier: demandTier(r.score),
+      demandText: demandLabel(r.score).label,
+      cond,
+      disp,
+      score: r.score,
+    };
+    return view;
+  });
 
   // Manual: pending moves wait for approve/reject/schedule. Auto: moves run
   // unattended; executed ones surface below with when and why.
@@ -338,6 +372,22 @@ export function WeatherSegments({
             Loading forecast…
           </div>
         ) : (
+          <>
+            {regionViews.length > 0 ? (
+              <div style={{ height: 280, borderBottom: "0.5px solid var(--hairline-strong)" }}>
+                <Suspense fallback={null}>
+                  <WeatherRegionMap
+                    views={regionViews}
+                    dark={dark}
+                    onLocate={(lat, lon) => void saveLocation(lat, lon)}
+                    onLocateError={() => {
+                      setGeoDenied(true);
+                      toast("Couldn't get your location — check permissions", "x", "critical");
+                    }}
+                  />
+                </Suspense>
+              </div>
+            ) : null}
           <div
             style={{
               display: "grid",
@@ -346,55 +396,44 @@ export function WeatherSegments({
               padding: "12px 16px 16px",
             }}
           >
-            {forecast.regions.map((r) => {
-              // A selected day narrows the icon/temp/precip to that day; the
-              // demand meter stays window-level (scores are 3-day quantities).
-              const disp = dayIdx !== null ? r.days?.[dayIdx] ?? r : r;
-              const cond = conditionFor(disp);
-              const home = forecast.homeRegion === r.region;
-              return (
-                <div
-                  key={r.region}
-                  className="cd-trow"
-                  style={{ display: "block", padding: "14px 12px", borderRadius: 10, textAlign: "center" }}
-                >
-                  <CDIcon
-                    name={COND_ICON[cond]}
-                    size={34}
-                    strokeWidth={1.5}
-                    style={{ color: COND_COLOR[cond] }}
-                  />
-                  <div className="tabular-nums" style={{ fontSize: 25, fontWeight: 650, lineHeight: 1.2 }}>
-                    {fahrenheit(disp.avgTempC)}°
-                  </div>
-                  <div
-                    className="cd-caption"
-                    style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4 }}
-                  >
-                    {home ? (
-                      <CDIcon name="mapPin" size={11} strokeWidth={2.2} style={{ color: "var(--accent)" }} />
-                    ) : null}
-                    {REGION_LABEL[r.region] ?? r.region}
-                  </div>
-                  {/* Slot is always rendered so every card's demand meter sits
-                      on the same line regardless of precipitation. */}
-                  <div className="cd-caption tabular-nums" style={{ marginTop: 4, minHeight: 16 }}>
-                    {cond !== "clear" ? (
-                      <>
-                        <CDIcon name={cond === "snow" ? "snowflake" : "rain"} size={11} />{" "}
-                        {cond === "snow"
-                          ? `${Math.round(disp.snowCm)}cm`
-                          : `${Math.round(disp.precipMm)}mm`}
-                      </>
-                    ) : null}
-                  </div>
-                  <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
-                    <Pill tone={demandLabel(r.score).tone}>{demandLabel(r.score).label}</Pill>
-                  </div>
+            {regionViews.map((v) => (
+              <div
+                key={v.region}
+                className="cd-trow"
+                style={{ display: "block", padding: "14px 12px", borderRadius: 10, textAlign: "center" }}
+              >
+                <CDIcon name={v.icon} size={34} strokeWidth={1.5} style={{ color: v.color }} />
+                <div className="tabular-nums" style={{ fontSize: 25, fontWeight: 650, lineHeight: 1.2 }}>
+                  {v.tempF}°
                 </div>
-              );
-            })}
+                <div
+                  className="cd-caption"
+                  style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4 }}
+                >
+                  {v.home ? (
+                    <CDIcon name="mapPin" size={11} strokeWidth={2.2} style={{ color: "var(--accent)" }} />
+                  ) : null}
+                  {v.label}
+                </div>
+                {/* Slot is always rendered so every card's demand meter sits
+                    on the same line regardless of precipitation. */}
+                <div className="cd-caption tabular-nums" style={{ marginTop: 4, minHeight: 16 }}>
+                  {v.cond !== "clear" ? (
+                    <>
+                      <CDIcon name={v.cond === "snow" ? "snowflake" : "rain"} size={11} />{" "}
+                      {v.cond === "snow"
+                        ? `${Math.round(v.disp.snowCm)}cm`
+                        : `${Math.round(v.disp.precipMm)}mm`}
+                    </>
+                  ) : null}
+                </div>
+                <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
+                  <Pill tone={demandLabel(v.score).tone}>{v.demandText}</Pill>
+                </div>
+              </div>
+            ))}
           </div>
+          </>
         )}
       </Card>
 

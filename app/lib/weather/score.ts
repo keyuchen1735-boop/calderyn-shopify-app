@@ -28,8 +28,10 @@ const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
 export function favorability(f: RegionForecast): number {
   const coldness = clamp01((18 - f.avgTempC) / 30);
-  const wetness = clamp01(f.precipMm / 30);
+  // 15mm over the window saturates wetness — a plainly rainy stretch should
+  // read as elevated demand on its own, not only when it's also cold.
+  const wetness = clamp01(f.precipMm / 15);
   const snowiness = clamp01(f.snowCm / 10);
   const darkness = clamp01((12 - f.avgDaylightH) / 6);
-  return 0.4 * coldness + 0.3 * wetness + 0.2 * snowiness + 0.1 * darkness;
+  return 0.35 * coldness + 0.35 * wetness + 0.2 * snowiness + 0.1 * darkness;
 }

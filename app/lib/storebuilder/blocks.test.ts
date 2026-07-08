@@ -33,6 +33,24 @@ describe("starter blocks", () => {
     expect(flavor.productGrid).toBe("dynamic");
   });
 
+  it("collectionList renders category cards with live item counts", () => {
+    const cl = STARTER_BLOCKS.find((b) => b.type === "collectionList")!;
+    const html = renderToStaticMarkup(createElement(cl.Component, { props: cl.validateProps({ heading: "Browse" }), ctx: ctx() }));
+    expect(html).toContain("cd-collection-card"); // a card, not a bare chip link
+    expect(html).toContain("Summer");
+    expect(html).toContain("1 item"); // live count from productsByCollection
+  });
+
+  it("collectionList omits the count when the collection has no loaded products", () => {
+    const cl = STARTER_BLOCKS.find((b) => b.type === "collectionList")!;
+    const bare: RenderContext = {
+      data: { collections: [{ handle: "winter", title: "Winter" }], productsByCollection: {}, productsById: {}, allProducts: [] },
+    };
+    const html = renderToStaticMarkup(createElement(cl.Component, { props: cl.validateProps({ heading: "Browse" }), ctx: bare }));
+    expect(html).toContain("Winter");
+    expect(html).not.toContain("item");
+  });
+
   it("featureRow renders a card per value prop (accepts text/body), and nothing when empty", () => {
     const fr = STARTER_BLOCKS.find((b) => b.type === "featureRow")!;
     const clean = fr.validateProps({

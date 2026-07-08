@@ -106,14 +106,17 @@ export function applySecurityHeaders(headers: Headers, pathname?: string): void 
 
   // The studio's own draft preview: allow same-origin framing only. SAMEORIGIN
   // for legacy browsers, frame-ancestors 'self' for the rest — cross-origin
-  // clickjacking is still refused. The page is a display-only, script-free
-  // render, so script-src 'none' keeps the isolation even on a top-level load
-  // (not just inside the parent's sandboxed iframe).
+  // clickjacking is still refused. The page displays sanitized store HTML and
+  // hydrates first-party effect runtimes (shader/motion), so it runs its own
+  // bundles plus Remix's inline hydration context: script-src 'self'
+  // 'unsafe-inline'. Model-authored script never reaches here — the HTML
+  // sanitizer strips it at persistence — and remote script stays blocked, so no
+  // third-party code can execute.
   if (pathname !== undefined && SELF_FRAMEABLE_PATH.test(pathname)) {
     headers.set("X-Frame-Options", "SAMEORIGIN");
     headers.set(
       "Content-Security-Policy",
-      `frame-ancestors 'self'; script-src 'none'; ${HARDENING_DIRECTIVES.join("; ")};`,
+      `frame-ancestors 'self'; script-src 'self' 'unsafe-inline'; ${HARDENING_DIRECTIVES.join("; ")};`,
     );
     return;
   }

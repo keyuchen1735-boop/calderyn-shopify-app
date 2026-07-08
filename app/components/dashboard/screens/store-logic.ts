@@ -1,7 +1,8 @@
 // Pure logic for the Store studio screen (kept out of Store.tsx so it is
 // testable without rendering — same pattern as dashboard-layout.ts).
 import type { Screen } from "../context";
-import type { StudioVibe } from "~/lib/storebuilder/studio-types";
+import { BUILD_STAGES, STUDIO_IMAGE_MEDIA_TYPES, type BuildStage, type StudioVibe } from "~/lib/storebuilder/studio-types";
+export { parseBuildEvent, type BuildEvent, type BuildStage } from "~/lib/storebuilder/studio-types";
 
 export interface StoreReadiness {
   /** Live (active) products the storefront actually renders. */
@@ -22,7 +23,7 @@ export interface MissingPiece {
 }
 
 export type BuildPhase =
-  | { kind: "running" }
+  | { kind: "running"; stage?: BuildStage }
   | { kind: "done"; status: "draft" | "no_products" | "failed" }
   | { kind: "failed"; message: string };
 
@@ -31,6 +32,25 @@ export interface BuildStepView {
   dotColor?: string;
   title: string;
   sub: string;
+}
+
+const STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
+  { stage: "brand", title: "Reading your catalog", sub: "Naming the brand and picking its palette." },
+  { stage: "designing", title: "Designing your pages", sub: "Home, collection and product pages." },
+  { stage: "checking", title: "Verifying links & layout", sub: "Every link checked against your catalog." },
+];
+
+/** Multi-row live progress for the streaming build: each row is a REAL stage the
+ *  server reported. Without a stage (the non-streaming fallback) and for terminal
+ *  phases, this collapses to the single legacy row. */
+export function buildSteps(phase: BuildPhase): BuildStepView[] {
+  if (phase.kind !== "running" || !phase.stage) return [buildStep(phase)];
+  const at = BUILD_STAGES.indexOf(phase.stage);
+  return STAGE_ROWS.map((r, i) => ({
+    dot: i < at ? "done" : i === at ? "run" : "wait",
+    title: r.title,
+    sub: r.sub,
+  }));
 }
 
 /** Progress copy for the floating build step. A no-products run still drafted
@@ -145,22 +165,44 @@ const HERO_QUOTE_RE = /headline (?:to say|to|says?|reading) ["']?([^"']{4,60})["
 const HEX_RE = /#[0-9a-f]{6}\b/i;
 const EXPERIMENT_RE = /\b(test|optimi[sz]e|experiment|a\/b)\b/i;
 const EXPERIMENT_VIBE_HINT_RE = /\b(vibe|look|style|design)\b/i;
+// An explicit build verb is a rebuild ask no matter what adjectives ride along.
+const BUILD_VERB_RE = /\b(rebuild|redesign|regenerate|redo|build|generate|create)\b/i;
+// Vibe/accent word-matches only apply to short imperative tweaks ("make it
+// bolder", "use blue"). Sentence-length briefs routinely contain the same
+// adjectives ("a bold alpine brand — dark, dramatic") and must reach the real
+// generator instead of silently flipping a setting.
+const MAX_TOGGLE_WORDS = 6;
 
-/** Parse a chat (or markup-note) message into the one real action it maps to. */
-export function parseChatIntent(text: string): ChatIntent {
+/**
+ * Parse a chat (or markup-note) message into the one real action it maps to.
+ * The build-verb and word-count gates exist to stop sentence-length briefs in
+ * the composer from being hijacked into cheap toggles; the markup channel
+ * never generates (its unmatched fallback is "noted"), so it keeps the
+ * permissive matching — gating it would only turn working edits into no-ops.
+ */
+export function parseChatIntent(text: string, channel: "composer" | "note" = "composer"): ChatIntent {
   const t = text.trim();
+  const permissive = channel === "note";
 
   const heroMatch = t.match(HERO_QUOTE_RE);
   if (heroMatch) return { kind: "hero", headline: heroMatch[1].trim() };
 
-  for (const vibe of VIBE_PRIORITY) {
-    if (VIBE_WORDS[vibe].test(t)) return { kind: "vibe", vibe };
-  }
+  if (!permissive && BUILD_VERB_RE.test(t)) return { kind: "generate", brief: t };
 
+  // A raw #rrggbb is machine-readable and unambiguous at any message length.
   const hex = t.match(HEX_RE);
   if (hex) return { kind: "accent", color: hex[0].toLowerCase() };
-  for (const word of Object.keys(ACCENT_WORDS)) {
-    if (new RegExp(`\\b${word}\\b`, "i").test(t)) return { kind: "accent", color: ACCENT_WORDS[word] };
+
+  // Count word-bearing tokens only, so spaced punctuation ("dark — moodier")
+  // does not eat into the toggle budget.
+  const words = t.split(/\s+/).filter((w) => /\w/.test(w)).length;
+  if (permissive || words <= MAX_TOGGLE_WORDS) {
+    for (const vibe of VIBE_PRIORITY) {
+      if (VIBE_WORDS[vibe].test(t)) return { kind: "vibe", vibe };
+    }
+    for (const word of Object.keys(ACCENT_WORDS)) {
+      if (new RegExp(`\\b${word}\\b`, "i").test(t)) return { kind: "accent", color: ACCENT_WORDS[word] };
+    }
   }
 
   if (EXPERIMENT_RE.test(t)) {
@@ -177,6 +219,57 @@ export function isDeterministicChatIntent(
   intent: ChatIntent,
 ): intent is Extract<ChatIntent, { kind: "vibe" | "accent" | "hero" }> {
   return intent.kind === "vibe" || intent.kind === "accent" || intent.kind === "hero";
+}
+
+// ---- composer attachments (staging) -----------------------------------------
+//
+// Images picked/dropped in the chat composer are STAGED as chips, not converted
+// on the spot — they travel with the next message. The rules below mirror the
+// server's multipart caps (app/routes/dashboard.api.store.tsx) so an over-limit
+// pick is rejected in chat before it can fail at the API boundary.
+
+export const MAX_STAGED_ATTACHMENTS = 4;
+// Mirrors the route's MAX_IMAGE_BYTES: 3,932,160 raw bytes (~3.75 MiB) stays
+// under Anthropic's per-image ceiling once base64-inflated.
+export const MAX_ATTACHMENT_BYTES = 3_932_160;
+
+export interface StagePlan {
+  /** Files accepted for staging, in order (image, within size, within the cap). */
+  accepted: File[];
+  /** Non-image files, rejected with the "images only" message. */
+  skipped: File[];
+  /** Images over the byte cap, rejected by name. */
+  oversize: File[];
+  /** How many within-size images were dropped because the 4-image cap was hit. */
+  overflow: number;
+}
+
+/** Decide which picked/dropped files can be staged, given how many are already
+ *  staged. Pure so the non-image / oversize / over-cap rules stay unit-testable
+ *  apart from the object-URL + React state work the screen layers on top. */
+export function planStagedAttachments(files: File[], alreadyStaged: number): StagePlan {
+  // Exact server allowlist (studio-types.ts), not image/* — a drag-dropped HEIC or
+  // SVG would otherwise chip up here and dead-end in a 422 at send.
+  const allowed: ReadonlySet<string> = new Set<string>(STUDIO_IMAGE_MEDIA_TYPES);
+  const skipped = files.filter((f) => !allowed.has(f.type));
+  const images = files.filter((f) => allowed.has(f.type));
+  const oversize = images.filter((f) => f.size > MAX_ATTACHMENT_BYTES);
+  const withinSize = images.filter((f) => f.size <= MAX_ATTACHMENT_BYTES);
+  const slots = Math.max(0, MAX_STAGED_ATTACHMENTS - alreadyStaged);
+  const accepted = withinSize.slice(0, slots);
+  return { accepted, skipped, oversize, overflow: withinSize.length - accepted.length };
+}
+
+/** Whether the composer's send button (and Enter) fires: some text OR at least
+ *  one staged attachment, and not mid-build (busy) or mid-add (attaching). */
+export function canSendComposer(input: {
+  prompt: string;
+  attachmentCount: number;
+  busy: boolean;
+  attaching: boolean;
+}): boolean {
+  if (input.busy || input.attaching) return false;
+  return input.prompt.trim().length > 0 || input.attachmentCount > 0;
 }
 
 // ---- welcome overlay (first run) --------------------------------------------

@@ -143,6 +143,22 @@ export async function apiSend<T>(
   return (await res.json()) as T;
 }
 
+/** POST multipart FormData with the same-origin + CSRF conventions apiSend uses,
+ *  but WITHOUT a Content-Type header so the browser sets the multipart boundary
+ *  (same rule as uploadProductImage). Errors parse to a DashboardApiError with
+ *  the server's code/message, like apiSend. */
+export async function apiSendForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { Origin: location.origin },
+    body: form,
+  });
+  if (res.status === 401) redirectToLogin();
+  if (!res.ok) throw await toApiError(res);
+  return (await res.json()) as T;
+}
+
 // --- adapters --------------------------------------------------------------
 
 /**

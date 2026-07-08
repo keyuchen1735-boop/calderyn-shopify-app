@@ -3,10 +3,30 @@
 
 import { describe, it, expect, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { backfillGoogle } from "../ingest.server";
+import { backfillGoogle, reportGaql90d } from "../ingest.server";
 import type { GoogleAdsClient } from "../client.server";
 
 const SHOP = "00000000-0000-0000-0000-000000000002";
+
+describe("reportGaql90d — 90-day backfill spend query", () => {
+  it("uses an explicit BETWEEN date range, not the invalid LAST_90_DAYS literal", () => {
+    const gaql = reportGaql90d();
+    // Google Ads rejects `DURING LAST_90_DAYS` (INVALID_VALUE_WITH_DURING_OPERATOR);
+    // there is no such predefined range.
+    expect(gaql).not.toMatch(/DURING/);
+    expect(gaql).not.toMatch(/LAST_90_DAYS/);
+    // Inclusive range of two YYYY-MM-DD literals.
+    expect(gaql).toMatch(/WHERE segments\.date BETWEEN '\d{4}-\d{2}-\d{2}' AND '\d{4}-\d{2}-\d{2}'/);
+  });
+
+  it("spans ~90 days ending today", () => {
+    const m = reportGaql90d().match(/BETWEEN '(\d{4}-\d{2}-\d{2})' AND '(\d{4}-\d{2}-\d{2})'/);
+    expect(m).not.toBeNull();
+    const [, start, end] = m!;
+    const days = (Date.parse(end) - Date.parse(start)) / (24 * 60 * 60 * 1000);
+    expect(days).toBe(90);
+  });
+});
 
 type SelectResult = { data: Array<Record<string, unknown>>; error: null };
 
