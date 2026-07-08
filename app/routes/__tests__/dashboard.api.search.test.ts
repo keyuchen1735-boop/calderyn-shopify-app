@@ -33,7 +33,11 @@ vi.mock("~/lib/dashboard/http.server", () => ({
   dashboardJson: async (fn: () => Promise<unknown>) => new Response(JSON.stringify(await fn()), { status: 200 }),
   jsonError: (s: number, e: string, m?: string) => new Response(JSON.stringify({ error: e, message: m }), { status: s }),
 }));
-vi.mock("~/lib/seo/seo-store.server", () => ({
+// Keep the real cleanGoogleToken (a pure helper, thoroughly unit-tested in
+// seo-store.server.test.ts) so the action's extraction path is exercised for real;
+// only the DB-touching reads/writes are stubbed.
+vi.mock("~/lib/seo/seo-store.server", async (importActual) => ({
+  ...(await importActual() as Record<string, unknown>),
   getSeoSettings: getSeoSettingsMock,
   upsertSeoSettings: upsertSeoSettingsMock,
 }));
