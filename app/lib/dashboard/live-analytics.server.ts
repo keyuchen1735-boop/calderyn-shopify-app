@@ -76,7 +76,7 @@ export async function buildLiveSnapshot(
   const todayStart = storeTodayStartIso(tz, now);
   const nowWindowStartMs = now.getTime() - VISITORS_NOW_WINDOW_MS;
 
-  const [eventsRes, ordersRes] = await Promise.all([
+  const [eventsRes, ordersRes, refundsRes] = await Promise.all([
     sb
       .from("storefront_event")
       .select("session_id, is_returning, type, country, created_at")
@@ -86,14 +86,30 @@ export async function buildLiveSnapshot(
       .from("orders")
       .select("id, total_cents, currency, created_at, attribution")
       .eq("shop_id", shopId)
-      .eq("financial_status", "paid")
+      // Keep partially/fully-refunded orders in gross (the sale happened); their
+      // refunded cents are netted out of total sales below via refund_fact,
+      // mirroring the 30-day model's SALE_STATES semantics.
+      .in("financial_status", ["paid", "partially_refunded", "refunded"])
       .gte("created_at", todayStart)
       .order("created_at", { ascending: false }),
+    // Native refunds processed today (external_id gid://calderyn/…). Migrated
+    // Shopify refunds are netted elsewhere, so they are excluded here to avoid
+    // double-counting. A single shop's one-day refunds are far below the
+    // 1000-row clamp, so no paging is needed.
+    sb
+      .from("refund_fact")
+      .select("subtotal_cents")
+      .eq("shop_id", shopId)
+      .like("external_id", "gid://calderyn/%")
+      .gte("processed_at", todayStart),
   ]);
   if (eventsRes.error) fail("events read", eventsRes.error);
   if (ordersRes.error) fail("orders read", ordersRes.error);
+  if (refundsRes.error) fail("refunds read", refundsRes.error);
   const events = (eventsRes.data ?? []) as EventRow[];
   const orders = (ordersRes.data ?? []) as OrderRow[];
+  const refunds = (refundsRes.data ?? []) as { subtotal_cents: number | null }[];
+  const todayNativeRefundCents = refunds.reduce((n, r) => n + Number(r.subtotal_cents ?? 0), 0);
 
   // Lines for today's paid orders, fetched in bounded id chunks.
   const lines: LineRow[] = [];
@@ -176,7 +192,8 @@ export async function buildLiveSnapshot(
     // sales use orders.created_at (no paid-at timestamp exists), and mixed
     // currencies would be summed as-is with the most recent order's currency
     // label — revisit when a multi-currency tenant onboards.
-    total_sales_today_cents: orders.reduce((n, o) => n + Number(o.total_cents), 0),
+    total_sales_today_cents:
+      orders.reduce((n, o) => n + Number(o.total_cents), 0) - todayNativeRefundCents,
     currency: orders[0]?.currency ?? "usd",
     orders_today: orders.length,
     funnel: {
