@@ -8,6 +8,7 @@
 import { getSupabase } from "../supabase.server";
 import { signMediaPaths } from "../catalog/sign-media.server";
 import { boostByWeather, WEATHER_CONDITIONS, type WeatherCondition } from "../weather/affinity";
+import { getSeoSettings } from "../seo/seo-store.server";
 import type {
   StorefrontCatalog,
   StoreProduct,
@@ -195,8 +196,9 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
 // Current weather condition for a shop's active location, memoized in-process for
 // WEATHER_CACHE_TTL_MS so a busy storefront doesn't re-query region_weather on
 // every product-list render. Fully fail-safe: any read error (missing location,
-// missing region_weather row, a DB hiccup) falls back to "neutral" — a broken
-// weather signal must never break or slow the public storefront.
+// missing region_weather row, a DB hiccup, or the merchant's own toggle) falls
+// back to "neutral" — a broken weather signal must never break or slow the
+// public storefront.
 const WEATHER_CACHE_TTL_MS = 5 * 60 * 1000;
 const weatherConditionCache = new Map<string, { condition: WeatherCondition; expiresAt: number }>();
 
@@ -206,25 +208,30 @@ async function shopWeatherCondition(shopId: string): Promise<WeatherCondition> {
 
   let condition: WeatherCondition = "neutral";
   try {
-    const sb = getSupabase();
-    const { data: location } = await sb
-      .from("location_dim")
-      .select("region")
-      .eq("shop_id", shopId)
-      .eq("active", true)
-      .not("region", "is", null)
-      .limit(1)
-      .maybeSingle();
-    const region = (location as Row | null)?.region as string | undefined;
-    if (region) {
-      const { data: weather } = await sb
-        .from("region_weather")
-        .select("condition")
-        .eq("region", region)
+    // Merchant off-switch: read this before resolving the region so an opted-out
+    // shop never pays for the region_weather lookup either.
+    const settings = await getSeoSettings(shopId);
+    if (settings.weatherMerchandising) {
+      const sb = getSupabase();
+      const { data: location } = await sb
+        .from("location_dim")
+        .select("region")
+        .eq("shop_id", shopId)
+        .eq("active", true)
+        .not("region", "is", null)
+        .limit(1)
         .maybeSingle();
-      const stored = (weather as Row | null)?.condition as string | undefined;
-      if (stored && (WEATHER_CONDITIONS as readonly string[]).includes(stored)) {
-        condition = stored as WeatherCondition;
+      const region = (location as Row | null)?.region as string | undefined;
+      if (region) {
+        const { data: weather } = await sb
+          .from("region_weather")
+          .select("condition")
+          .eq("region", region)
+          .maybeSingle();
+        const stored = (weather as Row | null)?.condition as string | undefined;
+        if (stored && (WEATHER_CONDITIONS as readonly string[]).includes(stored)) {
+          condition = stored as WeatherCondition;
+        }
       }
     }
   } catch (err) {
