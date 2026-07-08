@@ -10,6 +10,7 @@ import {
   TableSkeleton,
 } from "../ui";
 import { scorePillStyle } from "../score-pill";
+import { creativeEmptyText } from "./campaign-creative-status";
 import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
 import { money, timeAgo } from "../format";
 import { CDIcon } from "../icons";
@@ -515,14 +516,15 @@ function CampaignDetail({
   const cre: CreativeInput | null = firstAd?.creative ?? null;
   const creFormat =
     cre?.mediaKind === "video" ? "Video" : cre?.mediaKind === "image" || cre?.imageUrl ? "Image" : "—";
+  // Live creative preview + regeneration are Meta-only (the only platform with a
+  // creative fetcher), so a TikTok/Google campaign never shows Meta-connect
+  // guidance or the Meta-only creative tools.
+  const isMeta = c.platform === "Meta";
   // Honest message for the empty creative slot, by cause.
-  const creEmptyText = creativesLoadError
-    ? "Couldn't load the creative — refresh to retry"
-    : !creativeData
-      ? "Loading creative…"
-      : !creativeData.metaConnected
-        ? "Connect Meta to see this campaign's creative"
-        : "No creative yet";
+  const creEmptyText = creativeEmptyText(c.platform, {
+    loadError: creativesLoadError,
+    data: creativeData,
+  });
 
   const creativeCard = (
     <Card pad={false}>
@@ -733,33 +735,39 @@ function CampaignDetail({
               Cut budget 30%
             </Btn>
           </span>
-          <Btn small icon="sparkle" disabled={regenBusy} onClick={runRegen}>
-            {regenBusy ? "Generating…" : "Regenerate"}
-          </Btn>
-          {metaCanPushDrafts ? (
-            bestVariant ? (
-              <Btn
-                small
-                kind="primary"
-                icon="arrowUpRight"
-                disabled={pushing}
-                onClick={() => pushVariant(bestVariant)}
-              >
-                Push to Meta
+          {/* Regenerate + Push to Meta are Meta-only creative tools — hidden on
+              Google/TikTok campaigns, which have no creative fetcher to draft from. */}
+          {isMeta && (
+            <>
+              <Btn small icon="sparkle" disabled={regenBusy} onClick={runRegen}>
+                {regenBusy ? "Generating…" : "Regenerate"}
               </Btn>
-            ) : (
-              <Tooltip content="Run Regenerate first — the strongest variant pushes to Meta as a paused draft.">
-                <Btn small kind="primary" icon="arrowUpRight" disabled>
-                  Push to Meta
-                </Btn>
-              </Tooltip>
-            )
-          ) : (
-            <Tooltip content="Reconnect Meta with ad-management access to enable drafts">
-              <Btn small icon="lock" disabled>
-                Push to Meta
-              </Btn>
-            </Tooltip>
+              {metaCanPushDrafts ? (
+                bestVariant ? (
+                  <Btn
+                    small
+                    kind="primary"
+                    icon="arrowUpRight"
+                    disabled={pushing}
+                    onClick={() => pushVariant(bestVariant)}
+                  >
+                    Push to Meta
+                  </Btn>
+                ) : (
+                  <Tooltip content="Run Regenerate first — the strongest variant pushes to Meta as a paused draft.">
+                    <Btn small kind="primary" icon="arrowUpRight" disabled>
+                      Push to Meta
+                    </Btn>
+                  </Tooltip>
+                )
+              ) : (
+                <Tooltip content="Reconnect Meta with ad-management access to enable drafts">
+                  <Btn small icon="lock" disabled>
+                    Push to Meta
+                  </Btn>
+                </Tooltip>
+              )}
+            </>
           )}
         </div>
       </header>
