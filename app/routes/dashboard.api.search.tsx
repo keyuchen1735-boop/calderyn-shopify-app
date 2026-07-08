@@ -7,19 +7,22 @@ import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 import { buildStoreDescription } from "~/lib/seo/writer.server";
+import { shopRegionCondition } from "~/lib/weather/shop-region.server";
 
 // The Preferences screen (see Search.tsx) exposes the controls a merchant has —
-// search-engine access, AI-assistant access, a store description, and the
-// "Get found on Google" helper. The loader hands back this shop's SEO settings
-// plus its live sitemap URL (null until the shop has a storefront slug).
+// search-engine access, AI-assistant access, weather-aware ordering, a store
+// description, and the "Get found on Google" helper. The loader hands back this
+// shop's SEO settings plus its live sitemap URL (null until the shop has a
+// storefront slug) and its current weather status (null when unresolvable).
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request); // auth gate; settings are this shop's own data
   return dashboardJson(async () => {
-    const [settings, origin] = await Promise.all([
+    const [settings, origin, weatherStatus] = await Promise.all([
       getSeoSettings(session.shopId),
       getShopStorefrontOrigin(session.shopId),
+      shopRegionCondition(session.shopId),
     ]);
-    return { settings, sitemapUrl: origin ? `${origin}/sitemap.xml` : null };
+    return { settings, sitemapUrl: origin ? `${origin}/sitemap.xml` : null, weatherStatus };
   });
 }
 
@@ -27,6 +30,7 @@ interface SearchBody {
   action?: string;
   allowSearchEngines?: boolean;
   allowAiCrawlers?: boolean;
+  weatherMerchandising?: boolean;
   orgName?: string | null;
   orgDescription?: string | null;
   googleSiteVerification?: string | null;
@@ -63,6 +67,7 @@ export async function action({ request }: ActionFunctionArgs) {
       const patch: Record<string, unknown> = {};
       if (typeof body.allowSearchEngines === "boolean") patch.allowSearchEngines = body.allowSearchEngines;
       if (typeof body.allowAiCrawlers === "boolean") patch.allowAiCrawlers = body.allowAiCrawlers;
+      if (typeof body.weatherMerchandising === "boolean") patch.weatherMerchandising = body.weatherMerchandising;
       if (body.orgName === null || typeof body.orgName === "string") {
         if (typeof body.orgName === "string" && body.orgName.length > ORG_NAME_MAX) {
           return jsonError(422, "bad_request", `store name must be ${ORG_NAME_MAX} characters or fewer`);

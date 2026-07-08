@@ -8,6 +8,7 @@ import { apiGet, apiSend } from "./client";
 export interface SeoSettings {
   allowSearchEngines: boolean;
   allowAiCrawlers: boolean;
+  weatherMerchandising: boolean;
   orgName: string | null;
   orgDescription: string | null;
   googleSiteVerification: string | null;
@@ -17,6 +18,9 @@ export interface SearchOverviewVM {
   settings: SeoSettings;
   // This shop's live sitemap URL, or null until it has a storefront slug.
   sitemapUrl: string | null;
+  // This shop's current storefront weather condition, or null when it can't be
+  // resolved (no store location set yet, or no cached forecast for its region).
+  weatherStatus: { region: string; condition: "sun" | "storm" | "neutral" } | null;
 }
 
 // The Preferences screen's own read: just this shop's SEO settings. The loader

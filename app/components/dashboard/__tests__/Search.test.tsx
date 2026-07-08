@@ -10,7 +10,7 @@ vi.mock("~/lib/dashboard/search-client", () => ({
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
-import Search, { loadSearchOverview, saveSetting } from "../screens/Search";
+import Search, { loadSearchOverview, saveSetting, weatherStatusLine } from "../screens/Search";
 // eslint-disable-next-line import/first
 import { cacheScreenData, clearScreenCache, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 // eslint-disable-next-line import/first
@@ -23,8 +23,8 @@ import { fetchSearchOverview, updateSettings } from "~/lib/dashboard/search-clie
 import type { SeoSettings, SearchOverviewVM } from "~/lib/dashboard/search-client";
 
 const app = { toast: () => {}, navigate: () => {} } as unknown as DashboardCtx;
-const settings: SeoSettings = { allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null, googleSiteVerification: null };
-const overview: SearchOverviewVM = { settings, sitemapUrl: "https://demo.calderyncompany.com/sitemap.xml" };
+const settings: SeoSettings = { allowSearchEngines: true, allowAiCrawlers: true, weatherMerchandising: true, orgName: null, orgDescription: null, googleSiteVerification: null };
+const overview: SearchOverviewVM = { settings, sitemapUrl: "https://demo.calderyncompany.com/sitemap.xml", weatherStatus: null };
 
 beforeEach(() => {
   clearScreenCache();
@@ -39,8 +39,9 @@ describe("Search screen (smoke)", () => {
     // The two plain enable-rows a merchant controls.
     expect(html).toContain("Search engines (SEO)");
     expect(html).toContain("AI assistants (AIO)");
-    // Two switches (search + AI); the description field has none.
-    expect(html.match(/role="switch"/g)?.length).toBe(2);
+    expect(html).toContain("Weather-aware ordering");
+    // Three switches (search + AI + weather); the description field has none.
+    expect(html.match(/role="switch"/g)?.length).toBe(3);
   });
 
   it("shows the skeleton before any data is cached", () => {
@@ -193,5 +194,33 @@ describe("search route registration", () => {
 
   it("exposes a stable cache key", () => {
     expect(SCREEN_CACHE_KEYS.search).toBe("search");
+  });
+});
+
+describe("Search access toggles — weather-aware ordering", () => {
+  it("saves the weather flag and reports success", async () => {
+    vi.mocked(updateSettings).mockResolvedValueOnce({
+      settings: { ...settings, weatherMerchandising: false },
+    });
+    let saved = 0;
+    await saveSetting({ weatherMerchandising: false }, () => { saved++; }, () => {});
+    expect(updateSettings).toHaveBeenCalledWith({ weatherMerchandising: false });
+    expect(saved).toBe(1);
+  });
+});
+
+describe("weatherStatusLine", () => {
+  it("prompts to set a location when the status is unresolved", () => {
+    expect(weatherStatusLine(null, true)).toContain("Set a store location");
+  });
+  it("shows the forecast but not the boost when the toggle is off", () => {
+    const line = weatherStatusLine({ region: "us-east", condition: "storm" }, false);
+    expect(line).toContain("cold & wet");
+    expect(line).toContain("Turn on");
+  });
+  it("describes the active boost per condition when on", () => {
+    expect(weatherStatusLine({ region: "us-east", condition: "storm" }, true)).toContain("rain");
+    expect(weatherStatusLine({ region: "us-west", condition: "sun" }, true)).toContain("warm-weather");
+    expect(weatherStatusLine({ region: "us-central", condition: "neutral" }, true)).toContain("no weather change");
   });
 });

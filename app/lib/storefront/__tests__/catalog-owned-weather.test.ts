@@ -65,4 +65,22 @@ describe("ownedCatalog.listProducts — weather merchandising", () => {
 
     expect(out.map((p) => p.id)).toEqual(["p-mug", "p-umbrella"]);
   });
+
+  it("leaves order unchanged under a storm condition when weather_merchandising is off", async () => {
+    tableRows.product_dim = [
+      { id: "p-mug", handle: "mug", title: "Mug", description: "", category: "Mugs", tags: [] },
+      { id: "p-umbrella", handle: "umbrella", title: "Umbrella", description: "", category: "Umbrellas", tags: [] },
+    ];
+    // getSeoSettings only reads the DB for a real (uuid) shop_id — use a
+    // distinct uuid so this case's off-toggle doesn't collide with the
+    // module-level weather-condition memo used by the other cases.
+    tableSingle.seo_settings = { weather_merchandising: false };
+    tableSingle.location_dim = { region: "us-east" };
+    tableSingle.region_weather = { condition: "storm" };
+
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const out = await ownedCatalog.listProducts("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+
+    expect(out.map((p) => p.id)).toEqual(["p-mug", "p-umbrella"]);
+  });
 });
