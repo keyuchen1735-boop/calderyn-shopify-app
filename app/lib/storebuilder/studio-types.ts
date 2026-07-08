@@ -94,6 +94,8 @@ export interface StudioState {
   productCount: number;
   /** Products still in draft status (e.g. created from chat-box attachments). */
   draftProductCount: number;
+  /** Active sample products (calderyn:sample) still present; drives the studio's replace-samples chip. */
+  sampleCount: number;
   /** Whether payments are fully set up (Stripe charges + payouts + details). */
   checkoutReady: boolean;
   hasDraft: boolean;
@@ -185,8 +187,8 @@ export interface StudioGenerateReceipt {
 
 /** Real generation stages, streamed by the server as they happen (mirrors
  *  generate.server.ts BuildStage — a server-only module clients can't import). */
-export type BuildStage = "brand" | "designing" | "checking";
-export const BUILD_STAGES: readonly BuildStage[] = ["brand", "designing", "checking"];
+export type BuildStage = "seeding" | "brand" | "designing" | "checking";
+export const BUILD_STAGES: readonly BuildStage[] = ["seeding", "brand", "designing", "checking"];
 
 /** One NDJSON line from the streaming generate endpoint. */
 export type BuildEvent =

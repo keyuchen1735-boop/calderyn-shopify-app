@@ -45,9 +45,12 @@ const shop = "11111111-1111-1111-1111-111111111111";
 // tables without a configured result read as "no row".
 const tableResults: Record<string, { data: unknown; error: unknown }> = {};
 const upserts: Array<{ table: string; row: Record<string, unknown> }> = [];
+// product_dim rows the active-sample tag query returns (drives sampleCount).
+let sampleRows: Array<{ id: string }> = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sampleRows = [];
   catalogMock.listProducts.mockResolvedValue([]);
   catalogMock.listCollections.mockResolvedValue([]);
   connectMock.getConnectedAccount.mockResolvedValue(null);
@@ -74,6 +77,8 @@ beforeEach(() => {
     chain.eq = () => chain;
     chain.order = () => chain;
     chain.limit = () => chain;
+    // Terminal for the active-sample tag query (product_dim.tags contains calderyn:sample).
+    chain.contains = () => Promise.resolve({ data: sampleRows, error: null });
     chain.maybeSingle = () =>
       Promise.resolve(tableResults[table] ?? { data: null, error: null });
     chain.upsert = (row: Record<string, unknown>) => {
@@ -166,6 +171,17 @@ describe("loadStudioState readiness", () => {
     const state = await loadStudioState(shop);
     expect(state.draftProductCount).toBe(4);
     expect(adminListProducts).toHaveBeenCalledWith(shop, expect.objectContaining({ status: "draft" }));
+  });
+
+  it("counts active sample products so the studio can offer the replace-samples chip", async () => {
+    sampleRows = [{ id: "s1" }, { id: "s2" }, { id: "s3" }];
+    const state = await loadStudioState(shop);
+    expect(state.sampleCount).toBe(3);
+  });
+
+  it("reports zero samples for a shop with none", async () => {
+    const state = await loadStudioState(shop);
+    expect(state.sampleCount).toBe(0);
   });
 });
 

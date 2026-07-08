@@ -12,6 +12,7 @@ import { getConnectedAccount } from "~/lib/payments/connect.server";
 import { listProducts as listAdminProducts } from "~/lib/catalog/catalog.server";
 import { hasRunningExperiment, latestStudioExperiment } from "~/lib/experiments/store-experiment.server";
 import { injectMissingFunctionalBlocks } from "~/lib/storegen/sanitize";
+import { activeSampleProductIds } from "~/lib/storegen/seed.server";
 import { loadDraftDoc, loadPublishedDoc, saveDraft, publishDoc } from "./page-document.server";
 import { defaultHomeDocument } from "./default-doc";
 import { validateDocument, type ValidIds } from "./validate";
@@ -102,6 +103,14 @@ async function draftProductCount(shopId: string): Promise<number> {
   return total;
 }
 
+/** Active sample products (calderyn:sample) still in the catalog — drives the studio's
+ *  replace-samples chip. Demo (non-uuid) shops have no rows and would error on the uuid
+ *  shop_id column, so they read as zero. */
+async function sampleProductCount(shopId: string): Promise<number> {
+  if (!UUID_RE.test(shopId)) return 0;
+  return (await activeSampleProductIds(shopId)).length;
+}
+
 /** shops.org_slug — the owned-tenant identity the public storefront resolves
  *  by Host. Null for domain-keyed Shopify tenants and demo (non-uuid) shops.
  *  Fail-soft: a URL nicety must never fail the whole studio load. */
@@ -121,7 +130,7 @@ async function shopOrgSlug(shopId: string): Promise<string | null> {
 
 export async function loadStudioState(shopId: string): Promise<StudioState> {
   const catalog = getCatalog();
-  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug, experiment] =
+  const [settings, draft, published, products, generation, canCharge, draftCount, sampleCount, orgSlug, experiment] =
     await Promise.all([
       getStoreSettings(shopId),
       loadDraftDoc(shopId, "home"),
@@ -130,6 +139,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
       latestGeneration(shopId),
       checkoutReady(shopId),
       draftProductCount(shopId),
+      sampleProductCount(shopId),
       shopOrgSlug(shopId),
       latestStudioExperiment(shopId),
     ]);
@@ -156,6 +166,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     products: shaped,
     productCount: products.length,
     draftProductCount: draftCount,
+    sampleCount,
     checkoutReady: canCharge,
     hasDraft: draft != null,
     hasPublished: published != null,

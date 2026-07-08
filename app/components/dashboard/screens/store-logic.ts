@@ -34,7 +34,10 @@ export interface BuildStepView {
   sub: string;
 }
 
+// Row order must match BUILD_STAGES (buildSteps indexes into both). "seeding" only streams for an
+// empty shop; on a populated shop the build starts at "brand" and this row shows as already done.
 const STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
+  { stage: "seeding", title: "Stocking sample products", sub: "Adding starter products so every page has something to show." },
   { stage: "brand", title: "Reading your catalog", sub: "Naming the brand and picking its palette." },
   { stage: "designing", title: "Designing your pages", sub: "Home, collection and product pages." },
   { stage: "checking", title: "Verifying links & layout", sub: "Every link checked against your catalog." },

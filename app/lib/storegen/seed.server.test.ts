@@ -4,16 +4,26 @@ import { FALLBACK_SEED } from "./seed";
 
 const createCollectionMock = vi.hoisted(() => vi.fn());
 const createProductMock = vi.hoisted(() => vi.fn());
+const setStatusMock = vi.hoisted(() => vi.fn());
 vi.mock("~/lib/catalog/catalog.server", () => ({
   createCollection: createCollectionMock,
   createProduct: createProductMock,
+  setProductStatus: setStatusMock,
 }));
 
-import { seedSampleCatalog, SAMPLE_TAG } from "./seed.server";
+const sampleQueryMock = vi.hoisted(() => vi.fn());
+vi.mock("~/lib/supabase.server", () => ({
+  getSupabase: () => ({ from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ contains: sampleQueryMock }) }) }) }) }),
+}));
+
+// eslint-disable-next-line import/first -- vitest hoists the vi.mock calls above this import
+import { seedSampleCatalog, clearSampleProducts, SAMPLE_TAG } from "./seed.server";
 
 beforeEach(() => {
   createCollectionMock.mockReset().mockImplementation(async (_shop: string, title: string) => ({ id: `col-${title}` }));
   createProductMock.mockReset().mockResolvedValue({ id: "prod-1" });
+  setStatusMock.mockReset().mockResolvedValue(undefined);
+  sampleQueryMock.mockReset().mockResolvedValue({ data: [{ id: "s1" }, { id: "s2" }], error: null });
 });
 
 describe("seedSampleCatalog", () => {
@@ -33,5 +43,23 @@ describe("seedSampleCatalog", () => {
     const out = await seedSampleCatalog("shop-1", FALLBACK_SEED);
     expect(out.products).toBe(5);
     expect(out.failed).toBe(1);
+  });
+});
+
+describe("clearSampleProducts", () => {
+  it("archives every active sample product and returns the count", async () => {
+    const n = await clearSampleProducts("shop-1");
+    expect(n).toBe(2);
+    expect(setStatusMock).toHaveBeenCalledWith("shop-1", "s1", "archived");
+    expect(setStatusMock).toHaveBeenCalledWith("shop-1", "s2", "archived");
+  });
+  it("returns 0 and archives nothing when there are no samples", async () => {
+    sampleQueryMock.mockResolvedValue({ data: [], error: null });
+    expect(await clearSampleProducts("shop-1")).toBe(0);
+    expect(setStatusMock).not.toHaveBeenCalled();
+  });
+  it("throws if the tag query errors (never silently reports success — rule 12)", async () => {
+    sampleQueryMock.mockResolvedValue({ data: null, error: new Error("db down") });
+    await expect(clearSampleProducts("shop-1")).rejects.toThrow();
   });
 });

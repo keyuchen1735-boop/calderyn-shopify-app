@@ -17,6 +17,8 @@ import {
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
   addProductFromImage,
+  clearStoreSamples,
+  fillStoreImages,
   generateStudioStoreStream,
   StudioStreamError,
   decideStoreExperiment,
@@ -339,6 +341,30 @@ export default function Store({ app }: { app: DashboardCtx }) {
     pushMsg({ id: newId(), kind: "ai-text", text: reply, actions });
   };
 
+  // After a build, fill imagery in the background: each call does ONE unit (hero, then one pending
+  // product) and reports what remains, so we loop, reloading the preview between calls. Bounded at
+  // 12 (hero + up to ~9 products + slack); the endpoint's attempted-set guarantees termination.
+  // No-ops if already running or after unmount. Imagery is progressive enhancement over a finished
+  // store — a failure leaves the placeholder tiles (the server records the failed asset row), so we
+  // stop quietly rather than surfacing an error over a store that already built.
+  const fillImagesRef = useRef(false);
+  const fillImages = useCallback(async () => {
+    if (fillImagesRef.current) return;
+    fillImagesRef.current = true;
+    try {
+      for (let i = 0; i < 12; i++) {
+        const r = await fillStoreImages();
+        if (!aliveRef.current) return;
+        reloadPreview();
+        if (r.done) break;
+      }
+    } catch {
+      // Placeholder tiles are the floor; nothing to surface over a built store.
+    } finally {
+      fillImagesRef.current = false;
+    }
+  }, [reloadPreview]);
+
   const runBuild = async (brief: string, opts?: { firstBuild?: boolean }) => {
     if (buildingRef.current) return;
     buildingRef.current = true;
@@ -368,6 +394,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
       // drafts and the generation audit row — then reload the preview.
       await refresh();
       reloadPreview();
+      // Kick off background imagery fill: the store is already usable with
+      // placeholder tiles; real hero + product images stream in behind it.
+      void fillImages();
       if (!aliveRef.current) return;
       // The generate paths only ever return a terminal generation status
       // (draft/no_products/failed). The multipart-only intent statuses can't
@@ -996,6 +1025,21 @@ export default function Store({ app }: { app: DashboardCtx }) {
             onPublish={onPublishClick}
             publishing={publishing}
           />
+
+          {data.sampleCount > 0 ? (
+            <div className="cd-stage-status">
+              <span className="cd-chip cd-chip--sample">
+                Sample products
+                <button
+                  type="button"
+                  className="cd-chip__action"
+                  onClick={() => void clearStoreSamples().then(() => refresh()).then(reloadPreview)}
+                >
+                  Replace with your own
+                </button>
+              </span>
+            </div>
+          ) : null}
 
           <div className="cd-stage-page">
             <div className="cd-canvas-frame-wrap" data-device={device}>

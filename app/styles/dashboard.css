@@ -1891,6 +1891,14 @@
 .cd-chip { font-size: 12.5px; color: var(--text-2); background: var(--gray-bg); border: 0; border-radius: 999px; padding: 5px 12px; cursor: pointer; font-family: inherit; }
 .cd-chip:hover { color: var(--text-1); background: color-mix(in srgb, var(--live) 12%, transparent); }
 
+/* Sample-catalog notice: seeded starter products the merchant can clear in one click. The chip is
+   a label (not a button), so it reads as static; the inline action does the archival. */
+.cd-stage-status { display: flex; padding: 0 28px 10px; }
+.cd-chip--sample { display: inline-flex; align-items: center; gap: 8px; cursor: default; color: var(--text-1); background: color-mix(in srgb, var(--orange) 12%, transparent); }
+.cd-chip--sample:hover { color: var(--text-1); background: color-mix(in srgb, var(--orange) 12%, transparent); }
+.cd-chip__action { border: 0; background: transparent; padding: 0; font: inherit; color: var(--orange); font-weight: 600; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.cd-chip__action:hover { text-decoration: none; }
+
 /* ---- stage: top bar (uniform 32px pills) + canvas ---- */
 .cd-stage { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 /* Single row while it fits (the URL pill ellipsizes first); wrap is the escape

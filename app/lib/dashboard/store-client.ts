@@ -136,6 +136,18 @@ export async function publishStudioStore(): Promise<{ publishedAt: string }> {
   });
 }
 
+/** Run ONE unit of post-build imagery fill (hero first, then one pending product). The caller
+ *  loops until `done`, reloading the preview between calls, so no single request nears the
+ *  serverless limit and images appear incrementally. */
+export async function fillStoreImages(): Promise<{ done: boolean; remaining: number }> {
+  return apiSend<{ done: boolean; remaining: number }>("POST", "/dashboard/api/store/images", {});
+}
+
+/** Archive every active sample product (calderyn:sample); returns how many were cleared. */
+export async function clearStoreSamples(): Promise<{ removed: number }> {
+  return apiSend<{ removed: number }>("POST", "/dashboard/api/store/samples", {});
+}
+
 /** "red-ceramic_mug.v2.jpg" → "Red ceramic mug v2" — a starter title for a
  *  product created from a chat-box image attachment. */
 export function productTitleFromFilename(filename: string): string {

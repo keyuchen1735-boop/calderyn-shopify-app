@@ -13,6 +13,7 @@ import {
 
 describe("parseBuildEvent", () => {
   it("parses stage lines and the terminal done line with its receipt", () => {
+    expect(parseBuildEvent('{"stage":"seeding"}')).toEqual({ stage: "seeding" });
     expect(parseBuildEvent('{"stage":"brand"}')).toEqual({ stage: "brand" });
     expect(parseBuildEvent('{"stage":"checking"}')).toEqual({ stage: "checking" });
     const done = parseBuildEvent('{"stage":"done","receipt":{"runId":"r1","status":"draft"}}');
@@ -29,15 +30,19 @@ describe("parseBuildEvent", () => {
 });
 
 describe("buildSteps", () => {
-  it("renders the three real stages with run/done/wait dots as the build advances", () => {
+  it("renders the real stages with run/done/wait dots as the build advances", () => {
+    // Empty-shop build: seeding is the first real stage.
+    const atSeeding = buildSteps({ kind: "running", stage: "seeding" });
+    expect(atSeeding.map((r) => r.dot)).toEqual(["run", "wait", "wait", "wait"]);
+    expect(atSeeding[0].title).toMatch(/sample|stock/i);
     const atBrand = buildSteps({ kind: "running", stage: "brand" });
-    expect(atBrand.map((r) => r.dot)).toEqual(["run", "wait", "wait"]);
+    expect(atBrand.map((r) => r.dot)).toEqual(["done", "run", "wait", "wait"]);
     const atDesign = buildSteps({ kind: "running", stage: "designing" });
-    expect(atDesign.map((r) => r.dot)).toEqual(["done", "run", "wait"]);
+    expect(atDesign.map((r) => r.dot)).toEqual(["done", "done", "run", "wait"]);
     const atCheck = buildSteps({ kind: "running", stage: "checking" });
-    expect(atCheck.map((r) => r.dot)).toEqual(["done", "done", "run"]);
+    expect(atCheck.map((r) => r.dot)).toEqual(["done", "done", "done", "run"]);
     // the verification step is named for what it really does
-    expect(atCheck[2].title).toMatch(/verify|check/i);
+    expect(atCheck[3].title).toMatch(/verify|check/i);
   });
   it("falls back to the single legacy row when no stage is known (non-streaming path)", () => {
     const rows = buildSteps({ kind: "running" });
