@@ -206,6 +206,12 @@ export default function Search({ app }: { app: DashboardCtx }) {
   // The store's public web address (the sitemap URL minus the filename) — this is
   // exactly what a merchant registers as their site in Google Search Console.
   const siteUrl = data.sitemapUrl ? data.sitemapUrl.replace(/\/sitemap\.xml$/, "") : null;
+  // Deep link straight to this property's Sitemaps page in Search Console, so a
+  // merchant who closed the tab can jump back. resource_id is the URL-prefix
+  // property (the site address with a trailing slash), url-encoded.
+  const sitemapsConsoleUrl = siteUrl
+    ? `https://search.google.com/search-console/sitemaps?resource_id=${encodeURIComponent(`${siteUrl}/`)}`
+    : null;
 
   return (
     <div className="cd-screen cd-seo">
@@ -385,7 +391,15 @@ export default function Search({ app }: { app: DashboardCtx }) {
                   <span className="cd-seo__step">5</span>Hand Google your page list
                 </div>
                 <div className="cd-seo__hint">
-                  Once verified, open <b>Sitemaps</b> in Google, paste this link, then <b>Submit</b>.
+                  Once verified, open{" "}
+                  {sitemapsConsoleUrl ? (
+                    <a className="cd-seo__link" href={sitemapsConsoleUrl} target="_blank" rel="noopener noreferrer">
+                      Sitemaps
+                    </a>
+                  ) : (
+                    <b>Sitemaps</b>
+                  )}{" "}
+                  in Google, paste this link, then <b>Submit</b>.
                 </div>
               </div>
               <div className="cd-seo__control">

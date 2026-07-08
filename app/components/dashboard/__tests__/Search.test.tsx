@@ -68,6 +68,8 @@ describe("Search screen (smoke)", () => {
     expect(html).toContain("HTML tag");
     expect(html).toContain("Paste code here");
     expect(html).toContain("Open Google");
+    // Step 5 "Sitemaps" is a deep link into this property's Search Console page.
+    expect(html).toContain("search-console/sitemaps?resource_id=");
   });
 
   it("shows the verified confirmation once a code is saved", () => {
