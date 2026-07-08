@@ -146,7 +146,10 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   let seedOutcome: SeedOutcome | null = null;
   if (products.length === 0 && collections.length === 0 && UUID_RE.test(input.shopId)) {
     input.onStage?.("seeding");
-    const seedText = await call(SEED_SYSTEM_PROMPT, buildSeedUserMessage(input.mode === "brief" ? input.brief : undefined, hasReferences), { images: refImageBlocks, maxTokens: 2500 });
+    // Text-only on purpose: reference images are pinned to the brand + home-HTML calls (see
+    // GenerateInput.referenceImages), and keeping the seed call out of the vision counters
+    // preserves referencesUnread's meaning (design calls only).
+    const seedText = await call(SEED_SYSTEM_PROMPT, buildSeedUserMessage(input.mode === "brief" ? input.brief : undefined), { maxTokens: 2500 });
     const plan = (seedText && parseSeedPlan(seedText)) || FALLBACK_SEED;
     try {
       seedOutcome = await seedSampleCatalog(input.shopId, plan);

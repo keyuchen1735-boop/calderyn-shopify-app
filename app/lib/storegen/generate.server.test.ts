@@ -261,14 +261,23 @@ describe("generateStore", () => {
   it("seed write failure degrades to an unseeded run (recorded, never hidden)", async () => {
     getCatalogMock.mockReturnValue({ listProducts: async () => [], getProduct: async () => null, listCollections: async () => [] });
     seedMock.mockRejectedValue(new Error("collection write failed"));
+    // A genuinely valid 3-product plan, so the degraded outcome reports exactly its product count.
+    const seedPlanJson = JSON.stringify({
+      collections: [{ title: "Featured" }],
+      products: [
+        { title: "Mug", description: "A cozy mug", priceCents: 2800, collection: "Featured", iconHint: "coffee", phTone: "warm" },
+        { title: "Tote", description: "A sturdy tote", priceCents: 3900, collection: "Featured", iconHint: "backpack", phTone: "neutral" },
+        { title: "Candle", description: "Cedar and amber", priceCents: 3400, collection: "Featured", iconHint: "candle", phTone: "warm" },
+      ],
+    });
     createMock
-      .mockResolvedValueOnce(reply('{"collections":[{"title":"Featured"}],"products":[{"title":"Mug","description":"A cozy mug","priceCents":2800,"collection":"Featured","iconHint":"coffee","phTone":"warm"}]}')) // seed → valid plan
+      .mockResolvedValueOnce(reply(seedPlanJson)) // seed → valid plan
       .mockResolvedValue(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')); // brand + pages
     const result = await generateStore({ shopId: "3f0e8f5e-0000-4000-8000-000000000000", mode: "brief", brief: "cozy mugs" });
     expect(["draft", "no_products", "failed"]).toContain(result.status); // does not throw; run completes
     const proposals = recPropMock.mock.calls[0][2] as { seed?: { failed: number } };
     expect(proposals.seed).toBeDefined();
-    expect(proposals.seed!.failed).toBeGreaterThan(0); // the failed write is surfaced in proposals
+    expect(proposals.seed!.failed).toBe(3); // every product of the parsed plan surfaced as failed
   });
 
   it("still calls the LLM for an empty catalog when a brief gives it real input", async () => {
