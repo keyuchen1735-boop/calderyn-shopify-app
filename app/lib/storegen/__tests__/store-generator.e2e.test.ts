@@ -21,7 +21,7 @@ import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
 import type { BlockDocument, RenderContext } from "~/lib/storebuilder/types";
 
 // ── hoisted mock state (built before module imports) ────────────────────────
-const { createMock, getCatalogMock, providerMock, db } = vi.hoisted(() => {
+const { createMock, getCatalogMock, providerMock, seedMock, db } = vi.hoisted(() => {
   // In-memory Supabase. page_document + store_asset are real round-tripping tables; the rest are
   // capture buffers (we only assert the audit/settings writes happened with the right shape).
   const pageDocs = new Map<string, Record<string, unknown>>(); // key: shop|page
@@ -100,6 +100,7 @@ const { createMock, getCatalogMock, providerMock, db } = vi.hoisted(() => {
     createMock: vi.fn(),
     getCatalogMock: vi.fn(),
     providerMock: vi.fn(),
+    seedMock: vi.fn(),
     db: {
       client: { from },
       pageDocs,
@@ -115,6 +116,10 @@ const { createMock, getCatalogMock, providerMock, db } = vi.hoisted(() => {
 });
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => db.client }));
+// Seed catalog writes are a true external boundary (they createCollection/createProduct through
+// Supabase); stub them like the other boundaries so the empty-shop path stays offline. Default
+// no-op outcome; the re-fetched catalog is controlled per-scenario via getCatalogMock.
+vi.mock("~/lib/storegen/seed.server", () => ({ seedSampleCatalog: seedMock, SAMPLE_TAG: "calderyn:sample" }));
 vi.mock("~/lib/assistant/anthropic.server", () => ({
   getAnthropic: () => ({ messages: { create: createMock } }),
   digestModel: () => "claude-haiku-4-5",
@@ -185,8 +190,10 @@ beforeEach(() => {
   createMock.mockReset();
   getCatalogMock.mockReset();
   providerMock.mockReset();
+  seedMock.mockReset();
   db.reset();
   getCatalogMock.mockReturnValue(fixtureCatalog);
+  seedMock.mockResolvedValue({ collections: 0, products: 0, failed: 0 });
 });
 
 describe("store generator e2e", () => {
@@ -286,16 +293,19 @@ describe("store generator e2e", () => {
     expect(html).toContain('method="post"');
   });
 
-  it("4. empty catalog: status is no_products, LLM skipped, 3 fallback drafts still render cleanly", async () => {
+  it("4. empty catalog whose seed writes nothing: LLM runs, status is no_products, 3 fallback drafts render cleanly", async () => {
+    // The old zero-spend skip is retired: the seed stage fires on an empty shop (stubbed here to
+    // write nothing, so the catalog stays empty) and the LLM still runs. With nothing to design and
+    // the model returning junk, brand + every doc fall back — a clean, buyable store, never a blank.
     getCatalogMock.mockReturnValue(EMPTY_CATALOG);
+    createMock.mockResolvedValue(reply("not json")); // calls succeed but parse to nothing → brand + docs fall back
 
     const result = await generateStore({ shopId: SHOP, mode: "catalog" });
     expect(result.status).toBe("no_products");
     expect(db.pageDocs.size).toBe(3);
-    // No catalog and no brief gives the model nothing to work with — the run
-    // is deterministic and free.
-    expect(createMock).not.toHaveBeenCalled();
-    expect(result.tokenCost).toBe(0);
+    // The LLM now always runs (the skip is retired); the stubbed seed writes nothing this scenario.
+    expect(createMock).toHaveBeenCalled();
+    expect(result.tokenCost).toBeGreaterThan(0);
 
     // Home must render against an empty catalog without throwing or blanking the hero.
     const home = await loadDraftDoc(SHOP, "home");

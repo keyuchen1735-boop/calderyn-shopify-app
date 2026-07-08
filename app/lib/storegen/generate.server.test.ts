@@ -2,16 +2,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
 import { generateStore } from "./generate.server";
+import { FALLBACK_SEED } from "./seed";
 
-const { createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock } = vi.hoisted(() => ({
+const { createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock, seedMock } = vi.hoisted(() => ({
   createMock: vi.fn(), getCatalogMock: vi.fn(), saveDraftMock: vi.fn(),
-  saveSettingsMock: vi.fn(), hasSettingsMock: vi.fn(), recGenMock: vi.fn(), recPropMock: vi.fn(),
+  saveSettingsMock: vi.fn(), hasSettingsMock: vi.fn(), recGenMock: vi.fn(), recPropMock: vi.fn(), seedMock: vi.fn(),
 }));
 vi.mock("~/lib/assistant/anthropic.server", () => ({ getAnthropic: () => ({ messages: { create: createMock } }), digestModel: () => "claude-haiku-4-5" }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ saveDraft: saveDraftMock }));
 vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: async (shopId: string) => ({ shopId, storeName: "", logoUrl: null, palette: { primary: "#0f766e", background: "#ffffff", text: "#111827" }, voiceTagline: null, vibe: "minimal" }), saveStoreSettings: saveSettingsMock, hasStoreSettings: hasSettingsMock, DEFAULT_PALETTE: { primary: "#0f766e", background: "#fff", text: "#111" } }));
 vi.mock("./audit.server", () => ({ recordGeneration: recGenMock, recordProposal: recPropMock }));
+vi.mock("./seed.server", () => ({ seedSampleCatalog: seedMock, SAMPLE_TAG: "calderyn:sample" }));
 
 const realShop = "11111111-1111-1111-1111-111111111111";
 const product = (id: string): StoreProduct => ({ id, handle: `h-${id}`, title: `P${id}`, description: "", images: [], variants: [{ id: `v-${id}`, sku: null, title: "D", priceCents: 1000, currency: "USD", available: true }], collections: ["summer"] });
@@ -23,9 +25,10 @@ const catalog = (): StorefrontCatalog => ({
 const reply = (text: string) => ({ content: [{ type: "text", text }], usage: { input_tokens: 10, output_tokens: 20 } });
 
 beforeEach(() => {
-  for (const m of [createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock]) m.mockReset();
+  for (const m of [createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock, seedMock]) m.mockReset();
   getCatalogMock.mockReturnValue(catalog());
   hasSettingsMock.mockResolvedValue(false);
+  seedMock.mockResolvedValue({ collections: 0, products: 0, failed: 0 });
 });
 
 describe("generateStore", () => {
@@ -204,13 +207,68 @@ describe("generateStore", () => {
     expect(saveDraftMock).toHaveBeenCalled();
   });
 
-  it("skips all paid LLM calls for an empty catalog with no brief (deterministic fallback, zero spend)", async () => {
+  it("does not seed a non-uuid (stub) shop, but still calls the LLM (no zero-spend skip)", async () => {
+    // A non-uuid shop's catalog is a read-only fixture/stub that cannot take writes, so the seed
+    // stage never fires — but the old zero-spend skip is gone, so the LLM still runs the brand +
+    // page calls against the (empty) catalog rather than shipping a bare deterministic layout.
     getCatalogMock.mockReturnValue({ listProducts: async () => [], getProduct: async () => null, listCollections: async () => [] });
-    const result = await generateStore({ shopId: realShop, mode: "catalog" });
-    expect(createMock).not.toHaveBeenCalled();
-    expect(result.tokenCost).toBe(0);
+    createMock.mockResolvedValue(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}'));
+    const result = await generateStore({ shopId: "stub-shop", mode: "catalog" });
+    expect(seedMock).not.toHaveBeenCalled(); // non-uuid catalogs can't be seeded
+    expect(createMock).toHaveBeenCalled(); // the LLM now always runs
     expect(result.status).toBe("no_products");
     expect(saveDraftMock).toHaveBeenCalledTimes(3); // fallback docs still drafted
+  });
+
+  it("empty catalog: runs the seed stage, then generates against the re-fetched catalog", async () => {
+    let seeded = false;
+    const seededProduct: StoreProduct = { id: "p1", handle: "mug", title: "Mug", description: "", images: [], variants: [{ id: "v1", sku: null, title: "Default", priceCents: 2800, currency: "USD", available: true }], collections: ["featured"] };
+    getCatalogMock.mockReturnValue({
+      listProducts: async () => (seeded ? [seededProduct] : []),
+      getProduct: async () => seededProduct,
+      listCollections: async () => (seeded ? [{ handle: "featured", title: "Featured" }] : []),
+    });
+    seedMock.mockImplementation(async () => { seeded = true; return { collections: 1, products: 1, failed: 0 }; });
+    createMock
+      .mockResolvedValueOnce(reply('{"collections":[{"title":"Featured"}],"products":[{"title":"Mug","description":"A cozy mug","priceCents":2800,"collection":"Featured","iconHint":"coffee","phTone":"warm"}]}')) // seed
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"Go"}')) // brand
+      .mockResolvedValue(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}')); // pages
+    const stages: string[] = [];
+    const result = await generateStore({ shopId: "3f0e8f5e-0000-4000-8000-000000000000", mode: "brief", brief: "cozy mugs", onStage: (s) => stages.push(s) });
+    expect(stages[0]).toBe("seeding"); // seeding is the first stage on an empty shop
+    expect(seedMock).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("draft"); // re-fetched catalog has a product → not no_products
+    expect(createMock.mock.calls.length).toBeGreaterThan(1); // seed + brand + page calls all ran
+  });
+
+  it("seed parse failure falls back to FALLBACK_SEED", async () => {
+    let seeded = false;
+    const seededProduct: StoreProduct = { id: "p1", handle: "mug", title: "Mug", description: "", images: [], variants: [{ id: "v1", sku: null, title: "Default", priceCents: 2800, currency: "USD", available: true }], collections: ["featured"] };
+    getCatalogMock.mockReturnValue({
+      listProducts: async () => (seeded ? [seededProduct] : []),
+      getProduct: async () => seededProduct,
+      listCollections: async () => (seeded ? [{ handle: "featured", title: "Featured" }] : []),
+    });
+    seedMock.mockImplementation(async () => { seeded = true; return { collections: 1, products: 1, failed: 0 }; });
+    createMock
+      .mockResolvedValueOnce(reply("no json here")) // seed reply is junk → parseSeedPlan null → FALLBACK_SEED
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"Go"}')) // brand
+      .mockResolvedValue(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}')); // pages
+    await generateStore({ shopId: "3f0e8f5e-0000-4000-8000-000000000000", mode: "brief", brief: "cozy mugs" });
+    expect(seedMock.mock.calls[0][1]).toEqual(FALLBACK_SEED); // wrote the deterministic fallback plan
+  });
+
+  it("seed write failure degrades to an unseeded run (recorded, never hidden)", async () => {
+    getCatalogMock.mockReturnValue({ listProducts: async () => [], getProduct: async () => null, listCollections: async () => [] });
+    seedMock.mockRejectedValue(new Error("collection write failed"));
+    createMock
+      .mockResolvedValueOnce(reply('{"collections":[{"title":"Featured"}],"products":[{"title":"Mug","description":"A cozy mug","priceCents":2800,"collection":"Featured","iconHint":"coffee","phTone":"warm"}]}')) // seed → valid plan
+      .mockResolvedValue(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')); // brand + pages
+    const result = await generateStore({ shopId: "3f0e8f5e-0000-4000-8000-000000000000", mode: "brief", brief: "cozy mugs" });
+    expect(["draft", "no_products", "failed"]).toContain(result.status); // does not throw; run completes
+    const proposals = recPropMock.mock.calls[0][2] as { seed?: { failed: number } };
+    expect(proposals.seed).toBeDefined();
+    expect(proposals.seed!.failed).toBeGreaterThan(0); // the failed write is surfaced in proposals
   });
 
   it("still calls the LLM for an empty catalog when a brief gives it real input", async () => {

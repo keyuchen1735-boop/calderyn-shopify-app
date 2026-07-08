@@ -13,7 +13,9 @@ import type { BlockDocument, DocKind, PageKey } from "~/lib/storebuilder/types";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import type { ValidIds } from "~/lib/storebuilder/validate";
 import { parseBlockPlan, parseBrandPlan, type BrandPlan } from "./block-plan";
-import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUserMessage, HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage, type CatalogMenu } from "./prompts";
+import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUserMessage, HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage, SEED_SYSTEM_PROMPT, buildSeedUserMessage, type CatalogMenu } from "./prompts";
+import { parseSeedPlan, FALLBACK_SEED } from "./seed";
+import { seedSampleCatalog, type SeedOutcome } from "./seed.server";
 import { sanitizeStoreHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { normalizeStorefrontHref, type StorefrontLinkSet } from "~/lib/storefront/links";
 import { assembleDocument } from "./sanitize";
@@ -62,7 +64,7 @@ export interface GenerateInput {
    *  (never simulated): brand call → page design calls → pre-save verification. */
   onStage?: (stage: BuildStage) => void;
 }
-export type BuildStage = "brand" | "designing" | "checking";
+export type BuildStage = "seeding" | "brand" | "designing" | "checking";
 export type GenerateStatus = "draft" | "no_products" | "failed";
 export interface GenerateResult {
   runId: string;
@@ -86,24 +88,9 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   const runId = crypto.randomUUID();
   const model = storegenModel();
   const catalog = getCatalog();
-  const products = await catalog.listProducts(input.shopId);
-  const collections = await catalog.listCollections(input.shopId);
-  const menu: CatalogMenu = {
-    products: products.map((p) => ({ id: p.id, handle: p.handle, title: p.title })),
-    collections: collections.map((c) => ({ handle: c.handle, title: c.title })),
-  };
-  const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
-  // Real catalog numbers for the home prompt: copy grounded on these can be concrete
-  // ("Explore 21 certified devices") without the model inventing figures.
-  const byCollection: Record<string, number> = {};
-  for (const p of products) for (const h of p.collections) byCollection[h] = (byCollection[h] ?? 0) + 1;
-  const counts = { products: products.length, byCollection };
-  // Real handles behind every storefront deep-link, so a hallucinated collection/product href is
-  // rewritten to the shop home instead of 404-ing (rule 12: never ship a dead link).
-  const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
   let tokenCost = 0;
   let budgetHit = false;
-  // Distinguish "the model was never called" (skipLlm / budget) from "the model
+  // Distinguish "the model was never called" (budget) from "the model
   // was called and every call failed" (out of credits, API down). Only the
   // latter is a degraded run the merchant must be told about (rule 12) — a call
   // that merely returns junk still counts as a success (parsing handles it).
@@ -124,15 +111,9 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
     if (block) refImageBlocks.push(block);
   }
   const hasReferences = refImageBlocks.length > 0;
-  // An empty catalog with no brief gives the model nothing to work with — the
-  // result would match the deterministic fallback anyway, so skip the paid
-  // calls entirely (this is also the auto-build path for brand-new shops).
-  // Reference images ARE real input, so their presence keeps the calls on.
-  const skipLlm = products.length === 0 && collections.length === 0 && !input.brief && !hasReferences;
   const client = getAnthropic();
 
   async function call(system: string, user: string, opts?: { model?: string; maxTokens?: number; images?: Anthropic.ImageBlockParam[] }): Promise<string | null> {
-    if (skipLlm) return null;
     if (budgetHit || tokenCost >= TOKEN_BUDGET) { budgetHit = true; return null; }
     llmAttempts += 1;
     const isVision = !!(opts?.images && opts.images.length > 0);
@@ -155,6 +136,43 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       return null; // API/timeout → caller uses the deterministic fallback
     }
   }
+
+  let products = await catalog.listProducts(input.shopId);
+  let collections = await catalog.listCollections(input.shopId);
+  // Replit-style seed (design §3.1): an empty shop gets a model-invented demo catalog written
+  // through the real catalog path BEFORE anything else, so every later stage — link set, menu,
+  // grids, PDPs — works against real handles. UUID-gated: the fixture/stub catalogs (non-uuid
+  // shops) cannot take writes.
+  let seedOutcome: SeedOutcome | null = null;
+  if (products.length === 0 && collections.length === 0 && UUID_RE.test(input.shopId)) {
+    input.onStage?.("seeding");
+    const seedText = await call(SEED_SYSTEM_PROMPT, buildSeedUserMessage(input.mode === "brief" ? input.brief : undefined, hasReferences), { images: refImageBlocks, maxTokens: 2500 });
+    const plan = (seedText && parseSeedPlan(seedText)) || FALLBACK_SEED;
+    try {
+      seedOutcome = await seedSampleCatalog(input.shopId, plan);
+      products = await catalog.listProducts(input.shopId);
+      collections = await catalog.listCollections(input.shopId);
+    } catch (err) {
+      // A collection write failing mid-seed must degrade to the old unseeded behavior, not fail
+      // the whole generation — the run proceeds catalog-less and the outcome is recorded below
+      // (rule 12: surfaced in proposals, never hidden).
+      console.error("[storegen] seed catalog write failed; continuing unseeded", err);
+      seedOutcome = { collections: 0, products: 0, failed: plan.products.length };
+    }
+  }
+  const menu: CatalogMenu = {
+    products: products.map((p) => ({ id: p.id, handle: p.handle, title: p.title })),
+    collections: collections.map((c) => ({ handle: c.handle, title: c.title })),
+  };
+  const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
+  // Real catalog numbers for the home prompt: copy grounded on these can be concrete
+  // ("Explore 21 certified devices") without the model inventing figures.
+  const byCollection: Record<string, number> = {};
+  for (const p of products) for (const h of p.collections) byCollection[h] = (byCollection[h] ?? 0) + 1;
+  const counts = { products: products.length, byCollection };
+  // Real handles behind every storefront deep-link, so a hallucinated collection/product href is
+  // rewritten to the shop home instead of 404-ing (rule 12: never ship a dead link).
+  const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
 
   // Stage 1 — brand. The brief (when present) drives the store's identity here, not just the
   // per-doc copy below — otherwise a free-text prompt could only ever change page text.
@@ -278,6 +296,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   // design never saw the references. Not set on an all-failed run (status
   // "failed" already tells the merchant the AI was unreachable).
   const referencesUnread = hasReferences && visionAttempts > 0 && visionOk === 0 && llmOk > 0;
+  if (seedOutcome) proposals.seed = seedOutcome;
   await recordProposal(input.shopId, runId, proposals);
   await recordGeneration({ shopId: input.shopId, runId, source: input.mode, briefText: input.brief ?? null, model, status, tokenCost });
   return { runId, status, tokenCost, docs, verification, ...(referencesUnread ? { referencesUnread: true as const } : {}) };
