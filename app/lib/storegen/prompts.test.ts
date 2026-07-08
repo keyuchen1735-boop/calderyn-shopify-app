@@ -108,6 +108,24 @@ describe("generator prompts", () => {
   });
 });
 
+describe("home html taste layer", () => {
+  it("makes the hero shader and a motion entrance required", () => {
+    expect(HOME_HTML_SYSTEM_PROMPT).toContain("REQUIRED");
+    expect(HOME_HTML_SYSTEM_PROMPT).toMatch(/hero MUST carry a data-fx-shader/i);
+    expect(HOME_HTML_SYSTEM_PROMPT).toMatch(/at least one data-fx-motion/i);
+  });
+  it("demands visible motion and bans copying the examples", () => {
+    expect(HOME_HTML_SYSTEM_PROMPT).toMatch(/visible within 2 seconds/i);
+    expect(HOME_HTML_SYSTEM_PROMPT).toMatch(/never copy.*example/i);
+  });
+  it("requires a contrasting accent, not one-hue pages", () => {
+    expect(HOME_HTML_SYSTEM_PROMPT).toMatch(/single hue/i);
+  });
+  it("documents the hero media slot marker", () => {
+    expect(HOME_HTML_SYSTEM_PROMPT).toContain("data-cd-hero-media");
+  });
+});
+
 describe("seed prompts", () => {
   it("locks the output contract and the icon menu", () => {
     expect(SEED_SYSTEM_PROMPT).toContain('"products"');
