@@ -430,15 +430,16 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           )}
         </div>
         {/* Live-visitor readout: reuses the pulsing brand mark as a realtime
-            pulse. Shown only when the owned storefront has someone on it right
-            now (visitors_now = distinct sessions active in the last 5 min), so
-            it never sits at a dead "0". */}
-        {!freshStore && live && live.visitors_now > 0 && (
+            pulse (visitors_now = distinct sessions active in the last 5 min).
+            Always shown on an established store once the snapshot lands; the
+            mark only pulses when someone's actually on the site, so a quiet
+            store reads as a calm, un-lit "0" rather than fake activity. */}
+        {!freshStore && live && (
           <div
             className="cd-live-visitors"
             title="Visitors on your storefront in the last 5 minutes"
           >
-            <LiveMark on />
+            <LiveMark on={live.visitors_now > 0} />
             <span className="cd-live-visitors-n tabular-nums">{live.visitors_now}</span>
             <span className="cd-live-visitors-l">live now</span>
           </div>
