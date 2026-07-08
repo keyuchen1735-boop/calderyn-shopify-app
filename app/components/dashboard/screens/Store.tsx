@@ -1033,7 +1033,12 @@ export default function Store({ app }: { app: DashboardCtx }) {
                 <button
                   type="button"
                   className="cd-chip__action"
-                  onClick={() => void clearStoreSamples().then(() => refresh()).then(reloadPreview)}
+                  onClick={() =>
+                    void clearStoreSamples()
+                      .then(() => refresh())
+                      .then(reloadPreview)
+                      .catch(() => toast("Couldn't clear samples. Try again.", "warn", "critical"))
+                  }
                 >
                   Replace with your own
                 </button>
