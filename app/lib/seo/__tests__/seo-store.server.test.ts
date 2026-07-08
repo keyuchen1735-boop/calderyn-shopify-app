@@ -52,7 +52,7 @@ vi.mock("../../supabase.server", () => ({ getSupabase: () => ({ from: (t: string
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
 import {
-  getSeoSettings, upsertSeoSettings, getSeoOverride, listSeoOverrides, upsertSeoOverride, deleteSeoOverride,
+  getSeoSettings, upsertSeoSettings, getSeoOverride, listSeoOverrides, upsertSeoOverride, deleteSeoOverride, cleanGoogleToken,
 } from "../seo-store.server";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";
@@ -124,5 +124,47 @@ describe("seo_page overrides", () => {
     expect((await listSeoOverrides("demo-shop")).size).toBe(0);
     expect(await getSeoOverride("demo-shop", "product", "p1")).toBeNull();
     await expect(deleteSeoOverride("demo-shop", "product", "p1")).resolves.toBeUndefined();
+  });
+});
+
+describe("cleanGoogleToken (accepts anything a merchant might paste)", () => {
+  const TOKEN = "dCDyNAElOSKCGAaLHqlljYb6ncB0dkDpiviSaYM5BZA";
+
+  it("returns a bare token unchanged", () => {
+    expect(cleanGoogleToken(TOKEN)).toBe(TOKEN);
+  });
+  it("extracts the token from Google's full self-closing meta tag", () => {
+    expect(cleanGoogleToken(`<meta name="google-site-verification" content="${TOKEN}" />`)).toBe(TOKEN);
+  });
+  it("extracts from a tag without the self-closing slash", () => {
+    expect(cleanGoogleToken(`<meta name="google-site-verification" content="${TOKEN}">`)).toBe(TOKEN);
+  });
+  it("handles single quotes", () => {
+    expect(cleanGoogleToken(`<meta name='google-site-verification' content='${TOKEN}' />`)).toBe(TOKEN);
+  });
+  it("handles reversed attribute order (content before name)", () => {
+    expect(cleanGoogleToken(`<meta content="${TOKEN}" name="google-site-verification">`)).toBe(TOKEN);
+  });
+  it("handles spaces around the equals sign", () => {
+    expect(cleanGoogleToken(`<meta name="google-site-verification" content = "${TOKEN}" />`)).toBe(TOKEN);
+  });
+  it("is case-insensitive on the attribute name", () => {
+    expect(cleanGoogleToken(`<META NAME="google-site-verification" CONTENT="${TOKEN}">`)).toBe(TOKEN);
+  });
+  it("extracts from a bare content=\"...\" attribute", () => {
+    expect(cleanGoogleToken(`content="${TOKEN}"`)).toBe(TOKEN);
+  });
+  it("trims surrounding whitespace and newlines", () => {
+    expect(cleanGoogleToken(`\n  <meta name="google-site-verification" content="${TOKEN}" />  \n`)).toBe(TOKEN);
+  });
+  it("normalizes empty, whitespace, and null to null", () => {
+    expect(cleanGoogleToken("")).toBeNull();
+    expect(cleanGoogleToken("   ")).toBeNull();
+    expect(cleanGoogleToken(null)).toBeNull();
+    expect(cleanGoogleToken(undefined)).toBeNull();
+  });
+  it("getSeoSettings self-heals a legacy value that stored the whole tag", async () => {
+    store.seo_settings.push({ shop_id: SHOP, allow_ai_crawlers: true, allow_search_engines: true, org_name: null, org_description: null, google_site_verification: `<meta name="google-site-verification" content="${TOKEN}" />` });
+    expect((await getSeoSettings(SHOP)).googleSiteVerification).toBe(TOKEN);
   });
 });

@@ -32,6 +32,22 @@ const DEFAULT_SETTINGS: SeoSettings = {
   googleSiteVerification: null,
 };
 
+// Merchants copy the Google Search Console verification value in whatever form
+// Google shows it: the full <meta name="google-site-verification" content="TOKEN" />
+// tag, a bare content="TOKEN" attribute, or just the token. Reduce any of those to
+// the clean token so the emitted <meta> is always well-formed (never a tag nested
+// inside another tag's content attribute). A bare token has no content=..., so it
+// passes through untouched. Applied on BOTH write and read, so even a value stored
+// before this existed is served clean (self-healing). Returns null for empty input.
+export function cleanGoogleToken(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const m = s.match(/content\s*=\s*["']([^"']+)["']/i);
+  const token = (m ? m[1] : s).trim();
+  return token || null;
+}
+
 export async function getSeoSettings(shopId: string): Promise<SeoSettings> {
   if (!isUuid(shopId)) return { ...DEFAULT_SETTINGS };
   const { data, error } = await getSupabase()
@@ -47,7 +63,9 @@ export async function getSeoSettings(shopId: string): Promise<SeoSettings> {
     allowAiCrawlers: data.allow_ai_crawlers !== false,
     orgName: (data.org_name as string | null) ?? null,
     orgDescription: (data.org_description as string | null) ?? null,
-    googleSiteVerification: (data.google_site_verification as string | null) ?? null,
+    // Clean on read too, so a value stored before extraction existed (or by any
+    // other path) still emits a well-formed verification tag.
+    googleSiteVerification: cleanGoogleToken(data.google_site_verification as string | null),
   };
 }
 
