@@ -164,6 +164,9 @@ async function readWindowImportedRefundCents(shopId: string, sinceIso: string): 
         .eq("shop_id", shopId)
         .gte("processed_at", sinceIso)
         .order("processed_at", { ascending: false })
+        // Stable tiebreak so pagination across the PostgREST 1000-row clamp can't
+        // skip or double-count rows that share a processed_at at a page boundary.
+        .order("id", { ascending: true })
         .range(from, to),
   );
   return rows.reduce((s, r) => s + Number(r.subtotal_cents ?? 0), 0);

@@ -21,6 +21,7 @@ function sbStub(rows: {
   storefront_event: Array<Record<string, unknown>>;
   orders: Array<Record<string, unknown>>;
   order_line: Array<Record<string, unknown>>;
+  refund_fact?: Array<Record<string, unknown>>;
 }): SupabaseClient {
   const table = (name: string) => {
     const result =
@@ -32,6 +33,7 @@ function sbStub(rows: {
       eq: () => chain,
       gte: () => chain,
       in: () => chain,
+      like: () => chain,
       order: () => chain,
       maybeSingle: async () => result,
       then: (resolve: (v: unknown) => unknown) => Promise.resolve(result).then(resolve),
@@ -158,6 +160,38 @@ describe("buildLiveSnapshot", () => {
     expect(snap.top_products).toEqual([
       { product_id: "v1", title: "Mug", sales_cents: 4000, units: 2 },
       { product_id: "v2", title: "Cap", sales_cents: 2500, units: 1 },
+    ]);
+  });
+
+  it("nets today's native refunds out of total sales without dropping the order", async () => {
+    // A $100 order placed today that took a $10 partial refund today: the order
+    // is stamped partially_refunded but stays in gross, and the refund nets it
+    // to $90. The order still counts toward orders_today and top_products.
+    const sb = sbStub({
+      guardrail_config: { timezone: "UTC" },
+      storefront_event: [SESS("s1", "checkout_complete")],
+      orders: [
+        {
+          id: "o1",
+          total_cents: 10000,
+          currency: "usd",
+          created_at: "2026-07-02T18:00:00Z",
+          financial_status: "partially_refunded",
+          attribution: { live_session_id: "s1" },
+        },
+      ],
+      order_line: [
+        { order_id: "o1", variant_id: "v1", quantity: 1, unit_price_cents: 10000, title_snapshot: "Kettle" },
+      ],
+      refund_fact: [{ subtotal_cents: 1000 }],
+    });
+    const snap = await buildLiveSnapshot(sb, "shop-1", NOW);
+    expect(snap.total_sales_today_cents).toBe(9000);
+    expect(snap.orders_today).toBe(1);
+    expect(snap.funnel.purchased_sessions).toBe(1);
+    // Refunds are NOT netted out of top_products (mirrors the 30-day model).
+    expect(snap.top_products).toEqual([
+      { product_id: "v1", title: "Kettle", sales_cents: 10000, units: 1 },
     ]);
   });
 
