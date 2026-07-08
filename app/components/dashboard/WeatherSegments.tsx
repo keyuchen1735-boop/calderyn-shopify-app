@@ -64,6 +64,30 @@ function CardHead({ children }: { children: ReactNode }) {
   );
 }
 
+/** The Forecast card's map section: hidden entirely when there are no regions
+ *  to plot, otherwise a fixed-height region map. Exported for the static-markup
+ *  test that pins the section's rendered height. */
+export function ForecastMap({
+  views,
+  dark,
+  onLocate,
+  onLocateError,
+}: {
+  views: RegionMapView[];
+  dark: boolean;
+  onLocate: (lat: number, lon: number) => void;
+  onLocateError: () => void;
+}) {
+  if (views.length === 0) return null;
+  return (
+    <div style={{ height: 320, borderBottom: "0.5px solid var(--hairline-strong)" }}>
+      <Suspense fallback={null}>
+        <WeatherRegionMap views={views} dark={dark} onLocate={onLocate} onLocateError={onLocateError} />
+      </Suspense>
+    </div>
+  );
+}
+
 /** Compact icon+label glyph for one endpoint of a budget-move flow row. */
 function RegionGlyph({ region, cond }: { region: string; cond: WeatherCondition | null }) {
   return (
@@ -373,21 +397,15 @@ export function WeatherSegments({
           </div>
         ) : (
           <>
-            {regionViews.length > 0 ? (
-              <div style={{ height: 280, borderBottom: "0.5px solid var(--hairline-strong)" }}>
-                <Suspense fallback={null}>
-                  <WeatherRegionMap
-                    views={regionViews}
-                    dark={dark}
-                    onLocate={(lat, lon) => void saveLocation(lat, lon)}
-                    onLocateError={() => {
-                      setGeoDenied(true);
-                      toast("Couldn't get your location — check permissions", "x", "critical");
-                    }}
-                  />
-                </Suspense>
-              </div>
-            ) : null}
+            <ForecastMap
+              views={regionViews}
+              dark={dark}
+              onLocate={(lat, lon) => void saveLocation(lat, lon)}
+              onLocateError={() => {
+                setGeoDenied(true);
+                toast("Couldn't get your location — check permissions", "x", "critical");
+              }}
+            />
           <div
             style={{
               display: "grid",
