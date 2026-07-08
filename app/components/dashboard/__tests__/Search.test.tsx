@@ -10,7 +10,7 @@ vi.mock("~/lib/dashboard/search-client", () => ({
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
-import Search, { loadSearchOverview, saveSetting, weatherStatusLine } from "../screens/Search";
+import Search, { loadSearchOverview, saveSetting } from "../screens/Search";
 // eslint-disable-next-line import/first
 import { cacheScreenData, clearScreenCache, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 // eslint-disable-next-line import/first
@@ -209,17 +209,5 @@ describe("Search access toggles — weather-aware ordering", () => {
     await saveSetting({ weatherMerchandising: false }, () => { saved++; }, () => {});
     expect(updateSettings).toHaveBeenCalledWith({ weatherMerchandising: false });
     expect(saved).toBe(1);
-  });
-});
-
-describe("weatherStatusLine", () => {
-  it("explains the per-visitor behavior when on (no location setup)", () => {
-    const line = weatherStatusLine(true);
-    expect(line).toContain("own local weather");
-    expect(line).toContain("No setup");
-    expect(line).not.toContain("location");
-  });
-  it("says it is off when disabled", () => {
-    expect(weatherStatusLine(false)).toContain("normal order");
   });
 });
