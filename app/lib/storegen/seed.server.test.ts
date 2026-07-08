@@ -17,7 +17,7 @@ vi.mock("~/lib/supabase.server", () => ({
 }));
 
 // eslint-disable-next-line import/first -- vitest hoists the vi.mock calls above this import
-import { seedSampleCatalog, clearSampleProducts, SAMPLE_TAG } from "./seed.server";
+import { seedSampleCatalog, clearSampleProducts, activeSampleProductIds, SAMPLE_TAG } from "./seed.server";
 
 beforeEach(() => {
   createCollectionMock.mockReset().mockImplementation(async (_shop: string, title: string) => ({ id: `col-${title}` }));
@@ -46,20 +46,27 @@ describe("seedSampleCatalog", () => {
   });
 });
 
+const UUID_SHOP = "11111111-1111-1111-1111-111111111111";
 describe("clearSampleProducts", () => {
   it("archives every active sample product and returns the count", async () => {
-    const n = await clearSampleProducts("shop-1");
+    const n = await clearSampleProducts(UUID_SHOP);
     expect(n).toBe(2);
-    expect(setStatusMock).toHaveBeenCalledWith("shop-1", "s1", "archived");
-    expect(setStatusMock).toHaveBeenCalledWith("shop-1", "s2", "archived");
+    expect(setStatusMock).toHaveBeenCalledWith(UUID_SHOP, "s1", "archived");
+    expect(setStatusMock).toHaveBeenCalledWith(UUID_SHOP, "s2", "archived");
   });
   it("returns 0 and archives nothing when there are no samples", async () => {
     sampleQueryMock.mockResolvedValue({ data: [], error: null });
-    expect(await clearSampleProducts("shop-1")).toBe(0);
+    expect(await clearSampleProducts(UUID_SHOP)).toBe(0);
     expect(setStatusMock).not.toHaveBeenCalled();
   });
   it("throws if the tag query errors (never silently reports success — rule 12)", async () => {
     sampleQueryMock.mockResolvedValue({ data: null, error: new Error("db down") });
-    await expect(clearSampleProducts("shop-1")).rejects.toThrow();
+    await expect(clearSampleProducts(UUID_SHOP)).rejects.toThrow();
+  });
+  it("short-circuits a non-uuid shopId, returning []/0 without touching the DB (defense in depth)", async () => {
+    expect(await activeSampleProductIds("stub-shop")).toEqual([]);
+    expect(await clearSampleProducts("stub-shop")).toBe(0);
+    expect(sampleQueryMock).not.toHaveBeenCalled();
+    expect(setStatusMock).not.toHaveBeenCalled();
   });
 });

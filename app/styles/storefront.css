@@ -208,6 +208,8 @@ a { color: inherit; }
 /* Generated image lands -> gentle crossfade in. */
 .cd-product-card__img { animation: cd-img-in 0.5s ease; }
 @keyframes cd-img-in { from { opacity: 0; } }
+.cd-hero-media { animation: cd-img-in 0.5s ease; }
+@media (prefers-reduced-motion: reduce) { .cd-hero-media { animation: none; } }
 @media (prefers-reduced-motion: reduce) {
   .cd-product-card__ph::after { animation: none; }
   .cd-product-card__img { animation: none; }

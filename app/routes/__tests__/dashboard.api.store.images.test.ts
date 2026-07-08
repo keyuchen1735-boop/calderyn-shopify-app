@@ -73,14 +73,21 @@ describe("image fill action", () => {
     const body = await (await action({ request: req(), params: {}, context: {} } as never) as Response).json();
     expect(enhanceMock).toHaveBeenCalledTimes(1);
     expect(body).toMatchObject({ done: true, kind: "product", heroFailed: true, remaining: 0 });
-    expect(saveDraftMock).not.toHaveBeenCalled();
+    // The failed hero neutralizes its marker and saves once, so it is not re-attempted next loop.
+    expect(saveDraftMock).toHaveBeenCalledTimes(1);
+    const savedHtml = saveDraftMock.mock.calls[0][2].blocks[0].props.html;
+    expect(savedHtml).not.toContain("data-cd-hero-media");
+    expect(savedHtml).not.toContain("<img");
   });
   it("hero generation failure is non-fatal: reports heroFailed and moves on (rule 12)", async () => {
     loadDraftMock.mockResolvedValue({ kind: "singleton", pageKey: "home", blocks: [{ id: "b1", type: "rawHtml", props: { html: "<div data-cd-hero-media></div>" }, layout: {} }] });
     providerMock.mockRejectedValue(new Error("credits"));
     listProductsMock.mockResolvedValue([]);
     const body = await (await action({ request: req(), params: {}, context: {} } as never) as Response).json();
+    expect(saveDraftMock).toHaveBeenCalledTimes(1);
+    const savedHtml = saveDraftMock.mock.calls[0][2].blocks[0].props.html;
+    expect(savedHtml).not.toContain("data-cd-hero-media");
+    expect(savedHtml).not.toContain("<img");
     expect(body).toMatchObject({ done: true, heroFailed: true });
-    expect(saveDraftMock).not.toHaveBeenCalled();
   });
 });

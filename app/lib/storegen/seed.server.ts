@@ -8,6 +8,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import type { SeedPlan } from "./seed";
 
 export const SAMPLE_TAG = "calderyn:sample";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface SeedOutcome { collections: number; products: number; failed: number }
 
@@ -40,10 +41,13 @@ export async function seedSampleCatalog(shopId: string, plan: SeedPlan): Promise
   return { collections: collectionIds.size, products, failed };
 }
 
-// The sample tag rides on product_dim.tags (a text[] column). Neither the storefront nor the
-// catalog listProducts DTO surfaces tags, so sample-ness is read straight off the table here —
-// one query reused by the studio read model (sampleCount) and by clearSampleProducts.
+// The studio/clear paths filter by the sample tag, so query product_dim.tags (a text[] column)
+// directly for a precise, index-friendly active-sample lookup rather than post-filtering a full
+// product list — one query reused by the studio read model (sampleCount) and clearSampleProducts.
 export async function activeSampleProductIds(shopId: string): Promise<string[]> {
+  // Non-uuid (demo/fixture) shops have no product_dim rows and would trip a Postgres uuid cast;
+  // there is nothing to clear/count, so short-circuit before touching the DB (covers both callers).
+  if (!UUID_RE.test(shopId)) return [];
   const { data, error } = await getSupabase()
     .from("product_dim").select("id").eq("shop_id", shopId).eq("status", "active").contains("tags", [SAMPLE_TAG]);
   if (error) throw error;

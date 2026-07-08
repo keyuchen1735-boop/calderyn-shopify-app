@@ -66,15 +66,19 @@ export async function action({ request }: ActionFunctionArgs) {
       // are never reinterpreted as String.replace substitution patterns.
       const patched = html.replace(
         HERO_MARKER_RE,
-        () => `<img data-cd-hero-media src="${url}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" />`,
+        () => `<img data-cd-hero-media class="cd-hero-media" src="${url}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover" />`,
       );
       raw.props = { ...(raw.props as object), html: sanitizeStoreHtml(patched) };
       await saveDraft(shopId, "home", home);
       return json({ done: pending.length === 0, kind: "hero", remaining: pending.length });
     } catch (err) {
-      // Hero generation is non-fatal (rule 12): log, do not save a partial doc, and still advance the
-      // loop by doing one pending product so the fill makes progress and terminates.
       console.error("[storegen] hero image generation failed", err);
+      // Neutralize the marker so a failed hero is attempted once, not re-generated on every
+      // fill iteration (each attempt is a paid call). A later full regeneration emits a fresh
+      // marker, so the hero still regenerates then. The designed CSS hero stands without it.
+      const cleared = html.replace(HERO_MARKER_RE, () => "<div></div>");
+      raw.props = { ...(raw.props as object), html: sanitizeStoreHtml(cleared) };
+      await saveDraft(shopId, "home", home);
       if (pending.length === 0) return json({ done: true, remaining: 0, heroFailed: true });
       const r = await enhanceListing(shopId, pending[0]);
       return json({ done: pending.length <= 1, kind: "product", remaining: pending.length - 1, heroFailed: true, last: r });

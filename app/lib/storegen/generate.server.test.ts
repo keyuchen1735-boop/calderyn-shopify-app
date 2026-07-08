@@ -315,6 +315,27 @@ describe("generateStore", () => {
     expect(recGenMock).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
   });
 
+  it("empty shop: seed succeeds but every design call fails → 'failed' (degraded measured over design calls)", async () => {
+    // The seed call succeeding must not mask an all-fallback design: degradation is a DESIGN
+    // signal, so a run whose seed worked but whose every brand/page call errored is still failed
+    // (rule 12), not passed off as a draft just because products now exist from seeding.
+    let seeded = false;
+    const seededProduct: StoreProduct = { id: "p1", handle: "mug", title: "Mug", description: "", images: [], variants: [{ id: "v1", sku: null, title: "Default", priceCents: 2800, currency: "USD", available: true }], collections: ["featured"] };
+    getCatalogMock.mockReturnValue({
+      listProducts: async () => (seeded ? [seededProduct] : []),
+      getProduct: async () => seededProduct,
+      listCollections: async () => (seeded ? [{ handle: "featured", title: "Featured" }] : []),
+    });
+    seedMock.mockImplementation(async () => { seeded = true; return { collections: 1, products: 1, failed: 0 }; });
+    createMock
+      .mockResolvedValueOnce(reply('{"collections":[{"title":"Featured"}],"products":[{"title":"Mug","description":"A cozy mug","priceCents":2800,"collection":"Featured","iconHint":"coffee","phTone":"warm"}]}')) // seed OK
+      .mockRejectedValue(new Error("api down")); // every design call (brand + pages) fails
+    const result = await generateStore({ shopId: "3f0e8f5e-0000-4000-8000-000000000000", mode: "brief", brief: "cozy mugs" });
+    expect(seedMock).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe("failed"); // seed OK but all design calls failed
+    expect(saveDraftMock).toHaveBeenCalledTimes(3); // fallback docs still written
+  });
+
   it("stays 'draft' when the AI is partially degraded (brand ok, one doc call throws)", async () => {
     // A single transient doc-call error must NOT flip a mostly-good generation to
     // "failed" — at least one call succeeded, so the brief did reach the model.

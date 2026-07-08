@@ -163,6 +163,11 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       seedOutcome = { collections: 0, products: 0, failed: plan.products.length };
     }
   }
+  // Degradation is a DESIGN-quality signal: measure only the brand/page calls, excluding the
+  // seed call above, so a run whose seed succeeded but whose every design call failed is still
+  // reported as failed (rule 12), not passed off as a draft.
+  const designAttemptsBase = llmAttempts;
+  const designOkBase = llmOk;
   const menu: CatalogMenu = {
     products: products.map((p) => ({ id: p.id, handle: p.handle, title: p.title })),
     collections: collections.map((c) => ({ handle: c.handle, title: c.title })),
@@ -292,7 +297,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   // above are all deterministic fallbacks that ignore the brief. Surface that as
   // a failed run so the studio can tell the merchant instead of passing a
   // generic layout off as their design (rule 12).
-  const degraded = llmAttempts > 0 && llmOk === 0;
+  const degraded = (llmAttempts - designAttemptsBase) > 0 && (llmOk - designOkBase) === 0;
   const status: GenerateStatus = degraded ? "failed" : products.length === 0 ? "no_products" : "draft";
   // Best-effort attribution: references were attached and every call carrying
   // them errored while a text-only call succeeded — the run "worked" but the
