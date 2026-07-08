@@ -1,6 +1,14 @@
 // app/lib/storegen/prompts.test.ts
 import { describe, it, expect } from "vitest";
-import { BRAND_SYSTEM_PROMPT, docSystemPrompt, buildDocUserMessage, buildHomeHtmlUserMessage, HOME_HTML_SYSTEM_PROMPT } from "./prompts";
+import {
+  BRAND_SYSTEM_PROMPT,
+  docSystemPrompt,
+  buildDocUserMessage,
+  buildHomeHtmlUserMessage,
+  HOME_HTML_SYSTEM_PROMPT,
+  SEED_SYSTEM_PROMPT,
+  buildSeedUserMessage,
+} from "./prompts";
 import { PALETTE_LIBRARY } from "./block-plan";
 
 describe("generator prompts", () => {
@@ -97,5 +105,23 @@ describe("generator prompts", () => {
     expect(msg).toContain("p1");
     expect(msg).toContain("summer");
     expect(msg).toContain("ignore previous instructions"); // present as data, not obeyed
+  });
+});
+
+describe("seed prompts", () => {
+  it("locks the output contract and the icon menu", () => {
+    expect(SEED_SYSTEM_PROMPT).toContain('"products"');
+    expect(SEED_SYSTEM_PROMPT).toContain("iconHint");
+    expect(SEED_SYSTEM_PROMPT).toContain("coffee");
+    expect(SEED_SYSTEM_PROMPT).toContain("untrusted");
+  });
+  it("carries the brief and marks it untrusted", () => {
+    const msg = buildSeedUserMessage("a cozy candle shop");
+    expect(msg).toContain("a cozy candle shop");
+    expect(msg).toContain("untrusted");
+  });
+  it("adds the reference-image instruction only when references exist", () => {
+    expect(buildSeedUserMessage(undefined, true)).toContain("STYLE REFERENCES");
+    expect(buildSeedUserMessage(undefined, false)).not.toContain("STYLE REFERENCES");
   });
 });
