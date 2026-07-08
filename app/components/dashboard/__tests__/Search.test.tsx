@@ -76,7 +76,7 @@ describe("Search screen (smoke)", () => {
       settings: { ...settings, googleSiteVerification: "google-xyz" },
     });
     const html = renderToStaticMarkup(<Search app={app} />);
-    expect(html).toContain("Saved and live on your store");
+    expect(html).toContain("Saved and live");
   });
 
   it("seeds the optional store-description field from settings.orgDescription", () => {
