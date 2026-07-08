@@ -9,6 +9,7 @@ import { ensureVisitorSession } from "~/lib/storefront/visitor-cookie.server";
 import { getRunningExperiment, assignArm, type RunningExperiment } from "~/lib/experiments/store-experiment.server";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
+import { storefrontWeatherCondition } from "~/lib/storefront/weather-serve.server";
 import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
 import { renderBlocks } from "~/lib/storebuilder/render";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
@@ -81,7 +82,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const arm = resolveExperimentArm(experiment, visitor.visitorId);
   const doc = arm.doc ?? published;
   // Pre-resolve exactly the catalog data the doc's blocks reference (shopId scoping inside).
-  const data = await resolveRenderData(doc, shopId, catalog);
+  // The visitor's own local weather (from their request) floats weather-relevant products up.
+  const weatherCondition = await storefrontWeatherCondition(request, shopId);
+  const data = await resolveRenderData(doc, shopId, catalog, undefined, weatherCondition);
   // Exposure rides the existing page_view row for BOTH arms; only stamped when a test is running.
   const track = await trackStorefrontEvent(request, shopId, "page_view", {
     experimentId: arm.experimentId,

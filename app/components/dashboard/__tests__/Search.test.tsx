@@ -24,7 +24,7 @@ import type { SeoSettings, SearchOverviewVM } from "~/lib/dashboard/search-clien
 
 const app = { toast: () => {}, navigate: () => {} } as unknown as DashboardCtx;
 const settings: SeoSettings = { allowSearchEngines: true, allowAiCrawlers: true, weatherMerchandising: true, orgName: null, orgDescription: null, googleSiteVerification: null };
-const overview: SearchOverviewVM = { settings, sitemapUrl: "https://demo.calderyncompany.com/sitemap.xml", weatherStatus: null };
+const overview: SearchOverviewVM = { settings, sitemapUrl: "https://demo.calderyncompany.com/sitemap.xml" };
 
 beforeEach(() => {
   clearScreenCache();
@@ -39,7 +39,7 @@ describe("Search screen (smoke)", () => {
     // The two plain enable-rows a merchant controls.
     expect(html).toContain("Search engines (SEO)");
     expect(html).toContain("AI assistants (AIO)");
-    expect(html).toContain("Weather-aware ordering");
+    expect(html).toContain("Weather-aware shop");
     // Three switches (search + AI + weather); the description field has none.
     expect(html.match(/role="switch"/g)?.length).toBe(3);
   });
@@ -213,17 +213,13 @@ describe("Search access toggles — weather-aware ordering", () => {
 });
 
 describe("weatherStatusLine", () => {
-  it("prompts to set a location when the status is unresolved", () => {
-    expect(weatherStatusLine(null, true)).toContain("Set a store location");
+  it("explains the per-visitor behavior when on (no location setup)", () => {
+    const line = weatherStatusLine(true);
+    expect(line).toContain("own local weather");
+    expect(line).toContain("No setup");
+    expect(line).not.toContain("location");
   });
-  it("shows the forecast but not the boost when the toggle is off", () => {
-    const line = weatherStatusLine({ region: "us-east", condition: "storm" }, false);
-    expect(line).toContain("cold & wet");
-    expect(line).toContain("Turn on");
-  });
-  it("describes the active boost per condition when on", () => {
-    expect(weatherStatusLine({ region: "us-east", condition: "storm" }, true)).toContain("rain");
-    expect(weatherStatusLine({ region: "us-west", condition: "sun" }, true)).toContain("warm-weather");
-    expect(weatherStatusLine({ region: "us-central", condition: "neutral" }, true)).toContain("no weather change");
+  it("says it is off when disabled", () => {
+    expect(weatherStatusLine(false)).toContain("normal order");
   });
 });

@@ -19,6 +19,7 @@ import { getSeoOverride } from "~/lib/seo/seo-store.server";
 import { applyOverride } from "~/lib/seo/override";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
+import { storefrontWeatherCondition } from "~/lib/storefront/weather-serve.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Product" }];
@@ -32,7 +33,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Render the published PDP TEMPLATE bound to this product record. No doc → legacy PDP markup.
   const doc = await loadPublishedDoc(shopId, "pdp");
   const record = { product };
-  const data = doc ? await resolveRenderData(doc, shopId, catalog, record) : null;
+  const weatherCondition = await storefrontWeatherCondition(request, shopId);
+  const data = doc ? await resolveRenderData(doc, shopId, catalog, record, weatherCondition) : null;
   const track = await trackStorefrontEvent(request, shopId, "page_view", {
     productId: product.id,
   });

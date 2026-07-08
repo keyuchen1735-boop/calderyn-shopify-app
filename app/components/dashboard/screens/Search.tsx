@@ -14,24 +14,14 @@ import { fetchSearchOverview, updateSettings, suggestDescription, type SearchOve
 // dashboard.api.search.tsx), so a save can never be rejected for length.
 const DESCRIPTION_MAX = 200;
 
-const CONDITION_LABEL: Record<"sun" | "storm" | "neutral", string> = {
-  sun: "sunny",
-  storm: "cold & wet",
-  neutral: "mild",
-};
-
-// Pure so it's directly testable: turns the shop's resolved weather status plus
-// the merchant's own toggle into the one caption line shown under the toggle.
-export function weatherStatusLine(
-  status: SearchOverviewVM["weatherStatus"],
-  weatherMerchandising: boolean,
-): string {
-  if (!status) return "Set a store location to match your storefront to the local weather.";
-  const label = CONDITION_LABEL[status.condition];
-  if (!weatherMerchandising) return `Local forecast: ${label}. Turn on to feature matching products.`;
-  if (status.condition === "sun") return "Sunny forecast in your region, featuring warm-weather products first.";
-  if (status.condition === "storm") return "Cold, wet forecast in your region, featuring rain & warm-layer products first.";
-  return "Mild forecast in your region, no weather change to your ordering right now.";
+// Pure so it's directly testable: the one caption line shown under the toggle.
+// The boost is per-VISITOR (each shopper's own local weather, read from their
+// request), so there is no single shop region to display, and no setup for the
+// merchant. The line just explains what the switch does.
+export function weatherStatusLine(weatherMerchandising: boolean): string {
+  return weatherMerchandising
+    ? "Each shopper sees products matched to their own local weather, automatically. No setup needed."
+    : "Off. Your storefront shows products in your normal order for everyone.";
 }
 
 // Shared by the initial mount and the Retry button, so a failed load and a
@@ -160,7 +150,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
     await saveSetting(
       { weatherMerchandising: next },
       () => {
-        toast(next ? "Weather-aware ordering is on." : "Weather-aware ordering is off.", "check");
+        toast(next ? "Weather-aware shop is on." : "Weather-aware shop is off.", "check");
         refresh();
       },
       () => toast("Could not update", "warn", "critical"),
@@ -246,7 +236,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
   const sitemapsConsoleUrl = siteUrl
     ? `https://search.google.com/search-console/sitemaps?resource_id=${encodeURIComponent(`${siteUrl}/`)}`
     : null;
-  const weatherStatusText = weatherStatusLine(data.weatherStatus, settings.weatherMerchandising);
+  const weatherStatusText = weatherStatusLine(settings.weatherMerchandising);
 
   return (
     <div className="cd-screen cd-seo">
@@ -286,10 +276,10 @@ export default function Search({ app }: { app: DashboardCtx }) {
             </div>
             <div className="cd-seo__row">
               <div className="cd-seo__info">
-                <div className="cd-seo__label">Weather-aware ordering</div>
+                <div className="cd-seo__label">Weather-aware shop</div>
                 <div className="cd-seo__hint">
-                  Automatically float weather-relevant products to the top of your storefront collections when the
-                  local forecast calls for them.
+                  Float weather-relevant products to the top of your collections for each shopper, based on their own
+                  local forecast (rain gear before a storm, summer goods on a sunny day).
                 </div>
               </div>
               <Toggle
