@@ -4,7 +4,7 @@ import type { DraftedAction } from "./types";
 import { COMMERCE_TOOLS, COMMERCE_TOOL_NAMES, handleCommerceTool, type CommerceCtx } from "./commerce-tools.server";
 import { ASSISTANT_ACTIONS, generatedWriteTools } from "./actions/registry.server";
 import { runRegistryAction } from "./actions/execute.server";
-import type { ActionReceipt, PendingActionCard } from "./actions/registry-types";
+import type { ActionCtx, ActionReceipt, PendingActionCard } from "./actions/registry-types";
 
 const COMMERCE_NAME_SET = new Set<string>(COMMERCE_TOOL_NAMES);
 const REGISTRY_NAME_SET = new Set<string>(ASSISTANT_ACTIONS.map((a) => a.name));
@@ -19,8 +19,13 @@ export interface ToolDispatchResult {
 
 const LIMIT_CAP = 200;
 
-/** Read tools + flag_alert, shared by the in-app assistant and external buyer clients. */
-const READ_TOOLS: Anthropic.Tool[] = [
+/**
+ * Read tools + flag_alert, shared by the in-app assistant and external buyer
+ * clients. Also what turn.server.ts advertises to callers that don't set
+ * allowActions (e.g. the legacy embedded surface) — the model never sees a
+ * write tool name it can't actually dispatch.
+ */
+export const READ_TOOLS: Anthropic.Tool[] = [
   {
     name: "list_alerts",
     description:
@@ -130,9 +135,12 @@ export interface ToolDispatcherDeps {
    *  tools are available to this caller (frictionless — no scope string required). */
   commerceCtx?: CommerceCtx;
   /** Shop + conversation identity required to run registry actions. Only the
-   *  in-app merchant assistant (turn.server.ts) sets this; external/MCP
-   *  callers never do, so registry tool names come back ACTIONS_UNAVAILABLE. */
-  actionCtx?: { shopId: string; conversationId: string };
+   *  in-app merchant assistant (turn.server.ts) sets this, and only when the
+   *  caller opted into allowActions; external/MCP callers and the legacy
+   *  embedded surface never do, so registry tool names come back
+   *  ACTIONS_UNAVAILABLE. idempotencyKey is minted per tool_use inside the
+   *  dispatcher, not supplied by callers. */
+  actionCtx?: Omit<ActionCtx, "idempotencyKey">;
 }
 
 export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherDeps = {}) {

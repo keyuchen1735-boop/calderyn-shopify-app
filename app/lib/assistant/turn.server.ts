@@ -8,7 +8,7 @@ import { calderynClient } from "../calderyn.server";
 import { getAnthropic, assistantModel } from "./anthropic.server";
 import { buildSnapshot } from "./snapshot.server";
 import { buildSystemPrompt } from "./prompt.server";
-import { ASSISTANT_TOOLS, makeToolDispatcher, type ToolDispatcherDeps } from "./tools.server";
+import { ASSISTANT_TOOLS, READ_TOOLS, makeToolDispatcher, type ToolDispatcherDeps } from "./tools.server";
 import { runAssistantTurn } from "./loop.server";
 import { appendMessage, createConversation, getMessages } from "./conversations.server";
 import type { ChatMessage } from "./types";
@@ -34,6 +34,15 @@ export interface ConversationTurnInput {
   message: string;
   conversationId: string | null;
   deps?: ToolDispatcherDeps;
+  /**
+   * Opts into the write-tool registry (actionCtx + registry tool names
+   * advertised to the model). The registry is dashboard-only: the legacy
+   * embedded surface (app/routes/app.assistant.tsx) receives a shop DOMAIN,
+   * not a session-derived shop id, and must never be able to execute writes.
+   * Its calls must never set this — default is false/unset, which keeps
+   * actionCtx unbuilt and drops write tools from the advertised toolset.
+   */
+  allowActions?: boolean;
 }
 
 export interface ConversationTurnResult {
@@ -59,6 +68,8 @@ export async function runConversationTurn(
   const client = calderynClient(shopDomain);
   const snapshot = await buildSnapshot(client);
 
+  const allowActions = input.allowActions === true;
+
   let result;
   try {
     const anthropic = getAnthropic();
@@ -66,10 +77,10 @@ export async function runConversationTurn(
       createMessage: (params) => anthropic.messages.create(params),
       model: assistantModel(),
       system: buildSystemPrompt(snapshot),
-      tools: ASSISTANT_TOOLS,
+      tools: allowActions ? ASSISTANT_TOOLS : READ_TOOLS,
       dispatchTool: makeToolDispatcher(client, {
         ...input.deps,
-        actionCtx: { shopId: shopDomain, conversationId },
+        ...(allowActions ? { actionCtx: { shopId: shopDomain, conversationId } } : {}),
       }),
       history,
       userMessage: message,
