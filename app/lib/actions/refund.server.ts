@@ -28,6 +28,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CalderynError } from "../calderyn.server";
+import { restockOrderLines } from "../inventory/engine.server";
 import { transitionOrder } from "../order/order.server";
 import { isOrderState, type OrderState } from "../order/state";
 import { createStripeRefund, type StripeRefundInput, type StripeRefundResult } from "../payments/refund.server";
@@ -51,6 +52,8 @@ export interface RefundActionInput {
   triggerReason?: string | null;
   /** Merchant free-text note (persisted to audit params only — NOT sent to Stripe). */
   reason?: string | null;
+  /** Restock all lines at the primary location — honored only when this refund makes the order fully refunded. */
+  restock?: boolean;
 }
 
 export interface RefundActionResult {
@@ -62,6 +65,8 @@ export interface RefundActionResult {
   refundedTotalCents: number;
   /** The order's resulting state (refunded when fully refunded, else partially_refunded). */
   orderState: OrderState;
+  /** Lines restocked via inventory_restock — 0 when not requested, partial, or on a replay. */
+  restockedLines: number;
   replayed: boolean;
 }
 
@@ -194,6 +199,7 @@ async function resultFromAudit(
     capturedCents: Number(params.captured_cents ?? 0),
     refundedTotalCents: Number(params.refunded_total_cents ?? post.refunded_cents ?? 0),
     orderState: (isOrderState(state) ? state : "refunded") as OrderState,
+    restockedLines: 0,
     replayed: true,
   };
 }
@@ -374,6 +380,27 @@ export async function executeRefundAction(
     );
   }
 
+  // 8c. Optional restock — FULL refunds only (amount-based partials can't say which
+  // lines came back; per-line restock ships with returns). Best-effort like 8b: the
+  // money already moved, so a restock failure logs loudly and lands in the audit
+  // params rather than failing the refund.
+  let restockedLines = 0;
+  if (input.restock === true && resolvedState === "refunded") {
+    try {
+      const r = await restockOrderLines(shopId, input.orderId, "refund");
+      restockedLines = r.restockedLines;
+      params.restocked_lines = restockedLines;
+    } catch (err) {
+      params.restock_error = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[refund] order ${input.orderId} refund ${refund.refundId}: restock failed — reconcile inventory manually`,
+        err,
+      );
+    }
+  } else if (input.restock === true) {
+    params.restock_skipped = "partial_refund";
+  }
+
   // 9. One append-only action_audit row (+ idempotency marker). issue_refund recovers $0 impact
   // (a refund is money OUT, not clawed-back waste) — recoveredCentsFromStates returns 0 for it.
   // Loud-log before rethrow: after a FULL refund the order is already 'refunded', so a retry is
@@ -413,6 +440,7 @@ export async function executeRefundAction(
     capturedCents,
     refundedTotalCents,
     orderState: resolvedState,
+    restockedLines,
     replayed: false,
   };
 }
