@@ -116,6 +116,56 @@ export async function seedInitialStock(shopId: string, variantId: string, onHand
   await adjustStock(shopId, variantId, locationId, qty, "initial");
 }
 
+// Refund/cancel restock: put a whole order's sold units back into on_hand at the
+// shop's primary location. Amount-based Phase-1 refunds have no line selection, so
+// this is all-lines-or-nothing (per-line restock arrives with returns). Only
+// tracked variants restock (untracked lines never held ledger stock). Idempotent:
+// the ledger key restock:<order>:<variant> makes a replayed refund/cancel a no-op.
+export async function restockOrderLines(
+  shopId: string, orderId: string, reason: string,
+): Promise<{ restockedLines: number }> {
+  const sb = getSupabase();
+  const { data: lines, error: lErr } = await sb
+    .from("order_line")
+    .select("variant_id, quantity")
+    .eq("shop_id", shopId)
+    .eq("order_id", orderId);
+  if (lErr) throw lErr;
+  const byVariant = new Map<string, number>();
+  for (const l of (lines ?? []) as Array<Record<string, unknown>>) {
+    const v = String(l.variant_id);
+    byVariant.set(v, (byVariant.get(v) ?? 0) + Number(l.quantity ?? 0));
+  }
+  if (byVariant.size === 0) return { restockedLines: 0 };
+
+  const { data: variants, error: vErr } = await sb
+    .from("variant_dim")
+    .select("id, inventory_tracked")
+    .eq("shop_id", shopId)
+    .in("id", [...byVariant.keys()]);
+  if (vErr) throw vErr;
+  const tracked = new Set(
+    ((variants ?? []) as Array<Record<string, unknown>>)
+      .filter((r) => r.inventory_tracked === true)
+      .map((r) => String(r.id)),
+  );
+  if (tracked.size === 0) return { restockedLines: 0 };
+
+  const locationId = await ensurePrimaryLocation(shopId);
+  let restockedLines = 0;
+  for (const [variantId, qty] of byVariant) {
+    if (!tracked.has(variantId) || qty <= 0) continue;
+    const { error } = await sb.rpc("inventory_restock", {
+      p_shop_id: shopId, p_variant_id: variantId, p_location_id: locationId,
+      p_qty: qty, p_idempotency_key: `restock:${orderId}:${variantId}`, p_reason: reason,
+    });
+    if (error) throw error;
+    await projectLevelFact(shopId, variantId, locationId);
+    restockedLines += 1;
+  }
+  return { restockedLines };
+}
+
 export async function adjustStock(shopId: string, variantId: string, locationId: string, newOnHand: number, reason?: string): Promise<void> {
   const { error } = await getSupabase().rpc("inventory_adjust", {
     p_shop_id: shopId, p_variant_id: variantId, p_location_id: locationId,
