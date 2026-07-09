@@ -6,9 +6,12 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 const resolveStorefrontShop = vi.fn();
 const priceCart = vi.fn();
 const createCheckout = vi.fn();
+const paymentsReadiness = vi.fn();
 
 // Real class so the route's `err instanceof OutOfStockError` branch (-> 409) is exercised. Defined
-// via vi.hoisted so it exists when the (hoisted) vi.mock factory below references it.
+// via vi.hoisted so it exists when the (hoisted) vi.mock factory below references it. The payments
+// and origin error classes are NOT faked — they live in dependency-free errors modules the route
+// (and this test) import for real, so instanceof matches by construction.
 const { OutOfStockError } = vi.hoisted(() => ({
   OutOfStockError: class OutOfStockError extends Error {
     readonly variantIds: string[];
@@ -31,9 +34,18 @@ vi.mock("~/lib/order/checkout.server", () => ({
   createCheckout: (...a: unknown[]) => createCheckout(...a),
   OutOfStockError,
 }));
+vi.mock("~/lib/payments/connect.server", () => ({
+  paymentsReadiness: (...a: unknown[]) => paymentsReadiness(...a),
+}));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { commitCartId } from "~/lib/storefront/cart-cookie.server";
+// eslint-disable-next-line import/first -- real dependency-free error class the route catches by instanceof
+import { ShipRestrictedError } from "~/lib/shipping/errors";
+// eslint-disable-next-line import/first -- real dependency-free error class the route catches by instanceof
+import { PaymentsNotReadyError } from "~/lib/payments/errors";
+// eslint-disable-next-line import/first -- real dependency-free error class the route catches by instanceof
+import { OriginNotConfiguredError } from "~/lib/commerce/errors";
 // eslint-disable-next-line import/first
 import { action, loader } from "../storefront.checkout";
 
@@ -81,6 +93,7 @@ beforeEach(() => {
   process.env.SHOPIFY_API_SECRET = SECRET;
   process.env.STRIPE_PUBLISHABLE_KEY = "pk_test_x";
   resolveStorefrontShop.mockResolvedValue("shop-1");
+  paymentsReadiness.mockResolvedValue({ ready: true, route: "destination" });
   priceCart.mockResolvedValue({
     cartId: "cart-1",
     lines: [
@@ -122,10 +135,29 @@ describe("checkout loader", () => {
     const res = await loader(loaderArgs(req));
     const body = await (res as Response).json();
     expect(body.publishableKey).toBe("pk_test_x");
+    expect(body.paymentsReady).toBe(true);
     expect(body.summary.subtotalCents).toBe(3998);
     expect(body.summary.lines).toHaveLength(1);
     // No secret material leaks through the loader payload.
     expect(JSON.stringify(body)).not.toContain("sk_");
+  });
+
+  it("flags paymentsReady=false when the merchant has no fully-enabled Stripe account", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    paymentsReadiness.mockResolvedValueOnce({ ready: false, reason: "no_account" });
+    const req = new Request("https://shop.example/storefront/checkout", { headers: { Cookie: await cartCookie() } });
+    const res = await loader(loaderArgs(req));
+    expect((await (res as Response).json()).paymentsReady).toBe(false);
+    spy.mockRestore();
+  });
+
+  it("fails CLOSED (paymentsReady=false, no 500) when the readiness lookup errors", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    paymentsReadiness.mockRejectedValueOnce(new Error("db blip"));
+    const req = new Request("https://shop.example/storefront/checkout", { headers: { Cookie: await cartCookie() } });
+    const res = await loader(loaderArgs(req));
+    expect((await (res as Response).json()).paymentsReady).toBe(false);
+    spy.mockRestore();
   });
 });
 
@@ -234,6 +266,31 @@ describe("checkout action happy path", () => {
     const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
     expect((res as Response).status).toBe(409);
     expect((await (res as Response).json()).error).toMatch(/sold out/);
+  });
+
+  it("maps a payments-not-ready checkout to an honest 503 (buyer money never lands in the platform account)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    createCheckout.mockRejectedValueOnce(new PaymentsNotReadyError("shop-1", "no_account"));
+    const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(503);
+    expect((await (res as Response).json()).error).toMatch(/isn't accepting payments yet/);
+    spy.mockRestore();
+  });
+
+  it("maps a ship-restricted cart to an actionable 422 with the destination country", async () => {
+    createCheckout.mockRejectedValueOnce(new ShipRestrictedError("CA", ["v1"]));
+    const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(422);
+    expect((await (res as Response).json()).error).toMatch(/can't be shipped to CA/);
+  });
+
+  it("maps a missing ship-from origin to an honest 503 (retrying can't help the buyer)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    createCheckout.mockRejectedValueOnce(new OriginNotConfiguredError("shop-1"));
+    const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(503);
+    expect((await (res as Response).json()).error).toMatch(/can't ship orders yet/);
+    spy.mockRestore();
   });
 
   it("still maps an unexpected checkout failure to a 502", async () => {

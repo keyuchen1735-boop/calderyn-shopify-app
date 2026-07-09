@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { getOrgMode } from "~/lib/cutover/org-mode.server";
-import { getConnectedAccount } from "~/lib/payments/connect.server";
+import { paymentsReadiness } from "~/lib/payments/connect.server";
 import { upsertGuestBuyer } from "~/lib/buyer/identity.server";
 import { createCommerceCheckoutSession } from "~/lib/commerce/stripe-checkout.server";
 import { executeRefundAction } from "~/lib/actions/refund.server";
@@ -37,8 +37,14 @@ export async function startTestTransaction(
   if (mode !== "dual_run") {
     throw new Error(`a test transaction can only be run in dual_run (shop is in ${mode})`);
   }
-  if (!(await getConnectedAccount(shopId))) {
-    throw new Error("Connect Stripe before running a test transaction.");
+  // Full readiness, not mere account existence: the probe exercises the REAL charge
+  // path, which fails closed for a half-onboarded account — gate here (BEFORE the
+  // probe order is written) with the merchant-actionable message instead of letting
+  // the session create throw deeper and orphan a channel='test' order. The decision
+  // is reused by the session create below (one readiness read per probe).
+  const readiness = await paymentsReadiness(shopId);
+  if (!readiness.ready) {
+    throw new Error("Finish connecting Stripe (charges and payouts enabled) before running a test transaction.");
   }
 
   // orders.buyer_id is NOT NULL (order_spine.sql:122) — every money-path order carries a
@@ -65,18 +71,22 @@ export async function startTestTransaction(
   const row = data as { id: string; confirmation_token: string };
 
   const golive = `${returnOrigin}${GOLIVE_PATH}`;
-  const session = await createCommerceCheckoutSession(shopId, {
-    orderId: row.id,
-    totalCents: TEST_CHARGE_CENTS,
-    currency: "usd",
-    confirmationToken: row.confirmation_token,
-    // The Cutover screen reads the return marker to confirm the payment (success) or
-    // note the abandoned checkout (cancelled) without the merchant hunting for Re-check.
-    returnUrls: {
-      success: `${golive}?${TEST_TX_PARAM}=${TEST_TX_SUCCESS}`,
-      cancel: `${golive}?${TEST_TX_PARAM}=${TEST_TX_CANCELLED}`,
+  const session = await createCommerceCheckoutSession(
+    shopId,
+    {
+      orderId: row.id,
+      totalCents: TEST_CHARGE_CENTS,
+      currency: "usd",
+      confirmationToken: row.confirmation_token,
+      // The Cutover screen reads the return marker to confirm the payment (success) or
+      // note the abandoned checkout (cancelled) without the merchant hunting for Re-check.
+      returnUrls: {
+        success: `${golive}?${TEST_TX_PARAM}=${TEST_TX_SUCCESS}`,
+        cancel: `${golive}?${TEST_TX_PARAM}=${TEST_TX_CANCELLED}`,
+      },
     },
-  });
+    readiness,
+  );
   return { url: session.url };
 }
 

@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   balanceRetrieve: vi.fn(),
   piCreate: vi.fn(),
   maybeSingle: vi.fn(),
+  shopsMaybeSingle: vi.fn(),
   insert: vi.fn(),
   updateEq: vi.fn(),
 }));
@@ -22,12 +23,16 @@ vi.mock("stripe", () => ({
   },
 }));
 
-// from("stripe_connected_account"): .select().eq().maybeSingle() reads; .insert() writes;
-// .update(payload).eq() resolves via h.updateEq so tests can assert the payload.
+// Table-aware fake: from("stripe_connected_account") reads resolve via h.maybeSingle;
+// from("shops") (the fresh demo_mode read on the money seam) via h.shopsMaybeSingle.
+// .insert() writes; .update(payload).eq() resolves via h.updateEq so tests can assert
+// the payload.
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
-    from: () => ({
-      select: () => ({ eq: () => ({ maybeSingle: h.maybeSingle }) }),
+    from: (table: string) => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: table === "shops" ? h.shopsMaybeSingle : h.maybeSingle }),
+      }),
       insert: h.insert,
       update: (payload: Record<string, unknown>) => ({ eq: () => h.updateEq(payload) }),
     }),
@@ -40,6 +45,8 @@ import {
   createRoutedPaymentIntent,
   destinationParamsFor,
   expressLoginLink,
+  paymentsReadiness,
+  PaymentsNotReadyError,
   startOnboarding,
   syncAccountStatus,
   applyAccountUpdate,
@@ -67,6 +74,7 @@ beforeEach(() => {
   process.env.STRIPE_SECRET_KEY = "sk_test_x";
   h.insert.mockResolvedValue({ error: null });
   h.updateEq.mockResolvedValue({ error: null });
+  h.shopsMaybeSingle.mockResolvedValue({ data: { demo_mode: false }, error: null }); // default: real shop — fail closed
 });
 
 describe("computeApplicationFeeCents", () => {
@@ -80,23 +88,68 @@ describe("computeApplicationFeeCents", () => {
   });
 });
 
-describe("destinationParamsFor", () => {
-  it("returns platform params when no connected account exists", async () => {
+describe("paymentsReadiness", () => {
+  it("is ready via destination for a fully-enabled connected account (demo lookup skipped)", async () => {
+    h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
+    expect(await paymentsReadiness("shop-1")).toEqual({ ready: true, route: "destination", account: ROW });
+    expect(h.shopsMaybeSingle).not.toHaveBeenCalled();
+  });
+
+  it("is ready via platform for a demo shop without a connected account", async () => {
     h.maybeSingle.mockResolvedValue({ data: null, error: null });
-    expect(await destinationParamsFor("shop-1", 2500)).toEqual({
-      params: {},
-      stripeAccountId: null,
-      applicationFeeCents: null,
-    });
+    h.shopsMaybeSingle.mockResolvedValue({ data: { demo_mode: true }, error: null });
+    expect(await paymentsReadiness("shop-demo")).toEqual({ ready: true, route: "platform" });
+  });
+
+  it("is not ready (no_account) for a real shop with no connected account", async () => {
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    expect(await paymentsReadiness("shop-1")).toEqual({ ready: false, reason: "no_account" });
+  });
+
+  it("is not ready (onboarding_incomplete) for a half-onboarded real shop", async () => {
+    h.maybeSingle.mockResolvedValue({ data: { ...ROW, payouts_enabled: false }, error: null });
+    expect(await paymentsReadiness("shop-1")).toEqual({ ready: false, reason: "onboarding_incomplete" });
+  });
+
+  it("fails toward NOT ready (real shop) when the fresh demo_mode read errors", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    h.shopsMaybeSingle.mockResolvedValue({ data: null, error: { message: "db blip" } });
+    expect(await paymentsReadiness("shop-1")).toEqual({ ready: false, reason: "no_account" });
+    spy.mockRestore();
+  });
+});
+
+describe("destinationParamsFor", () => {
+  it("fails CLOSED (PaymentsNotReadyError) when a real shop has no connected account", async () => {
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    await expect(destinationParamsFor("shop-1", 2500)).rejects.toBeInstanceOf(PaymentsNotReadyError);
   });
 
   it.each([
     ["charges_enabled", { ...ROW, charges_enabled: false }],
     ["payouts_enabled", { ...ROW, payouts_enabled: false }],
     ["details_submitted", { ...ROW, details_submitted: false }],
-  ])("returns platform params when %s is false (never route to a half-onboarded account)", async (_k, row) => {
+  ])("fails CLOSED when %s is false (never route to a half-onboarded account)", async (_k, row) => {
     h.maybeSingle.mockResolvedValue({ data: row, error: null });
-    expect((await destinationParamsFor("shop-1", 2500)).stripeAccountId).toBeNull();
+    await expect(destinationParamsFor("shop-1", 2500)).rejects.toBeInstanceOf(PaymentsNotReadyError);
+  });
+
+  it("returns platform params for a DEMO shop (the single platform-charge exemption)", async () => {
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    h.shopsMaybeSingle.mockResolvedValue({ data: { demo_mode: true }, error: null });
+    expect(await destinationParamsFor("shop-demo", 2500)).toEqual({
+      params: {},
+      stripeAccountId: null,
+      applicationFeeCents: null,
+    });
+  });
+
+  it("reuses a caller-supplied readiness decision without a second account read", async () => {
+    const d = await destinationParamsFor("shop-1", 2500, { ready: true, route: "destination", account: ROW });
+    expect(d.stripeAccountId).toBe("acct_1");
+    expect(h.maybeSingle).not.toHaveBeenCalled();
+    expect(h.shopsMaybeSingle).not.toHaveBeenCalled();
   });
 
   it("routes with destination + on_behalf_of, OMITTING the fee param at fee 0 (pilot comp)", async () => {
@@ -118,16 +171,9 @@ describe("destinationParamsFor", () => {
     expect(d.applicationFeeCents).toBe(280);
   });
 
-  it("fails OPEN to a platform charge when the connected-account read errors (spec §7)", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("propagates a connected-account read error — a charge is never routed on unknown state", async () => {
     h.maybeSingle.mockResolvedValue({ data: null, error: { message: "relation missing" } });
-    expect(await destinationParamsFor("shop-1", 2500)).toEqual({
-      params: {},
-      stripeAccountId: null,
-      applicationFeeCents: null,
-    });
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/lookup failed .* using platform charge/));
-    warn.mockRestore();
+    await expect(destinationParamsFor("shop-1", 2500)).rejects.toMatchObject({ message: "relation missing" });
   });
 });
 
@@ -145,8 +191,9 @@ describe("createRoutedPaymentIntent", () => {
       ...over,
     });
 
-  it("platform path: no connected account -> create(base) verbatim, null stamps", async () => {
+  it("platform path (demo shop only): no connected account -> create(base) verbatim, null stamps", async () => {
     h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    h.shopsMaybeSingle.mockResolvedValue({ data: { demo_mode: true }, error: null });
     h.piCreate.mockResolvedValue({ id: "pi_1", status: "requires_payment_method" });
 
     const out = await createRoutedPaymentIntent("shop-1", BASE);
@@ -155,6 +202,12 @@ describe("createRoutedPaymentIntent", () => {
     expect(h.piCreate).toHaveBeenCalledWith(BASE);
     expect(out).toMatchObject({ stripeAccountId: null, applicationFeeCents: null });
     expect(out.pi.id).toBe("pi_1");
+  });
+
+  it("fails CLOSED before any Stripe call when a real shop is not payment-ready", async () => {
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    await expect(createRoutedPaymentIntent("shop-1", BASE)).rejects.toBeInstanceOf(PaymentsNotReadyError);
+    expect(h.piCreate).not.toHaveBeenCalled();
   });
 
   it("routed path: spreads destination params and returns the routed stamps", async () => {
@@ -176,21 +229,19 @@ describe("createRoutedPaymentIntent", () => {
     expect(out).toMatchObject({ stripeAccountId: "acct_1", applicationFeeCents: 280 });
   });
 
-  it("falls back to a platform charge ONLY on a destination-param invalid-request (narrow guard)", async () => {
+  it("fails CLOSED (never a platform retry) on a destination-param invalid-request, re-syncing stale flags", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
     h.accountsRetrieve.mockResolvedValue({ charges_enabled: false, payouts_enabled: false, details_submitted: true });
-    h.piCreate
-      .mockRejectedValueOnce(destinationErr())
-      .mockResolvedValueOnce({ id: "pi_fb", status: "requires_payment_method" });
+    h.piCreate.mockRejectedValueOnce(destinationErr());
 
-    const out = await createRoutedPaymentIntent("shop-1", BASE);
+    await expect(createRoutedPaymentIntent("shop-1", BASE)).rejects.toBeInstanceOf(PaymentsNotReadyError);
 
-    expect(h.piCreate).toHaveBeenCalledTimes(2);
-    expect(h.piCreate.mock.calls[1][0]).toEqual(BASE); // second attempt: NO connect params
-    expect(out).toMatchObject({ stripeAccountId: null, applicationFeeCents: null });
-    expect(out.pi.id).toBe("pi_fb");
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/falling back to platform charge/));
+    // Exactly one create attempt — buyer money is NEVER re-routed into the platform account.
+    expect(h.piCreate).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/failing closed/));
+    // The stale row is re-synced (fire-and-forget) so the next load shows the honest state.
+    await vi.waitFor(() => expect(h.accountsRetrieve).toHaveBeenCalledWith("acct_1"));
     warn.mockRestore();
   });
 

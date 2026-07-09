@@ -7,7 +7,7 @@ import { commitReservation } from "~/lib/inventory/engine.server";
 // Singleton lives in stripe-client.server so connect.server can use it without
 // importing this module (which imports connect.server — would be a cycle).
 import { getStripe } from "./stripe-client.server";
-import { createRoutedPaymentIntent, applyAccountUpdate } from "./connect.server";
+import { createRoutedPaymentIntent, applyAccountUpdate, type PaymentsReadiness } from "./connect.server";
 
 export { getStripe };
 
@@ -33,6 +33,7 @@ export async function createPaymentIntent(
   amountCents: number,
   currency: string,
   orderRef?: string,
+  readiness?: PaymentsReadiness,
 ): Promise<{ paymentIntentId: string; clientSecret: string; amountCents: number; currency: string }> {
   if (!shopId) throw new Error("shopId is required");
   if (!Number.isInteger(amountCents) || amountCents <= 0) {
@@ -43,14 +44,19 @@ export async function createPaymentIntent(
     throw new Error(`unsupported currency: ${currency}`);
   }
 
-  // Routing decision + destination→platform fallback live in ONE seam
-  // (createRoutedPaymentIntent) shared with the ACP charge path.
-  const { pi, stripeAccountId, applicationFeeCents } = await createRoutedPaymentIntent(shopId, {
-    amount: amountCents,
-    currency: cur,
-    automatic_payment_methods: { enabled: true },
-    metadata: { shop_id: shopId, order_ref: orderRef ?? "" },
-  });
+  // Routing decision + fail-closed destination handling live in ONE seam
+  // (createRoutedPaymentIntent) shared with the ACP charge path. `readiness` reuses
+  // a decision the caller already gated on (createCheckout) — one read per charge.
+  const { pi, stripeAccountId, applicationFeeCents } = await createRoutedPaymentIntent(
+    shopId,
+    {
+      amount: amountCents,
+      currency: cur,
+      automatic_payment_methods: { enabled: true },
+      metadata: { shop_id: shopId, order_ref: orderRef ?? "" },
+    },
+    { readiness },
+  );
   if (!pi.client_secret) {
     throw new Error(`Stripe PaymentIntent ${pi.id} returned no client_secret`);
   }
@@ -125,6 +131,18 @@ export async function processStripeEvent(
       );
       return { status: 200, processed: false, duplicate: false };
     }
+    // Hosted-session charges are destination-routed like every other charge site, and the
+    // refund path decides reverse_transfer/refund_application_fee off this row's
+    // stripe_account_id — so the reconciliation MUST stamp the routing columns, not leave
+    // them null. The session event doesn't carry transfer_data; read it off the PI. A
+    // retrieve failure throws (500) so Stripe redelivers and the stamp self-heals — a row
+    // silently reconciled as "platform" for a routed charge would make its refund leak the
+    // transferred funds to the merchant while the platform pays the buyer back.
+    const sessionPi = await getStripe().paymentIntents.retrieve(piId);
+    const destAcct =
+      typeof sessionPi.transfer_data?.destination === "string"
+        ? sessionPi.transfer_data.destination
+        : (sessionPi.transfer_data?.destination?.id ?? null);
     const { error: upsertErr } = await getSupabase()
       .from("payment_intent")
       .upsert(
@@ -134,6 +152,8 @@ export async function processStripeEvent(
           order_ref: session.metadata?.order_ref ?? null,
           amount_cents: session.amount_total ?? 0,
           currency: session.currency ?? "usd",
+          stripe_account_id: destAcct,
+          application_fee_cents: sessionPi.application_fee_amount ?? null,
         },
         { onConflict: "stripe_pi_id" },
       );

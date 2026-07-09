@@ -1,11 +1,24 @@
 import type Stripe from "stripe";
 import { getStripe } from "./stripe-client.server";
 import { getSupabase } from "~/lib/supabase.server";
+import { PaymentsNotReadyError } from "./errors";
+
+// Re-exported so charge sites can import error + readiness from one module; the class
+// itself lives in the dependency-free errors module for lightweight instanceof catches.
+export { PaymentsNotReadyError };
 
 /**
  * Stripe Connect (#11): per-shop Express connected account, destination-charge
  * params, pull-based status sync, and the dashboard billing DTO. The PI itself
  * stays on the platform account — nothing here touches the webhook/order path.
+ *
+ * Routing policy (supersedes the spike-era "checkout never fails because of payout
+ * plumbing" fallback): buyer money must land in the MERCHANT's Stripe account. A shop
+ * whose connected account is missing or not fully enabled cannot take payments — every
+ * charge site fails CLOSED with PaymentsNotReadyError (the storefront renders an honest
+ * "not accepting payments yet" state) instead of silently settling into the platform
+ * account. The single exemption is demo/showcase shops (shops.demo_mode), whose
+ * simulated storefronts may charge the platform test account.
  */
 
 export interface ConnectedAccountRow {
@@ -38,6 +51,55 @@ export function computeApplicationFeeCents(amountCents: number, bps: number, fla
   return Math.min(Math.max(fee, 0), amountCents);
 }
 
+/** The one fully-enabled definition every payments surface must share. */
+export function isFullyEnabledAccount(
+  acct: Pick<ConnectedAccountRow, "charges_enabled" | "payouts_enabled" | "details_submitted">,
+): boolean {
+  return acct.charges_enabled && acct.payouts_enabled && acct.details_submitted;
+}
+
+/**
+ * Fresh shops.demo_mode read for the MONEY seam. Deliberately NOT isShowcaseShop
+ * (showcase.server.ts), whose process-lifetime cache is calibrated for cosmetic
+ * action simulation: a demo→real flip must take effect on the next charge, not the
+ * next deploy — a stale `true` would route real buyers' money to the platform
+ * account. Mirrors the reset orchestrator's hard-gate stance (demo/reset.server.ts).
+ * Fails toward "real shop" (false) on any error: unknown state must fail CLOSED.
+ */
+async function isDemoShopFresh(shopId: string): Promise<boolean> {
+  try {
+    const { data, error } = await getSupabase().from("shops").select("demo_mode").eq("id", shopId).maybeSingle();
+    if (error) {
+      console.error(`[stripe-connect] demo_mode lookup failed for shop ${shopId}; treating as real shop`, error);
+      return false;
+    }
+    return Boolean((data as { demo_mode?: boolean } | null)?.demo_mode);
+  } catch (err) {
+    console.error(`[stripe-connect] demo_mode lookup threw for shop ${shopId}; treating as real shop`, err);
+    return false;
+  }
+}
+
+export type PaymentsReadiness =
+  | { ready: true; route: "destination"; account: ConnectedAccountRow }
+  | { ready: true; route: "platform" }
+  | { ready: false; reason: "no_account" | "onboarding_incomplete" };
+
+/**
+ * Whether the shop can take a buyer's money RIGHT NOW, and where a charge would settle.
+ * `destination` = fully-enabled connected account (the only route for real shops);
+ * `platform` = demo/showcase shop charging the platform test account. A read error on
+ * stripe_connected_account propagates — a charge is never routed on unknown state.
+ */
+export async function paymentsReadiness(shopId: string): Promise<PaymentsReadiness> {
+  const acct = await getConnectedAccount(shopId);
+  if (acct && isFullyEnabledAccount(acct)) {
+    return { ready: true, route: "destination", account: acct };
+  }
+  if (await isDemoShopFresh(shopId)) return { ready: true, route: "platform" };
+  return { ready: false, reason: acct ? "onboarding_incomplete" : "no_account" };
+}
+
 export interface DestinationDecision {
   params: Partial<
     Pick<Stripe.PaymentIntentCreateParams, "transfer_data" | "on_behalf_of" | "application_fee_amount">
@@ -47,27 +109,28 @@ export interface DestinationDecision {
 }
 
 /**
- * The single routing decision, shared by BOTH PI-creation sites (storefront +
- * ACP). Routes ONLY to a fully-onboarded account — never strand buyer money in
- * a half-onboarded one; anything else charges the platform (today's behavior).
+ * The single routing decision, shared by EVERY charge site (storefront PI, hosted
+ * Checkout Session, ACP). Routes to a fully-onboarded account, permits a platform
+ * charge only for demo shops, and FAILS CLOSED (PaymentsNotReadyError) for any real
+ * shop that is not fully onboarded — buyer money is never silently stranded in the
+ * platform account.
+ *
+ * `pre` lets a call site that already gated on paymentsReadiness (checkout, go-live
+ * probe) reuse that decision instead of paying a second stripe_connected_account
+ * read — ONE decision per charge, with Stripe's own destination validation as the
+ * authoritative backstop if the account changes between the gate and the create.
  */
-export async function destinationParamsFor(shopId: string, amountCents: number): Promise<DestinationDecision> {
-  let acct: ConnectedAccountRow | null;
-  try {
-    acct = await getConnectedAccount(shopId);
-  } catch (err) {
-    // Routing is best-effort (spec §7: checkout never fails because of payout
-    // plumbing). A stripe_connected_account read error falls OPEN to a platform
-    // charge — today's manually-settleable behavior — instead of aborting a
-    // checkout that has already written its order rows. Logged, never silent.
-    console.warn(
-      `[stripe-connect] connected-account lookup failed for shop ${shopId} (${(err as Error).message}); using platform charge`,
-    );
+export async function destinationParamsFor(
+  shopId: string,
+  amountCents: number,
+  pre?: PaymentsReadiness,
+): Promise<DestinationDecision> {
+  const readiness = pre ?? (await paymentsReadiness(shopId));
+  if (!readiness.ready) throw new PaymentsNotReadyError(shopId, readiness.reason);
+  if (readiness.route === "platform") {
     return { params: {}, stripeAccountId: null, applicationFeeCents: null };
   }
-  if (!acct || !acct.charges_enabled || !acct.payouts_enabled || !acct.details_submitted) {
-    return { params: {}, stripeAccountId: null, applicationFeeCents: null };
-  }
+  const acct = readiness.account;
   const fee = computeApplicationFeeCents(amountCents, acct.application_fee_bps, acct.application_fee_flat_cents);
   return {
     params: {
@@ -82,7 +145,7 @@ export async function destinationParamsFor(shopId: string, amountCents: number):
 
 export interface RoutedPaymentIntent {
   pi: Stripe.PaymentIntent;
-  /** null = platform charge (manual settlement); acct_... = destination-routed. */
+  /** null = demo-shop platform charge; acct_... = destination-routed to the merchant. */
   stripeAccountId: string | null;
   /** Fee actually attached at create; null = none. */
   applicationFeeCents: number | null;
@@ -91,25 +154,32 @@ export interface RoutedPaymentIntent {
 /**
  * THE single PI-creation seam for routed charges — every PaymentIntent site
  * (storefront checkout, ACP agentic checkout, future sites) calls this so the
- * routing decision, the destination→platform fallback, and the row-stamping
+ * routing decision, the destination-rejection handling, and the row-stamping
  * values cannot drift apart per call site.
  *
- * Fallback contract: ONLY a routed create rejected as StripeInvalidRequestError
- * (HTTP 400/404 parameter validation — strictly pre-authorization, so a
- * confirm:true create has moved no money) retries as a platform charge.
- * A card decline (StripeCardError, 402) or any network/API error propagates
- * untouched — NEVER retried, so a confirmed charge can never double-attempt.
+ * Destination-rejection contract: ONLY a routed create rejected as a
+ * StripeInvalidRequestError whose code/param implicates the destination account
+ * (stale flags — the account was de-onboarded after our row said enabled) is
+ * converted to PaymentsNotReadyError, with the stored flags re-synced so the next
+ * load shows the honest state. No money has moved (a 400 is strictly
+ * pre-authorization) and NOTHING retries as a platform charge — buyer money never
+ * lands outside the merchant's account. A card decline (StripeCardError, 402),
+ * an invalid-request WE caused, or any network/API error propagates untouched.
+ *
+ * ponytail: a keyed create (opts.idempotencyKey — the ACP path) that hits the
+ * destination rejection burns its key on the cached 400 for ~24h, so that one
+ * order cannot be re-charged until the key expires even after onboarding
+ * completes. Accepted: a fresh-key retry could double-charge if the first
+ * attempt actually succeeded, and correctness beats availability on a dormant path.
  */
 export async function createRoutedPaymentIntent(
   shopId: string,
   base: Stripe.PaymentIntentCreateParams,
-  opts: { logLabel?: string; idempotencyKey?: string } = {},
+  opts: { logLabel?: string; idempotencyKey?: string; readiness?: PaymentsReadiness } = {},
 ): Promise<RoutedPaymentIntent> {
   const label = opts.logLabel ? `${opts.logLabel} ` : "";
-  const dest = await destinationParamsFor(shopId, base.amount as number);
+  const dest = await destinationParamsFor(shopId, base.amount as number, opts.readiness);
 
-  let stripeAccountId = dest.stripeAccountId;
-  let applicationFeeCents = dest.applicationFeeCents;
   let pi: Stripe.PaymentIntent;
   const routedParams = { ...base, ...dest.params };
   try {
@@ -119,38 +189,22 @@ export async function createRoutedPaymentIntent(
       ? await getStripe().paymentIntents.create(routedParams, { idempotencyKey: opts.idempotencyKey })
       : await getStripe().paymentIntents.create(routedParams);
   } catch (err) {
-    // Destination-specific rejection (half-onboarded/restricted account) must not
-    // break checkout: retry as a platform charge (= manually settleable) and
-    // re-sync the stale flags. The guard is deliberately NARROW — only invalid-
-    // requests whose code/param implicates the account/destination params fall
-    // back; an invalid-request WE caused (malformed fee/amount/etc.) propagates
-    // visibly (rule 12) instead of silently becoming a feeless platform charge.
     const e = err as { type?: string; code?: string; param?: string };
     const destinationRejected =
       e.type === "StripeInvalidRequestError" &&
       (e.code === "account_invalid" || /transfer_data|on_behalf_of/.test(e.param ?? ""));
-    if (stripeAccountId && destinationRejected) {
+    if (dest.stripeAccountId && destinationRejected) {
       console.warn(
-        `[stripe-connect] ${label}destination charge for shop ${shopId} rejected (${(err as Error).message}); falling back to platform charge`,
+        `[stripe-connect] ${label}destination charge for shop ${shopId} rejected (${(err as Error).message}); stored flags are stale — failing closed`,
       );
-      void syncAccountStatus(shopId).catch((e) =>
-        console.warn(`[stripe-connect] status re-sync failed for shop ${shopId}: ${(e as Error).message}`),
+      void syncAccountStatus(shopId).catch((e2) =>
+        console.warn(`[stripe-connect] status re-sync failed for shop ${shopId}: ${(e2 as Error).message}`),
       );
-      stripeAccountId = null;
-      applicationFeeCents = null;
-      // The platform fallback needs its OWN idempotency key: reusing the
-      // destination attempt's key with different params would make Stripe
-      // reject the retry with idempotency_error instead of charging.
-      pi = opts.idempotencyKey
-        ? await getStripe().paymentIntents.create(base, {
-            idempotencyKey: `${opts.idempotencyKey}_platform`,
-          })
-        : await getStripe().paymentIntents.create(base);
-    } else {
-      throw err;
+      throw new PaymentsNotReadyError(shopId, "onboarding_incomplete");
     }
+    throw err;
   }
-  return { pi, stripeAccountId, applicationFeeCents };
+  return { pi, stripeAccountId: dest.stripeAccountId, applicationFeeCents: dest.applicationFeeCents };
 }
 
 /**
@@ -213,7 +267,7 @@ export async function syncAccountStatus(
     payouts_enabled: Boolean(remote.payouts_enabled),
     details_submitted: Boolean(remote.details_submitted),
   };
-  const fullyEnabled = flags.charges_enabled && flags.payouts_enabled && flags.details_submitted;
+  const fullyEnabled = isFullyEnabledAccount(flags);
   const upd = await getSupabase()
     .from("stripe_connected_account")
     .update({
@@ -254,7 +308,7 @@ export async function applyAccountUpdate(account: Stripe.Account): Promise<boole
     .maybeSingle();
   if (existing.error) throw existing.error;
   if (!existing.data) return false; // account not linked to any shop — not ours to sync
-  const fullyEnabled = flags.charges_enabled && flags.payouts_enabled && flags.details_submitted;
+  const fullyEnabled = isFullyEnabledAccount(flags);
   const alreadyOnboarded = (existing.data as { onboarded_at: string | null }).onboarded_at;
   const upd = await getSupabase()
     .from("stripe_connected_account")
