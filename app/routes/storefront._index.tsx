@@ -6,7 +6,7 @@ import { getCatalog } from "~/lib/storefront/catalog.server";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { ensureVisitorSession } from "~/lib/storefront/visitor-cookie.server";
-import { getRunningExperiment, assignArm, type RunningExperiment } from "~/lib/experiments/store-experiment.server";
+import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { storefrontWeatherCondition } from "~/lib/storefront/weather-serve.server";
@@ -18,68 +18,36 @@ import { buildHomeDraft } from "~/lib/seo/writer.server";
 import { safeMetaFromDraft } from "~/lib/seo/render.server";
 import { storefrontOrigin } from "~/lib/seo/origin.server";
 import type { BlockDocument } from "~/lib/storebuilder/types";
-import type { StudioVibe } from "~/lib/storebuilder/studio-types";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Store" }];
 
 interface ExperimentArm {
   /** Set only on arm b — the champion doc renders when this is null. */
   doc: BlockDocument | null;
-  vibe: StudioVibe | null;
   experimentId: string | null;
   variantKey: "a" | "b" | null;
-}
-
-const NO_ARM: ExperimentArm = { doc: null, vibe: null, experimentId: null, variantKey: null };
-
-/**
- * One-at-a-time home-page A/B lookup (D4), decoupled from the visitor id so it
- * can run in parallel with ensureVisitorSession/loadPublishedDoc. Failure-isolated:
- * a lookup/DB hiccup must never break the home render, so any error degrades to
- * "no test running" exactly like a shop with none.
- */
-async function fetchRunningExperimentSafe(shopId: string): Promise<RunningExperiment | null> {
-  try {
-    return await getRunningExperiment(shopId);
-  } catch (err) {
-    console.error(`[storefront] experiment lookup failed for shop ${shopId} (serving the champion):`, err);
-    return null;
-  }
-}
-
-/** Bucket the already-fetched experiment against the visitor id — pure/sync,
- *  so it composes with a Promise.all fetch instead of gating it. */
-function resolveExperimentArm(experiment: RunningExperiment | null, visitorId: string): ExperimentArm {
-  if (!experiment) return NO_ARM;
-  const variantKey = assignArm(visitorId, experiment.id);
-  if (variantKey === "b") {
-    return {
-      doc: experiment.variantDoc,
-      vibe: experiment.variantSettings?.vibe ?? null,
-      experimentId: experiment.id,
-      variantKey,
-    };
-  }
-  return { ...NO_ARM, experimentId: experiment.id, variantKey };
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   const catalog = getCatalog();
-  // The visitor id backing both live analytics and A/B bucketing (D4). The session is minted
-  // once here and threaded into trackStorefrontEvent below (5th arg), so the served arm, the
-  // exposure row, and the persisted cd_vid/cd_sid Set-Cookie all key off this one id — including
-  // on a visitor's very first-ever hit, when no cookie is on the request yet.
+  // The visitor session backs live analytics; A/B bucketing resolves through the shared
+  // experiments helper, which keys off the COOKIE id only — every surface (this doc swap, the
+  // layout's vibe restyle, the PDP variant, the checkout stamps) buckets the same visitor the
+  // same way, and a first-ever visit sees the champion unstamped until its cookie lands.
   //
-  // None of these three reads depend on each other, so they run concurrently; only the
-  // arm assignment (sync, below) needs both the visitor id and the experiment lookup.
-  const [visitor, published, experiment] = await Promise.all([
+  // None of these reads depend on each other, so they run concurrently.
+  const [visitor, published, served] = await Promise.all([
     ensureVisitorSession(request),
     // The published block doc for this shop's home, or the never-blank default (rule 12).
     loadPublishedDoc(shopId, "home").then((doc) => doc ?? defaultHomeDocument()),
-    fetchRunningExperimentSafe(shopId),
+    resolveServedExperiment(shopId, request, "home"),
   ]);
-  const arm = resolveExperimentArm(experiment, visitor.visitorId);
+  const arm: ExperimentArm = {
+    doc: served.variantKey === "b" && served.experiment?.pageKey === "home" ? served.experiment.variantDoc : null,
+    experimentId: served.experimentId,
+    variantKey: served.variantKey,
+  };
   const doc = arm.doc ?? published;
   // Pre-resolve exactly the catalog data the doc's blocks reference (shopId scoping inside).
   // The visitor's own local weather (from their request) floats weather-relevant products up.

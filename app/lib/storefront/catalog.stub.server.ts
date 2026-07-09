@@ -69,6 +69,7 @@ const PRODUCTS: StoreProduct[] = [
 // owned impl MUST .eq('shop_id', shopId) on every query.
 export const fixtureCatalog: StorefrontCatalog = {
   async listProducts(_shopId, opts) {
+    if (opts?.ids) return PRODUCTS.filter((p) => opts.ids!.includes(p.id));
     if (!opts?.collection) return PRODUCTS;
     return PRODUCTS.filter((p) => p.collections.includes(opts.collection!));
   },

@@ -58,6 +58,16 @@ export interface StudioGeneration {
 /** Mirrors the store_experiment.state check constraint. */
 export type StudioExperimentState = "running" | "decided_ship" | "decided_keep" | "stopped";
 
+/** Mirrors the store_experiment.page_key check constraint — the storefront page under test. */
+export type StudioExperimentPage = "home" | "pdp";
+
+/** Challenger recipes the studio can start. headline/vibe/ai_page test the home page;
+ *  pdp_copy tests the product-page template. */
+export type StudioExperimentKind = "headline" | "vibe" | "pdp_copy" | "ai_page";
+/** The single runtime list behind StudioExperimentKind — the API route validates against it
+ *  and the client narrows from it, so adding a kind is a one-line change here. */
+export const STUDIO_EXPERIMENT_KINDS: readonly StudioExperimentKind[] = ["headline", "vibe", "pdp_copy", "ai_page"];
+
 export interface StudioExperimentReport {
   /** Distinct sessions that saw each arm (page_view exposure rows). */
   aSessions: number;
@@ -76,7 +86,7 @@ export interface StudioExperiment {
   id: string;
   name: string;
   why: string;
-  pageKey: "home";
+  pageKey: StudioExperimentPage;
   state: StudioExperimentState;
   startedAt: string;
   decidedAt: string | null;

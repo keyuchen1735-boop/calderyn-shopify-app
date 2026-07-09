@@ -21,8 +21,15 @@ function clampLayout(raw: Partial<GridCell> | undefined, fallback: GridCell): Gr
   return { x, y, w, h };
 }
 
-function boundCopy(props: Record<string, unknown>): Record<string, unknown> {
+function boundCopy(type: string, props: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...props };
+  // richText's `html` prop is rendered as plain text (blocks.tsx never injects HTML), so any
+  // markup the model emits there would show as literal angle brackets to shoppers — strip tags
+  // before bounding length. Keyed on the BLOCK TYPE, never on the prop name: a rawHtml block's
+  // `html` prop is genuinely HTML and must pass through untouched.
+  if (type === "richText" && typeof out.html === "string") {
+    out.html = (out.html as string).replace(/<[^>]*>/g, " ").replace(/\s{2,}/g, " ").trim();
+  }
   for (const [k, max] of Object.entries(COPY_BOUNDS)) {
     if (typeof out[k] === "string" && (out[k] as string).length > max) out[k] = (out[k] as string).slice(0, max);
   }
@@ -58,7 +65,7 @@ export function assembleDocument(
     return {
       id: `${pageKey}-${b.type}-${i}`,
       type: b.type as BlockType,
-      props: boundCopy(b.props),
+      props: boundCopy(b.type, b.props),
       layout: clampLayout(b.layout, fallbackLayout),
     };
   });

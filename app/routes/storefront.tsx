@@ -7,8 +7,7 @@ import storefrontCss from "~/styles/storefront.css?url";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
-import { getRunningExperiment, assignArm } from "~/lib/experiments/store-experiment.server";
-import { peekVisitorId } from "~/lib/storefront/visitor-cookie.server";
+import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import { detectAiBot, logAiCrawl } from "~/lib/seo/crawlers.server";
 import type { StudioVibe } from "~/lib/storebuilder/studio-types";
 
@@ -27,21 +26,14 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => {
 /**
  * A running vibe experiment restyles the WHOLE page, not just the home doc's
  * blocks: the vibe token packs redeclare on this .cd-store root, so the swap
- * has to happen here regardless of which child route is being served.
- * Failure-isolated — a lookup/cookie hiccup must never break the shell render.
+ * has to happen here regardless of which child route is being served. The
+ * shared resolver keeps this bucketing identical to every other surface's
+ * (and is failure-isolated internally — a hiccup never breaks the shell).
  */
 async function resolveLayoutExperimentVibe(shopId: string, request: Request): Promise<StudioVibe | null> {
-  try {
-    const experiment = await getRunningExperiment(shopId);
-    const vibe = experiment?.variantSettings?.vibe;
-    if (!vibe) return null;
-    const visitorId = await peekVisitorId(request);
-    if (!visitorId) return null;
-    return assignArm(visitorId, experiment.id) === "b" ? vibe : null;
-  } catch (err) {
-    console.error(`[storefront] layout experiment-vibe lookup failed for shop ${shopId}:`, err);
-    return null;
-  }
+  const served = await resolveServedExperiment(shopId, request, "layout");
+  if (served.variantKey !== "b") return null;
+  return served.experiment?.variantSettings?.vibe ?? null;
 }
 
 /** Collections for the header category nav — the store chrome that makes a page read as a real

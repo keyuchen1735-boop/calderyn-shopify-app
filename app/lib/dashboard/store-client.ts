@@ -17,6 +17,7 @@ import {
   type StudioExperiment,
   type StudioExperimentReport,
   type StudioExperimentState,
+  type StudioExperimentKind,
 } from "~/lib/storebuilder/studio-types";
 
 export type {
@@ -70,7 +71,7 @@ export async function setStudioVibe(vibe: StudioVibe): Promise<StudioVibe> {
 /** Start a one-at-a-time home-page A/B test. The server picks the concrete
  *  challenger from its deterministic library; name is an optional override. */
 export async function startStoreExperiment(spec: {
-  kind: "headline" | "vibe";
+  kind: StudioExperimentKind;
   name?: string;
 }): Promise<StudioExperiment> {
   const data = await apiSend<{ experiment: StudioExperiment }>("POST", "/dashboard/api/store", {

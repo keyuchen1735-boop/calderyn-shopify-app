@@ -31,10 +31,17 @@ function ExperimentPopover({
   deciding: boolean;
 }) {
   const report = experiment.report;
-  const aRate = report ? report.aConversions / Math.max(1, report.aSessions) : 0;
-  const bRate = report ? report.bConversions / Math.max(1, report.bSessions) : 0;
+  // Same rate formula as the server's ship guard (sessions > 0 ? conv/sessions : 0) so the
+  // button and the 422 can't disagree at the edges.
+  const aRate = report && report.aSessions > 0 ? report.aConversions / report.aSessions : 0;
+  const bRate = report && report.bSessions > 0 ? report.bConversions / report.bSessions : 0;
   const maxRate = Math.max(aRate, bRate, 0.001);
-  const canDecideNow = report?.confidence != null && report.confidence >= 95;
+  // The z-test is two-sided: 95%+ confidence means the arms differ, not that B WON. Only a
+  // confident WIN offers Ship — a confident loss offers "Keep" as the primary action instead
+  // (the server refuses ship on a proven loser regardless).
+  const significant = report?.confidence != null && report.confidence >= 95;
+  const canShipNow = significant && bRate > aRate;
+  const provenLoss = significant && bRate <= aRate;
   return (
     <div className="cd-exp-pop" role="dialog" aria-label={`${experiment.name} test`}>
       <div className="cd-exp-name">Testing your {experiment.name}</div>
@@ -66,13 +73,22 @@ function ExperimentPopover({
         </>
       )}
       <div className="cd-exp-actions">
-        {canDecideNow ? (
+        {canShipNow ? (
           <>
             <Btn kind="primary" small onClick={() => onDecide("ship")} disabled={deciding}>
               Ship
             </Btn>
             <Btn small onClick={() => onDecide("keep")} disabled={deciding}>
               Keep
+            </Btn>
+          </>
+        ) : provenLoss ? (
+          <>
+            <Btn kind="primary" small onClick={() => onDecide("keep")} disabled={deciding}>
+              Keep current page
+            </Btn>
+            <Btn small onClick={() => onDecide("stop")} disabled={deciding}>
+              Stop
             </Btn>
           </>
         ) : (

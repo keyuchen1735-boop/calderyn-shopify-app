@@ -11,6 +11,7 @@ import { useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { clearCartId, readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
+import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import { findOrderByConfirmationToken, formatOrderRef } from "~/lib/order/checkout.server";
 import { getCartState } from "~/lib/order/cart.server";
 import { formatMoney as money } from "~/lib/storefront/money";
@@ -54,6 +55,23 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     }
   }
 
+  // Experiment stamp for the checkout_complete row: the report treats stamped
+  // checkout_complete sessions as the conversion fallback for orders that lost their
+  // attribution (a transient lookup failure at checkout origination) — without this stamp
+  // that fallback can never match anything. Only orders CREATED under the running
+  // experiment stamp: a bookmarked receipt revisited after a NEW test started must not
+  // fabricate a conversion for a test the purchase predates. Shared resolver = same
+  // cookie-only bucketing as every other surface; failure-isolated inside it.
+  let exposure: { experimentId?: string; variantKey?: string } = {};
+  if (captured) {
+    const served = await resolveServedExperiment(shopId, request, "checkout");
+    const orderInWindow =
+      served.experiment != null && Date.parse(order.createdAt) >= Date.parse(served.experiment.startedAt);
+    if (served.experimentId && served.variantKey && orderInWindow) {
+      exposure = { experimentId: served.experimentId, variantKey: served.variantKey };
+    }
+  }
+
   // Funnel terminal: the buyer's browser is back from Stripe with a captured
   // payment. Refresh duplicates are harmless — the funnel counts distinct
   // sessions. An unpaid (webhook-lagged) visit stays an ordinary page view.
@@ -61,6 +79,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     request,
     shopId,
     captured ? "checkout_complete" : "page_view",
+    exposure,
   );
   for (const c of track.getSetCookie()) headers.append("Set-Cookie", c);
 

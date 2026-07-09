@@ -23,7 +23,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const products = await applyAssetOverrides(shopId, await catalog.listProducts(shopId));
   const collections = await catalog.listCollections(shopId);
   const candidates = findImprovableListings(products);
-  const enhanceError = new URL(request.url).searchParams.get("enhanceError") === "1";
+  const url = new URL(request.url);
+  const enhanceError = url.searchParams.get("enhanceError") === "1";
+  const generateFailed = url.searchParams.get("status") === "failed";
   const sample: RenderContext["record"] = { product: products[0], collection: collections[0] };
 
   async function previewFor(page: "home" | "collection" | "pdp") {
@@ -39,6 +41,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     pdp: await previewFor("pdp"),
     candidates,
     enhanceError,
+    generateFailed,
   });
 }
 
@@ -60,14 +63,19 @@ export async function action({ request }: ActionFunctionArgs) {
 type Pane = { doc: BlockDocument; data: RenderData; record?: RenderContext["record"] } | null;
 
 export default function BuilderPreview() {
-  const { home, collection, pdp, candidates, enhanceError } = useLoaderData<typeof loader>() as {
-    home: Pane; collection: Pane; pdp: Pane; candidates: ImprovableListing[]; enhanceError: boolean;
+  const { home, collection, pdp, candidates, enhanceError, generateFailed } = useLoaderData<typeof loader>() as {
+    home: Pane; collection: Pane; pdp: Pane; candidates: ImprovableListing[]; enhanceError: boolean; generateFailed: boolean;
   };
   const panes: [string, Pane][] = [["Home", home], ["Collection", collection], ["PDP", pdp]];
   const any = panes.some(([, p]) => p);
   return (
     <div className="cd-builder-preview">
       <h1>Generated store (draft)</h1>
+      {generateFailed ? (
+        <p className="cd-builder-preview__error">
+          We couldn&apos;t reach the design engine, so this draft is a starter layout — not your generated design. Try again in a moment.
+        </p>
+      ) : null}
       {enhanceError ? (
         <p className="cd-builder-preview__error">Image generation failed for that listing — check Higgsfield configuration.</p>
       ) : null}

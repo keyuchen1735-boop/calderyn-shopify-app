@@ -40,6 +40,22 @@ describe("resolveRenderData", () => {
     expect(data.productsByCollection.winter).toHaveLength(1);
   });
 
+  it("resolves an explicit-ids grid by REAL product id (no handle convention), preserving unknown-id drops", async () => {
+    // Regression: ids used to resolve via a fixture-only `h-<id>` handle lookup that matched
+    // nothing in production, so every curated "featured picks" grid rendered empty.
+    const doc: BlockDocument = { kind: "singleton", pageKey: "home", blocks: [
+      { id: "g", type: "productGrid", layout: { x: 0, y: 0, w: 12, h: 6 }, props: { source: { kind: "ids", ids: ["2", "deleted-since"] } } },
+    ] };
+    const catalog: StorefrontCatalog = {
+      ...fakeCatalog(),
+      // getProduct throwing proves the id path never touches the handle lookup.
+      getProduct: async () => { throw new Error("id resolution must not use getProduct"); },
+    };
+    const data = await resolveRenderData(doc, "shop", catalog);
+    expect(data.productsById["2"]?.title).toBe("P2");
+    expect(data.productsById["deleted-since"]).toBeUndefined();
+  });
+
   it("floats weather-relevant products to the top of the all-products grid for the visitor's condition", async () => {
     const prod = (id: string, title: string): StoreProduct => ({
       id, handle: `h-${id}`, title, description: "", images: [], variants: [], collections: [],

@@ -49,6 +49,7 @@ import {
   type ChatIntent,
   type MissingPiece,
 } from "./store-logic";
+import type { StudioExperimentKind } from "~/lib/storebuilder/studio-types";
 import type { DashboardCtx } from "../context";
 import ChatRail from "../store/ChatRail";
 import TopBar, { type Device } from "../store/TopBar";
@@ -462,7 +463,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     }
   };
 
-  const runExperiment = async (expKind: "headline" | "vibe") => {
+  const runExperiment = async (expKind: StudioExperimentKind) => {
     if (chatBusyRef.current) return;
     setChatBusyBoth(true);
     const thinkId = newId();

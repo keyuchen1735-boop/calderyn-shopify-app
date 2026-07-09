@@ -219,8 +219,12 @@ describe("checkout action happy path", () => {
       totalCents: 4957,
       currency: "usd",
     });
-    // The cart is NOT cleared at the action — payment can still fail.
-    expect((res as Response).headers.get("Set-Cookie")).toBeNull();
+    // The cart is NOT cleared at the action — payment can still fail. The visitor
+    // session cookies DO ride along (they persist the id the confirmation page's
+    // checkout_complete event keys off); only the cart cookie must stay untouched.
+    const setCookie = (res as Response).headers.get("Set-Cookie") ?? "";
+    expect(setCookie).not.toContain("cd_cart");
+    expect(setCookie).toContain("cd_vid");
   });
 
   it("captures the marketing opt-in when the box is checked", async () => {

@@ -45,5 +45,8 @@ export interface DiscoverFeedItem {
 
 export interface PickResult {
   productId: string;
-  storeRunId: string;
+  /** Null when the auto-build was refused (mid-experiment, rate limit, daily AI quota) —
+   *  the pick itself still succeeded; skipReason says why the store rebuild was skipped. */
+  storeRunId: string | null;
+  storeBuildSkipped?: string;
 }

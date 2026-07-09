@@ -1,7 +1,7 @@
 // Pure logic for the Store studio screen (kept out of Store.tsx so it is
 // testable without rendering — same pattern as dashboard-layout.ts).
 import type { Screen } from "../context";
-import { BUILD_STAGES, STUDIO_IMAGE_MEDIA_TYPES, type BuildStage, type StudioVibe } from "~/lib/storebuilder/studio-types";
+import { BUILD_STAGES, STUDIO_IMAGE_MEDIA_TYPES, type BuildStage, type StudioVibe, type StudioExperimentKind } from "~/lib/storebuilder/studio-types";
 export { parseBuildEvent, type BuildEvent, type BuildStage } from "~/lib/storebuilder/studio-types";
 
 export interface StoreReadiness {
@@ -137,7 +137,7 @@ export type ChatIntent =
   | { kind: "vibe"; vibe: StudioVibe }
   | { kind: "accent"; color: string }
   | { kind: "hero"; headline: string }
-  | { kind: "experiment"; expKind: "headline" | "vibe" }
+  | { kind: "experiment"; expKind: StudioExperimentKind }
   | { kind: "generate"; brief: string };
 
 const VIBE_WORDS: Record<StudioVibe, RegExp> = {
@@ -165,6 +165,12 @@ const HERO_QUOTE_RE = /headline (?:to say|to|says?|reading) ["']?([^"']{4,60})["
 const HEX_RE = /#[0-9a-f]{6}\b/i;
 const EXPERIMENT_RE = /\b(test|optimi[sz]e|experiment|a\/b)\b/i;
 const EXPERIMENT_VIBE_HINT_RE = /\b(vibe|look|style|design)\b/i;
+// "test my product page" / "optimize the buy box" -> the PDP-template test.
+const EXPERIMENT_PDP_HINT_RE = /\b(product page|pdp|buy box|add to cart)\b/i;
+// "test a redesign" / "try a new page" -> the AI-designed challenger. Deliberately narrow:
+// generic adjectives ("fresh look") must fall through to the free deterministic vibe test,
+// not burn a designer-quota slot on a full generation.
+const EXPERIMENT_AI_HINT_RE = /\b(redesign|rework|new (?:page|design|version)|different (?:page|design))\b/i;
 // An explicit build verb is a rebuild ask no matter what adjectives ride along.
 const BUILD_VERB_RE = /\b(rebuild|redesign|regenerate|redo|build|generate|create)\b/i;
 // Vibe/accent word-matches only apply to short imperative tweaks ("make it
@@ -187,7 +193,9 @@ export function parseChatIntent(text: string, channel: "composer" | "note" = "co
   const heroMatch = t.match(HERO_QUOTE_RE);
   if (heroMatch) return { kind: "hero", headline: heroMatch[1].trim() };
 
-  if (!permissive && BUILD_VERB_RE.test(t)) return { kind: "generate", brief: t };
+  // "test a redesign" is an experiment ask, not a rebuild — the experiment word wins
+  // when both appear, so the build verb only hijacks messages with no test intent.
+  if (!permissive && BUILD_VERB_RE.test(t) && !EXPERIMENT_RE.test(t)) return { kind: "generate", brief: t };
 
   // A raw #rrggbb is machine-readable and unambiguous at any message length.
   const hex = t.match(HEX_RE);
@@ -206,7 +214,14 @@ export function parseChatIntent(text: string, channel: "composer" | "note" = "co
   }
 
   if (EXPERIMENT_RE.test(t)) {
-    return { kind: "experiment", expKind: EXPERIMENT_VIBE_HINT_RE.test(t) ? "vibe" : "headline" };
+    const expKind = EXPERIMENT_PDP_HINT_RE.test(t)
+      ? "pdp_copy"
+      : EXPERIMENT_AI_HINT_RE.test(t)
+        ? "ai_page"
+        : EXPERIMENT_VIBE_HINT_RE.test(t)
+          ? "vibe"
+          : "headline";
+    return { kind: "experiment", expKind };
   }
 
   return { kind: "generate", brief: t };

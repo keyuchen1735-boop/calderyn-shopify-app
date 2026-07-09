@@ -44,11 +44,12 @@ describe("parseBrandPlan", () => {
     const b = parseBrandPlan('{"storeName":"Acme"}');
     expect(b?.palette).toEqual({ primary: PALETTE_LIBRARY[0].primary, background: PALETTE_LIBRARY[0].background, text: PALETTE_LIBRARY[0].text });
   });
-  it("falls back to the default curated palette for an achromatic (gray/black/white) hex, never matching by a false hue", () => {
+  it("snaps an achromatic (gray/black/white) hex to Charcoal — a neutral brief must not turn teal", () => {
+    const charcoal = PALETTE_LIBRARY.find((p) => p.name === "Charcoal")!;
     const gray = parseBrandPlan('{"storeName":"Acme","palette":{"primary":"#808080","background":"#fff","text":"#000"}}');
-    expect(gray?.palette).toEqual({ primary: PALETTE_LIBRARY[0].primary, background: PALETTE_LIBRARY[0].background, text: PALETTE_LIBRARY[0].text });
+    expect(gray?.palette).toEqual({ primary: charcoal.primary, background: charcoal.background, text: charcoal.text });
     const black = parseBrandPlan('{"storeName":"Acme","palette":{"primary":"#000000","background":"#fff","text":"#000"}}');
-    expect(black?.palette).toEqual({ primary: PALETTE_LIBRARY[0].primary, background: PALETTE_LIBRARY[0].background, text: PALETTE_LIBRARY[0].text });
+    expect(black?.palette).toEqual({ primary: charcoal.primary, background: charcoal.background, text: charcoal.text });
   });
   it("parses typeStyle and density, defaulting invalid/missing to classic/standard", () => {
     const ok = parseBrandPlan('{"storeName":"Acme","paletteName":"Midnight","vibe":"bold","typeStyle":"editorial","density":"roomy","voiceTagline":"Go"}');

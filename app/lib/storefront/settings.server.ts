@@ -20,7 +20,9 @@ export interface StoreSettings {
 export interface StoreSettingsInput {
   storeName: string;
   palette: StoreSettings["palette"];
-  logoUrl: string | null;
+  /** Optional: when omitted the stored logo is left untouched — a regenerate
+   *  must never wipe a merchant-uploaded logo. Pass null to explicitly clear. */
+  logoUrl?: string | null;
   voiceTagline: string | null;
   /** Optional: when omitted the stored vibe is left untouched (new rows take
    *  the column default 'minimal'). */
@@ -81,10 +83,11 @@ export async function hasStoreSettings(shopId: string): Promise<boolean> {
 export async function saveStoreSettings(shopId: string, input: StoreSettingsInput): Promise<void> {
   if (!UUID_RE.test(shopId)) throw new Error(`saveStoreSettings requires a real (uuid) shop_id, got ${shopId}`);
   const row: Record<string, unknown> = {
-    shop_id: shopId, store_name: input.storeName, palette: input.palette, logo_url: input.logoUrl, voice_tagline: input.voiceTagline, updated_at: new Date().toISOString(),
+    shop_id: shopId, store_name: input.storeName, palette: input.palette, voice_tagline: input.voiceTagline, updated_at: new Date().toISOString(),
   };
-  // Omitted vibe leaves the stored value untouched (upsert only writes the
+  // Omitted logo/vibe leaves the stored value untouched (upsert only writes the
   // columns present in the payload); new rows take the column default.
+  if (input.logoUrl !== undefined) row.logo_url = input.logoUrl;
   if (input.vibe !== undefined) row.vibe = input.vibe;
   if (input.typeStyle !== undefined) row.type_style = input.typeStyle;
   if (input.density !== undefined) row.density = input.density;

@@ -1,7 +1,7 @@
 // app/lib/storegen/generate.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
-import { generateStore } from "./generate.server";
+import { generateStore, extractStoreHtml } from "./generate.server";
 
 const { createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock } = vi.hoisted(() => ({
   createMock: vi.fn(), getCatalogMock: vi.fn(), saveDraftMock: vi.fn(),
@@ -20,7 +20,7 @@ const catalog = (): StorefrontCatalog => ({
   getProduct: async (_s, h) => product(h.replace("h-", "")),
   listCollections: async () => [{ handle: "summer", title: "Summer" }],
 });
-const reply = (text: string) => ({ content: [{ type: "text", text }], usage: { input_tokens: 10, output_tokens: 20 } });
+const reply = (text: string, stopReason?: string) => ({ content: [{ type: "text", text }], usage: { input_tokens: 10, output_tokens: 20 }, ...(stopReason ? { stop_reason: stopReason } : {}) });
 
 beforeEach(() => {
   for (const m of [createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock]) m.mockReset();
@@ -182,7 +182,7 @@ describe("generateStore", () => {
     await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand", designModel: "opus" });
     const models = createMock.mock.calls.map((c) => (c[0] as { model: string }).model);
     expect(models.filter((m) => m === "claude-opus-4-8")).toHaveLength(1); // the design call
-    expect(models.filter((m) => m === "claude-haiku-4-5")).toHaveLength(3); // brand + block plans stay cheap
+    expect(models.filter((m) => m === "claude-sonnet-5")).toHaveLength(3); // brand + block plans on the storegen default
   });
 
   it("falls back to the designed hollow store when the home HTML call returns no markup (junk/refusal)", async () => {
@@ -368,17 +368,91 @@ describe("generateStore", () => {
     let inflight = 0;
     let release!: () => void;
     const allStarted = new Promise<void>((r) => { release = r; });
-    createMock.mockImplementation(async () => {
+    createMock.mockImplementation(async (req: unknown) => {
       calls += 1;
       // Call #1 is the Stage 1 brand call — resolve it immediately so Stage 2 can begin.
       if (calls === 1) return reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}');
       inflight += 1;
       if (inflight === 3) release();
       await allStarted; // deadlocks (→ timeout) if the three calls are serialized
-      return reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}');
+      // Answer each page's actual contract (HTML for home, JSON for the plans) so no
+      // corrective retry fires — a retry would add a 4th call and skew the inflight count.
+      const isHome = String((req as { system?: unknown }).system ?? "").includes("art director");
+      return isHome
+        ? reply('<div class="ai-store"><style>.ai-store .hero{color:#111}</style><h1>Hi</h1></div>')
+        : reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}');
     });
     await generateStore({ shopId: realShop, mode: "catalog" });
     expect(inflight).toBe(3);
     expect(saveDraftMock).toHaveBeenCalledTimes(3);
   }, 3000);
+});
+
+describe("extractStoreHtml", () => {
+  const PAGE = '<div class="ai-store"><style>.ai-store{}</style><h1>Hi</h1></div>';
+
+  it("passes clean raw HTML through", () => {
+    expect(extractStoreHtml(PAGE)).toBe(PAGE);
+  });
+
+  it("strips a prose preamble and an embedded code fence", () => {
+    const fenced = ["Here is your page:", "```html", PAGE, "```"].join("\n");
+    expect(extractStoreHtml(fenced)).toBe(PAGE);
+  });
+
+  it("rejects a refusal that merely mentions a tag", () => {
+    expect(extractStoreHtml("I can't render <script> content for this request.")).toBe("");
+  });
+
+  it("rejects prose and JSON with no container", () => {
+    expect(extractStoreHtml("I cannot help with that.")).toBe("");
+    expect(extractStoreHtml('{"blocks":[]}')).toBe("");
+  });
+});
+
+describe("generateStore — premium-output hardening", () => {
+  it("never writes logoUrl — a regenerate must not wipe the merchant's uploaded logo", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"Go"}'))
+      .mockResolvedValue(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}'));
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    expect(saveSettingsMock.mock.calls[0][1]).not.toHaveProperty("logoUrl");
+  });
+
+  it("treats a max_tokens-truncated home reply as a miss: one retry, then the designed fallback — never half a page", async () => {
+    const half = '<div class="ai-store"><style>.ai-store{}</style><section>cut off';
+    createMock.mockImplementation(async (req: unknown) => {
+      const isHome = String((req as { system?: unknown }).system ?? "").includes("art director");
+      if (isHome) return reply(half, "max_tokens");
+      if (createMock.mock.calls.length === 1) return reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}');
+      return reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}');
+    });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    expect(homeDraft.blocks.map((b: { type: string }) => b.type)).not.toContain("rawHtml");
+    // Exactly one corrective retry for the home call: brand + home + retry + 2 block plans.
+    const homeCalls = createMock.mock.calls.filter((c) => String((c[0] as { system?: unknown }).system ?? "").includes("art director"));
+    expect(homeCalls).toHaveLength(2);
+  });
+
+  it("retries a junk block-plan reply once and uses the corrected plan instead of the canned fallback", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand
+      .mockResolvedValueOnce(reply('<div class="ai-store"><style>.ai-store{}</style><h1>Hi</h1></div>')) // home
+      .mockResolvedValueOnce(reply("garbage not json")) // collection (junk -> retry)
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}')) // pdp
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"hero","props":{"headline":"Retried heading"},"layout":{}},{"type":"collectionGrid","props":{},"layout":{}}]}')); // collection retry
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    const collectionDraft = saveDraftMock.mock.calls.find((c) => c[1] === "collection")![2];
+    const hero = collectionDraft.blocks.find((b: { type: string }) => b.type === "hero");
+    expect(hero?.props.headline).toBe("Retried heading");
+  });
+
+  it("reports failed when the model answered but every page still fell back (junk all the way down)", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand ok
+      .mockResolvedValue(reply("garbage not json")); // every page + retry -> fallback
+    const result = await generateStore({ shopId: realShop, mode: "brief", brief: "anything" });
+    expect(result.status).toBe("failed");
+  });
 });

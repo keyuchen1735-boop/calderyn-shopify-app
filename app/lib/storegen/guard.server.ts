@@ -46,7 +46,7 @@ export async function assertGeneratePrechecks(
     throw new CalderynError({
       code: "experiment_running",
       status: 409,
-      message: "An experiment is running on your home page. Decide it before rebuilding.",
+      message: "An experiment is running on your store. Decide it before rebuilding.",
     });
   }
 }

@@ -32,6 +32,21 @@ const PUBLISHABLE_PAGES: PageKey[] = ["home", "collection", "pdp"];
 
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 
+/** Refuse a studio design write while an experiment is running. Arm A is the LIVE settings/doc,
+ *  so a mid-test vibe/accent/hero change silently rewrites the control (or erases the very
+ *  difference under test — setting the challenger's vibe makes both arms identical), and a later
+ *  "ship" overwrites the edit with the challenger clone frozen at start time. Same posture as
+ *  publish and generate. */
+async function refuseMidTest(shopId: string, what: string): Promise<void> {
+  if (await hasRunningExperiment(shopId)) {
+    throw new CalderynError({
+      code: "experiment_running",
+      status: 409,
+      message: `An experiment is running on your store. Decide it before changing the ${what}.`,
+    });
+  }
+}
+
 /** Extract the hero block's real text fields from a doc; null when absent. */
 function heroFromDoc(doc: BlockDocument): StudioHero | null {
   const block = doc.blocks.find((b) => b.type === "hero");
@@ -177,6 +192,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
 /** Update the home hero block's text on the draft doc (creating the draft from
  *  the default home doc when none exists), validate, and save. */
 export async function saveStudioHero(shopId: string, hero: StudioHero): Promise<StudioHero> {
+  await refuseMidTest(shopId, "hero copy");
   const doc = (await loadDraftDoc(shopId, "home")) ?? defaultHomeDocument();
   const heroBlock = doc.blocks.find((b) => b.type === "hero");
   if (!heroBlock) {
@@ -214,6 +230,7 @@ export async function saveStudioHero(shopId: string, hero: StudioHero): Promise<
  *  and the rest of the store settings. Color format is validated at the route
  *  boundary. */
 export async function saveStudioAccent(shopId: string, color: string): Promise<void> {
+  await refuseMidTest(shopId, "accent color");
   const settings = await getStoreSettings(shopId);
   await saveStoreSettings(shopId, {
     storeName: settings.storeName,
@@ -235,6 +252,7 @@ export async function saveStudioVibe(shopId: string, vibe: StudioVibe): Promise<
       message: "This demo store can't change its design vibe.",
     });
   }
+  await refuseMidTest(shopId, "design vibe");
   const settings = await getStoreSettings(shopId);
   await saveStoreSettings(shopId, {
     storeName: settings.storeName,
@@ -266,7 +284,7 @@ export async function publishStudioStore(shopId: string): Promise<void> {
     throw new CalderynError({
       code: "experiment_running",
       status: 409,
-      message: "An experiment is running on your home page. Decide it before publishing.",
+      message: "An experiment is running on your store. Decide it before publishing.",
     });
   }
   const valid = await catalogValidIds(shopId);

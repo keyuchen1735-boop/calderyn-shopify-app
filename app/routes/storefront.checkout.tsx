@@ -13,7 +13,7 @@ import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.serve
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { ensureVisitorSession } from "~/lib/storefront/visitor-cookie.server";
-import { getRunningExperiment, assignArm } from "~/lib/experiments/store-experiment.server";
+import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import { priceCart } from "~/lib/order/cart.server";
 import { createCheckout, OutOfStockError } from "~/lib/order/checkout.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
@@ -65,25 +65,21 @@ async function buyerCheckoutPrefill(request: Request, shopId: string): Promise<C
 }
 
 /**
- * Stamp {experiment_id, variant_key} onto the order's attribution when a home-page
- * A/B test is running (D4) — snake_case to match the keys experimentReport reads
- * back off orders.attribution. Bucketing reuses the same visitor id assignArm uses
- * on the storefront, so a buyer's checkout always attributes to the arm they were
- * actually shown. Failure-isolated: a lookup hiccup must never break checkout, so
- * it degrades to no stamp (the order still records live_session_id).
+ * Stamp {experiment_id, variant_key} onto the order's attribution when an A/B test is
+ * running (D4) — snake_case to match the keys experimentReport reads back off
+ * orders.attribution. The shared resolver buckets off the COOKIE visitor id, the same id
+ * every storefront surface bucketed with — a buyer whose cookie vanished between browse
+ * and checkout gets NO stamp rather than a freshly-minted id's 50/50 coin flip crediting
+ * the wrong arm. Failure-isolated inside the resolver: the order still records
+ * live_session_id when the lookup hiccups.
  */
 async function checkoutExperimentAttribution(
   shopId: string,
-  visitorId: string,
+  request: Request,
 ): Promise<Record<string, string>> {
-  try {
-    const experiment = await getRunningExperiment(shopId);
-    if (!experiment) return {};
-    return { experiment_id: experiment.id, variant_key: assignArm(visitorId, experiment.id) };
-  } catch (err) {
-    console.error(`[checkout] experiment lookup failed for shop ${shopId} (continuing without attribution):`, err);
-    return {};
-  }
+  const served = await resolveServedExperiment(shopId, request, "checkout");
+  if (!served.experimentId || !served.variantKey) return {};
+  return { experiment_id: served.experimentId, variant_key: served.variantKey };
 }
 
 // The policy text version the buyer accepts at checkout — recorded verbatim on buyer_consent as
@@ -267,8 +263,12 @@ export async function action({ request }: ActionFunctionArgs) {
   // this is the only moment the session id and the order meet — it anchors the
   // Live View funnel's "purchased" count on paid orders instead of on the
   // buyer happening to revisit the confirmation page.
-  const visitor = await ensureVisitorSession(request);
-  const experimentAttribution = await checkoutExperimentAttribution(shopId, visitor.visitorId);
+  // Independent reads — resolved concurrently so the experiment lookup never adds latency
+  // in front of createCheckout, the most conversion-sensitive call in the app.
+  const [visitor, experimentAttribution] = await Promise.all([
+    ensureVisitorSession(request),
+    checkoutExperimentAttribution(shopId, request),
+  ]);
 
   try {
     const result = await createCheckout(
@@ -296,16 +296,20 @@ export async function action({ request }: ActionFunctionArgs) {
     // Return the client secret + confirmation token AND the amounts actually charged (subtotal +
     // quoted shipping + tax) so the payment step shows the real total, not the subtotal-only figure.
     // The cart is NOT cleared here — payment can still fail at the Payment Element; the cart is
-    // cleared on the confirmation page.
-    return json({
-      clientSecret: result.clientSecret,
-      confirmationToken: result.confirmationToken,
-      subtotalCents: result.subtotalCents,
-      shippingCents: result.shippingCents,
-      taxCents: result.taxCents,
-      totalCents: result.totalCents,
-      currency: result.currency,
-    });
+    // cleared on the confirmation page. The visitor Set-Cookie headers ride along so a session
+    // minted here persists into the confirmation page's checkout_complete event.
+    return json(
+      {
+        clientSecret: result.clientSecret,
+        confirmationToken: result.confirmationToken,
+        subtotalCents: result.subtotalCents,
+        shippingCents: result.shippingCents,
+        taxCents: result.taxCents,
+        totalCents: result.totalCents,
+        currency: result.currency,
+      },
+      { headers: visitor.headers },
+    );
   } catch (err) {
     // One or more items sold out between add-to-cart and checkout: surface an actionable 409 so
     // the buyer knows to remove the sold-out line, rather than an opaque "try again" 502 they'd

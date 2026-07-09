@@ -29,6 +29,8 @@ export async function action({ request }: ActionFunctionArgs) {
     throw err;
   }
   const brief = rawBrief && rawBrief.trim() ? rawBrief.trim() : undefined;
-  await generateStore({ shopId: session.shopId, mode, brief });
-  return redirect("/dashboard/builder/preview");
+  const result = await generateStore({ shopId: session.shopId, mode, brief });
+  // A failed run means every page is a deterministic fallback that ignored the brief — the
+  // preview must say so instead of passing a canned layout off as the merchant's design (rule 12).
+  return redirect(result.status === "failed" ? "/dashboard/builder/preview?status=failed" : "/dashboard/builder/preview");
 }
