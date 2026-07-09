@@ -66,7 +66,13 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
-    await markPendingExecuted(session.shopId, pendingId, receipt.auditId);
+    // Bookkeeping: mark the pending action as executed. Failure here must never
+    // hide the fact that the action succeeded, so it is logged and swallowed.
+    try {
+      await markPendingExecuted(session.shopId, pendingId, receipt.auditId);
+    } catch (err) {
+      console.error("[assistant.confirm] failed to mark pending executed", { pendingId }, err);
+    }
 
     // Best-effort: persist the outcome into the conversation thread so a page
     // reload and the model's next turn both see it happened. The action has

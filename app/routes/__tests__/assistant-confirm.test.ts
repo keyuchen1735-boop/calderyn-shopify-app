@@ -172,6 +172,17 @@ describe("dashboard.api.assistant.confirm action", () => {
     expect(body.message).toBeNull();
   });
 
+  it("still returns the receipt with 200 when marking pending executed fails, but appendMessage is still attempted", async () => {
+    markExecutedMock.mockRejectedValue(new Error("db down"));
+    const res = await run(post({ pending_id: "p1", decision: "confirm" }));
+    expect(res.status).toBe(200);
+    expect(markExecutedMock).toHaveBeenCalledWith(SHOP, "p1", "audit-1");
+    expect(appendMessageMock).toHaveBeenCalled();
+    const body = (await res.json()) as { receipt: typeof RECEIPT; message: { content: string } };
+    expect(body.receipt).toEqual(RECEIPT);
+    expect(body.message.content).toBe('Confirmed — Paused "Summer Sale"');
+  });
+
   it("on dismiss, calls dismissPendingAction and never runs the action", async () => {
     const res = await run(post({ pending_id: "p1", decision: "dismiss" }));
     expect(res.status).toBe(200);
