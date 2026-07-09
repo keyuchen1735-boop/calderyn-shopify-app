@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   transitionOrder: vi.fn(),
   createRefund: vi.fn(),
   restockOrderLines: vi.fn(),
+  sendRefundNotice: vi.fn(),
 }));
 
 // Lightweight CalderynError so the executor's typed refusals carry code/status/message without
@@ -29,6 +30,7 @@ vi.mock("../execute.server", () => ({
 }));
 vi.mock("../../order/order.server", () => ({ transitionOrder: h.transitionOrder }));
 vi.mock("../../inventory/engine.server", () => ({ restockOrderLines: h.restockOrderLines }));
+vi.mock("../../order/notify-email.server", () => ({ sendRefundNotice: h.sendRefundNotice }));
 
 // eslint-disable-next-line import/first -- must follow vi.mock so the fakes register before load
 import { executeRefundAction } from "../refund.server";
@@ -98,6 +100,7 @@ beforeEach(() => {
   h.transitionOrder.mockResolvedValue({ id: "t-1" });
   h.createRefund.mockResolvedValue({ refundId: "re_1", status: "succeeded", chargeId: "ch_1" });
   h.restockOrderLines.mockResolvedValue({ restockedLines: 2, failedVariantIds: [] });
+  h.sendRefundNotice.mockResolvedValue({ sent: true, id: "email-1" });
 });
 
 function baseCfg(overrides: SbCfg = {}): SbCfg {
@@ -154,6 +157,10 @@ describe("executeRefundAction — happy paths", () => {
     expect(audit.post_state).toMatchObject({ state: "refunded" });
     expect(res.orderState).toBe("refunded");
     expect(res.refundId).toBe("re_1");
+    // Best-effort buyer notification fires once on the fresh success path, after the audit insert,
+    // with the actual executed refund magnitude (not the pre-refund `remaining` projection).
+    expect(h.sendRefundNotice).toHaveBeenCalledTimes(1);
+    expect(h.sendRefundNotice).toHaveBeenCalledWith("shop-1", "order-1", { amountCents: 2500 });
   });
 
   it("partial refund: paid->partially_refunded when the ledger is not fully refunded", async () => {
@@ -298,6 +305,8 @@ describe("executeRefundAction — idempotency + failure surfacing", () => {
     expect(res.replayed).toBe(true);
     expect(res.refundId).toBe("re_prev");
     expect(h.createRefund).not.toHaveBeenCalled();
+    // At-most-once: a replay must NOT re-send the refund-notice email.
+    expect(h.sendRefundNotice).not.toHaveBeenCalled();
   });
 
   it("surfaces a Stripe failure and writes no ledger/audit row", async () => {

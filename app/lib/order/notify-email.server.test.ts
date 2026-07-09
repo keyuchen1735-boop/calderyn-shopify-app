@@ -1,0 +1,135 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// In-memory Supabase stand-in: orders + buyer_dim, queried by .eq(...).maybeSingle() exactly like
+// loadOrderAndBuyer does. Enforces shop-scoping (every read threads shop_id) so the test exercises
+// real behavior, not a bare mock. Mirrors confirmation-email.server.test.ts's fixture.
+const store = vi.hoisted(() => {
+  type Row = Record<string, any>;
+  const db: Record<string, Row[]> = { orders: [], buyer_dim: [] };
+
+  class Builder {
+    private filters: Array<[string, unknown]> = [];
+    private readonly table: string;
+    constructor(table: string) {
+      this.table = table;
+    }
+    select() {
+      return this;
+    }
+    eq(col: string, val: unknown) {
+      this.filters.push([col, val]);
+      return this;
+    }
+    maybeSingle() {
+      const match = db[this.table].find((r) => this.filters.every(([c, v]) => r[c] === v)) ?? null;
+      return Promise.resolve({ data: match, error: null });
+    }
+  }
+  return { db, client: { from: (t: string) => new Builder(t) } };
+});
+
+const sendEmail = vi.fn();
+
+vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
+vi.mock("~/lib/email/send.server", () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }));
+
+// eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
+import { sendShippingConfirmation, sendRefundNotice, sendCancellationNotice } from "./notify-email.server";
+
+const ORDER_ID = "11112222-3333-4444-5555-666677778888";
+
+beforeEach(() => {
+  for (const k of Object.keys(store.db)) store.db[k].length = 0;
+  vi.clearAllMocks();
+  process.env.RESEND_API_KEY = "re_test";
+  process.env.ORDER_CONFIRM_FROM = "Store <orders@example.com>";
+  sendEmail.mockResolvedValue({ sent: true, id: "email-1" });
+  store.db.orders.push({ id: ORDER_ID, shop_id: "shop-1", buyer_id: "buyer-1", currency: "usd" });
+  store.db.buyer_dim.push({ id: "buyer-1", shop_id: "shop-1", email_normalized: "buyer@example.com" });
+});
+
+describe("sendShippingConfirmation", () => {
+  it("emails the buyer with the order ref + tracking number when provided", async () => {
+    const res = await sendShippingConfirmation("shop-1", ORDER_ID, { trackingNumber: "1Z999", carrier: "UPS" });
+    expect(res.sent).toBe(true);
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    const args = sendEmail.mock.calls[0][0];
+    expect(args.subject).toBe("Order #11112222 is on the way");
+    expect(args.text).toContain("Good news! Your order #11112222 has shipped.");
+    expect(args.text).toContain("Tracking: UPS 1Z999");
+  });
+
+  it("omits the tracking line when no tracking number is given", async () => {
+    const res = await sendShippingConfirmation("shop-1", ORDER_ID, {});
+    expect(res.sent).toBe(true);
+    const args = sendEmail.mock.calls[0][0];
+    expect(args.text).not.toContain("Tracking:");
+  });
+
+  it("does not send (and does not call sendEmail) when the buyer has no email on file", async () => {
+    store.db.buyer_dim[0].email_normalized = "";
+    const res = await sendShippingConfirmation("shop-1", ORDER_ID, {});
+    expect(res.sent).toBe(false);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("swallows a sendEmail rejection into a structured failure (never throws)", async () => {
+    sendEmail.mockRejectedValueOnce(new Error("network down"));
+    await expect(sendShippingConfirmation("shop-1", ORDER_ID, {})).resolves.toEqual({
+      sent: false,
+      error: "network down",
+    });
+  });
+});
+
+describe("sendRefundNotice", () => {
+  it("emails the buyer with the refunded amount", async () => {
+    const res = await sendRefundNotice("shop-1", ORDER_ID, { amountCents: 1999 });
+    expect(res.sent).toBe(true);
+    const args = sendEmail.mock.calls[0][0];
+    expect(args.text).toContain("We've issued a refund of $19.99 for order #11112222.");
+    expect(args.text).toContain("5-10 business days");
+  });
+
+  it("does not send when the order is not found for the shop (shop-scoped)", async () => {
+    const res = await sendRefundNotice("other-shop", ORDER_ID, { amountCents: 500 });
+    expect(res.sent).toBe(false);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("swallows a sendEmail rejection into a structured failure (never throws)", async () => {
+    sendEmail.mockRejectedValueOnce(new Error("timeout"));
+    await expect(sendRefundNotice("shop-1", ORDER_ID, { amountCents: 500 })).resolves.toEqual({
+      sent: false,
+      error: "timeout",
+    });
+  });
+});
+
+describe("sendCancellationNotice", () => {
+  it("mentions the refund when refunded is true", async () => {
+    const res = await sendCancellationNotice("shop-1", ORDER_ID, { refunded: true });
+    expect(res.sent).toBe(true);
+    const args = sendEmail.mock.calls[0][0];
+    expect(args.text).toContain("Your order #11112222 has been cancelled.");
+    expect(args.text).toContain("A full refund has been issued to your original payment method.");
+  });
+
+  it("omits the refund sentence when refunded is false", async () => {
+    const res = await sendCancellationNotice("shop-1", ORDER_ID, { refunded: false });
+    expect(res.sent).toBe(true);
+    const args = sendEmail.mock.calls[0][0];
+    expect(args.text).not.toContain("A full refund has been issued");
+  });
+
+  it("fails visibly (no throw) when the mail transport is unconfigured", async () => {
+    delete process.env.RESEND_API_KEY;
+    delete process.env.ORDER_CONFIRM_FROM;
+    delete process.env.PILOT_FROM;
+    delete process.env.DIGEST_FROM;
+    const res = await sendCancellationNotice("shop-1", ORDER_ID, { refunded: false });
+    expect(res.sent).toBe(false);
+    expect(res.error).toMatch(/not configured/);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+});

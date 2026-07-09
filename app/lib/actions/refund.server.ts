@@ -32,6 +32,7 @@ import { restockOrderLines } from "../inventory/engine.server";
 import { transitionOrder } from "../order/order.server";
 import { isOrderState, type OrderState } from "../order/state";
 import { createStripeRefund, type StripeRefundInput, type StripeRefundResult } from "../payments/refund.server";
+import { sendRefundNotice } from "../order/notify-email.server";
 import { priorExecutionForKey, insertAuditWithIdempotency } from "./execute.server";
 
 /** Owned-order states a refund may act on. checkout_pending/cancelled/cart are not refundable. */
@@ -449,6 +450,11 @@ export async function executeRefundAction(
     );
     throw err;
   }
+
+  // 10. Best-effort buyer notification — fires only on this fresh success path (a replay returns
+  // early from resultFromAudit in step 1), so the notice is at-most-once. sendRefundNotice never
+  // throws; its result is intentionally not awaited into the return value below.
+  await sendRefundNotice(shopId, input.orderId, { amountCents });
 
   return {
     auditId: audit.id,
