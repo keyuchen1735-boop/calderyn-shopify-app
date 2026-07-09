@@ -148,6 +148,7 @@ async function resumeAfterRefundCrash(
       alert_id: null,
       action_kind: "cancel_order",
       params: {
+        order_id: input.orderId,
         reason,
         refund: true,
         restock: input.restock,
@@ -230,6 +231,7 @@ export async function executeCancelAction(
   let refunded = false;
   let restockedLines = 0;
   const params: Record<string, unknown> = {
+    order_id: input.orderId,
     reason,
     refund: input.refund,
     restock: input.restock,

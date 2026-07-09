@@ -20,7 +20,10 @@ export default function CancelOrderModal({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const hasMoneyToRefund = order.remainingRefundableCents > 0;
+  // checkout_pending orders never captured anything — the read model falls back to the gross
+  // total for remainingRefundableCents on that state, so gate on state too or the modal claims
+  // money was captured (and defaults to refunding) on an order that never charged the customer.
+  const hasMoneyToRefund = order.remainingRefundableCents > 0 && order.state !== "checkout_pending";
   const [reason, setReason] = useState("");
   const [refund, setRefund] = useState(true);
   const [restock, setRestock] = useState(true);
