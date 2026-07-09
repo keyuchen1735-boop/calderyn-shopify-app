@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as client from "~/lib/dashboard/client";
 import { AssistantSendError } from "~/lib/dashboard/client";
 import type { ChatMessage, DraftedAction } from "~/lib/assistant/types";
+import type { ActionReceipt, PendingActionCard } from "~/lib/assistant/actions/registry-types";
 import { SUGGESTED_PROMPTS } from "~/lib/assistant/suggested-prompts";
 import { useThinkingPhrase } from "~/lib/assistant/thinking";
 import { DASH_INLINE_ACTIONS, dashReviewScreen } from "~/lib/labels";
@@ -109,6 +110,129 @@ function DraftActionCard({
             </Btn>
           </div>
         </>
+      )}
+      {errorText && <div className="cd-chat-error">{errorText}</div>}
+    </div>
+  );
+}
+
+/** A completed (Tier-1 or confirmed Tier-2) action under an assistant bubble.
+ *  Undo is only offered when the executor marked it undoable AND wrote an
+ *  audit row — some actions (e.g. a dismiss) have neither. */
+function ReceiptChip({ receipt }: { receipt: ActionReceipt }) {
+  const [state, setState] = useState<"idle" | "undoing" | "undone">("idle");
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const canUndo = receipt.undoable && Boolean(receipt.auditId);
+
+  const undo = async () => {
+    if (!receipt.auditId) return;
+    setState("undoing");
+    setErrorText(null);
+    try {
+      await client.undoAudit(receipt.auditId);
+      setState("undone");
+    } catch (err) {
+      setErrorText(err instanceof Error ? err.message : "Undo failed.");
+      setState("idle");
+    }
+  };
+
+  return (
+    <div className="cd-chat-action">
+      <div className="cd-chat-action-head">
+        <span className="cd-chat-action-done">
+          <CDIcon name="check" size={13} strokeWidth={2.2} /> {receipt.summary}
+        </span>
+      </div>
+      {canUndo &&
+        (state === "undone" ? (
+          <span className="cd-chat-action-done">
+            <CDIcon name="check" size={13} strokeWidth={2.2} /> Undone
+          </span>
+        ) : (
+          <div className="cd-chat-action-btns">
+            <Btn small disabled={state === "undoing"} onClick={undo}>
+              {state === "undoing" ? "Undoing…" : "Undo"}
+            </Btn>
+          </div>
+        ))}
+      {errorText && <div className="cd-chat-error">{errorText}</div>}
+    </div>
+  );
+}
+
+/** A Tier-2 (confirm-gated) action awaiting a merchant decision. Renders from
+ *  persisted history as much as from a live turn, so a stale card (already
+ *  confirmed/dismissed elsewhere, or past its TTL) must fail gracefully — the
+ *  server's 409 "pending_unavailable" surfaces as plain copy, not a crash. */
+function PendingConfirmCard({
+  pending,
+  onConfirmed,
+}: {
+  pending: PendingActionCard;
+  /** Fired once, after a successful confirm, with the receipt the action
+   *  itself always returns plus the persisted follow-up turn the server
+   *  appended (message is null only when that best-effort bookkeeping step
+   *  failed — the action still ran, so the caller must fall back to the
+   *  receipt rather than showing nothing). */
+  onConfirmed: (receipt: ActionReceipt, message: ChatMessage | null) => void;
+}) {
+  const [phase, setPhase] = useState<
+    "active" | "confirming" | "dismissing" | "confirmed" | "dismissed"
+  >("active");
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const busy = phase === "confirming" || phase === "dismissing";
+  const resolved = phase === "confirmed" || phase === "dismissed";
+
+  const confirm = async () => {
+    setPhase("confirming");
+    setErrorText(null);
+    try {
+      const { receipt, message } = await client.confirmAssistantAction(pending.id);
+      setPhase("confirmed");
+      onConfirmed(receipt, message);
+    } catch (err) {
+      // Covers the 409 pending_unavailable path too: a card rendered from
+      // reloaded history may already be expired or resolved elsewhere, and
+      // this is where that surfaces — as plain copy, buttons re-enabled so a
+      // fresh ask isn't blocked on a stuck spinner.
+      setErrorText(err instanceof Error ? err.message : "Could not confirm this action.");
+      setPhase("active");
+    }
+  };
+
+  const dismiss = async () => {
+    setPhase("dismissing");
+    setErrorText(null);
+    try {
+      await client.dismissAssistantAction(pending.id);
+      setPhase("dismissed");
+    } catch (err) {
+      setErrorText(err instanceof Error ? err.message : "Could not dismiss this action.");
+      setPhase("active");
+    }
+  };
+
+  return (
+    <div className="cd-chat-action">
+      <div className="cd-chat-action-head">
+        <span className="cd-chat-action-label">{pending.summary}</span>
+        {phase === "confirmed" && (
+          <span className="cd-chat-action-done">
+            <CDIcon name="check" size={13} strokeWidth={2.2} /> Confirmed
+          </span>
+        )}
+      </div>
+      {phase === "dismissed" && <div className="cd-caption">Not now — no changes made.</div>}
+      {!resolved && (
+        <div className="cd-chat-action-btns">
+          <Btn kind="primary" small disabled={busy} onClick={confirm}>
+            {phase === "confirming" ? "Confirming…" : "Confirm"}
+          </Btn>
+          <Btn small disabled={busy} onClick={dismiss}>
+            {phase === "dismissing" ? "…" : "Not now"}
+          </Btn>
+        </div>
       )}
       {errorText && <div className="cd-chat-error">{errorText}</div>}
     </div>
@@ -262,7 +386,7 @@ export default function AssistantPanel({
           </span>
           <div>
             <div className="cd-h3">Ask Calderyn</div>
-            <div className="cd-caption">Knows your alerts, campaigns &amp; stock</div>
+            <div className="cd-caption">Sees your store and can act on it</div>
           </div>
         </div>
         <div className="cd-chat-head-btns">
@@ -285,7 +409,8 @@ export default function AssistantPanel({
           <div className="cd-chat-empty">
             <p className="cd-sub">
               Ask anything about your store&rsquo;s alerts, campaigns, inventory, or action
-              history, or start with one of these:
+              history — or ask it to take action, like pausing a campaign or issuing a refund.
+              Start with one of these:
             </p>
             <div className="cd-chat-chips">
               {SUGGESTED_PROMPTS.map((p) => (
@@ -320,6 +445,39 @@ export default function AssistantPanel({
                   action={m.draftedAction}
                   app={app}
                   onClose={() => setOpen(false)}
+                />
+              )}
+              {m.receipts.map((r, i) => (
+                // Receipts have no id of their own; a message's list is fixed
+                // once persisted, so index is a stable key.
+                <ReceiptChip key={i} receipt={r} />
+              ))}
+              {m.pendingAction && (
+                <PendingConfirmCard
+                  pending={m.pendingAction}
+                  onConfirmed={(receipt, message) => {
+                    if (message) {
+                      setMessages((prev) => [...prev, message]);
+                    } else {
+                      // Bookkeeping-only failure (rare): the action already ran
+                      // server-side but persisting the follow-up turn didn't.
+                      // Fall back to the receipt the action call itself always
+                      // returns, so the thread still shows what happened AND
+                      // keeps the Undo affordance instead of going silent.
+                      setMessages((prev) => [
+                        ...prev,
+                        {
+                          id: nextLocalId(),
+                          role: "assistant",
+                          content: `Confirmed — ${receipt.summary}`,
+                          draftedAction: null,
+                          receipts: [receipt],
+                          pendingAction: null,
+                          createdAt: new Date().toISOString(),
+                        },
+                      ]);
+                    }
+                  }}
                 />
               )}
             </div>
