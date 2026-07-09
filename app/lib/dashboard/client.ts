@@ -54,6 +54,7 @@ import type {
   ChatMessage as AssistantMessage,
   ConversationSummary as AssistantConversation,
 } from "~/lib/assistant/types";
+import type { ActionReceipt } from "~/lib/assistant/actions/registry-types";
 
 // --- error type ------------------------------------------------------------
 
@@ -1036,6 +1037,26 @@ export async function sendAssistantMessage(
     conversationId: String(body.conversation_id),
     message: body.message as AssistantMessage,
   };
+}
+
+/** Confirm a Tier-2 pending action by id — the server re-resolves the action
+ *  and its parameters from the pending row, so this call carries no payload
+ *  the client could tamper with. Errors (expired/already-used/not-found)
+ *  surface as a DashboardApiError with code "pending_unavailable". */
+export async function confirmAssistantAction(pendingId: string): Promise<ActionReceipt> {
+  const data = await apiSend<{ receipt: ActionReceipt }>("POST", "/dashboard/api/assistant/confirm", {
+    pending_id: pendingId,
+    decision: "confirm",
+  });
+  return data.receipt;
+}
+
+/** Dismiss a Tier-2 pending action by id without running it. */
+export async function dismissAssistantAction(pendingId: string): Promise<void> {
+  await apiSend<{ dismissed: boolean }>("POST", "/dashboard/api/assistant/confirm", {
+    pending_id: pendingId,
+    decision: "dismiss",
+  });
 }
 
 // --- calibration -------------------------------------------------------------
