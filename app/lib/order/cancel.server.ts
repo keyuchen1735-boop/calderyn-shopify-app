@@ -68,6 +68,43 @@ async function loadOrderState(sb: SupabaseClient, shopId: string, orderId: strin
   return isOrderState(state) ? state : null;
 }
 
+/**
+ * Hardening (code-review finding): the crash-resume gate below used to trust a literal
+ * idempotency-key match alone — `<key>:refund` existing as SOME completed execution — without
+ * proving that execution was a refund of THIS order. Idempotency keys are caller-supplied
+ * strings; a client bug (or two orders sharing a naive key scheme) could collide the OUTER key
+ * across two different orders and, since both would then probe the SAME `<key>:refund` inner
+ * key, incorrectly resume order B onto order A's completed refund. Close that by re-reading the
+ * matched action_audit row and checking both `action_kind` (must be the refund executor, not
+ * some unrelated action that happened to share a key) and `params->>order_id` (refund.server.ts
+ * persists `order_id` — snake_case, see its module header) against `input.orderId`. Only a
+ * proven refund-of-THIS-order resumes; anything else falls through to the normal 409.
+ */
+async function priorRefundBelongsToThisOrder(
+  sb: SupabaseClient,
+  shopId: string,
+  auditId: string,
+  orderId: string,
+): Promise<boolean> {
+  const { data, error } = await sb
+    .from("action_audit")
+    .select("action_kind, outcome, params")
+    .eq("shop_id", shopId)
+    .eq("id", auditId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return false;
+  const row = data as Record<string, unknown>;
+  // Belt-and-braces: refund.server.ts's RefundActionResult types `outcome` as the literal
+  // "succeeded" (every issue_refund audit insert passes that literal, never a variable — see its
+  // module header's ATOMICITY note: a Stripe failure throws before any audit row is written), so
+  // a non-succeeded issue_refund row is not reachable today. Checking it anyway costs one extra
+  // selected column and closes the gap outright should that invariant ever loosen.
+  if (row.action_kind !== "issue_refund" || row.outcome !== "succeeded") return false;
+  const params = (row.params ?? {}) as Record<string, unknown>;
+  return params.order_id === orderId;
+}
+
 /** Stamp cancelled_at + cancel_reason. Called IMMEDIATELY after each branch's state-changing step
  *  (transitionOrder, or executeRefundAction in the refund branch) so the crash window between the
  *  money/state move and this visible marker is as small as this non-transactional shape allows. */
@@ -176,7 +213,7 @@ export async function executeCancelAction(
     // the already_cancelled guard above short-circuits a completed stamp.
     if (input.refund && isOrderState(fromStateRaw) && (fromStateRaw === "refunded" || fromStateRaw === "partially_refunded")) {
       const priorRefund = await priorExecutionForKey(shopId, `${input.idempotencyKey}:refund`, sb);
-      if (priorRefund) {
+      if (priorRefund && (await priorRefundBelongsToThisOrder(sb, shopId, priorRefund.id, input.orderId))) {
         return resumeAfterRefundCrash(sb, shopId, input, fromStateRaw);
       }
     }

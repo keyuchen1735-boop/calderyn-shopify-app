@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // order.server.test.ts.
 const store = vi.hoisted(() => {
   type Row = Record<string, any>;
-  const db: Record<string, Row[]> = { orders: [] };
+  const db: Record<string, Row[]> = { orders: [], action_audit: [] };
 
   class Builder {
     private op: "select" | "update" = "select";
@@ -95,9 +95,19 @@ import { executeCancelAction } from "./cancel.server";
 function seedOrder(shopId: string, id: string, state: string, cancelledAt: string | null = null) {
   store.db.orders.push({ id, shop_id: shopId, state, cancelled_at: cancelledAt });
 }
+function seedAudit(
+  shopId: string,
+  id: string,
+  actionKind: string,
+  params: Record<string, unknown>,
+  outcome: string = "succeeded",
+) {
+  store.db.action_audit.push({ id, shop_id: shopId, action_kind: actionKind, outcome, params });
+}
 
 beforeEach(() => {
   store.db.orders.length = 0;
+  store.db.action_audit.length = 0;
   vi.clearAllMocks();
   h.prior.mockResolvedValue(null);
   h.insertAudit.mockResolvedValue({ id: "audit-1", outcome: "succeeded" });
@@ -243,6 +253,7 @@ describe("executeCancelAction", () => {
     // Simulates a prior call that ran the refund branch (money moved, order -> refunded) and
     // crashed before the cancelled_at stamp / outer audit row landed. cancelled_at is still null.
     seedOrder("shop-1", "order-9", "refunded");
+    seedAudit("shop-1", "raudit-9", "issue_refund", { order_id: "order-9" });
     h.prior.mockImplementation(async (_shopId: string, key: string) => {
       if (key === "k9:refund") return { id: "raudit-9", outcome: "succeeded" };
       return null;
@@ -266,6 +277,78 @@ describe("executeCancelAction", () => {
     const audit = h.insertAudit.mock.calls[0][2];
     expect(audit.params.resumed_after_refund_crash).toBe(true);
     expect(h.sendCancellationNotice).not.toHaveBeenCalled();
+  });
+
+  it("crash-resume hardening: a '<key>:refund' hit whose audited order_id belongs to a DIFFERENT order does not resume, still 409s", async () => {
+    // Simulates an idempotency-key collision: the outer key "k11" happens to share its
+    // ":refund" suffix with a completed refund audit row that actually belongs to some
+    // OTHER order ("order-other"), not the order being cancelled here ("order-11"). Without
+    // the params.order_id / action_kind check, this would incorrectly resume order-11 onto
+    // order-other's refund.
+    seedOrder("shop-1", "order-11", "refunded");
+    seedAudit("shop-1", "raudit-11", "issue_refund", { order_id: "order-other" });
+    h.prior.mockImplementation(async (_shopId: string, key: string) => {
+      if (key === "k11:refund") return { id: "raudit-11", outcome: "succeeded" };
+      return null;
+    });
+
+    await expect(
+      executeCancelAction("shop-1", {
+        orderId: "order-11",
+        refund: true,
+        restock: false,
+        idempotencyKey: "k11",
+      }),
+    ).rejects.toMatchObject({ code: "order_not_cancellable", status: 409 });
+    expect(h.executeRefundAction).not.toHaveBeenCalled();
+    expect(h.insertAudit).not.toHaveBeenCalled();
+    expect(store.db.orders[0].cancelled_at).toBeNull();
+  });
+
+  it("crash-resume hardening: a '<key>:refund' hit whose audited action_kind is NOT issue_refund does not resume, still 409s", async () => {
+    // A key collision against some unrelated action (not a refund at all) that happens to
+    // match this order's id in its params must not be treated as proof a refund ran.
+    seedOrder("shop-1", "order-12", "refunded");
+    seedAudit("shop-1", "raudit-12", "fulfill_order", { order_id: "order-12" });
+    h.prior.mockImplementation(async (_shopId: string, key: string) => {
+      if (key === "k12:refund") return { id: "raudit-12", outcome: "succeeded" };
+      return null;
+    });
+
+    await expect(
+      executeCancelAction("shop-1", {
+        orderId: "order-12",
+        refund: true,
+        restock: false,
+        idempotencyKey: "k12",
+      }),
+    ).rejects.toMatchObject({ code: "order_not_cancellable", status: 409 });
+    expect(h.executeRefundAction).not.toHaveBeenCalled();
+    expect(h.insertAudit).not.toHaveBeenCalled();
+  });
+
+  it("crash-resume hardening: a '<key>:refund' hit whose audited outcome is NOT 'succeeded' does not resume, still 409s", async () => {
+    // Defense-in-depth: refund.server.ts today only ever writes issue_refund audits with the
+    // literal outcome "succeeded" (a Stripe failure throws before any audit insert), so this path
+    // isn't reachable through the real executor — but the gate should not trust a match on
+    // action_kind + order_id alone if that invariant ever loosens.
+    seedOrder("shop-1", "order-13", "refunded");
+    seedAudit("shop-1", "raudit-13", "issue_refund", { order_id: "order-13" }, "retrying");
+    h.prior.mockImplementation(async (_shopId: string, key: string) => {
+      if (key === "k13:refund") return { id: "raudit-13", outcome: "retrying" };
+      return null;
+    });
+
+    await expect(
+      executeCancelAction("shop-1", {
+        orderId: "order-13",
+        refund: true,
+        restock: false,
+        idempotencyKey: "k13",
+      }),
+    ).rejects.toMatchObject({ code: "order_not_cancellable", status: 409 });
+    expect(h.executeRefundAction).not.toHaveBeenCalled();
+    expect(h.insertAudit).not.toHaveBeenCalled();
   });
 
   it("state refunded with NO prior '<key>:refund' execution is still refused with 409 order_not_cancellable", async () => {

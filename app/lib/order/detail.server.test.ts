@@ -107,10 +107,32 @@ const store = vi.hoisted(() => {
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fake registers first
-import { loadOrderDetail } from "./detail.server";
+import { loadOrderDetail, isImportedOrderId, stripNativeOrderPrefix, nativeOrderExists } from "./detail.server";
 
 beforeEach(() => {
   for (const k of Object.keys(store.db)) store.db[k].length = 0;
+});
+
+describe("isImportedOrderId / stripNativeOrderPrefix (Task 10 write-route guards)", () => {
+  it("isImportedOrderId is true only for a shopify:-prefixed id", () => {
+    expect(isImportedOrderId("shopify:123")).toBe(true);
+    expect(isImportedOrderId("order-1")).toBe(false);
+    expect(isImportedOrderId("calderyn:order-1")).toBe(false);
+  });
+
+  it("stripNativeOrderPrefix removes a calderyn: prefix and passes a bare id through unchanged", () => {
+    expect(stripNativeOrderPrefix("calderyn:order-1")).toBe("order-1");
+    expect(stripNativeOrderPrefix("order-1")).toBe("order-1");
+  });
+});
+
+describe("nativeOrderExists", () => {
+  it("true for a row scoped to the shop, false for a missing id or a cross-tenant id", async () => {
+    store.db.orders.push({ id: "order-9", shop_id: "shop-1" });
+    expect(await nativeOrderExists("shop-1", "order-9")).toBe(true);
+    expect(await nativeOrderExists("shop-1", "ghost")).toBe(false);
+    expect(await nativeOrderExists("shop-2", "order-9")).toBe(false);
+  });
 });
 
 describe("loadOrderDetail — native branch", () => {

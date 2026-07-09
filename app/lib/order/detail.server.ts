@@ -17,6 +17,37 @@ import type { OrderDetail, OrderDetailFulfillment, OrderDetailLine, OrderTimelin
 const SHOPIFY_PREFIX = "shopify:";
 const CALDERYN_PREFIX = "calderyn:";
 
+/** True for an imported (Shopify-paid, read-only) order id. Shared by the write routes
+ *  (Task 10: fulfill/cancel/notes/tags/archive) so every merchant-mutation surface refuses
+ *  a `shopify:`-prefixed id the same way, with the same prefix this module already owns. */
+export function isImportedOrderId(sourceId: string): boolean {
+  return sourceId.startsWith(SHOPIFY_PREFIX);
+}
+
+/**
+ * Strips an optional `calderyn:` prefix, mirroring loadOrderDetail's native branch (line ~77)
+ * so a native order id round-trips the same way through the write routes as it does through
+ * this read model — a caller that sends the `calderyn:<uuid>` form this module already accepts
+ * for reads must not 404 on a write route just because that route used the raw id verbatim.
+ * A bare uuid (no prefix) passes through unchanged.
+ */
+export function stripNativeOrderPrefix(sourceId: string): string {
+  return sourceId.startsWith(CALDERYN_PREFIX) ? sourceId.slice(CALDERYN_PREFIX.length) : sourceId;
+}
+
+/** Shop-scoped existence check for a native order — shared by the write routes (Task 10:
+ *  notes/tags) that must 404 before touching a related table (order_note/order_tag) rather than
+ *  let a foreign-key violation surface as an opaque 500. */
+export async function nativeOrderExists(
+  shopId: string,
+  orderId: string,
+  sb: SupabaseClient = getSupabase(),
+): Promise<boolean> {
+  const { data, error } = await sb.from("orders").select("id").eq("shop_id", shopId).eq("id", orderId).maybeSingle();
+  if (error) throw new Error(`orders read failed: ${error.message}`);
+  return Boolean(data);
+}
+
 /** Plain-language labels for order_state_transition.to_state (mirrors state.ts's ORDER_STATES). */
 const STATE_LABELS: Record<string, string> = {
   cart: "Cart",

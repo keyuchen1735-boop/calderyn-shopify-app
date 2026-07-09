@@ -142,6 +142,25 @@ export function safeDashboardReturnTo(raw: string | null): string | null {
   return raw;
 }
 
+/**
+ * Parse a request body as JSON, normalizing anything that isn't a plain object (a bare `null`,
+ * array, string, or number is all valid JSON) down to `{}` rather than letting a later
+ * `body.someField` access throw on it. Returns null on unparseable JSON so the caller can 400 —
+ * distinct from "valid JSON but not an object", which is treated as an empty body (every field
+ * absent) rather than a parse failure.
+ */
+export async function parseJsonObjectBody(request: Request): Promise<Record<string, unknown> | null> {
+  let parsed: unknown;
+  try {
+    parsed = await request.json();
+  } catch {
+    return null;
+  }
+  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
+}
+
 /** Wrap a loader/action body: CalderynError → its status/code; rethrow Responses. */
 export async function dashboardJson(fn: () => Promise<unknown>): Promise<Response> {
   try {
