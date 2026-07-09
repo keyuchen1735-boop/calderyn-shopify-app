@@ -50,14 +50,13 @@ export const CATALOG_ACTIONS: AssistantAction[] = [
   {
     name: "create_product",
     description:
-      "Create a new product as a single-variant listing (draft by default). price_cents is required, in cents.",
+      "Create a new product as a single-variant listing in draft status. After creation, use set_product_status to activate it. price_cents is required, in cents.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
         price_cents: { type: "number" },
         description: { type: "string" },
-        status: { type: "string", enum: ["draft", "active"] },
       },
       required: ["title", "price_cents"],
     },
@@ -66,22 +65,20 @@ export const CATALOG_ACTIONS: AssistantAction[] = [
     validate: (i): ValidationResult => {
       const title = str(i.title);
       const priceCents = posInt(i.price_cents);
-      const status = i.status === undefined ? "draft" : i.status;
       if (!title || title.length > 200) return { ok: false, message: "title is required (max 200 chars)" };
       if (!priceCents) return { ok: false, message: "price_cents must be a positive integer (cents)" };
       if (i.description !== undefined && (typeof i.description !== "string" || i.description.length > 2000)) {
         return { ok: false, message: "description must be a string of at most 2000 chars" };
       }
-      if (status !== "draft" && status !== "active") return { ok: false, message: "status must be draft or active" };
       return {
         ok: true,
-        value: { title, price_cents: priceCents, description: str(i.description) ?? undefined, status },
+        value: { title, price_cents: priceCents, description: str(i.description) ?? undefined },
       };
     },
     run: async (ctx, i): Promise<ActionReceipt> => {
       const built = validateProductInput({
         title: i.title,
-        status: i.status,
+        status: "draft",
         description: i.description,
         variants: [{ retailPriceCents: i.price_cents }],
       });
@@ -89,7 +86,7 @@ export const CATALOG_ACTIONS: AssistantAction[] = [
       const { id } = await createProduct(ctx.shopId, built.value);
       return {
         action: "create_product",
-        summary: `Created "${String(i.title)}" as a ${String(i.status)} product`,
+        summary: `Created "${String(i.title)}" as a draft product`,
         auditId: null,
         undoable: false,
         detail: { product_id: id },

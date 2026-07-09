@@ -73,6 +73,30 @@ describe("catalog actions", () => {
     );
   });
 
+  it("create_product validates unknown properties (e.g. status) but ignores them", () => {
+    const a = byName("create_product");
+    // Try to pass status in the input — validate should accept it but ignore it
+    const v = a.validate({ title: "Blue Hoodie", price_cents: 3900, status: "active" });
+    expect(v.ok).toBe(true);
+    // Verify the validated value does NOT have status
+    expect((v as OkV).value).not.toHaveProperty("status");
+  });
+
+  it("create_product always creates with draft status regardless of input", async () => {
+    const a = byName("create_product");
+    // Even if someone tried to force status in the input, run always uses draft
+    const v = a.validate({ title: "Test", price_cents: 1000, status: "active" as unknown });
+    expect(v.ok).toBe(true);
+    await a.run(ctx, (v as OkV).value);
+    // Verify createProduct was called with status: "draft"
+    expect(createProduct).toHaveBeenCalledWith(
+      "shop-1",
+      expect.objectContaining({
+        status: "draft",
+      }),
+    );
+  });
+
   it("create_product rejects a title over 200 chars", () => {
     const a = byName("create_product");
     expect(a.validate({ title: "x".repeat(201), price_cents: 100 }).ok).toBe(false);
