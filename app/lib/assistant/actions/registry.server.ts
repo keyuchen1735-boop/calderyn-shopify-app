@@ -7,14 +7,13 @@ import type { AssistantAction } from "./registry-types";
 import { CAMPAIGN_ACTIONS } from "./campaign-actions.server";
 import { CATALOG_ACTIONS } from "./catalog-actions.server";
 import { INVENTORY_ACTIONS } from "./inventory-actions.server";
-// Domain import is added by Task 7:
-// import { OPS_ACTIONS } from "./ops-actions.server";
+import { OPS_ACTIONS } from "./ops-actions.server";
 
 export const ASSISTANT_ACTIONS: AssistantAction[] = [
   ...CAMPAIGN_ACTIONS,
   ...CATALOG_ACTIONS,
   ...INVENTORY_ACTIONS,
-  // ...OPS_ACTIONS,
+  ...OPS_ACTIONS,
 ];
 
 export function actionByName(name: string): AssistantAction | undefined {

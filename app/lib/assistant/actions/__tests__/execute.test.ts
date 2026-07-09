@@ -7,6 +7,19 @@ vi.mock("../pending.server", () => ({
   })),
 }));
 
+// This file imports execute.server.ts for real, which imports registry.server.ts for
+// real, which pulls in every domain module (including ops-actions.server.ts) before
+// __setActionsForTest can swap the catalog. ops-actions.server.ts's import chain
+// (import/run.server -> ingest/backfill.server -> shopify-admin.server) reaches
+// app/shopify.server.ts, which calls shopifyApp() at module scope and throws when
+// SHOPIFY_API_SECRET isn't set. Mock the boundary so this dispatch-logic test never
+// needs real Shopify config, same as every other test that crosses this chain.
+vi.mock("../../../import/run.server", () => ({
+  startImport: vi.fn(async () => ({ importId: "imp-test" })),
+  kickDrainSoon: vi.fn(async () => undefined),
+  latestImport: vi.fn(async () => null),
+}));
+
 const ctx: ActionCtx = { shopId: "shop-1", conversationId: "conv-1", idempotencyKey: "ik-1" };
 
 const tier1: AssistantAction = {
