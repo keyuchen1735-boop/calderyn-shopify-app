@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // Hoisted mock handles shared by the Stripe SDK + Supabase mocks below.
 const h = vi.hoisted(() => ({
   piCreate: vi.fn(),
+  piRetrieve: vi.fn(),
   constructEvent: vi.fn(),
   insert: vi.fn(),
   upsert: vi.fn(),
@@ -20,7 +21,7 @@ const h = vi.hoisted(() => ({
 // Server SDK: default export is the Stripe class; instances expose paymentIntents + webhooks.
 vi.mock("stripe", () => ({
   default: class {
-    paymentIntents = { create: h.piCreate };
+    paymentIntents = { create: h.piCreate, retrieve: h.piRetrieve };
     webhooks = { constructEvent: h.constructEvent };
   },
 }));
@@ -140,12 +141,16 @@ describe("createPaymentIntent", () => {
 
     await createPaymentIntent("shop-1", 10000, "usd", "order-2");
 
-    expect(h.routedCreate).toHaveBeenCalledWith("shop-1", {
-      amount: 10000,
-      currency: "usd",
-      automatic_payment_methods: { enabled: true },
-      metadata: { shop_id: "shop-1", order_ref: "order-2" },
-    });
+    expect(h.routedCreate).toHaveBeenCalledWith(
+      "shop-1",
+      {
+        amount: 10000,
+        currency: "usd",
+        automatic_payment_methods: { enabled: true },
+        metadata: { shop_id: "shop-1", order_ref: "order-2" },
+      },
+      { readiness: undefined },
+    );
     expect(h.insert).toHaveBeenCalledWith(
       expect.objectContaining({ stripe_account_id: "acct_1", application_fee_cents: 280 }),
     );
@@ -329,6 +334,8 @@ describe("processStripeEvent", () => {
 
     it("provisions the payment_intent row from the session and does no money work", async () => {
       h.constructEvent.mockReturnValue(sessionEvent);
+      // Platform-charged session (demo shop): the PI carries no transfer_data.
+      h.piRetrieve.mockResolvedValue({ id: "pi_hosted_1", transfer_data: null, application_fee_amount: null });
 
       const res = await processStripeEvent("raw-body", "sig");
 
@@ -341,6 +348,8 @@ describe("processStripeEvent", () => {
           order_ref: "order-9",
           amount_cents: 50,
           currency: "usd",
+          stripe_account_id: null,
+          application_fee_cents: null,
         },
         { onConflict: "stripe_pi_id" },
       );
@@ -348,6 +357,36 @@ describe("processStripeEvent", () => {
       expect(h.rpc).not.toHaveBeenCalled();
       expect(h.transitionOrder).not.toHaveBeenCalled();
       expect(h.emitPaidOrder).not.toHaveBeenCalled();
+    });
+
+    it("stamps the routing columns for a destination-routed session so refunds reverse the transfer", async () => {
+      // Hosted-session charges route to the merchant like every other site; the refund
+      // path decides reverse_transfer off this row's stripe_account_id — a null stamp on
+      // a routed charge would make the platform pay the buyer while the merchant keeps
+      // the transferred funds.
+      h.constructEvent.mockReturnValue(sessionEvent);
+      h.piRetrieve.mockResolvedValue({
+        id: "pi_hosted_1",
+        transfer_data: { destination: "acct_1" },
+        application_fee_amount: 42,
+      });
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.piRetrieve).toHaveBeenCalledWith("pi_hosted_1");
+      expect(h.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ stripe_account_id: "acct_1", application_fee_cents: 42 }),
+        { onConflict: "stripe_pi_id" },
+      );
+    });
+
+    it("500s (Stripe redelivers) when the PI read fails, rather than reconciling a routed charge as platform", async () => {
+      h.constructEvent.mockReturnValue(sessionEvent);
+      h.piRetrieve.mockRejectedValue(new Error("stripe down"));
+
+      await expect(processStripeEvent("raw-body", "sig")).rejects.toThrow(/stripe down/);
+      expect(h.upsert).not.toHaveBeenCalled();
     });
 
     it("ACKs (200) and writes nothing when the session lacks shop_id or a payment_intent", async () => {

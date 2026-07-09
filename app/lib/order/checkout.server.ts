@@ -23,6 +23,7 @@ import {
   type BuyerAddressInput,
 } from "~/lib/buyer/identity.server";
 import { createPaymentIntent, isSupportedCurrency } from "~/lib/payments/stripe.server";
+import { paymentsReadiness, PaymentsNotReadyError } from "~/lib/payments/connect.server";
 import { quoteCart } from "~/lib/commerce/quote.server";
 import { reserveStock, releaseReservation } from "~/lib/inventory/engine.server";
 import { transitionOrder } from "./order.server";
@@ -114,6 +115,13 @@ export async function createCheckout(
   if (!shopId) throw new Error("shopId is required");
   if (!cartId) throw new Error("cartId is required");
   if (!buyer?.email) throw new Error("buyer.email is required to originate a checkout");
+
+  // Fail CLOSED before any write when the shop cannot accept payments (no fully-enabled
+  // Stripe connected account, and not a demo shop). Without this gate the charge would
+  // settle into the PLATFORM account — buyer money the merchant never sees. The checkout
+  // route renders an honest "not accepting payments yet" state off this same signal.
+  const readiness = await paymentsReadiness(shopId);
+  if (!readiness.ready) throw new PaymentsNotReadyError(shopId, readiness.reason);
 
   const priced = await priceCart(shopId, cartId);
   // When a shipping address is present, use the single source-of-truth quote engine (same as
@@ -248,11 +256,38 @@ export async function createCheckout(
     }
   }
 
+  // No PaymentIntent exists until the create below returns, so on ANY failure here it
+  // is safe (and required) to unwind: free the holds and cancel the just-born order —
+  // otherwise a Stripe 5xx or a routing race leaves held stock blocking other buyers
+  // until the reaper, plus an orphan checkout_pending order. Cleanup failures are
+  // logged but never replace the original error: the route maps the ORIGINAL
+  // (PaymentsNotReadyError → honest 503, everything else → 502), and the reaper
+  // remains the backstop for holds a failed cleanup left behind.
+  let pi: Awaited<ReturnType<typeof createPaymentIntent>>;
+  try {
+    pi = await createPaymentIntent(shopId, totalCents, priced.currency, orderId, readiness);
+  } catch (err) {
+    const reason =
+      err instanceof PaymentsNotReadyError ? "checkout:payments_not_ready" : "checkout:payment_intent_failed";
+    try {
+      await releaseReservation(shopId, orderId);
+      await transitionOrder(shopId, orderId, "cancelled", reason);
+    } catch (cleanupErr) {
+      console.error(
+        `[checkout] failed to unwind order ${orderId} (shop ${shopId}) after PI-create failure; reaper will release holds:`,
+        cleanupErr,
+      );
+    }
+    throw err;
+  }
+
   // Mark the source cart consumed (cart → checkout_pending, the shared state
   // vocabulary) so open-basket surfaces (Orders → Draft carts, Customers →
   // "In cart now") stop presenting it as an open basket — the order created
-  // above is the record from here on. Best-effort: a failed flag must not
-  // fail a checkout that already has its order + lines written.
+  // above is the record from here on. Deliberately AFTER the PaymentIntent
+  // exists: a failed checkout must leave the cart an open basket (the buyer
+  // keeps it and the UI says so). Best-effort: a failed flag must not fail a
+  // checkout that already has its order + lines + PI written.
   const cartUpd = await sb
     .from("cart")
     .update({ state: "checkout_pending" })
@@ -263,8 +298,6 @@ export async function createCheckout(
       `[checkout] could not mark cart ${cartId} consumed (shop ${shopId}): ${cartUpd.error.message}`,
     );
   }
-
-  const pi = await createPaymentIntent(shopId, totalCents, priced.currency, orderId);
 
   return {
     orderId,

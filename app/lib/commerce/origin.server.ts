@@ -5,13 +5,11 @@
 import type { Address } from "~/lib/ship-cost/adapters/rate-quote";
 import { getSupabase } from "~/lib/supabase.server";
 import { fetchShopifyShopAddress } from "./shopify-shop-address.server";
+import { OriginNotConfiguredError } from "./errors";
 
-export class OriginNotConfiguredError extends Error {
-  code = "ORIGIN_NOT_CONFIGURED" as const;
-  constructor(shopId: string) {
-    super(`shop ${shopId} has no ship-from address; the merchant must set one before quoting`);
-  }
-}
+// Re-exported from the dependency-free errors module so existing importers keep
+// working while routes can catch by instanceof without this file's import graph.
+export { OriginNotConfiguredError };
 
 function isComplete(a: Partial<Address> | null): a is Address {
   return !!(a && a.street1 && a.city && a.state && a.zip && a.country);
