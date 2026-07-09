@@ -80,6 +80,22 @@ describe("sendShippingConfirmation", () => {
       error: "network down",
     });
   });
+
+  it("escapes malicious tracking number and carrier in html (xss prevention)", async () => {
+    const res = await sendShippingConfirmation("shop-1", ORDER_ID, {
+      trackingNumber: "<img onerror=x>",
+      carrier: '"><script>alert(1)</script>',
+    });
+    expect(res.sent).toBe(true);
+    const args = sendEmail.mock.calls[0][0];
+    // plaintext should preserve raw string
+    expect(args.text).toContain('<img onerror=x>');
+    expect(args.text).toContain('"><script>alert(1)</script>');
+    // html should have escaped entities
+    expect(args.html).toContain('&lt;img onerror=x&gt;');
+    expect(args.html).toContain('&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(args.html).not.toContain('<img onerror=x>');
+  });
 });
 
 describe("sendRefundNotice", () => {

@@ -15,6 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { sendEmail } from "~/lib/email/send.server";
 import { formatOrderRef } from "./checkout.server";
+import { escapeHtml } from "~/lib/pilot-invite/content";
 
 export interface OrderEmailResult {
   sent: boolean;
@@ -118,8 +119,11 @@ export async function sendShippingConfirmation(
     const text = [`Good news! Your order ${found.ref} has shipped.`, ...(trackingLine ? ["", trackingLine] : [])].join(
       "\n",
     );
+    const htmlTrackingLine = opts.trackingNumber
+      ? `Tracking: ${opts.carrier ? `${escapeHtml(opts.carrier)} ` : ""}${escapeHtml(opts.trackingNumber)}`
+      : null;
     const html =
-      `<p>Good news! Your order ${found.ref} has shipped.</p>` + (trackingLine ? `<p>${trackingLine}</p>` : "");
+      `<p>Good news! Your order ${found.ref} has shipped.</p>` + (htmlTrackingLine ? `<p>${htmlTrackingLine}</p>` : "");
 
     const delivery = await sendEmail({ apiKey: config.apiKey, from: config.from, to: found.email, subject, text, html });
     if (!delivery.sent) {
