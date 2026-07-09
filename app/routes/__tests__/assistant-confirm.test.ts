@@ -189,4 +189,19 @@ describe("dashboard.api.assistant.confirm action", () => {
     expect((res as Response).status).toBe(403);
     expect(claimMock).not.toHaveBeenCalled();
   });
+
+  it("returns 502 with action_failed when runClaimedAction throws after claim succeeds, without marking executed or persisting the message", async () => {
+    runClaimedMock.mockRejectedValue(new Error("platform rejected the refund"));
+    const res = await run(post({ pending_id: "p1", decision: "confirm" })).catch(
+      (thrown: Response) => thrown,
+    );
+    expect((res as Response).status).toBe(502);
+    const body = (await (res as Response).json()) as { error: string; message: string; receipt: unknown };
+    expect(body.error).toBe("action_failed");
+    expect(body.message).toContain("platform rejected the refund");
+    expect(body.receipt).toBeNull();
+    // Claim is consumed by design; markExecuted and appendMessage must not run.
+    expect(markExecutedMock).not.toHaveBeenCalled();
+    expect(appendMessageMock).not.toHaveBeenCalled();
+  });
 });

@@ -4,7 +4,7 @@
 // change what runs. Claim is single-use and atomic.
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { dashboardJson, jsonError, jsonOk, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
 import {
   claimPendingAction,
   dismissPendingAction,
@@ -46,11 +46,26 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   return dashboardJson(async () => {
-    const receipt = await runClaimedAction(claimed.action, claimed.input, {
-      shopId: session.shopId,
-      conversationId: claimed.conversationId,
-      idempotencyKey: `assistant-confirm:${pendingId}`,
-    });
+    let receipt;
+    try {
+      receipt = await runClaimedAction(claimed.action, claimed.input, {
+        shopId: session.shopId,
+        conversationId: claimed.conversationId,
+        idempotencyKey: `assistant-confirm:${pendingId}`,
+      });
+    } catch (err) {
+      // Execution failed after claim was consumed (single-use; the merchant
+      // re-asks the assistant, which re-proposes). Surface the real reason as
+      // 502 (not 500 opaque internal_error) so merchants see why refunds/budget
+      // changes rejected.
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[assistant.confirm] action execution failed", { pendingId, action: claimed.action }, err);
+      throw jsonOk(
+        { error: "action_failed", message, receipt: null },
+        { status: 502 },
+      );
+    }
+
     await markPendingExecuted(session.shopId, pendingId, receipt.auditId);
 
     // Best-effort: persist the outcome into the conversation thread so a page
