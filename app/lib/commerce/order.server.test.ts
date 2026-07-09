@@ -19,6 +19,9 @@ function mock(insertedOrder: Record<string, unknown>[]) {
           if (t === "orders") { insertedOrder.push(row); return { select: () => ({ single: async () => ({ data: { id: "order1" }, error: null }) }) }; }
           return { error: null };
         },
+        // Oversell check reads variant_dim (id, inventory_tracked); no rows seeded here means no
+        // line is classified tracked, so placeAgenticOrder skips the reserve step below.
+        select: () => ({ eq: () => ({ in: async () => ({ data: [], error: null }) }) }),
       }),
     }),
   }));
