@@ -9,7 +9,10 @@ const store = vi.hoisted(() => {
     private inFilters: Array<[string, unknown[]]> = [];
     private ord: string | null = null;
     private lim = 0;
-    constructor(private table: string) {}
+    private readonly table: string;
+    constructor(table: string) {
+      this.table = table;
+    }
     select(_c?: string) { return this; }
     insert(p: Row | Row[]) { const rows = Array.isArray(p) ? p : [p]; rows.forEach((r) => db[this.table].push({ id: `${this.table}-${db[this.table].length + 1}`, ...r })); return this; }
     eq(c: string, v: unknown) { this.filters.push([c, v]); return this; }
@@ -29,6 +32,7 @@ const store = vi.hoisted(() => {
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
 vi.mock("~/lib/inventory/project-level-fact.server", () => ({ projectLevelFact: vi.fn(async () => {}) }));
 
+// eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { restockOrderLines } from "../engine.server";
 
 describe("restockOrderLines", () => {
