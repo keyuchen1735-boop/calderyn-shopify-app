@@ -29,6 +29,7 @@ export interface RefundResult {
   orderState: string;
   refundedTotalCents: number;
   capturedCents: number;
+  restockedLines: number;
 }
 
 /**
@@ -38,7 +39,7 @@ export interface RefundResult {
  */
 export async function refundOrder(
   orderId: string,
-  args: { amountCents?: number; idempotencyKey: string; reason?: string },
+  args: { amountCents?: number; idempotencyKey: string; reason?: string; restock?: boolean },
 ): Promise<RefundResult> {
   const data = await apiSend<{
     audit_id: string;
@@ -47,10 +48,12 @@ export async function refundOrder(
     order_state: string;
     refunded_total_cents: number;
     captured_cents: number;
+    restocked_lines: number;
   }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/refund`, {
     amount_cents: args.amountCents,
     idempotency_key: args.idempotencyKey,
     reason: args.reason,
+    restock: args.restock,
   });
   return {
     auditId: data.audit_id,
@@ -59,5 +62,6 @@ export async function refundOrder(
     orderState: data.order_state,
     refundedTotalCents: data.refunded_total_cents,
     capturedCents: data.captured_cents,
+    restockedLines: data.restocked_lines,
   };
 }
