@@ -26,7 +26,7 @@ export function fulfillmentBadge(state: string, cancelledAt: string | null): Ful
 /** Native order states where issuing a Calderyn refund is possible. Mirrors REFUNDABLE_STATES
  *  in app/lib/actions/refund.server.ts — kept here (not duplicated per-screen) so the Orders
  *  list and the order detail screen never drift on which states show a Refund action. */
-export const REFUNDABLE_ORDER_STATES = new Set(["paid", "fulfilled", "partially_refunded"]);
+export const REFUNDABLE_ORDER_STATES = new Set(["paid", "partially_fulfilled", "fulfilled", "partially_refunded"]);
 
 /** Native order states a cancellation may act on. Mirrors CANCELLABLE_STATES in
  *  app/lib/order/cancel.server.ts. */

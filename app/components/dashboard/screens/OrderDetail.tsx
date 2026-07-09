@@ -371,7 +371,7 @@ export default function OrderDetailScreen({
                                 await navigator.clipboard.writeText(f.trackingNumber ?? "");
                                 toast("Copied to clipboard", "check");
                               } catch {
-                                toast("Couldn't copy — select the text manually.", "x", "critical");
+                                toast("Couldn't copy. Select the text manually.", "x", "critical");
                               }
                             }}
                           >

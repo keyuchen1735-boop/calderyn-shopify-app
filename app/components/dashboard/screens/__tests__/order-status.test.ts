@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fulfillmentBadge, paymentPillStyle } from "../order-status";
+import { fulfillmentBadge, paymentPillStyle, REFUNDABLE_ORDER_STATES } from "../order-status";
 
 describe("fulfillmentBadge", () => {
   it("shows Unfulfilled for a paid order with nothing shipped yet", () => {
@@ -46,6 +46,12 @@ describe("fulfillmentBadge", () => {
 
   it("returns null for an unrecognized state", () => {
     expect(fulfillmentBadge("some_future_state", null)).toBeNull();
+  });
+});
+
+describe("REFUNDABLE_ORDER_STATES", () => {
+  it("includes partially_fulfilled as refundable", () => {
+    expect(REFUNDABLE_ORDER_STATES.has("partially_fulfilled")).toBe(true);
   });
 });
 
