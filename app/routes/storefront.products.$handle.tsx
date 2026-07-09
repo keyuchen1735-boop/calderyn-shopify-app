@@ -93,8 +93,14 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   // Reuse the buyer's existing cart when the cookie is present; otherwise mint one
-  // and persist its id in the Set-Cookie carried back with the redirect.
-  let cartId = await readCartId(request);
+  // and persist its id in the Set-Cookie carried back with the redirect. The
+  // experiment lookup is independent of the cookie read (checkout surface: every
+  // running test measures its cart_add step), so the two resolve concurrently.
+  const [cookieCartId, served] = await Promise.all([
+    readCartId(request),
+    resolveServedExperiment(shopId, request, "checkout"),
+  ]);
+  let cartId = cookieCartId;
   const headers = new Headers();
   if (!cartId) {
     cartId = (await buildCart(shopId)).id;
@@ -120,6 +126,8 @@ export async function action({ request }: ActionFunctionArgs) {
   // break any product-level view->add funnel join.
   const track = await trackStorefrontEvent(request, shopId, "cart_add", {
     productId: line.productId,
+    experimentId: served.experimentId,
+    variantKey: served.variantKey,
   });
   for (const c of track.getSetCookie()) headers.append("Set-Cookie", c);
 

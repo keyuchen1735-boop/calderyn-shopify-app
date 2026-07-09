@@ -1,7 +1,7 @@
 // app/lib/storegen/generate.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
-import { generateStore, extractStoreHtml } from "./generate.server";
+import { generateStore, extractStoreHtml, parseJudgeVerdict, extractSectionHtml, regenerateHomeSection } from "./generate.server";
 
 const { createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock } = vi.hoisted(() => ({
   createMock: vi.fn(), getCatalogMock: vi.fn(), saveDraftMock: vi.fn(),
@@ -26,6 +26,9 @@ beforeEach(() => {
   for (const m of [createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock]) m.mockReset();
   getCatalogMock.mockReturnValue(catalog());
   hasSettingsMock.mockResolvedValue(false);
+  // Single-candidate mode keeps the queued-reply sequences of the legacy tests deterministic;
+  // the multi-candidate judge pipeline has its own describe block below.
+  process.env.STOREGEN_HOME_CANDIDATES = "1";
 });
 
 describe("generateStore", () => {
@@ -454,5 +457,116 @@ describe("generateStore — premium-output hardening", () => {
       .mockResolvedValue(reply("garbage not json")); // every page + retry -> fallback
     const result = await generateStore({ shopId: realShop, mode: "brief", brief: "anything" });
     expect(result.status).toBe("failed");
+  });
+});
+
+describe("generateStore - multi-candidate judge pipeline", () => {
+  const BRAND = '{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}';
+  const PAGE_A = '<div class="ai-store"><style>.ai-store{}</style><h1>ANGLE-A</h1></div>';
+  const PAGE_B = '<div class="ai-store"><style>.ai-store{}</style><h1>ANGLE-B</h1></div>';
+  const PAGE_R = '<div class="ai-store"><style>.ai-store{}</style><h1>REVISED</h1></div>';
+  const PLAN = '{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}';
+
+  function routeMock(opts: { judge: string; revision?: string }) {
+    createMock.mockImplementation(async (req: unknown) => {
+      const system = String((req as { system?: unknown }).system ?? "");
+      const user = JSON.stringify((req as { messages?: unknown }).messages ?? "");
+      if (system.includes("design director")) return reply(opts.judge);
+      if (system.includes("art director")) {
+        if (user.includes("CURRENT PAGE")) return reply(opts.revision ?? PAGE_R);
+        return reply(user.includes("RESTRAINED") || user.includes("different compositional angle") ? PAGE_B : PAGE_A);
+      }
+      if (system.includes("name and brand")) return reply(BRAND);
+      return reply(PLAN);
+    });
+  }
+
+  beforeEach(() => {
+    process.env.STOREGEN_HOME_CANDIDATES = "2";
+  });
+
+  it("generates two candidates, ships the judge's winner, and skips revision on a strong score", async () => {
+    routeMock({ judge: '{"winner":2,"score":9,"critique":""}' });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const htmlBlock = homeDraft.blocks.find((b: { type: string }) => b.type === "rawHtml");
+    expect(htmlBlock.props.html).toContain("ANGLE-B");
+    expect(htmlBlock.props.html).not.toContain("REVISED");
+    const proposal = recPropMock.mock.calls[0][2] as Record<string, { judge?: { winner: number } }>;
+    expect(proposal.home.judge).toMatchObject({ winner: 2, score: 9 });
+  });
+
+  it("revises a weak winner once with the judge's critique", async () => {
+    routeMock({ judge: '{"winner":1,"score":5,"critique":"Hero copy reads generic; sections repeat the same shape."}' });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const htmlBlock = homeDraft.blocks.find((b: { type: string }) => b.type === "rawHtml");
+    expect(htmlBlock.props.html).toContain("REVISED");
+    const proposal = recPropMock.mock.calls[0][2] as Record<string, { revised?: boolean }>;
+    expect(proposal.home.revised).toBe(true);
+  });
+
+  it("keeps the winner when the revision comes back unusable", async () => {
+    routeMock({ judge: '{"winner":1,"score":4,"critique":"Weak hierarchy."}', revision: "I cannot revise that." });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const htmlBlock = homeDraft.blocks.find((b: { type: string }) => b.type === "rawHtml");
+    expect(htmlBlock.props.html).toContain("ANGLE-A");
+  });
+
+  it("falls back to the first valid candidate when the judge returns junk", async () => {
+    routeMock({ judge: "not json at all" });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const htmlBlock = homeDraft.blocks.find((b: { type: string }) => b.type === "rawHtml");
+    expect(htmlBlock.props.html).toContain("ANGLE-A");
+  });
+});
+
+describe("parseJudgeVerdict", () => {
+  it("parses a clean verdict and clamps the score", () => {
+    expect(parseJudgeVerdict('{"winner":2,"score":14,"critique":"x"}')).toEqual({ winner: 2, score: 10, critique: "x" });
+  });
+  it("tolerates a fenced verdict", () => {
+    const NL = String.fromCharCode(10);
+    const fenced = ["```json", '{"winner":1,"score":7,"critique":""}', "```"].join(NL);
+    expect(parseJudgeVerdict(fenced)).toEqual({ winner: 1, score: 7, critique: "" });
+  });
+  it("rejects junk, bad winners and missing scores", () => {
+    expect(parseJudgeVerdict("prose")).toBeNull();
+    expect(parseJudgeVerdict('{"winner":3,"score":5}')).toBeNull();
+    expect(parseJudgeVerdict('{"winner":1}')).toBeNull();
+  });
+});
+
+describe("extractSectionHtml", () => {
+  it("takes the balanced section and trims prose around it", () => {
+    const out = extractSectionHtml('Here you go: <section class="hero"><h1>Hi</h1></section> Anything else?');
+    expect(out).toBe('<section class="hero"><h1>Hi</h1></section>');
+  });
+  it("keeps nested sections inside the balanced extent", () => {
+    const html = '<section id="a">x<section id="b">y</section>z</section>';
+    expect(extractSectionHtml(html)).toBe(html);
+  });
+  it("rejects replies with no section or an unterminated section", () => {
+    expect(extractSectionHtml("I cannot do that.")).toBe("");
+    expect(extractSectionHtml('<section class="hero">cut off')).toBe("");
+  });
+});
+
+describe("regenerateHomeSection", () => {
+  it("returns the sanitized replacement section", async () => {
+    createMock.mockResolvedValue(reply('<section class="hero"><h1>New hero</h1></section>'));
+    const out = await regenerateHomeSection(realShop, '<section class="hero"><h1>Old</h1></section>', "make it punchier");
+    expect(out).toContain("New hero");
+    expect(out).toMatch(/^<section/);
+  });
+  it("returns null on junk output and on API failure — never a silent no-op", async () => {
+    createMock.mockResolvedValue(reply("Sorry, no."));
+    expect(await regenerateHomeSection(realShop, "<section>Old</section>")).toBeNull();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    createMock.mockRejectedValue(new Error("down"));
+    expect(await regenerateHomeSection(realShop, "<section>Old</section>")).toBeNull();
+    spy.mockRestore();
   });
 });

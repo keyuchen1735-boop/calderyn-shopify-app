@@ -21,7 +21,17 @@ function rate(conversions: number, sessions: number): string {
   return `${((conversions / Math.max(1, sessions)) * 100).toFixed(1)}% · ${sessions.toLocaleString()}`;
 }
 
-function ExperimentPopover({
+// Whole dollars with a pinned locale (matches the money helper's posture: an
+// environment-default locale can differ between server and browser renders).
+function dollars(cents: number): string {
+  return `$${Math.round(cents / 100).toLocaleString("en-US")}`;
+}
+
+function armDetail(revenueCents: number, cartAdds: number, checkoutStarts: number): string {
+  return `${dollars(revenueCents)} in sales · ${cartAdds} carts / ${checkoutStarts} checkouts`;
+}
+
+export function ExperimentPopover({
   experiment,
   onDecide,
   deciding,
@@ -56,12 +66,18 @@ function ExperimentPopover({
               </span>
               <span className="cd-exp-num">{rate(report.aConversions, report.aSessions)}</span>
             </div>
+            <div className="cd-exp-sub">
+              {armDetail(report.aRevenueCents, report.funnel.aCartAdds, report.funnel.aCheckoutStarts)}
+            </div>
             <div className="cd-exp-bar-row" data-lead={bRate > aRate ? "1" : "0"}>
               <b>B</b>
               <span className="cd-exp-bar">
                 <i style={{ width: `${Math.round((bRate / maxRate) * 100)}%` }} />
               </span>
               <span className="cd-exp-num">{rate(report.bConversions, report.bSessions)}</span>
+            </div>
+            <div className="cd-exp-sub">
+              {armDetail(report.bRevenueCents, report.funnel.bCartAdds, report.funnel.bCheckoutStarts)}
             </div>
           </div>
           <div className="cd-exp-meta">

@@ -15,7 +15,10 @@ vi.mock("~/lib/ai-quota.server", () => ({
   quotaTrusted: () => false,
 }));
 vi.mock("~/lib/storegen/generate.server", () => ({ generateStore: generateMock }));
-vi.mock("~/lib/experiments/store-experiment.server", () => ({ hasRunningExperiment: runningMock }));
+vi.mock("~/lib/experiments/store-experiment.server", () => ({
+  hasRunningExperiment: runningMock,
+  expireOverdueExperiment: vi.fn(async () => undefined),
+}));
 
 const realShop = "11111111-1111-1111-1111-111111111111";
 beforeEach(() => {

@@ -3,13 +3,14 @@
 // publishes that. loadStudioState exposes what's missing (products, checkout)
 // so the UI can warn — warn, not gate.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { publishStudioStore, loadStudioState, saveStudioVibe } from "./studio.server";
+import { publishStudioStore, loadStudioState, saveStudioVibe, sectionsFromDoc, moveStudioSection, removeStudioSection, regenerateStudioSection } from "./studio.server";
 
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // mocks still apply even though they are written below them (imports-first
 // satisfies the import/first rule).
-const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock } =
+const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock, storegenMock } =
   vi.hoisted(() => ({
+    storegenMock: { regenerateHomeSection: vi.fn() },
     fromMock: vi.fn(),
     pageDoc: {
       loadDraftDoc: vi.fn(),
@@ -23,7 +24,11 @@ const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experime
     },
     connectMock: { getConnectedAccount: vi.fn() },
     adminListProducts: vi.fn(),
-    experimentsMock: { latestStudioExperiment: vi.fn(), hasRunningExperiment: vi.fn() },
+    experimentsMock: {
+      latestStudioExperiment: vi.fn(),
+      hasRunningExperiment: vi.fn(),
+      expireOverdueExperiment: vi.fn(async () => undefined),
+    },
     settingsMock: { getStoreSettings: vi.fn(), saveStoreSettings: vi.fn() },
   }));
 
@@ -33,6 +38,7 @@ vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: () => catalogMoc
 vi.mock("~/lib/payments/connect.server", () => connectMock);
 vi.mock("~/lib/catalog/catalog.server", () => ({ listProducts: adminListProducts }));
 vi.mock("~/lib/experiments/store-experiment.server", () => experimentsMock);
+vi.mock("~/lib/storegen/generate.server", () => storegenMock);
 vi.mock("~/lib/storefront/settings.server", () => ({
   DEFAULT_PALETTE: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
   getStoreSettings: settingsMock.getStoreSettings,
@@ -282,5 +288,122 @@ describe("publishStudioStore experiment guard", () => {
     });
     expect(pageDoc.saveDraft).not.toHaveBeenCalled();
     expect(pageDoc.publishDoc).not.toHaveBeenCalled();
+  });
+});
+
+describe("studio sections", () => {
+  const WRAP = '<div class="ai-store">';
+  const STYLE = "<style>.ai-store .hero{color:#111}</style>";
+  const HOME = {
+    kind: "singleton",
+    pageKey: "home",
+    blocks: [
+      { id: "s0", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 8 }, props: { html: `${WRAP}${STYLE}<section class="hero"><h1>Big hero</h1></section></div>` } },
+      { id: "g1", type: "productGrid", layout: { x: 0, y: 1, w: 12, h: 6 }, props: { heading: "Best sellers", source: { kind: "all" } } },
+      { id: "s2", type: "rawHtml", layout: { x: 0, y: 2, w: 12, h: 8 }, props: { html: `${WRAP}${STYLE}<section class="closer"><h2>Come back soon</h2></section></div>` } },
+    ],
+  };
+
+  it("sectionsFromDoc labels sections by heading and kind", () => {
+    const sections = sectionsFromDoc(HOME as never);
+    expect(sections).toEqual([
+      { id: "s0", kind: "design", title: "Big hero" },
+      { id: "g1", kind: "products", title: "Best sellers" },
+      { id: "s2", kind: "design", title: "Come back soon" },
+    ]);
+  });
+
+  it("moveStudioSection swaps neighbours, restacks y and saves the draft", async () => {
+    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
+    const sections = await moveStudioSection(shop, "g1", "up");
+    expect(sections.map((x) => x.id)).toEqual(["g1", "s0", "s2"]);
+    const saved = pageDoc.saveDraft.mock.calls[0][2] as { blocks: { id: string; layout: { y: number } }[] };
+    expect(saved.blocks.map((b) => b.layout.y)).toEqual([0, 1, 2]);
+  });
+
+  it("moveStudioSection at the edge is a no-op that saves nothing", async () => {
+    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
+    const sections = await moveStudioSection(shop, "s0", "up");
+    expect(sections.map((x) => x.id)).toEqual(["s0", "g1", "s2"]);
+    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it("removeStudioSection deletes the block but refuses to empty the page", async () => {
+    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
+    const sections = await removeStudioSection(shop, "g1");
+    expect(sections.map((x) => x.id)).toEqual(["s0", "s2"]);
+
+    pageDoc.loadDraftDoc.mockResolvedValue({ ...HOME, blocks: [HOME.blocks[0]] });
+    await expect(removeStudioSection(shop, "s0")).rejects.toMatchObject({ status: 422, code: "last_section" });
+  });
+
+  it("section mutations refuse mid-test (arm A must not change under a running experiment)", async () => {
+    experimentsMock.hasRunningExperiment.mockResolvedValue(true);
+    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
+    await expect(moveStudioSection(shop, "g1", "up")).rejects.toMatchObject({ status: 409, code: "experiment_running" });
+    await expect(removeStudioSection(shop, "g1")).rejects.toMatchObject({ status: 409 });
+    await expect(regenerateStudioSection(shop, "s0")).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("regenerateStudioSection peels the wrapper and style, then re-wraps the replacement with the SAME style", async () => {
+    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
+    storegenMock.regenerateHomeSection.mockResolvedValue('<section class="hero"><h1>Fresh hero</h1></section>');
+    await regenerateStudioSection(shop, "s0", "punchier");
+    expect(storegenMock.regenerateHomeSection).toHaveBeenCalledWith(shop, '<section class="hero"><h1>Big hero</h1></section>', "punchier");
+    const saved = pageDoc.saveDraft.mock.calls[0][2] as { blocks: { id: string; props: { html?: string } }[] };
+    const block = saved.blocks.find((b) => b.id === "s0")!;
+    expect(block.props.html).toBe(`${WRAP}${STYLE}<section class="hero"><h1>Fresh hero</h1></section></div>`);
+  });
+
+  it("labels template-vocabulary blocks as content (movable, never a dead Redo)", () => {
+    const doc = {
+      kind: "singleton",
+      pageKey: "home",
+      blocks: [
+        { id: "h", type: "hero", layout: { x: 0, y: 0, w: 12, h: 2 }, props: { headline: "Welcome in", subhead: "" } },
+        { id: "f", type: "featureRow", layout: { x: 0, y: 2, w: 12, h: 2 }, props: { heading: "Why us", items: [] } },
+      ],
+    };
+    expect(sectionsFromDoc(doc as never)).toEqual([
+      { id: "h", kind: "content", title: "Welcome in" },
+      { id: "f", kind: "content", title: "Why us" },
+    ]);
+  });
+
+  it("regenerating a legacy multi-section block splits it apart and asks again instead of eating the page", async () => {
+    const legacy = {
+      ...HOME,
+      blocks: [
+        { id: "home-html", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html: `${WRAP}${STYLE}<section id="a">A</section><section id="b">B</section></div>` } },
+      ],
+    };
+    pageDoc.loadDraftDoc.mockResolvedValue(legacy);
+    await expect(regenerateStudioSection(shop, "home-html")).rejects.toMatchObject({ status: 409, code: "sections_split" });
+    // The split itself was persisted: two blocks now, each wrapped with the shared style.
+    expect(storegenMock.regenerateHomeSection).not.toHaveBeenCalled();
+    const saved = pageDoc.saveDraft.mock.calls[0][2] as { blocks: { id: string; props: { html?: string } }[] };
+    expect(saved.blocks).toHaveLength(2);
+    expect(saved.blocks[0].props.html).toContain('id="a"');
+    expect(saved.blocks[1].props.html).toContain('id="b"');
+    expect(saved.blocks[1].props.html).toContain("<style>");
+  });
+
+  it("refuses to apply a regeneration onto a draft that changed during the model call", async () => {
+    const changed = {
+      ...HOME,
+      blocks: HOME.blocks.map((b) => (b.id === "s0" ? { ...b, props: { html: `${WRAP}${STYLE}<section class="hero"><h1>Rebuilt meanwhile</h1></section></div>` } } : b)),
+    };
+    // First read returns the original doc; the re-read after the model call sees a rebuilt draft.
+    pageDoc.loadDraftDoc.mockResolvedValueOnce(HOME).mockResolvedValueOnce(changed);
+    storegenMock.regenerateHomeSection.mockResolvedValue('<section class="hero"><h1>Fresh</h1></section>');
+    await expect(regenerateStudioSection(shop, "s0")).rejects.toMatchObject({ status: 409, code: "section_changed" });
+    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
+  });
+
+  it("regenerateStudioSection refuses catalog sections and surfaces engine failure", async () => {
+    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
+    await expect(regenerateStudioSection(shop, "g1")).rejects.toMatchObject({ status: 422, code: "not_a_design_section" });
+    storegenMock.regenerateHomeSection.mockResolvedValue(null);
+    await expect(regenerateStudioSection(shop, "s0")).rejects.toMatchObject({ status: 502, code: "section_regen_failed" });
   });
 });

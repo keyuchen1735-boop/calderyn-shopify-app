@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   assignArm,
   clearStoreExperimentCache,
+  expireOverdueExperiment,
   getRunningExperiment,
   latestStudioExperiment,
   startExperiment,
@@ -39,6 +40,18 @@ vi.mock("~/lib/storefront/visitor-cookie.server", () => visitorMock);
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const EXP_ID = "22222222-2222-2222-2222-222222222222";
+
+const EMPTY_REPORT = {
+  aSessions: 0,
+  bSessions: 0,
+  aConversions: 0,
+  bConversions: 0,
+  aRevenueCents: 0,
+  bRevenueCents: 0,
+  funnel: { aCartAdds: 0, bCartAdds: 0, aCheckoutStarts: 0, bCheckoutStarts: 0 },
+  lift: null,
+  confidence: null,
+};
 
 const HOME_DOC = {
   kind: "singleton",
@@ -98,6 +111,7 @@ function makeBuilder(table: string): Record<string, unknown> {
 beforeEach(() => {
   vi.clearAllMocks();
   clearStoreExperimentCache();
+  delete process.env.STORE_EXPERIMENT_MAX_DAYS;
   resultQueues.clear();
   calls.length = 0;
   fromMock.mockImplementation((table: string) => makeBuilder(table));
@@ -258,14 +272,7 @@ describe("experimentReport", () => {
 
   it("returns an empty report for non-uuid shops", async () => {
     const report = await experimentReport("demo-shop", experiment);
-    expect(report).toEqual({
-      aSessions: 0,
-      bSessions: 0,
-      aConversions: 0,
-      bConversions: 0,
-      lift: null,
-      confidence: null,
-    });
+    expect(report).toEqual(EMPTY_REPORT);
     expect(fromMock).not.toHaveBeenCalled();
   });
 
@@ -305,6 +312,37 @@ describe("experimentReport", () => {
       ],
     });
     const report = await experimentReport(SHOP, experiment);
+    expect(report.bConversions).toBe(1);
+  });
+
+  it("sums stamped order revenue per arm and counts funnel steps as distinct sessions", async () => {
+    queue("storefront_event:range", {
+      data: [
+        { session_id: "s1", variant_key: "a", type: "page_view" },
+        // s1 adds to cart twice — distinct-session math counts it once.
+        { session_id: "s1", variant_key: "a", type: "cart_add" },
+        { session_id: "s1", variant_key: "a", type: "cart_add" },
+        { session_id: "s1", variant_key: "a", type: "checkout_start" },
+        { session_id: "s2", variant_key: "b", type: "page_view" },
+        { session_id: "s2", variant_key: "b", type: "cart_add" },
+        { session_id: "s3", variant_key: "b", type: "cart_add" },
+        // Fallback conversion with no stamped order: counts as a conversion,
+        // contributes 0 revenue.
+        { session_id: "s2", variant_key: "b", type: "checkout_complete" },
+      ],
+    });
+    queue("orders:range", {
+      data: [
+        { id: "o1", attribution: { variant_key: "a", live_session_id: "s1" }, total_cents: 2500 },
+        // Order-keyed stamp (no session id) still adds its total to the arm.
+        { id: "o2", attribution: { variant_key: "a" }, total_cents: 1000 },
+        { id: "o3", attribution: { variant_key: null }, total_cents: 9999 },
+      ],
+    });
+    const report = await experimentReport(SHOP, experiment);
+    expect(report.aRevenueCents).toBe(3500);
+    expect(report.bRevenueCents).toBe(0);
+    expect(report.funnel).toEqual({ aCartAdds: 1, bCartAdds: 2, aCheckoutStarts: 1, bCheckoutStarts: 0 });
     expect(report.bConversions).toBe(1);
   });
 
@@ -457,26 +495,24 @@ describe("latestStudioExperiment", () => {
   });
 
   it("shapes the newest row and attaches a fresh report", async () => {
-    queue("store_experiment:select.maybeSingle", {
-      data: {
-        id: EXP_ID,
-        name: "Sharper headline",
-        why: "w",
-        state: "decided_keep",
-        started_at: "2026-07-01T00:00:00Z",
-        decided_at: "2026-07-04T00:00:00Z",
+    // First maybeSingle read is the overdue-expiry sweep's running-row check.
+    queue(
+      "store_experiment:select.maybeSingle",
+      {},
+      {
+        data: {
+          id: EXP_ID,
+          name: "Sharper headline",
+          why: "w",
+          state: "decided_keep",
+          started_at: "2026-07-01T00:00:00Z",
+          decided_at: "2026-07-04T00:00:00Z",
+        },
       },
-    });
+    );
     const exp = await latestStudioExperiment(SHOP);
     expect(exp).toMatchObject({ id: EXP_ID, state: "decided_keep", pageKey: "home" });
-    expect(exp?.report).toEqual({
-      aSessions: 0,
-      bSessions: 0,
-      aConversions: 0,
-      bConversions: 0,
-      lift: null,
-      confidence: null,
-    });
+    expect(exp?.report).toEqual(EMPTY_REPORT);
   });
 });
 
@@ -501,7 +537,9 @@ describe("report cache", () => {
   };
 
   it("serves a repeat report read from cache within the TTL, sweeping the DB only once", async () => {
-    queue("store_experiment:select.maybeSingle", { data: decidedRow }, { data: decidedRow });
+    // Each latestStudioExperiment call reads twice: the expiry sweep's
+    // running-row check ({} = nothing running), then the newest-row read.
+    queue("store_experiment:select.maybeSingle", {}, { data: decidedRow }, {}, { data: decidedRow });
     queue("storefront_event:range", { data: [] });
     queue("orders:range", { data: [] });
 
@@ -512,7 +550,8 @@ describe("report cache", () => {
   });
 
   it("decide invalidates the shop's cached report so the next read sweeps the DB again", async () => {
-    queue("store_experiment:select.maybeSingle", { data: decidedRow }, { data: runningRow });
+    // {} = the expiry sweep's running-row check finds nothing running.
+    queue("store_experiment:select.maybeSingle", {}, { data: decidedRow }, { data: runningRow });
     queue("store_experiment:update", { data: [{ id: EXP_ID }] });
     queue("storefront_event:range", { data: [] }, { data: [] });
     queue("orders:range", { data: [] }, { data: [] });
@@ -666,6 +705,130 @@ describe("ship-on-loss guard", () => {
     queue("store_experiment:update", { data: [{ id: EXP_ID }] });
     const exp = await decideExperiment(SHOP, EXP_ID, "keep");
     expect(exp.state).toBe("decided_keep");
+  });
+});
+
+describe("expireOverdueExperiment (max duration + lazy auto-decide)", () => {
+  const OVERDUE_START = new Date(Date.now() - 20 * 86_400_000).toISOString();
+  const overdueRow = {
+    id: EXP_ID,
+    page_key: "home",
+    name: "Sharper headline",
+    why: "w",
+    state: "running",
+    started_at: OVERDUE_START,
+    decided_at: null,
+    variant_doc: HOME_DOC,
+    variant_settings: null,
+  };
+
+  // 60 page_view sessions per arm plus per-arm checkout_complete conversions:
+  // enough exposure for the z-test to reach >= 95% confidence either way.
+  function armRows(aConv: number, bConv: number): { session_id: string; variant_key: string; type: string }[] {
+    const rows: { session_id: string; variant_key: string; type: string }[] = [];
+    for (let i = 0; i < 60; i++) {
+      rows.push({ session_id: `a-${i}`, variant_key: "a", type: "page_view" });
+      rows.push({ session_id: `b-${i}`, variant_key: "b", type: "page_view" });
+    }
+    for (let i = 0; i < aConv; i++) rows.push({ session_id: `a-${i}`, variant_key: "a", type: "checkout_complete" });
+    for (let i = 0; i < bConv; i++) rows.push({ session_id: `b-${i}`, variant_key: "b", type: "checkout_complete" });
+    return rows;
+  }
+
+  it("ships an overdue confident winner", async () => {
+    queue(
+      "store_experiment:select.maybeSingle",
+      { data: { id: EXP_ID, started_at: OVERDUE_START } }, // expiry's direct running read
+      { data: overdueRow }, // decideExperiment's row read
+    );
+    // Two sweeps: the expiry decision's report, then decideExperiment's ship guard.
+    queue("storefront_event:range", { data: armRows(2, 30) }, { data: armRows(2, 30) });
+    queue("orders:range", { data: [] }, { data: [] });
+    queue("store_experiment:update", { data: [{ id: EXP_ID }] });
+
+    await expireOverdueExperiment(SHOP);
+
+    const updates = calls.filter((c) => c.table === "store_experiment" && c.verb === "update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0].payload).toMatchObject({ state: "decided_ship" });
+    expect(pageDoc.publishDoc).toHaveBeenCalledWith(SHOP, "home");
+  });
+
+  it("keeps the champion when the overdue variant is not a confident winner", async () => {
+    queue(
+      "store_experiment:select.maybeSingle",
+      { data: { id: EXP_ID, started_at: OVERDUE_START } },
+      { data: overdueRow },
+    );
+    // Confident LOSS for B: keep, decided without the ship guard's second sweep.
+    queue("storefront_event:range", { data: armRows(30, 2) });
+    queue("orders:range", { data: [] });
+    queue("store_experiment:update", { data: [{ id: EXP_ID }] });
+
+    await expireOverdueExperiment(SHOP);
+
+    const updates = calls.filter((c) => c.table === "store_experiment" && c.verb === "update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0].payload).toMatchObject({ state: "decided_keep" });
+    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
+  });
+
+  it("falls back to keep when the ship guard's own sweep refuses the winner (variant_losing)", async () => {
+    queue(
+      "store_experiment:select.maybeSingle",
+      { data: { id: EXP_ID, started_at: OVERDUE_START } },
+      { data: overdueRow }, // ship attempt's row read
+      { data: overdueRow }, // keep fallback's row read
+    );
+    // Expiry sweep sees a winner; the guard's re-sweep sees a confident loss.
+    queue("storefront_event:range", { data: armRows(2, 30) }, { data: armRows(30, 2) });
+    queue("orders:range", { data: [] }, { data: [] });
+    queue("store_experiment:update", { data: [{ id: EXP_ID }] });
+
+    await expireOverdueExperiment(SHOP);
+
+    const updates = calls.filter((c) => c.table === "store_experiment" && c.verb === "update");
+    expect(updates).toHaveLength(1);
+    expect(updates[0].payload).toMatchObject({ state: "decided_keep" });
+    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
+  });
+
+  it("leaves an experiment inside the max duration untouched", async () => {
+    queue("store_experiment:select.maybeSingle", {
+      data: { id: EXP_ID, started_at: new Date(Date.now() - 2 * 86_400_000).toISOString() },
+    });
+    await expireOverdueExperiment(SHOP);
+    expect(calls.find((c) => c.table === "store_experiment" && c.verb === "update")).toBeUndefined();
+    expect(fromMock.mock.calls.filter((c) => c[0] === "storefront_event")).toHaveLength(0);
+  });
+
+  it("honors STORE_EXPERIMENT_MAX_DAYS from the environment", async () => {
+    process.env.STORE_EXPERIMENT_MAX_DAYS = "30";
+    queue("store_experiment:select.maybeSingle", { data: { id: EXP_ID, started_at: OVERDUE_START } });
+    await expireOverdueExperiment(SHOP);
+    expect(calls.find((c) => c.table === "store_experiment" && c.verb === "update")).toBeUndefined();
+  });
+
+  it("an expiry failure logs and never breaks latestStudioExperiment", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    queue(
+      "store_experiment:select.maybeSingle",
+      { error: new Error("supabase down") }, // expiry sweep fails
+      {
+        data: {
+          id: EXP_ID,
+          name: "Sharper headline",
+          why: "w",
+          state: "decided_keep",
+          started_at: "2026-07-01T00:00:00Z",
+          decided_at: "2026-07-04T00:00:00Z",
+        },
+      },
+    );
+    const exp = await latestStudioExperiment(SHOP);
+    expect(exp).toMatchObject({ id: EXP_ID, state: "decided_keep" });
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 

@@ -76,6 +76,18 @@ export interface StudioExperimentReport {
    *  with checkout_complete exposure sessions as fallback). */
   aConversions: number;
   bConversions: number;
+  /** Sum of order totals per arm across stamped sale-state orders. Fallback
+   *  conversions (checkout_complete sessions with no stamped order) add 0. */
+  aRevenueCents: number;
+  bRevenueCents: number;
+  /** Distinct sessions per arm at each mid-funnel step (cart_add /
+   *  checkout_start exposure rows). */
+  funnel: {
+    aCartAdds: number;
+    bCartAdds: number;
+    aCheckoutStarts: number;
+    bCheckoutStarts: number;
+  };
   /** (rB - rA) / rA; null when arm A has no conversions to compare against. */
   lift: number | null;
   /** Two-proportion z-test confidence, 0-99; null under 30 sessions per arm. */
@@ -91,6 +103,18 @@ export interface StudioExperiment {
   startedAt: string;
   decidedAt: string | null;
   report: StudioExperimentReport | null;
+}
+
+/** One editable piece of the home page, derived from the draft doc's blocks.
+ *  "design" sections (AI-authored HTML) can be regenerated; catalog sections
+ *  (live product grid / category cards) and "content" sections (plain template
+ *  blocks like a hero or feature row) can only be moved or removed. */
+export interface StudioSection {
+  /** The underlying block id — the handle every section mutation takes. */
+  id: string;
+  kind: "design" | "products" | "collections" | "content";
+  /** Short human label: the section's first heading, or the catalog block's role. */
+  title: string;
 }
 
 export interface StudioState {
@@ -118,6 +142,9 @@ export interface StudioState {
   /** The running or most recent experiment, with a fresh report; null when the
    *  shop has never run one. */
   experiment: StudioExperiment | null;
+  /** Editable sections of the home draft (published as fallback), in page order.
+   *  Empty when no doc exists yet. */
+  sections: StudioSection[];
 }
 
 /** Merchant-facing design-model choice for a generation run. The client only

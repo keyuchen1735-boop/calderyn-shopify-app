@@ -13,7 +13,7 @@ import type { BlockDocument, DocKind, PageKey } from "~/lib/storebuilder/types";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import type { ValidIds } from "~/lib/storebuilder/validate";
 import { parseBlockPlan, parseBrandPlan, type BrandPlan } from "./block-plan";
-import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUserMessage, HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage, type CatalogMenu } from "./prompts";
+import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUserMessage, HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage, HOME_JUDGE_SYSTEM_PROMPT, buildHomeJudgeUserMessage, candidateAngleNudge, homeRevisionSuffix, SECTION_SYSTEM_PROMPT, buildSectionUserMessage, type CatalogMenu } from "./prompts";
 import { sanitizeStoreHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { normalizeStorefrontHref, type StorefrontLinkSet } from "~/lib/storefront/links";
 import { assembleDocument } from "./sanitize";
@@ -23,11 +23,20 @@ import { fallbackDoc, type FallbackContext } from "./fallback";
 import { recordGeneration, recordProposal } from "./audit.server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// 60k, not 20k: the budget counts INPUT tokens too, and the old 20k could be consumed by the
-// brand call alone on a large catalog — every page then silently fell back to the canned
-// templates while the run still reported "draft". Generation volume is already bounded by the
-// burst limit + daily designer quota, so the budget is a per-run safety net, not the cost cap.
-const TOKEN_BUDGET = Number(process.env.STOREGEN_TOKEN_BUDGET ?? 60000);
+// 90k: the budget counts INPUT tokens too, and a full quality run is brand + block plans +
+// N home candidates + a judge + possibly one revision. Generation volume is already bounded
+// by the burst limit + daily designer quota, so the budget is a per-run runaway safety net,
+// not the cost cap — starving pages into silent fallbacks is worse than the marginal spend.
+const TOKEN_BUDGET = Number(process.env.STOREGEN_TOKEN_BUDGET ?? 90000);
+// Concurrent home candidates per run (1 disables the judge/critique pipeline entirely —
+// the cost lever). Clamped 1..2: the judge contract compares exactly two candidates, so a
+// third would be paid for and then unconditionally discarded.
+function homeCandidateCount(): number {
+  const n = Number(process.env.STOREGEN_HOME_CANDIDATES ?? 2);
+  return Number.isFinite(n) ? Math.min(2, Math.max(1, Math.round(n))) : 2;
+}
+// A judged winner scoring below this gets one critique-driven revision pass.
+const REVISE_BELOW_SCORE = 8;
 // The catalog menu is embedded in every prompt of the run; cap it so a thousand-product shop
 // can't burn the budget on menu JSON (the model needs representative nouns, not the full list).
 const MENU_PRODUCT_CAP = 60;
@@ -116,12 +125,101 @@ export function extractStoreHtml(raw: string): string {
   return "";
 }
 
+/** Tolerant parse of the judge's JSON verdict; null on anything off-contract. */
+export function parseJudgeVerdict(raw: string): { winner: number; score: number; critique: string } | null {
+  let s = raw.trim();
+  const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(s);
+  if (fence) s = fence[1].trim();
+  try {
+    const v = JSON.parse(s) as { winner?: unknown; score?: unknown; critique?: unknown };
+    const winner = typeof v.winner === "number" && (v.winner === 1 || v.winner === 2) ? v.winner : null;
+    const score = typeof v.score === "number" && Number.isFinite(v.score) ? Math.min(10, Math.max(0, v.score)) : null;
+    if (winner == null || score == null) return null;
+    return { winner, score, critique: typeof v.critique === "string" ? v.critique.slice(0, 400) : "" };
+  } catch {
+    return null;
+  }
+}
+
 // One corrective retry per page: appended to the user message so the second attempt knows
 // exactly what was wrong with the first. Stateless — no conversation is carried over.
 const RETRY_NUDGE_HTML =
   "\n\nIMPORTANT: your previous reply was unusable (truncated, wrapped in prose, or not raw HTML). Reply with ONLY the complete HTML fragment — no prose before or after, no code fences — and keep it compact enough to finish within the token limit.";
 const RETRY_NUDGE_JSON =
   "\n\nIMPORTANT: your previous reply was not the required JSON (invalid, truncated, or empty blocks). Reply with ONLY the JSON object in the exact contract shape — no prose, no markdown fences.";
+
+/**
+ * Extract exactly one balanced <section> element from a model reply (fences and prose
+ * stripped) — the contract of the section-revision prompt. Null-string on anything else so
+ * the caller keeps the current section rather than shipping junk.
+ */
+export function extractSectionHtml(raw: string): string {
+  const fenced = /```(?:html)?\s*([\s\S]*?)```/i.exec(raw);
+  let s = (fenced ? fenced[1] : raw).trim();
+  s = s.replace(/```\s*$/i, "").trim();
+  const start = s.search(/<section\b/i);
+  if (start === -1) return "";
+  s = s.slice(start);
+  const tag = /<section\b[^>]*>|<\/section>/gi;
+  let depth = 0;
+  let m: RegExpExecArray | null;
+  while ((m = tag.exec(s)) !== null) {
+    depth += m[0][1] === "/" ? -1 : 1;
+    if (depth === 0) return s.slice(0, m.index + m[0].length);
+  }
+  return "";
+}
+
+/**
+ * Regenerate ONE section of an AI-designed home page (studio "redo this section"). Takes the
+ * section's current inner HTML (the <section> element, without the .ai-store wrapper/style)
+ * plus an optional merchant instruction; returns the sanitized replacement <section>, or null
+ * when the model was unreachable or off-contract — the caller keeps the current section and
+ * tells the merchant, never a silent no-op. Side-effect free; the studio owns persistence.
+ */
+export async function regenerateHomeSection(
+  shopId: string,
+  currentSectionHtml: string,
+  instruction?: string,
+): Promise<string | null> {
+  const catalog = getCatalog();
+  const [products, collections, settings] = await Promise.all([
+    catalog.listProducts(shopId),
+    catalog.listCollections(shopId),
+    getStoreSettings(shopId),
+  ]);
+  const menu: CatalogMenu = {
+    products: products.slice(0, MENU_PRODUCT_CAP).map((p) => ({ id: p.id, handle: p.handle, title: p.title })),
+    collections: collections.slice(0, MENU_COLLECTION_CAP).map((c) => ({ handle: c.handle, title: c.title })),
+  };
+  const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
+  const brand: BrandPlan = {
+    storeName: settings.storeName,
+    palette: settings.palette,
+    voiceTagline: settings.voiceTagline ?? "",
+    vibe: settings.vibe,
+    typeStyle: settings.typeStyle,
+    density: settings.density,
+  };
+  try {
+    const msg = await getAnthropic().messages.create({
+      model: storegenHtmlModel(),
+      max_tokens: 4000,
+      system: SECTION_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: buildSectionUserMessage(brand, menu, currentSectionHtml, instruction) }],
+    });
+    if ((msg as { stop_reason?: string | null }).stop_reason === "max_tokens") return null;
+    const section = extractSectionHtml(textOf(msg));
+    if (!section) return null;
+    // The sanitizer expects/keeps arbitrary fragments; the caller re-wraps into the block's
+    // .ai-store scope. Sanitizing the bare section here keeps the security boundary in one place.
+    const clean = sanitizeStoreHtml(section, { links: linkSet });
+    return clean || null;
+  } catch (err) {
+    console.error("[storegen] section regeneration failed", err);
+    return null;
+  }
+}
 
 /**
  * Generate ONE alternative home-page document for an A/B challenger (experiment kind
@@ -324,14 +422,56 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
         maxTokens: 12000,
         images: refImageBlocks,
       };
-      let res = await call(HOME_HTML_SYSTEM_PROMPT, homeUser, homeOpts);
-      // Truncated replies are a hard miss (never ship half a page); prose/refusal replies fail
-      // extractStoreHtml. Either way the model was reachable, so one corrective retry is worth
-      // the spend before conceding the canned fallback.
-      let html = res && !res.truncated ? extractStoreHtml(res.text) : "";
-      if (res && !html) {
-        res = await call(HOME_HTML_SYSTEM_PROMPT, homeUser + RETRY_NUDGE_HTML, homeOpts);
+      const candidateCount = homeCandidateCount();
+      // Quality pipeline: N concurrent candidates exploring different angles, a judge picks
+      // the winner against a slop rubric, and a weak winner gets ONE critique-driven revision.
+      // candidateCount 1 disables the pipeline (single call + corrective retry — the cost lever).
+      const judgeMeta: Record<string, unknown> = {};
+      let html = "";
+      if (candidateCount > 1) {
+        const results = await Promise.all(
+          Array.from({ length: candidateCount }, (_, i) =>
+            call(HOME_HTML_SYSTEM_PROMPT, homeUser + candidateAngleNudge(i), homeOpts),
+          ),
+        );
+        const candidates = results
+          .map((r) => (r && !r.truncated ? extractStoreHtml(r.text) : ""))
+          .filter((h) => h !== "");
+        judgeMeta.candidates = candidateCount;
+        judgeMeta.validCandidates = candidates.length;
+        if (candidates.length === 0) {
+          // Every candidate missed: one corrective retry before conceding the fallback.
+          const retry = await call(HOME_HTML_SYSTEM_PROMPT, homeUser + RETRY_NUDGE_HTML, homeOpts);
+          html = retry && !retry.truncated ? extractStoreHtml(retry.text) : "";
+        } else {
+          html = candidates[0];
+          const judgeRes = await call(HOME_JUDGE_SYSTEM_PROMPT, buildHomeJudgeUserMessage(brandPlan, candidates.slice(0, 2)), { maxTokens: 600 });
+          const verdict = judgeRes && !judgeRes.truncated ? parseJudgeVerdict(judgeRes.text) : null;
+          if (verdict) {
+            html = candidates[Math.min(verdict.winner, candidates.length) - 1];
+            judgeMeta.judge = { winner: verdict.winner, score: verdict.score, critique: verdict.critique };
+            if (verdict.score < REVISE_BELOW_SCORE && verdict.critique) {
+              // The judge found concrete, fixable issues: one revision pass carrying the
+              // critique and the current page. An invalid revision keeps the winner.
+              const revised = await call(HOME_HTML_SYSTEM_PROMPT, homeUser + homeRevisionSuffix(verdict.critique, html), homeOpts);
+              const revisedHtml = revised && !revised.truncated ? extractStoreHtml(revised.text) : "";
+              if (revisedHtml) {
+                html = revisedHtml;
+                judgeMeta.revised = true;
+              }
+            }
+          }
+        }
+      } else {
+        let res = await call(HOME_HTML_SYSTEM_PROMPT, homeUser, homeOpts);
+        // Truncated replies are a hard miss (never ship half a page); prose/refusal replies fail
+        // extractStoreHtml. Either way the model was reachable, so one corrective retry is worth
+        // the spend before conceding the canned fallback.
         html = res && !res.truncated ? extractStoreHtml(res.text) : "";
+        if (res && !html) {
+          res = await call(HOME_HTML_SYSTEM_PROMPT, homeUser + RETRY_NUDGE_HTML, homeOpts);
+          html = res && !res.truncated ? extractStoreHtml(res.text) : "";
+        }
       }
       const clean = html ? sanitizeStoreHtml(html, { links: linkSet }) : "";
       // Splice catalog markers into REAL productGrid/collectionList blocks — live
@@ -342,7 +482,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
       return {
         pageKey,
         doc,
-        proposal: blocks.length > 0 ? { rawHtml: true, catalogBlocks: blocks.filter((b) => b.type !== "rawHtml").length } : { fallback: true },
+        proposal: blocks.length > 0 ? { rawHtml: true, catalogBlocks: blocks.filter((b) => b.type !== "rawHtml").length, ...judgeMeta } : { fallback: true, ...judgeMeta },
         fellBack: blocks.length === 0,
       };
     }

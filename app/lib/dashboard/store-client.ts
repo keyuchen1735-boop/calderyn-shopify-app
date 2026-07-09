@@ -18,6 +18,7 @@ import {
   type StudioExperimentReport,
   type StudioExperimentState,
   type StudioExperimentKind,
+  type StudioSection,
 } from "~/lib/storebuilder/studio-types";
 
 export type {
@@ -34,6 +35,7 @@ export type {
   StudioExperiment,
   StudioExperimentReport,
   StudioExperimentState,
+  StudioSection,
 };
 
 export async function fetchStudio(): Promise<StudioState> {
@@ -253,4 +255,34 @@ export async function generateStudioStoreStream(
     if (receipt) return receipt;
   }
   throw new StudioStreamError("stream ended without a result");
+}
+
+/** Move one home section up or down; returns the new section order. */
+export async function moveStoreSection(id: string, direction: "up" | "down"): Promise<StudioSection[]> {
+  const data = await apiSend<{ sections: StudioSection[] }>("POST", "/dashboard/api/store", {
+    action: "section-move",
+    id,
+    direction,
+  });
+  return data.sections;
+}
+
+/** Remove one home section; returns the new section order. */
+export async function removeStoreSection(id: string): Promise<StudioSection[]> {
+  const data = await apiSend<{ sections: StudioSection[] }>("POST", "/dashboard/api/store", {
+    action: "section-remove",
+    id,
+  });
+  return data.sections;
+}
+
+/** Regenerate one design section with the design model (optional instruction).
+ *  Awaits the full model call — can take several seconds. */
+export async function regenerateStoreSection(id: string, instruction?: string): Promise<StudioSection[]> {
+  const data = await apiSend<{ sections: StudioSection[] }>("POST", "/dashboard/api/store", {
+    action: "section-regenerate",
+    id,
+    ...(instruction ? { instruction } : {}),
+  });
+  return data.sections;
 }

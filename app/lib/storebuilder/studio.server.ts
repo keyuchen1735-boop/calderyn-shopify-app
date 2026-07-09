@@ -10,17 +10,20 @@ import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, saveStoreSettings, DEFAULT_PALETTE } from "~/lib/storefront/settings.server";
 import { getConnectedAccount } from "~/lib/payments/connect.server";
 import { listProducts as listAdminProducts } from "~/lib/catalog/catalog.server";
-import { hasRunningExperiment, latestStudioExperiment } from "~/lib/experiments/store-experiment.server";
+import { expireOverdueExperiment, hasRunningExperiment, latestStudioExperiment } from "~/lib/experiments/store-experiment.server";
 import { injectMissingFunctionalBlocks } from "~/lib/storegen/sanitize";
+import { regenerateHomeSection } from "~/lib/storegen/generate.server";
+import { splitTopLevelSections } from "~/lib/storegen/hybrid";
 import { loadDraftDoc, loadPublishedDoc, saveDraft, publishDoc } from "./page-document.server";
 import { defaultHomeDocument } from "./default-doc";
 import { validateDocument, type ValidIds } from "./validate";
-import type { BlockDocument, PageKey } from "./types";
+import type { Block, BlockDocument, PageKey } from "./types";
 import type {
   StudioGeneration,
   StudioGenerationStatus,
   StudioHero,
   StudioProduct,
+  StudioSection,
   StudioState,
   StudioVibe,
 } from "./studio-types";
@@ -55,6 +58,194 @@ function heroFromDoc(doc: BlockDocument): StudioHero | null {
     headline: str(block.props.headline, "Welcome"),
     subhead: str(block.props.subhead, "Shop our latest"),
   };
+}
+
+// ── Sections (editable pieces of the home page) ────────────────────────────────
+
+const SECTION_TITLE_MAX = 60;
+
+/** First heading's text inside a rawHtml section, tags stripped; empty when none. */
+function sectionHeading(html: string): string {
+  const m = /<h[1-4][^>]*>([\s\S]*?)<\/h[1-4]>/i.exec(html);
+  if (!m) return "";
+  return m[1].replace(/<[^>]*>/g, " ").replace(/\s{2,}/g, " ").trim().slice(0, SECTION_TITLE_MAX);
+}
+
+/** Shape a home doc's blocks as the studio's editable section list. Only rawHtml blocks
+ *  are "design" (regenerable) — template-vocabulary blocks (hero, featureRow, …) from
+ *  fallback/default docs are movable/removable "content", never offered a dead Redo. */
+export function sectionsFromDoc(doc: BlockDocument): StudioSection[] {
+  return doc.blocks.map((b, i) => {
+    if (b.type === "productGrid") {
+      const heading = str((b.props as { heading?: unknown }).heading).trim();
+      return { id: b.id, kind: "products" as const, title: heading || "Product grid" };
+    }
+    if (b.type === "collectionList") {
+      const heading = str((b.props as { heading?: unknown }).heading).trim();
+      return { id: b.id, kind: "collections" as const, title: heading || "Category cards" };
+    }
+    if (b.type === "rawHtml") {
+      const html = typeof b.props.html === "string" ? b.props.html : "";
+      return { id: b.id, kind: "design" as const, title: sectionHeading(html) || `Design section ${i + 1}` };
+    }
+    const label = str((b.props as { headline?: unknown }).headline ?? (b.props as { heading?: unknown }).heading).trim();
+    return { id: b.id, kind: "content" as const, title: label.slice(0, SECTION_TITLE_MAX) || `${b.type.charAt(0).toUpperCase()}${b.type.slice(1)} section` };
+  });
+}
+
+/** The home doc section mutations operate on: the draft, else a copy of the published page
+ *  (first edit of a published-only store forks it into a draft — publish stays explicit). */
+async function loadHomeDocForEdit(shopId: string): Promise<BlockDocument> {
+  const doc = (await loadDraftDoc(shopId, "home")) ?? (await loadPublishedDoc(shopId, "home"));
+  if (!doc) {
+    throw new CalderynError({
+      code: "no_home_doc",
+      status: 422,
+      message: "Build your store first, then edit its sections.",
+    });
+  }
+  return doc;
+}
+
+function requireSection(doc: BlockDocument, blockId: string): Block {
+  const block = doc.blocks.find((b) => b.id === blockId);
+  if (!block) {
+    throw new CalderynError({
+      code: "section_not_found",
+      status: 404,
+      message: "That section no longer exists. Refresh and try again.",
+    });
+  }
+  return block;
+}
+
+/** Re-stack ys sequentially after any reorder/removal so the renderer's y-sort matches
+ *  the array order the studio just produced. */
+function restackedDoc(doc: BlockDocument, blocks: Block[]): BlockDocument {
+  return { ...doc, blocks: blocks.map((b, i) => ({ ...b, layout: { ...b.layout, y: i } })) };
+}
+
+async function saveHomeDoc(shopId: string, doc: BlockDocument): Promise<StudioSection[]> {
+  const valid = await catalogValidIds(shopId);
+  const { doc: clean } = validateDocument(doc, valid);
+  await saveDraft(shopId, "home", clean);
+  return sectionsFromDoc(clean);
+}
+
+/** Move a home section one step up or down the page. */
+export async function moveStudioSection(
+  shopId: string,
+  blockId: string,
+  direction: "up" | "down",
+): Promise<StudioSection[]> {
+  await refuseMidTest(shopId, "page layout");
+  const doc = await loadHomeDocForEdit(shopId);
+  requireSection(doc, blockId);
+  const blocks = [...doc.blocks];
+  const from = blocks.findIndex((b) => b.id === blockId);
+  const to = direction === "up" ? from - 1 : from + 1;
+  if (to < 0 || to >= blocks.length) return sectionsFromDoc(doc); // already at the edge — no-op
+  [blocks[from], blocks[to]] = [blocks[to], blocks[from]];
+  return saveHomeDoc(shopId, restackedDoc(doc, blocks));
+}
+
+/** Remove a home section. The last remaining section is not removable — an empty
+ *  home would render blank, which is never what a merchant means. */
+export async function removeStudioSection(shopId: string, blockId: string): Promise<StudioSection[]> {
+  await refuseMidTest(shopId, "page layout");
+  const doc = await loadHomeDocForEdit(shopId);
+  requireSection(doc, blockId);
+  if (doc.blocks.length <= 1) {
+    throw new CalderynError({
+      code: "last_section",
+      status: 422,
+      message: "A page needs at least one section. Regenerate it instead of removing it.",
+    });
+  }
+  const blocks = doc.blocks.filter((b) => b.id !== blockId);
+  return saveHomeDoc(shopId, restackedDoc(doc, blocks));
+}
+
+// Matches the wrapper convention spliceCatalogBlocks emits: every design section's html is
+// `<div class="ai-store">[<style>…</style>]<section-or-content></div>`.
+const AI_WRAP_OPEN = '<div class="ai-store">';
+
+/** Regenerate ONE design section of the home page with the design model, keeping the
+ *  page's scoped style block intact. Only rawHtml sections qualify — a live product
+ *  grid has nothing to regenerate. */
+export async function regenerateStudioSection(
+  shopId: string,
+  blockId: string,
+  instruction?: string,
+): Promise<StudioSection[]> {
+  await refuseMidTest(shopId, "page design");
+  const doc = await loadHomeDocForEdit(shopId);
+  const block = requireSection(doc, blockId);
+  if (block.type !== "rawHtml" || typeof block.props.html !== "string") {
+    throw new CalderynError({
+      code: "not_a_design_section",
+      status: 422,
+      message: "Only design sections can be regenerated. Catalog sections always show your live products.",
+    });
+  }
+  // Peel the wrapper + scoped style so the model sees just the section, and the
+  // replacement is re-wrapped with the SAME style (page-wide CSS must survive the edit).
+  const originalHtml = block.props.html;
+  let inner = originalHtml;
+  let style = "";
+  if (inner.startsWith(AI_WRAP_OPEN) && inner.endsWith("</div>")) {
+    inner = inner.slice(AI_WRAP_OPEN.length, -"</div>".length);
+    if (inner.startsWith("<style")) {
+      const end = inner.indexOf("</style>");
+      if (end !== -1) {
+        style = inner.slice(0, end + "</style>".length);
+        inner = inner.slice(end + "</style>".length);
+      }
+    }
+  }
+  // Legacy blocks predate per-section splitting and can hold a WHOLE page; the revision
+  // contract returns exactly one <section>, so regenerating in place would silently delete
+  // every other section. Split the block apart first and ask the merchant to pick again.
+  const pieces = splitTopLevelSections(inner);
+  if (pieces.length > 1) {
+    const replacementBlocks: Block[] = pieces.map((piece, i) => ({
+      ...block,
+      id: `${block.id}-s${i}`,
+      props: { ...block.props, html: `${AI_WRAP_OPEN}${style}${piece}</div>` },
+    }));
+    const idx = doc.blocks.findIndex((b) => b.id === blockId);
+    const blocks = [...doc.blocks.slice(0, idx), ...replacementBlocks, ...doc.blocks.slice(idx + 1)];
+    await saveHomeDoc(shopId, restackedDoc(doc, blocks));
+    throw new CalderynError({
+      code: "sections_split",
+      status: 409,
+      message: "That block held several sections, so they are now listed separately. Pick the one to redo.",
+    });
+  }
+  const replacement = await regenerateHomeSection(shopId, inner, instruction);
+  if (!replacement) {
+    throw new CalderynError({
+      code: "section_regen_failed",
+      status: 502,
+      message: "The design engine could not redo that section right now. Try again in a moment.",
+    });
+  }
+  // The model call took seconds; the draft may have changed under it (second tab, a full
+  // rebuild landing). Re-read and verify the target is untouched — applying onto a stale
+  // doc would silently discard the newer draft.
+  const freshDoc = await loadHomeDocForEdit(shopId);
+  const freshBlock = freshDoc.blocks.find((b) => b.id === blockId);
+  if (!freshBlock || freshBlock.props.html !== originalHtml) {
+    throw new CalderynError({
+      code: "section_changed",
+      status: 409,
+      message: "The page changed while redoing that section. Check the preview and try again.",
+    });
+  }
+  const blocks = freshDoc.blocks.map((b) =>
+    b.id === blockId ? { ...b, props: { ...b.props, html: `${AI_WRAP_OPEN}${style}${replacement}</div>` } } : b,
+  );
+  return saveHomeDoc(shopId, { ...freshDoc, blocks });
 }
 
 /** Live catalog ids/handles, for validateDocument before any draft write. */
@@ -176,6 +367,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     hasPublished: published != null,
     generation,
     orgSlug,
+    sections: doc ? sectionsFromDoc(doc) : [],
     // The public storefront resolves tenants by Host, so on the dashboard
     // origin the fixed app path renders the demo shell — the real tenant URL
     // needs the org_slug subdomain. tenantDomain keeps the host provably
@@ -280,6 +472,7 @@ export async function publishStudioStore(shopId: string): Promise<void> {
   // Publishing mid-test would change arm A under the running experiment, and
   // a later "ship" would overwrite the newer published home (and draft) with
   // the challenger clone frozen at start time — refuse until it is decided.
+  await expireOverdueExperiment(shopId);
   if (await hasRunningExperiment(shopId)) {
     throw new CalderynError({
       code: "experiment_running",

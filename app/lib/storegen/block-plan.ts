@@ -37,6 +37,18 @@ export const PALETTE_LIBRARY: readonly NamedPalette[] = [
   { name: "Sand", primary: "#a16207", background: "#fffdf5", text: "#3f2d0a" },
   { name: "Berry", primary: "#9f1239", background: "#fff5f6", text: "#3f0d17" },
   { name: "Slate", primary: "#334155", background: "#f8fafc", text: "#0f172a" },
+  { name: "Olive", primary: "#4d7c0f", background: "#f9fbf1", text: "#1f2a0d" },
+  { name: "Burgundy", primary: "#881337", background: "#fff6f8", text: "#4c0519" },
+  { name: "Cobalt", primary: "#1d4ed8", background: "#f4f8ff", text: "#172554" },
+  { name: "Blush", primary: "#a53860", background: "#fdf5f7", text: "#43112a" },
+  { name: "Espresso", primary: "#4a2c17", background: "#faf5f0", text: "#2b1a0e" },
+  { name: "Mustard", primary: "#854d0e", background: "#fdfaee", text: "#3b2607" },
+  { name: "Ink", primary: "#111827", background: "#f6f7f9", text: "#111827" },
+  { name: "Sage", primary: "#4f7a68", background: "#f3f8f5", text: "#1e332a" },
+  { name: "Coral", primary: "#d1495b", background: "#fff6f5", text: "#4a121c" },
+  { name: "Denim", primary: "#29527a", background: "#f5f8fb", text: "#122236" },
+  { name: "Lavender", primary: "#7c3aed", background: "#f9f7ff", text: "#2f2065" },
+  { name: "Lagoon", primary: "#155e75", background: "#f1f9fb", text: "#083344" },
 ];
 const DEFAULT_PALETTE = PALETTE_LIBRARY[0]; // Evergreen — the pre-v2 hardcoded default, unchanged
 const VIBES: readonly StudioVibe[] = ["minimal", "bold", "warm"];

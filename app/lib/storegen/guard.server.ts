@@ -6,7 +6,7 @@
 // hitting the other.
 import { CalderynError } from "~/lib/calderyn.server";
 import { rateLimit } from "~/lib/dashboard/http.server";
-import { hasRunningExperiment } from "~/lib/experiments/store-experiment.server";
+import { expireOverdueExperiment, hasRunningExperiment } from "~/lib/experiments/store-experiment.server";
 import { checkAiQuota } from "~/lib/ai-quota.server";
 
 // A brief is a short prompt, not a document; the cap bounds LLM input spend
@@ -42,6 +42,9 @@ export async function assertGeneratePrechecks(
       message: "Too many generations. Please wait a moment.",
     });
   }
+  // A test past its max duration decides itself here, so an abandoned
+  // experiment can never block regeneration forever (failure-isolated inside).
+  await expireOverdueExperiment(shopId);
   if (await hasRunningExperiment(shopId)) {
     throw new CalderynError({
       code: "experiment_running",

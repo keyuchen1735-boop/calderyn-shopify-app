@@ -73,6 +73,16 @@ const SUBHEAD_MAX = 200;
 const EVENT_ROW_CAP = 50_000;
 const ORDER_ROW_CAP = 10_000;
 const MIN_SESSIONS_PER_ARM = 30;
+// An undecided experiment blocks publish/generate, so it cannot run forever:
+// past this age the next studio/publish/generate touch auto-decides it (ship
+// only a confident winner, otherwise keep the champion).
+const DEFAULT_EXPERIMENT_MAX_DAYS = 14;
+const DAY_MS = 86_400_000;
+
+function experimentMaxDays(): number {
+  const raw = Number(process.env.STORE_EXPERIMENT_MAX_DAYS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_EXPERIMENT_MAX_DAYS;
+}
 // Every order state where the sale happened (order/state.ts vocabulary): a
 // partial refund must not make a conversion vanish while a full refund keeps
 // counting.
@@ -232,11 +242,62 @@ export async function getRunningExperiment(shopId: string): Promise<RunningExper
   return exp;
 }
 
+/**
+ * Auto-decide a running experiment that has outlived the max duration
+ * (EXPERIMENT_MAX_DAYS, env STORE_EXPERIMENT_MAX_DAYS): an undecided test
+ * blocks publish and generate, so it must not be able to block them forever.
+ * Ship only when the report shows a confident WIN (confidence >= 95 and
+ * rateB > rateA); anything else keeps the champion. Lazy — invoked from the
+ * studio read and the write guards rather than a cron — and failure-isolated:
+ * a sweep error logs and returns, it never breaks the caller.
+ */
+export async function expireOverdueExperiment(shopId: string): Promise<void> {
+  try {
+    if (!isUuid(shopId)) return;
+    // Direct (uncached) read: a stale 60s cache entry must not delay or
+    // double-fire an expiry.
+    const { data, error } = await getSupabase()
+      .from("store_experiment")
+      .select("id, started_at")
+      .eq("shop_id", shopId)
+      .eq("state", "running")
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return;
+    const startedAtMs = Date.parse(String(data.started_at));
+    if (!Number.isFinite(startedAtMs)) return;
+    if (Date.now() - startedAtMs < experimentMaxDays() * DAY_MS) return;
+
+    const id = String(data.id);
+    const report = await experimentReport(shopId, { id, startedAt: String(data.started_at) });
+    const rA = report.aSessions > 0 ? report.aConversions / report.aSessions : 0;
+    const rB = report.bSessions > 0 ? report.bConversions / report.bSessions : 0;
+    const winner = report.confidence != null && report.confidence >= 95 && rB > rA;
+    try {
+      await decideExperiment(shopId, id, winner ? "ship" : "keep");
+    } catch (err) {
+      // decideExperiment re-reads the report inside its ship guard; if the
+      // picture shifted to a confident loss between the two sweeps, fall back
+      // to keeping the champion instead of leaving the test undecided.
+      if (winner && err instanceof CalderynError && err.code === "variant_losing") {
+        await decideExperiment(shopId, id, "keep");
+      } else {
+        throw err;
+      }
+    }
+  } catch (err) {
+    console.error(`[store-experiment] overdue-experiment sweep failed for shop ${shopId} (continuing):`, err);
+  }
+}
+
 /** The running or most recent experiment as the studio DTO, with a fresh
  *  report attached (report failures degrade to null rather than failing the
  *  studio load — same posture as checkoutReady). */
 export async function latestStudioExperiment(shopId: string): Promise<StudioExperiment | null> {
   if (!isUuid(shopId)) return null;
+  // A test past its max duration decides itself here, so the studio shows the
+  // decided state instead of a stale "running" pill.
+  await expireOverdueExperiment(shopId);
   const { data, error } = await getSupabase()
     .from("store_experiment")
     .select("id, page_key, name, why, state, started_at, decided_at")
@@ -489,6 +550,9 @@ export async function experimentReport(
 
   // Exposure = distinct page_view sessions per arm.
   const sessions = { a: new Set<string>(), b: new Set<string>() };
+  // Mid-funnel steps, same distinct-session math as exposure.
+  const cartAdds = { a: new Set<string>(), b: new Set<string>() };
+  const checkoutStarts = { a: new Set<string>(), b: new Set<string>() };
   // checkout_complete exposure sessions double as the conversion fallback for
   // orders that predate (or lost) the attribution stamp.
   const purchases = { a: new Set<string>(), b: new Set<string>() };
@@ -497,13 +561,18 @@ export async function experimentReport(
     if (!arm) continue;
     const sid = String(e.session_id);
     if (e.type === "page_view") sessions[arm].add(sid);
+    else if (e.type === "cart_add") cartAdds[arm].add(sid);
+    else if (e.type === "checkout_start") checkoutStarts[arm].add(sid);
     else if (e.type === "checkout_complete") purchases[arm].add(sid);
   }
 
   // Authoritative conversions: orders stamped at checkout origination (the
   // paid-flip webhook has no cookies, so the stamp is written up front and
   // survives the 30-day event trim). Orders without a session id still count
-  // once each, keyed by order id.
+  // once each, keyed by order id. Revenue sums each stamped sale-state order's
+  // total once per order; the checkout_complete fallback sessions above carry
+  // no order total, so they contribute 0 revenue.
+  const revenue = { a: 0, b: 0 };
   for (const o of orders) {
     const attr =
       o.attribution && typeof o.attribution === "object"
@@ -516,6 +585,7 @@ export async function experimentReport(
         ? attr.live_session_id
         : `order:${o.id}`;
     purchases[arm].add(sid);
+    revenue[arm] += Number(o.total_cents ?? 0);
   }
 
   // Conversions can exceed the page_view exposure count: the retention sweep
@@ -536,6 +606,14 @@ export async function experimentReport(
     bSessions,
     aConversions,
     bConversions,
+    aRevenueCents: revenue.a,
+    bRevenueCents: revenue.b,
+    funnel: {
+      aCartAdds: cartAdds.a.size,
+      bCartAdds: cartAdds.b.size,
+      aCheckoutStarts: checkoutStarts.a.size,
+      bCheckoutStarts: checkoutStarts.b.size,
+    },
     lift: rA > 0 ? (rB - rA) / rA : null,
     confidence: zConfidence(aSessions, aConversions, bSessions, bConversions),
   };
@@ -546,7 +624,17 @@ function armKey(v: unknown): "a" | "b" | null {
 }
 
 function emptyReport(): StudioExperimentReport {
-  return { aSessions: 0, bSessions: 0, aConversions: 0, bConversions: 0, lift: null, confidence: null };
+  return {
+    aSessions: 0,
+    bSessions: 0,
+    aConversions: 0,
+    bConversions: 0,
+    aRevenueCents: 0,
+    bRevenueCents: 0,
+    funnel: { aCartAdds: 0, bCartAdds: 0, aCheckoutStarts: 0, bCheckoutStarts: 0 },
+    lift: null,
+    confidence: null,
+  };
 }
 
 interface ExposureEventRow {
@@ -570,6 +658,7 @@ async function readExposureEvents(shopId: string, experimentId: string): Promise
 interface StampedOrderRow {
   id: string;
   attribution: unknown;
+  total_cents: number | null;
 }
 
 async function readStampedOrders(
@@ -580,7 +669,7 @@ async function readStampedOrders(
   return readPaged<StampedOrderRow>("orders", shopId, ORDER_ROW_CAP, (from, to) =>
     getSupabase()
       .from("orders")
-      .select("id, attribution")
+      .select("id, attribution, total_cents")
       .eq("shop_id", shopId)
       .in("state", [...SALE_STATES])
       .gte("created_at", sinceIso)

@@ -46,10 +46,13 @@ interface Voice {
   features: { title: string; body: string }[];
 }
 
-// One voice per vibe: distinct sentence shape and word choice, not just a palette swap, so the
-// no-credits path still reads like three different designers rather than one template.
-const VOICE: Record<StudioVibe, Voice> = {
-  minimal: {
+// Two voices per vibe: distinct sentence shape and word choice, not just a palette swap, so the
+// no-credits path still reads like different designers rather than one template. Variant 0 is the
+// original copy; variant 1 is a second register in the same vibe. Which one a store gets is keyed
+// off its name (see voiceVariantIndex), so two shops with the same vibe read differently while a
+// regenerate never flips an individual shop's copy.
+const VOICES: Record<StudioVibe, readonly Voice[]> = {
+  minimal: [{
     heroHeadline: (noun, storeName) => (noun ? `${cap(noun)}, considered` : storeName || "Considered essentials"),
     heroSubhead: (noun) => (noun ? `Fewer, better things, starting with ${low(noun)}.` : "Fewer, better things."),
     gridHeading: (noun) => (noun ? `Start with ${noun}` : "Shop the edit"),
@@ -64,7 +67,22 @@ const VOICE: Record<StudioVibe, Voice> = {
       { title: "Quietly guaranteed", body: "Thirty days to change your mind — no fuss." },
     ],
   },
-  bold: {
+  {
+    heroHeadline: (noun, storeName) => (noun ? `${cap(noun)}, pared back to the good part` : storeName || "Pared back to the good part"),
+    heroSubhead: (noun) => (noun ? `A short list built around ${low(noun)}, nothing extra.` : "A short list, nothing extra."),
+    gridHeading: (noun) => (noun ? `The ${noun} shortlist` : "The shortlist"),
+    story: (noun, storeName) =>
+      `${storeName || "This shop"} would rather stock ten things worth owning than a hundred that fill a page. ${noun ? `${cap(noun)} is where that standard starts.` : "That standard shapes everything here."}`,
+    ctaLabel: "See the shortlist",
+    closingLabel: "Browse the full list",
+    featuresHeading: "What we optimize for",
+    features: [
+      { title: "Fewer, better", body: "A small catalog means every item gets real attention." },
+      { title: "Chosen twice", body: "Everything is used at home before it goes on sale." },
+      { title: "Easy returns", body: "Thirty days, no forms, no questions." },
+    ],
+  }],
+  bold: [{
     heroHeadline: (noun, storeName) => (noun ? `${cap(noun)}. No compromises.` : storeName || "No compromises."),
     heroSubhead: (noun) => (noun ? `Built around ${low(noun)}. Engineered, not decorated.` : "Engineered, not decorated."),
     gridHeading: (noun) => (noun ? `The ${noun} lineup` : "The full lineup"),
@@ -79,7 +97,22 @@ const VOICE: Record<StudioVibe, Voice> = {
       { title: "Backed hard", body: "If it fails, we make it right. Simple." },
     ],
   },
-  warm: {
+  {
+    heroHeadline: (noun, storeName) => (noun ? `${cap(noun)} that earns its keep` : storeName || "Gear that earns its keep"),
+    heroSubhead: (noun) => (noun ? `${cap(noun)} tested hard before it gets the label.` : "Tested hard before it gets the label."),
+    gridHeading: (noun) => (noun ? `${noun}, proven` : "Proven picks"),
+    story: (noun, storeName) =>
+      `${storeName || "This shop"} publishes the test results, not the mood board.${noun ? ` ${cap(noun)} ships because it survived; nothing here is decoration.` : " Everything ships because it survived; nothing here is decoration."}`,
+    ctaLabel: "Shop what lasts",
+    closingLabel: "See everything we make",
+    featuresHeading: "Held to a standard",
+    features: [
+      { title: "Tested, then shipped", body: "Prototypes get broken so your order doesn't." },
+      { title: "Spec over styling", body: "Materials chosen for load, wear, and weather." },
+      { title: "Fixed or replaced", body: "If it breaks in normal use, we sort it. Done." },
+    ],
+  }],
+  warm: [{
     heroHeadline: (noun, storeName) => (noun ? `A little more ${low(noun)} in your day` : storeName || "Made for slow mornings"),
     heroSubhead: (noun) => (noun ? `Small-batch ${low(noun)}, made the unhurried way.` : "Small batches, made the unhurried way."),
     gridHeading: (noun) => (noun ? `Our favorite ${noun}` : "Our favorites"),
@@ -94,7 +127,41 @@ const VOICE: Record<StudioVibe, Voice> = {
       { title: "Sent like a gift", body: "Wrapped with care, because it should feel special." },
     ],
   },
+  {
+    heroHeadline: (noun, storeName) => (noun ? `${cap(noun)} worth slowing down for` : storeName || "Worth slowing down for"),
+    heroSubhead: (noun) => (noun ? `${cap(noun)} made in small rounds and finished by hand.` : "Made in small rounds and finished by hand."),
+    gridHeading: (noun) => (noun ? `${noun} we reach for first` : "What we reach for first"),
+    story: (noun, storeName) =>
+      `At ${storeName || "our shop"}, ${noun ? low(noun) : "each batch"} gets finished, checked, and wrapped by the same pair of hands. If we wouldn't keep it, we don't send it.`,
+    ctaLabel: "Have a look around",
+    closingLabel: "See the whole shelf",
+    featuresHeading: "The way we work",
+    features: [
+      { title: "Made in small rounds", body: "Never more at once than we can finish properly." },
+      { title: "Materials we can name", body: "We know where every component comes from." },
+      { title: "Packed to arrive well", body: "Wrapped so the unboxing feels like the gift." },
+    ],
+  }],
 };
+
+function hashString(s: string): number {
+  // djb2-xor: tiny, dependency-free, and stable across runs/platforms — all this needs.
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+  return h >>> 0;
+}
+
+/** Which voice variant a store gets, keyed off its name: stable per shop (a regenerate never
+ *  flips the copy) while two different shops with the same vibe read differently. Exported so
+ *  tests can pick names on known variants. */
+export function voiceVariantIndex(storeName: string): number {
+  return hashString(storeName.trim().toLowerCase()) % VOICES.minimal.length;
+}
+
+function voiceFor(vibe: StudioVibe, storeName: string): Voice {
+  const variants = VOICES[vibe];
+  return variants[voiceVariantIndex(storeName) % variants.length];
+}
 
 export function fallbackDoc(pageKey: PageKey, brand: BrandFacts, context?: FallbackContext): BlockDocument {
   if (pageKey === "collection") {
@@ -120,7 +187,7 @@ export function fallbackDoc(pageKey: PageKey, brand: BrandFacts, context?: Fallb
   // genuinely designed store, in the vibe's voice, that never reads as broken or unfinished.
   if (products.length === 0 && collections.length === 0) {
     const vibe: StudioVibe = context?.vibe ?? "minimal";
-    const voice = VOICE[vibe];
+    const voice = voiceFor(vibe, brand.storeName);
     return { kind: "singleton", pageKey: "home", blocks: [
       { id: "fb-hero", type: "hero", layout: { x: 0, y: 0, w: 12, h: 3 }, props: { headline: clip(voice.heroHeadline(null, brand.storeName), HEADLINE_MAX), subhead: clip(brand.tagline || voice.heroSubhead(null), SUBHEAD_MAX) } },
       { id: "fb-cta", type: "button", layout: { x: 0, y: 3, w: 3, h: 1 }, props: { label: clip(voice.ctaLabel, LABEL_MAX), href: "/storefront" } },
@@ -131,7 +198,7 @@ export function fallbackDoc(pageKey: PageKey, brand: BrandFacts, context?: Fallb
   }
 
   const vibe: StudioVibe = context?.vibe ?? "minimal";
-  const voice = VOICE[vibe];
+  const voice = voiceFor(vibe, brand.storeName);
   const topCollection = collections[0] ?? null;
   const topProduct = products[0] ?? null;
   const noun = (topCollection?.title || topProduct?.title || "").trim() || null;

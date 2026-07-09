@@ -1,6 +1,6 @@
 // app/lib/storegen/fallback.test.ts
 import { describe, it, expect } from "vitest";
-import { fallbackDoc } from "./fallback";
+import { fallbackDoc, voiceVariantIndex } from "./fallback";
 import { validateDocument } from "~/lib/storebuilder/validate";
 
 const valid = { productIds: new Set<string>(), collectionHandles: new Set<string>() };
@@ -90,6 +90,23 @@ describe("fallbackDoc", () => {
       const bold = headline("bold");
       const warm = headline("warm");
       expect(new Set([minimal, bold, warm]).size).toBe(3); // three distinct voices, not one template
+    });
+
+    it("varies the voice across store names but stays stable for the same name", () => {
+      // Cover both variants without hardcoding which name hashes where.
+      const names = ["Acme", "Birch & Vine", "Copperline", "Driftwood", "Ember Goods"];
+      const byVariant = new Map(names.map((n) => [voiceVariantIndex(n), n]));
+      expect(byVariant.size).toBeGreaterThan(1); // two different names can get different voices
+      const headline = (storeName: string) =>
+        (fallbackDoc("home", { storeName, tagline: "" }, oneCollection).blocks[0].props as { headline: string }).headline;
+      const [a, b] = [...byVariant.values()];
+      expect(headline(a)).not.toBe(headline(b)); // different variant, different copy
+      expect(headline(a)).toBe(headline(a)); // same name, same copy on every run
+      // Both variants still template over the real catalog noun, never a generic heading.
+      for (const n of [a, b]) {
+        const grid = fallbackDoc("home", { storeName: n, tagline: "" }, oneCollection).blocks.find((bl) => bl.type === "productGrid")!;
+        expect(grid.props.heading).toContain("Summer");
+      }
     });
 
     it("never writes clichés and stays within the copy bounds", () => {

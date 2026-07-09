@@ -7,6 +7,9 @@ import {
   saveStudioAccent,
   saveStudioVibe,
   publishStudioStore,
+  moveStudioSection,
+  removeStudioSection,
+  regenerateStudioSection,
 } from "~/lib/storebuilder/studio.server";
 import { decideExperiment, startExperiment, type StoreExperimentKind } from "~/lib/experiments/store-experiment.server";
 import { generateStore, type GenerateResult } from "~/lib/storegen/generate.server";
@@ -356,6 +359,40 @@ export async function action({ request }: ActionFunctionArgs) {
         await saveStudioVibe(session.shopId, vibe as StudioVibe);
         return { vibe };
       });
+    }
+
+    case "section-move": {
+      const id = typeof b.id === "string" ? b.id : "";
+      const direction = b.direction === "up" || b.direction === "down" ? b.direction : null;
+      if (!id || !direction) return jsonError(422, "invalid_section", "Section move needs an id and a direction.");
+      return dashboardJson(async () => ({ sections: await moveStudioSection(session.shopId, id, direction) }));
+    }
+
+    case "section-remove": {
+      const id = typeof b.id === "string" ? b.id : "";
+      if (!id) return jsonError(422, "invalid_section", "Section remove needs an id.");
+      return dashboardJson(async () => ({ sections: await removeStudioSection(session.shopId, id) }));
+    }
+
+    case "section-regenerate": {
+      const id = typeof b.id === "string" ? b.id : "";
+      if (!id) return jsonError(422, "invalid_section", "Section regenerate needs an id.");
+      if (b.instruction !== undefined && typeof b.instruction !== "string") {
+        return jsonError(422, "invalid_instruction");
+      }
+      const instruction = typeof b.instruction === "string" && b.instruction.trim() ? b.instruction.trim() : undefined;
+      if (instruction && instruction.length > 500) {
+        return jsonError(422, "invalid_instruction", "Keep the instruction under 500 characters.");
+      }
+      // A real design-model call: bound it like other paid entry points. The shared
+      // storegen burst limit is deliberately not consumed (a section redo must not lock
+      // the merchant out of a full rebuild); a dedicated hourly cap bounds the spend.
+      if (!(await rateLimit(`sectionregen:${session.shopId}`, 20, 3_600_000))) {
+        return jsonError(429, "rate_limited", "Too many section redos. Please wait a little while.");
+      }
+      return dashboardJson(async () => ({
+        sections: await regenerateStudioSection(session.shopId, id, instruction),
+      }));
     }
 
     case "experiment-start": {

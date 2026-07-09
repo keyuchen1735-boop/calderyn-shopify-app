@@ -123,7 +123,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // No cart -> nothing to check out; send the buyer back to the cart view.
   if (!cartId) return redirect("/storefront/cart");
 
-  const priced = await priceCart(shopId, cartId);
+  // Independent reads: the experiment lookup (checkout always participates, so
+  // the funnel's checkout_start rows carry the arm stamp) rides alongside the
+  // cart pricing instead of adding latency in front of it.
+  const [priced, served] = await Promise.all([
+    priceCart(shopId, cartId),
+    resolveServedExperiment(shopId, request, "checkout"),
+  ]);
   if (priced.lines.length === 0) return redirect("/storefront/cart");
 
   // A store without payment keys renders an honest "payments not set up" notice
@@ -134,7 +140,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     console.error(`[checkout] STRIPE_PUBLISHABLE_KEY is not configured; refusing checkout for shop ${shopId}`);
   }
 
-  const track = await trackStorefrontEvent(request, shopId, "checkout_start");
+  const track = await trackStorefrontEvent(request, shopId, "checkout_start", {
+    experimentId: served.experimentId,
+    variantKey: served.variantKey,
+  });
 
   // Prefill from the buyer's saved profile when signed in (#1b); guest checkout is unchanged.
   const prefill = await buyerCheckoutPrefill(request, shopId);
