@@ -178,11 +178,11 @@ function PendingConfirmCard({
   onConfirmed: (receipt: ActionReceipt, message: ChatMessage | null) => void;
 }) {
   const [phase, setPhase] = useState<
-    "active" | "confirming" | "dismissing" | "confirmed" | "dismissed"
+    "active" | "confirming" | "dismissing" | "confirmed" | "dismissed" | "stale"
   >("active");
   const [errorText, setErrorText] = useState<string | null>(null);
   const busy = phase === "confirming" || phase === "dismissing";
-  const resolved = phase === "confirmed" || phase === "dismissed";
+  const resolved = phase === "confirmed" || phase === "dismissed" || phase === "stale";
 
   const confirm = async () => {
     setPhase("confirming");
@@ -205,8 +205,13 @@ function PendingConfirmCard({
     setPhase("dismissing");
     setErrorText(null);
     try {
-      await client.dismissAssistantAction(pending.id);
-      setPhase("dismissed");
+      const dismissed = await client.dismissAssistantAction(pending.id);
+      // dismissed === false means the pending row was NOT actually pending
+      // (already executed, already dismissed, or expired) — e.g. a stale card
+      // reopened after the action already ran. Reporting that as "Not now —
+      // no changes made" would misstate whether the action (e.g. a refund)
+      // already happened, so it gets its own honest, non-confirmatory state.
+      setPhase(dismissed ? "dismissed" : "stale");
     } catch (err) {
       setErrorText(err instanceof Error ? err.message : "Could not dismiss this action.");
       setPhase("active");
@@ -224,13 +229,16 @@ function PendingConfirmCard({
         )}
       </div>
       {phase === "dismissed" && <div className="cd-caption">Not now — no changes made.</div>}
+      {phase === "stale" && (
+        <div className="cd-chat-error">This action was already resolved elsewhere.</div>
+      )}
       {!resolved && (
         <div className="cd-chat-action-btns">
           <Btn kind="primary" small disabled={busy} onClick={confirm}>
             {phase === "confirming" ? "Confirming…" : "Confirm"}
           </Btn>
           <Btn small disabled={busy} onClick={dismiss}>
-            {phase === "dismissing" ? "…" : "Not now"}
+            {phase === "dismissing" ? "Dismissing…" : "Not now"}
           </Btn>
         </div>
       )}

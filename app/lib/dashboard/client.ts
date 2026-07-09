@@ -1058,12 +1058,16 @@ export async function confirmAssistantAction(
   return { receipt: data.receipt, message: data.message ?? null };
 }
 
-/** Dismiss a Tier-2 pending action by id without running it. */
-export async function dismissAssistantAction(pendingId: string): Promise<void> {
-  await apiSend<{ dismissed: boolean }>("POST", "/dashboard/api/assistant/confirm", {
+/** Dismiss a Tier-2 pending action by id without running it. Returns the
+ *  server's `dismissed` flag: `false` means the pending row was NOT actually
+ *  pending (already executed/dismissed elsewhere, or expired) — the caller
+ *  must not report this as a plain "no changes made" dismissal. */
+export async function dismissAssistantAction(pendingId: string): Promise<boolean> {
+  const data = await apiSend<{ dismissed: boolean }>("POST", "/dashboard/api/assistant/confirm", {
     pending_id: pendingId,
     decision: "dismiss",
   });
+  return data.dismissed;
 }
 
 // --- calibration -------------------------------------------------------------
