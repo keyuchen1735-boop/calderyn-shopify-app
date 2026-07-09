@@ -416,6 +416,9 @@ async function readExposureEvents(shopId: string, experimentId: string): Promise
       .eq("shop_id", shopId)
       .eq("experiment_id", experimentId)
       .order("created_at", { ascending: false })
+      // Stable tiebreak so pagination across the PostgREST 1000-row clamp can't
+      // skip or double-count rows that share a created_at at a page boundary.
+      .order("id", { ascending: true })
       .range(from, to),
   );
 }
@@ -439,6 +442,9 @@ async function readStampedOrders(
       .gte("created_at", sinceIso)
       .eq("attribution->>experiment_id", experimentId)
       .order("created_at", { ascending: false })
+      // Stable tiebreak so pagination across the PostgREST 1000-row clamp can't
+      // skip or double-count rows that share a created_at at a page boundary.
+      .order("id", { ascending: true })
       .range(from, to),
   );
 }
