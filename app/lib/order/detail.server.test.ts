@@ -212,6 +212,11 @@ describe("loadOrderDetail — native branch", () => {
       reason: null,
       occurred_at: "2026-07-01T10:05:00.000Z",
     });
+    // Ledger fixture: full capture at checkout + partial refund matching the audit above.
+    store.db.transaction_ledger.push(
+      { shop_id: "shop-1", order_ref: "order-1", kind: "capture", amount_cents: 5700 },
+      { shop_id: "shop-1", order_ref: "order-1", kind: "refund", amount_cents: -1000 },
+    );
 
     const detail = await loadOrderDetail("shop-1", "order-1");
     expect(detail).not.toBeNull();
@@ -235,9 +240,10 @@ describe("loadOrderDetail — native branch", () => {
       notifiedAt: "2026-07-02T12:00:00.000Z",
     });
 
-    // remainingRefundableCents comes from the ledger (no capture row here -> falls back
-    // to the gross total, matching remainingRefundableByOrder's documented fallback).
-    expect(detail.remainingRefundableCents).toBe(detail.totalCents);
+    // remainingRefundableCents comes from the ledger: capture (5700) - refund (1000) = 4700.
+    expect(detail.remainingRefundableCents).toBe(4700);
+    // refundedCents = total - remaining = 5700 - 4700 = 1000, matching the audit.
+    expect(detail.refundedCents).toBe(1000);
 
     // Timeline: transition, note, refund, and fulfillment events all present, sorted
     // newest-first (2026-07-03 refund > 2026-07-02 fulfillment > 2026-07-01 note > transition).

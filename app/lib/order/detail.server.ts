@@ -54,6 +54,7 @@ function importedOrderRef(orderNumber: string | null, externalId: string): strin
 }
 
 function sortTimelineDesc(events: OrderTimelineEvent[]): OrderTimelineEvent[] {
+  // Descending by .at timestamp; ties (same second) are stable-sorted by concat order (transitions, notes, refunds, fulfillments).
   return [...events].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
 }
 
@@ -120,6 +121,7 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
   // Ledger truth: remaining = captured − already-refunded (floored at 0 by the shared
   // helper); a native order's capture is its total_cents, so refunded = total − remaining.
   const remainingRefundableCents = ledgerMap.get(orderId) ?? totalCents;
+  // Refunded = total - remaining, relying on the invariant that a native order's capture equals total_cents.
   const refundedCents = Math.max(0, totalCents - remainingRefundableCents);
 
   const timeline = sortTimelineDesc([...transitions, ...notes, ...refunds, ...fulfillmentEvents(fulfillments)]);
