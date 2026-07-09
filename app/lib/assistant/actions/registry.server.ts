@@ -6,14 +6,15 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { AssistantAction } from "./registry-types";
 import { CAMPAIGN_ACTIONS } from "./campaign-actions.server";
 import { CATALOG_ACTIONS } from "./catalog-actions.server";
-// Domain imports are added by Tasks 6–7:
-// import { INVENTORY_ACTIONS } from "./inventory-actions.server";
+import { INVENTORY_ACTIONS } from "./inventory-actions.server";
+// Domain import is added by Task 7:
 // import { OPS_ACTIONS } from "./ops-actions.server";
 
 export const ASSISTANT_ACTIONS: AssistantAction[] = [
   ...CAMPAIGN_ACTIONS,
   ...CATALOG_ACTIONS,
-  // ...INVENTORY_ACTIONS, ...OPS_ACTIONS,
+  ...INVENTORY_ACTIONS,
+  // ...OPS_ACTIONS,
 ];
 
 export function actionByName(name: string): AssistantAction | undefined {
