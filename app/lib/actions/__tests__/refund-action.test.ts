@@ -241,7 +241,7 @@ describe("executeRefundAction — guards (fail before moving money)", () => {
     const { sb } = makeSb(baseCfg({ order: { data: { state: "checkout_pending", currency: "usd" }, error: null } }));
     await expect(
       executeRefundAction("shop-1", { orderId: "order-1", idempotencyKey: "k7" }, sb, { createRefund: h.createRefund }),
-    ).rejects.toThrow(/only a paid, fulfilled, or partially-refunded order/);
+    ).rejects.toThrow(/only a paid, partially-fulfilled, fulfilled, or partially-refunded order/);
     expect(h.createRefund).not.toHaveBeenCalled();
   });
 
@@ -258,7 +258,7 @@ describe("executeRefundAction — guards (fail before moving money)", () => {
     // refunded is not a refundable state -> refused before the remaining math.
     await expect(
       executeRefundAction("shop-1", { orderId: "order-1", idempotencyKey: "k8" }, sb, { createRefund: h.createRefund }),
-    ).rejects.toThrow(/only a paid, fulfilled, or partially-refunded order/);
+    ).rejects.toThrow(/only a paid, partially-fulfilled, fulfilled, or partially-refunded order/);
   });
 });
 

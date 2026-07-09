@@ -3,12 +3,13 @@
 // unit-testable and can be shared by any layer. transitionOrder() in order.server.ts
 // is the audited DB enforcer that calls assertLegalTransition() before writing.
 //
-// The vocabulary mirrors the `state` check constraint in 20260629110000_order_spine.sql.
+// The vocabulary mirrors the `state` check constraint in migration 20260709190000.
 
 export const ORDER_STATES = [
   "cart",
   "checkout_pending",
   "paid",
+  "partially_fulfilled",
   "fulfilled",
   "cancelled",
   "refunded",
@@ -28,6 +29,12 @@ export type OrderState = (typeof ORDER_STATES)[number];
 // cancelled` edge (cancelling an abandoned basket) is intentionally omitted because it is
 // unreachable for the order state machine this enforcer guards.
 //
+// Fulfillment edges (#6): an order transitions paid -> partially_fulfilled when shipped
+// partially, or directly to fulfilled when fully shipped. A partially_fulfilled order can
+// be further fulfilled or cancelled by merchant action. A fully fulfilled order cannot be
+// cancelled (only refunded). Merchant cancel edges: paid -> cancelled (before any shipment),
+// partially_fulfilled -> cancelled (abandon partial shipment).
+//
 // Refund edges (#3b): a partial Stripe refund moves paid/fulfilled -> `partially_refunded`;
 // a full refund (or a later partial that reaches the captured total) moves paid / fulfilled /
 // partially_refunded -> `refunded`. A SECOND partial refund on an already-partially_refunded
@@ -38,7 +45,8 @@ export type OrderState = (typeof ORDER_STATES)[number];
 export const LEGAL_TRANSITIONS: Record<OrderState, readonly OrderState[]> = {
   cart: ["checkout_pending"],
   checkout_pending: ["paid", "cancelled"],
-  paid: ["fulfilled", "refunded", "partially_refunded"],
+  paid: ["partially_fulfilled", "fulfilled", "cancelled", "refunded", "partially_refunded"],
+  partially_fulfilled: ["fulfilled", "cancelled", "refunded", "partially_refunded"],
   fulfilled: ["refunded", "partially_refunded"],
   partially_refunded: ["refunded"],
   cancelled: [],

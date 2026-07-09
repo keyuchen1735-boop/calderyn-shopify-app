@@ -22,7 +22,9 @@ export type ExecutableKind =
   | "reduce_campaign_budget"
   | "increase_campaign_budget"
   | "exclude_geo"
-  | "push_creative_draft";
+  | "push_creative_draft"
+  | "fulfill_order"
+  | "cancel_order";
 
 export interface ExecuteInput {
   alertId: string | null;
