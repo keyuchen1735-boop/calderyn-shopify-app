@@ -192,6 +192,23 @@ machinery backstops replays.
 - Existing suites (`tools.test.ts`, `assistant-action.test.ts`) updated for
   the new dispatcher wiring.
 
+## Fast follow (registry entries deferred from the first ship)
+
+Each of these is one ~20-line registry entry later; deferred for a concrete
+reason, not scope-cut silently:
+
+- `create_po_draft`, alert-path `adjust_price`, `reject_queue_action` —
+  alert-executor plumbing with multi-dependency call shapes; the free-form
+  `set_variant_price` (cap-bounded) covers the price case day one.
+- `relocate_inventory` — `create_transfer` covers the owned-engine move.
+- `discontinue_sku` — Shopify-legacy write surface; `archive_product` covers
+  owned catalogs.
+- `regenerate_creative`, `screen_creative`, `generate_store` — paid-AI
+  generation flows; the assistant deep-links to their screens instead.
+- Media upload/delete — chat has no file channel.
+- Ship-cost settings, `pick_discover_product`, experiment start/decide — low
+  frequency; add on demand.
+
 ## Rollout notes
 
 - Prod blocker unchanged: Anthropic credits. The quota gate already on this
