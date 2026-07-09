@@ -26,6 +26,7 @@ function seg(nav: NavState): string {
       // Merchant SEO/AIO surface, nested under Store as "Preferences".
       return "store/preferences";
     case "orders":
+      if (param) return `orders/${encodeURIComponent(param)}`;
       return sub && sub !== "orders" ? `orders/${sub}` : "orders";
     case "catalog":
       return "products";
@@ -109,7 +110,8 @@ export function parsePath(pathname: string): NavState | null {
       return is(ANALYTICS_SUBTABS, b) ? { screen: "analytics", param: null, sub: b } : null;
     case "orders":
       if (!b) return { screen: "orders", param: null, sub: "orders" };
-      return is(ORDERS_SUBTABS, b) ? { screen: "orders", param: null, sub: b } : null;
+      if (is(ORDERS_SUBTABS, b)) return { screen: "orders", param: null, sub: b };
+      return { screen: "orders", param: b, sub: null };
     case "products":
       if (!b) return { screen: "catalog", param: null, sub: null };
       if (b === "inventory") return { screen: "inventory", param: null, sub: null };
