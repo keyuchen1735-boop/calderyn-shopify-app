@@ -30,9 +30,19 @@ export function weatherCondition(f: RegionForecast): WeatherCondition {
 const SUN_CUES = ["swim","bikini","beach","sun","shorts","sandal","flip-flop","tank","patio","bbq","grill","garden","pool","tan","summer","hat","cap","outdoor","picnic","cooler","hydration","hike","cycling","tee","linen"];
 const STORM_CUES = ["umbrella","rain","coat","jacket","parka","boot","wellington","heater","sweater","hoodie","thermal","snow","waterproof","scarf","glove","mitten","beanie","wool","fleece","blanket","indoor","cozy","winter","insulated"];
 
-function countCues(haystack: string, cues: string[]): number {
+// Match each cue only at a word start (preceded by start-of-string or a non-letter),
+// so it never collides inside an unrelated word — "tee" must not match "steel", "tan"
+// must not match "titanium", "rain" must not match "training", "cap" must not match
+// "escape". A trailing suffix is still allowed, so plurals/derivations keep matching
+// ("sandal" → "sandals", "umbrella" → "umbrellas").
+const cueMatcher = (cue: string): RegExp =>
+  new RegExp(`(?:^|[^a-z])${cue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+const SUN_CUE_RES = SUN_CUES.map(cueMatcher);
+const STORM_CUE_RES = STORM_CUES.map(cueMatcher);
+
+function countCues(haystack: string, cueRes: readonly RegExp[]): number {
   let n = 0;
-  for (const cue of cues) if (haystack.includes(cue)) n += 1;
+  for (const re of cueRes) if (re.test(haystack)) n += 1;
   return n;
 }
 
@@ -47,8 +57,8 @@ export function productAffinity(
 ): WeatherCondition {
   const haystack = [title ?? "", category ?? "", ...(tags ?? [])].join(" ").toLowerCase();
   if (!haystack.trim()) return "neutral";
-  const sun = countCues(haystack, SUN_CUES);
-  const storm = countCues(haystack, STORM_CUES);
+  const sun = countCues(haystack, SUN_CUE_RES);
+  const storm = countCues(haystack, STORM_CUE_RES);
   if (sun > storm) return "sun";
   if (storm > sun) return "storm";
   return "neutral";
