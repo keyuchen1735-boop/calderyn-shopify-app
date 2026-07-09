@@ -114,7 +114,7 @@ export const CAMPAIGN_ACTIONS: AssistantAction[] = [
   },
   {
     name: "exclude_geo",
-    description: "Exclude a geographic region bucket from a campaign's targeting. Undoable. region must be a bucket seen in alert evidence (e.g. us_midwest).",
+    description: "Exclude a geographic region bucket from a campaign's targeting. Undoable. region must be one of: us-west, us-east, us-south, us-central.",
     inputSchema: {
       type: "object",
       properties: { campaign_id: { type: "string" }, region: { type: "string" } },
