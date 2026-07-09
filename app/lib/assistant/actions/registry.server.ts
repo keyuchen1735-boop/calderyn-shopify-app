@@ -10,7 +10,6 @@ import type { AssistantAction } from "./registry-types";
 // import { INVENTORY_ACTIONS } from "./inventory-actions.server";
 // import { OPS_ACTIONS } from "./ops-actions.server";
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export const ASSISTANT_ACTIONS: AssistantAction[] = [
   // ...CAMPAIGN_ACTIONS, ...CATALOG_ACTIONS, ...INVENTORY_ACTIONS, ...OPS_ACTIONS,
 ];

@@ -73,3 +73,29 @@ describe("runRegistryAction", () => {
     expect(out.isError).toBe(true);
   });
 });
+
+describe("runClaimedAction", () => {
+  it("runs a confirm-tier action directly (merchant already confirmed)", async () => {
+    const { __setActionsForTest, runClaimedAction } = await import("../execute.server");
+    __setActionsForTest([tier2]);
+    vi.clearAllMocks();
+    const receipt = await runClaimedAction("test_refund", { order_id: "o1" }, ctx);
+    expect(receipt.action).toBe("test_refund");
+    expect(receipt.summary).toBe("Refunded");
+    expect(tier2.run).toHaveBeenCalledWith(ctx, { order_id: "o1" });
+  });
+
+  it("throws on an unknown action name", async () => {
+    const { __setActionsForTest, runClaimedAction } = await import("../execute.server");
+    __setActionsForTest([]);
+    await expect(runClaimedAction("nope", {}, ctx)).rejects.toThrow(/Unknown action/);
+  });
+
+  it("throws when the executor errors, preserving the message", async () => {
+    const boom: AssistantAction = { ...tier1, name: "test_boom",
+      run: async () => { throw new Error("platform rejected"); } };
+    const { __setActionsForTest, runClaimedAction } = await import("../execute.server");
+    __setActionsForTest([boom]);
+    await expect(runClaimedAction("test_boom", { campaign_id: "c1" }, ctx)).rejects.toThrow(/platform rejected/);
+  });
+});

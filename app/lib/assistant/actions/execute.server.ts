@@ -1,7 +1,7 @@
 // Shared run path for every registry action: validate → tier gate → execute
 // or park for confirmation → structured outcome for the tool loop.
 import type { ActionCtx, ActionReceipt, AssistantAction, PendingActionCard } from "./registry-types";
-import { ASSISTANT_ACTIONS, actionByName } from "./registry.server";
+import { actionByName } from "./registry.server";
 import { createPendingAction } from "./pending.server";
 
 export interface ActionRunOutcome {
