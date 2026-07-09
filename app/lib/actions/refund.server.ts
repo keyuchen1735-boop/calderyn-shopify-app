@@ -67,6 +67,8 @@ export interface RefundActionResult {
   orderState: OrderState;
   /** Lines restocked via inventory_restock — 0 when not requested, partial, or on a replay. */
   restockedLines: number;
+  /** Non-null when a restock was requested but some (or all, or a preamble step) failed. */
+  restockError: string | null;
   replayed: boolean;
 }
 
@@ -200,6 +202,7 @@ async function resultFromAudit(
     refundedTotalCents: Number(params.refunded_total_cents ?? post.refunded_cents ?? 0),
     orderState: (isOrderState(state) ? state : "refunded") as OrderState,
     restockedLines: 0,
+    restockError: null,
     replayed: true,
   };
 }
@@ -383,22 +386,36 @@ export async function executeRefundAction(
   // 8c. Optional restock — FULL refunds only (amount-based partials can't say which
   // lines came back; per-line restock ships with returns). Best-effort like 8b: the
   // money already moved, so a restock failure logs loudly and lands in the audit
-  // params rather than failing the refund.
+  // params rather than failing the refund. restockOrderLines itself never throws for a
+  // per-variant RPC failure (partial-progress contract) — it only throws for a preamble
+  // read failure (order_line/variant_dim/ensurePrimaryLocation), which means nothing was
+  // attempted; that case is caught here and surfaced the same way.
   let restockedLines = 0;
-  if (input.restock === true && resolvedState === "refunded") {
-    try {
-      const r = await restockOrderLines(shopId, input.orderId, "refund");
-      restockedLines = r.restockedLines;
-      params.restocked_lines = restockedLines;
-    } catch (err) {
-      params.restock_error = err instanceof Error ? err.message : String(err);
-      console.error(
-        `[refund] order ${input.orderId} refund ${refund.refundId}: restock failed — reconcile inventory manually`,
-        err,
-      );
+  let restockError: string | null = null;
+  if (input.restock === true) {
+    if (resolvedState === "refunded") {
+      try {
+        const r = await restockOrderLines(shopId, input.orderId, "refund");
+        restockedLines = r.restockedLines;
+        params.restocked_lines = restockedLines;
+        if (r.failedVariantIds.length > 0) {
+          restockError = `restock failed for variants: ${r.failedVariantIds.join(", ")}`;
+          params.restock_error = restockError;
+          console.error(
+            `[refund] order ${input.orderId} refund ${refund.refundId}: restock partially failed for variants ${r.failedVariantIds.join(", ")} — reconcile inventory manually`,
+          );
+        }
+      } catch (err) {
+        restockError = err instanceof Error ? err.message : String(err);
+        params.restock_error = restockError;
+        console.error(
+          `[refund] order ${input.orderId} refund ${refund.refundId}: restock failed — reconcile inventory manually`,
+          err,
+        );
+      }
+    } else {
+      params.restock_skipped = "partial_refund";
     }
-  } else if (input.restock === true) {
-    params.restock_skipped = "partial_refund";
   }
 
   // 9. One append-only action_audit row (+ idempotency marker). issue_refund recovers $0 impact
@@ -441,6 +458,7 @@ export async function executeRefundAction(
     refundedTotalCents,
     orderState: resolvedState,
     restockedLines,
+    restockError,
     replayed: false,
   };
 }

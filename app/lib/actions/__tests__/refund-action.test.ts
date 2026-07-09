@@ -97,7 +97,7 @@ beforeEach(() => {
   h.insertAudit.mockResolvedValue({ id: "audit-1", outcome: "succeeded" });
   h.transitionOrder.mockResolvedValue({ id: "t-1" });
   h.createRefund.mockResolvedValue({ refundId: "re_1", status: "succeeded", chargeId: "ch_1" });
-  h.restockOrderLines.mockResolvedValue({ restockedLines: 2 });
+  h.restockOrderLines.mockResolvedValue({ restockedLines: 2, failedVariantIds: [] });
 });
 
 function baseCfg(overrides: SbCfg = {}): SbCfg {
@@ -333,8 +333,32 @@ describe("executeRefundAction — restock (full refunds only)", () => {
     expect(h.restockOrderLines).toHaveBeenCalledTimes(1);
     expect(h.restockOrderLines).toHaveBeenCalledWith("shop-1", "order-1", "refund");
     expect(res.restockedLines).toBe(2);
+    expect(res.restockError).toBeNull();
     const audit = h.insertAudit.mock.calls[0][2];
     expect(audit.params.restocked_lines).toBe(2);
+  });
+
+  it("a partial restock failure (some variants restocked, some not) surfaces restockError and params.restock_error while the refund still succeeds", async () => {
+    h.restockOrderLines.mockResolvedValue({ restockedLines: 1, failedVariantIds: ["v-bad"] });
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { sb } = makeSb(baseCfg());
+      const res = await executeRefundAction(
+        "shop-1",
+        { orderId: "order-1", idempotencyKey: "k15", restock: true },
+        sb,
+        { createRefund: h.createRefund },
+      );
+      expect(res.outcome).toBe("succeeded");
+      expect(res.restockedLines).toBe(1);
+      expect(res.restockError).toBe("restock failed for variants: v-bad");
+      const audit = h.insertAudit.mock.calls[0][2];
+      expect(audit.params.restocked_lines).toBe(1);
+      expect(audit.params.restock_error).toBe("restock failed for variants: v-bad");
+      expect(consoleErr).toHaveBeenCalled();
+    } finally {
+      consoleErr.mockRestore();
+    }
   });
 
   it("full refund + restock:false (or omitted) never calls restockOrderLines and returns 0", async () => {
@@ -414,6 +438,7 @@ describe("executeRefundAction — restock (full refunds only)", () => {
       );
       expect(res.outcome).toBe("succeeded");
       expect(res.restockedLines).toBe(0);
+      expect(res.restockError).toMatch(/deadlock/);
       const audit = h.insertAudit.mock.calls[0][2];
       expect(audit.params.restock_error).toMatch(/deadlock/);
       expect(consoleErr).toHaveBeenCalled();

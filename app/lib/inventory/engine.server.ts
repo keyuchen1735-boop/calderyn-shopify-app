@@ -121,9 +121,20 @@ export async function seedInitialStock(shopId: string, variantId: string, onHand
 // this is all-lines-or-nothing (per-line restock arrives with returns). Only
 // tracked variants restock (untracked lines never held ledger stock). Idempotent:
 // the ledger key restock:<order>:<variant> makes a replayed refund/cancel a no-op.
+//
+// PARTIAL-PROGRESS CONTRACT: each variant's inventory_restock RPC commits independently
+// (its own atomic Postgres function), so a failure on one variant midway through the loop
+// does NOT roll back the variants already restocked before it. Because the ledger key is
+// per-(order, variant), and the caller's refund idempotency key short-circuits on replay
+// (and, for a full refund, the order is already `refunded`), a later retry can never re-enter
+// this function for the same order. Throwing on the first failure would therefore both (a)
+// abandon the remaining variants forever and (b) tell the caller "0 restocked" when some
+// variants truly were restocked. So we keep going past a failed variant, log every failure
+// loudly, and report exactly what happened: how many lines succeeded and which variants
+// failed, so the caller can record a truthful, actionable audit trail.
 export async function restockOrderLines(
   shopId: string, orderId: string, reason: string,
-): Promise<{ restockedLines: number }> {
+): Promise<{ restockedLines: number; failedVariantIds: string[] }> {
   const sb = getSupabase();
   const { data: lines, error: lErr } = await sb
     .from("order_line")
@@ -136,7 +147,7 @@ export async function restockOrderLines(
     const v = String(l.variant_id);
     byVariant.set(v, (byVariant.get(v) ?? 0) + Number(l.quantity ?? 0));
   }
-  if (byVariant.size === 0) return { restockedLines: 0 };
+  if (byVariant.size === 0) return { restockedLines: 0, failedVariantIds: [] };
 
   const { data: variants, error: vErr } = await sb
     .from("variant_dim")
@@ -149,21 +160,32 @@ export async function restockOrderLines(
       .filter((r) => r.inventory_tracked === true)
       .map((r) => String(r.id)),
   );
-  if (tracked.size === 0) return { restockedLines: 0 };
+  if (tracked.size === 0) return { restockedLines: 0, failedVariantIds: [] };
 
   const locationId = await ensurePrimaryLocation(shopId);
   let restockedLines = 0;
+  const failedVariantIds: string[] = [];
   for (const [variantId, qty] of byVariant) {
     if (!tracked.has(variantId) || qty <= 0) continue;
     const { error } = await sb.rpc("inventory_restock", {
       p_shop_id: shopId, p_variant_id: variantId, p_location_id: locationId,
       p_qty: qty, p_idempotency_key: `restock:${orderId}:${variantId}`, p_reason: reason,
     });
-    if (error) throw error;
+    if (error) {
+      // Log loudly and keep going: this variant's RPC did not commit, but earlier variants in
+      // this same loop iteration already did (see the partial-progress contract above), so
+      // aborting here would silently strand them unreported.
+      console.error(
+        `[restock] inventory_restock failed for shop ${shopId} order ${orderId} variant ${variantId}:`,
+        error,
+      );
+      failedVariantIds.push(variantId);
+      continue;
+    }
     await projectLevelFact(shopId, variantId, locationId);
     restockedLines += 1;
   }
-  return { restockedLines };
+  return { restockedLines, failedVariantIds };
 }
 
 export async function adjustStock(shopId: string, variantId: string, locationId: string, newOnHand: number, reason?: string): Promise<void> {

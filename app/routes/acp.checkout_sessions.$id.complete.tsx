@@ -11,7 +11,7 @@ import { verifyAcpSignature } from "~/lib/commerce/acp/signature.server";
 import { getAcpSession, claimAcpSessionForCompletion, completeAcpSession, releaseAcpSessionClaim } from "~/lib/commerce/acp/session-store.server";
 import { getQuote } from "~/lib/commerce/quote-store.server";
 import { assertWithinCommerceCap } from "~/lib/commerce/guardrail.server";
-import { placeAgenticOrder, type PlaceResult } from "~/lib/commerce/order.server";
+import { placeAgenticOrder, OutOfStockError, type PlaceResult } from "~/lib/commerce/order.server";
 import { chargeSharedPaymentToken } from "~/lib/commerce/acp/charge.server";
 import { isSupportedCurrency } from "~/lib/payments/stripe.server";
 import { paymentsReadiness } from "~/lib/payments/connect.server";
@@ -89,6 +89,10 @@ export async function action({ request, params }: ActionFunctionArgs) {
     );
   } catch (err) {
     await releaseAcpSessionClaim(s.sessionId);
+    // One or more tracked lines sold out between quote and completion (mirrors the storefront
+    // checkout route's OutOfStockError -> 409 mapping): actionable for the caller instead of an
+    // opaque 500, and the claim above is already released so a retry with a fresh quote works.
+    if (err instanceof OutOfStockError) return json({ error: "OUT_OF_STOCK" }, { status: 409 });
     throw err;
   }
   try {

@@ -53,6 +53,7 @@ describe("restockOrderLines", () => {
   it("restocks only tracked lines, keyed idempotently per (order, variant)", async () => {
     const res = await restockOrderLines("shop-1", "o-1", "refund");
     expect(res.restockedLines).toBe(1);
+    expect(res.failedVariantIds).toEqual([]);
     expect(store.rpc).toHaveBeenCalledTimes(1);
     expect(store.rpc).toHaveBeenCalledWith("inventory_restock", {
       p_shop_id: "shop-1", p_variant_id: "v-tracked", p_location_id: "loc-1",
@@ -64,6 +65,36 @@ describe("restockOrderLines", () => {
     store.db.variant_dim.find((v) => v.id === "v-tracked")!.inventory_tracked = false;
     const res = await restockOrderLines("shop-1", "o-1", "refund");
     expect(res.restockedLines).toBe(0);
+    expect(res.failedVariantIds).toEqual([]);
     expect(store.rpc).not.toHaveBeenCalled();
+  });
+
+  it("continues past a failed variant's RPC instead of throwing, reporting partial progress", async () => {
+    // Two tracked variants; the RPC fails for v-bad but succeeds for v-good.
+    store.db.order_line.length = 0;
+    store.db.order_line.push(
+      { id: "ol-1", shop_id: "shop-1", order_id: "o-1", variant_id: "v-good", quantity: 1 },
+      { id: "ol-2", shop_id: "shop-1", order_id: "o-1", variant_id: "v-bad", quantity: 1 },
+    );
+    store.db.variant_dim.length = 0;
+    store.db.variant_dim.push(
+      { id: "v-good", shop_id: "shop-1", inventory_tracked: true },
+      { id: "v-bad", shop_id: "shop-1", inventory_tracked: true },
+    );
+    (store.rpc as unknown as { mockImplementation: (fn: (...args: unknown[]) => unknown) => void }).mockImplementation(
+      (...args: unknown[]) => {
+        const rpcArgs = args[1] as Record<string, unknown>;
+        if (rpcArgs.p_variant_id === "v-bad") return Promise.resolve({ data: null, error: { message: "deadlock" } });
+        return Promise.resolve({ data: null, error: null });
+      },
+    );
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await restockOrderLines("shop-1", "o-1", "refund");
+      expect(res).toEqual({ restockedLines: 1, failedVariantIds: ["v-bad"] });
+      expect(consoleErr).toHaveBeenCalled();
+    } finally {
+      consoleErr.mockRestore();
+    }
   });
 });

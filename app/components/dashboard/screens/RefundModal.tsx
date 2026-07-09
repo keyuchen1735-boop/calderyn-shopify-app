@@ -60,6 +60,9 @@ export default function RefundModal({
         `Refunded ${money(res.amountCents, order.currency)} — order is now ${res.orderState.replace("_", " ")}.${res.restockedLines > 0 ? " Items restocked." : ""}`,
         "check",
       );
+      if (res.restockError) {
+        app.toast("Refund issued, but some items could not be restocked. Check your inventory.", "warn");
+      }
       onDone();
       onClose();
     } catch (err) {

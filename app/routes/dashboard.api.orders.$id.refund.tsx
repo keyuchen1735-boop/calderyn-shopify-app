@@ -60,6 +60,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       refunded_total_cents: result.refundedTotalCents,
       captured_cents: result.capturedCents,
       restocked_lines: result.restockedLines,
+      restock_error: result.restockError,
     };
   });
 }

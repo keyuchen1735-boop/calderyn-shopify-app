@@ -6,7 +6,7 @@ import { getAgenticCatalog } from "~/lib/commerce/catalog.server";
 import { quoteCart } from "~/lib/commerce/quote.server";
 import { lockQuote, getQuote } from "~/lib/commerce/quote-store.server";
 import { assertWithinCommerceCap } from "~/lib/commerce/guardrail.server";
-import { placeAgenticOrder } from "~/lib/commerce/order.server";
+import { placeAgenticOrder, OutOfStockError } from "~/lib/commerce/order.server";
 import { createCommerceCheckoutSession } from "~/lib/commerce/stripe-checkout.server";
 import { paymentsReadiness } from "~/lib/payments/connect.server";
 import { sha256hex } from "~/lib/mcp_oauth.server";
@@ -103,7 +103,24 @@ export async function handleCommerceTool(name: string, input: Record<string, unk
         return { content: JSON.stringify({ code: "PAYMENTS_NOT_READY", message: "this store is not accepting payments yet; the merchant must finish Stripe onboarding" }), isError: true };
       }
       await assertWithinCommerceCap(ctx.clientId, q.totalCents); // rule 5: BEFORE placing
-      const placed = await placeAgenticOrder(ctx.shopId, q.quoteId, { email, phone: typeof input.phone === "string" && input.phone ? input.phone : null }, { protocol: "mcp", clientId: ctx.clientId });
+      let placed;
+      try {
+        placed = await placeAgenticOrder(ctx.shopId, q.quoteId, { email, phone: typeof input.phone === "string" && input.phone ? input.phone : null }, { protocol: "mcp", clientId: ctx.clientId });
+      } catch (err) {
+        // One or more tracked lines sold out between quoting and placing: mirror the
+        // QUOTE_EXPIRED shape so the assistant tells the buyer to re-quote instead of
+        // surfacing an opaque tool error (and without leaking internal variant ids).
+        if (err instanceof OutOfStockError) {
+          return {
+            content: JSON.stringify({
+              code: "OUT_OF_STOCK",
+              message: `${err.variantIds.length} item(s) in this order just sold out; create a new quote to see current availability.`,
+            }),
+            isError: true,
+          };
+        }
+        throw err;
+      }
       const session = await createCommerceCheckoutSession(ctx.shopId, { orderId: placed.orderId, totalCents: placed.totalCents, currency: placed.currency, confirmationToken: placed.confirmationToken }, readiness);
       return ok({ order_id: placed.orderId, pay_url: session.url, total_cents: placed.totalCents, currency: placed.currency, status: "awaiting_payment" });
     }

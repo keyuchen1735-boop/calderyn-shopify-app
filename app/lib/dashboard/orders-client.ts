@@ -30,6 +30,7 @@ export interface RefundResult {
   refundedTotalCents: number;
   capturedCents: number;
   restockedLines: number;
+  restockError: string | null;
 }
 
 /**
@@ -49,6 +50,7 @@ export async function refundOrder(
     refunded_total_cents: number;
     captured_cents: number;
     restocked_lines: number;
+    restock_error: string | null;
   }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/refund`, {
     amount_cents: args.amountCents,
     idempotency_key: args.idempotencyKey,
@@ -63,5 +65,6 @@ export async function refundOrder(
     refundedTotalCents: data.refunded_total_cents,
     capturedCents: data.captured_cents,
     restockedLines: data.restocked_lines,
+    restockError: data.restock_error,
   };
 }
