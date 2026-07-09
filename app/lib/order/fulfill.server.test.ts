@@ -203,6 +203,71 @@ describe("executeFulfillAction", () => {
     expect(h.insertAudit).not.toHaveBeenCalled();
   });
 
+  it("rejects a duplicate orderLineId in the same request with a 422-coded error, before any insert", async () => {
+    seedOrder("shop-1", "order-3b", "paid");
+    seedOrderLine("shop-1", "order-3b", "line-dup", 4);
+
+    await expect(
+      executeFulfillAction("shop-1", {
+        orderId: "order-3b",
+        lines: [
+          { orderLineId: "line-dup", quantity: 2 },
+          { orderLineId: "line-dup", quantity: 2 },
+        ],
+        notify: false,
+        idempotencyKey: "k3b",
+      }),
+    ).rejects.toMatchObject({ code: "duplicate_line", status: 422 });
+    expect(store.db.fulfillment).toHaveLength(0);
+    expect(store.db.fulfillment_line).toHaveLength(0);
+    expect(h.transitionOrder).not.toHaveBeenCalled();
+    expect(h.insertAudit).not.toHaveBeenCalled();
+  });
+
+  it("rejects a negative quantity with a 422-coded invalid_quantity error, before any insert", async () => {
+    seedOrder("shop-1", "order-3c", "paid");
+    seedOrderLine("shop-1", "order-3c", "line-neg", 4);
+
+    await expect(
+      executeFulfillAction("shop-1", {
+        orderId: "order-3c",
+        lines: [{ orderLineId: "line-neg", quantity: -1 }],
+        notify: false,
+        idempotencyKey: "k3c",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_quantity", status: 422 });
+    expect(store.db.fulfillment).toHaveLength(0);
+    expect(h.insertAudit).not.toHaveBeenCalled();
+  });
+
+  it("rejects a zero quantity with a 422-coded invalid_quantity error", async () => {
+    seedOrder("shop-1", "order-3d", "paid");
+    seedOrderLine("shop-1", "order-3d", "line-zero", 4);
+
+    await expect(
+      executeFulfillAction("shop-1", {
+        orderId: "order-3d",
+        lines: [{ orderLineId: "line-zero", quantity: 0 }],
+        notify: false,
+        idempotencyKey: "k3d",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_quantity", status: 422 });
+  });
+
+  it("rejects a non-integer quantity with a 422-coded invalid_quantity error", async () => {
+    seedOrder("shop-1", "order-3e", "paid");
+    seedOrderLine("shop-1", "order-3e", "line-frac", 4);
+
+    await expect(
+      executeFulfillAction("shop-1", {
+        orderId: "order-3e",
+        lines: [{ orderLineId: "line-frac", quantity: 1.5 }],
+        notify: false,
+        idempotencyKey: "k3e",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_quantity", status: 422 });
+  });
+
   it("rejects a foreign order-line id with a 409-coded error", async () => {
     seedOrder("shop-1", "order-4", "paid");
     seedOrderLine("shop-1", "order-4", "line-real", 2);

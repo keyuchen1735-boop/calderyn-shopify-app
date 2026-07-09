@@ -12,6 +12,18 @@
 // "Refund on cancel" means the order's disposition IS the refund, not two separate transitions.
 // The refund executor is called with a nested idempotency key (`<key>:refund`) so its own
 // idempotency/audit trail is independent of (but linked to) this action's.
+//
+// CRASH WINDOW (rule 12, same shape as fulfill.server.ts / refund.server.ts): the branches below
+// are several non-transactional PostgREST/RPC calls, not one atomic statement. cancelled_at/
+// cancel_reason is stamped IMMEDIATELY after each branch's state-changing call (transitionOrder,
+// or executeRefundAction in the refund branch) to shrink -- not close -- the window between the
+// money/state move and the audit tail. A crash inside that window (refund branch) leaves the order
+// refunded with cancelled_at still null; a retry of the SAME outer key would otherwise see a
+// non-cancellable state and 409. Instead the validation step detects a completed `<key>:refund`
+// execution and RESUMES: stamps cancelled_at, writes the outer audit row, sends no second refund,
+// and skips the buyer notice (at-most-once beats at-least-once here). Folding the stamp+audit into
+// the refund/transition RPC itself is the same GA upgrade transitionOrder's and
+// record_refund_ledger's headers already defer.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
@@ -56,6 +68,67 @@ async function loadOrderState(sb: SupabaseClient, shopId: string, orderId: strin
   return isOrderState(state) ? state : null;
 }
 
+/** Stamp cancelled_at + cancel_reason. Called IMMEDIATELY after each branch's state-changing step
+ *  (transitionOrder, or executeRefundAction in the refund branch) so the crash window between the
+ *  money/state move and this visible marker is as small as this non-transactional shape allows. */
+async function stampCancelled(
+  sb: SupabaseClient,
+  shopId: string,
+  orderId: string,
+  reason: string | null,
+): Promise<void> {
+  const stampRes = await sb
+    .from("orders")
+    .update({ cancelled_at: new Date().toISOString(), cancel_reason: reason })
+    .eq("shop_id", shopId)
+    .eq("id", orderId);
+  if (stampRes.error) throw stampRes.error;
+}
+
+/**
+ * Crash-resume for the refund branch (see module header). A prior call with this exact outer
+ * idempotencyKey already delegated to executeRefundAction -- proven by a completed `<key>:refund`
+ * execution -- and crashed before the cancelled_at stamp / outer audit row landed. The refund
+ * itself is done and money already moved, so this path only finishes the bookkeeping: it never
+ * calls executeRefundAction again (that would risk a double-refund), and it skips the buyer notice
+ * rather than resend it -- there's no way to prove the first attempt's notice landed or failed, and
+ * at-most-once is the safer default for a "your refund happened" email than a duplicate. Reached
+ * only when cancelled_at is still null (the already_cancelled guard above catches a completed one).
+ */
+async function resumeAfterRefundCrash(
+  sb: SupabaseClient,
+  shopId: string,
+  input: CancelActionInput,
+  orderState: OrderState,
+): Promise<CancelActionResult> {
+  const reason = input.reason ?? null;
+  await stampCancelled(sb, shopId, input.orderId, reason);
+
+  const audit = await insertAuditWithIdempotency(
+    shopId,
+    input.idempotencyKey,
+    {
+      alert_id: null,
+      action_kind: "cancel_order",
+      params: {
+        reason,
+        refund: true,
+        restock: input.restock,
+        resumed_after_refund_crash: true,
+      },
+      outcome: "succeeded",
+      pre_state: { state: orderState },
+      post_state: { state: orderState },
+      last_error: null,
+      actor_user_id: input.actor ?? "merchant",
+      write_target: "owned_sot",
+    },
+    sb,
+  );
+
+  return { auditId: audit.id, orderState, refunded: true, restockedLines: 0, replayed: false };
+}
+
 export async function executeCancelAction(
   shopId: string,
   input: CancelActionInput,
@@ -97,6 +170,16 @@ export async function executeCancelAction(
     throw new CalderynError({ code: "already_cancelled", status: 409, message: `Order ${input.orderId} is already cancelled.` });
   }
   if (!isOrderState(fromStateRaw) || !CANCELLABLE_STATES.has(fromStateRaw)) {
+    // Crash-resume check (Finding 2 / module header): a completed `<key>:refund` execution proves
+    // THIS cancel already ran the refund branch and moved the order to refunded/partially_refunded
+    // before crashing. Resume rather than 409 -- only reachable with cancelled_at still null, since
+    // the already_cancelled guard above short-circuits a completed stamp.
+    if (input.refund && isOrderState(fromStateRaw) && (fromStateRaw === "refunded" || fromStateRaw === "partially_refunded")) {
+      const priorRefund = await priorExecutionForKey(shopId, `${input.idempotencyKey}:refund`, sb);
+      if (priorRefund) {
+        return resumeAfterRefundCrash(sb, shopId, input, fromStateRaw);
+      }
+    }
     throw new CalderynError({
       code: "order_not_cancellable",
       status: 409,
@@ -122,6 +205,8 @@ export async function executeCancelAction(
     await releaseReservation(shopId, input.orderId);
     await transitionOrder(shopId, input.orderId, "cancelled", reason ?? "merchant:cancel");
     orderState = "cancelled";
+    // Stamp immediately after the state move (module header: shrink the crash window).
+    await stampCancelled(sb, shopId, input.orderId, reason);
     if (input.refund) params.refund_skipped = "not_captured";
   } else if (input.refund) {
     // 4. Paid/partially_fulfilled + refund requested: delegate to the refund executor, which moves
@@ -142,11 +227,17 @@ export async function executeCancelAction(
     refunded = true;
     restockedLines = refundResult.restockedLines;
     params.restockedLines = restockedLines;
+    // Stamp immediately after the refund delegate returns -- this is the crash window Finding 2 /
+    // the resume path above closes for: a crash between here and the audit tail is what a retry
+    // with the same outer key resumes from, above.
+    await stampCancelled(sb, shopId, input.orderId, reason);
   } else {
     // 5. Paid/partially_fulfilled, no refund: transition straight to cancelled; restock committed
     // stock on request (the refund branch above already handles restock for its own path).
     await transitionOrder(shopId, input.orderId, "cancelled", reason ?? "merchant:cancel");
     orderState = "cancelled";
+    // Stamp immediately after the state move (module header: shrink the crash window).
+    await stampCancelled(sb, shopId, input.orderId, reason);
     if (input.restock) {
       const r = await restockOrderLines(shopId, input.orderId, "cancel");
       restockedLines = r.restockedLines;
@@ -160,20 +251,10 @@ export async function executeCancelAction(
     }
   }
 
-  // 6. Stamp cancelled_at + cancel_reason on EVERY success path -- including the refund branch,
-  // where `state` already moved to refunded/partially_refunded but the merchant's cancel intent
-  // still needs a visible timestamp/reason distinct from the refund's own bookkeeping.
-  const stampRes = await sb
-    .from("orders")
-    .update({ cancelled_at: new Date().toISOString(), cancel_reason: reason })
-    .eq("shop_id", shopId)
-    .eq("id", input.orderId);
-  if (stampRes.error) throw stampRes.error;
-
-  // 7. Best-effort buyer notification (never throws).
+  // 6. Best-effort buyer notification (never throws).
   await sendCancellationNotice(shopId, input.orderId, { refunded });
 
-  // 8. One append-only audit row + idempotency marker.
+  // 7. One append-only audit row + idempotency marker.
   const audit = await insertAuditWithIdempotency(
     shopId,
     input.idempotencyKey,

@@ -141,9 +141,37 @@ export async function executeFulfillAction(
   // 4. Resolve requested lines against `remaining`.
   let resolved: ResolvedLine[];
   if (input.lines !== undefined) {
-    resolved = [];
+    // Duplicate-line guard: reject the request outright rather than silently merging two entries
+    // for the same order line -- merging would need the exact decrement-as-we-go logic below
+    // anyway, and a caller sending duplicates almost always indicates a client-side bug worth
+    // surfacing (422), not papering over.
+    const seenLineIds = new Set<string>();
     for (const req of input.lines) {
-      const rem = remaining.get(req.orderLineId);
+      if (seenLineIds.has(req.orderLineId)) {
+        throw new CalderynError({
+          code: "duplicate_line",
+          status: 422,
+          message: `Order line ${req.orderLineId} is requested more than once in the same fulfillment.`,
+        });
+      }
+      seenLineIds.add(req.orderLineId);
+    }
+
+    resolved = [];
+    // Working copy of `remaining`, decremented as each requested line is accepted. Belt-and-braces
+    // alongside the duplicate-line guard above: any future caller that merges duplicate lines
+    // before calling in (rather than rejecting them) still can't over-fulfil against a stale
+    // snapshot, since each accepted quantity is subtracted before the next line is checked.
+    const workingRemaining = new Map(remaining);
+    for (const req of input.lines) {
+      if (!Number.isInteger(req.quantity) || req.quantity <= 0) {
+        throw new CalderynError({
+          code: "invalid_quantity",
+          status: 422,
+          message: `Order line ${req.orderLineId} quantity must be a positive whole number (got ${req.quantity}).`,
+        });
+      }
+      const rem = workingRemaining.get(req.orderLineId);
       if (rem === undefined) {
         throw new CalderynError({
           code: "line_not_on_order",
@@ -158,7 +186,8 @@ export async function executeFulfillAction(
           message: `Order line ${req.orderLineId} has ${rem} remaining; cannot fulfill ${req.quantity}.`,
         });
       }
-      if (req.quantity > 0) resolved.push({ orderLineId: req.orderLineId, quantity: req.quantity });
+      workingRemaining.set(req.orderLineId, rem - req.quantity);
+      resolved.push({ orderLineId: req.orderLineId, quantity: req.quantity });
     }
     if (resolved.length === 0) {
       throw new CalderynError({

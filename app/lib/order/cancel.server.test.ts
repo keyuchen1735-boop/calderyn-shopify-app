@@ -239,6 +239,51 @@ describe("executeCancelAction", () => {
     ).rejects.toMatchObject({ code: "order_not_found", status: 404 });
   });
 
+  it("crash-resume: a completed '<key>:refund' execution resumes the stamp/audit instead of a misleading 409", async () => {
+    // Simulates a prior call that ran the refund branch (money moved, order -> refunded) and
+    // crashed before the cancelled_at stamp / outer audit row landed. cancelled_at is still null.
+    seedOrder("shop-1", "order-9", "refunded");
+    h.prior.mockImplementation(async (_shopId: string, key: string) => {
+      if (key === "k9:refund") return { id: "raudit-9", outcome: "succeeded" };
+      return null;
+    });
+
+    const res = await executeCancelAction("shop-1", {
+      orderId: "order-9",
+      reason: "buyer changed mind",
+      refund: true,
+      restock: false,
+      idempotencyKey: "k9",
+    });
+
+    expect(h.executeRefundAction).not.toHaveBeenCalled();
+    expect(res.replayed).toBe(false);
+    expect(res.orderState).toBe("refunded");
+    expect(res.refunded).toBe(true);
+    expect(store.db.orders[0].cancelled_at).toBeTruthy();
+    expect(store.db.orders[0].cancel_reason).toBe("buyer changed mind");
+    expect(h.insertAudit).toHaveBeenCalledTimes(1);
+    const audit = h.insertAudit.mock.calls[0][2];
+    expect(audit.params.resumed_after_refund_crash).toBe(true);
+    expect(h.sendCancellationNotice).not.toHaveBeenCalled();
+  });
+
+  it("state refunded with NO prior '<key>:refund' execution is still refused with 409 order_not_cancellable", async () => {
+    seedOrder("shop-1", "order-10", "refunded");
+    h.prior.mockResolvedValue(null);
+
+    await expect(
+      executeCancelAction("shop-1", {
+        orderId: "order-10",
+        refund: true,
+        restock: false,
+        idempotencyKey: "k10",
+      }),
+    ).rejects.toMatchObject({ code: "order_not_cancellable", status: 409 });
+    expect(h.executeRefundAction).not.toHaveBeenCalled();
+    expect(h.insertAudit).not.toHaveBeenCalled();
+  });
+
   it("replay: returns replayed:true without acting again", async () => {
     h.prior.mockResolvedValue({ id: "audit-9", outcome: "succeeded" });
     seedOrder("shop-1", "order-7", "refunded");
