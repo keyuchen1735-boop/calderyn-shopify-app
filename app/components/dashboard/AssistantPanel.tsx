@@ -182,6 +182,8 @@ export default function AssistantPanel({
           role: "user",
           content: text,
           draftedAction: null,
+          receipts: [],
+          pendingAction: null,
           createdAt: new Date().toISOString(),
         },
       ]);
