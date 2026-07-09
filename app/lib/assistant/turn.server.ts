@@ -67,7 +67,10 @@ export async function runConversationTurn(
       model: assistantModel(),
       system: buildSystemPrompt(snapshot),
       tools: ASSISTANT_TOOLS,
-      dispatchTool: makeToolDispatcher(client, input.deps),
+      dispatchTool: makeToolDispatcher(client, {
+        ...input.deps,
+        actionCtx: { shopId: shopDomain, conversationId },
+      }),
       history,
       userMessage: message,
     });
@@ -86,6 +89,8 @@ export async function runConversationTurn(
     role: "assistant",
     content: result.text,
     draftedAction: result.draftedAction,
+    receipts: result.receipts,
+    pendingAction: result.pendingAction,
   });
 
   return { conversationId, assistantMessage };
