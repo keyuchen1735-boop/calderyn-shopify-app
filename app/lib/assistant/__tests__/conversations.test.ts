@@ -104,3 +104,26 @@ describe("conversations.server shop scoping", () => {
     expect(store["assistant_messages"] ?? []).toHaveLength(0);
   });
 });
+
+describe("conversations.server receipts and pending_action", () => {
+  it("persists and returns receipts and pending_action on assistant messages", async () => {
+    const convId = await createConversation("a.myshopify.com", "Test");
+    const msg = await appendMessage("a.myshopify.com", convId, {
+      role: "assistant",
+      content: "Done.",
+      receipts: [{ action: "pause_campaign", summary: 'Paused "X"', auditId: "a1", undoable: true }],
+      pendingAction: null,
+    });
+    expect(msg.receipts).toHaveLength(1);
+    expect(msg.receipts[0].auditId).toBe("a1");
+    expect(msg.pendingAction).toBeNull();
+  });
+
+  it("defaults receipts to [] and pendingAction to null on legacy rows", async () => {
+    const convId = await createConversation("a.myshopify.com", "Test");
+    await appendMessage("a.myshopify.com", convId, { role: "user", content: "hi" });
+    const msgs = await getMessages("a.myshopify.com", convId);
+    expect(msgs[0].receipts).toEqual([]);
+    expect(msgs[0].pendingAction).toBeNull();
+  });
+});
