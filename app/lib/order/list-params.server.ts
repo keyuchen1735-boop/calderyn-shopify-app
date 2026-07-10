@@ -4,11 +4,7 @@
 // change validation here, not in either route.
 import { jsonError } from "~/lib/dashboard/http.server";
 import type { OrdersListParams } from "./unified-list-types";
-
-const FULFILLMENT_STATUSES = new Set(["unfulfilled", "partially_fulfilled", "fulfilled"]);
-const SOURCES = new Set(["calderyn", "shopify"]);
-const SORTS = new Set(["date", "total", "customer"]);
-const DIRS = new Set(["asc", "desc"]);
+import { FULFILLMENT_STATUSES, SOURCES, SORTS, DIRS } from "./list-vocab";
 
 /** True for a value ISO-parseable by Date.parse — same permissive-ISO acceptance the rest of the
  *  codebase uses for date query params (no stricter regex; Postgres/PostgREST are the real gate). */

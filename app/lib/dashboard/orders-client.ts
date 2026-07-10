@@ -1,6 +1,6 @@
 // Client fetchers for the owned-orders dashboard surface. Kept in its own
 // module (not client.ts) so parallel surface work never collides on one file.
-import { apiGet, apiSend } from "./client";
+import { apiGet, apiSend, DashboardApiError } from "./client";
 import type {
   OrderRow,
   DraftCartRow,
@@ -285,20 +285,70 @@ function mapBulkResults(rows: BulkResultWire[]): BulkResultVM[] {
   return rows.map((r) => ({ orderId: r.order_id, ok: r.ok, error: r.error }));
 }
 
+// The orders list's page size is 50 (fetchOrdersList's default limit), so "select all on this
+// page" can hand these functions up to 50 ids — but the server-side bulk routes cap a single
+// request at MAX_BULK_ORDERS = 25 (app/lib/order/bulk.server.ts) and 422 the WHOLE request over
+// that, taking the entire selection down with it. Chunk into slices of at most this size and send
+// them one at a time (never Promise.all) so a full-page bulk action never doubles the server's
+// intended concurrent load.
+const BULK_CHUNK_SIZE = 25;
+
+/** Split `items` into consecutive slices of at most `size` elements each. */
+export function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+/** Run a bulk-action sender over `orderIds` in <=BULK_CHUNK_SIZE slices, SEQUENTIALLY (each slice
+ *  awaited before the next is sent), concatenating every slice's `results` into one flat array so
+ *  callers see the same shape they would from a single request.
+ *
+ *  A single request's per-order failures are already captured inside its `results` (that's
+ *  runBulkOrderAction's whole design, server-side) and never throw. But now that one logical bulk
+ *  action can span 2-3 HTTP requests, a WHOLE chunk can still reject outright (network blip,
+ *  expired session, a 5xx) after one or more earlier chunks already succeeded. Losing those
+ *  already-applied results by letting the rejection propagate would both discard real work from
+ *  the caller's summary AND skip its post-action refetch, leaving the screen showing stale data
+ *  for orders that in fact changed. So a chunk-level rejection is caught here and downgraded to
+ *  per-order `ok:false` entries for just that slice — the same "partial failure is normal, never
+ *  a whole-request throw" contract runBulkOrderAction already guarantees within one request. */
+async function runBulkInChunks(
+  orderIds: string[],
+  send: (slice: string[]) => Promise<{ results: BulkResultVM[] }>,
+): Promise<{ results: BulkResultVM[] }> {
+  const results: BulkResultVM[] = [];
+  for (const slice of chunk(orderIds, BULK_CHUNK_SIZE)) {
+    try {
+      const { results: sliceResults } = await send(slice);
+      results.push(...sliceResults);
+    } catch (err) {
+      const message = err instanceof DashboardApiError ? err.message : "Something went wrong.";
+      for (const orderId of slice) results.push({ orderId, ok: false, error: message });
+    }
+  }
+  return { results };
+}
+
 /** Fulfill every selected order in full (no per-order lines/tracking/carrier — that stays a
  *  single-order-only refinement). Native orders only; imported (shopify:) ids 422 the whole
- *  request. `idempotencyKey` is the outer key — the server derives one per order internally. */
+ *  request. `idempotencyKey` is the outer key — the server derives one per order internally, so
+ *  reusing it across chunked requests below is safe (each order still gets its own derived key). */
 export async function bulkFulfillOrders(
   orderIds: string[],
   notify: boolean,
   idempotencyKey: string,
 ): Promise<{ results: BulkResultVM[] }> {
-  const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/fulfill", {
-    order_ids: orderIds,
-    notify,
-    idempotency_key: idempotencyKey,
+  return runBulkInChunks(orderIds, async (slice) => {
+    const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/fulfill", {
+      order_ids: slice,
+      notify,
+      idempotency_key: idempotencyKey,
+    });
+    return { results: mapBulkResults(data.results) };
   });
-  return { results: mapBulkResults(data.results) };
 }
 
 /** Archive or unarchive every selected order. Native orders only. */
@@ -306,11 +356,13 @@ export async function bulkArchiveOrders(
   orderIds: string[],
   archived: boolean,
 ): Promise<{ results: BulkResultVM[] }> {
-  const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/archive", {
-    order_ids: orderIds,
-    archived,
+  return runBulkInChunks(orderIds, async (slice) => {
+    const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/archive", {
+      order_ids: slice,
+      archived,
+    });
+    return { results: mapBulkResults(data.results) };
   });
-  return { results: mapBulkResults(data.results) };
 }
 
 /** Add tags to every selected order WITHOUT removing any tag already there (additive, never the
@@ -319,9 +371,11 @@ export async function bulkAddOrderTags(
   orderIds: string[],
   addTags: string[],
 ): Promise<{ results: BulkResultVM[] }> {
-  const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/tags", {
-    order_ids: orderIds,
-    add_tags: addTags,
+  return runBulkInChunks(orderIds, async (slice) => {
+    const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/tags", {
+      order_ids: slice,
+      add_tags: addTags,
+    });
+    return { results: mapBulkResults(data.results) };
   });
-  return { results: mapBulkResults(data.results) };
 }

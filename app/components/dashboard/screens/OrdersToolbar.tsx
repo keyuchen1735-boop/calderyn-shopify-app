@@ -2,13 +2,50 @@ import { useState } from "react";
 import { Btn } from "../ui";
 import { CDIcon } from "../icons";
 import type { OrderViewVM, OrdersListParams } from "~/lib/dashboard/orders-client";
-import { SYSTEM_VIEWS } from "./orders-list-state";
+import { SYSTEM_VIEWS, type ListFilterPatch } from "./orders-list-state";
 
 const SORT_OPTIONS: { value: NonNullable<OrdersListParams["sort"]>; label: string }[] = [
   { value: "date", label: "Date" },
   { value: "total", label: "Total" },
   { value: "customer", label: "Customer" },
 ];
+
+// Single-select payment-status options — the underlying filter is a string[] (a saved view or a
+// future multi-select could carry more than one), but the toolbar only ever picks one at a time.
+const PAYMENT_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Any" },
+  { value: "paid", label: "Paid" },
+  { value: "pending", label: "Pending" },
+  { value: "authorized", label: "Authorized" },
+  { value: "partially_paid", label: "Partially paid" },
+  { value: "partially_refunded", label: "Partially refunded" },
+  { value: "refunded", label: "Refunded" },
+];
+
+const FULFILLMENT_STATUS_OPTIONS: { value: NonNullable<OrdersListParams["fulfillmentStatus"]> | ""; label: string }[] = [
+  { value: "", label: "Any" },
+  { value: "unfulfilled", label: "Unfulfilled" },
+  { value: "partially_fulfilled", label: "Partially fulfilled" },
+  { value: "fulfilled", label: "Fulfilled" },
+];
+
+const SOURCE_OPTIONS: { value: NonNullable<OrdersListParams["source"]> | ""; label: string }[] = [
+  { value: "", label: "All sources" },
+  { value: "calderyn", label: "Calderyn" },
+  { value: "shopify", label: "Shopify" },
+];
+
+/** `dateTo` end-of-day ISO for a same-day range to actually match: an <input type="date"> only
+ *  ever gives a bare "YYYY-MM-DD", which as a start-of-day ISO would exclude every order placed
+ *  later that same day. Stamping 23:59:59.999Z makes "from today to today" cover the whole day. */
+function dateToEndOfDayIso(raw: string): string | undefined {
+  return raw ? `${raw}T23:59:59.999Z` : undefined;
+}
+
+/** ISO datetime -> the bare "YYYY-MM-DD" an <input type="date"> can display. */
+function isoToDateInputValue(iso: string | undefined): string {
+  return iso ? iso.slice(0, 10) : "";
+}
 
 /** Orders screen toolbar (Phase 2 Task 6): search, sort, Export CSV, and the view-tab row
  *  (system tabs + saved views). A pure display/controlled component — Orders.tsx owns every bit
@@ -27,6 +64,12 @@ export default function OrdersToolbar({
   canSaveView,
   onSaveView,
   exportHref,
+  paymentStatus,
+  fulfillmentStatus,
+  source,
+  dateFrom,
+  dateTo,
+  onFilterChange,
 }: {
   view: string;
   savedViews: OrderViewVM[];
@@ -41,6 +84,12 @@ export default function OrdersToolbar({
   canSaveView: boolean;
   onSaveView: (name: string) => void;
   exportHref: string;
+  paymentStatus?: string[];
+  fulfillmentStatus?: OrdersListParams["fulfillmentStatus"];
+  source?: OrdersListParams["source"];
+  dateFrom?: string;
+  dateTo?: string;
+  onFilterChange: (patch: ListFilterPatch) => void;
 }) {
   const [savingName, setSavingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
@@ -87,6 +136,74 @@ export default function OrdersToolbar({
         <Btn small icon="download" onClick={() => window.open(exportHref, "_blank")}>
           Export CSV
         </Btn>
+      </div>
+
+      <div className="flex items-center gap-2.5" style={{ marginTop: 8, flexWrap: "wrap" }}>
+        <select
+          className="cd-input"
+          aria-label="Payment status"
+          value={paymentStatus?.[0] ?? ""}
+          onChange={(e) => onFilterChange({ paymentStatus: e.target.value ? [e.target.value] : undefined })}
+          style={{ width: "auto" }}
+        >
+          {PAYMENT_STATUS_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="cd-input"
+          aria-label="Fulfillment status"
+          title="Shopify-imported orders are excluded when this filter is set"
+          value={fulfillmentStatus ?? ""}
+          onChange={(e) =>
+            onFilterChange({
+              fulfillmentStatus: (e.target.value || undefined) as OrdersListParams["fulfillmentStatus"],
+            })
+          }
+          style={{ width: "auto" }}
+        >
+          {FULFILLMENT_STATUS_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <select
+          className="cd-input"
+          aria-label="Order source"
+          value={source ?? ""}
+          onChange={(e) =>
+            onFilterChange({ source: (e.target.value || undefined) as OrdersListParams["source"] })
+          }
+          style={{ width: "auto" }}
+        >
+          {SOURCE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <div className="flex items-center gap-1.5">
+          <input
+            className="cd-input"
+            type="date"
+            aria-label="Date from"
+            value={isoToDateInputValue(dateFrom)}
+            onChange={(e) => onFilterChange({ dateFrom: e.target.value || undefined })}
+            style={{ width: "auto" }}
+          />
+          <span className="cd-caption">to</span>
+          <input
+            className="cd-input"
+            type="date"
+            aria-label="Date to"
+            value={isoToDateInputValue(dateTo)}
+            onChange={(e) => onFilterChange({ dateTo: dateToEndOfDayIso(e.target.value) })}
+            style={{ width: "auto" }}
+          />
+        </div>
       </div>
 
       <div className="flex items-center gap-2" style={{ marginTop: 10, flexWrap: "wrap" }}>

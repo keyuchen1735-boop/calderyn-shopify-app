@@ -5,6 +5,15 @@
 import { getSupabase } from "~/lib/supabase.server";
 import type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage } from "./unified-list-types";
 
+/** Escape ILIKE metacharacters in free-text search before it reaches the RPC, so a merchant
+ *  literally searching for e.g. "50% off" or "rush_order" gets that text matched exactly instead
+ *  of `%`/`_` being treated as SQL wildcards. Backslash must be escaped FIRST — escaping it after
+ *  `%`/`_` would double-escape the backslashes those two replacements just inserted. Postgres's
+ *  default LIKE/ILIKE escape character is backslash, matching this order. */
+export function escapeLikeMetacharacters(search: string): string {
+  return search.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 export async function listOrdersUnified(shopId: string, params: OrdersListParams): Promise<UnifiedOrdersPage> {
   if (!shopId) throw new Error("shopId is required");
 
@@ -14,7 +23,7 @@ export async function listOrdersUnified(shopId: string, params: OrdersListParams
 
   const { data, error } = await getSupabase().rpc("list_orders_unified", {
     p_shop_id: shopId,
-    p_search: params.search ?? null,
+    p_search: params.search ? escapeLikeMetacharacters(params.search) : null,
     p_payment_status: params.paymentStatus ?? null,
     p_fulfillment_status: params.fulfillmentStatus ?? null,
     p_source: params.source ?? null,

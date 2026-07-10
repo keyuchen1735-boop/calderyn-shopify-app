@@ -29,8 +29,9 @@ import { fulfillmentBadge, paymentPillStyle, REFUNDABLE_ORDER_STATES } from "./o
 import {
   isSystemView,
   paramsToViewFilters,
-  systemViewParams,
+  stateToParams,
   viewFiltersToParams,
+  type ListFilterPatch,
   type ListState,
 } from "./orders-list-state";
 
@@ -104,14 +105,6 @@ function unifiedRowToDisplayOrder(row: UnifiedOrderRow): DisplayOrder {
           }
         : null,
   };
-}
-
-/** The system tab's fixed filters, or a saved view's stored filters decoded back to
- *  OrdersListParams. Unknown/removed saved-view id resolves to no extra filters (same as "all"). */
-function resolveViewFilters(view: string, savedViews: OrderViewVM[]): Partial<OrdersListParams> {
-  if (isSystemView(view)) return systemViewParams(view);
-  const saved = savedViews.find((v) => v.id === view);
-  return saved ? viewFiltersToParams(saved.filters) : {};
 }
 
 function UnifiedOrdersList({
@@ -220,7 +213,9 @@ function UnifiedOrdersList({
                   aria-label={`Select order ${r.ref}`}
                 />
               ) : (
-                <span className="cd-caption">—</span>
+                // Imported (Shopify) rows aren't bulk-selectable — an empty span keeps the grid
+                // column aligned without a stray placeholder glyph in a screen reader's way.
+                <span className="cd-caption" aria-hidden="true" />
               )}
             </div>
             <div>
@@ -343,29 +338,37 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     };
   }, []);
 
-  const effectiveParams = useMemo<OrdersListParams>(() => {
-    const viewFilters = resolveViewFilters(state.view, savedViews);
-    return {
-      ...viewFilters,
-      search: state.search || undefined,
-      sort: state.sort,
-      dir: state.dir,
-      offset: state.offset,
-    };
-  }, [state.view, state.search, state.sort, state.dir, state.offset, savedViews]);
+  const effectiveParams = useMemo<OrdersListParams>(
+    () => stateToParams(state, savedViews),
+    [state, savedViews],
+  );
 
-  // Only the bare "all" tab, no search, first page, default sort seeds from + writes through the
-  // screen cache — any other combination is a live fetch (never cached), so a saved filter never
-  // paints stale data from a totally different view.
+  // Whether any of the manually-picked toolbar filter controls (Fix 3) carry a value — used both
+  // to widen isDefaultView/isPlainSystemTab below and to gate the Save view button.
+  const hasManualFilters =
+    !!state.paymentStatus?.length ||
+    !!state.fulfillmentStatus ||
+    !!state.source ||
+    !!state.dateFrom ||
+    !!state.dateTo;
+
+  // Only the bare "all" tab, no search, first page, default sort, no manual filter controls seeds
+  // from + writes through the screen cache — any other combination is a live fetch (never
+  // cached), so a saved filter never paints stale data from a totally different view.
   const isDefaultView =
     state.view === "all" &&
     !state.search &&
     state.offset === 0 &&
     state.sort === undefined &&
-    state.dir === undefined;
+    state.dir === undefined &&
+    !hasManualFilters;
   const isArchivedView = effectiveParams.archived === true;
   const isPlainSystemTab =
-    isSystemView(state.view) && !state.search && state.sort === undefined && state.dir === undefined;
+    isSystemView(state.view) &&
+    !state.search &&
+    state.sort === undefined &&
+    state.dir === undefined &&
+    !hasManualFilters;
   const canSaveView = !isPlainSystemTab;
 
   const loadOrdersList = useCallback(
@@ -374,7 +377,17 @@ export default function Orders({ app }: { app: DashboardCtx }) {
       fetchOrdersList(params)
         .then((p) => {
           if (isDefault) cacheScreenData(SCREEN_CACHE_KEYS.ordersList, p);
-          if (!signal || signal.alive) setOrdersListPage(p);
+          if (signal && !signal.alive) return;
+          setOrdersListPage(p);
+          // Offset stranded past the end of the (now-shrunk) result set — e.g. bulk-archiving
+          // every order on the last page of a filtered view. Step back one page and let the
+          // effect below refetch, rather than showing a dead "no orders" empty state the merchant
+          // has to manually back out of. Guarded to only ever step toward 0 (never below it), and
+          // only fires when we're actually past the first page, so a genuinely empty view (offset
+          // already 0) can't loop.
+          if (p.rows.length === 0 && p.offset > 0) {
+            setState((s) => ({ ...s, offset: Math.max(0, p.offset - p.limit) }));
+          }
         })
         .catch((err: unknown) => {
           if (signal && !signal.alive) return;
@@ -414,6 +427,11 @@ export default function Orders({ app }: { app: DashboardCtx }) {
         ...s,
         view: next,
         search: filters.search ?? "",
+        paymentStatus: filters.paymentStatus,
+        fulfillmentStatus: filters.fulfillmentStatus,
+        source: filters.source,
+        dateFrom: filters.dateFrom,
+        dateTo: filters.dateTo,
         sort: filters.sort,
         dir: filters.dir,
         offset: 0,
@@ -421,6 +439,21 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     },
     [savedViews],
   );
+
+  // Fix 3's simplest-coherent rule: a saved view is a single frozen filter preset, so the moment
+  // the merchant touches one of the manual toolbar filter controls while a saved view is active,
+  // fall back to the "all" baseline with that one filter now applied on top of it — rather than
+  // silently mutating the saved view's own stored filters, or leaving the control's edit inert.
+  // System tabs don't need this: stateToParams already lets a system tab's own dimension win over
+  // a manual control on that same dimension, so touching an unrelated filter there just composes.
+  const updateFilter = useCallback((patch: ListFilterPatch) => {
+    setState((s) => ({
+      ...s,
+      ...patch,
+      view: isSystemView(s.view) ? s.view : "all",
+      offset: 0,
+    }));
+  }, []);
 
   const saveCurrentView = useCallback(
     async (name: string) => {
@@ -494,7 +527,10 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   }, [selectableIds]);
 
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [notifyOnFulfill, setNotifyOnFulfill] = useState(true);
+  // Defaults OFF: a bulk fulfill can send up to 25 shipping-confirmation emails on one click, so
+  // opt-in beats opt-out here. The single-order FulfillModal is a deliberate, reviewed action on
+  // one order at a time, so it keeps its own default of ON.
+  const [notifyOnFulfill, setNotifyOnFulfill] = useState(false);
   const [bulkTagInput, setBulkTagInput] = useState("");
 
   const summarizeBulk = useCallback(
@@ -633,6 +669,12 @@ export default function Orders({ app }: { app: DashboardCtx }) {
             canSaveView={canSaveView}
             onSaveView={saveCurrentView}
             exportHref={exportHref}
+            paymentStatus={state.paymentStatus}
+            fulfillmentStatus={state.fulfillmentStatus}
+            source={state.source}
+            dateFrom={state.dateFrom}
+            dateTo={state.dateTo}
+            onFilterChange={updateFilter}
           />
 
           {selected.size > 0 && (

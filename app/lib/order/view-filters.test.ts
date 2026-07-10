@@ -72,4 +72,30 @@ describe("isValidViewFilters", () => {
     const items = Array(10).fill("short");
     expect(isValidViewFilters({ tag: items })).toEqual({ tag: items });
   });
+
+  it("rejects an out-of-vocabulary fulfillment_status", () => {
+    expect(isValidViewFilters({ fulfillment_status: "shipped" })).toBeNull();
+  });
+
+  it("accepts every in-vocabulary fulfillment_status", () => {
+    for (const v of ["unfulfilled", "partially_fulfilled", "fulfilled"]) {
+      expect(isValidViewFilters({ fulfillment_status: v })).toEqual({ fulfillment_status: v });
+    }
+  });
+
+  it("rejects an out-of-vocabulary source", () => {
+    expect(isValidViewFilters({ source: "amazon" })).toBeNull();
+  });
+
+  it("rejects an out-of-vocabulary sort", () => {
+    expect(isValidViewFilters({ sort: "weight" })).toBeNull();
+  });
+
+  it("rejects an out-of-vocabulary dir", () => {
+    expect(isValidViewFilters({ dir: "sideways" })).toBeNull();
+  });
+
+  it("rejects a non-string value for a vocabulary-restricted key", () => {
+    expect(isValidViewFilters({ sort: true })).toBeNull();
+  });
 });

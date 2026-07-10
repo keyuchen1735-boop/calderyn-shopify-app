@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   isSystemView,
   paramsToViewFilters,
+  resolveViewFilters,
+  stateToParams,
   systemViewParams,
   viewFiltersToParams,
+  type ListState,
 } from "../orders-list-state";
+import type { OrderViewVM } from "~/lib/dashboard/orders-client";
 
 describe("systemViewParams", () => {
   it("maps unfulfilled to a fulfillment_status filter", () => {
@@ -105,5 +109,62 @@ describe("paramsToViewFilters", () => {
 
   it("omits undefined/empty fields", () => {
     expect(paramsToViewFilters({ paymentStatus: [], search: undefined })).toEqual({});
+  });
+});
+
+const baseState: ListState = {
+  view: "all",
+  search: "",
+  sort: undefined,
+  dir: undefined,
+  offset: 0,
+};
+
+describe("resolveViewFilters", () => {
+  it("resolves a system tab to its fixed filters", () => {
+    expect(resolveViewFilters("unfulfilled", [])).toEqual({ fulfillmentStatus: "unfulfilled" });
+  });
+
+  it("resolves a known saved-view id to its decoded filters", () => {
+    const savedViews: OrderViewVM[] = [
+      { id: "v1", name: "VIP", filters: { source: "shopify" }, position: 0 },
+    ];
+    expect(resolveViewFilters("v1", savedViews)).toEqual({ source: "shopify" });
+  });
+
+  it("resolves an unknown saved-view id to no extra filters", () => {
+    expect(resolveViewFilters("stale-id", [])).toEqual({});
+  });
+});
+
+describe("stateToParams", () => {
+  it("passes manual filters through untouched on the 'all' view", () => {
+    const state: ListState = { ...baseState, source: "shopify", dateFrom: "2026-01-01" };
+    expect(stateToParams(state, [])).toEqual(
+      expect.objectContaining({ source: "shopify", dateFrom: "2026-01-01" }),
+    );
+  });
+
+  it("a system tab's own filter dimension overrides a manual control on that same dimension", () => {
+    const state: ListState = { ...baseState, view: "unfulfilled", fulfillmentStatus: "fulfilled" };
+    expect(stateToParams(state, []).fulfillmentStatus).toBe("unfulfilled");
+  });
+
+  it("a system tab leaves every OTHER manual filter dimension untouched", () => {
+    const state: ListState = { ...baseState, view: "unfulfilled", source: "shopify" };
+    const params = stateToParams(state, []);
+    expect(params.fulfillmentStatus).toBe("unfulfilled");
+    expect(params.source).toBe("shopify");
+  });
+
+  it("search/sort/dir/offset always come from live state, even when a saved view stores its own", () => {
+    const savedViews: OrderViewVM[] = [
+      { id: "v1", name: "Saved", filters: { sort: "total", dir: "asc" }, position: 0 },
+    ];
+    const state: ListState = { ...baseState, view: "v1", sort: "customer", dir: "desc", offset: 50 };
+    const params = stateToParams(state, savedViews);
+    expect(params.sort).toBe("customer");
+    expect(params.dir).toBe("desc");
+    expect(params.offset).toBe(50);
   });
 });

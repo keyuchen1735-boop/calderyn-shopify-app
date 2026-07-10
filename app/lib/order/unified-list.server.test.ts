@@ -12,7 +12,7 @@ vi.mock("~/lib/supabase.server", () => ({
 }));
 
 // eslint-disable-next-line import/first -- import must follow vi.mock so the supabase fake is registered first
-import { listOrdersUnified } from "./unified-list.server";
+import { listOrdersUnified, escapeLikeMetacharacters } from "./unified-list.server";
 
 beforeEach(() => {
   store.rpc.mockReset();
@@ -198,6 +198,21 @@ describe("listOrdersUnified", () => {
     expect(result.totalCount).toBe(150); // From first row's full_count
     expect(result.rows[0].source).toBe("calderyn");
     expect(result.rows[1].source).toBe("shopify");
+  });
+
+  it("escapes ILIKE metacharacters in search so a literal % is matched literally", async () => {
+    store.rpc.mockResolvedValue({ data: [], error: null });
+
+    await listOrdersUnified("shop-1", { search: "50% off_deal" });
+
+    expect(store.rpc).toHaveBeenCalledWith(
+      "list_orders_unified",
+      expect.objectContaining({ p_search: "50\\% off\\_deal" }),
+    );
+  });
+
+  it("escapes a literal backslash before % and _ so it isn't double-escaped", () => {
+    expect(escapeLikeMetacharacters("50\\%")).toBe("50\\\\\\%");
   });
 
   it("clamps limit to 1000 and reports clamped value in returned page", async () => {
