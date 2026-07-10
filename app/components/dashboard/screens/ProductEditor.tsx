@@ -22,6 +22,8 @@ function variantLabel(v: client.VariantDraft): string {
   return (v.optionValues ?? []).join(" / ") || "Default";
 }
 
+type MediaVM = client.ProductDetailVM["media"][number];
+
 function parseRestrictedCountries(text: string): string[] {
   return text
     .split(",")
@@ -54,7 +56,7 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
   const [category, setCategory] = useState<string | null>(null);
   const [options, setOptions] = useState<Opt[]>([]);
   const [variants, setVariants] = useState<client.VariantDraft[]>([{ optionValues: [] }]);
-  const [media, setMedia] = useState<Array<{ id: string; url: string; isPrimary: boolean }>>([]);
+  const [media, setMedia] = useState<MediaVM[]>([]);
   const [collections, setCollections] = useState<client.CollectionVM[]>([]);
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [loading, setLoading] = useState(Boolean(id));
@@ -116,9 +118,56 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
     if (!id) return;
     try {
       const m = await client.uploadProductImage(id, file);
-      setMedia((cur) => [...cur, { id: m.id, url: m.url, isPrimary: cur.length === 0 }]);
+      // Mirror the server's placement: the new image lands last (position = count
+      // of images shown here) and is primary only when it is the first one.
+      setMedia((cur) => [...cur, { id: m.id, url: m.url, isPrimary: cur.length === 0, alt: null, position: cur.length }]);
     } catch (err) {
       app.toast(err instanceof DashboardApiError ? err.message : "Upload failed.", "warn", "critical");
+    }
+  };
+
+  // Media management handlers are optimistic (the gallery reflects the intent
+  // immediately) and roll back to the pre-call snapshot + toast on failure.
+  const onMakeMain = async (mediaId: string) => {
+    const snapshot = media;
+    setMedia((cur) => cur.map((m) => ({ ...m, isPrimary: m.id === mediaId })));
+    try {
+      await client.setPrimaryProductImage(mediaId);
+    } catch (err) {
+      setMedia(snapshot);
+      app.toast(err instanceof DashboardApiError ? err.message : "Couldn't set the main image.", "warn", "critical");
+    }
+  };
+
+  const onMoveImage = async (mediaId: string, dir: "up" | "down") => {
+    const snapshot = media;
+    // Same reorder rule as the server: swap with the neighbor in position order,
+    // then renumber by index so duplicate legacy positions self-heal.
+    const ordered = [...media].sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
+    const idx = ordered.findIndex((m) => m.id === mediaId);
+    const j = dir === "up" ? idx - 1 : idx + 1;
+    if (idx < 0 || j < 0 || j >= ordered.length) return; // edge — nothing to swap with
+    [ordered[idx], ordered[j]] = [ordered[j], ordered[idx]];
+    setMedia(ordered.map((m, i) => ({ ...m, position: i })));
+    try {
+      await client.moveProductImage(mediaId, dir);
+    } catch (err) {
+      setMedia(snapshot);
+      app.toast(err instanceof DashboardApiError ? err.message : "Couldn't reorder the images.", "warn", "critical");
+    }
+  };
+
+  const onSetImageAlt = async (mediaId: string, raw: string) => {
+    const next = raw.trim() || null;
+    const current = media.find((m) => m.id === mediaId);
+    if (!current || current.alt === next) return; // only commit a real change
+    const snapshot = media;
+    setMedia((cur) => cur.map((m) => (m.id === mediaId ? { ...m, alt: next } : m)));
+    try {
+      await client.setProductImageAlt(mediaId, next);
+    } catch (err) {
+      setMedia(snapshot);
+      app.toast(err instanceof DashboardApiError ? err.message : "Couldn't save the alt text.", "warn", "critical");
     }
   };
 
@@ -242,40 +291,87 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
           <Card>
             <SectionTitle>Images</SectionTitle>
             {!id && <p className="cd-caption" style={{ marginBottom: 10 }}>Save the product first, then add images.</p>}
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-              {media.map((m) => (
-                <div
-                  key={m.id}
-                  style={{ position: "relative", width: 96, height: 96, borderRadius: 10, overflow: "hidden", background: "var(--gray-bg)" }}
-                >
-                  <img src={m.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  {m.isPrimary && (
-                    <span style={{ position: "absolute", top: 4, left: 4 }}>
-                      <Pill tone="accent">Main</Pill>
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => onRemoveImage(m.id)}
-                    aria-label="Remove image"
-                    style={{
-                      position: "absolute",
-                      top: 4,
-                      right: 4,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 22,
-                      height: 22,
-                      borderRadius: 999,
-                      border: 0,
-                      cursor: "pointer",
-                      background: "color-mix(in oklch, black 55%, transparent)",
-                      color: "white",
-                    }}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start" }}>
+              {[...media]
+                .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))
+                .map((m, i, ordered) => (
+                <div key={m.id} style={{ display: "flex", flexDirection: "column", gap: 4, width: 96 }}>
+                  <div
+                    style={{ position: "relative", width: 96, height: 96, borderRadius: 10, overflow: "hidden", background: "var(--gray-bg)" }}
                   >
-                    <CDIcon name="x" size={13} strokeWidth={2.2} />
-                  </button>
+                    <img src={m.url} alt={m.alt ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    {m.isPrimary && (
+                      <span style={{ position: "absolute", top: 4, left: 4 }}>
+                        <Pill tone="accent">Main</Pill>
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onRemoveImage(m.id)}
+                      aria-label="Remove image"
+                      style={{
+                        position: "absolute",
+                        top: 4,
+                        right: 4,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 22,
+                        height: 22,
+                        borderRadius: 999,
+                        border: 0,
+                        cursor: "pointer",
+                        background: "color-mix(in oklch, black 55%, transparent)",
+                        color: "white",
+                      }}
+                    >
+                      <CDIcon name="x" size={13} strokeWidth={2.2} />
+                    </button>
+                  </div>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <button
+                      type="button"
+                      className="cd-btn cd-btn-secondary cd-btn-sm"
+                      aria-label="Move image earlier"
+                      disabled={i === 0}
+                      onClick={() => onMoveImage(m.id, "up")}
+                      style={{ padding: "2px 6px" }}
+                    >
+                      <CDIcon name="arrowUp" size={13} strokeWidth={2} />
+                    </button>
+                    <button
+                      type="button"
+                      className="cd-btn cd-btn-secondary cd-btn-sm"
+                      aria-label="Move image later"
+                      disabled={i === ordered.length - 1}
+                      onClick={() => onMoveImage(m.id, "down")}
+                      style={{ padding: "2px 6px" }}
+                    >
+                      <CDIcon name="arrowDown" size={13} strokeWidth={2} />
+                    </button>
+                    {!m.isPrimary && (
+                      <button
+                        type="button"
+                        className="cd-btn cd-btn-secondary cd-btn-sm"
+                        onClick={() => onMakeMain(m.id)}
+                        style={{ padding: "2px 6px", whiteSpace: "nowrap" }}
+                      >
+                        Make main
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    // Value-derived key: remount (and re-read defaultValue) when the
+                    // saved alt changes, so a failed save's rollback is reflected.
+                    key={`alt:${m.id}:${m.alt ?? ""}`}
+                    className="cd-input"
+                    placeholder="Alt text"
+                    aria-label="Image alt text"
+                    maxLength={300}
+                    defaultValue={m.alt ?? ""}
+                    onBlur={(e) => onSetImageAlt(m.id, e.target.value)}
+                    style={{ width: 96 }}
+                  />
                 </div>
               ))}
               {id && (
@@ -348,56 +444,91 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
 
           <Card>
             <SectionTitle>Variants</SectionTitle>
-            <div className="flex flex-col gap-2">
-              <div className="cd-caption" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ flex: "1 1 0", minWidth: 120 }}>Variant</span>
-                <span style={{ width: 150 }}>SKU</span>
-                <span style={{ width: 110, textAlign: "right" }}>Price ($)</span>
-                {showStock && !id && <span style={{ width: 90, textAlign: "right" }}>Stock</span>}
-              </div>
-              {variants.map((v, i) => (
-                <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span className="cd-row-title truncate" style={{ flex: "1 1 0", minWidth: 120 }}>
-                    {variantLabel(v)}
-                  </span>
-                  <input
-                    className="cd-input"
-                    placeholder="SKU"
-                    aria-label={`SKU for ${variantLabel(v)}`}
-                    value={v.sku ?? ""}
-                    onChange={(e) => setVariantField(i, { sku: e.target.value })}
-                    style={{ width: 150 }}
-                  />
-                  <input
-                    className="cd-input tabular-nums"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    inputMode="decimal"
-                    aria-label={`Price for ${variantLabel(v)}`}
-                    value={centsToDollars(v.retailPriceCents)}
-                    onChange={(e) => setVariantField(i, { retailPriceCents: dollarsToCents(e.target.value) })}
-                    style={{ width: 110, textAlign: "right" }}
-                  />
-                  {showStock && !id && (
+            <div style={{ overflowX: "auto" }}>
+              <div className="flex flex-col gap-2" style={{ minWidth: 780 }}>
+                <div className="cd-caption" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ flex: "1 1 0", minWidth: 120 }}>Variant</span>
+                  <span style={{ width: 150, flexShrink: 0 }}>SKU</span>
+                  <span style={{ width: 110, flexShrink: 0, textAlign: "right" }}>Price ($)</span>
+                  <span style={{ width: 110, flexShrink: 0, textAlign: "right" }}>Compare-at ($)</span>
+                  <span style={{ width: 110, flexShrink: 0, textAlign: "right" }}>Cost ($)</span>
+                  <span style={{ width: 64, flexShrink: 0, textAlign: "center" }}>Tracked</span>
+                  {showStock && !id && <span style={{ width: 90, flexShrink: 0, textAlign: "right" }}>Stock</span>}
+                </div>
+                {variants.map((v, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span className="cd-row-title truncate" style={{ flex: "1 1 0", minWidth: 120 }}>
+                      {variantLabel(v)}
+                    </span>
+                    <input
+                      className="cd-input"
+                      placeholder="SKU"
+                      aria-label={`SKU for ${variantLabel(v)}`}
+                      value={v.sku ?? ""}
+                      onChange={(e) => setVariantField(i, { sku: e.target.value })}
+                      style={{ width: 150, flexShrink: 0 }}
+                    />
                     <input
                       className="cd-input tabular-nums"
                       type="number"
                       min="0"
-                      step="1"
-                      inputMode="numeric"
-                      aria-label={`Stock for ${variantLabel(v)}`}
-                      value={v.inventoryOnHand ?? ""}
-                      onChange={(e) =>
-                        setVariantField(i, {
-                          inventoryOnHand: e.target.value === "" ? undefined : Math.max(0, Math.trunc(Number(e.target.value) || 0)),
-                        })
-                      }
-                      style={{ width: 90, textAlign: "right" }}
+                      step="0.01"
+                      inputMode="decimal"
+                      aria-label={`Price for ${variantLabel(v)}`}
+                      value={centsToDollars(v.retailPriceCents)}
+                      onChange={(e) => setVariantField(i, { retailPriceCents: dollarsToCents(e.target.value) })}
+                      style={{ width: 110, flexShrink: 0, textAlign: "right" }}
                     />
-                  )}
-                </div>
-              ))}
+                    <input
+                      className="cd-input tabular-nums"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      aria-label={`Compare-at price for ${variantLabel(v)}`}
+                      value={centsToDollars(v.compareAtPriceCents)}
+                      onChange={(e) => setVariantField(i, { compareAtPriceCents: dollarsToCents(e.target.value) })}
+                      style={{ width: 110, flexShrink: 0, textAlign: "right" }}
+                    />
+                    <input
+                      className="cd-input tabular-nums"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      aria-label={`Cost for ${variantLabel(v)}`}
+                      value={centsToDollars(v.unitCostCents)}
+                      onChange={(e) => setVariantField(i, { unitCostCents: dollarsToCents(e.target.value) })}
+                      style={{ width: 110, flexShrink: 0, textAlign: "right" }}
+                    />
+                    <span style={{ width: 64, flexShrink: 0, display: "flex", justifyContent: "center" }}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Track inventory for ${variantLabel(v)}`}
+                        checked={v.inventoryTracked !== false}
+                        onChange={(e) => setVariantField(i, { inventoryTracked: e.target.checked })}
+                      />
+                    </span>
+                    {showStock && !id && (
+                      <input
+                        className="cd-input tabular-nums"
+                        type="number"
+                        min="0"
+                        step="1"
+                        inputMode="numeric"
+                        aria-label={`Stock for ${variantLabel(v)}`}
+                        value={v.inventoryOnHand ?? ""}
+                        onChange={(e) =>
+                          setVariantField(i, {
+                            inventoryOnHand: e.target.value === "" ? undefined : Math.max(0, Math.trunc(Number(e.target.value) || 0)),
+                          })
+                        }
+                        style={{ width: 90, flexShrink: 0, textAlign: "right" }}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
             <p className="cd-caption" style={{ marginTop: 10 }}>
               {id

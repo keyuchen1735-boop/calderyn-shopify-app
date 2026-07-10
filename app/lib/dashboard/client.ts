@@ -1270,6 +1270,7 @@ export interface VariantDraft {
   sku?: string;
   title?: string;
   retailPriceCents?: number;
+  compareAtPriceCents?: number;
   unitCostCents?: number;
   inventoryTracked?: boolean;
   inventoryOnHand?: number;
@@ -1300,7 +1301,7 @@ export interface ProductDraft {
 
 export interface ProductDetailVM extends ProductDraft {
   id: string;
-  media: Array<{ id: string; url: string; isPrimary: boolean }>;
+  media: Array<{ id: string; url: string; isPrimary: boolean; alt: string | null; position: number }>;
   updatedAt: string;
 }
 
@@ -1494,6 +1495,21 @@ export async function uploadProductImage(productId: string, file: File): Promise
 
 export async function deleteProductImage(mediaId: string): Promise<void> {
   await apiSend("DELETE", "/dashboard/api/catalog/media", { mediaId });
+}
+
+/** Make this image the product's main (storefront lead) image. */
+export async function setPrimaryProductImage(mediaId: string): Promise<void> {
+  await apiSend("PUT", "/dashboard/api/catalog/media", { mediaId, intent: "set_primary" });
+}
+
+/** Set an image's alt text; empty clears it. */
+export async function setProductImageAlt(mediaId: string, alt: string | null): Promise<void> {
+  await apiSend("PUT", "/dashboard/api/catalog/media", { mediaId, intent: "set_alt", alt });
+}
+
+/** Move an image one step in the gallery order; past-the-edge moves no-op. */
+export async function moveProductImage(mediaId: string, dir: "up" | "down"): Promise<void> {
+  await apiSend("PUT", "/dashboard/api/catalog/media", { mediaId, intent: "move", dir });
 }
 
 // --- AI listing drafts (new-product flow) ------------------------------------

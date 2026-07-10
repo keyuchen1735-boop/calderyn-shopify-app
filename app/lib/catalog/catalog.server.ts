@@ -143,7 +143,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
 
   const [{ data: options }, { data: variants }, { data: vov }, { data: media }, { data: pc }] = await Promise.all([
     sb.from("product_option").select("id, name, position, product_option_value(id, value, position)").eq("product_id", productId).order("position"),
-    sb.from("variant_dim").select("id, sku, title, retail_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position").eq("product_id", productId).order("position"),
+    sb.from("variant_dim").select("id, sku, title, retail_price_cents, compare_at_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position").eq("product_id", productId).order("position"),
     sb.from("variant_option_value").select("variant_id, option_value_id"),
     // Bucket-backed media only (see getCatalogProducts): a promoted mirror image
     // has an external_url + no storage_path and is served by the storefront reader.
@@ -209,6 +209,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
         sku: (v.sku as string | null) ?? null,
         title: String(v.title),
         retailPriceCents: (v.retail_price_cents as number | null) ?? null,
+        compareAtPriceCents: (v.compare_at_price_cents as number | null) ?? null,
         unitCostCents: (v.unit_cost_cents as number | null) ?? null,
         inventoryTracked: (v.inventory_tracked as boolean | null) ?? null,
         inventoryOnHand: Number(v.inventory_on_hand ?? 0),
@@ -327,7 +328,8 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
       .from("variant_dim")
       .insert({
         shop_id: shopId, product_id: productId, sku: v.sku ?? null, title: v.title ?? "Default",
-        retail_price_cents: v.retailPriceCents ?? null, unit_cost_cents: v.unitCostCents ?? null,
+        retail_price_cents: v.retailPriceCents ?? null, compare_at_price_cents: v.compareAtPriceCents ?? null,
+        unit_cost_cents: v.unitCostCents ?? null,
         inventory_policy: v.inventoryPolicy ?? null, inventory_tracked: trackedForNewVariant(v),
         inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
       })
@@ -467,7 +469,7 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
     // the stored value on update; a brand-new variant defaults to null.
     const fields = {
       sku: v.sku ?? null, title: v.title ?? "Default", retail_price_cents: v.retailPriceCents ?? null,
-      unit_cost_cents: v.unitCostCents ?? null,
+      compare_at_price_cents: v.compareAtPriceCents ?? null, unit_cost_cents: v.unitCostCents ?? null,
       inventory_tracked: v.inventoryTracked ?? null, inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
     };
     let variantId = v.id ?? null;

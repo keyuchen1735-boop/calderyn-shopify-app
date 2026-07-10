@@ -52,7 +52,17 @@ const price: BlockMeta = {
   Component: ({ ctx }) => {
     const v = recProduct(ctx)?.variants[0];
     if (!v) return null;
-    return createElement("div", { className: "cd-block cd-block--price" }, money(v.priceCents, v.currency));
+    // A compare-at above the selling price renders as a struck-through "was"
+    // price beside the current one; anything else (absent/equal/lower) is noise.
+    const compareAt = v.compareAtPriceCents;
+    const onSale = compareAt != null && compareAt > v.priceCents;
+    return createElement(
+      "div",
+      { className: "cd-block cd-block--price" },
+      onSale ? createElement("s", { className: "cd-price__compare" }, money(compareAt, v.currency)) : null,
+      onSale ? " " : null,
+      money(v.priceCents, v.currency),
+    );
   },
 };
 
