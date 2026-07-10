@@ -23,7 +23,7 @@ vi.mock("~/lib/order/cart.server", () => ({
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { commitCartId } from "~/lib/storefront/cart-cookie.server";
 // eslint-disable-next-line import/first
-import { loader } from "../storefront.checkout.confirmation.$token";
+import { loader } from "../storefront.checkout_.confirmation.$token";
 
 const SECRET = "test-app-secret-0000000000000000000000000000";
 
