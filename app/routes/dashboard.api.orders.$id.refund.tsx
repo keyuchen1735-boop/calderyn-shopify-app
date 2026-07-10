@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { dashboardJson, jsonError, parseJsonObjectBody, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { isImportedOrderId, stripNativeOrderPrefix } from "~/lib/order/detail.server";
 import { executeRefundAction } from "~/lib/actions/refund.server";
 import { getSupabase } from "~/lib/supabase.server";
 
@@ -16,13 +17,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const session = await requireDashboardSession(request);
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
 
-  // Validate the JSON body at the boundary — never trust its shape.
-  let body: Record<string, unknown> = {};
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    return jsonError(400, "bad_body", "Expected a JSON body.");
+  // Imported (Shopify-mirrored) orders are read-only here — reject them and strip any
+  // native `calderyn:` prefix, mirroring every sibling order write route so the same id
+  // that works on fulfill/cancel/tags resolves here too.
+  const rawId = String(params.id);
+  if (isImportedOrderId(rawId)) {
+    return jsonError(422, "imported_read_only", "Imported orders cannot be refunded here.");
   }
+  const orderId = stripNativeOrderPrefix(rawId);
+
+  // Validate the JSON body at the boundary — never trust its shape. parseJsonObjectBody
+  // normalizes a bare null/array/primitive body to {} and only returns null on a JSON
+  // parse failure, so a body of literally `null` can no longer crash the field reads below.
+  const body = await parseJsonObjectBody(request);
+  if (!body) return jsonError(400, "bad_body", "Expected a JSON body.");
   const idempotencyKey = typeof body.idempotency_key === "string" ? body.idempotency_key : "";
   if (!idempotencyKey) return jsonError(422, "missing_idempotency_key", "idempotency_key is required.");
 
@@ -49,7 +57,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   return dashboardJson(async () => {
     const result = await executeRefundAction(
       session.shopId,
-      { orderId: String(params.id), amountCents, idempotencyKey, actor: "merchant:web-dashboard", reason, restock },
+      { orderId, amountCents, idempotencyKey, actor: "merchant:web-dashboard", reason, restock },
       getSupabase(),
     );
     return {
