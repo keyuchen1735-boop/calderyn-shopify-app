@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { saveTypedPeriodTotal, ingestInvoiceCsv, setManualOverride } from "../inputs.server";
+import { saveTypedPeriodTotal, ingestInvoiceCsv, setManualOverride, setShipCostMode } from "../inputs.server";
 import { makeFakeSupabase } from "./helpers";
 import { runShipCostResolution } from "../runner.server";
 
@@ -46,5 +46,15 @@ describe("setManualOverride", () => {
     const sb = makeFakeSupabase({ order_fact: [{ id: "o1", shop_id: "s" }], shipping_cost_period: [], shipping_invoice_line: [] });
     await setManualOverride(sb, "s", { orderId: "o1", cents: null, shopCountry: "US" });
     expect(sb.updates("order_fact")[0].ship_cost_manual_cents).toBeNull();
+  });
+});
+
+describe("setShipCostMode", () => {
+  it("upserts the shop's ship_cost_mode", async () => {
+    const sb = makeFakeSupabase({ shop_settings: [] });
+    await setShipCostMode(sb, "s", "force_measured");
+    const row = sb.upserts("shop_settings")[0];
+    expect(row).toMatchObject({ shop_id: "s", ship_cost_mode: "force_measured" });
+    expect(typeof row.updated_at).toBe("string");
   });
 });

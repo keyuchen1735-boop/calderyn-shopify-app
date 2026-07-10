@@ -12,9 +12,9 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin, rateLimit } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
-import { saveTypedPeriodTotal, setManualOverride } from "~/lib/ship-cost/inputs.server";
+import { saveTypedPeriodTotal, setManualOverride, setShipCostMode, SHIP_COST_MODES } from "~/lib/ship-cost/inputs.server";
 
-const MODES = ["auto", "force_measured", "force_reconciled"];
+const MODES: readonly string[] = SHIP_COST_MODES;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
@@ -67,11 +67,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const mode = String(body.ship_cost_mode ?? "");
     if (!MODES.includes(mode)) return jsonError(422, "invalid_mode");
     return dashboardJson(async () => {
-      await sb.from("shop_settings").upsert({
-        shop_id: shopId,
-        ship_cost_mode: mode,
-        updated_at: new Date().toISOString(),
-      });
+      await setShipCostMode(sb, shopId, mode as (typeof SHIP_COST_MODES)[number]);
       return { ship_mode: mode };
     });
   }

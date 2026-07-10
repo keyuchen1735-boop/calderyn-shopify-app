@@ -126,3 +126,14 @@ export async function setManualOverride(
     .eq("shop_id", shopId);
   await runShipCostResolution(sb, shopId, { shopCountry: input.shopCountry });
 }
+
+export const SHIP_COST_MODES = ["auto", "force_measured", "force_reconciled"] as const;
+export type ShipCostMode = (typeof SHIP_COST_MODES)[number];
+
+export async function setShipCostMode(sb: SupabaseClient, shopId: string, mode: ShipCostMode): Promise<void> {
+  await sb.from("shop_settings").upsert({
+    shop_id: shopId,
+    ship_cost_mode: mode,
+    updated_at: new Date().toISOString(),
+  });
+}
