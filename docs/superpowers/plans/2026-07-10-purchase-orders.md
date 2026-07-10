@@ -33,3 +33,22 @@ Steps (one commit each, gate at the end):
    pass → zero console errors.
 8. **Merge** — rebase onto latest `origin/main` immediately before push; PR; manual merge (fork CI
    is ignored by standing rule); remove worktree.
+
+## Reliability close-out
+
+The implementation uses `po_list(p_shop_id, p_limit, p_offset)` for bounded list aggregation,
+nullable `variant_id` plus SKU/title line snapshots for durable history, and
+`po_receive(..., p_receipt_id)` with ledger keys shaped
+`po_receive:<receipt_id>:<line_id>`. A receipt ID identifies one exact line/quantity set; changed,
+subset, or superset reuse is a `receipt_conflict`.
+
+The post-live follow-up is a new migration, never an edit to the applied base migration:
+
+1. Replace `po_receive` so exact receipt replays succeed after full receipt and return variants
+   for projection recovery.
+2. Make ordered/cancelled same-state retries recompute incoming and return affected variants.
+3. Lock the `inventory_balance` row before recomputing incoming, serializing concurrent writers.
+4. Add standalone indexes for the supplier, destination, PO-line parent, and variant foreign keys.
+5. Reject JSON null/arrays and malformed supplier UUIDs at the action boundary with 422s.
+6. Gate with focused server/route/SQL-contract tests, typecheck, lint, build, and diff checks before
+   the final rebase/push.

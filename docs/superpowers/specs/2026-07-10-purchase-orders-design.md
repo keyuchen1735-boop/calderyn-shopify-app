@@ -59,7 +59,9 @@ product.
 
 ### `purchase_order_line`
 - `id uuid pk`, `shop_id uuid not null`, `po_id uuid not null references purchase_order(id) on delete cascade`
-- `variant_id uuid not null references variant_dim(id)`
+- `variant_id uuid references variant_dim(id) on delete set null`; `sku text` and
+  `variant_title text` are nullable snapshots, so deleting a catalog variant does not erase or
+  block historical PO lines
 - `qty_ordered int not null check (qty_ordered > 0 and qty_ordered <= 1000000)`
 - `qty_received int not null default 0 check (qty_received >= 0)` (receive fn enforces
   `qty_received <= qty_ordered`)
@@ -78,20 +80,34 @@ route maps to 422s (mirror `inventory_receive_transfer`).
   the relocate guard; the transfer path lacks this and we will not repeat that gap). Per line:
   upsert `inventory_balance` at destination, `incoming += qty_ordered`, ledger `in_transit` row with
   `order_ref = po_number`, `reason = 'po_ordered'`, `source='merchant'`, idempotency key
-  `po_order:<line_id>`. Set `status='ordered'`, `ordered_at=now()`. Returns affected
-  `(variant_id)` list for `projectLevelFact` re-projection.
-- `po_receive(p_shop_id, p_po_id, p_lines jsonb)` — `p_lines = [{line_id, qty}]`. Require
-  `status in ('ordered','partial')` (`po_not_receivable`). Per entry: `qty > 0`
+  `po_order:<line_id>`. Set `status='ordered'`, `ordered_at=now()`. A retry while already
+  `ordered` recomputes incoming and returns the same affected variants, closing the
+  database-commit/projection-failure window.
+- `po_receive(p_shop_id, p_po_id, p_lines jsonb, p_receipt_id uuid)` — `p_lines =
+  [{line_id, qty}]`; `p_receipt_id` is one client-generated UUID per receive submission and is
+  reused for retries. New receipts require `status in ('ordered','partial')`; an exact committed
+  receipt replay is also accepted in `received` (`po_not_receivable` otherwise). Per entry: `qty > 0`
   (`invalid_receive_qty`), `qty_received + qty <= qty_ordered` (`receive_exceeds_ordered`); balance:
-  `incoming = greatest(incoming - qty, 0)`, `on_hand += qty`; ledger `receive` row, idempotency key
-  `po_receive:<line_id>:<new_total_received>`; update line. After all entries: status becomes
-  `received` + `received_at` when every line is fully received, else `partial`. Returns affected
-  variant ids.
-- `po_cancel(p_shop_id, p_po_id)` — require `status in ('draft','ordered','partial')`
+  `on_hand += qty`; ledger `receive` row, idempotency key
+  `po_receive:<receipt_id>:<line_id>`; update line and recompute incoming from PO/transfer truth.
+  An exact receipt replay skips already-committed ledger keys but still returns their affected
+  variants. The receipt UUID identifies the whole submitted line/quantity set: reusing it with a
+  subset, superset, or changed quantity raises `receipt_conflict`; a new submission gets a new
+  UUID. An exact replay remains a success after the original call fully received the PO, allowing
+  `projectLevelFact` recovery without double-counting stock. After all entries, status becomes
+  `received` + `received_at` when every line is fully received, else `partial`.
+- `po_cancel(p_shop_id, p_po_id)` — new cancellation requires
+  `status in ('draft','ordered','partial')`; `cancelled` is accepted only as a same-state retry
   (`po_not_cancellable`). For ordered/partial, remove remaining expectation:
   `incoming = greatest(incoming - (qty_ordered - qty_received), 0)` per line, ledger `in_transit`
   row with negative qty and `reason='po_cancelled'` (keeps the incoming journal balanced). Received
-  stock stays. Set `status='cancelled'`, `cancelled_at`.
+  stock stays. Set `status='cancelled'`, `cancelled_at`. A retry while already `cancelled`
+  recomputes incoming and returns affected variants for projection recovery.
+
+`po_recompute_incoming` first creates and then locks the target `inventory_balance` row before its
+recompute `UPDATE`. Concurrent PO operations for the same variant/location therefore serialize
+instead of overwriting a newer incoming total. The follow-up migration also adds standalone
+indexes for every new foreign-key column not already covered by a leading index.
 
 Draft edits (lines/supplier/ETA) are allowed only in `draft`, so no incoming rebalancing on edit.
 After every mutating call the app layer re-projects `inventory_level_fact` via
@@ -101,7 +117,8 @@ After every mutating call the app layer re-projects `inventory_level_fact` via
 ## Server lib + routes
 
 - `app/lib/po/purchase-orders.server.ts` — DTO shaping + validation + RPC wrappers:
-  `listPurchaseOrders(shopId, {status?, cursor/limit})` (paginated like the current PO endpoint),
+  `listPurchaseOrders(shopId, {offset, limit})` through `po_list` (SQL-side line aggregates and a
+  window total avoid PostgREST's 1,000-row clamp),
   `getPurchaseOrder`, `createPurchaseOrder` (validates lines, resolves supplier + snapshot
   `vendor_name`, defaults `expected_at` from lead time, generates `po_number`),
   `updateDraftPurchaseOrder`, `markOrdered`, `receiveLines`, `cancelPurchaseOrder`,
@@ -175,6 +192,7 @@ idempotent at the ledger layer via idempotency keys; double-submit prevented by 
 
 ## Migration rollout
 
-Single file `supabase/migrations/20260710200000_purchase_orders.sql` (tables + RLS + functions +
-grants). Applied to prod via supabase MCP before browser verification (repo standard; check
-`list_migrations` slug diff first per migration-drift memory).
+The live base schema is `supabase/migrations/20260710200000_purchase_orders.sql` (tables + RLS +
+functions + grants). Reliability corrections ship separately in
+`supabase/migrations/20260710225348_purchase_order_reliability.sql`; the already-applied base
+migration is never rewritten or reapplied. Check migration history before applying the follow-up.

@@ -168,10 +168,13 @@ export function validateReceiveBody(body: Record<string, unknown>): ReceiveBody 
   if (!Array.isArray(raw) || raw.length === 0) {
     invalid("invalid_receive", "Enter a quantity to receive on at least one line.");
   }
+  const seen = new Set<string>();
   const lines = raw.map((entry) => {
     const line = entry !== null && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
     const lineId = typeof line.lineId === "string" ? line.lineId : "";
     if (!isUuid(lineId)) invalid("invalid_receive", "Invalid line reference.");
+    if (seen.has(lineId)) invalid("invalid_receive", "Each line can only be received once.");
+    seen.add(lineId);
     const qty = Number(line.qty);
     if (!Number.isInteger(qty) || qty < 1 || qty > MAX_LINE_QTY) {
       invalid("invalid_receive", "Receive quantities must be whole numbers above zero.");
@@ -656,6 +659,10 @@ export const PO_RPC_ERRORS: Record<string, { status: number; message: string }> 
   invalid_receipt_id: {
     status: 422,
     message: "Missing receive reference — reopen the receive panel and try again.",
+  },
+  receipt_conflict: {
+    status: 422,
+    message: "That receive reference was already used with a different quantity.",
   },
   receive_exceeds_ordered: {
     status: 422,

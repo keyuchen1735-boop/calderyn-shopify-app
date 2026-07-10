@@ -53,7 +53,7 @@ function capture(fn: () => unknown): unknown {
 }
 
 const ROW = {
-  id: "sup-1",
+  id: "11111111-1111-4111-8111-111111111111",
   name: "Acme Textiles",
   email: "orders@acme.example",
   phone: null,
@@ -96,7 +96,7 @@ describe("suppliers CRUD wrappers", () => {
     state.queue.push({ data: [ROW], error: null });
     expect(await listSuppliers("shop-1")).toEqual([
       {
-        id: "sup-1",
+        id: ROW.id,
         name: "Acme Textiles",
         email: "orders@acme.example",
         phone: null,
@@ -118,13 +118,26 @@ describe("suppliers CRUD wrappers", () => {
   it("404s supplier_not_found when updating a missing supplier", async () => {
     state.queue.push({ data: null, error: null });
     await expect(
-      updateSupplier("shop-1", "sup-x", { name: "Acme" }),
+      updateSupplier("shop-1", "22222222-2222-4222-8222-222222222222", { name: "Acme" }),
     ).rejects.toMatchObject({ code: "supplier_not_found", status: 404 });
+  });
+
+  it("rejects malformed supplier ids before querying Postgres", async () => {
+    await expect(updateSupplier("shop-1", "sup-x", { name: "Acme" })).rejects.toMatchObject({
+      code: "invalid_supplier",
+      status: 422,
+    });
+    await expect(setSupplierActive("shop-1", "not-a-uuid", false)).rejects.toMatchObject({
+      code: "invalid_supplier",
+      status: 422,
+    });
+    expect(state.queue).toHaveLength(0);
+    expect(state.payloads).toHaveLength(0);
   });
 
   it("setSupplierActive flips the flag and returns the mapped row", async () => {
     state.queue.push({ data: { ...ROW, active: false }, error: null });
-    const updated = await setSupplierActive("shop-1", "sup-1", false);
+    const updated = await setSupplierActive("shop-1", ROW.id, false);
     expect(updated.active).toBe(false);
     expect(state.payloads[0]).toMatchObject({ active: false });
   });

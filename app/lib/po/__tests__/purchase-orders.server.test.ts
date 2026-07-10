@@ -290,6 +290,16 @@ describe("validateReceiveBody", () => {
     ["fractional qty", { receiptId: RECEIPT, lines: [{ lineId: LINE1, qty: 1.5 }] }],
     ["missing receipt id", { lines: [{ lineId: LINE1, qty: 1 }] }],
     ["non-uuid receipt id", { receiptId: "retry-1", lines: [{ lineId: LINE1, qty: 1 }] }],
+    [
+      "duplicate line",
+      {
+        receiptId: RECEIPT,
+        lines: [
+          { lineId: LINE1, qty: 1 },
+          { lineId: LINE1, qty: 1 },
+        ],
+      },
+    ],
   ])("rejects %s as invalid_receive", (_name, body) => {
     expect(capture(() => validateReceiveBody(body as Record<string, unknown>))).toMatchObject({
       code: "invalid_receive",
@@ -621,6 +631,11 @@ describe("markOrdered / receiveLines / cancelPurchaseOrder", () => {
     await expect(
       receiveLines(SHOP, PO_ID, [{ lineId: LINE1, qty: 5 }], RECEIPT),
     ).rejects.toMatchObject({ code: "line_variant_missing", status: 422 });
+
+    state.rpc.mockResolvedValue({ data: null, error: { message: "receipt_conflict" } });
+    await expect(
+      receiveLines(SHOP, PO_ID, [{ lineId: LINE1, qty: 5 }], RECEIPT),
+    ).rejects.toMatchObject({ code: "receipt_conflict", status: 422 });
 
     state.rpc.mockResolvedValue({ data: null, error: { message: "po_not_cancellable" } });
     await expect(cancelPurchaseOrder(SHOP, PO_ID)).rejects.toMatchObject({

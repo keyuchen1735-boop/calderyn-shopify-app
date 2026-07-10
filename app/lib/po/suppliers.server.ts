@@ -4,6 +4,7 @@
 // the two concepts.
 
 import { CalderynError } from "~/lib/calderyn.server";
+import { isUuid } from "~/lib/ids";
 import { getSupabase } from "~/lib/supabase.server";
 import type { SupplierDto, SupplierInput } from "./types";
 
@@ -26,6 +27,10 @@ function mapSupplier(row: Record<string, unknown>): SupplierDto {
 
 function invalid(message: string): never {
   throw new CalderynError({ code: "invalid_supplier", status: 422, message });
+}
+
+function assertSupplierId(supplierId: string): void {
+  if (!isUuid(supplierId)) invalid("Invalid supplier reference.");
 }
 
 /** Validate + normalize a supplier create/update payload at the boundary. */
@@ -107,6 +112,7 @@ export async function updateSupplier(
   supplierId: string,
   input: SupplierInput,
 ): Promise<SupplierDto> {
+  assertSupplierId(supplierId);
   const { data, error } = await getSupabase()
     .from("supplier_dim")
     .update({
@@ -140,6 +146,7 @@ export async function setSupplierActive(
   supplierId: string,
   active: boolean,
 ): Promise<SupplierDto> {
+  assertSupplierId(supplierId);
   const { data, error } = await getSupabase()
     .from("supplier_dim")
     .update({ active, updated_at: new Date().toISOString() })

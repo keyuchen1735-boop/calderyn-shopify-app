@@ -5,8 +5,14 @@
 
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
+import {
+  dashboardJson,
+  jsonError,
+  parseJsonObjectBody,
+  requireSameOrigin,
+} from "~/lib/dashboard/http.server";
 import { CalderynError } from "~/lib/calderyn.server";
+import { isUuid } from "~/lib/ids";
 import {
   createSupplier,
   listSuppliers,
@@ -25,23 +31,19 @@ export async function action({ request }: ActionFunctionArgs) {
   const session = await requireDashboardSession(request);
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
 
-  let body: Record<string, unknown>;
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    return jsonError(422, "invalid_json");
-  }
+  const body = await parseJsonObjectBody(request);
+  if (body === null) return jsonError(422, "invalid_json");
 
   return dashboardJson(async () => {
     if (body.intent === "create") {
       return { supplier: await createSupplier(session.shopId, validateSupplierInput(body)) };
     }
     const supplierId = typeof body.supplierId === "string" ? body.supplierId : "";
-    if (!supplierId) {
+    if (!isUuid(supplierId)) {
       throw new CalderynError({
         code: "invalid_supplier",
         status: 422,
-        message: "Missing supplier reference.",
+        message: "Invalid supplier reference.",
       });
     }
     if (body.intent === "update") {
@@ -50,8 +52,15 @@ export async function action({ request }: ActionFunctionArgs) {
       };
     }
     if (body.intent === "set_active") {
+      if (typeof body.active !== "boolean") {
+        throw new CalderynError({
+          code: "invalid_supplier",
+          status: 422,
+          message: "Supplier status must be true or false.",
+        });
+      }
       return {
-        supplier: await setSupplierActive(session.shopId, supplierId, body.active === true),
+        supplier: await setSupplierActive(session.shopId, supplierId, body.active),
       };
     }
     throw new CalderynError({ code: "invalid_intent", status: 422, message: "Unknown intent." });

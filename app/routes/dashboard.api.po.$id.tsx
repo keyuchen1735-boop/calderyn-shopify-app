@@ -9,7 +9,12 @@
 
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
+import {
+  dashboardJson,
+  jsonError,
+  parseJsonObjectBody,
+  requireSameOrigin,
+} from "~/lib/dashboard/http.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { isUuid } from "~/lib/ids";
 import {
@@ -37,12 +42,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const poId = params.id ?? "";
   if (!isUuid(poId)) return jsonError(404, "po_not_found");
 
-  let body: Record<string, unknown>;
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    return jsonError(422, "invalid_json");
-  }
+  const body = await parseJsonObjectBody(request);
+  if (body === null) return jsonError(422, "invalid_json");
 
   return dashboardJson(async () => {
     switch (body.intent) {
