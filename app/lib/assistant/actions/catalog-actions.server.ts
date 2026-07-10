@@ -22,6 +22,11 @@ import {
 } from "../../storebuilder/studio.server";
 import type { StudioVibe } from "../../storebuilder/studio-types";
 import { updateLocationDetails, type LocationPatch } from "../../catalog/locations.server";
+import {
+  startExperiment,
+  decideExperiment,
+  type StoreExperimentKind,
+} from "../../experiments/store-experiment.server";
 import type { ActionReceipt, AssistantAction, ValidationResult } from "./registry-types";
 
 function str(v: unknown): string | null {
@@ -379,6 +384,97 @@ export const CATALOG_ACTIONS: AssistantAction[] = [
         auditId: null,
         undoable: false,
         detail: { location_id: locationId, patch },
+      };
+    },
+  },
+  {
+    name: "start_experiment",
+    description:
+      "Start a home-page A/B experiment (headline copy or design vibe) against the currently published store. Only one experiment can run at a time; decide_experiment or ship_experiment closes it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["headline", "vibe"] },
+        name: { type: "string" },
+      },
+      required: ["kind"],
+    },
+    tier: "execute",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      if (i.kind !== "headline" && i.kind !== "vibe") {
+        return { ok: false, message: "kind must be headline or vibe" };
+      }
+      if (i.name !== undefined && (typeof i.name !== "string" || i.name.length > 80)) {
+        return { ok: false, message: "name must be a string of at most 80 chars" };
+      }
+      return { ok: true, value: { kind: i.kind, name: str(i.name) ?? undefined } };
+    },
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      const kind = i.kind as StoreExperimentKind;
+      await startExperiment(ctx.shopId, { kind, name: i.name as string | undefined });
+      return {
+        action: "start_experiment",
+        summary: `Started a ${kind} experiment`,
+        auditId: null,
+        undoable: false,
+      };
+    },
+  },
+  {
+    name: "decide_experiment",
+    description:
+      "Close a running home-page experiment by keeping the current published page (keep) or discarding the challenger (stop). To publish the winning variant live, use ship_experiment instead (requires confirmation).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        experiment_id: { type: "string" },
+        decision: { type: "string", enum: ["keep", "stop"] },
+      },
+      required: ["experiment_id", "decision"],
+    },
+    tier: "execute",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      const experimentId = str(i.experiment_id);
+      if (!experimentId) return { ok: false, message: "experiment_id is required" };
+      if (i.decision !== "keep" && i.decision !== "stop") {
+        return { ok: false, message: "decision must be keep or stop (use ship_experiment to publish live)" };
+      }
+      return { ok: true, value: { experiment_id: experimentId, decision: i.decision } };
+    },
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      const decision = i.decision as "keep" | "stop";
+      await decideExperiment(ctx.shopId, String(i.experiment_id), decision);
+      return {
+        action: "decide_experiment",
+        summary: `Closed the experiment (${decision})`,
+        auditId: null,
+        undoable: false,
+      };
+    },
+  },
+  {
+    name: "ship_experiment",
+    description:
+      "Publish the winning variant of a home-page experiment live to the storefront. Requires confirmation.",
+    inputSchema: { type: "object", properties: { experiment_id: { type: "string" } }, required: ["experiment_id"] },
+    tier: "confirm",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      const experimentId = str(i.experiment_id);
+      return experimentId
+        ? { ok: true, value: { experiment_id: experimentId } }
+        : { ok: false, message: "experiment_id is required" };
+    },
+    confirmSummary: async () => "Ship the winning variant — publishes it live to your storefront",
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      await decideExperiment(ctx.shopId, String(i.experiment_id), "ship");
+      return {
+        action: "ship_experiment",
+        summary: "Shipped the experiment — the winning variant is now live",
+        auditId: null,
+        undoable: false,
       };
     },
   },

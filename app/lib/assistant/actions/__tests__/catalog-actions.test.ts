@@ -20,6 +20,14 @@ vi.mock("../../../calderyn.server", () => ({
   calderynClient: () => ({ guardrails: { get: async () => ({ max_price_change_pct: 20 }) } }),
 }));
 
+const startExperiment = vi.fn(async () => ({ id: "exp-1" }));
+const decideExperiment = vi.fn(async () => ({ id: "exp-1" }));
+
+vi.mock("../../../experiments/store-experiment.server", () => ({
+  startExperiment: (...a: unknown[]) => startExperiment(...(a as [])),
+  decideExperiment: (...a: unknown[]) => decideExperiment(...(a as [])),
+}));
+
 const updateLocationDetails = vi.fn(async () => undefined);
 
 vi.mock("../../../catalog/locations.server", () => ({
@@ -63,6 +71,8 @@ describe("catalog actions", () => {
     vi.mocked(saveStudioVibe).mockClear();
     vi.mocked(publishStudioStore).mockClear();
     updateLocationDetails.mockClear();
+    startExperiment.mockClear();
+    decideExperiment.mockClear();
   });
 
   it("create_product builds a draft ProductInput with one variant at price_cents", async () => {
@@ -255,6 +265,102 @@ describe("catalog actions", () => {
       const a = byName("set_location_details");
       expect(a.tier).toBe("execute");
       expect(a.undoable).toBe(false);
+    });
+  });
+
+  describe("start_experiment", () => {
+    it("only accepts headline|vibe for kind", () => {
+      const a = byName("start_experiment");
+      expect(a.validate({ kind: "price" }).ok).toBe(false);
+      expect(a.validate({ kind: "headline" }).ok).toBe(true);
+    });
+
+    it("rejects a name over 80 chars", () => {
+      const a = byName("start_experiment");
+      expect(a.validate({ kind: "headline", name: "x".repeat(81) }).ok).toBe(false);
+    });
+
+    it("is execute-tier, not undoable", () => {
+      const a = byName("start_experiment");
+      expect(a.tier).toBe("execute");
+      expect(a.undoable).toBe(false);
+    });
+
+    it("calls startExperiment(shopId, { kind, name })", async () => {
+      const a = byName("start_experiment");
+      const v = a.validate({ kind: "headline", name: "Spring push" });
+      expect(v.ok).toBe(true);
+      const r = await a.run(ctx, (v as OkV).value);
+      expect(startExperiment).toHaveBeenCalledWith("shop-1", { kind: "headline", name: "Spring push" });
+      expect(r.summary).toMatch(/headline/i);
+    });
+
+    it("lets startExperiment errors (CalderynError) propagate", async () => {
+      const a = byName("start_experiment");
+      startExperiment.mockRejectedValueOnce(new Error("nothing_published"));
+      await expect(a.run(ctx, { kind: "vibe" })).rejects.toThrow("nothing_published");
+    });
+  });
+
+  describe("decide_experiment", () => {
+    it("requires experiment_id", () => {
+      const a = byName("decide_experiment");
+      expect(a.validate({ decision: "keep" }).ok).toBe(false);
+    });
+
+    it("only accepts keep|stop for decision — ship is rejected", () => {
+      const a = byName("decide_experiment");
+      expect(a.validate({ experiment_id: "exp-1", decision: "keep" }).ok).toBe(true);
+      expect(a.validate({ experiment_id: "exp-1", decision: "stop" }).ok).toBe(true);
+      expect(a.validate({ experiment_id: "exp-1", decision: "ship" }).ok).toBe(false);
+    });
+
+    it("is execute-tier, not undoable", () => {
+      const a = byName("decide_experiment");
+      expect(a.tier).toBe("execute");
+      expect(a.undoable).toBe(false);
+    });
+
+    it("calls decideExperiment(shopId, experiment_id, decision)", async () => {
+      const a = byName("decide_experiment");
+      const v = a.validate({ experiment_id: "exp-1", decision: "stop" });
+      expect(v.ok).toBe(true);
+      const r = await a.run(ctx, (v as OkV).value);
+      expect(decideExperiment).toHaveBeenCalledWith("shop-1", "exp-1", "stop");
+      expect(r.summary).toMatch(/stop/i);
+    });
+
+    it("lets decideExperiment errors propagate", async () => {
+      const a = byName("decide_experiment");
+      decideExperiment.mockRejectedValueOnce(new Error("experiment_not_running"));
+      await expect(a.run(ctx, { experiment_id: "exp-1", decision: "keep" })).rejects.toThrow(
+        "experiment_not_running",
+      );
+    });
+  });
+
+  describe("ship_experiment", () => {
+    it("is confirm-tier, not undoable, requires experiment_id", () => {
+      const a = byName("ship_experiment");
+      expect(a.tier).toBe("confirm");
+      expect(a.undoable).toBe(false);
+      expect(a.validate({}).ok).toBe(false);
+      expect(a.validate({ experiment_id: "exp-1" }).ok).toBe(true);
+    });
+
+    it("confirmSummary mentions publishing live", async () => {
+      const a = byName("ship_experiment");
+      const summary = await a.confirmSummary!(ctx, { experiment_id: "exp-1" });
+      expect(summary).toMatch(/live/i);
+      expect(summary).toMatch(/publish/i);
+    });
+
+    it("calls decideExperiment(shopId, experiment_id, 'ship')", async () => {
+      const a = byName("ship_experiment");
+      const v = a.validate({ experiment_id: "exp-1" });
+      expect(v.ok).toBe(true);
+      await a.run(ctx, (v as OkV).value);
+      expect(decideExperiment).toHaveBeenCalledWith("shop-1", "exp-1", "ship");
     });
   });
 });
