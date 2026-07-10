@@ -42,6 +42,12 @@ describe("validateBulkOrderIds", () => {
     const result = validateBulkOrderIds(dup);
     expect(result).toEqual({ ok: true, orderIds: ["order-1"] });
   });
+
+  it("short-circuits when raw.length > 100 before validating entries", () => {
+    const many = Array.from({ length: 101 }, (_, i) => `order-${i}`);
+    const result = validateBulkOrderIds(many);
+    expect(result).toMatchObject({ ok: false, code: "too_many_orders" });
+  });
 });
 
 describe("validateIdempotencyKey", () => {

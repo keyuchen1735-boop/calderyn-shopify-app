@@ -56,9 +56,13 @@ export async function addOrderTags(
   }
 
   if (missing.length > 0) {
+    // Concurrent adds of the same tag must both succeed (the tag is present either way).
     const insRes = await sb
       .from("order_tag")
-      .insert(missing.map((tag) => ({ shop_id: shopId, order_id: orderId, tag })));
+      .upsert(missing.map((tag) => ({ shop_id: shopId, order_id: orderId, tag })), {
+        onConflict: "shop_id,order_id,tag",
+        ignoreDuplicates: true,
+      });
     if (insRes.error) throw insRes.error;
   }
 

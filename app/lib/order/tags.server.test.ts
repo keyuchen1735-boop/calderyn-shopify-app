@@ -11,15 +11,22 @@ function makeStore() {
   const rows: Row[] = [];
 
   class Builder {
-    private op: "select" | "insert" = "select";
+    private op: "select" | "insert" | "upsert" = "select";
     private payload: Row | Row[] = {};
     private filters: Array<[string, unknown]> = [];
+    private upsertOpts?: { onConflict?: string; ignoreDuplicates?: boolean };
     select(_cols?: string) {
       return this;
     }
     insert(payload: Row | Row[]) {
       this.op = "insert";
       this.payload = payload;
+      return this;
+    }
+    upsert(payload: Row | Row[], opts?: { onConflict?: string; ignoreDuplicates?: boolean }) {
+      this.op = "upsert";
+      this.payload = payload;
+      this.upsertOpts = opts;
       return this;
     }
     eq(col: string, val: unknown) {
@@ -37,6 +44,24 @@ function makeStore() {
         const toInsert = Array.isArray(this.payload) ? this.payload : [this.payload];
         rows.push(...toInsert);
         return { data: toInsert, error: null };
+      }
+      if (this.op === "upsert") {
+        const toUpsert = Array.isArray(this.payload) ? this.payload : [this.payload];
+        const inserted: Row[] = [];
+        for (const row of toUpsert) {
+          // For ignoreDuplicates, only insert if the row doesn't already exist (check PK).
+          if (this.upsertOpts?.ignoreDuplicates) {
+            const exists = rows.some((r) => r.shop_id === row.shop_id && r.order_id === row.order_id && r.tag === row.tag);
+            if (!exists) {
+              rows.push(row);
+              inserted.push(row);
+            }
+          } else {
+            rows.push(row);
+            inserted.push(row);
+          }
+        }
+        return { data: inserted, error: null };
       }
       return { data: rows.filter((r) => this.matches(r)), error: null };
     }
@@ -104,5 +129,17 @@ describe("addOrderTags", () => {
     const result = await addOrderTags("shop-1", "order-1", [], client as never);
     expect(result).toEqual(["vip"]);
     expect(rows).toHaveLength(1);
+  });
+
+  it("concurrent adds of the same tag both succeed (upsert idempotent)", async () => {
+    const { rows, client } = makeStore();
+    // Simulate two concurrent requests trying to add "urgent" to the same order
+    const tag1 = addOrderTags("shop-1", "order-1", ["urgent"], client as never);
+    const tag2 = addOrderTags("shop-1", "order-1", ["urgent"], client as never);
+    const [result1, result2] = await Promise.all([tag1, tag2]);
+    expect(result1).toEqual(["urgent"]);
+    expect(result2).toEqual(["urgent"]);
+    // Both upserts succeed; the tag appears only once in the final row set.
+    expect(rows.filter((r) => r.tag === "urgent")).toHaveLength(1);
   });
 });

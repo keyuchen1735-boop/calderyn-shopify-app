@@ -27,6 +27,15 @@ export function validateBulkOrderIds(raw: unknown): BulkOrderIdsResult {
     };
   }
 
+  // Bound the loop before validating entries; the real cap of 25 still applies after dedupe.
+  if (raw.length > 100) {
+    return {
+      ok: false,
+      code: "too_many_orders",
+      message: `At most ${MAX_BULK_ORDERS} orders per bulk action (got ${raw.length} entries before dedup).`,
+    };
+  }
+
   const ids: string[] = [];
   for (const entry of raw) {
     if (typeof entry !== "string" || !entry) {
