@@ -31,6 +31,10 @@ function boundCopy(type: string, props: Record<string, unknown>): Record<string,
     out.html = (out.html as string).replace(/<[^>]*>/g, " ").replace(/\s{2,}/g, " ").trim();
   }
   for (const [k, max] of Object.entries(COPY_BOUNDS)) {
+    // A rawHtml block's `html` is genuine markup that must pass through untouched (it is
+    // sanitized and length-capped at the persistence boundary); slicing it to 2000 chars here
+    // would silently truncate it mid-tag, contradicting the type-gated invariant above.
+    if (k === "html" && type === "rawHtml") continue;
     if (typeof out[k] === "string" && (out[k] as string).length > max) out[k] = (out[k] as string).slice(0, max);
   }
   return out;

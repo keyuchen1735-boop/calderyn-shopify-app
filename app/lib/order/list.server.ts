@@ -70,15 +70,26 @@ export async function listOrders(shopId: string): Promise<OrderRow[]> {
     (async () => {
       const counts = new Map<string, number>();
       if (orderIds.length === 0) return counts;
-      const { data: lines, error: lineErr } = await sb
-        .from("order_line")
-        .select("order_id, quantity")
-        .eq("shop_id", shopId)
-        .in("order_id", orderIds);
-      if (lineErr) throw new Error(`order_line read failed: ${lineErr.message}`);
-      for (const l of lines ?? []) {
-        const key = String(l.order_id);
-        counts.set(key, (counts.get(key) ?? 0) + Number(l.quantity ?? 0));
+      // PostgREST clamps every response at 1000 rows. With up to LIST_LIMIT (100) orders, a
+      // single unpaged read of their lines can exceed 1000 rows and silently drop the overflow,
+      // undercounting (or zeroing) itemCount for whichever orders fall past the cutoff. Page by
+      // the order_line primary key until a short page so every line is summed.
+      const LINE_PAGE = 1000;
+      for (let from = 0; ; from += LINE_PAGE) {
+        const { data: lines, error: lineErr } = await sb
+          .from("order_line")
+          .select("order_id, quantity")
+          .eq("shop_id", shopId)
+          .in("order_id", orderIds)
+          .order("id", { ascending: true })
+          .range(from, from + LINE_PAGE - 1);
+        if (lineErr) throw new Error(`order_line read failed: ${lineErr.message}`);
+        const batch = lines ?? [];
+        for (const l of batch) {
+          const key = String(l.order_id);
+          counts.set(key, (counts.get(key) ?? 0) + Number(l.quantity ?? 0));
+        }
+        if (batch.length < LINE_PAGE) break;
       }
       return counts;
     })(),

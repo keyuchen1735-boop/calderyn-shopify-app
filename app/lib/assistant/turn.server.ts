@@ -57,9 +57,12 @@ export async function runConversationTurn(
   const conversationId =
     input.conversationId ?? (await createConversation(shopDomain, message.slice(0, 80)));
 
-  // History BEFORE this message (model context), then persist the user turn.
+  // History BEFORE this message (model context). The user turn is persisted only AFTER a
+  // successful turn (below), never before the Claude call: persisting it up front left an
+  // orphaned, unanswered user row on failure, so a retry into the same conversation (the
+  // route hands conversationId back for exactly that) re-appended the message and sent two
+  // consecutive user-role turns to the Messages API.
   const prior = await getMessages(shopDomain, conversationId);
-  await appendMessage(shopDomain, conversationId, { role: "user", content: message });
 
   const history: Anthropic.MessageParam[] = prior
     .slice(-HISTORY_WINDOW)
@@ -87,7 +90,8 @@ export async function runConversationTurn(
     });
   } catch (err) {
     const e = err as { message?: string };
-    // User turn already saved; do not persist a broken assistant turn (clean retry).
+    // Nothing was persisted this turn (the user turn is saved only on success, below), so a
+    // retry into the same conversation starts clean — no duplicated/unanswered user row.
     console.error("[assistant] turn failed", {
       shop: shopDomain,
       conversationId,
@@ -96,13 +100,45 @@ export async function runConversationTurn(
     throw new AssistantTurnError(e.message ?? "Could not reach Claude", conversationId);
   }
 
-  const assistantMessage = await appendMessage(shopDomain, conversationId, {
-    role: "assistant",
-    content: result.text,
-    draftedAction: result.draftedAction,
-    receipts: result.receipts,
-    pendingAction: result.pendingAction,
-  });
+  // The turn succeeded. When allowActions is set, execute-tier registry actions may have
+  // ALREADY committed real side effects (a paused campaign, a price change) inside
+  // runAssistantTurn, so a persistence failure here must never surface as a failed turn and
+  // hide them (same stance the confirm route takes). Persist the user turn, then the assistant
+  // reply; on a reply-persist failure, log loudly and return the receipts anyway.
+  try {
+    await appendMessage(shopDomain, conversationId, { role: "user", content: message });
+  } catch (err) {
+    console.error("[assistant] failed to persist user turn after a successful reply", {
+      shop: shopDomain,
+      conversationId,
+    }, err);
+  }
+
+  let assistantMessage: ChatMessage;
+  try {
+    assistantMessage = await appendMessage(shopDomain, conversationId, {
+      role: "assistant",
+      content: result.text,
+      draftedAction: result.draftedAction,
+      receipts: result.receipts,
+      pendingAction: result.pendingAction,
+    });
+  } catch (err) {
+    console.error(
+      "[assistant] failed to persist assistant reply; returning receipts anyway so executed actions aren't reported as failed",
+      { shop: shopDomain, conversationId },
+      err,
+    );
+    assistantMessage = {
+      id: "",
+      role: "assistant",
+      content: result.text,
+      draftedAction: result.draftedAction ?? null,
+      receipts: result.receipts ?? [],
+      pendingAction: result.pendingAction ?? null,
+      createdAt: new Date().toISOString(),
+    };
+  }
 
   return { conversationId, assistantMessage };
 }

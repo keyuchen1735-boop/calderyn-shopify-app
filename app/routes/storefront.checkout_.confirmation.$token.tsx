@@ -44,7 +44,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // keyed off the whole set rather than the exact `paid` state so the status stays honest after
   // the order moves on (a `fulfilled` order must not read as "still confirming payment").
   const captured =
-    order.state === "paid" || order.state === "fulfilled" || order.state === "refunded";
+    order.state === "paid" ||
+    order.state === "fulfilled" ||
+    order.state === "partially_refunded" ||
+    order.state === "refunded";
 
   // Clear the cart cookie ONLY when payment is captured AND the cookie still points at the CONSUMED
   // cart (the one this checkout marked 'checkout_pending'). The order carries no cart_id, so we tell
@@ -93,9 +96,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   // Reflect the ACTUAL order state so the buyer is never falsely reassured. The webhook may lag
   // (order still `checkout_pending` reads as "processing"), but a `cancelled`/`refunded` order
   // must show its terminal status — not the "we'll email you shortly" processing copy.
-  // `fulfilled` is post-paid, so it reads as confirmed.
+  // `fulfilled` and `partially_refunded` are post-paid, so they read as confirmed — a paid
+  // order that had a partial refund must never fall through to the "still confirming payment" copy.
   const status: "confirmed" | "processing" | "cancelled" | "refunded" =
-    order.state === "paid" || order.state === "fulfilled"
+    order.state === "paid" || order.state === "fulfilled" || order.state === "partially_refunded"
       ? "confirmed"
       : order.state === "cancelled"
         ? "cancelled"
