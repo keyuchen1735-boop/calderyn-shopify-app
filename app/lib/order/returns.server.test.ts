@@ -138,6 +138,8 @@ vi.mock("./list.server", () => ({ remainingRefundableByOrder: h.remainingRefunda
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { createOrderReturn, cancelOrderReturn, executeReturnReceivedAction, listOrderReturns } from "./returns.server";
+// eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
+import { REDUCTION_TAX_FIXTURE } from "./__tests__/reduction-tax-fixture";
 
 function seedOrder(shopId: string, id: string, state: string, extra: Record<string, unknown> = {}) {
   store.db.orders.push({ id, shop_id: shopId, state, subtotal_cents: 10000, tax_cents: 0, total_cents: 10000, ...extra });
@@ -282,14 +284,17 @@ describe("createOrderReturn — returnable-quantity cap", () => {
 
 describe("createOrderReturn — refund default + cap", () => {
   it("defaults refund_cents to unit_price x qty + proportional tax share when omitted", async () => {
-    seedOrder("shop-1", "order-1", "fulfilled", { subtotal_cents: 10000, tax_cents: 800 });
-    seedLine("shop-1", "order-1", "line-1", "v-1", 1250); // 2 units -> deltaSubtotal 2500
+    // Shared fixture (also asserted by edit.server.test.ts / reduce-line-preview.test.ts): keeps
+    // this executor's formula and its expected numbers synchronized with the rest of the suite.
+    const { subtotalCents, taxCents, deltaSubtotal, expectedRefund } = REDUCTION_TAX_FIXTURE;
+    const unitPriceCents = deltaSubtotal / 2; // fixture's deltaSubtotal is for 2 units
+    seedOrder("shop-1", "order-1", "fulfilled", { subtotal_cents: subtotalCents, tax_cents: taxCents });
+    seedLine("shop-1", "order-1", "line-1", "v-1", unitPriceCents);
     seedFulfilled("shop-1", "order-1", "line-1", 5);
 
     const res = await createOrderReturn("shop-1", { orderId: "order-1", lines: [{ orderLineId: "line-1", quantity: 2, restock: true }] });
 
-    // floor(800 * 2500 / 10000) = 200; refund = 2500 + 200 = 2700 (shared reduction-tax formula).
-    expect(res.lines[0].refundCents).toBe(2700);
+    expect(res.lines[0].refundCents).toBe(expectedRefund);
   });
 
   it("accepts a client refundCents at or below the default", async () => {
@@ -565,6 +570,112 @@ describe("executeReturnReceivedAction — crash-window resume", () => {
     // The over-refund pre-check is SKIPPED on resume (it would wrongly reject against a ledger the
     // crashed attempt's own refund already moved) — remainingRefundableByOrder is never consulted.
     expect(h.remainingRefundableByOrder).not.toHaveBeenCalled();
+  });
+});
+
+describe("executeReturnReceivedAction — refund-committed-before-flip crash resume", () => {
+  it("resumes when <key>:refund has a prior succeeded issue_refund for THIS order: skips the over_refund precheck and the refund call, redoes restocks, flips to closed, audits", async () => {
+    seedOrder("shop-1", "order-1", "fulfilled");
+    seedLine("shop-1", "order-1", "line-1", "v-1", 1000);
+    seedFulfilled("shop-1", "order-1", "line-1", 5);
+    store.db.variant_dim.push({ id: "v-1", shop_id: "shop-1", inventory_tracked: true });
+    // Still 'open' with no received_idempotency_key -- the nested refund committed but the CAS
+    // flip never landed before the crash.
+    store.db.order_return.push({
+      id: "return-1",
+      shop_id: "shop-1",
+      order_id: "order-1",
+      status: "open",
+      received_idempotency_key: null,
+    });
+    store.db.order_return_line.push({
+      id: "rline-1",
+      shop_id: "shop-1",
+      return_id: "return-1",
+      order_line_id: "line-1",
+      quantity: 2,
+      restock: true,
+      refund_cents: 2000,
+    });
+    store.db.action_audit = [
+      {
+        id: "refund-audit-committed",
+        shop_id: "shop-1",
+        action_kind: "issue_refund",
+        outcome: "succeeded",
+        params: { order_id: "order-1", amount_cents: 2000 },
+      },
+    ] as any;
+    // Outer idempotency (input.idempotencyKey) finds nothing; the sub-key finds the committed refund.
+    h.prior.mockImplementation(async (_shopId: string, key: string) => {
+      if (key === "rk-crash:refund") return { id: "refund-audit-committed", outcome: "succeeded" };
+      return null;
+    });
+    // The ledger already reflects this return's own refund -- proving the precheck was SKIPPED
+    // (not merely that it happened to pass) by making it throw if ever called.
+    h.remainingRefundableByOrder.mockImplementation(async () => {
+      throw new Error("remainingRefundableByOrder must not be called on a refund-committed resume");
+    });
+
+    const res = await executeReturnReceivedAction("shop-1", { returnId: "return-1", idempotencyKey: "rk-crash" });
+
+    expect(h.executeRefundAction).not.toHaveBeenCalled();
+    expect(h.restockLine).toHaveBeenCalledWith("shop-1", "order-1", "v-1", 2, "restockreturn:rline-1");
+    expect(store.db.order_return[0]).toMatchObject({ status: "closed", received_idempotency_key: "rk-crash" });
+    expect(res).toMatchObject({
+      returnId: "return-1",
+      orderId: "order-1",
+      status: "closed",
+      refundedCents: 2000,
+      restockedLines: 1,
+      replayed: false,
+    });
+    expect(h.insertAudit).toHaveBeenCalledTimes(1);
+    const audit = h.insertAudit.mock.calls[0][2];
+    expect(audit.params).toMatchObject({ refunded_cents: 2000, resumed_after_refund_crash: true });
+  });
+
+  it("does NOT resume when <key>:refund belongs to a DIFFERENT order: falls through to the fresh branch and over_refunds 409s as before", async () => {
+    seedOrder("shop-1", "order-1", "fulfilled");
+    seedLine("shop-1", "order-1", "line-1", "v-1", 1000);
+    seedFulfilled("shop-1", "order-1", "line-1", 5);
+    store.db.order_return.push({
+      id: "return-1",
+      shop_id: "shop-1",
+      order_id: "order-1",
+      status: "open",
+      received_idempotency_key: null,
+    });
+    store.db.order_return_line.push({
+      id: "rline-1",
+      shop_id: "shop-1",
+      return_id: "return-1",
+      order_line_id: "line-1",
+      quantity: 2,
+      restock: true,
+      refund_cents: 2000,
+    });
+    store.db.action_audit = [
+      {
+        id: "refund-audit-other-order",
+        shop_id: "shop-1",
+        action_kind: "issue_refund",
+        outcome: "succeeded",
+        params: { order_id: "order-OTHER", amount_cents: 2000 },
+      },
+    ] as any;
+    h.prior.mockImplementation(async (_shopId: string, key: string) => {
+      if (key === "rk-cross:refund") return { id: "refund-audit-other-order", outcome: "succeeded" };
+      return null;
+    });
+    h.remainingRefundableByOrder.mockResolvedValueOnce(new Map([["order-1", 1000]])); // only 1000 left, need 2000
+
+    await expect(executeReturnReceivedAction("shop-1", { returnId: "return-1", idempotencyKey: "rk-cross" })).rejects.toMatchObject({
+      code: "over_refund",
+      status: 409,
+    });
+    expect(h.executeRefundAction).not.toHaveBeenCalled();
+    expect(store.db.order_return[0].status).toBe("open");
   });
 });
 
