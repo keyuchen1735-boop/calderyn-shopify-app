@@ -10,10 +10,12 @@ import type {
 } from "~/lib/order/list-types";
 import type { ImportedOrdersPage } from "~/lib/order/imported-list-types";
 import type { OrderDetail } from "~/lib/order/detail-types";
+import type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage } from "~/lib/order/unified-list-types";
 
 export type { OrderRow, DraftCartRow, AbandonedCheckoutRow, ShipChargeRow, OrdersPage };
 export type { ImportedOrdersPage };
 export type { OrderDetail };
+export type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage };
 
 export async function fetchOrdersPage(): Promise<OrdersPage> {
   return apiGet<OrdersPage>("/dashboard/api/orders");
@@ -155,4 +157,100 @@ export async function setOrderArchived(orderId: string, archived: boolean): Prom
     { archived },
   );
   return data.archived;
+}
+
+// --- unified list + saved views (Phase 2 Task 2) ----------------------------
+
+interface UnifiedOrderRowWire {
+  source: "calderyn" | "shopify";
+  id: string;
+  ref: string;
+  buyer_email: string | null;
+  total_cents: number;
+  currency: string;
+  payment_status: string;
+  state: string;
+  cancelled_at: string | null;
+  archived_at: string | null;
+  occurred_at: string;
+  item_count: number;
+  tags: string[];
+  remaining_refundable_cents: number;
+}
+
+function mapUnifiedRow(row: UnifiedOrderRowWire): UnifiedOrderRow {
+  return {
+    source: row.source,
+    id: row.id,
+    ref: row.ref,
+    buyerEmail: row.buyer_email,
+    totalCents: row.total_cents,
+    currency: row.currency,
+    paymentStatus: row.payment_status,
+    state: row.state,
+    cancelledAt: row.cancelled_at,
+    archivedAt: row.archived_at,
+    occurredAt: row.occurred_at,
+    itemCount: row.item_count,
+    tags: row.tags,
+    remainingRefundableCents: row.remaining_refundable_cents,
+  };
+}
+
+/** Search/filter/sort/paginate across native + imported orders (Phase 2 list power tools).
+ *  Omits any param that's undefined so the querystring stays minimal. */
+export async function fetchOrdersList(params: OrdersListParams): Promise<UnifiedOrdersPage> {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set("search", params.search);
+  if (params.paymentStatus?.length) qs.set("payment_status", params.paymentStatus.join(","));
+  if (params.fulfillmentStatus) qs.set("fulfillment_status", params.fulfillmentStatus);
+  if (params.source) qs.set("source", params.source);
+  if (params.dateFrom) qs.set("date_from", params.dateFrom);
+  if (params.dateTo) qs.set("date_to", params.dateTo);
+  if (params.tag) qs.set("tag", params.tag);
+  if (params.archived !== undefined) qs.set("archived", params.archived ? "true" : "false");
+  if (params.sort) qs.set("sort", params.sort);
+  if (params.dir) qs.set("dir", params.dir);
+  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+
+  const data = await apiGet<{
+    rows: UnifiedOrderRowWire[];
+    total_count: number;
+    offset: number;
+    limit: number;
+  }>(`/dashboard/api/orders/list${suffix}`);
+  return {
+    rows: data.rows.map(mapUnifiedRow),
+    totalCount: data.total_count,
+    offset: data.offset,
+    limit: data.limit,
+  };
+}
+
+/** A merchant-saved orders-list filter preset. */
+export interface OrderViewVM {
+  id: string;
+  name: string;
+  filters: Record<string, unknown>;
+  position: number;
+}
+
+/** List the shop's saved order-list views, in display order. */
+export async function fetchOrderViews(): Promise<OrderViewVM[]> {
+  const data = await apiGet<{ views: OrderViewVM[] }>("/dashboard/api/orders/views");
+  return data.views;
+}
+
+/** Save the current toolbar filters as a named view. 409s (DashboardApiError) on a duplicate
+ *  name; 422s past the per-shop saved-view cap. */
+export async function createOrderView(name: string, filters: Record<string, unknown>): Promise<OrderViewVM> {
+  const data = await apiSend<{ view: OrderViewVM }>("POST", "/dashboard/api/orders/views", { name, filters });
+  return data.view;
+}
+
+/** Delete a saved view by id. */
+export async function deleteOrderView(id: string): Promise<void> {
+  await apiSend<{ deleted: true }>("DELETE", `/dashboard/api/orders/views?id=${encodeURIComponent(id)}`);
 }
