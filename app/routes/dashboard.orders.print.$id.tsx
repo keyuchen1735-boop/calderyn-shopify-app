@@ -45,7 +45,8 @@ export default function OrderPrintPage() {
   const { doc, order, shopLabel } = useLoaderData<typeof loader>();
   const isInvoice = doc === "invoice";
   const title = isInvoice ? "Invoice" : "Packing slip";
-  const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "";
+  // Pinned locale: SSR and hydration must format identically (server ICU default can differ).
+  const orderDate = order.createdAt ? new Date(order.createdAt).toLocaleDateString("en-US") : "";
   const address = order.shippingAddress;
   const netCents = order.totalCents - order.refundedCents;
 
