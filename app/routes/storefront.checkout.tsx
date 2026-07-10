@@ -22,6 +22,8 @@ import { ShipRestrictedError, ShippingOptionUnavailableError } from "~/lib/shipp
 import { OriginNotConfiguredError } from "~/lib/commerce/errors";
 import { RateSourceNotConfiguredError } from "~/lib/commerce/rate-source.server";
 import { quoteCartOptions } from "~/lib/commerce/quote.server";
+import { verifyCheckoutAddress } from "~/lib/commerce/address-verify.server";
+import type { AddressSuggestion } from "~/lib/commerce/address-verify.server";
 import type { CartShippingOption } from "~/lib/commerce/types";
 import { PICKUP_OPTION_TOKEN, PICKUP_SERVICE_NAME } from "~/lib/commerce/types";
 import { COUNTRIES, isKnownCountry } from "~/lib/storefront/countries";
@@ -377,20 +379,30 @@ export async function action({ request }: ActionFunctionArgs) {
     try {
       const priced = await priceCart(shopId, cartId);
       if (priced.lines.length === 0) return redirect("/storefront/cart");
+      const destination = {
+        street1: line1,
+        street2: line2 || undefined,
+        city,
+        state: region,
+        zip: postal,
+        country: countryIso,
+      };
+      // Best-effort address verification rides ALONGSIDE the quote (2s budget, never
+      // throws, never blocks) — a differing standardized form renders a one-click
+      // "use suggested address" on the options step.
+      const suggestionP = verifyCheckoutAddress(shopId, destination);
       const { options, currency } = await quoteCartOptions(
         shopId,
         priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
-        {
-          street1: line1,
-          street2: line2 || undefined,
-          city,
-          state: region,
-          zip: postal,
-          country: countryIso,
-        },
+        destination,
         { subtotalCentsOverride: priced.subtotalCents },
       );
-      return json({ shippingOptions: options, optionsCurrency: currency });
+      const addressSuggestion = await suggestionP;
+      return json({
+        shippingOptions: options,
+        optionsCurrency: currency,
+        ...(addressSuggestion ? { addressSuggestion } : {}),
+      });
     } catch (err) {
       const mapped = await mapShippingError(err, shopId, cartId);
       if (mapped) return mapped;
@@ -597,6 +609,29 @@ export default function StorefrontCheckout() {
   const formError = data && "error" in data ? data.error : undefined;
   const shippingOptions: CartShippingOption[] | undefined =
     data && "shippingOptions" in data ? data.shippingOptions : undefined;
+  const addressSuggestion: AddressSuggestion | undefined =
+    data && "addressSuggestion" in data ? data.addressSuggestion : undefined;
+
+  // Applying the suggestion writes the (hidden, still-mounted) address inputs in place
+  // and immediately RE-QUOTES: the offered rates must be priced for the address that
+  // will actually be charged, and the fresh response (whose standardized form now
+  // matches the inputs) naturally clears the banner — no dismissal state to go stale.
+  // Country is never touched: the verifier doesn't suggest country changes.
+  function applySuggestion(form: HTMLFormElement | null) {
+    if (!form || !addressSuggestion) return;
+    const set = (name: string, value: string) => {
+      const el = form.elements.namedItem(name);
+      if (el instanceof HTMLInputElement) el.value = value;
+    };
+    set("line1", addressSuggestion.line1);
+    set("line2", addressSuggestion.line2 ?? "");
+    set("city", addressSuggestion.city);
+    set("region", addressSuggestion.region);
+    set("postal", addressSuggestion.postal);
+    const fd = new FormData(form);
+    fd.set("intent", "quote");
+    fetcher.submit(fd, { method: "post" });
+  }
   // Once the action has quoted shipping + tax, show the real charged amounts; before that only
   // the subtotal is known.
   const charged = data && "totalCents" in data ? data : null;
@@ -735,6 +770,26 @@ export default function StorefrontCheckout() {
 
           {onOptionsStep && shippingOptions ? (
             <div className="cd-checkout__shipping">
+              {addressSuggestion ? (
+                <div className="cd-checkout__suggestion">
+                  <p className="cd-checkout__suggestion-text">
+                    We found a standardized version of your address:{" "}
+                    <strong>
+                      {addressSuggestion.line1}
+                      {addressSuggestion.line2 ? `, ${addressSuggestion.line2}` : ""},{" "}
+                      {addressSuggestion.city}, {addressSuggestion.region} {addressSuggestion.postal}
+                    </strong>
+                  </p>
+                  <button
+                    type="button"
+                    className="cd-checkout__back"
+                    disabled={busy}
+                    onClick={(e) => applySuggestion(e.currentTarget.form)}
+                  >
+                    {busy ? "Updating…" : "Use suggested address"}
+                  </button>
+                </div>
+              ) : null}
               <h2>Shipping method</h2>
               {shippingOptions.map((o, i) => {
                 const pickup = o.service === PICKUP_OPTION_TOKEN;

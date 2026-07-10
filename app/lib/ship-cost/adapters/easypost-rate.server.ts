@@ -5,10 +5,7 @@
 //
 // No new npm dependency (repo rule P6): built-in fetch + HTTP Basic + AbortController.
 
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { parseRateToCents, basicAuthHeader, apiBase } from "./easypost.server";
-import { getSupabase } from "../../supabase.server";
-import { decrypt } from "../../crypto.server";
+import { parseRateToCents, basicAuthHeader, apiBase, loadEasyPostApiKey } from "./easypost.server";
 import type {
   Address,
   NormalizedRateOption,
@@ -207,16 +204,9 @@ export const easyPostRateAdapter: RateQuoteAdapter = {
   provider: "easypost",
   integrationKind: "easypost_ship",
   async connect(shopId: string): Promise<RateQuoteSource | null> {
-    const sb: SupabaseClient = getSupabase();
-    const { data, error } = await sb
-      .from("integration_credentials")
-      .select("access_token_encrypted")
-      .eq("shop_id", shopId)
-      .eq("kind", "easypost_ship")
-      .maybeSingle();
-    if (error) throw error;
-    if (!data || !data.access_token_encrypted) return null; // shop not connected.
-    const apiKey = decrypt(data.access_token_encrypted as string); // throws if ciphertext is broken (rule 12).
+    // Shared load: null = shop not connected; throws on broken ciphertext (rule 12).
+    const apiKey = await loadEasyPostApiKey(shopId);
+    if (!apiKey) return null;
     return {
       // Scope the shared quote cache to this shop+provider so no other tenant is
       // ever served these rates (see RateQuoteSource.id / quote cache keying).

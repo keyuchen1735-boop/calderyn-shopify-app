@@ -149,20 +149,33 @@ export async function fetchEasyPostCharges(
   return out;
 }
 
+/**
+ * THE credential load for every EasyPost surface (cost ingest, rate quotes, label
+ * purchase, address verification): decrypted API key, or null when the shop has no
+ * stored credential. Throws on a DB error or broken ciphertext (rule 12) — callers
+ * that must degrade instead (advisory paths) wrap it.
+ */
+export async function loadEasyPostApiKey(
+  shopId: string,
+  sb: SupabaseClient = getSupabase(),
+): Promise<string | null> {
+  const { data, error } = await sb
+    .from("integration_credentials")
+    .select("access_token_encrypted")
+    .eq("shop_id", shopId)
+    .eq("kind", "easypost_ship")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data || !data.access_token_encrypted) return null;
+  return decrypt(data.access_token_encrypted as string);
+}
+
 export const easyPostAdapter: ShipCostAdapter = {
   provider: "easypost",
   integrationKind: "easypost_ship",
   async connect(shopId: string): Promise<ShipSource | null> {
-    const sb: SupabaseClient = getSupabase();
-    const { data, error } = await sb
-      .from("integration_credentials")
-      .select("access_token_encrypted")
-      .eq("shop_id", shopId)
-      .eq("kind", "easypost_ship")
-      .maybeSingle();
-    if (error) throw error;
-    if (!data || !data.access_token_encrypted) return null; // → cron marks "skipped".
-    const apiKey = decrypt(data.access_token_encrypted as string);
+    const apiKey = await loadEasyPostApiKey(shopId);
+    if (!apiKey) return null; // → cron marks "skipped".
     return {
       fetchCharges: (since) => fetchEasyPostCharges(apiKey, since),
     };
