@@ -1346,6 +1346,85 @@ export async function archiveProduct(id: string): Promise<void> {
   await apiSend("DELETE", `/dashboard/api/catalog/products/${encodeURIComponent(id)}`);
 }
 
+// --- bulk catalog actions ------------------------------------------------------
+
+/** One product's outcome from a bulk catalog action: ok, or ok:false + a plain-language
+ *  error — never thrown per-product, since partial failure across a bulk selection is
+ *  normal, expected output. */
+export interface BulkProductResultVM {
+  productId: string;
+  ok: boolean;
+  error?: string;
+}
+
+interface BulkProductResultWire {
+  product_id: string;
+  ok: boolean;
+  error?: string;
+}
+
+function mapBulkProductResults(rows: BulkProductResultWire[]): BulkProductResultVM[] {
+  return rows.map((r) => ({ productId: r.product_id, ok: r.ok, error: r.error }));
+}
+
+// The catalog page size is 50 (listProducts' default limit), so "select all on this page" can
+// hand these functions up to 50 ids — but the server-side bulk routes cap a single request at
+// MAX_BULK_PRODUCTS = 25 (app/lib/catalog/bulk.server.ts) and 422 the WHOLE request over that.
+// Chunk into slices of at most this size and send them one at a time (never Promise.all), same
+// contract as the orders bulk client: a whole-slice rejection after earlier slices succeeded is
+// downgraded to per-product failures so already-applied results are never discarded.
+const PRODUCT_BULK_CHUNK_SIZE = 25;
+
+async function runProductBulkInChunks(
+  productIds: string[],
+  send: (slice: string[]) => Promise<{ results: BulkProductResultVM[] }>,
+): Promise<{ results: BulkProductResultVM[] }> {
+  const results: BulkProductResultVM[] = [];
+  for (let i = 0; i < productIds.length; i += PRODUCT_BULK_CHUNK_SIZE) {
+    const slice = productIds.slice(i, i + PRODUCT_BULK_CHUNK_SIZE);
+    try {
+      const { results: sliceResults } = await send(slice);
+      results.push(...sliceResults);
+    } catch (err) {
+      const message = err instanceof DashboardApiError ? err.message : "Something went wrong.";
+      for (const productId of slice) results.push({ productId, ok: false, error: message });
+    }
+  }
+  return { results };
+}
+
+/** Set every selected product's status. No idempotency key — a status write is naturally
+ *  idempotent, so a retried request converges on the same state. */
+export async function bulkSetProductStatus(
+  productIds: string[],
+  status: "active" | "draft" | "archived",
+): Promise<{ results: BulkProductResultVM[] }> {
+  return runProductBulkInChunks(productIds, async (slice) => {
+    const data = await apiSend<{ results: BulkProductResultWire[] }>(
+      "POST",
+      "/dashboard/api/catalog/products/bulk/status",
+      { product_ids: slice, status },
+    );
+    return { results: mapBulkProductResults(data.results) };
+  });
+}
+
+/** Add every selected product to a collection. Membership writes are naturally idempotent
+ *  (the server upsert ignores duplicates), so no idempotency key here either. */
+export async function bulkAddProductsToCollection(
+  productIds: string[],
+  collectionId: string,
+): Promise<{ results: BulkProductResultVM[] }> {
+  return runProductBulkInChunks(productIds, async (slice) => {
+    const data = await apiSend<{ results: BulkProductResultWire[] }>(
+      "POST",
+      "/dashboard/api/catalog/products/bulk/collection",
+      { product_ids: slice, collection_id: collectionId },
+    );
+    return { results: mapBulkProductResults(data.results) };
+  });
+}
+
 export async function fetchCollections(): Promise<CollectionVM[]> {
   const data = await apiGet<{ collections: CollectionVM[] }>("/dashboard/api/catalog/collections");
   return data.collections;
