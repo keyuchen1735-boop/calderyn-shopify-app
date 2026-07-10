@@ -1568,6 +1568,36 @@ export async function fetchInventoryHistory(variantId: string): Promise<LedgerEn
   );
   return d.history;
 }
+/** One shop-wide inventory list row: per-variant balance rollups across
+ *  locations, plus the latest recent restock-draft audit entry when one
+ *  targets this variant's sku (null otherwise). */
+export interface InventoryRowVM {
+  variantId: string;
+  productId: string;
+  sku: string | null;
+  variantTitle: string | null;
+  productTitle: string;
+  onHand: number;
+  reserved: number;
+  incoming: number;
+  available: number;
+  low: boolean;
+  locationCount: number;
+  singleLocationId: string | null;
+  restock: { auditId: string; createdAt: string; outcome: string } | null;
+}
+export async function fetchInventoryList(
+  opts: { search?: string; stock?: "low" | "out"; offset?: number } = {},
+): Promise<{ rows: InventoryRowVM[]; total: number }> {
+  const params = new URLSearchParams();
+  if (opts.search) params.set("search", opts.search);
+  if (opts.stock) params.set("stock", opts.stock);
+  if (opts.offset) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  return apiGet<{ rows: InventoryRowVM[]; total: number }>(
+    `/dashboard/api/catalog/inventory${qs ? `?${qs}` : ""}`,
+  );
+}
 // ----- Import from Shopify (#13.promote) -----
 export interface ImportRunVM {
   id: string;
