@@ -8,6 +8,10 @@ import type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage } from "./uni
 export async function listOrdersUnified(shopId: string, params: OrdersListParams): Promise<UnifiedOrdersPage> {
   if (!shopId) throw new Error("shopId is required");
 
+  // Mirror the SQL function's clamping: offset ≥ 0, limit ∈ [1, 1000]
+  const appliedOffset = Math.max(params.offset ?? 0, 0);
+  const appliedLimit = Math.min(Math.max(params.limit ?? 50, 1), 1000);
+
   const { data, error } = await getSupabase().rpc("list_orders_unified", {
     p_shop_id: shopId,
     p_search: params.search ?? null,
@@ -20,8 +24,8 @@ export async function listOrdersUnified(shopId: string, params: OrdersListParams
     p_archived: params.archived ?? false,
     p_sort: params.sort ?? "date",
     p_dir: params.dir ?? "desc",
-    p_offset: params.offset ?? 0,
-    p_limit: params.limit ?? 50,
+    p_offset: appliedOffset,
+    p_limit: appliedLimit,
   });
 
   if (error) throw error;
@@ -32,8 +36,8 @@ export async function listOrdersUnified(shopId: string, params: OrdersListParams
   return {
     rows: rows.map((row) => mapRow(row)),
     totalCount,
-    offset: params.offset ?? 0,
-    limit: params.limit ?? 50,
+    offset: appliedOffset,
+    limit: appliedLimit,
   };
 }
 

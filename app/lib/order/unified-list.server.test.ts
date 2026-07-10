@@ -199,4 +199,20 @@ describe("listOrdersUnified", () => {
     expect(result.rows[0].source).toBe("calderyn");
     expect(result.rows[1].source).toBe("shopify");
   });
+
+  it("clamps limit to 1000 and reports clamped value in returned page", async () => {
+    store.rpc.mockResolvedValue({ data: [], error: null });
+
+    const result = await listOrdersUnified("shop-1", { limit: 5000 });
+
+    // RPC called with clamped limit
+    expect(store.rpc).toHaveBeenCalledWith(
+      "list_orders_unified",
+      expect.objectContaining({
+        p_limit: 1000,
+      }),
+    );
+    // Returned page reflects clamped limit
+    expect(result.limit).toBe(1000);
+  });
 });
