@@ -91,7 +91,9 @@ describe("inventory transfer route", () => {
     expect((await res.json()).transfers).toEqual([
       // sku/variantTitle come from a variant_dim lookup; the mock has no row for
       // v1, so both resolve null (the DTO's honest missing-label state).
-      { id: "t1", variantId: "v1", qty: 2, fromName: "A", toName: "B", createdAt: "now", sku: null, variantTitle: null },
+      // receivedAt is null for the default in-transit view (only the received
+      // history view carries a timestamp).
+      { id: "t1", variantId: "v1", qty: 2, fromName: "A", toName: "B", createdAt: "now", sku: null, variantTitle: null, receivedAt: null },
     ]);
   });
 });

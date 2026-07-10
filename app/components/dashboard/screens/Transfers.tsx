@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Btn, Card, Pill, Placeholder, SectionTitle } from "../ui";
+import { Btn, Card, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
 import { timeAgo } from "../format";
 import { DashboardApiError, receiveTransfer } from "~/lib/dashboard/client";
 import {
@@ -47,6 +47,9 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
   );
   const [received, setReceived] = useState<ShopTransferVM[] | null>(null);
   const [receivedError, setReceivedError] = useState<string | null>(null);
+  // First-load failure with nothing to show — rendered in the card so the API
+  // message isn't lost to a transient toast.
+  const [pendingError, setPendingError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   // Set when a reload fails but stale rows are still on screen, so the list
   // stays useful without pretending it's fresh.
@@ -73,14 +76,15 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
           cacheScreenData(SCREEN_CACHE_KEYS.transfers, pending.value);
           setRows(pending.value);
           setStaleWarning(false);
+          setPendingError(null);
         } else if (rowsRef.current) {
           setStaleWarning(true);
         } else {
-          const msg =
+          setPendingError(
             pending.reason instanceof DashboardApiError
               ? pending.reason.message
-              : "Could not load transfers.";
-          toast(msg, "warn", "critical");
+              : "Could not load transfers.",
+          );
         }
         if (hist.status === "fulfilled") {
           setReceived(hist.value);
@@ -98,7 +102,7 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
     return () => {
       alive = false;
     };
-  }, [toast, reloadKey]);
+  }, [reloadKey]);
 
   const onReceive = async (transferId: string) => {
     if (receiving) return;
@@ -138,15 +142,15 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
           </div>
         )}
         {!rows ? (
-          <Placeholder
-            icon="truck"
-            title={loading ? "Loading transfers" : "Transfers unavailable"}
-            sub={
-              loading
-                ? "Reading in-transit stock moves."
-                : "Could not load transfers just now. Refresh to try again."
-            }
-          />
+          loading ? (
+            <TableSkeleton />
+          ) : (
+            <Placeholder
+              icon="warn"
+              title="Couldn't load transfers"
+              sub={pendingError ?? "Could not load transfers just now. Refresh to try again."}
+            />
+          )
         ) : rows.length === 0 ? (
           <>
             <Placeholder
@@ -161,7 +165,10 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
             </div>
           </>
         ) : (
-          <>
+          // Five columns can't compress into a phone width — the table pans
+          // sideways inside the card instead of crushing every cell.
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 620 }}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
               <span>Transfer</span>
               <span>SKU / variant</span>
@@ -199,7 +206,8 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
                 </div>
               </div>
             ))}
-          </>
+            </div>
+          </div>
         )}
       </Card>
 
@@ -209,11 +217,7 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
           {receivedError ? (
             <Placeholder icon="warn" title="History unavailable" sub={receivedError} />
           ) : received == null ? (
-            <Placeholder
-              icon="truck"
-              title="Loading history"
-              sub="Reading transfers received in the last 30 days."
-            />
+            <TableSkeleton rows={3} />
           ) : received.length === 0 ? (
             <Placeholder
               icon="truck"
@@ -221,7 +225,8 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
               sub="Transfers you mark received show here for 30 days."
             />
           ) : (
-            <>
+            <div style={{ overflowX: "auto" }}>
+              <div style={{ minWidth: 620 }}>
               <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
                 <span>Transfer</span>
                 <span>SKU / variant</span>
@@ -249,7 +254,8 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
                   </div>
                 </div>
               ))}
-            </>
+              </div>
+            </div>
           )}
         </Card>
       </div>

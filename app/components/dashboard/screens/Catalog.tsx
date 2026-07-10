@@ -396,7 +396,10 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
             onAction={filtered ? undefined : () => app.navigate("product-editor", "new")}
           />
         ) : (
-          <>
+          // Six columns can't compress into a phone width — the table pans
+          // sideways inside the card instead of crushing every cell.
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 680 }}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
               <span>
                 <input
@@ -494,7 +497,8 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
                 </div>
               </div>
             ))}
-          </>
+            </div>
+          </div>
         )}
       </Card>
 

@@ -192,12 +192,22 @@ function ComboTable({
 function CollectionChips({
   collections,
   selected,
+  error,
   onToggle,
 }: {
   collections: client.CollectionVM[];
   selected: string[];
+  error?: boolean;
   onToggle: (id: string) => void;
 }) {
+  if (error) {
+    return (
+      <p className="cd-caption">
+        Couldn&apos;t load collections — you can add this product to collections later from the
+        editor.
+      </p>
+    );
+  }
   if (!collections.length) {
     return <p className="cd-caption">No collections yet — create one on the Collections screen.</p>;
   }
@@ -260,10 +270,11 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
   const [vendor, setVendor] = useState("");
   const [tags, setTags] = useState("");
   const [collections, setCollections] = useState<client.CollectionVM[]>([]);
+  const [collectionsError, setCollectionsError] = useState(false);
   const [sel, setSel] = useState<string[]>([]);
 
   useEffect(() => {
-    client.fetchCollections().then(setCollections).catch(() => {});
+    client.fetchCollections().then(setCollections).catch(() => setCollectionsError(true));
   }, []);
 
   // Pending prompt-apply steps die with the component (the timers array keeps
@@ -1068,6 +1079,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                     <CollectionChips
                       collections={collections}
                       selected={sel}
+                      error={collectionsError}
                       onToggle={(id) => setSel((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]))}
                     />
                   </Field>

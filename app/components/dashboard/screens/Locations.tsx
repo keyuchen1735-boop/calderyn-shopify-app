@@ -166,7 +166,10 @@ export default function Locations({ app }: { app: DashboardCtx }) {
             sub="Add one to start tracking stock."
           />
         ) : (
-          <>
+          // Five columns of inputs can't compress into a phone width — the
+          // table pans sideways inside the card instead of crushing the fields.
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 620 }}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
               <span>Location</span>
               <span>Priority</span>
@@ -224,7 +227,8 @@ export default function Locations({ app }: { app: DashboardCtx }) {
                 </div>
               </div>
             ))}
-          </>
+            </div>
+          </div>
         )}
       </Card>
 

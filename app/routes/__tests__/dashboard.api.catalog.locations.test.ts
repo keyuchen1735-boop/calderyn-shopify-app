@@ -9,7 +9,8 @@ vi.mock("~/lib/dashboard/http.server", () => ({
 const order = vi.fn().mockResolvedValue({ data: [{ id: "l1", name: "Main", priority: 0, lat: null, lng: null }], error: null });
 const update = vi.fn(() => ({ eq: () => ({ eq: () => Promise.resolve({ error: null }) }) }));
 vi.mock("~/lib/supabase.server", () => ({
-  getSupabase: () => ({ from: () => ({ select: () => ({ eq: () => ({ order }) }), update }) }),
+  // GET filters shop_id AND active, so select chains two .eq calls before .order.
+  getSupabase: () => ({ from: () => ({ select: () => ({ eq: () => ({ eq: () => ({ order }) }) }), update }) }),
 }));
 
 describe("locations route", () => {

@@ -553,11 +553,6 @@ export async function fetchCampaignDirection(id: string): Promise<CampaignDirect
   return apiGet<CampaignDirectionDTO>(`/dashboard/api/campaigns/${encodeURIComponent(id)}/direction`);
 }
 
-export async function fetchSkus(): Promise<SkuVM[]> {
-  const data = await apiGet<{ skus: SKU[] }>("/dashboard/api/skus");
-  return sortSkusByOnHandDesc(data.skus.map(adaptSku));
-}
-
 /** Per-SKU daily on-hand trend (90-day window) for the stock-trend sparkline.
  * Sparse, oldest-first; empty when the SKU has no in-window changes. */
 export async function fetchSkuHistory(id: string): Promise<SkuHistoryPoint[]> {

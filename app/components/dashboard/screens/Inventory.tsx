@@ -257,7 +257,10 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
             }
           />
         ) : (
-          <>
+          // Six columns can't compress into a phone width — the table pans
+          // sideways inside the card instead of crushing every cell.
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 640 }}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
               <span>Product</span>
               <span>On hand</span>
@@ -374,7 +377,8 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                 </div>
               );
             })}
-          </>
+            </div>
+          </div>
         )}
       </Card>
 
