@@ -84,6 +84,9 @@ export const SCREEN_CACHE_KEYS = {
   search: "search",
   transfers: "transfers",
   inventorySkus: "inventory-skus",
+  // The shop-wide inventory list (balance rollups + restock presence), default
+  // view only (no search, stock "all") — filtered views are live fetches.
+  inventoryList: "inventory-list",
   locations: "locations",
   shipCost: "settings-ship-cost",
   unmatchedShip: "settings-unmatched-ship",

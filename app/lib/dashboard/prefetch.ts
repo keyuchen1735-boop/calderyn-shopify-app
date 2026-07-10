@@ -8,12 +8,12 @@ import {
   apiGet,
   fetchBilling,
   fetchCollections,
+  fetchInventoryList,
   fetchLearnedRules,
   fetchLiveAnalytics,
   fetchLocations,
   fetchProducts,
   fetchShipCost,
-  fetchSkus,
   fetchUnmatchedShipCharges,
 } from "./client";
 import { fetchOrdersList, fetchOrdersPage } from "./orders-client";
@@ -50,7 +50,7 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.discover, fetchDiscover],
   [SCREEN_CACHE_KEYS.search, fetchSearchOverview],
   [SCREEN_CACHE_KEYS.agentic, () => apiGet("/dashboard/api/agentic")],
-  [SCREEN_CACHE_KEYS.inventorySkus, fetchSkus],
+  [SCREEN_CACHE_KEYS.inventoryList, () => fetchInventoryList({})],
   [SCREEN_CACHE_KEYS.collections, fetchCollections],
   [SCREEN_CACHE_KEYS.transfers, fetchAllPendingTransfers],
   [SCREEN_CACHE_KEYS.locations, fetchLocations],
