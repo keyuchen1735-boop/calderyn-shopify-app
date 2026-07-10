@@ -65,6 +65,19 @@ function humanizeState(state: string): string {
   return STATE_LABELS[state] ?? state;
 }
 
+/** Filters machine-generated transition reasons from the timeline.
+ *  Returns null for exact `payment_confirmed` and any reason starting with
+ *  `fulfillment:`, `stripe:`, `checkout:`, `agentic:`, or `merchant:` (provenance tags).
+ *  Any other non-empty reason (human text like "Customer changed their mind") passes through.
+ *  Input null returns null. */
+function humanizeTransitionReason(reason: string | null): string | null {
+  if (reason == null) return null;
+  if (reason === "payment_confirmed") return null;
+  const machinePrefix = ["fulfillment:", "stripe:", "checkout:", "agentic:", "merchant:"];
+  if (machinePrefix.some((prefix) => reason.startsWith(prefix))) return null;
+  return reason;
+}
+
 /** Human label for the attribution jsonb captured at checkout — same extraction shape as
  *  list.server.ts's private attributionLabel (duplicated rather than exported: it's a
  *  4-line pure function and the two read models are otherwise independent). */
@@ -360,7 +373,7 @@ async function loadTransitions(sb: SupabaseClient, shopId: string, orderId: stri
     kind: "transition" as const,
     at: String(r.occurred_at),
     title: humanizeState(String(r.to_state)),
-    detail: r.reason == null ? null : String(r.reason),
+    detail: humanizeTransitionReason(r.reason == null ? null : String(r.reason)),
     author: null,
   }));
 }

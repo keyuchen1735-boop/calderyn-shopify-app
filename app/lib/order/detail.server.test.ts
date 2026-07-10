@@ -390,6 +390,122 @@ describe("loadOrderDetail — native branch", () => {
   });
 });
 
+describe("humanizeTransitionReason", () => {
+  it("hides machine-generated reasons and preserves human text", async () => {
+    // Import the helper by testing it through transitions
+    store.db.orders.push({
+      id: "order-reasons",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "paid",
+      financial_status: "paid",
+      subtotal_cents: 1000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 1000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: "2026-07-01T00:00:00.000Z",
+    });
+
+    // Test various machine-generated reasons that should be hidden (null)
+    store.db.order_state_transition.push(
+      {
+        id: "trans-payment",
+        shop_id: "shop-1",
+        order_id: "order-reasons",
+        to_state: "paid",
+        reason: "payment_confirmed",
+        occurred_at: "2026-07-01T10:00:00.000Z",
+      },
+      {
+        id: "trans-fulfillment",
+        shop_id: "shop-1",
+        order_id: "order-reasons",
+        to_state: "fulfilled",
+        reason: "fulfillment:60ac5957-f168-4a3b-8f7a-2b8c3f3d5e7a",
+        occurred_at: "2026-07-01T11:00:00.000Z",
+      },
+      {
+        id: "trans-stripe",
+        shop_id: "shop-1",
+        order_id: "order-reasons",
+        to_state: "refunded",
+        reason: "stripe:evt_1234567890",
+        occurred_at: "2026-07-01T12:00:00.000Z",
+      },
+      {
+        id: "trans-checkout",
+        shop_id: "shop-1",
+        order_id: "order-reasons",
+        to_state: "cancelled",
+        reason: "checkout:timeout",
+        occurred_at: "2026-07-01T13:00:00.000Z",
+      },
+      {
+        id: "trans-agentic",
+        shop_id: "shop-1",
+        order_id: "order-reasons",
+        to_state: "partially_fulfilled",
+        reason: "agentic:auto_stock_rebalance",
+        occurred_at: "2026-07-01T14:00:00.000Z",
+      },
+      {
+        id: "trans-merchant",
+        shop_id: "shop-1",
+        order_id: "order-reasons",
+        to_state: "cart",
+        reason: "merchant:manual_adjustment",
+        occurred_at: "2026-07-01T15:00:00.000Z",
+      },
+      {
+        id: "trans-human",
+        shop_id: "shop-1",
+        order_id: "order-reasons",
+        to_state: "cancelled",
+        reason: "Customer changed their mind",
+        occurred_at: "2026-07-01T16:00:00.000Z",
+      },
+      {
+        id: "trans-null",
+        shop_id: "shop-1",
+        order_id: "order-reasons",
+        to_state: "paid",
+        reason: null,
+        occurred_at: "2026-07-01T17:00:00.000Z",
+      },
+    );
+
+    const detail = await loadOrderDetail("shop-1", "order-reasons");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+
+    const transitions = detail.timeline.filter((e) => e.kind === "transition");
+    expect(transitions).toHaveLength(8);
+
+    // payment_confirmed → hidden
+    expect(transitions[7]).toMatchObject({ detail: null });
+    // fulfillment:* → hidden
+    expect(transitions[6]).toMatchObject({ detail: null });
+    // stripe:* → hidden
+    expect(transitions[5]).toMatchObject({ detail: null });
+    // checkout:* → hidden
+    expect(transitions[4]).toMatchObject({ detail: null });
+    // agentic:* → hidden
+    expect(transitions[3]).toMatchObject({ detail: null });
+    // merchant:* → hidden
+    expect(transitions[2]).toMatchObject({ detail: null });
+    // Human text → preserved
+    expect(transitions[1]).toMatchObject({ detail: "Customer changed their mind" });
+    // null → stays null
+    expect(transitions[0]).toMatchObject({ detail: null });
+  });
+});
+
 describe("loadOrderDetail — imported (shopify:) branch", () => {
   it("marks readOnly true and titles lines from sku_dim", async () => {
     store.db.imported_order.push({
