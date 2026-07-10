@@ -150,7 +150,7 @@ Each send lands a timeline event.
 
 - `source` ('calderyn' | 'shopify'), `id`, `ref` (native: first-8 hex of the uuid, uppercased; imported: `order_number`), `buyer_email` (`buyer_dim` join on both — imported rows use their relinked `buyer_id`, which finally gives migrated history a customer column), `total_cents`, `currency`, `payment_status` (both sides' `financial_status`; native falls back to 'pending'), `state` (imported rows carry their financial status here, mirroring the shipped client convention so the fulfillment badge stays native-only), `cancelled_at`/`archived_at` (native only, null for imported), `occurred_at` (`created_at` vs `processed_at`), `item_count` (lateral sum), `tags` (native lateral array_agg; empty for imported), `remaining_refundable_cents` (native lateral over `transaction_ledger` capture/refund sums, gross-total fallback — the list row's Refund button depends on it), `full_count` (`count(*) over ()`).
 
-**Parameters:** `p_search` (matches ref prefix — native via `replace(id::text,'-','')`, imported via `order_number` — OR buyer email substring OR exact tag, case-insensitive), `p_payment_status[]`, `p_fulfillment_status` ('unfulfilled' | 'partially_fulfilled' | 'fulfilled'), `p_source`, `p_date_from/to`, `p_tag`, `p_archived` (default excludes archived), `p_sort` ('date' | 'total' | 'customer', asc/desc), cursor (`p_cursor_occurred_at`, `p_cursor_id`) + `p_limit` (≤100; UI uses 50).
+**Parameters:** `p_search` (matches ref prefix — native via `replace(id::text,'-','')`, imported via `order_number` — OR buyer email substring OR exact tag, case-insensitive), `p_payment_status[]`, `p_fulfillment_status` ('unfulfilled' | 'partially_fulfilled' | 'fulfilled'), `p_source`, `p_date_from/to`, `p_tag`, `p_archived` (default excludes archived), `p_sort` ('date' | 'total' | 'customer', asc/desc), `p_offset` + `p_limit` (≤100; UI uses 50).
 
 **Fulfillment-filter rule (explicit):** a fulfillment-status filter EXCLUDES imported rows — they carry no fulfillment concept, and the filter's job is a work queue. The UI notes this next to the control. Native mapping: unfulfilled = state 'paid' with no coverage; partially_fulfilled / fulfilled = their states.
 
@@ -177,7 +177,7 @@ New `order_view` table (id, shop_id, name 1-60, filters jsonb, position, created
 ## 6. UI (Orders screen rework)
 
 - Toolbar above the list: debounced search input, filter controls (payment status, fulfillment status, source, date range), sort menu, view tabs (system presets + saved views with a "Save current view" affordance + per-view delete).
-- Pagination footer ("1-50 of N", prev/next cursors).
+- Pagination footer ("1-50 of N", prev/next).
 - Row checkboxes + select-page; bulk bar (Fulfill, Archive/Unarchive, Add tag) appears on selection with per-order failure reporting in the completion toast.
 - **Data flow + cache (explicit):** a NEW `GET dashboard.api.orders.list` route wraps the RPC; the old bundle endpoint (`dashboard.api.orders`) keeps serving drafts/abandoned/shipCharges for the other subtabs (its `orders` field stays for back-compat but the screen stops reading it). `fetchImportedOrders` leaves the Orders screen (endpoint kept — other consumers unaffected). Screen cache: the DEFAULT view's first page seeds + writes through under a new `SCREEN_CACHE_KEYS.ordersList`, with a matching `WARM_TARGETS` swap (list default view replaces the importedOrders warm entry); filtered/paged results are fetched live, never warm-cached.
 - The detail screen, modals, drafts/abandoned/ship-charges tabs are untouched.
