@@ -27,6 +27,8 @@ create table if not exists public.order_return (
   received_idempotency_key text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  -- Composite FK target for order_return_line (same pattern as fulfillment's unique (shop_id, id)).
+  unique (shop_id, id),
   foreign key (shop_id, order_id) references public.orders (shop_id, id) on delete cascade
 );
 create index if not exists order_return_order_idx on public.order_return (shop_id, order_id);
