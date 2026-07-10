@@ -5,6 +5,10 @@
 
 export interface OrderDetailLine {
   id: string;
+  /** Owned variant_dim id, for the Edit-items variant picker to keep an existing line's identity
+   *  when the merchant only changes its quantity. Null for an imported (Shopify-paid) line — those
+   *  key off sku_dim, not an owned variant, and are read-only besides. */
+  variantId: string | null;
   title: string;
   sku: string | null;
   /** Effective quantity today (snapshot minus any reductions) — what the line actually totals. */

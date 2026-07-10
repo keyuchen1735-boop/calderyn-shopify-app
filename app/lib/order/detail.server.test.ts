@@ -431,7 +431,7 @@ describe("loadOrderDetail — imported (shopify:) branch", () => {
     expect(detail.readOnly).toBe(true);
     expect(detail.ref).toBe("#1042");
     expect(detail.lines).toEqual([
-      { id: "impline-1", title: "Blue Mug", sku: "MUG-1", quantity: 2, reducedQuantity: 0, unitPriceCents: 1400, fulfilledQuantity: 0 },
+      { id: "impline-1", variantId: null, title: "Blue Mug", sku: "MUG-1", quantity: 2, reducedQuantity: 0, unitPriceCents: 1400, fulfilledQuantity: 0 },
     ]);
     expect(detail.fulfillments).toEqual([]);
     expect(detail.tags).toEqual([]);

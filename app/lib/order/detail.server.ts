@@ -230,6 +230,7 @@ async function loadNativeLines(
 
   return rows.map((r) => ({
     id: String(r.id),
+    variantId: String(r.variant_id),
     title: String(r.title_snapshot),
     sku: skuByVariant.get(String(r.variant_id)) ?? null,
     quantity: Number(r.quantity ?? 0),
@@ -542,6 +543,8 @@ async function loadImportedLines(
     const skuRow = Array.isArray(rel) ? (rel[0] ?? null) : rel;
     return {
       id: String(r.id),
+      // Imported lines key off sku_dim, not an owned variant_dim row.
+      variantId: null,
       title: skuRow?.title ?? "Unknown item",
       sku: skuRow?.sku ?? null,
       quantity: Number(r.quantity ?? 0),

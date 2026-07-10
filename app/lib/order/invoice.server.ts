@@ -224,6 +224,83 @@ export async function sendDraftOrderInvoice(
   };
 }
 
+export interface ResendInvoiceResult {
+  sent: boolean;
+  reason?: string;
+}
+
+/**
+ * Re-send the buyer-facing pay-link email for an UNPAID invoice order (Phase 3 Task 5). The pay
+ * link itself (confirmation_token) never changes across a resend — payableInvoiceSession mints a
+ * fresh Stripe Checkout Session lazily whenever the buyer actually opens it, so resending is just
+ * sendInvoiceEmail replayed off the order's CURRENT lines/total, not a new order-origination path.
+ * Only available while the invoice is still unpaid (channel='invoice', state='checkout_pending');
+ * a paid/void/cancelled invoice has no pay link left to resend (Void is the merchant's action on
+ * those instead).
+ */
+export async function resendInvoiceEmail(shopId: string, orderId: string): Promise<ResendInvoiceResult> {
+  if (!shopId) throw new Error("shopId is required");
+  if (!orderId) {
+    throw new CalderynError({ code: "invalid_order", status: 422, message: "orderId is required." });
+  }
+
+  const sb = getSupabase();
+  const orderRes = await sb
+    .from("orders")
+    .select("id, channel, state, confirmation_token, total_cents, currency")
+    .eq("shop_id", shopId)
+    .eq("id", orderId)
+    .maybeSingle();
+  if (orderRes.error) throw orderRes.error;
+  const order = orderRes.data as Record<string, unknown> | null;
+  if (!order) {
+    throw new CalderynError({ code: "order_not_found", status: 404, message: `Order ${orderId} not found.` });
+  }
+  if (order.channel !== "invoice") {
+    throw new CalderynError({
+      code: "not_an_invoice",
+      status: 409,
+      message: `Order ${orderId} is not an invoice order.`,
+    });
+  }
+  if (order.state !== "checkout_pending") {
+    throw new CalderynError({
+      code: "invoice_not_pending",
+      status: 409,
+      message: `Order ${orderId} is '${String(order.state)}'; only an unpaid invoice's pay link can be resent.`,
+    });
+  }
+  const token = order.confirmation_token ? String(order.confirmation_token) : "";
+  if (!token) {
+    // A pending invoice always carries a token (minted at send time) — a missing one is a data
+    // anomaly, surfaced as a typed error rather than an opaque 500.
+    throw new CalderynError({
+      code: "no_pay_link",
+      status: 409,
+      message: `Invoice order ${orderId} has no pay link to resend.`,
+    });
+  }
+
+  const linesRes = await sb
+    .from("order_line")
+    .select("title_snapshot, quantity")
+    .eq("shop_id", shopId)
+    .eq("order_id", orderId);
+  if (linesRes.error) throw linesRes.error;
+  const lines = ((linesRes.data ?? []) as Array<Record<string, unknown>>).map((l) => ({
+    title: String(l.title_snapshot ?? ""),
+    quantity: Number(l.quantity ?? 0),
+  }));
+
+  const delivery = await sendInvoiceEmail(shopId, orderId, {
+    confirmationToken: token,
+    lines,
+    totalCents: Number(order.total_cents ?? 0),
+  });
+
+  return { sent: delivery.sent, reason: delivery.reason };
+}
+
 export type PayableInvoiceSession =
   | { kind: "pay"; url: string }
   | { kind: "paid"; confirmationToken: string }

@@ -9,12 +9,12 @@ import type {
   OrdersPage,
 } from "~/lib/order/list-types";
 import type { ImportedOrdersPage } from "~/lib/order/imported-list-types";
-import type { OrderDetail } from "~/lib/order/detail-types";
+import type { OrderDetail, OrderDetailLine } from "~/lib/order/detail-types";
 import type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage } from "~/lib/order/unified-list-types";
 
 export type { OrderRow, DraftCartRow, AbandonedCheckoutRow, ShipChargeRow, OrdersPage };
 export type { ImportedOrdersPage };
-export type { OrderDetail };
+export type { OrderDetail, OrderDetailLine };
 export type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage };
 
 export async function fetchOrdersPage(): Promise<OrdersPage> {
@@ -591,4 +591,15 @@ export async function sendDraftInvoice(input: {
     currency: data.currency,
     emailSent: data.email_sent,
   };
+}
+
+/** Re-send the pay-link email for an unpaid invoice order (Phase 3 Task 5). The pay link itself
+ *  is stable across a resend; `sent: false` with a `reason` means the shop's email transport or
+ *  storefront origin isn't set up yet, not that the invoice itself is invalid. */
+export async function resendInvoiceEmail(orderId: string): Promise<{ sent: boolean; reason?: string }> {
+  return apiSend<{ sent: boolean; reason?: string }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/resend-invoice`,
+    {},
+  );
 }
