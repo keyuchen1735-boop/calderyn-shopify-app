@@ -1760,3 +1760,11 @@ export async function updateLocation(
 ): Promise<void> {
   await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, patch);
 }
+export async function createLocation(input: { name: string; priority?: number }): Promise<{ id: string }> {
+  return apiSend<{ id: string }>("POST", "/dashboard/api/catalog/locations", input);
+}
+/** Deactivate a location. Rejects with a 409 DashboardApiError while any stock
+ *  (on hand, reserved, or incoming) still sits there. */
+export async function deactivateLocation(id: string): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, { active: false });
+}

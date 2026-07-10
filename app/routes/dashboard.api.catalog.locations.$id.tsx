@@ -2,7 +2,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
-import { updateLocationDetails, type LocationPatch } from "~/lib/catalog/locations.server";
+import { deactivateLocation, updateLocationDetails, type LocationPatch } from "~/lib/catalog/locations.server";
 
 export async function action({ request, params }: ActionFunctionArgs) {
   requireSameOrigin(request);
@@ -11,6 +11,16 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   let body: Record<string, unknown>;
   try { body = (await request.json()) as Record<string, unknown>; } catch { return jsonError(422, "invalid_json"); }
+
+  // Deactivation is its own request: any other patch keys sent alongside
+  // `active: false` are ignored. The stock guard inside deactivateLocation
+  // surfaces as a 409 through dashboardJson's CalderynError mapping.
+  if (body.active === false) {
+    return dashboardJson(async () => {
+      await deactivateLocation(session.shopId, String(params.id));
+      return { ok: true };
+    });
+  }
 
   const patch: LocationPatch = {};
   if (Number.isFinite(body.priority)) patch.priority = Math.trunc(Number(body.priority));
