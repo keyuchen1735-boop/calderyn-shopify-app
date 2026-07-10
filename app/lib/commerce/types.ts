@@ -29,4 +29,14 @@ export interface CartQuote {
   deliveryLatest: string | null;
   lowConfidence: boolean; // shipping had to guess dims/weight (rule 12)
   fallbackUsed: boolean; // shipping degraded to static fallback (rule 12)
+  shippingService: string | null; // the priced option's service name (buyer-chosen or cheapest)
+}
+
+/** One buyer-facing shipping choice, surfaced by quoteCartOptions() at checkout. */
+export interface CartShippingOption {
+  service: string; // stable service code posted back as the buyer's choice
+  label: string; // display name, e.g. "USPS Priority"
+  amountCents: number;
+  deliveryEarliest: string | null; // ISO calendar date
+  deliveryLatest: string | null;
 }

@@ -11,6 +11,7 @@ import { requireBuyerSession, revokeBuyerSession, clearBuyerSessionCookieHeader 
 import { addBuyerAddress } from "~/lib/buyer/identity.server";
 import { listBuyerAddresses, listBuyerOrders, deleteBuyerAddress, deleteBuyerAccount } from "~/lib/buyer/account.server";
 import { formatOrderRef } from "~/lib/order/checkout.server";
+import { carrierTrackingUrl } from "~/lib/shipping/tracking-url";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
 
@@ -47,6 +48,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       currency: o.currency,
       createdAt: o.createdAt,
       confirmationToken: o.confirmationToken,
+      trackingNumber: o.trackingNumber,
+      trackingUrl: carrierTrackingUrl(o.trackingCarrier, o.trackingNumber),
     })),
   });
 }
@@ -136,7 +139,21 @@ export default function BuyerAccount() {
                   )}
                 </span>
                 <span className="cd-account__order-date">{new Date(o.createdAt).toLocaleDateString()}</span>
-                <span className="cd-account__order-status">{o.status}</span>
+                <span className="cd-account__order-status">
+                  {o.status}
+                  {o.trackingNumber ? (
+                    <>
+                      {" · "}
+                      {o.trackingUrl ? (
+                        <a href={o.trackingUrl} target="_blank" rel="noreferrer">
+                          Track package
+                        </a>
+                      ) : (
+                        `Tracking ${o.trackingNumber}`
+                      )}
+                    </>
+                  ) : null}
+                </span>
                 <span className="cd-account__order-total">{money(o.totalCents, o.currency)}</span>
               </li>
             ))}

@@ -17,6 +17,9 @@ export interface BuyerOrderSummary {
   createdAt: string;
   /** Unguessable per-order token that keys the buyer-facing confirmation/receipt page. */
   confirmationToken: string | null;
+  /** Latest fulfillment tracking (shipped orders only); null when none was recorded. */
+  trackingNumber: string | null;
+  trackingCarrier: string | null;
 }
 
 function mapAddress(row: Record<string, unknown>): BuyerAddress {
@@ -109,15 +112,49 @@ export async function listBuyerOrders(shopId: string, buyerId: string): Promise<
     .in("state", BUYER_HISTORY_STATES)
     .order("created_at", { ascending: false });
   if (error) throw error;
-  return ((data ?? []) as Record<string, unknown>[]).map((o) => ({
-    orderId: String(o.id),
-    state: String(o.state),
-    financialStatus: String(o.financial_status),
-    totalCents: Number(o.total_cents),
-    currency: String(o.currency),
-    createdAt: String(o.created_at),
-    confirmationToken: o.confirmation_token == null ? null : String(o.confirmation_token),
-  }));
+  const rows = (data ?? []) as Record<string, unknown>[];
+
+  // Latest recorded tracking per order, one batched read (newest fulfillment with a
+  // tracking number wins). Best-effort: a fulfillment read failure renders history
+  // without tracking rather than failing the whole account page.
+  const tracking = new Map<string, { number: string; carrier: string | null }>();
+  if (rows.length > 0) {
+    const ful = await getSupabase()
+      .from("order_fulfillment")
+      .select("order_id, tracking_number, carrier, created_at")
+      .eq("shop_id", shopId)
+      .in("order_id", rows.map((o) => String(o.id)))
+      .not("tracking_number", "is", null)
+      .order("created_at", { ascending: false });
+    if (ful.error) {
+      console.error(`[account] order_fulfillment read failed for shop ${shopId}:`, ful.error.message);
+    } else {
+      for (const f of (ful.data ?? []) as Record<string, unknown>[]) {
+        const orderId = String(f.order_id);
+        if (!tracking.has(orderId) && f.tracking_number) {
+          tracking.set(orderId, {
+            number: String(f.tracking_number),
+            carrier: f.carrier == null ? null : String(f.carrier),
+          });
+        }
+      }
+    }
+  }
+
+  return rows.map((o) => {
+    const t = tracking.get(String(o.id)) ?? null;
+    return {
+      orderId: String(o.id),
+      state: String(o.state),
+      financialStatus: String(o.financial_status),
+      totalCents: Number(o.total_cents),
+      currency: String(o.currency),
+      createdAt: String(o.created_at),
+      confirmationToken: o.confirmation_token == null ? null : String(o.confirmation_token),
+      trackingNumber: t?.number ?? null,
+      trackingCarrier: t?.carrier ?? null,
+    };
+  });
 }
 
 /**

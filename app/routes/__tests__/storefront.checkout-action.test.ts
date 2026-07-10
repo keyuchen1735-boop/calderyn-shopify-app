@@ -8,6 +8,7 @@ const priceCart = vi.fn();
 const getCartOrigin = vi.fn();
 const createCheckout = vi.fn();
 const paymentsReadiness = vi.fn();
+const quoteCartOptions = vi.fn();
 
 // Real class so the route's `err instanceof OutOfStockError` branch (-> 409) is exercised. Defined
 // via vi.hoisted so it exists when the (hoisted) vi.mock factory below references it. The payments
@@ -38,6 +39,9 @@ vi.mock("~/lib/order/checkout.server", () => ({
 }));
 vi.mock("~/lib/payments/connect.server", () => ({
   paymentsReadiness: (...a: unknown[]) => paymentsReadiness(...a),
+}));
+vi.mock("~/lib/commerce/quote.server", () => ({
+  quoteCartOptions: (...a: unknown[]) => quoteCartOptions(...a),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
@@ -113,6 +117,18 @@ beforeEach(() => {
     shippingCents: 599,
     taxCents: 360,
     totalCents: 4957,
+    currency: "usd",
+  });
+  quoteCartOptions.mockResolvedValue({
+    options: [
+      {
+        service: "usps-priority",
+        label: "USPS Priority",
+        amountCents: 599,
+        deliveryEarliest: "2026-07-14",
+        deliveryLatest: "2026-07-16",
+      },
+    ],
     currency: "usd",
   });
 });
@@ -199,7 +215,7 @@ describe("checkout action validation (fail visibly)", () => {
     // A free-text / autofilled full name that is not a 2-letter code and not a known alias.
     const res = await action(actionArgs(await postForm({ ...GOOD_FIELDS, country: "Freedonia" }, { cookie: await cartCookie() })));
     expect((res as Response).status).toBe(400);
-    expect((await (res as Response).json()).error).toMatch(/valid country/);
+    expect((await (res as Response).json()).error).toMatch(/choose a country/);
     expect(createCheckout).not.toHaveBeenCalled();
   });
 
@@ -213,6 +229,69 @@ describe("checkout action validation (fail visibly)", () => {
     const res = await action(actionArgs(await postForm({ ...GOOD_FIELDS, country: "gb" }, { cookie: await cartCookie() })));
     expect((res as Response).status).toBe(200);
     expect(createCheckout.mock.calls[0][2].address.country).toBe("GB");
+  });
+});
+
+describe("checkout action — shipping options step (intent=quote)", () => {
+  it("returns the shipping options for the address WITHOUT creating an order or requiring consent", async () => {
+    const fields: Record<string, string> = { ...GOOD_FIELDS, intent: "quote" };
+    delete fields.tos;
+    delete fields.privacy;
+    const res = await action(actionArgs(await postForm(fields, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(200);
+    const body = await (res as Response).json();
+    expect(body.shippingOptions).toHaveLength(1);
+    expect(body.shippingOptions[0]).toMatchObject({ service: "usps-priority", amountCents: 599 });
+    expect(createCheckout).not.toHaveBeenCalled();
+    // Quoted with the priced cart lines + the posted address.
+    expect(quoteCartOptions).toHaveBeenCalledWith(
+      "shop-1",
+      [{ variantId: "v1", quantity: 2 }],
+      expect.objectContaining({ zip: "94105", country: "US" }),
+      { subtotalCentsOverride: 3998 },
+    );
+  });
+
+  it("maps a ship-restricted quote to the same actionable 422 as pay", async () => {
+    quoteCartOptions.mockRejectedValueOnce(new ShipRestrictedError("CA", ["v1"]));
+    const res = await action(
+      actionArgs(await postForm({ ...GOOD_FIELDS, intent: "quote" }, { cookie: await cartCookie() })),
+    );
+    expect((res as Response).status).toBe(422);
+    const error = (await (res as Response).json()).error as string;
+    expect(error).toMatch(/Tee/);
+    expect(error).toMatch(/Canada/);
+  });
+});
+
+describe("checkout action — chosen shipping option (intent=pay)", () => {
+  it("threads the buyer's chosen service into createCheckout", async () => {
+    const res = await action(
+      actionArgs(
+        await postForm(
+          { ...GOOD_FIELDS, intent: "pay", shippingService: "usps-priority" },
+          { cookie: await cartCookie() },
+        ),
+      ),
+    );
+    expect((res as Response).status).toBe(200);
+    expect(createCheckout.mock.calls[0][4]).toEqual({ shippingService: "usps-priority" });
+  });
+
+  it("maps a vanished shipping option to a 409 that tells the client to re-quote", async () => {
+    const { ShippingOptionUnavailableError } = await import("~/lib/shipping/errors");
+    createCheckout.mockRejectedValueOnce(new ShippingOptionUnavailableError("usps-priority"));
+    const res = await action(
+      actionArgs(
+        await postForm(
+          { ...GOOD_FIELDS, intent: "pay", shippingService: "usps-priority" },
+          { cookie: await cartCookie() },
+        ),
+      ),
+    );
+    expect((res as Response).status).toBe(409);
+    const body = await (res as Response).json();
+    expect(body.error).toMatch(/shipping option just changed/);
   });
 });
 
@@ -311,11 +390,15 @@ describe("checkout action happy path", () => {
     spy.mockRestore();
   });
 
-  it("maps a ship-restricted cart to an actionable 422 with the destination country", async () => {
+  it("maps a ship-restricted cart to an actionable 422 naming the item and destination country", async () => {
     createCheckout.mockRejectedValueOnce(new ShipRestrictedError("CA", ["v1"]));
     const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
     expect((res as Response).status).toBe(422);
-    expect((await (res as Response).json()).error).toMatch(/can't be shipped to CA/);
+    const error = (await (res as Response).json()).error as string;
+    // Buyer-actionable: names the blocked item (from the priced cart) and the
+    // country by display name, not its ISO code.
+    expect(error).toMatch(/can't be shipped to Canada/);
+    expect(error).toMatch(/Tee/);
   });
 
   it("maps a missing ship-from origin to an honest 503 (retrying can't help the buyer)", async () => {

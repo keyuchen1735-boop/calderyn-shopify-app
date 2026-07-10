@@ -333,6 +333,7 @@ export function Btn({
   disabled,
   small,
   className = "",
+  type = "button",
 }: {
   children: ReactNode;
   kind?: "primary" | "secondary" | "danger";
@@ -341,10 +342,12 @@ export function Btn({
   disabled?: boolean;
   small?: boolean;
   className?: string;
+  /** "submit" opts into native form submission (keeps built-in field validation). */
+  type?: "button" | "submit";
 }) {
   return (
     <button
-      type="button"
+      type={type}
       onClick={onClick}
       disabled={disabled}
       className={`cd-btn cd-btn-${kind} ${small ? "cd-btn-sm" : ""} ${className}`}

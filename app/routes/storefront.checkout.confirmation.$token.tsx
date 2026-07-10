@@ -106,6 +106,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     {
       ref: formatOrderRef(order.orderId),
       status,
+      subtotalCents: order.subtotalCents,
+      shippingCents: order.shippingCents,
+      shippingService: order.shippingService,
+      taxCents: order.taxCents,
       totalCents: order.totalCents,
       currency: order.currency,
       lines: order.lines.map((l) => ({ title: l.title, quantity: l.quantity })),
@@ -131,7 +135,8 @@ const STATUS_COPY: Record<"confirmed" | "processing" | "cancelled" | "refunded",
 };
 
 export default function StorefrontCheckoutConfirmation() {
-  const { ref, status, totalCents, currency, lines } = useLoaderData<typeof loader>();
+  const { ref, status, subtotalCents, shippingCents, shippingService, taxCents, totalCents, currency, lines } =
+    useLoaderData<typeof loader>();
   return (
     <section className="cd-confirm">
       <h1>{HEADING[status]}</h1>
@@ -147,6 +152,18 @@ export default function StorefrontCheckoutConfirmation() {
           </li>
         ))}
       </ul>
+      <div className="cd-confirm__row">
+        <span>Subtotal</span>
+        <span>{money(subtotalCents, currency)}</span>
+      </div>
+      <div className="cd-confirm__row">
+        <span>Shipping{shippingService ? ` (${shippingService})` : ""}</span>
+        <span>{shippingCents === 0 ? "Free" : money(shippingCents, currency)}</span>
+      </div>
+      <div className="cd-confirm__row">
+        <span>Tax</span>
+        <span>{money(taxCents, currency)}</span>
+      </div>
       <div className="cd-confirm__total">
         <span>Total</span>
         <span>{money(totalCents, currency)}</span>

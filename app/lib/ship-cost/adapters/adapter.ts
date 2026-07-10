@@ -4,7 +4,9 @@
 // core (ship-cost/adapters/land.server.ts), the resolver, and everything above it
 // never branch on provider — exactly like the ad-ingestion core (ads/adapter.ts).
 
-export type ShipProvider = "easypost" | "shippo" | "shipbob" | "shiphero";
+// "merchant" = shop-defined flat rates (ship_flat_rate) — a rate-quote source only,
+// never a cost-ingest provider.
+export type ShipProvider = "easypost" | "shippo" | "shipbob" | "shiphero" | "merchant";
 
 export type ShipIntegrationKind =
   | "easypost_ship"

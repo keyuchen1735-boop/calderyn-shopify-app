@@ -13,9 +13,10 @@
 // order_fact. Mirror native orders into that view when the dashboard order surface is built
 // (CLAUDE.md "Dashboard parity"); the warehouse emit already feeds the analytics views for free.
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
 import { priceCart } from "./cart.server";
+import { lockQuote } from "~/lib/commerce/quote-store.server";
 import {
   upsertGuestBuyer,
   addBuyerAddress,
@@ -77,6 +78,11 @@ export interface CheckoutResult {
   taxCents: number;
   totalCents: number;
   currency: string;
+  /** The priced shipping option's display name (buyer-chosen or cheapest), for the review step. */
+  shippingService: string | null;
+  /** Quoted delivery window (ISO calendar dates) for the priced option, when the carrier gave one. */
+  deliveryEarliest: string | null;
+  deliveryLatest: string | null;
 }
 
 /** A confirmed-order summary for the buyer-facing confirmation page. PII-free by construction. */
@@ -89,6 +95,7 @@ export interface ConfirmedOrder {
   totalCents: number;
   currency: string;
   createdAt: string;
+  shippingService: string | null;
   lines: Array<{ title: string; quantity: number; unitPriceCents: number }>;
 }
 
@@ -111,6 +118,7 @@ export async function createCheckout(
   cartId: string,
   buyer: CheckoutBuyer,
   attribution: Record<string, unknown> = {},
+  opts: { shippingService?: string | null } = {},
 ): Promise<CheckoutResult> {
   if (!shopId) throw new Error("shopId is required");
   if (!cartId) throw new Error("cartId is required");
@@ -136,24 +144,47 @@ export async function createCheckout(
   }
   let shippingCents = 0;
   let taxCents = 0;
+  let shippingService: string | null = null;
+  let deliveryEarliest: string | null = null;
+  let deliveryLatest: string | null = null;
   if (buyer.address) {
+    const destination = {
+      street1: buyer.address.line1 ?? "",
+      street2: buyer.address.line2 ?? undefined,
+      city: buyer.address.city ?? "",
+      state: buyer.address.region ?? "",
+      zip: buyer.address.postal ?? "",
+      country: buyer.address.country ?? "US",
+    };
     const quoted = await quoteCart(
       shopId,
       priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
-      {
-        street1: buyer.address.line1 ?? "",
-        street2: buyer.address.line2 ?? undefined,
-        city: buyer.address.city ?? "",
-        state: buyer.address.region ?? "",
-        zip: buyer.address.postal ?? "",
-        country: buyer.address.country ?? "US",
-      },
+      destination,
       // Pin the authoritative subtotal so quoteCart computes tax on what Stripe will actually
-      // charge (the snapshot price), not on a potentially-drifted live catalog price.
-      { subtotalCentsOverride: priced.subtotalCents },
+      // charge (the snapshot price), not on a potentially-drifted live catalog price. The
+      // buyer's chosen shipping option (when they picked one) prices as ITSELF or throws
+      // ShippingOptionUnavailableError — never a silent swap.
+      { subtotalCentsOverride: priced.subtotalCents, shippingService: opts.shippingService },
     );
     shippingCents = quoted.shippingCents;
     taxCents = quoted.taxCents;
+    shippingService = quoted.shippingService;
+    deliveryEarliest = quoted.deliveryEarliest;
+    deliveryLatest = quoted.deliveryLatest;
+
+    // Record the quote into commerce_quote_fact so storefront checkouts show up in the
+    // dashboard's 30d quote stats alongside the agentic surfaces. Best-effort ledger
+    // write: a stats hiccup must never lose a sale.
+    try {
+      const destinationHash = createHash("sha256")
+        .update(JSON.stringify([destination.zip, destination.country, destination.city]))
+        .digest("hex");
+      // clientId tags these rows as stat records, distinguishing them from redeemable
+      // agentic locks in the same table (nobody ever redeems a storefront row).
+      await lockQuote(shopId, quoted, { destinationHash, clientId: "storefront_checkout" });
+    } catch (err) {
+      console.warn(`[checkout] quote-fact write failed for shop ${shopId} (continuing):`, err);
+    }
   }
   const totalCents = priced.subtotalCents + shippingCents + taxCents;
 
@@ -195,6 +226,7 @@ export async function createCheckout(
       // state defaults to 'checkout_pending' (orders.state default); the order is BORN here.
       subtotal_cents: priced.subtotalCents,
       shipping_cents: shippingCents,
+      shipping_service: shippingService,
       tax_cents: taxCents,
       total_cents: totalCents,
       currency: priced.currency,
@@ -308,11 +340,14 @@ export async function createCheckout(
     taxCents,
     totalCents,
     currency: priced.currency,
+    shippingService,
+    deliveryEarliest,
+    deliveryLatest,
   };
 }
 
 const ORDER_SUMMARY_COLS =
-  "id, state, subtotal_cents, shipping_cents, tax_cents, total_cents, currency, created_at";
+  "id, state, subtotal_cents, shipping_cents, shipping_service, tax_cents, total_cents, currency, created_at";
 
 /**
  * IDOR-safe confirmation lookup (#2c-2): resolve an order by its unguessable confirmation token,
@@ -367,6 +402,7 @@ export async function findOrderByConfirmationToken(
     totalCents: Number(o.total_cents),
     currency: String(o.currency),
     createdAt: String(o.created_at),
+    shippingService: o.shipping_service == null ? null : String(o.shipping_service),
     lines,
   };
 }

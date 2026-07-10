@@ -15,6 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { sendEmail } from "~/lib/email/send.server";
 import { formatOrderRef } from "./checkout.server";
+import { carrierTrackingUrl } from "~/lib/shipping/tracking-url";
 import { escapeHtml } from "~/lib/pilot-invite/content";
 import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 
@@ -129,14 +130,22 @@ export async function sendShippingConfirmation(
     }
 
     const subject = `Order ${found.ref} is on the way`;
+    // Known carriers get a click-to-track link in the HTML body; the plain-text part
+    // carries the URL on its own line so text-only clients can still follow it.
+    const trackingUrl = carrierTrackingUrl(opts.carrier, opts.trackingNumber);
     const trackingLine = opts.trackingNumber
       ? `Tracking: ${opts.carrier ? `${opts.carrier} ` : ""}${opts.trackingNumber}`
       : null;
-    const text = [`Good news! Your order ${found.ref} has shipped.`, ...(trackingLine ? ["", trackingLine] : [])].join(
-      "\n",
-    );
-    const htmlTrackingLine = opts.trackingNumber
-      ? `Tracking: ${opts.carrier ? `${escapeHtml(opts.carrier)} ` : ""}${escapeHtml(opts.trackingNumber)}`
+    const text = [
+      `Good news! Your order ${found.ref} has shipped.`,
+      ...(trackingLine ? ["", trackingLine] : []),
+      ...(trackingUrl ? [`Track it: ${trackingUrl}`] : []),
+    ].join("\n");
+    const escapedNumber = opts.trackingNumber ? escapeHtml(opts.trackingNumber) : null;
+    const htmlTrackingLine = escapedNumber
+      ? `Tracking: ${opts.carrier ? `${escapeHtml(opts.carrier)} ` : ""}${
+          trackingUrl ? `<a href="${trackingUrl}">${escapedNumber}</a>` : escapedNumber
+        }`
       : null;
     const html =
       `<p>Good news! Your order ${found.ref} has shipped.</p>` + (htmlTrackingLine ? `<p>${htmlTrackingLine}</p>` : "");

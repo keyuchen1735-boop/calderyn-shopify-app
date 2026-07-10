@@ -5,6 +5,20 @@
 // the buyer's destination country (destination is in variant_shipping.restricted_countries).
 // Checkout/storefront catch this (by `code` or instanceof) and tell the buyer which items
 // to remove, rather than quoting an order that could never be fulfilled.
+// Thrown when the buyer's chosen shipping option can no longer be quoted (the carrier
+// rate vanished or the engine degraded to fallback between offer and pay). Callers
+// re-offer fresh options rather than silently charging a different service's price.
+export class ShippingOptionUnavailableError extends Error {
+  readonly code = "SHIPPING_OPTION_UNAVAILABLE" as const;
+  readonly service: string;
+
+  constructor(service: string) {
+    super(`shipping option ${service} is no longer available; re-quote and re-offer`);
+    this.name = "ShippingOptionUnavailableError";
+    this.service = service;
+  }
+}
+
 export class ShipRestrictedError extends Error {
   readonly code = "SHIP_RESTRICTED" as const;
   readonly destinationCountry: string;

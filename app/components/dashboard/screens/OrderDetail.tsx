@@ -3,6 +3,7 @@ import type { DashboardCtx } from "../context";
 import { Btn, Card, Pill, Placeholder, TableSkeleton } from "../ui";
 import { money, timeAgo } from "../format";
 import { CDIcon } from "../icons";
+import { carrierTrackingUrl } from "~/lib/shipping/tracking-url";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   fetchOrderDetail,
@@ -451,7 +452,16 @@ export default function OrderDetailScreen({
                         <div className="cd-code" style={{ marginTop: 6 }}>
                           <span className="tabular-nums" style={{ minWidth: 0, wordBreak: "break-all" }}>
                             {f.carrier ? `${f.carrier} · ` : ""}
-                            {f.trackingNumber}
+                            {(() => {
+                              const url = carrierTrackingUrl(f.carrier, f.trackingNumber);
+                              return url ? (
+                                <a href={url} target="_blank" rel="noreferrer">
+                                  {f.trackingNumber}
+                                </a>
+                              ) : (
+                                f.trackingNumber
+                              );
+                            })()}
                           </span>
                           <button
                             type="button"
