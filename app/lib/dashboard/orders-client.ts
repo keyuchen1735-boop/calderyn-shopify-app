@@ -379,3 +379,130 @@ export async function bulkAddOrderTags(
     return { results: mapBulkResults(data.results) };
   });
 }
+
+// --- merchant drafts + send-invoice (Phase 3 Task 2) -------------------------
+
+export interface DraftLineVM {
+  id: string;
+  variantId: string;
+  title: string;
+  quantity: number;
+  unitPriceCents: number;
+  currency: string;
+}
+
+export interface MerchantDraftVM {
+  id: string;
+  lines: DraftLineVM[];
+  subtotalCents: number;
+  currency: string;
+  createdAt: string;
+}
+
+interface DraftLineWire {
+  id: string;
+  variant_id: string;
+  title: string;
+  quantity: number;
+  unit_price_cents: number;
+  currency: string;
+}
+
+interface MerchantDraftWire {
+  id: string;
+  lines: DraftLineWire[];
+  subtotal_cents: number;
+  currency: string;
+  created_at: string;
+}
+
+function mapDraft(d: MerchantDraftWire): MerchantDraftVM {
+  return {
+    id: d.id,
+    lines: d.lines.map((l) => ({
+      id: l.id,
+      variantId: l.variant_id,
+      title: l.title,
+      quantity: l.quantity,
+      unitPriceCents: l.unit_price_cents,
+      currency: l.currency,
+    })),
+    subtotalCents: d.subtotal_cents,
+    currency: d.currency,
+    createdAt: d.created_at,
+  };
+}
+
+/** List every open merchant-draft cart for the session's shop. */
+export async function fetchMerchantDrafts(): Promise<MerchantDraftVM[]> {
+  const data = await apiGet<{ drafts: MerchantDraftWire[] }>("/dashboard/api/orders/drafts");
+  return data.drafts.map(mapDraft);
+}
+
+/** Create a new merchant draft (omit cartId) or replace an existing one's lines (cartId given).
+ *  1-50 lines, qty 1-999 each; an unknown/unavailable variant 422s (DashboardApiError). */
+export async function saveMerchantDraft(input: {
+  cartId?: string;
+  lines: Array<{ variantId: string; quantity: number }>;
+}): Promise<MerchantDraftVM> {
+  const data = await apiSend<{ draft: MerchantDraftWire }>("POST", "/dashboard/api/orders/drafts", {
+    cart_id: input.cartId,
+    lines: input.lines.map((l) => ({ variant_id: l.variantId, quantity: l.quantity })),
+  });
+  return mapDraft(data.draft);
+}
+
+/** Delete a merchant-draft cart outright. 404s (DashboardApiError) on an unknown/foreign/non-draft id. */
+export async function deleteMerchantDraft(cartId: string): Promise<void> {
+  await apiSend<{ deleted: true }>("DELETE", `/dashboard/api/orders/drafts?id=${encodeURIComponent(cartId)}`);
+}
+
+/** Buyer address captured for a sent invoice (mirrors BuyerAddressInput, browser-safe copy). */
+export interface InvoiceAddressInput {
+  kind?: "shipping" | "billing";
+  name?: string;
+  line1: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postal?: string;
+  country?: string;
+  phone?: string;
+}
+
+export interface SendInvoiceResult {
+  orderId: string;
+  confirmationToken: string;
+  totalCents: number;
+  currency: string;
+  emailSent: boolean;
+}
+
+/** Turn a merchant-draft cart into a real invoice and email the buyer a pay link. 409s
+ *  (DashboardApiError, code "payments_not_ready") if the shop can't take payments yet. */
+export async function sendDraftInvoice(input: {
+  cartId: string;
+  email: string;
+  address?: InvoiceAddressInput;
+  note?: string;
+}): Promise<SendInvoiceResult> {
+  const data = await apiSend<{
+    order_id: string;
+    confirmation_token: string;
+    total_cents: number;
+    currency: string;
+    email_sent: boolean;
+  }>("POST", "/dashboard/api/orders/drafts/send", {
+    cart_id: input.cartId,
+    email: input.email,
+    address: input.address,
+    note: input.note,
+  });
+  return {
+    orderId: data.order_id,
+    confirmationToken: data.confirmation_token,
+    totalCents: data.total_cents,
+    currency: data.currency,
+    emailSent: data.email_sent,
+  };
+}
