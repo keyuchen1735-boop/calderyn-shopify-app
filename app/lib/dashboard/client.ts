@@ -1193,6 +1193,9 @@ export interface VariantDraft {
 export interface ProductDraft {
   title: string;
   status: "draft" | "active" | "archived";
+  /** URL handle — include only when the merchant edited it (the server keeps
+   *  the stored one otherwise and generates one on create). */
+  handle?: string;
   vendor?: string;
   category?: string;
   description?: string;
@@ -1200,12 +1203,27 @@ export interface ProductDraft {
   options?: Array<{ name: string; values: string[] }>;
   variants: VariantDraft[];
   collectionIds?: string[];
+  /** Search-listing override; both fields empty clears the stored override. */
+  seo?: { metaTitle?: string; metaDescription?: string };
+}
+
+/** Search-listing state for the editor: the stored override (null = none) plus
+ *  the deterministic defaults the storefront serves without one. */
+export interface SeoListingVM {
+  metaTitle: string | null;
+  metaDescription: string | null;
+  defaultTitle: string;
+  defaultDescription: string;
+  /** Absolute prefix the handle is appended to (".../storefront/products/"). */
+  urlPrefix: string;
 }
 
 export interface ProductDetailVM extends ProductDraft {
   id: string;
+  handle: string;
   media: Array<{ id: string; url: string; isPrimary: boolean; alt: string | null; position: number }>;
   updatedAt: string;
+  seoListing: SeoListingVM;
 }
 
 export interface CollectionVM {

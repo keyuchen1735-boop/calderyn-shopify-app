@@ -35,6 +35,25 @@ function restrictedCountriesText(codes?: string[]): string {
   return (codes ?? []).join(", ");
 }
 
+// Mirrors the server's handle rule (validate.ts): lowercase slug segments
+// joined by single hyphens, 1-80 chars. Checked before submit so a typo is a
+// friendly toast, not a 422 round-trip.
+const HANDLE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// Advisory search-result lengths the counters measure against.
+const SEO_TITLE_SOFT_MAX = 60;
+const SEO_DESCRIPTION_SOFT_MAX = 160;
+
+function CharCounter({ length, max }: { length: number; max: number }) {
+  return (
+    <span
+      className="cd-caption"
+      style={{ alignSelf: "flex-end", ...(length > max ? { color: "var(--cd-warning, #b45309)" } : {}) }}
+    >
+      {length}/{max}
+    </span>
+  );
+}
+
 // Creating a product goes through the prompt-first stepped flow; this editor
 // remains the edit surface (media, per-variant SKUs/shipping, live stock).
 export default function ProductEditor({ app }: { app: DashboardCtx }) {
@@ -56,6 +75,13 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
   const [category, setCategory] = useState<string | null>(null);
   const [options, setOptions] = useState<Opt[]>([]);
   const [variants, setVariants] = useState<client.VariantDraft[]>([{ optionValues: [] }]);
+  // Search-listing card: the handle as edited, the saved one (only a real
+  // change is submitted), the override fields, and the server-built defaults.
+  const [handle, setHandle] = useState("");
+  const [savedHandle, setSavedHandle] = useState("");
+  const [metaTitle, setMetaTitle] = useState("");
+  const [metaDescription, setMetaDescription] = useState("");
+  const [seoListing, setSeoListing] = useState<client.SeoListingVM | null>(null);
   const [media, setMedia] = useState<MediaVM[]>([]);
   const [collections, setCollections] = useState<client.CollectionVM[]>([]);
   const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
@@ -88,6 +114,11 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
         setVariants(p.variants.length ? p.variants : [{ optionValues: [] }]);
         setMedia(p.media);
         setSelectedCollections(p.collectionIds ?? []);
+        setHandle(p.handle);
+        setSavedHandle(p.handle);
+        setSeoListing(p.seoListing);
+        setMetaTitle(p.seoListing?.metaTitle ?? "");
+        setMetaDescription(p.seoListing?.metaDescription ?? "");
       })
       .catch((err: unknown) => {
         if (!alive) return;
@@ -185,6 +216,14 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
       app.toast("Add a product title.", "warn");
       return;
     }
+    // Only a real handle edit is submitted; an emptied field keeps the saved
+    // address (there is always a page address, so blank means "no change").
+    const nextHandle = handle.trim().toLowerCase();
+    const handleChanged = Boolean(nextHandle) && nextHandle !== savedHandle;
+    if (handleChanged && !HANDLE_RE.test(nextHandle)) {
+      app.toast("Page address can use only lowercase letters, numbers, and hyphens.", "warn");
+      return;
+    }
     setSaving(true);
     try {
       const draft: client.ProductDraft = {
@@ -197,6 +236,8 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
         options: parseOptions(options),
         variants,
         collectionIds: selectedCollections,
+        ...(handleChanged ? { handle: nextHandle } : {}),
+        seo: { metaTitle: metaTitle.trim(), metaDescription: metaDescription.trim() },
       };
       await client.saveProduct(draft, id ?? undefined);
       app.toast("Product saved.", "check");
@@ -204,6 +245,10 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
     } catch (err) {
       if (err instanceof DashboardApiError && err.code === "incomplete_shipping") {
         app.toast("Add size and weight before this product can go live.", "warn", "critical");
+      } else if (err instanceof DashboardApiError && err.code === "invalid_handle") {
+        app.toast("Page address can use only lowercase letters, numbers, and hyphens.", "warn", "critical");
+      } else if (err instanceof DashboardApiError && err.code === "handle_conflict") {
+        app.toast("That URL is already used by another product.", "warn", "critical");
       } else {
         app.toast(err instanceof DashboardApiError ? err.message : "Couldn't save the product.", "warn", "critical");
       }
@@ -286,6 +331,109 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
                 <textarea className="cd-input" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
               </label>
             </div>
+          </Card>
+
+          <Card>
+            <SectionTitle>Search listing</SectionTitle>
+            <p className="cd-caption" style={{ marginBottom: 10 }}>
+              How this product shows up in search results, and its address on your store.
+            </p>
+            {(() => {
+              const urlPrefix = seoListing?.urlPrefix ?? "/storefront/products/";
+              const previewTitle = metaTitle.trim() || seoListing?.defaultTitle || title;
+              const previewDescription = metaDescription.trim() || seoListing?.defaultDescription || "";
+              const previewUrl = `${urlPrefix}${handle.trim().toLowerCase() || savedHandle}`;
+              return (
+                <div className="flex flex-col gap-3">
+                  <label className="cd-field">
+                    <span>Page address</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span
+                        className="cd-caption"
+                        title={urlPrefix}
+                        style={{ flex: "0 1 auto", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                      >
+                        {urlPrefix}
+                      </span>
+                      <input
+                        className="cd-input"
+                        maxLength={80}
+                        value={handle}
+                        aria-label="Page address"
+                        onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))}
+                        style={{ flex: "1 1 0", minWidth: 120 }}
+                      />
+                    </div>
+                    <span className="cd-caption">Changing the address redirects the old link to the new one.</span>
+                  </label>
+                  <label className="cd-field">
+                    <span>Search title</span>
+                    <input
+                      className="cd-input"
+                      maxLength={70}
+                      value={metaTitle}
+                      placeholder={seoListing?.defaultTitle ?? ""}
+                      onChange={(e) => setMetaTitle(e.target.value)}
+                    />
+                    <CharCounter length={metaTitle.length} max={SEO_TITLE_SOFT_MAX} />
+                  </label>
+                  <label className="cd-field">
+                    <span>Search description</span>
+                    <textarea
+                      className="cd-input"
+                      rows={2}
+                      maxLength={200}
+                      value={metaDescription}
+                      placeholder={seoListing?.defaultDescription ?? ""}
+                      onChange={(e) => setMetaDescription(e.target.value)}
+                    />
+                    <CharCounter length={metaDescription.length} max={SEO_DESCRIPTION_SOFT_MAX} />
+                  </label>
+                  <div className="cd-field">
+                    <span>Preview</span>
+                    <div
+                      style={{
+                        border: "1px solid var(--hairline)",
+                        borderRadius: 10,
+                        padding: "10px 14px",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 3,
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: "var(--accent)",
+                          fontWeight: 550,
+                          fontSize: "calc(14px * var(--type-scale))",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {previewTitle}
+                      </span>
+                      <span
+                        style={{
+                          color: "var(--green)",
+                          fontSize: "calc(11.5px * var(--type-scale))",
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {previewUrl}
+                      </span>
+                      <span
+                        className="cd-caption"
+                        style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
+                      >
+                        {previewDescription}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </Card>
 
           <Card>
