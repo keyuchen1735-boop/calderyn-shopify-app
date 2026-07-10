@@ -24,7 +24,7 @@ const STATUS_OPTIONS = [
 ];
 
 // Design table: checkbox / thumbnail / Product / Price / Status / Ship data.
-const GRID = "auto 44px 2fr 1fr 1fr 1fr";
+const GRID = "auto 36px 2fr 1fr 1fr 1fr";
 
 /** Ship-data cell copy — "Validated · <weight>kg" only when the product truly
  * passes the activation shipping check; the weight is the heaviest recorded
@@ -431,9 +431,9 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
                 </div>
                 <div
                   style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 8,
+                    width: 30,
+                    height: 30,
+                    borderRadius: 7,
                     overflow: "hidden",
                     background: "var(--gray-bg)",
                     display: "flex",
