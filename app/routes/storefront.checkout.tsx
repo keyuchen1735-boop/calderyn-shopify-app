@@ -23,6 +23,7 @@ import { OriginNotConfiguredError } from "~/lib/commerce/errors";
 import { RateSourceNotConfiguredError } from "~/lib/commerce/rate-source.server";
 import { quoteCartOptions } from "~/lib/commerce/quote.server";
 import type { CartShippingOption } from "~/lib/commerce/types";
+import { PICKUP_OPTION_TOKEN, PICKUP_SERVICE_NAME } from "~/lib/commerce/types";
 import { COUNTRIES, isKnownCountry } from "~/lib/storefront/countries";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { getBuyerSession } from "~/lib/buyer/session.server";
@@ -559,18 +560,28 @@ function PaymentStep({ confirmationUrl, total }: { confirmationUrl: string; tota
   );
 }
 
-// "Arrives Jul 14–16" from the quote's ISO calendar dates. Locale + UTC pinned so
-// SSR/hydration and every buyer timezone render the promised dates identically.
+// "Jul 14" from an ISO calendar date. Locale + UTC pinned so SSR/hydration and every
+// buyer timezone render the promised dates identically — every promise-date string
+// below derives from this ONE formatter.
+function fmtDay(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(d);
+}
+
+// "Arrives Jul 14–16" from the quote's delivery window.
 function fmtArrival(earliest: string | null, latest: string | null): string | null {
-  if (!earliest) return null;
-  const fmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-  const e = new Date(earliest);
-  if (Number.isNaN(e.getTime())) return null;
-  const eTxt = fmt.format(e);
-  if (!latest || latest === earliest) return `Arrives ${eTxt}`;
-  const l = new Date(latest);
-  if (Number.isNaN(l.getTime())) return `Arrives ${eTxt}`;
-  return `Arrives ${eTxt}–${fmt.format(l)}`;
+  const eTxt = fmtDay(earliest);
+  if (!eTxt) return null;
+  const lTxt = latest && latest !== earliest ? fmtDay(latest) : null;
+  return lTxt ? `Arrives ${eTxt}–${lTxt}` : `Arrives ${eTxt}`;
+}
+
+// "Ready Jul 14" for the local-pickup option — the order is collected, not delivered.
+function fmtReady(earliest: string | null): string | null {
+  const eTxt = fmtDay(earliest);
+  return eTxt ? `Ready ${eTxt}` : null;
 }
 
 export default function StorefrontCheckout() {
@@ -592,7 +603,12 @@ export default function StorefrontCheckout() {
   const total = charged
     ? money(charged.totalCents, charged.currency)
     : money(summary.subtotalCents, summary.currency);
-  const chargedArrival = charged ? fmtArrival(charged.deliveryEarliest, charged.deliveryLatest) : null;
+  const chargedPickup = charged?.shippingService === PICKUP_SERVICE_NAME;
+  const chargedArrival = charged
+    ? chargedPickup
+      ? fmtReady(charged.deliveryEarliest)
+      : fmtArrival(charged.deliveryEarliest, charged.deliveryLatest)
+    : null;
 
   // Which half of the single form is visible. Address inputs stay MOUNTED (hidden)
   // on the options step so the pay submit re-posts the address the options were
@@ -625,8 +641,9 @@ export default function StorefrontCheckout() {
             </div>
             <div className="cd-checkout__row">
               <span>
-                Shipping
-                {charged.shippingService ? ` (${charged.shippingService})` : ""}
+                {chargedPickup
+                  ? "Pickup"
+                  : `Shipping${charged.shippingService ? ` (${charged.shippingService})` : ""}`}
               </span>
               <span>
                 {charged.shippingCents === 0 ? "Free" : money(charged.shippingCents, charged.currency)}
@@ -720,13 +737,17 @@ export default function StorefrontCheckout() {
             <div className="cd-checkout__shipping">
               <h2>Shipping method</h2>
               {shippingOptions.map((o, i) => {
-                const arrival = fmtArrival(o.deliveryEarliest, o.deliveryLatest);
+                const pickup = o.service === PICKUP_OPTION_TOKEN;
+                const arrival = pickup
+                  ? fmtReady(o.deliveryEarliest)
+                  : fmtArrival(o.deliveryEarliest, o.deliveryLatest);
                 return (
                   <label key={o.service} className="cd-checkout__option">
                     <input type="radio" name="shippingService" value={o.service} defaultChecked={i === 0} />
                     <span className="cd-checkout__option-label">
                       <span className="cd-checkout__option-name">{o.label}</span>
                       {arrival ? <span className="cd-checkout__option-arrival">{arrival}</span> : null}
+                      {o.note ? <span className="cd-checkout__option-arrival">{o.note}</span> : null}
                     </span>
                     <span className="cd-checkout__option-price">
                       {o.amountCents === 0 ? "Free" : money(o.amountCents, summary.currency)}

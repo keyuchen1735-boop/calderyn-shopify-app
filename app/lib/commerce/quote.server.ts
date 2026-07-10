@@ -9,7 +9,14 @@ import type { RateQuoteSource } from "~/lib/ship-cost/adapters/rate-quote";
 import { getShippingEngine } from "~/lib/shipping/engine.server";
 import { priceLines } from "~/lib/order/cart.server";
 import type { CartQuote, CartShippingOption, PricedLine, QuoteDestination, QuoteLine } from "./types";
+import {
+  PICKUP_OPTION_TOKEN,
+  PICKUP_SERVICE_NAME,
+  parseShippingOptionToken,
+  shippingOptionToken,
+} from "./types";
 import { getShopOrigin } from "./origin.server";
+import { isoDatePlus } from "~/lib/shipping/delivery-window";
 import { getRateSource } from "./rate-source.server";
 import { calculateTax } from "./tax.server";
 import { cartShipInfo } from "~/lib/shipping/parcel.server";
@@ -19,40 +26,40 @@ import { loadShipRules, toMerchantShipRules } from "~/lib/shipping/rules.server"
 /** How many choices the buyer sees at checkout; the cheapest and the fastest always survive. */
 const MAX_BUYER_OPTIONS = 5;
 
-// The buyer's choice is a CARRIER-QUALIFIED token, not a bare service code: two
-// carriers can share a code ("Express"), and a code-only round trip would let the
-// pay step silently price a different carrier's rate than the one the buyer clicked.
-const TOKEN_SEP = "::";
-
-export function shippingOptionToken(carrier: string, service: string): string {
-  return `${carrier}${TOKEN_SEP}${service}`;
-}
-
-function parseShippingOptionToken(token: string): { carrier: string; service: string } | null {
-  const idx = token.indexOf(TOKEN_SEP);
-  if (idx <= 0 || idx + TOKEN_SEP.length >= token.length) return null;
-  return { carrier: token.slice(0, idx), service: token.slice(idx + TOKEN_SEP.length) };
-}
+// Token helpers live in types.ts (browser-safe, shared with the checkout UI); re-exported
+// here for existing server-side importers.
+export { shippingOptionToken };
 
 interface PreparedQuote {
   priced: { lines: PricedLine[]; subtotalCents: number; currency: string };
   cart: ShippingQuoteRequest["cart"];
   origin: QuoteDestination;
   rules: MerchantShipRules;
-  rateSource: RateQuoteSource;
+  /** null only on the pickup path, which never rates anything. */
+  rateSource: RateQuoteSource | null;
+  /** Variants that cannot ship to the destination country — the CALLER decides whether
+   *  that blocks the quote (it never blocks pickup: nothing ships anywhere). */
+  blocked: string[];
+  pickupEnabled: boolean;
+  pickupNote: string | null;
+  /** ISO calendar date the pickup order is ready (today + handling window); null when pickup is off. */
+  pickupReadyDate: string | null;
 }
 
 /**
- * The shared front half of every quote: price the lines, enforce the destination
- * restriction gate, assemble parcels, resolve origin + merchant rules + rate source.
+ * The shared front half of every quote: price the lines, compute the destination
+ * restriction list, assemble parcels, resolve origin + merchant rules + rate source.
  * Restrictions, per-variant handling, and parcel dims ride ONE batched read
  * (cartShipInfo); the shop-scoped reads (rules, origin, rate source) run alongside
- * it since none depends on another.
+ * it since none depends on another. `pickup` skips the rate-source resolution —
+ * pickup never rates anything, and a broken carrier credential (connect() throws on
+ * corrupt ciphertext) must not be able to fail a quote that doesn't use the carrier.
  */
 async function prepareQuote(
   shopId: string,
   lines: QuoteLine[],
   destination: QuoteDestination,
+  pickup = false,
 ): Promise<PreparedQuote> {
   if (!shopId) throw new Error("shopId is required");
   if (!lines.length) throw new Error("at least one line is required to quote");
@@ -63,13 +70,8 @@ async function prepareQuote(
     cartShipInfo(priced.lines.map((l) => l.variantId), destination.country),
     loadShipRules(shopId),
     getShopOrigin(shopId), // throws ORIGIN_NOT_CONFIGURED if unset
-    getRateSource(shopId),
+    pickup ? Promise.resolve(null) : getRateSource(shopId),
   ]);
-
-  // Fail fast before any rate work: an order containing an item we cannot ship to the
-  // destination country can never be fulfilled, so reject the whole quote with a typed
-  // error the caller surfaces to the buyer (which items to remove) rather than quoting it.
-  if (shipInfo.blocked.length) throw new ShipRestrictedError(destination.country, shipInfo.blocked);
 
   // A variant without ship data quotes as a bare line → engine low-confidence fallback
   // (never blocks the sale).
@@ -81,13 +83,20 @@ async function prepareQuote(
       : base;
   });
 
+  // The slowest item's handling window stretches the shop-level rule (never shrinks it).
+  const handlingDays = Math.max(rulesDto.handlingDays, shipInfo.maxHandlingDays);
+
   return {
     priced,
     cart,
     origin,
-    // The slowest item's handling window stretches the shop-level rule (never shrinks it).
     rules: toMerchantShipRules(rulesDto, shipInfo.maxHandlingDays),
     rateSource,
+    blocked: shipInfo.blocked,
+    pickupEnabled: rulesDto.pickupEnabled,
+    pickupNote: rulesDto.pickupNote,
+    // Computed ONCE so the options step and the pay step can never disagree on the rule.
+    pickupReadyDate: rulesDto.pickupEnabled ? isoDatePlus(new Date(), handlingDays) : null,
   };
 }
 
@@ -113,13 +122,53 @@ export async function quoteCart(
   destination: QuoteDestination,
   opts: { subtotalCentsOverride?: number; shippingService?: string | null } = {},
 ): Promise<CartQuote> {
-  const prepared = await prepareQuote(shopId, lines, destination);
+  const isPickup = opts.shippingService === PICKUP_OPTION_TOKEN;
+
+  // Pickup never reaches the rate engine (no rate source resolved), and the
+  // destination-country restriction gate below is skipped for it — nothing ships;
+  // the goods change hands at the store.
+  const prepared = await prepareQuote(shopId, lines, destination, isPickup);
   const { priced, rules } = prepared;
+
+  // Fail fast before any rate work: an order containing an item we cannot ship to the
+  // destination country can never be fulfilled, so reject the whole quote with a typed
+  // error the caller surfaces to the buyer (which items to remove) rather than quoting it.
+  if (!isPickup && prepared.blocked.length) {
+    throw new ShipRestrictedError(destination.country, prepared.blocked);
+  }
 
   // Authoritative subtotal: callers holding a pre-priced/snapshot subtotal (checkout's cart)
   // pass it so tax + total match what is actually charged; agentic callers omit it and use the
   // live price. quoteCart remains the single composer either way.
   const subtotalCents = opts.subtotalCentsOverride ?? priced.subtotalCents;
+
+  if (isPickup) {
+    // A pickup token from a shop that doesn't offer pickup was never a real offer — same
+    // typed re-offer as a carrier rate that vanished between the options step and pay.
+    if (!prepared.pickupEnabled || !prepared.pickupReadyDate) {
+      throw new ShippingOptionUnavailableError(opts.shippingService as string);
+    }
+    // Tax destination is the ORIGIN address: the sale completes where the buyer collects.
+    const taxCents = await calculateTax({
+      currency: priced.currency,
+      subtotalCents,
+      shippingCents: 0,
+      destination: prepared.origin,
+    });
+    return {
+      lines: priced.lines,
+      subtotalCents,
+      shippingCents: 0,
+      taxCents,
+      totalCents: subtotalCents + taxCents,
+      currency: priced.currency,
+      deliveryEarliest: prepared.pickupReadyDate,
+      deliveryLatest: prepared.pickupReadyDate,
+      lowConfidence: false,
+      fallbackUsed: false,
+      shippingService: PICKUP_SERVICE_NAME,
+    };
+  }
 
   const chosenToken = opts.shippingService ? parseShippingOptionToken(opts.shippingService) : null;
   if (opts.shippingService && !chosenToken) {
@@ -127,6 +176,7 @@ export async function quoteCart(
     throw new ShippingOptionUnavailableError(opts.shippingService);
   }
 
+  if (!prepared.rateSource) throw new Error("rate source not resolved for a carrier quote");
   const req = buildRequest(
     prepared,
     subtotalCents,
@@ -199,9 +249,39 @@ export async function quoteCartOptions(
   const prepared = await prepareQuote(shopId, lines, destination);
   const subtotalCents = opts.subtotalCentsOverride ?? prepared.priced.subtotalCents;
 
+  // The pickup option is valid whenever the merchant offers it — it does not depend on the
+  // cart being shippable or on the carrier engine having rates. Built once here so the
+  // restricted-cart and no-rates paths below can offer it as the ONLY option instead of
+  // dead-ending a sale the merchant could fulfill over the counter.
+  const pickupOption = (): CartShippingOption => ({
+    service: PICKUP_OPTION_TOKEN,
+    label: prepared.origin.city ? `Pick up in ${prepared.origin.city}` : "Pick up",
+    amountCents: 0,
+    deliveryEarliest: prepared.pickupReadyDate,
+    deliveryLatest: prepared.pickupReadyDate,
+    ...(prepared.pickupNote ? { note: prepared.pickupNote } : {}),
+  });
+
+  // Destination-restricted items block every SHIPPING option (the order can never be
+  // fulfilled by carrier), but not pickup — nothing ships, so a pickup-enabled shop
+  // offers pickup alone rather than throwing the buyer out of checkout.
+  if (prepared.blocked.length) {
+    if (prepared.pickupEnabled) {
+      return { options: [pickupOption()], currency: prepared.priced.currency };
+    }
+    throw new ShipRestrictedError(destination.country, prepared.blocked);
+  }
+
+  if (!prepared.rateSource) throw new Error("rate source not resolved for a carrier quote");
   const req = buildRequest(prepared, subtotalCents, destination, { selection: "all" });
   const shipQuote = await getShippingEngine()(req, prepared.rateSource, prepared.rules);
-  if (!shipQuote.options.length) throw new Error("shipping engine returned no options");
+  if (!shipQuote.options.length) {
+    // No carrier can rate this destination — pickup (when offered) still can.
+    if (prepared.pickupEnabled) {
+      return { options: [pickupOption()], currency: prepared.priced.currency };
+    }
+    throw new Error("shipping engine returned no options");
+  }
 
   // Sort BEFORE dedupe so a duplicated carrier+service keeps its cheapest price —
   // first-seen order would let a pricier duplicate shadow the rate the buyer should get.
@@ -222,5 +302,11 @@ export async function quoteCartOptions(
     shortlist[shortlist.length - 1] = fastest;
   }
 
-  return { options: shortlist.map(toCartOption), currency: prepared.priced.currency };
+  const options = shortlist.map(toCartOption);
+  // Local pickup rides after the carrier shortlist (never competing for its slots): free,
+  // ready after the shop's handling window, labelled with the pickup city so the buyer
+  // knows where they're collecting. Priced by quoteCart's pickup branch, not the engine.
+  if (prepared.pickupEnabled) options.push(pickupOption());
+
+  return { options, currency: prepared.priced.currency };
 }

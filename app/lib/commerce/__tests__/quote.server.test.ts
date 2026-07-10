@@ -52,6 +52,8 @@ const NEUTRAL_RULES = {
   handlingCents: 0,
   freeShipThresholdCents: null,
   handlingDays: 1,
+  pickupEnabled: false,
+  pickupNote: null,
 };
 
 const FAKE_ORIGIN = {
@@ -201,8 +203,8 @@ describe("quoteCart — merchant rules + chosen service", () => {
   it("passes shaped merchant rules to the engine, handling days stretched by the slowest variant", async () => {
     mockPriceLines.mockResolvedValue(makePricedLines("var_r") as never);
     mockLoadShipRules.mockResolvedValue({
+      ...NEUTRAL_RULES,
       markupPct: 10,
-      handlingCents: 0,
       freeShipThresholdCents: 5000,
       handlingDays: 2,
     });
@@ -338,6 +340,137 @@ describe("quoteCartOptions — buyer choice shortlist", () => {
     const { options } = await quoteCartOptions("shop_1", [{ variantId: "var_l", quantity: 1 }], FAKE_DESTINATION);
     expect(options[0].label).toBe("USPS Priority");
     expect(options[1].label).toBe("Economy"); // "Standard" carrier is a placeholder, not signal
+  });
+});
+
+describe("local pickup", () => {
+  const PICKUP_RULES = { ...NEUTRAL_RULES, pickupEnabled: true, pickupNote: "Side entrance, Mon to Sat" };
+
+  it("quoteCartOptions appends the pickup option after the carrier shortlist when enabled", async () => {
+    mockPriceLines.mockResolvedValue(makePricedLines("var_p") as never);
+    mockLoadShipRules.mockResolvedValue(PICKUP_RULES);
+    const fakeEngine = vi.fn(async () => FAKE_QUOTE_RESULT);
+    mockGetShippingEngine.mockReturnValue(fakeEngine as never);
+
+    const { quoteCartOptions } = await import("~/lib/commerce/quote.server");
+    const { options } = await quoteCartOptions("shop_1", [{ variantId: "var_p", quantity: 1 }], FAKE_DESTINATION);
+
+    const pickup = options[options.length - 1];
+    expect(pickup.service).toBe("PICKUP::PICKUP");
+    expect(pickup.label).toBe("Pick up in Portland"); // origin city, not the buyer's
+    expect(pickup.amountCents).toBe(0);
+    expect(pickup.note).toBe("Side entrance, Mon to Sat");
+    // Ready date: a single calendar date (earliest === latest), today + handling window.
+    expect(pickup.deliveryEarliest).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(pickup.deliveryLatest).toBe(pickup.deliveryEarliest);
+    // The carrier options are untouched ahead of it.
+    expect(options[0].service).toBe("USPS::USPS_PRIORITY");
+  });
+
+  it("quoteCartOptions offers pickup ALONE when the cart is destination-restricted (no dead-end)", async () => {
+    mockPriceLines.mockResolvedValue(makePricedLines("var_pb") as never);
+    mockLoadShipRules.mockResolvedValue(PICKUP_RULES);
+    mockCartShipInfo.mockResolvedValue(shipInfo({ blocked: ["var_pb"] }));
+    const fakeEngine = vi.fn(async () => FAKE_QUOTE_RESULT);
+    mockGetShippingEngine.mockReturnValue(fakeEngine as never);
+
+    const { quoteCartOptions } = await import("~/lib/commerce/quote.server");
+    const { options } = await quoteCartOptions("shop_1", [{ variantId: "var_pb", quantity: 1 }], FAKE_DESTINATION);
+
+    expect(options).toHaveLength(1);
+    expect(options[0].service).toBe("PICKUP::PICKUP");
+    expect(fakeEngine).not.toHaveBeenCalled(); // shipping can never fulfill this cart
+  });
+
+  it("quoteCartOptions still throws ShipRestrictedError for a restricted cart when pickup is off", async () => {
+    mockPriceLines.mockResolvedValue(makePricedLines("var_nb") as never);
+    mockCartShipInfo.mockResolvedValue(shipInfo({ blocked: ["var_nb"] }));
+    const fakeEngine = vi.fn(async () => FAKE_QUOTE_RESULT);
+    mockGetShippingEngine.mockReturnValue(fakeEngine as never);
+
+    const { quoteCartOptions } = await import("~/lib/commerce/quote.server");
+    const err = await quoteCartOptions("shop_1", [{ variantId: "var_nb", quantity: 1 }], FAKE_DESTINATION).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(ShipRestrictedError);
+  });
+
+  it("quoteCartOptions offers pickup ALONE when the engine has no rates for the destination", async () => {
+    mockPriceLines.mockResolvedValue(makePricedLines("var_pe") as never);
+    mockLoadShipRules.mockResolvedValue(PICKUP_RULES);
+    const fakeEngine = vi.fn(async () => ({ ...FAKE_QUOTE_RESULT, options: [] }));
+    mockGetShippingEngine.mockReturnValue(fakeEngine as never);
+
+    const { quoteCartOptions } = await import("~/lib/commerce/quote.server");
+    const { options } = await quoteCartOptions("shop_1", [{ variantId: "var_pe", quantity: 1 }], FAKE_DESTINATION);
+
+    expect(options).toHaveLength(1);
+    expect(options[0].service).toBe("PICKUP::PICKUP");
+  });
+
+  it("quoteCartOptions offers no pickup option when disabled", async () => {
+    mockPriceLines.mockResolvedValue(makePricedLines("var_np") as never);
+    const fakeEngine = vi.fn(async () => FAKE_QUOTE_RESULT);
+    mockGetShippingEngine.mockReturnValue(fakeEngine as never);
+
+    const { quoteCartOptions } = await import("~/lib/commerce/quote.server");
+    const { options } = await quoteCartOptions("shop_1", [{ variantId: "var_np", quantity: 1 }], FAKE_DESTINATION);
+    expect(options.some((o) => o.service === "PICKUP::PICKUP")).toBe(false);
+  });
+
+  it("quoteCart prices the pickup token WITHOUT the rate engine: $0 shipping, tax at the ORIGIN", async () => {
+    mockPriceLines.mockResolvedValue(makePricedLines("var_pk") as never);
+    mockLoadShipRules.mockResolvedValue(PICKUP_RULES);
+    const fakeEngine = vi.fn(async () => FAKE_QUOTE_RESULT);
+    mockGetShippingEngine.mockReturnValue(fakeEngine as never);
+
+    const { quoteCart } = await import("~/lib/commerce/quote.server");
+    const q = await quoteCart("shop_1", [{ variantId: "var_pk", quantity: 1 }], FAKE_DESTINATION, {
+      shippingService: "PICKUP::PICKUP",
+    });
+
+    expect(fakeEngine).not.toHaveBeenCalled(); // pickup never reaches the rate engine
+    // Pickup never resolves a rate source either — a broken carrier credential
+    // (connect() throws) must not be able to fail a pickup checkout.
+    expect(mockGetRateSource).not.toHaveBeenCalled();
+    expect(q.shippingCents).toBe(0);
+    expect(q.shippingService).toBe("Store pickup");
+    expect(q.totalCents).toBe(2000 + 100); // subtotal + mocked tax, no shipping
+    expect(q.lowConfidence).toBe(false);
+    expect(q.fallbackUsed).toBe(false);
+    expect(q.deliveryLatest).toBe(q.deliveryEarliest);
+    // Tax is computed where the goods change hands: the store, not the buyer's address.
+    expect(mockCalculateTax).toHaveBeenCalledWith(
+      expect.objectContaining({ shippingCents: 0, destination: FAKE_ORIGIN }),
+    );
+  });
+
+  it("quoteCart skips the destination-restriction gate for pickup (nothing ships)", async () => {
+    mockPriceLines.mockResolvedValue(makePricedLines("var_blocked") as never);
+    mockLoadShipRules.mockResolvedValue(PICKUP_RULES);
+    mockCartShipInfo.mockResolvedValue(shipInfo({ blocked: ["var_blocked"] }));
+    const fakeEngine = vi.fn(async () => FAKE_QUOTE_RESULT);
+    mockGetShippingEngine.mockReturnValue(fakeEngine as never);
+
+    const { quoteCart } = await import("~/lib/commerce/quote.server");
+    const q = await quoteCart("shop_1", [{ variantId: "var_blocked", quantity: 1 }], FAKE_DESTINATION, {
+      shippingService: "PICKUP::PICKUP",
+    });
+    expect(q.shippingService).toBe("Store pickup");
+  });
+
+  it("quoteCart rejects a pickup token when the shop doesn't offer pickup", async () => {
+    mockPriceLines.mockResolvedValue(makePricedLines("var_off") as never);
+    const fakeEngine = vi.fn(async () => FAKE_QUOTE_RESULT);
+    mockGetShippingEngine.mockReturnValue(fakeEngine as never);
+
+    const { quoteCart } = await import("~/lib/commerce/quote.server");
+    const { ShippingOptionUnavailableError } = await import("~/lib/shipping/errors");
+    const err = await quoteCart("shop_1", [{ variantId: "var_off", quantity: 1 }], FAKE_DESTINATION, {
+      shippingService: "PICKUP::PICKUP",
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ShippingOptionUnavailableError);
+    expect(fakeEngine).not.toHaveBeenCalled();
   });
 });
 

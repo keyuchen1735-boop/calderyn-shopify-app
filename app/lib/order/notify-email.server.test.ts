@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // real behavior, not a bare mock. Mirrors confirmation-email.server.test.ts's fixture.
 const store = vi.hoisted(() => {
   type Row = Record<string, any>;
-  const db: Record<string, Row[]> = { orders: [], buyer_dim: [] };
+  const db: Record<string, Row[]> = { orders: [], buyer_dim: [], shop_origin: [], ship_rules: [] };
 
   class Builder {
     private filters: Array<[string, unknown]> = [];
@@ -93,6 +93,32 @@ describe("sendShippingConfirmation", () => {
       sent: false,
       error: "network down",
     });
+  });
+
+  it("sends ready-for-pickup copy (no tracking) when the order's shipping_service is Store pickup", async () => {
+    store.db.orders[0].shipping_service = "Store pickup";
+    const res = await sendShippingConfirmation("shop-1", ORDER_ID, { trackingNumber: "1Z999", carrier: "UPS" });
+    expect(res.sent).toBe(true);
+    const args = sendEmail.mock.calls[0][0];
+    expect(args.subject).toBe("Order #11112222 is ready for pickup");
+    expect(args.text).toContain("Your order #11112222 is ready for pickup.");
+    // Tracking is meaningless for a pickup order even if the caller passed one.
+    expect(args.text).not.toContain("Tracking:");
+    expect(args.html).not.toContain("Tracking:");
+  });
+
+  it("tells the pickup buyer WHERE to collect: origin address + merchant pickup note, escaped in html", async () => {
+    store.db.orders[0].shipping_service = "Store pickup";
+    store.db.shop_origin.push({ shop_id: "shop-1", street1: "1 Main St", city: "Portland", state: "OR", zip: "97201" });
+    store.db.ship_rules.push({ shop_id: "shop-1", pickup_note: "Side entrance <b>only</b>" });
+    const res = await sendShippingConfirmation("shop-1", ORDER_ID, {});
+    expect(res.sent).toBe(true);
+    const args = sendEmail.mock.calls[0][0];
+    expect(args.text).toContain("Pick it up at: 1 Main St, Portland, OR, 97201");
+    expect(args.text).toContain("Side entrance <b>only</b>");
+    expect(args.html).toContain("Pick it up at: 1 Main St, Portland, OR, 97201");
+    expect(args.html).toContain("Side entrance &lt;b&gt;only&lt;/b&gt;");
+    expect(args.html).not.toContain("<b>only</b>");
   });
 
   it("escapes malicious tracking number and carrier in html (xss prevention)", async () => {
