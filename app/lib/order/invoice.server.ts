@@ -155,6 +155,28 @@ export async function sendDraftOrderInvoice(
     if (buyer.address && !buyer.address.line1) {
       throw new Error("shipping address line1 is required to quote");
     }
+
+    // Exchange-lite (Phase 4 Task 2): before any writes, verify that an exchange_for_return_id
+    // (if provided) refers to a real, shop-scoped return. A foreign return (from another shop) or
+    // a non-existent return must never be referenced in attribution — the link would be invalid
+    // and attribution must always resolve to a real return when present.
+    if (buyer.exchangeForReturnId) {
+      const returnCheck = await sb
+        .from("order_return")
+        .select("id")
+        .eq("shop_id", shopId)
+        .eq("id", buyer.exchangeForReturnId)
+        .maybeSingle();
+      if (returnCheck.error) throw returnCheck.error;
+      if (!returnCheck.data) {
+        throw new CalderynError({
+          code: "unknown_return",
+          status: 422,
+          message: `Return ${buyer.exchangeForReturnId} not found for this shop.`,
+        });
+      }
+    }
+
     let shippingCents = 0;
     let taxCents = 0;
     if (buyer.address) {

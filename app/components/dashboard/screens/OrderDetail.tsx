@@ -255,9 +255,15 @@ export default function OrderDetailScreen({
     !isUnpaidInvoice;
   // Create return (Phase 4 Task 2): native, at least one line still has returnable quantity, and
   // no return already open (createOrderReturn's one-open-return guard, mirrored here so the button
-  // never invites a 409 the server would refuse anyway).
+  // never invites a 409 the server would refuse anyway). Must also gate on order state: a return
+  // can only be created on orders in states where refund is possible (mirroring REFUNDABLE_ORDER_STATES
+  // so a cancelled/refunded order never renders the "Create return" action).
   const canCreateReturn =
-    !!detail && !detail.readOnly && !hasOpenReturn(detail.returns) && anyLineReturnable(detail.lines, detail.returns);
+    !!detail &&
+    !detail.readOnly &&
+    REFUNDABLE_ORDER_STATES.has(detail.state) &&
+    !hasOpenReturn(detail.returns) &&
+    anyLineReturnable(detail.lines, detail.returns);
 
   const addNote = async () => {
     if (!detail || noteSaving || !noteText.trim()) return;
