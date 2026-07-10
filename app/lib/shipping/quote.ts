@@ -23,6 +23,7 @@ export interface MerchantShipRules {
   markupPct?: number; // e.g. 10 = +10% on the carrier amount
   handlingCents?: number; // flat handling added per shipment
   freeShipThresholdCents?: number; // cart subtotal at/above which shipping is free
+  handlingDays?: number; // origin handling window for delivery dates (engine default when absent)
   // Zone overrides are intentionally minimal for v1; richer matchers are a #6.3 v2 upgrade.
 }
 
