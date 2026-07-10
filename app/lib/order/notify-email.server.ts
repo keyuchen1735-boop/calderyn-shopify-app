@@ -16,12 +16,13 @@ import { getSupabase } from "~/lib/supabase.server";
 import { sendEmail } from "~/lib/email/send.server";
 import { formatOrderRef } from "./checkout.server";
 import { escapeHtml } from "~/lib/pilot-invite/content";
-import { publicBaseUrl } from "~/lib/dashboard/http.server";
+import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 
 export interface OrderEmailResult {
   sent: boolean;
   id?: string;
   error?: string;
+  reason?: string;
 }
 
 /** Format integer cents for display only. Money stays integer cents everywhere else. */
@@ -84,6 +85,20 @@ function transportConfig(): { apiKey: string; from: string } | null {
   const from = process.env.ORDER_CONFIRM_FROM || process.env.PILOT_FROM || process.env.DIGEST_FROM;
   if (!apiKey || !from) return null;
   return { apiKey, from };
+}
+
+/**
+ * Resolves the TENANT storefront origin (https://<org_slug>.calderyncompany.com) a buyer-facing
+ * email link must point at. Storefront routes (recover/$token, invoice/$token/pay) resolve their
+ * shop from the request's Host subdomain (storefront/shop.server.ts's storefrontSlug/
+ * resolveTenantShopId) — never from the platform app/apex host, which falls back to the demo shop
+ * and 404s. publicBaseUrl() returns that app/apex host, so it must never be used to build a link
+ * that goes in an email. Returns null when the shop has no live storefront yet (no org_slug) —
+ * callers must not send a dead link in that case.
+ */
+async function storefrontOriginForShop(shopId: string): Promise<string | null> {
+  const origin = await getShopStorefrontOrigin(shopId);
+  return origin || null;
 }
 
 /**
@@ -226,7 +241,15 @@ export async function sendInvoiceEmail(
       return { sent: false, error: "email transport not configured" };
     }
 
-    const payLink = `${publicBaseUrl()}/storefront/invoice/${opts.confirmationToken}/pay`;
+    const origin = await storefrontOriginForShop(shopId);
+    if (!origin) {
+      console.warn(
+        `[order-notify] cannot send invoice email for order ${orderId} (shop ${shopId}): no storefront origin`,
+      );
+      return { sent: false, reason: "no_storefront_origin" };
+    }
+
+    const payLink = `${origin}/storefront/invoice/${opts.confirmationToken}/pay`;
     const total = money(opts.totalCents, found.currency);
     const lineText = opts.lines.map((l) => `${l.title} x ${l.quantity}`).join("\n");
     const subject = `Invoice for order ${found.ref}`;
@@ -299,7 +322,15 @@ export async function sendRecoveryEmailMessage(
       return { sent: false, error: "email transport not configured" };
     }
 
-    const resumeLink = `${publicBaseUrl()}/storefront/recover/${opts.confirmationToken}`;
+    const origin = await storefrontOriginForShop(shopId);
+    if (!origin) {
+      console.warn(
+        `[order-notify] cannot send recovery email for order ${orderId} (shop ${shopId}): no storefront origin`,
+      );
+      return { sent: false, reason: "no_storefront_origin" };
+    }
+
+    const resumeLink = `${origin}/storefront/recover/${opts.confirmationToken}`;
     const total = money(opts.totalCents, found.currency);
     const lineText = opts.lines.map((l) => `${l.title} x ${l.quantity}`).join("\n");
     const subject = "Your order is waiting";

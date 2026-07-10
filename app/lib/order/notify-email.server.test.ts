@@ -29,9 +29,15 @@ const store = vi.hoisted(() => {
 });
 
 const sendEmail = vi.fn();
+// Tenant storefront origin resolver: buyer links must be built from THIS, never the app/apex
+// host, since storefront routes resolve their shop from the request Host subdomain.
+const getShopStorefrontOrigin = vi.fn();
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
 vi.mock("~/lib/email/send.server", () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }));
+vi.mock("~/lib/storefront/shop.server", () => ({
+  getShopStorefrontOrigin: (...a: unknown[]) => getShopStorefrontOrigin(...a),
+}));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import {
@@ -43,14 +49,15 @@ import {
 } from "./notify-email.server";
 
 const ORDER_ID = "11112222-3333-4444-5555-666677778888";
+const TENANT_ORIGIN = "https://ember.calderyncompany.com";
 
 beforeEach(() => {
   for (const k of Object.keys(store.db)) store.db[k].length = 0;
   vi.clearAllMocks();
   process.env.RESEND_API_KEY = "re_test";
   process.env.ORDER_CONFIRM_FROM = "Store <orders@example.com>";
-  process.env.DASHBOARD_PUBLIC_URL = "https://app.example.com";
   sendEmail.mockResolvedValue({ sent: true, id: "email-1" });
+  getShopStorefrontOrigin.mockResolvedValue(TENANT_ORIGIN);
   store.db.orders.push({ id: ORDER_ID, shop_id: "shop-1", buyer_id: "buyer-1", currency: "usd" });
   store.db.buyer_dim.push({ id: "buyer-1", shop_id: "shop-1", email_normalized: "buyer@example.com" });
 });
@@ -164,19 +171,27 @@ describe("sendInvoiceEmail", () => {
     totalCents: 3998,
   };
 
-  it("emails the buyer the invoice subject, line summary, total, and pay link", async () => {
+  it("emails the buyer the invoice subject, line summary, total, and pay link built from the tenant storefront origin", async () => {
     const res = await sendInvoiceEmail("shop-1", ORDER_ID, opts);
     expect(res.sent).toBe(true);
+    expect(getShopStorefrontOrigin).toHaveBeenCalledWith("shop-1");
     const args = sendEmail.mock.calls[0][0];
     expect(args.subject).toBe("Invoice for order #11112222");
     expect(args.text).toContain("Cotton Tee - Small x 2");
     expect(args.text).toContain("Total: $39.98");
-    expect(args.text).toContain("https://app.example.com/storefront/invoice/tok-abc123/pay");
+    expect(args.text).toContain(`${TENANT_ORIGIN}/storefront/invoice/tok-abc123/pay`);
     expect(args.html).toContain("<li>Cotton Tee - Small x 2</li>");
-    expect(args.html).toContain("https://app.example.com/storefront/invoice/tok-abc123/pay");
+    expect(args.html).toContain(`${TENANT_ORIGIN}/storefront/invoice/tok-abc123/pay`);
     // No em dashes anywhere in the copy.
     expect(args.text).not.toMatch(/[—–]/);
     expect(args.html).not.toMatch(/[—–]/);
+  });
+
+  it("does not send (and does not call sendEmail) when the shop has no resolvable storefront origin", async () => {
+    getShopStorefrontOrigin.mockResolvedValueOnce("");
+    const res = await sendInvoiceEmail("shop-1", ORDER_ID, opts);
+    expect(res).toEqual({ sent: false, reason: "no_storefront_origin" });
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 
   it("includes the merchant note, escaped in html, verbatim in the plain-text body", async () => {
@@ -233,21 +248,29 @@ describe("sendRecoveryEmailMessage", () => {
     totalCents: 3998,
   };
 
-  it("emails the buyer the recovery subject, line summary, total, and resume link", async () => {
+  it("emails the buyer the recovery subject, line summary, total, and resume link built from the tenant storefront origin", async () => {
     const res = await sendRecoveryEmailMessage("shop-1", ORDER_ID, opts);
     expect(res.sent).toBe(true);
+    expect(getShopStorefrontOrigin).toHaveBeenCalledWith("shop-1");
     const args = sendEmail.mock.calls[0][0];
     expect(args.subject).toBe("Your order is waiting");
     expect(args.text).toContain("Cotton Tee - Small x 2");
     expect(args.text).toContain("$39.98");
-    expect(args.text).toContain("https://app.example.com/storefront/recover/tok-recover123");
+    expect(args.text).toContain(`${TENANT_ORIGIN}/storefront/recover/tok-recover123`);
     expect(args.html).toContain("<li>Cotton Tee - Small x 2</li>");
-    expect(args.html).toContain("https://app.example.com/storefront/recover/tok-recover123");
+    expect(args.html).toContain(`${TENANT_ORIGIN}/storefront/recover/tok-recover123`);
     // Notes that prices/availability reflect current state.
     expect(args.text).toMatch(/prices and availability may have changed/i);
     // No em dashes anywhere in the copy.
     expect(args.text).not.toMatch(/[—–]/);
     expect(args.html).not.toMatch(/[—–]/);
+  });
+
+  it("does not send (and does not call sendEmail) when the shop has no resolvable storefront origin", async () => {
+    getShopStorefrontOrigin.mockResolvedValueOnce("");
+    const res = await sendRecoveryEmailMessage("shop-1", ORDER_ID, opts);
+    expect(res).toEqual({ sent: false, reason: "no_storefront_origin" });
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 
   it("does not send when the buyer has no email on file", async () => {

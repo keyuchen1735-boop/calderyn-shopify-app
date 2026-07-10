@@ -187,7 +187,7 @@ export async function sendRecoveryEmail(
     totalCents: order.totalCents,
   });
   if (!delivery.sent) {
-    return { sent: false, reason: delivery.error ?? "delivery_failed" };
+    return { sent: false, reason: delivery.reason ?? delivery.error ?? "delivery_failed" };
   }
 
   const stamp = await getSupabase()
