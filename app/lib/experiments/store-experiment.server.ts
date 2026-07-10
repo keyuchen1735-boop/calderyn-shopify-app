@@ -1,6 +1,7 @@
 // app/lib/experiments/store-experiment.server.ts
-// One-at-a-time home-page A/B experiments for the owned storefront (spec
-// 2026-07-05-store-studio-v2-design.md D4). The champion stays in
+// One-at-a-time A/B experiments for the owned storefront (spec
+// 2026-07-05-store-studio-v2-design.md D4; extended 2026-07-09 to product-page
+// tests + an AI-generated challenger). The champion stays in
 // page_document.published_json; the challenger doc and optional settings
 // overrides live on the store_experiment row. Server-only: service-role
 // client, shop_id threaded on every query. Non-uuid (demo) shops: reads
@@ -8,32 +9,45 @@
 import { getSupabase } from "~/lib/supabase.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { isUuid } from "~/lib/ids";
+import { peekVisitorId } from "~/lib/storefront/visitor-cookie.server";
 import { readPaged } from "~/lib/db/read-paged.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, saveStoreSettings } from "~/lib/storefront/settings.server";
 import { loadPublishedDoc, saveDraft, publishDoc } from "~/lib/storebuilder/page-document.server";
 import { sanitizeDocHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { validateDocument, type ValidIds } from "~/lib/storebuilder/validate";
+import { generateChallengerHome } from "~/lib/storegen/generate.server";
 import type { Block, BlockDocument } from "~/lib/storebuilder/types";
 import type {
   StudioExperiment,
+  StudioExperimentPage,
   StudioExperimentReport,
   StudioExperimentState,
   StudioVibe,
 } from "~/lib/storebuilder/studio-types";
 
-export type StoreExperimentKind = "headline" | "vibe";
+export type StoreExperimentKind = "headline" | "vibe" | "pdp_copy" | "ai_page";
 export type StoreExperimentDecision = "ship" | "keep" | "stop";
 export interface StoreExperimentSpec {
   kind: StoreExperimentKind;
   name?: string;
+  /** Runs after the cheap refusals (running test, nothing published) but BEFORE any paid model
+   *  call — the route wires the daily designer quota here so a refused start never burns a slot
+   *  (quota-last invariant, see storegen/guard.server.ts). Only invoked for AI-backed kinds. */
+  onBeforeAiCall?: () => Promise<void>;
+}
+
+/** The page a challenger tests against. pdp_copy runs on the PDP template;
+ *  every other kind tests the home page. */
+export function experimentPageKey(kind: StoreExperimentKind): StudioExperimentPage {
+  return kind === "pdp_copy" ? "pdp" : "home";
 }
 
 /** What the storefront serving path needs per request: the challenger doc and
  *  any settings overrides for arm B. */
 export interface RunningExperiment {
   id: string;
-  pageKey: "home";
+  pageKey: StudioExperimentPage;
   name: string;
   why: string;
   startedAt: string;
@@ -42,6 +56,10 @@ export interface RunningExperiment {
 }
 
 const VIBES: StudioVibe[] = ["minimal", "bold", "warm"];
+
+// Stable id for the pdp_copy challenger's injected trust line — used to strip a previously
+// shipped copy before building a new challenger, so repeat tests never stack duplicates.
+const REASSURANCE_BLOCK_ID = "pdp-experiment-reassurance";
 
 // Copy bounds mirror the generator's COPY_BOUNDS (storegen/sanitize.ts) so a
 // templated challenger can never exceed what a generated doc may hold.
@@ -55,6 +73,16 @@ const SUBHEAD_MAX = 200;
 const EVENT_ROW_CAP = 50_000;
 const ORDER_ROW_CAP = 10_000;
 const MIN_SESSIONS_PER_ARM = 30;
+// An undecided experiment blocks publish/generate, so it cannot run forever:
+// past this age the next studio/publish/generate touch auto-decides it (ship
+// only a confident winner, otherwise keep the champion).
+const DEFAULT_EXPERIMENT_MAX_DAYS = 14;
+const DAY_MS = 86_400_000;
+
+function experimentMaxDays(): number {
+  const raw = Number(process.env.STORE_EXPERIMENT_MAX_DAYS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_EXPERIMENT_MAX_DAYS;
+}
 // Every order state where the sale happened (order/state.ts vocabulary): a
 // partial refund must not make a conversion vanish while a full refund keeps
 // counting.
@@ -81,6 +109,63 @@ export function assignArm(visitorId: string, experimentId: string): "a" | "b" {
   }
   h >>>= 0;
   return (((h >>> 16) ^ h) & 1) === 0 ? "a" : "b";
+}
+
+// ---------------------------------------------------------------------------
+// Serving-time participation — ONE definition of which surfaces an experiment
+// treats and how a request buckets, shared by every storefront surface so the
+// exposure denominator, the served variant and the checkout attribution can
+// never drift apart.
+
+/** Storefront surfaces that resolve an experiment per request. "layout" is the
+ *  shell around every page (vibe restyles land there); "checkout" stamps
+ *  attribution regardless of which page the experiment tests. */
+export type ExperimentSurface = "home" | "pdp" | "collection" | "layout" | "checkout";
+
+/** Whether a running experiment treats (and must be measured on) a surface. A
+ *  vibe override restyles the whole site, so every surface participates; a doc
+ *  experiment participates only on its own page. Checkout always participates —
+ *  a conversion belongs to the buyer's arm no matter where the test runs. */
+export function experimentTreatsSurface(exp: RunningExperiment, surface: ExperimentSurface): boolean {
+  if (surface === "checkout") return true;
+  if (exp.variantSettings?.vibe) return true;
+  return exp.pageKey === surface;
+}
+
+export interface ServedExperiment {
+  /** Non-null only when a running experiment treats this surface AND the request
+   *  carried a visitor cookie to bucket on. */
+  experiment: RunningExperiment | null;
+  experimentId: string | null;
+  variantKey: "a" | "b" | null;
+}
+
+const NOT_SERVED: ServedExperiment = { experiment: null, experimentId: null, variantKey: null };
+
+/**
+ * Resolve the experiment exposure for one storefront request. Bucketing keys
+ * off the COOKIE visitor id only (peekVisitorId): a first-ever visit has no
+ * cookie yet, sees the champion unstamped, and buckets deterministically from
+ * its next request — bucketing off a freshly minted id would let one surface
+ * style arm A while another records arm-B exposure. Failure-isolated: any
+ * lookup hiccup degrades to "no test running" and never breaks a buyer render.
+ */
+export async function resolveServedExperiment(
+  shopId: string,
+  request: Request,
+  surface: ExperimentSurface,
+): Promise<ServedExperiment> {
+  try {
+    const experiment = await getRunningExperiment(shopId);
+    if (!experiment || !experimentTreatsSurface(experiment, surface)) return NOT_SERVED;
+    const visitorId = await peekVisitorId(request);
+    if (!visitorId) return NOT_SERVED;
+    const variantKey = assignArm(visitorId, experiment.id);
+    return { experiment, experimentId: experiment.id, variantKey };
+  } catch (err) {
+    console.error(`[store-experiment] ${surface} exposure lookup failed for shop ${shopId} (serving the champion):`, err);
+    return NOT_SERVED;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +215,7 @@ export async function getRunningExperiment(shopId: string): Promise<RunningExper
 
   const { data, error } = await getSupabase()
     .from("store_experiment")
-    .select("id, name, why, started_at, variant_doc, variant_settings")
+    .select("id, page_key, name, why, started_at, variant_doc, variant_settings")
     .eq("shop_id", shopId)
     .eq("state", "running")
     .maybeSingle();
@@ -138,7 +223,7 @@ export async function getRunningExperiment(shopId: string): Promise<RunningExper
   const exp: RunningExperiment | null = data
     ? {
         id: String(data.id),
-        pageKey: "home",
+        pageKey: shapePageKey(data.page_key),
         name: String(data.name),
         why: String(data.why ?? ""),
         startedAt: String(data.started_at),
@@ -157,14 +242,65 @@ export async function getRunningExperiment(shopId: string): Promise<RunningExper
   return exp;
 }
 
+/**
+ * Auto-decide a running experiment that has outlived the max duration
+ * (EXPERIMENT_MAX_DAYS, env STORE_EXPERIMENT_MAX_DAYS): an undecided test
+ * blocks publish and generate, so it must not be able to block them forever.
+ * Ship only when the report shows a confident WIN (confidence >= 95 and
+ * rateB > rateA); anything else keeps the champion. Lazy — invoked from the
+ * studio read and the write guards rather than a cron — and failure-isolated:
+ * a sweep error logs and returns, it never breaks the caller.
+ */
+export async function expireOverdueExperiment(shopId: string): Promise<void> {
+  try {
+    if (!isUuid(shopId)) return;
+    // Direct (uncached) read: a stale 60s cache entry must not delay or
+    // double-fire an expiry.
+    const { data, error } = await getSupabase()
+      .from("store_experiment")
+      .select("id, started_at")
+      .eq("shop_id", shopId)
+      .eq("state", "running")
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return;
+    const startedAtMs = Date.parse(String(data.started_at));
+    if (!Number.isFinite(startedAtMs)) return;
+    if (Date.now() - startedAtMs < experimentMaxDays() * DAY_MS) return;
+
+    const id = String(data.id);
+    const report = await experimentReport(shopId, { id, startedAt: String(data.started_at) });
+    const rA = report.aSessions > 0 ? report.aConversions / report.aSessions : 0;
+    const rB = report.bSessions > 0 ? report.bConversions / report.bSessions : 0;
+    const winner = report.confidence != null && report.confidence >= 95 && rB > rA;
+    try {
+      await decideExperiment(shopId, id, winner ? "ship" : "keep");
+    } catch (err) {
+      // decideExperiment re-reads the report inside its ship guard; if the
+      // picture shifted to a confident loss between the two sweeps, fall back
+      // to keeping the champion instead of leaving the test undecided.
+      if (winner && err instanceof CalderynError && err.code === "variant_losing") {
+        await decideExperiment(shopId, id, "keep");
+      } else {
+        throw err;
+      }
+    }
+  } catch (err) {
+    console.error(`[store-experiment] overdue-experiment sweep failed for shop ${shopId} (continuing):`, err);
+  }
+}
+
 /** The running or most recent experiment as the studio DTO, with a fresh
  *  report attached (report failures degrade to null rather than failing the
  *  studio load — same posture as checkoutReady). */
 export async function latestStudioExperiment(shopId: string): Promise<StudioExperiment | null> {
   if (!isUuid(shopId)) return null;
+  // A test past its max duration decides itself here, so the studio shows the
+  // decided state instead of a stale "running" pill.
+  await expireOverdueExperiment(shopId);
   const { data, error } = await getSupabase()
     .from("store_experiment")
-    .select("id, name, why, state, started_at, decided_at")
+    .select("id, page_key, name, why, state, started_at, decided_at")
     .eq("shop_id", shopId)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -221,7 +357,8 @@ export async function startExperiment(
     });
   }
 
-  const published = await loadPublishedDoc(shopId, "home");
+  const pageKey = experimentPageKey(spec.kind);
+  const published = await loadPublishedDoc(shopId, pageKey);
   if (!published) {
     throw new CalderynError({
       code: "nothing_published",
@@ -230,6 +367,10 @@ export async function startExperiment(
     });
   }
 
+  // Quota-last: the cheap refusals above ran; consume the designer allowance only when the
+  // paid challenger generation is actually about to happen.
+  if (spec.kind === "ai_page" && spec.onBeforeAiCall) await spec.onBeforeAiCall();
+
   const challenger = await buildChallenger(shopId, spec.kind, published);
   const name = spec.name?.trim() || challenger.name;
 
@@ -237,7 +378,7 @@ export async function startExperiment(
     .from("store_experiment")
     .insert({
       shop_id: shopId,
-      page_key: "home",
+      page_key: pageKey,
       name,
       why: challenger.why,
       // variant_doc reaches the public storefront (arm B) without passing through saveDraft, so
@@ -246,7 +387,7 @@ export async function startExperiment(
       variant_doc: sanitizeDocHtml(challenger.doc),
       variant_settings: challenger.settings,
     })
-    .select("id, name, why, state, started_at, decided_at")
+    .select("id, page_key, name, why, state, started_at, decided_at")
     .single();
   if (error) {
     // 23505 = the store_experiment_one_running index caught a racing start.
@@ -255,6 +396,14 @@ export async function startExperiment(
         code: "experiment_running",
         status: 409,
         message: "An experiment is already running — decide it before starting another.",
+      });
+    }
+    // 23514 = the page_key check constraint predates migration 20260709160000 (pdp support).
+    if ((error as { code?: string }).code === "23514") {
+      throw new CalderynError({
+        code: "migration_pending",
+        status: 503,
+        message: "Product-page tests aren't enabled on this database yet. Try again shortly.",
       });
     }
     throw error;
@@ -288,6 +437,65 @@ async function buildChallenger(
     };
   }
 
+  if (kind === "ai_page") {
+    // A full alternative home designed by the same engine that built the champion — a genuinely
+    // different composition/copy angle, never a fake or templated "AI" variant. Unreachable or
+    // unusable model output refuses the start honestly (503) instead of starting a sham test.
+    const doc = await generateChallengerHome(shopId);
+    if (!doc) {
+      throw new CalderynError({
+        code: "ai_unavailable",
+        status: 503,
+        message: "The design engine couldn't produce a challenger page right now. Try again later.",
+      });
+    }
+    return {
+      name: "AI redesign",
+      why: "Tests a fresh AI-designed home page — new composition and copy angle, same brand — against your current one.",
+      doc,
+      settings: null,
+    };
+  }
+
+  if (kind === "pdp_copy") {
+    // Buy-box reassurance on the PDP template: a short trust line directly under Add to cart.
+    // Copy states only what is true for every Calderyn store (Stripe checkout; live delivery
+    // estimates via the delivery-promise quote) — never invented claims like "free returns".
+    // A previously SHIPPED reassurance line is removed first, so re-running the test never
+    // stacks two copies (or duplicates the block id).
+    const base = published.blocks.filter((b) => b.id !== REASSURANCE_BLOCK_ID);
+    const anchor = base.find((b) => b.type === "addToCart");
+    if (!anchor) {
+      throw new CalderynError({
+        code: "no_buy_box",
+        status: 422,
+        message: "The published product page has no Add to cart section to test against.",
+      });
+    }
+    const reassurance: Block = {
+      id: REASSURANCE_BLOCK_ID,
+      type: "richText",
+      props: {
+        html: "Secure checkout, real delivery estimates before you pay, and every order tracked until it arrives.",
+      },
+      layout: { x: anchor.layout.x, y: anchor.layout.y + anchor.layout.h, w: anchor.layout.w, h: 1 },
+    };
+    // Shift by GRID position, not array order — block arrays are not guaranteed y-sorted, and a
+    // block stored early but positioned below the insertion row must still move down.
+    const blocks: Block[] = [
+      ...base.map((b) =>
+        b !== anchor && b.layout.y >= reassurance.layout.y ? { ...b, layout: { ...b.layout, y: b.layout.y + 1 } } : b,
+      ),
+      reassurance,
+    ];
+    return {
+      name: "Buy-box reassurance",
+      why: "Tests a short trust line under Add to cart on your product pages against the current layout.",
+      doc: { ...published, blocks },
+      settings: null,
+    };
+  }
+
   // headline: clone the published home doc and patch the hero copy with a
   // curated, product-led headline templated from the real catalog nouns.
   const heroIndex = published.blocks.findIndex((b) => b.type === "hero");
@@ -295,7 +503,7 @@ async function buildChallenger(
     throw new CalderynError({
       code: "no_hero_block",
       status: 422,
-      message: "The published home page has no hero section to test.",
+      message: "The published home page has no hero section to test — try the AI redesign test instead.",
     });
   }
   const [settings, products] = await Promise.all([
@@ -342,6 +550,9 @@ export async function experimentReport(
 
   // Exposure = distinct page_view sessions per arm.
   const sessions = { a: new Set<string>(), b: new Set<string>() };
+  // Mid-funnel steps, same distinct-session math as exposure.
+  const cartAdds = { a: new Set<string>(), b: new Set<string>() };
+  const checkoutStarts = { a: new Set<string>(), b: new Set<string>() };
   // checkout_complete exposure sessions double as the conversion fallback for
   // orders that predate (or lost) the attribution stamp.
   const purchases = { a: new Set<string>(), b: new Set<string>() };
@@ -350,13 +561,18 @@ export async function experimentReport(
     if (!arm) continue;
     const sid = String(e.session_id);
     if (e.type === "page_view") sessions[arm].add(sid);
+    else if (e.type === "cart_add") cartAdds[arm].add(sid);
+    else if (e.type === "checkout_start") checkoutStarts[arm].add(sid);
     else if (e.type === "checkout_complete") purchases[arm].add(sid);
   }
 
   // Authoritative conversions: orders stamped at checkout origination (the
   // paid-flip webhook has no cookies, so the stamp is written up front and
   // survives the 30-day event trim). Orders without a session id still count
-  // once each, keyed by order id.
+  // once each, keyed by order id. Revenue sums each stamped sale-state order's
+  // total once per order; the checkout_complete fallback sessions above carry
+  // no order total, so they contribute 0 revenue.
+  const revenue = { a: 0, b: 0 };
   for (const o of orders) {
     const attr =
       o.attribution && typeof o.attribution === "object"
@@ -369,6 +585,7 @@ export async function experimentReport(
         ? attr.live_session_id
         : `order:${o.id}`;
     purchases[arm].add(sid);
+    revenue[arm] += Number(o.total_cents ?? 0);
   }
 
   // Conversions can exceed the page_view exposure count: the retention sweep
@@ -389,6 +606,14 @@ export async function experimentReport(
     bSessions,
     aConversions,
     bConversions,
+    aRevenueCents: revenue.a,
+    bRevenueCents: revenue.b,
+    funnel: {
+      aCartAdds: cartAdds.a.size,
+      bCartAdds: cartAdds.b.size,
+      aCheckoutStarts: checkoutStarts.a.size,
+      bCheckoutStarts: checkoutStarts.b.size,
+    },
     lift: rA > 0 ? (rB - rA) / rA : null,
     confidence: zConfidence(aSessions, aConversions, bSessions, bConversions),
   };
@@ -399,7 +624,17 @@ function armKey(v: unknown): "a" | "b" | null {
 }
 
 function emptyReport(): StudioExperimentReport {
-  return { aSessions: 0, bSessions: 0, aConversions: 0, bConversions: 0, lift: null, confidence: null };
+  return {
+    aSessions: 0,
+    bSessions: 0,
+    aConversions: 0,
+    bConversions: 0,
+    aRevenueCents: 0,
+    bRevenueCents: 0,
+    funnel: { aCartAdds: 0, bCartAdds: 0, aCheckoutStarts: 0, bCheckoutStarts: 0 },
+    lift: null,
+    confidence: null,
+  };
 }
 
 interface ExposureEventRow {
@@ -423,6 +658,7 @@ async function readExposureEvents(shopId: string, experimentId: string): Promise
 interface StampedOrderRow {
   id: string;
   attribution: unknown;
+  total_cents: number | null;
 }
 
 async function readStampedOrders(
@@ -433,7 +669,7 @@ async function readStampedOrders(
   return readPaged<StampedOrderRow>("orders", shopId, ORDER_ROW_CAP, (from, to) =>
     getSupabase()
       .from("orders")
-      .select("id, attribution")
+      .select("id, attribution, total_cents")
       .eq("shop_id", shopId)
       .in("state", [...SALE_STATES])
       .gte("created_at", sinceIso)
@@ -495,7 +731,7 @@ export async function decideExperiment(
 
   const { data: row, error } = await sb
     .from("store_experiment")
-    .select("id, name, why, state, started_at, decided_at, variant_doc, variant_settings")
+    .select("id, page_key, name, why, state, started_at, decided_at, variant_doc, variant_settings")
     .eq("shop_id", shopId)
     .eq("id", experimentId)
     .maybeSingle();
@@ -513,6 +749,30 @@ export async function decideExperiment(
       status: 409,
       message: "This experiment has already been decided.",
     });
+  }
+
+  if (decision === "ship") {
+    // Never publish a statistically proven LOSER: the z-test is two-sided, so high confidence
+    // is reached just as easily when B is losing — a bare confidence gate would offer "Ship"
+    // on a variant converting at half the champion's rate. Advisory data (low traffic, no
+    // confidence) still ships freely; only a confident loss refuses.
+    try {
+      const report = await experimentReport(shopId, { id: experimentId, startedAt: String(row.started_at) });
+      const rA = report.aSessions > 0 ? report.aConversions / report.aSessions : 0;
+      const rB = report.bSessions > 0 ? report.bConversions / report.bSessions : 0;
+      if (report.confidence != null && report.confidence >= 95 && rB < rA) {
+        throw new CalderynError({
+          code: "variant_losing",
+          status: 422,
+          message:
+            "This variant is converting significantly WORSE than your current page — shipping it would hurt sales. Keep the current page (or stop the test) instead.",
+        });
+      }
+    } catch (err) {
+      if (err instanceof CalderynError) throw err;
+      // A report read hiccup must not block a legitimate ship — the guard is best-effort.
+      console.error("[store-experiment] pre-ship report read failed; shipping without the loss guard", err);
+    }
   }
 
   const state: StudioExperimentState =
@@ -542,6 +802,7 @@ export async function decideExperiment(
   if (decision === "ship") {
     try {
       await applyVariant(shopId, {
+        pageKey: shapePageKey(row.page_key),
         variantDoc: row.variant_doc as BlockDocument,
         variantSettings: shapeVariantSettings(row.variant_settings),
       });
@@ -578,18 +839,18 @@ export async function decideExperiment(
 
 async function applyVariant(
   shopId: string,
-  variant: { variantDoc: BlockDocument; variantSettings: { vibe?: StudioVibe } | null },
+  variant: { pageKey: StudioExperimentPage; variantDoc: BlockDocument; variantSettings: { vibe?: StudioVibe } | null },
 ): Promise<void> {
   if (variant.variantSettings?.vibe) {
     await saveVibe(shopId, variant.variantSettings.vibe);
     return;
   }
-  // Headline challenger: its doc becomes the new published home page.
+  // Doc challenger (headline / ai_page / pdp_copy): its doc becomes the new published page.
   // validateDocument before publishDoc is a page-document caller obligation.
   const valid = await catalogValidIds(shopId);
   const { doc: clean } = validateDocument(variant.variantDoc, valid);
-  await saveDraft(shopId, "home", clean);
-  await publishDoc(shopId, "home");
+  await saveDraft(shopId, variant.pageKey, clean);
+  await publishDoc(shopId, variant.pageKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -627,8 +888,15 @@ function shapeVariantSettings(raw: unknown): { vibe?: StudioVibe } | null {
   return VIBES.includes(v as StudioVibe) ? { vibe: v as StudioVibe } : null;
 }
 
+/** Rows written before the pdp extension carry 'home'; anything unexpected reads as home too
+ *  (the serving paths treat an unknown page as the safest, original surface). */
+function shapePageKey(raw: unknown): StudioExperimentPage {
+  return raw === "pdp" ? "pdp" : "home";
+}
+
 function shapeStudioExperiment(row: {
   id: unknown;
+  page_key?: unknown;
   name: unknown;
   why: unknown;
   state: unknown;
@@ -639,7 +907,7 @@ function shapeStudioExperiment(row: {
     id: String(row.id),
     name: String(row.name),
     why: String(row.why ?? ""),
-    pageKey: "home",
+    pageKey: shapePageKey(row.page_key),
     state: row.state as StudioExperimentState,
     startedAt: String(row.started_at),
     decidedAt: row.decided_at == null ? null : String(row.decided_at),

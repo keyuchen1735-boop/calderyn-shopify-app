@@ -2490,3 +2490,19 @@
 .mapcn-region { display: flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 999px; border: 1.5px solid var(--hairline-strong); background: var(--card-solid); color: var(--text-1); font-size: 12px; font-weight: 650; box-shadow: 0 3px 10px rgba(0,0,0,0.18); }
 .mapcn-region[data-demand="high"] { border-color: var(--green); }
 .mapcn-region[data-demand="up"] { border-color: var(--orange); }
+
+/* ---- Store studio: floating section editor ------------------------------------------------- */
+.cd-sections { position: absolute; right: 14px; bottom: 14px; z-index: 6; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.cd-sections__toggle { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08); }
+.cd-sections__toggle:hover { border-color: var(--accent); }
+.cd-sections__panel { width: 280px; max-height: 320px; overflow-y: auto; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.14); }
+.cd-sections__row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; }
+.cd-sections__row:hover { background: var(--panel-2, rgba(0, 0, 0, 0.04)); }
+.cd-sections__row[data-busy="1"] { opacity: 0.55; pointer-events: none; }
+.cd-sections__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.cd-sections__actions { display: inline-flex; gap: 2px; }
+.cd-sections__actions button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.cd-sections__actions button:hover:not(:disabled) { background: var(--panel-2, rgba(0, 0, 0, 0.06)); color: var(--text); }
+.cd-sections__actions button:disabled { opacity: 0.35; cursor: default; }
+.cd-sections__redo { display: flex; gap: 6px; width: 100%; padding-top: 4px; }
+.cd-sections__redo input { flex: 1; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; }

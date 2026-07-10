@@ -10,15 +10,18 @@ import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import storefrontCss from "~/styles/storefront.css?url";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
+import { getSupabase } from "~/lib/supabase.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
+import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
 import { loadDraftDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
+import { PdpBlockColumns } from "~/lib/storebuilder/pdp-layout";
 import { PREVIEW_LINKS } from "~/lib/storebuilder/links";
 import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
 import { fallbackDoc } from "~/lib/storegen/fallback";
-import type { PageKey, RenderContext } from "~/lib/storebuilder/types";
+import type { BlockDocument, PageKey, RenderContext } from "~/lib/storebuilder/types";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
 
@@ -26,6 +29,61 @@ const PAGES: PageKey[] = ["home", "collection", "pdp"];
 function pageParam(url: string): PageKey {
   const p = new URL(url).searchParams.get("page");
   return PAGES.includes(p as PageKey) ? (p as PageKey) : "home";
+}
+
+// AI-generated home pages arrive as rawHtml blocks whose anchors hardcode /storefront/… paths.
+// Inside the preview iframe those resolve against the DASHBOARD origin, whose /storefront
+// host-resolves to the demo shell — a click would land the merchant on a store that isn't
+// theirs. Rewrite them (display-only, in the loader; the stored doc is never touched) to the
+// merchant's real tenant storefront, opened outside the iframe.
+const STOREFRONT_HREF_DQ = /href="(\/storefront(?:[/?#][^"]*)?)"/g;
+const STOREFRONT_HREF_SQ = /href='(\/storefront(?:[/?#][^']*)?)'/g;
+
+/** Rewrite /storefront… hrefs in a raw HTML string. With a tenant origin they become absolute
+ *  links to the live store, opened in a new tab; without one (shop has no org_slug yet, or dev,
+ *  where the tenant host doesn't exist) they turn inert (href="#", no target) so a click can
+ *  never eject the merchant to the wrong store. Non-storefront hrefs and anchors without an
+ *  href pass through untouched. Pure — trivially testable. */
+export function rewriteStorefrontHrefs(html: string, tenantOrigin: string | null): string {
+  const sub = (path: string, q: string): string =>
+    tenantOrigin ? `href=${q}${tenantOrigin}${path}${q} target=${q}_blank${q} rel=${q}noopener${q}` : `href=${q}#${q}`;
+  return html
+    .replace(STOREFRONT_HREF_DQ, (_m, path: string) => sub(path, '"'))
+    .replace(STOREFRONT_HREF_SQ, (_m, path: string) => sub(path, "'"));
+}
+
+/** Apply rewriteStorefrontHrefs to every rawHtml block. Cheap no-op for docs without one. */
+export function rewriteDocStorefrontHrefs(doc: BlockDocument, tenantOrigin: string | null): BlockDocument {
+  if (!doc.blocks.some((b) => b.type === "rawHtml")) return doc;
+  return {
+    ...doc,
+    blocks: doc.blocks.map((b) =>
+      b.type === "rawHtml" && typeof b.props.html === "string"
+        ? { ...b, props: { ...b.props, html: rewriteStorefrontHrefs(b.props.html, tenantOrigin) } }
+        : b,
+    ),
+  };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The shop's live storefront origin (https://<org_slug>.calderyncompany.com), or null when the
+ *  shop has no org_slug / in dev — the callers' cue to render inert links instead. Fail-soft:
+ *  a URL nicety must never 500 the preview. */
+async function tenantStorefrontOrigin(shopId: string): Promise<string | null> {
+  if (process.env.NODE_ENV === "development" || !UUID_RE.test(shopId)) return null;
+  try {
+    const { data, error } = await getSupabase().from("shops").select("org_slug").eq("id", shopId).maybeSingle();
+    if (error) {
+      console.error("[store-preview] org_slug lookup failed", { shopId, error: error.message });
+      return null;
+    }
+    const slug = typeof data?.org_slug === "string" && data.org_slug ? data.org_slug : null;
+    return slug ? `https://${tenantDomain(slug)}` : null;
+  } catch (err) {
+    console.error("[store-preview] org_slug lookup errored", err);
+    return null;
+  }
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -42,7 +100,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const brand = { storeName: settings.storeName, tagline: settings.voiceTagline ?? "" };
   // Never blank (rule 12): a merchant who hasn't generated — or a page with no
   // draft — still sees the deterministic starter layout the storefront publishes.
-  const doc = draft ?? (page === "home" ? defaultHomeDocument() : fallbackDoc(page, brand));
+  const stored = draft ?? (page === "home" ? defaultHomeDocument() : fallbackDoc(page, brand));
+  // Display-only href rewrite (see rewriteStorefrontHrefs) — the org_slug read only happens
+  // when the doc actually carries rawHtml, so block-vocabulary previews skip the round trip.
+  const doc = stored.blocks.some((b) => b.type === "rawHtml")
+    ? rewriteDocStorefrontHrefs(stored, await tenantStorefrontOrigin(shopId))
+    : stored;
   // Template pages (collection/pdp) bind their dynamic blocks to a record. In the
   // preview a click-through arrives as ?handle=… (a product for pdp, a collection for
   // collection); resolve that specific record, falling back to the first item so the
@@ -99,7 +162,17 @@ export default function StoreDraftPreview() {
           via PREVIEW_LINKS, so a merchant can click through their own store. The iframe
           sandbox (allow-same-origin only — no allow-forms / allow-top-navigation) keeps
           every navigation inside the frame and blocks the buy-path form POST. */}
-      <main>{renderBlocks(doc, { data, record, links: PREVIEW_LINKS })}</main>
+      <main>
+        {doc.pageKey === "pdp" ? (
+          // Same column composition as the live PDP (shared PdpBlockColumns), so the merchant
+          // approves the layout that actually publishes — not a flat stack of the same blocks.
+          <article className="cd-pdp cd-pdp--blocks">
+            <PdpBlockColumns doc={doc} data={data} record={record} links={PREVIEW_LINKS} />
+          </article>
+        ) : (
+          renderBlocks(doc, { data, record, links: PREVIEW_LINKS })
+        )}
+      </main>
       <footer className="cd-store__footer">{settings.storeName}</footer>
     </div>
   );

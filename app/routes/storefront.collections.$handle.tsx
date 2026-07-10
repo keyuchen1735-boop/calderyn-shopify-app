@@ -14,6 +14,7 @@ import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { storefrontWeatherCondition } from "~/lib/storefront/weather-serve.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
+import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Collection" }];
 
@@ -34,11 +35,19 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const title = collection.title;
 
   // Render the published collection TEMPLATE bound to this collection record. No doc → legacy grid.
-  const doc = await loadPublishedDoc(shopId, "collection");
+  // A sitewide vibe experiment treats this page (the layout restyles every route), so its
+  // exposure is measured here too — resolved concurrently with the doc read (independent).
+  const [doc, exposure] = await Promise.all([
+    loadPublishedDoc(shopId, "collection"),
+    resolveServedExperiment(shopId, request, "collection"),
+  ]);
   const record = { collection: { handle, title } };
   const weatherCondition = await storefrontWeatherCondition(request, shopId);
   const data = doc ? await resolveRenderData(doc, shopId, catalog, record, weatherCondition) : null;
-  const track = await trackStorefrontEvent(request, shopId, "page_view");
+  const track = await trackStorefrontEvent(request, shopId, "page_view", {
+    experimentId: exposure.experimentId,
+    variantKey: exposure.variantKey,
+  });
   // SEO/AIO meta + CollectionPage JSON-LD. Failure-isolated (see the PDP/home routes):
   // a settings-fetch hiccup must never 500 a collection page that would otherwise render
   // fine. StoreCollection carries no description field today, so the writer always falls

@@ -21,6 +21,8 @@ import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { storefrontWeatherCondition } from "~/lib/storefront/weather-serve.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
+import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
+import type { Block } from "~/lib/storebuilder/types";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Product" }];
 
@@ -31,12 +33,24 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const product = await catalog.getProduct(shopId, handle);
   if (!product) throw new Response(null, { status: 404 });
   // Render the published PDP TEMPLATE bound to this product record. No doc → legacy PDP markup.
-  const doc = await loadPublishedDoc(shopId, "pdp");
+  // A/B participation (pdp experiments serve their variant to arm B here; sitewide vibe tests
+  // are measured here too) resolves through the shared experiments helper — one bucketing rule
+  // across every storefront surface.
+  const [published, experiment] = await Promise.all([
+    loadPublishedDoc(shopId, "pdp"),
+    resolveServedExperiment(shopId, request, "pdp"),
+  ]);
+  const doc =
+    experiment.variantKey === "b" && experiment.experiment?.pageKey === "pdp"
+      ? experiment.experiment.variantDoc
+      : published;
   const record = { product };
   const weatherCondition = await storefrontWeatherCondition(request, shopId);
   const data = doc ? await resolveRenderData(doc, shopId, catalog, record, weatherCondition) : null;
   const track = await trackStorefrontEvent(request, shopId, "page_view", {
     productId: product.id,
+    experimentId: experiment.experimentId,
+    variantKey: experiment.variantKey,
   });
   // SEO/AIO meta + Product JSON-LD, computed server-side so it is present on first paint.
   // Failure-isolated (mirrors the storefront layout's own settings/experiment reads): a
@@ -79,8 +93,14 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   // Reuse the buyer's existing cart when the cookie is present; otherwise mint one
-  // and persist its id in the Set-Cookie carried back with the redirect.
-  let cartId = await readCartId(request);
+  // and persist its id in the Set-Cookie carried back with the redirect. The
+  // experiment lookup is independent of the cookie read (checkout surface: every
+  // running test measures its cart_add step), so the two resolve concurrently.
+  const [cookieCartId, served] = await Promise.all([
+    readCartId(request),
+    resolveServedExperiment(shopId, request, "checkout"),
+  ]);
+  let cartId = cookieCartId;
   const headers = new Headers();
   if (!cartId) {
     cartId = (await buildCart(shopId)).id;
@@ -106,6 +126,8 @@ export async function action({ request }: ActionFunctionArgs) {
   // break any product-level view->add funnel join.
   const track = await trackStorefrontEvent(request, shopId, "cart_add", {
     productId: line.productId,
+    experimentId: served.experimentId,
+    variantKey: served.variantKey,
   });
   for (const c of track.getSetCookie()) headers.append("Set-Cookie", c);
 
@@ -123,10 +145,27 @@ export default function StorefrontProduct() {
   // POST a safe no-op redirect rather than a uuid-cast 500.
   if (doc && data) {
     // The addToCart block renders a native <form method="post"> posting to THIS route's action.
+    // .cd-pdp is a two-column grid; without explicit columns the doc's blocks auto-place into it
+    // and zigzag (title next to gallery, price under the gallery, add-to-cart orphaned). Compose
+    // the layout the doc actually encodes: half-width blocks bucket into left (x<6) and right
+    // (x>=6) columns; full-width blocks (w>6, e.g. a below-the-fold featureRow) span both
+    // columns, before or after the column pair by their y position.
+    const sorted: Block[] = [...doc.blocks].sort((a, b) => a.layout.y - b.layout.y || a.layout.x - b.layout.x);
+    const left = sorted.filter((b) => b.layout.w <= 6 && b.layout.x < 6);
+    const right = sorted.filter((b) => b.layout.w <= 6 && b.layout.x >= 6);
+    const columnTopY = Math.min(...[...left, ...right].map((b) => b.layout.y), Infinity);
+    const fullAbove = sorted.filter((b) => b.layout.w > 6 && b.layout.y < columnTopY);
+    const fullBelow = sorted.filter((b) => b.layout.w > 6 && b.layout.y >= columnTopY);
+    const sub = (blocks: Block[]) => renderBlocks({ ...doc, blocks }, { data, record });
     return (
       <article className="cd-pdp cd-pdp--blocks">
-        {renderBlocks(doc, { data, record })}
-        {firstVariantId && <DeliveryPromise variantId={firstVariantId} />}
+        {fullAbove.length > 0 ? <div className="cd-pdp__col cd-pdp__col--full">{sub(fullAbove)}</div> : null}
+        {left.length > 0 ? <div className="cd-pdp__col">{sub(left)}</div> : null}
+        <div className={left.length > 0 ? "cd-pdp__col" : "cd-pdp__col cd-pdp__col--full"}>
+          {sub(right)}
+          {firstVariantId && <DeliveryPromise variantId={firstVariantId} />}
+        </div>
+        {fullBelow.length > 0 ? <div className="cd-pdp__col cd-pdp__col--full">{sub(fullBelow)}</div> : null}
       </article>
     );
   }

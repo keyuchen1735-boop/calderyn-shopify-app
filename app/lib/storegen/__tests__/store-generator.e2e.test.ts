@@ -187,6 +187,9 @@ beforeEach(() => {
   providerMock.mockReset();
   db.reset();
   getCatalogMock.mockReturnValue(fixtureCatalog);
+  // Single-candidate mode: these e2e flows queue exact reply sequences; the
+  // multi-candidate judge pipeline is covered by generate.server.test.ts.
+  process.env.STOREGEN_HOME_CANDIDATES = "1";
 });
 
 describe("store generator e2e", () => {

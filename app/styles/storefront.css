@@ -135,6 +135,11 @@ a { color: inherit; }
 .cd-store__collection > .cd-block:last-child,
 .cd-pdp--blocks > .cd-block:last-child { margin-bottom: 0; }
 
+/* Doc-rendered PDP columns: gallery blocks left, buy column right (storefront.products.$handle
+   wraps them) — direct blocks would auto-place into the 2-col grid and zigzag. */
+.cd-pdp__col > .cd-block:last-child { margin-bottom: 0; }
+.cd-pdp__col--full { grid-column: 1 / -1; }
+
 /* ---- hero ---------------------------------------------------------------------------------- */
 .cd-block--hero { padding: calc(var(--cd-gap) * 2) 0 0; }
 .cd-hero__headline { font-family: var(--cd-font-display); font-weight: var(--cd-weight-display); letter-spacing: var(--cd-tracking-display); font-size: clamp(1.85rem, 1.2rem + 2.6vw, 2.75rem); line-height: 1.08; margin: 0 0 0.6rem; }

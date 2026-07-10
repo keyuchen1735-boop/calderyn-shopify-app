@@ -214,6 +214,11 @@ export const ownedCatalog: StorefrontCatalog = {
       if (lErr) throw lErr;
       restrictToIds = (links ?? []).map((r: Row) => String(r.product_id)).slice(0, MAX_STOREFRONT_PRODUCTS);
       if (!restrictToIds.length) return [];
+    } else if (opts?.ids) {
+      // Explicit-id grids: fetch and assemble ONLY the referenced products — never the
+      // whole catalog (assemble signs every image URL, so a full fetch is hot-path poison).
+      restrictToIds = opts.ids.slice(0, MAX_STOREFRONT_PRODUCTS);
+      if (!restrictToIds.length) return [];
     }
 
     let q = sb

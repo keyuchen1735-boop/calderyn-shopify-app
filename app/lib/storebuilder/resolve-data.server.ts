@@ -54,14 +54,20 @@ export async function resolveRenderData(
     );
   }));
 
+  // Explicit-id grids resolve against the catalog BY ID (getProduct is keyed by handle, and no
+  // handle convention encodes an id). The needsAll fetch above is reused when present; otherwise
+  // an id-scoped listProducts fetches only the referenced products — never the whole catalog on
+  // this hot path. Unknown ids drop silently — validation already vouched for them, so a miss
+  // here means the product was deleted since.
   const productsById: Record<string, Awaited<ReturnType<StorefrontCatalog["getProduct"]>> & object> = Object.create(null);
-  await Promise.all([...productIds].map(async (id) => {
-    // ponytail: getProduct is keyed by handle; the fixture handle is `h-<id>`. The owned
-    // catalog (#5) will expose id lookups — until then explicit-id grids resolve by that
-    // convention. Acceptable: explicit-id grids are author-chosen, validated against real ids.
-    const prod = await catalog.getProduct(shopId, `h-${id}`);
-    if (prod) productsById[id] = prod;
-  }));
+  if (productIds.size > 0) {
+    const pool = needsAll ? allProducts : await catalog.listProducts(shopId, { ids: [...productIds] });
+    const byId = new Map(pool.map((p) => [p.id, p]));
+    for (const id of productIds) {
+      const prod = byId.get(id);
+      if (prod) productsById[id] = prod;
+    }
+  }
 
   return { collections, productsByCollection, productsById, allProducts };
 }

@@ -9,6 +9,18 @@ const track = vi.fn(async (..._a: unknown[]) => {
   return h;
 });
 const resolveStorefrontShop = vi.fn(async (..._a: unknown[]) => "11111111-2222-3333-4444-555555555555");
+interface ServedFake {
+  experiment: { id: string; pageKey: string } | null;
+  experimentId: string | null;
+  variantKey: string | null;
+}
+const resolveServedExperiment = vi.fn(
+  async (..._a: unknown[]): Promise<ServedFake> => ({
+    experiment: null,
+    experimentId: null,
+    variantKey: null,
+  }),
+);
 
 vi.mock("~/lib/storefront/events.server", () => ({
   trackStorefrontEvent: (...a: unknown[]) => track(...a),
@@ -38,6 +50,9 @@ vi.mock("~/lib/order/cart.server", () => ({
   buildCart: vi.fn(async () => ({ id: "cart-1" })),
   addCartLine: vi.fn(async () => ({ id: "line-1", productId: "p1" })),
   priceCart: vi.fn(async () => null),
+}));
+vi.mock("~/lib/experiments/store-experiment.server", () => ({
+  resolveServedExperiment: (...a: unknown[]) => resolveServedExperiment(...a),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
@@ -74,5 +89,32 @@ describe("storefront live-analytics wiring", () => {
     expect(res.status).toBe(302);
     expect(res.headers.get("Location")).toBe("/storefront/cart");
     expect(res.headers.getSetCookie().some((c) => c.startsWith("cd_sid="))).toBe(true);
+  });
+
+  it("PDP action stamps cart_add with the served experiment (checkout surface)", async () => {
+    resolveServedExperiment.mockResolvedValueOnce({
+      experiment: { id: "exp-9", pageKey: "home" },
+      experimentId: "exp-9",
+      variantKey: "b",
+    });
+    await pdpAction({
+      request: new Request("https://x.example/storefront/products/mug", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ variantId: "v1" }),
+      }),
+      params: { handle: "mug" },
+      context: {},
+    });
+    expect(resolveServedExperiment).toHaveBeenCalledWith(
+      "11111111-2222-3333-4444-555555555555",
+      expect.any(Request),
+      "checkout",
+    );
+    expect(track.mock.calls[0][3]).toMatchObject({
+      productId: "p1",
+      experimentId: "exp-9",
+      variantKey: "b",
+    });
   });
 });

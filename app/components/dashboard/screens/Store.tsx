@@ -28,6 +28,10 @@ import {
   setStudioAccent,
   setStudioVibe,
   startStoreExperiment,
+  moveStoreSection,
+  removeStoreSection,
+  regenerateStoreSection,
+  type StudioSection,
   type StudioAddedProduct,
   type StudioDesignModel,
   type StudioGenerateReceipt,
@@ -49,6 +53,8 @@ import {
   type ChatIntent,
   type MissingPiece,
 } from "./store-logic";
+import type { StudioExperimentKind } from "~/lib/storebuilder/studio-types";
+import SectionsPanel from "../store/SectionsPanel";
 import type { DashboardCtx } from "../context";
 import ChatRail from "../store/ChatRail";
 import TopBar, { type Device } from "../store/TopBar";
@@ -462,7 +468,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     }
   };
 
-  const runExperiment = async (expKind: "headline" | "vibe") => {
+  const runExperiment = async (expKind: StudioExperimentKind) => {
     if (chatBusyRef.current) return;
     setChatBusyBoth(true);
     const thinkId = newId();
@@ -918,6 +924,34 @@ export default function Store({ app }: { app: DashboardCtx }) {
     }
   };
 
+  // Section mutations: optimistic-free (each returns the authoritative new order),
+  // one in flight at a time, preview reloaded so the edit is visible immediately.
+  const [sectionBusyId, setSectionBusyId] = useState<string | null>(null);
+  const runSectionOp = async (id: string, op: () => Promise<StudioSection[]>, doneText?: string) => {
+    if (sectionBusyId) return;
+    setSectionBusyId(id);
+    try {
+      const sections = await op();
+      if (!aliveRef.current) return;
+      setData((d) => (d ? { ...d, sections, hasDraft: true } : d));
+      reloadPreview();
+      if (doneText) pushMsg({ id: newId(), kind: "ai-text", text: doneText });
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't update that section.";
+      toast(msg, "warn", "critical");
+      // Some refusals change server state anyway (a legacy block being split apart, a page
+      // that moved under the edit) — refetch so the panel and preview match reality.
+      void refresh().then(reloadPreview).catch(() => {});
+    } finally {
+      if (aliveRef.current) setSectionBusyId(null);
+    }
+  };
+  const onSectionMove = (id: string, direction: "up" | "down") => void runSectionOp(id, () => moveStoreSection(id, direction));
+  const onSectionRemove = (id: string) => void runSectionOp(id, () => removeStoreSection(id), "Section removed. Publish when you like the page.");
+  const onSectionRegenerate = (id: string, instruction?: string) =>
+    void runSectionOp(id, () => regenerateStoreSection(id, instruction), "Redid that section. It is in the preview now, publish when you like it.");
+
   // --- render ----------------------------------------------------------------
   if (!data) {
     return (
@@ -1004,8 +1038,17 @@ export default function Store({ app }: { app: DashboardCtx }) {
                 className="cd-canvas-frame"
                 title="Store preview"
                 src={previewSrc}
-                sandbox="allow-same-origin allow-scripts"
+                sandbox="allow-same-origin allow-scripts allow-popups"
               />
+              {page === "home" && !building && (
+                <SectionsPanel
+                  sections={data.sections ?? []}
+                  busyId={sectionBusyId}
+                  onMove={onSectionMove}
+                  onRemove={onSectionRemove}
+                  onRegenerate={onSectionRegenerate}
+                />
+              )}
               <div className="cd-canvas-veil" data-on={building ? "1" : "0"} aria-hidden="true">
                 {/* Branded storefront skeleton: paints instantly on Build so a generation reads as
                     the store forming, not a dimmed stale page. Tinted with the shop's primary. */}
