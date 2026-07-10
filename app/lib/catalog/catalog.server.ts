@@ -4,6 +4,7 @@ import { CalderynError } from "../calderyn.server";
 import { projectProductToSkuDim } from "./project-sku-dim.server";
 import { seedInitialStock } from "../inventory/engine.server";
 import { collectionHandle, productHandleBase } from "./handle";
+import { catalogSortToOrder, type CatalogSort } from "~/components/dashboard/screens/catalog-list-state";
 import type { ProductInput, ProductStatus, ProductSummary, ProductDetail, VariantInput } from "./types";
 
 type Supa = ReturnType<typeof getSupabase>;
@@ -28,7 +29,7 @@ export interface ProductListItem extends ProductSummary {
 
 export async function listProducts(
   shopId: string,
-  opts: { search?: string; status?: ProductStatus; limit?: number; offset?: number } = {},
+  opts: { search?: string; status?: ProductStatus; limit?: number; offset?: number; sort?: CatalogSort } = {},
 ): Promise<{ products: ProductListItem[]; total: number }> {
   const sb = getSupabase();
   const limit = Math.min(opts.limit ?? 50, 100);
@@ -42,10 +43,11 @@ export async function listProducts(
     .eq("shop_id", shopId);
   if (opts.status) q = q.eq("status", opts.status);
   if (opts.search) q = q.ilike("title", `%${opts.search}%`);
-  // Stable tiebreaker after updated_at so offset paging can't skip/duplicate rows
-  // that share an updated_at (seeded/imported in the same write).
+  // Stable tiebreaker after the sort column so offset paging can't skip/duplicate
+  // rows that share a value (seeded/imported in the same write).
+  const order = catalogSortToOrder(opts.sort ?? "updated");
   const { data: rows, count, error } = await q
-    .order("updated_at", { ascending: false })
+    .order(order.column, { ascending: order.ascending })
     .order("id", { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) throw error;

@@ -4,7 +4,9 @@ import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, catalogCacheKey } from "~/lib/dashboard/screen-cache";
 import { Card, Btn, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
+import { CDIcon } from "../icons";
 import { money } from "../format";
+import { CATALOG_SORTS, isCatalogSort, type CatalogSort } from "./catalog-list-state";
 
 type StatusFilter = "All" | "active" | "draft" | "archived";
 
@@ -21,8 +23,8 @@ const STATUS_OPTIONS = [
   { value: "archived", label: "Archived" },
 ];
 
-// Design table: Product / Price / Status / Ship data.
-const GRID = "2fr 1fr 1fr 1fr";
+// Design table: thumbnail / Product / Price / Status / Ship data.
+const GRID = "44px 2fr 1fr 1fr 1fr";
 
 /** Ship-data cell copy — "Validated · <weight>kg" only when the product truly
  * passes the activation shipping check; the weight is the heaviest recorded
@@ -45,6 +47,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   const [total, setTotal] = useState(() => seeded?.total ?? 0);
   const [status, setStatus] = useState<StatusFilter>("All");
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<CatalogSort>("updated");
   const [loading, setLoading] = useState(() => !seeded);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -61,14 +64,16 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   // Latest filter identity, read after an async load to detect a filter change
   // that happened while the request was in flight (a closure-captured copy can't,
   // since it would equal itself). Updated every render.
-  const filterToken = JSON.stringify([query, statusParam ?? ""]);
+  const filterToken = JSON.stringify([query, statusParam ?? "", sort]);
   const filterRef = useRef(filterToken);
   filterRef.current = filterToken;
 
   useEffect(() => {
     let alive = true;
+    // Only the default sort seeds/writes the cache — a non-default sort is
+    // live-fetch-only so it never poisons the seeded default view.
     const key = catalogCacheKey(query, statusParam);
-    const cached = cachedScreenData<CatalogPage>(key);
+    const cached = sort === "updated" ? cachedScreenData<CatalogPage>(key) : undefined;
     if (cached) {
       // Last-known rows for this filter paint immediately — no skeleton, no
       // "Loading…" caption; the fetch below silently revalidates them.
@@ -78,9 +83,9 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
     setLoading(!cached);
     setError(null);
     client
-      .fetchProducts({ search: query || undefined, status: statusParam })
+      .fetchProducts({ search: query || undefined, status: statusParam, sort })
       .then((r) => {
-        cacheScreenData(key, { products: r.products, total: r.total });
+        if (sort === "updated") cacheScreenData(key, { products: r.products, total: r.total });
         if (!alive) return;
         setProducts(r.products);
         setTotal(r.total);
@@ -95,13 +100,13 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
     return () => {
       alive = false;
     };
-  }, [query, statusParam]);
+  }, [query, statusParam, sort]);
 
   const loadMore = async () => {
     const token = filterRef.current;
     setLoadingMore(true);
     try {
-      const r = await client.fetchProducts({ search: query || undefined, status: statusParam, offset: products.length });
+      const r = await client.fetchProducts({ search: query || undefined, status: statusParam, sort, offset: products.length });
       // The merchant changed the filter mid-flight: discard this page so stale
       // rows from the old filter don't append to the new list.
       if (filterRef.current !== token) return;
@@ -140,15 +145,56 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
       </header>
 
       <div className="flex items-center gap-2.5" style={{ marginBottom: 10, flexWrap: "wrap" }}>
-        <input
-          className="cd-input"
-          placeholder="Search products"
-          aria-label="Search products"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ width: "auto", minWidth: 220, flex: "1 1 220px" }}
-        />
+        <div style={{ position: "relative", flex: "1 1 220px", minWidth: 220 }}>
+          <input
+            className="cd-input"
+            placeholder="Search products"
+            aria-label="Search products"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: "100%", paddingRight: search ? 30 : undefined }}
+          />
+          {search && (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => setSearch("")}
+              style={{
+                position: "absolute",
+                right: 6,
+                top: "50%",
+                transform: "translateY(-50%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 22,
+                height: 22,
+                background: "none",
+                border: 0,
+                color: "inherit",
+                cursor: "pointer",
+              }}
+            >
+              <CDIcon name="x" size={13} />
+            </button>
+          )}
+        </div>
         <Segmented small value={status} onChange={(v) => setStatus(v as StatusFilter)} options={STATUS_OPTIONS} />
+        <select
+          className="cd-input"
+          value={sort}
+          onChange={(e) => {
+            if (isCatalogSort(e.target.value)) setSort(e.target.value);
+          }}
+          aria-label="Sort products"
+          style={{ width: "auto" }}
+        >
+          {CATALOG_SORTS.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <Card pad={false}>
@@ -167,6 +213,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
         ) : (
           <>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
+              <span aria-hidden="true" />
               <span>Product</span>
               <span>Price</span>
               <span>Status</span>
@@ -189,7 +236,37 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
                   cursor: "pointer",
                 }}
               >
-                <div className="cd-row-title truncate">{p.title}</div>
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    overflow: "hidden",
+                    background: "var(--gray-bg)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {p.imageUrl ? (
+                    <img
+                      src={p.imageUrl}
+                      alt=""
+                      loading="lazy"
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    <CDIcon name="bag" size={15} />
+                  )}
+                </div>
+                <div>
+                  <div className="cd-row-title truncate">{p.title}</div>
+                  {p.variantCount > 1 && (
+                    <div className="cd-caption">
+                      {p.variantCount} variant{p.variantCount === 1 ? "" : "s"}
+                    </div>
+                  )}
+                </div>
                 <div className="cd-row-num tabular-nums">
                   {p.priceCents != null ? money(p.priceCents) : "—"}
                 </div>

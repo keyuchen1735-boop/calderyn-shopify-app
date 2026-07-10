@@ -8,6 +8,7 @@
 // location.origin. It MUST NOT import any *.server.ts module.
 
 import type { LiveAnalyticsSnapshot } from "./live-analytics-types";
+import type { CatalogSort } from "~/components/dashboard/screens/catalog-list-state";
 import type { ListingDraftCurrent, ListingPlan } from "~/lib/catalog/listing-prompt";
 import type {
   Alert,
@@ -1310,12 +1311,13 @@ export interface CollectionVM {
 }
 
 export async function fetchProducts(
-  opts: { search?: string; status?: string; offset?: number } = {},
+  opts: { search?: string; status?: string; offset?: number; sort?: CatalogSort } = {},
 ): Promise<{ products: ProductSummaryVM[]; total: number }> {
   const qs = new URLSearchParams();
   if (opts.search) qs.set("search", opts.search);
   if (opts.status) qs.set("status", opts.status);
   if (opts.offset) qs.set("offset", String(opts.offset));
+  if (opts.sort && opts.sort !== "updated") qs.set("sort", opts.sort);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiGet<{ products: ProductSummaryVM[]; total: number }>(
     `/dashboard/api/catalog/products${suffix}`,
