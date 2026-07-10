@@ -18,14 +18,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { CalderynError } from "../calderyn.server";
 import { transitionOrder } from "./order.server";
-import { isOrderState, type OrderState } from "./state";
+import { FULFILLABLE_ORDER_STATES, isOrderState, type OrderState } from "./state";
 import { priorExecutionForKey, insertAuditWithIdempotency } from "../actions/execute.server";
 import { sendShippingConfirmation } from "./notify-email.server";
 import { effectiveLineQuantities } from "./line-edits.server";
-
-/** Order states a fulfillment may act on. Cart/checkout_pending are unpaid; fulfilled/cancelled/
- *  refunded/partially_refunded are past this action's reach. */
-const FULFILLABLE_STATES: ReadonlySet<OrderState> = new Set<OrderState>(["paid", "partially_fulfilled"]);
 
 export interface FulfillLineInput {
   orderLineId: string;
@@ -43,6 +39,33 @@ export interface FulfillActionInput {
   actor?: string;
 }
 
+/**
+ * Parse + validate a route body's `lines` field into FulfillLineInput[]. ONE parser for
+ * every fulfillment-shaped route (fulfill, label buy) so a validation hardening can never
+ * apply to one surface and miss the other. Returns `{ ok: false }` with the jsonError
+ * code/message pair the routes already speak.
+ */
+export function parseFulfillLinesBody(
+  raw: unknown,
+): { ok: true; lines?: FulfillLineInput[] } | { ok: false; code: string; message: string } {
+  if (raw === undefined || raw === null) return { ok: true };
+  if (!Array.isArray(raw)) return { ok: false, code: "invalid_lines", message: "lines must be an array." };
+  const lines: FulfillLineInput[] = [];
+  for (const item of raw) {
+    const row = item as Record<string, unknown>;
+    const orderLineId = row?.order_line_id;
+    const quantity = row?.quantity;
+    if (typeof orderLineId !== "string" || !orderLineId) {
+      return { ok: false, code: "invalid_lines", message: "Each line needs an order_line_id string." };
+    }
+    if (typeof quantity !== "number" || !Number.isInteger(quantity) || quantity <= 0) {
+      return { ok: false, code: "invalid_lines", message: "Each line's quantity must be a positive whole number." };
+    }
+    lines.push({ orderLineId, quantity });
+  }
+  return { ok: true, lines };
+}
+
 export interface FulfillActionResult {
   auditId: string;
   fulfillmentId: string | null;
@@ -55,6 +78,67 @@ export interface FulfillActionResult {
 interface ResolvedLine {
   orderLineId: string;
   quantity: number;
+}
+
+export interface RemainingByLine {
+  orderLines: Array<{ id: string; quantity: number; variantId: string; title: string }>;
+  /** order_line.id -> units still open (effective quantity net of edits, minus fulfilled). */
+  remaining: Map<string, number>;
+}
+
+/**
+ * How many units of each order line are still open to fulfill. Shared by the fulfillment
+ * executor (coverage validation) and the label flow (parcel weight must reflect what is
+ * actually shipping, not the original snapshot); variantId/title ride the same read so
+ * the label flow needs no second order_line query.
+ */
+export async function loadRemainingByLine(
+  sb: SupabaseClient,
+  shopId: string,
+  orderId: string,
+): Promise<RemainingByLine> {
+  const linesRes = await sb
+    .from("order_line")
+    .select("id, quantity, variant_id, title_snapshot")
+    .eq("shop_id", shopId)
+    .eq("order_id", orderId);
+  if (linesRes.error) throw linesRes.error;
+  const orderLines = ((linesRes.data ?? []) as Record<string, unknown>[]).map((r) => ({
+    id: String(r.id),
+    quantity: Number(r.quantity ?? 0),
+    variantId: String(r.variant_id),
+    title: String(r.title_snapshot ?? ""),
+  }));
+
+  const fulfillmentsRes = await sb.from("fulfillment").select("id").eq("shop_id", shopId).eq("order_id", orderId);
+  if (fulfillmentsRes.error) throw fulfillmentsRes.error;
+  const fulfillmentIds = ((fulfillmentsRes.data ?? []) as Array<{ id: string }>).map((f) => String(f.id));
+
+  const fulfilledByLine = new Map<string, number>();
+  if (fulfillmentIds.length > 0) {
+    const flRes = await sb
+      .from("fulfillment_line")
+      .select("order_line_id, quantity")
+      .eq("shop_id", shopId)
+      .in("fulfillment_id", fulfillmentIds);
+    if (flRes.error) throw flRes.error;
+    for (const r of (flRes.data ?? []) as Array<{ order_line_id: string; quantity: number }>) {
+      const id = String(r.order_line_id);
+      fulfilledByLine.set(id, (fulfilledByLine.get(id) ?? 0) + Number(r.quantity ?? 0));
+    }
+  }
+
+  // Remaining is computed off the EFFECTIVE quantity (snapshot net of any order_line_edit
+  // reductions), never the raw snapshot — a merchant who reduced a line to 1 unit must not be
+  // offered "fulfill the other 4" just because order_line.quantity still says 5.
+  const effectiveMap = await effectiveLineQuantities(shopId, orderId, sb);
+  const remaining = new Map<string, number>();
+  for (const l of orderLines) {
+    const id = String(l.id);
+    const effectiveQty = effectiveMap.get(id)?.effective ?? Number(l.quantity);
+    remaining.set(id, effectiveQty - (fulfilledByLine.get(id) ?? 0));
+  }
+  return { orderLines, remaining };
 }
 
 /** Read-only order-state lookup used both for the replay short-circuit and the initial load. */
@@ -97,7 +181,7 @@ export async function executeFulfillAction(
   }
   const orderRow = orderRes.data as Record<string, unknown>;
   const fromStateRaw = String(orderRow.state);
-  if (!isOrderState(fromStateRaw) || !FULFILLABLE_STATES.has(fromStateRaw)) {
+  if (!isOrderState(fromStateRaw) || !FULFILLABLE_ORDER_STATES.has(fromStateRaw)) {
     throw new CalderynError({
       code: "order_not_fulfillable",
       status: 409,
@@ -108,40 +192,9 @@ export async function executeFulfillAction(
   const buyerId = orderRow.buyer_id == null ? null : String(orderRow.buyer_id);
 
   // 3. Load order lines + existing fulfillment coverage; compute remaining[lineId].
-  const linesRes = await sb.from("order_line").select("id, quantity").eq("shop_id", shopId).eq("order_id", input.orderId);
-  if (linesRes.error) throw linesRes.error;
-  const orderLines = (linesRes.data ?? []) as Array<{ id: string; quantity: number }>;
+  const { orderLines, remaining } = await loadRemainingByLine(sb, shopId, input.orderId);
   if (orderLines.length === 0) {
     throw new CalderynError({ code: "nothing_to_fulfil", status: 422, message: `Order ${input.orderId} has no lines.` });
-  }
-
-  const fulfillmentsRes = await sb.from("fulfillment").select("id").eq("shop_id", shopId).eq("order_id", input.orderId);
-  if (fulfillmentsRes.error) throw fulfillmentsRes.error;
-  const fulfillmentIds = ((fulfillmentsRes.data ?? []) as Array<{ id: string }>).map((f) => String(f.id));
-
-  const fulfilledByLine = new Map<string, number>();
-  if (fulfillmentIds.length > 0) {
-    const flRes = await sb
-      .from("fulfillment_line")
-      .select("order_line_id, quantity")
-      .eq("shop_id", shopId)
-      .in("fulfillment_id", fulfillmentIds);
-    if (flRes.error) throw flRes.error;
-    for (const r of (flRes.data ?? []) as Array<{ order_line_id: string; quantity: number }>) {
-      const id = String(r.order_line_id);
-      fulfilledByLine.set(id, (fulfilledByLine.get(id) ?? 0) + Number(r.quantity ?? 0));
-    }
-  }
-
-  // Remaining is computed off the EFFECTIVE quantity (snapshot net of any order_line_edit
-  // reductions), never the raw snapshot — a merchant who reduced a line to 1 unit must not be
-  // offered "fulfill the other 4" just because order_line.quantity still says 5.
-  const effectiveMap = await effectiveLineQuantities(shopId, input.orderId, sb);
-  const remaining = new Map<string, number>();
-  for (const l of orderLines) {
-    const id = String(l.id);
-    const effectiveQty = effectiveMap.get(id)?.effective ?? Number(l.quantity);
-    remaining.set(id, effectiveQty - (fulfilledByLine.get(id) ?? 0));
   }
 
   // 4. Resolve requested lines against `remaining`.

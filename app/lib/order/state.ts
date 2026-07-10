@@ -57,6 +57,14 @@ export function isOrderState(value: string): value is OrderState {
   return (ORDER_STATES as readonly string[]).includes(value);
 }
 
+/** Order states a fulfillment (and therefore a label buy) may act on. ONE definition so
+ *  the fulfill executor, the label flow, and the detail read model's capability flags
+ *  can never diverge. Cart/checkout_pending are unpaid; the rest are past fulfillment. */
+export const FULFILLABLE_ORDER_STATES: ReadonlySet<OrderState> = new Set<OrderState>([
+  "paid",
+  "partially_fulfilled",
+]);
+
 /** True iff `from -> to` is a legal transition. Identity moves (from === to) are NOT legal. */
 export function isLegalTransition(from: OrderState, to: OrderState): boolean {
   return LEGAL_TRANSITIONS[from].includes(to);

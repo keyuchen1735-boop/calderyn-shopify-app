@@ -188,6 +188,85 @@ export async function fulfillOrder(
   };
 }
 
+export interface LabelRateView {
+  id: string;
+  carrier: string;
+  service: string;
+  amountCents: number;
+  estDeliveryDays: number | null;
+}
+
+/** Create an EasyPost shipment for the units being shipped and list its buyable rates. */
+export async function quoteLabelRates(
+  orderId: string,
+  lines?: { orderLineId: string; quantity: number }[],
+): Promise<{ shipmentId: string; rates: LabelRateView[] }> {
+  const data = await apiSend<{
+    shipment_id: string;
+    rates: Array<{ id: string; carrier: string; service: string; amount_cents: number; est_delivery_days: number | null }>;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/label`, {
+    intent: "quote",
+    lines: lines?.map((line) => ({ order_line_id: line.orderLineId, quantity: line.quantity })),
+  });
+  return {
+    shipmentId: data.shipment_id,
+    rates: data.rates.map((r) => ({
+      id: r.id,
+      carrier: r.carrier,
+      service: r.service,
+      amountCents: r.amount_cents,
+      estDeliveryDays: r.est_delivery_days,
+    })),
+  };
+}
+
+/** Buy the selected label rate and fulfill in one step. MONEY: spends the merchant's
+ *  EasyPost balance; the server is fail-closed and idempotent on the shipment id. */
+export async function buyLabel(
+  orderId: string,
+  args: {
+    shipmentId: string;
+    rateId: string;
+    lines?: { orderLineId: string; quantity: number }[];
+    notify: boolean;
+    idempotencyKey: string;
+  },
+): Promise<{
+  orderState: string;
+  fulfilledUnits: number;
+  notified: boolean;
+  replayed: boolean;
+  labelUrl: string | null;
+  labelCostCents: number | null;
+  trackingNumber: string | null;
+}> {
+  const data = await apiSend<{
+    order_state: string;
+    fulfilled_units: number;
+    notified: boolean;
+    replayed: boolean;
+    label_url: string | null;
+    label_cost_cents: number | null;
+    tracking_number: string | null;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/label`, {
+    intent: "buy",
+    shipment_id: args.shipmentId,
+    rate_id: args.rateId,
+    lines: args.lines?.map((line) => ({ order_line_id: line.orderLineId, quantity: line.quantity })),
+    notify: args.notify,
+    idempotency_key: args.idempotencyKey,
+  });
+  return {
+    orderState: data.order_state,
+    fulfilledUnits: data.fulfilled_units,
+    notified: data.notified,
+    replayed: data.replayed,
+    labelUrl: data.label_url,
+    labelCostCents: data.label_cost_cents,
+    trackingNumber: data.tracking_number,
+  };
+}
+
 /** Cancel (abandon) an order before or during fulfillment. Native orders only. */
 export async function cancelOrder(
   orderId: string,

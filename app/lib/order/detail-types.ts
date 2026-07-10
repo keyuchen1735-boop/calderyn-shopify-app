@@ -29,6 +29,9 @@ export interface OrderDetailFulfillment {
   carrier: string | null;
   notifiedAt: string | null;
   units: number;
+  /** Purchased shipping label, when this fulfillment was created by a label buy. */
+  labelUrl: string | null;
+  labelCostCents: number | null;
 }
 
 export interface OrderTimelineEvent {
@@ -94,4 +97,7 @@ export interface OrderDetail {
   /** true for imported (Shopify-paid) orders — no write actions on this surface. */
   readOnly: boolean;
   signals: OrderSignals;
+  /** True when the fulfill flow can offer "Buy shipping label": native fulfillable order
+   *  with a shipping address, not a store-pickup order, and an EasyPost credential on file. */
+  canBuyLabel: boolean;
 }
