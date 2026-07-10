@@ -8,6 +8,7 @@ import { lockQuote, getQuote } from "~/lib/commerce/quote-store.server";
 import { assertWithinCommerceCap } from "~/lib/commerce/guardrail.server";
 import { placeAgenticOrder } from "~/lib/commerce/order.server";
 import { createCommerceCheckoutSession } from "~/lib/commerce/stripe-checkout.server";
+import { paymentsReadiness } from "~/lib/payments/connect.server";
 import { sha256hex } from "~/lib/mcp_oauth.server";
 
 export const COMMERCE_TOOL_NAMES = ["get_catalog", "create_quote", "get_quote", "place_order"] as const;
@@ -94,9 +95,16 @@ export async function handleCommerceTool(name: string, input: Record<string, unk
       if (input.phone !== undefined && input.phone !== null && (typeof input.phone !== "string" || input.phone.length > 30)) {
         return badInput("phone must be a string of at most 30 characters");
       }
+      // Gate BEFORE placing: the session create fails CLOSED for a shop without a
+      // fully-enabled Stripe account, so placing first would orphan a checkout_pending
+      // order on every retry. Structured code so the agent can relay the real reason.
+      const readiness = await paymentsReadiness(ctx.shopId);
+      if (!readiness.ready) {
+        return { content: JSON.stringify({ code: "PAYMENTS_NOT_READY", message: "this store is not accepting payments yet; the merchant must finish Stripe onboarding" }), isError: true };
+      }
       await assertWithinCommerceCap(ctx.clientId, q.totalCents); // rule 5: BEFORE placing
       const placed = await placeAgenticOrder(ctx.shopId, q.quoteId, { email, phone: typeof input.phone === "string" && input.phone ? input.phone : null }, { protocol: "mcp", clientId: ctx.clientId });
-      const session = await createCommerceCheckoutSession(ctx.shopId, { orderId: placed.orderId, totalCents: placed.totalCents, currency: placed.currency, confirmationToken: placed.confirmationToken });
+      const session = await createCommerceCheckoutSession(ctx.shopId, { orderId: placed.orderId, totalCents: placed.totalCents, currency: placed.currency, confirmationToken: placed.confirmationToken }, readiness);
       return ok({ order_id: placed.orderId, pay_url: session.url, total_cents: placed.totalCents, currency: placed.currency, status: "awaiting_payment" });
     }
     default:

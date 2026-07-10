@@ -16,6 +16,10 @@ import { ensureVisitorSession } from "~/lib/storefront/visitor-cookie.server";
 import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import { priceCart } from "~/lib/order/cart.server";
 import { createCheckout, OutOfStockError } from "~/lib/order/checkout.server";
+import { paymentsReadiness } from "~/lib/payments/connect.server";
+import { PaymentsNotReadyError } from "~/lib/payments/errors";
+import { ShipRestrictedError } from "~/lib/shipping/errors";
+import { OriginNotConfiguredError } from "~/lib/commerce/errors";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { getBuyerSession } from "~/lib/buyer/session.server";
 import { defaultShippingAddress, getBuyerEmail } from "~/lib/buyer/account.server";
@@ -140,19 +144,43 @@ export async function loader({ request }: LoaderFunctionArgs) {
     console.error(`[checkout] STRIPE_PUBLISHABLE_KEY is not configured; refusing checkout for shop ${shopId}`);
   }
 
-  const track = await trackStorefrontEvent(request, shopId, "checkout_start", {
-    experimentId: served.experimentId,
-    variantKey: served.variantKey,
-  });
-
-  // Prefill from the buyer's saved profile when signed in (#1b); guest checkout is unchanged.
-  const prefill = await buyerCheckoutPrefill(request, shopId);
+  // Same honest state when THIS merchant can't accept payments yet (no fully-enabled
+  // Stripe connected account; demo shops are exempt) — the charge path fails closed
+  // (PaymentsNotReadyError) so buyer money can never settle outside the merchant's
+  // account, and the buyer sees it before typing their details rather than at Pay.
+  // A readiness read error also refuses (fail closed), loudly, without 500ing the
+  // page — logged with its OWN cause so an operator isn't sent chasing onboarding
+  // when the refusal was a DB blip. Independent of the tracking/prefill reads, so
+  // all three run concurrently (this is the conversion-critical first paint).
+  // checkout_start carries the experiment arm stamp (checkout always participates,
+  // so the funnel's per-arm counts include this step).
+  const [paymentsReady, track, prefill] = await Promise.all([
+    paymentsReadiness(shopId).then(
+      (r) => {
+        if (!r.ready) {
+          console.error(`[checkout] shop ${shopId} has no fully-enabled Stripe account; refusing checkout (lost revenue)`);
+        }
+        return r.ready;
+      },
+      (err) => {
+        console.error(`[checkout] payments-readiness lookup failed for shop ${shopId}; refusing checkout:`, err);
+        return false;
+      },
+    ),
+    trackStorefrontEvent(request, shopId, "checkout_start", {
+      experimentId: served.experimentId,
+      variantKey: served.variantKey,
+    }),
+    // Prefill from the buyer's saved profile when signed in (#1b); guest checkout is unchanged.
+    buyerCheckoutPrefill(request, shopId),
+  ]);
 
   // Pre-address view: only the subtotal is known here. Shipping + tax are quoted in the action
   // once the buyer's address is captured (createCheckout), and the real total is returned then.
   return json(
     {
       publishableKey,
+      paymentsReady,
       origin: new URL(request.url).origin,
       prefill,
       summary: {
@@ -329,6 +357,33 @@ export async function action({ request }: ActionFunctionArgs) {
         { status: 409 },
       );
     }
+    // The shop can't accept payments (no fully-enabled Stripe account). createCheckout fails
+    // closed before any charge; tell the buyer honestly instead of an opaque retry loop.
+    if (err instanceof PaymentsNotReadyError) {
+      console.error(`[checkout] shop ${shopId} not payment-ready; checkout refused (lost revenue)`);
+      return json(
+        { error: "This store isn't accepting payments yet. Your cart is saved — please check back soon." },
+        { status: 503 },
+      );
+    }
+    // Destination-restricted items: actionable — the buyer can remove them or change address.
+    if (err instanceof ShipRestrictedError) {
+      return json(
+        {
+          error: `Some items in your cart can't be shipped to ${err.destinationCountry}. Please remove them or use a different address.`,
+        },
+        { status: 422 },
+      );
+    }
+    // The merchant hasn't set a ship-from address, so nothing can be quoted. Retrying
+    // can't help the buyer; say so honestly.
+    if (err instanceof OriginNotConfiguredError) {
+      console.error(`[checkout] shop ${shopId} has no ship-from origin; checkout refused (lost revenue)`);
+      return json(
+        { error: "This store can't ship orders yet. Your cart is saved — please check back soon." },
+        { status: 503 },
+      );
+    }
     console.error(`[checkout] failed to originate checkout for shop ${shopId}, cart ${cartId}:`, err);
     return json({ error: "We couldn't start your payment. Please try again." }, { status: 502 });
   }
@@ -376,7 +431,7 @@ function PaymentStep({ confirmationUrl, total }: { confirmationUrl: string; tota
 }
 
 export default function StorefrontCheckout() {
-  const { publishableKey, origin, summary, prefill } = useLoaderData<typeof loader>();
+  const { publishableKey, paymentsReady, origin, summary, prefill } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const [stripePromise] = useState(() => (publishableKey ? loadStripe(publishableKey) : null));
 
@@ -434,7 +489,7 @@ export default function StorefrontCheckout() {
         )}
       </div>
 
-      {!publishableKey ? (
+      {!publishableKey || !paymentsReady ? (
         <p className="cd-checkout__error">
           This store isn&apos;t accepting payments yet. Your cart is saved — please check back soon.
         </p>

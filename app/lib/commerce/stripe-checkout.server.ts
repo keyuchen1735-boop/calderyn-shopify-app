@@ -5,7 +5,13 @@
 // metadata.order_ref, identical to the storefront Payment Element path. We set order_ref on BOTH
 // the Session metadata AND payment_intent_data.metadata so it propagates onto the PaymentIntent
 // the webhook actually reads (pi.metadata.order_ref in stripe.server.ts:processStripeEvent).
+//
+// The session's underlying PaymentIntent takes the SAME routing decision as the Payment Element
+// path (destinationParamsFor): destination-charged into the merchant's connected account (fee
+// attached), platform only for demo shops, and PaymentsNotReadyError for a shop that cannot
+// accept payments — this path moves the same buyer money the storefront does.
 import { getStripe } from "~/lib/payments/stripe.server";
+import { destinationParamsFor, type PaymentsReadiness } from "~/lib/payments/connect.server";
 
 export interface CommerceSessionInput {
   orderId: string;
@@ -31,9 +37,11 @@ function storefrontBaseUrl(): string {
 export async function createCommerceCheckoutSession(
   shopId: string,
   input: CommerceSessionInput,
+  readiness?: PaymentsReadiness,
 ): Promise<{ sessionId: string; url: string }> {
   if (!shopId) throw new Error("shopId is required");
   const base = storefrontBaseUrl();
+  const dest = await destinationParamsFor(shopId, input.totalCents, readiness);
   const session = await getStripe().checkout.sessions.create({
     mode: "payment",
     line_items: [{
@@ -45,7 +53,13 @@ export async function createCommerceCheckoutSession(
       },
     }],
     metadata: { shop_id: shopId, order_ref: input.orderId },
-    payment_intent_data: { metadata: { shop_id: shopId, order_ref: input.orderId } },
+    payment_intent_data: {
+      metadata: { shop_id: shopId, order_ref: input.orderId },
+      // Checkout copies these onto the PaymentIntent it mints. Spread verbatim — the
+      // decision already contains exactly the keys to attach ({} on the platform route),
+      // same consumer contract as createRoutedPaymentIntent's `{ ...base, ...dest.params }`.
+      ...dest.params,
+    },
     success_url:
       input.returnUrls?.success ?? `${base}/storefront/checkout/confirmation/${input.confirmationToken}`,
     cancel_url: input.returnUrls?.cancel ?? `${base}/storefront/cart`,

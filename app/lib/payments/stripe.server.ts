@@ -4,10 +4,11 @@ import { transitionOrder } from "~/lib/order/order.server";
 import { emitPaidOrder } from "~/lib/order/emit.server";
 import { sendOrderConfirmation } from "~/lib/order/confirmation-email.server";
 import { commitReservation } from "~/lib/inventory/engine.server";
+import { isLegalTransition, isOrderState, type OrderState } from "~/lib/order/state";
 // Singleton lives in stripe-client.server so connect.server can use it without
 // importing this module (which imports connect.server — would be a cycle).
 import { getStripe } from "./stripe-client.server";
-import { createRoutedPaymentIntent, applyAccountUpdate } from "./connect.server";
+import { createRoutedPaymentIntent, applyAccountUpdate, type PaymentsReadiness } from "./connect.server";
 
 export { getStripe };
 
@@ -33,6 +34,7 @@ export async function createPaymentIntent(
   amountCents: number,
   currency: string,
   orderRef?: string,
+  readiness?: PaymentsReadiness,
 ): Promise<{ paymentIntentId: string; clientSecret: string; amountCents: number; currency: string }> {
   if (!shopId) throw new Error("shopId is required");
   if (!Number.isInteger(amountCents) || amountCents <= 0) {
@@ -43,14 +45,19 @@ export async function createPaymentIntent(
     throw new Error(`unsupported currency: ${currency}`);
   }
 
-  // Routing decision + destination→platform fallback live in ONE seam
-  // (createRoutedPaymentIntent) shared with the ACP charge path.
-  const { pi, stripeAccountId, applicationFeeCents } = await createRoutedPaymentIntent(shopId, {
-    amount: amountCents,
-    currency: cur,
-    automatic_payment_methods: { enabled: true },
-    metadata: { shop_id: shopId, order_ref: orderRef ?? "" },
-  });
+  // Routing decision + fail-closed destination handling live in ONE seam
+  // (createRoutedPaymentIntent) shared with the ACP charge path. `readiness` reuses
+  // a decision the caller already gated on (createCheckout) — one read per charge.
+  const { pi, stripeAccountId, applicationFeeCents } = await createRoutedPaymentIntent(
+    shopId,
+    {
+      amount: amountCents,
+      currency: cur,
+      automatic_payment_methods: { enabled: true },
+      metadata: { shop_id: shopId, order_ref: orderRef ?? "" },
+    },
+    { readiness },
+  );
   if (!pi.client_secret) {
     throw new Error(`Stripe PaymentIntent ${pi.id} returned no client_secret`);
   }
@@ -75,6 +82,29 @@ export async function createPaymentIntent(
   };
 }
 
+interface OwnedPaymentIntentRow {
+  id: string;
+  shop_id: string;
+  order_ref: string | null;
+  currency: string;
+}
+
+/**
+ * Resolve the shop-scoped payment_intent row for a Stripe PaymentIntent id, used by both
+ * charge.refunded and charge.dispute.created to decide whether a charge/dispute originated
+ * through Calderyn before touching the ledger or the order. Returns null when no row matches
+ * (a charge Calderyn never created — e.g. another integration on the same Stripe account).
+ */
+async function findOwnedPaymentIntent(piId: string): Promise<OwnedPaymentIntentRow | null> {
+  const { data, error } = await getSupabase()
+    .from("payment_intent")
+    .select("id, shop_id, order_ref, currency")
+    .eq("stripe_pi_id", piId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as OwnedPaymentIntentRow | null) ?? null;
+}
+
 /**
  * Verify + idempotently process a Stripe webhook event over the RAW request body.
  * Returns the HTTP status the route should send plus whether this was a first
@@ -84,8 +114,6 @@ export async function processStripeEvent(
   rawBody: string,
   signature: string | null,
 ): Promise<{ status: number; processed: boolean; duplicate: boolean }> {
-  // TODO(parity): surface payment_intent / transaction_ledger in the Calderyn dashboard
-  // payments view when #3 graduates from spike (CLAUDE.md "Dashboard parity").
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   if (!secret) throw new Error("STRIPE_WEBHOOK_SECRET is not configured");
   if (!signature) {
@@ -125,6 +153,18 @@ export async function processStripeEvent(
       );
       return { status: 200, processed: false, duplicate: false };
     }
+    // Hosted-session charges are destination-routed like every other charge site, and the
+    // refund path decides reverse_transfer/refund_application_fee off this row's
+    // stripe_account_id — so the reconciliation MUST stamp the routing columns, not leave
+    // them null. The session event doesn't carry transfer_data; read it off the PI. A
+    // retrieve failure throws (500) so Stripe redelivers and the stamp self-heals — a row
+    // silently reconciled as "platform" for a routed charge would make its refund leak the
+    // transferred funds to the merchant while the platform pays the buyer back.
+    const sessionPi = await getStripe().paymentIntents.retrieve(piId);
+    const destAcct =
+      typeof sessionPi.transfer_data?.destination === "string"
+        ? sessionPi.transfer_data.destination
+        : (sessionPi.transfer_data?.destination?.id ?? null);
     const { error: upsertErr } = await getSupabase()
       .from("payment_intent")
       .upsert(
@@ -134,6 +174,8 @@ export async function processStripeEvent(
           order_ref: session.metadata?.order_ref ?? null,
           amount_cents: session.amount_total ?? 0,
           currency: session.currency ?? "usd",
+          stripe_account_id: destAcct,
+          application_fee_cents: sessionPi.application_fee_amount ?? null,
         },
         { onConflict: "stripe_pi_id" },
       );
@@ -153,6 +195,150 @@ export async function processStripeEvent(
       console.warn(`[stripe] account.updated ${event.id}: account ${account.id} not linked to any shop; skipped`);
     }
     return { status: 200, processed: applied, duplicate: false };
+  }
+
+  // Refunds issued from the STRIPE DASHBOARD (not ours) never touch executeRefundAction, so
+  // without this branch they never reach transaction_ledger or the order state and the merchant's
+  // Calderyn views lie. We reconcile off the charge's authoritative refund list rather than trust
+  // the (possibly partial) `refunds` page embedded on the charge event payload. Every write goes
+  // through record_refund_ledger — the SAME RPC executeRefundAction uses — so a refund WE issued
+  // (already recorded under its Stripe refund id) replays as a no-op (`inserted:false`); only a
+  // refund issued elsewhere inserts a new ledger row and reconciles the order.
+  if (event.type === "charge.refunded") {
+    const charge = event.data.object as Stripe.Charge;
+    const piId =
+      typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+    if (!piId) {
+      console.warn(`[stripe] charge.refunded ${event.id}: charge ${charge.id} has no payment_intent; skipped`);
+      return { status: 200, processed: false, duplicate: false };
+    }
+
+    const piRow = await findOwnedPaymentIntent(piId);
+    if (!piRow) {
+      console.warn(
+        `[stripe] charge.refunded ${event.id}: no payment_intent row for PI ${piId}; charge not originated by Calderyn`,
+      );
+      return { status: 200, processed: false, duplicate: false };
+    }
+    const { id: paymentIntentId, shop_id: shopId, order_ref: orderRef } = piRow;
+    const sb = getSupabase();
+
+    const refunds = await getStripe().refunds.list({ charge: charge.id, limit: 100 });
+    let insertedAny = false;
+    let lastFullyRefunded = false;
+    for (const refund of refunds.data) {
+      if (refund.status !== "succeeded") continue;
+      const { data: rpcData, error: rpcErr } = await sb.rpc("record_refund_ledger", {
+        p_shop_id: shopId,
+        p_payment_intent_id: paymentIntentId,
+        p_order_ref: orderRef,
+        p_amount_cents: refund.amount,
+        p_currency: refund.currency,
+        p_stripe_ref: charge.id,
+        p_stripe_event_id: refund.id,
+        p_occurred_at: new Date(refund.created * 1000).toISOString(),
+      });
+      if (rpcErr) throw rpcErr;
+      const result = (rpcData ?? {}) as { fully_refunded?: boolean; inserted?: boolean };
+      // fully_refunded reflects the CURRENT cumulative ledger total on every call (including a
+      // replay), so tracking it unconditionally always ends the loop with the true final total —
+      // no need to gate it on `inserted`.
+      lastFullyRefunded = Boolean(result.fully_refunded);
+      if (result.inserted) insertedAny = true;
+    }
+
+    // No refund on this charge was new to us — every succeeded refund was already recorded
+    // (either by executeRefundAction or a prior delivery of this same event). Nothing to reconcile.
+    if (!insertedAny) {
+      return { status: 200, processed: false, duplicate: true };
+    }
+
+    if (!orderRef) {
+      console.warn(
+        `[stripe] charge.refunded ${event.id}: payment_intent ${paymentIntentId} has no order_ref; ledger recorded but order not reconciled`,
+      );
+      return { status: 200, processed: true, duplicate: false };
+    }
+
+    const resolvedState: OrderState = lastFullyRefunded ? "refunded" : "partially_refunded";
+    const orderRead = await sb.from("orders").select("state").eq("shop_id", shopId).eq("id", orderRef).maybeSingle();
+    if (orderRead.error) throw orderRead.error;
+    const currentState = orderRead.data ? String((orderRead.data as Record<string, unknown>).state) : null;
+
+    if (currentState && isOrderState(currentState) && resolvedState !== currentState) {
+      if (isLegalTransition(currentState, resolvedState)) {
+        await transitionOrder(shopId, orderRef, resolvedState, "stripe:charge.refunded");
+      } else {
+        // Never throw here — an illegal transition (e.g. the order is still checkout_pending) is a
+        // state mismatch to reconcile manually, not a transient failure worth a Stripe retry storm.
+        console.error(
+          `[stripe] charge.refunded ${event.id}: order ${orderRef} (shop ${shopId}) state '${currentState}' cannot legally move to '${resolvedState}'; skipping transition — reconcile manually`,
+        );
+      }
+    }
+
+    // Mirrors executeRefundAction's tail: stamp financial_status on every reconciled delivery
+    // (not just a state change), best-effort. Native refund_fact emission stays executor-only for
+    // now (see emitNativeRefundFact in refund.server.ts) — this webhook path does not warehouse-emit.
+    const finUpd = await sb
+      .from("orders")
+      .update({ financial_status: resolvedState })
+      .eq("shop_id", shopId)
+      .eq("id", orderRef);
+    if (finUpd.error) {
+      console.error(
+        `[stripe] charge.refunded ${event.id}: financial_status stamp to '${resolvedState}' failed for order ${orderRef}`,
+        finUpd.error,
+      );
+    }
+
+    return { status: 200, processed: true, duplicate: false };
+  }
+
+  // Disputes are entirely invisible today — surface them loudly for an operator and flag the order
+  // so the merchant's views stop lying, without moving money or order state in this iteration (no
+  // ledger row, no state transition). financial_status is free text by design (see the order-spine
+  // migration comment), so "disputed" is a safe label alongside `state`.
+  if (event.type === "charge.dispute.created") {
+    const dispute = event.data.object as Stripe.Dispute;
+    const piId =
+      typeof dispute.payment_intent === "string" ? dispute.payment_intent : dispute.payment_intent?.id;
+    if (!piId) {
+      console.warn(`[stripe] charge.dispute.created ${event.id}: dispute ${dispute.id} has no payment_intent; skipped`);
+      return { status: 200, processed: false, duplicate: false };
+    }
+
+    const piRow = await findOwnedPaymentIntent(piId);
+    if (!piRow) {
+      console.warn(
+        `[stripe] charge.dispute.created ${event.id}: no payment_intent row for PI ${piId}; dispute not ours`,
+      );
+      return { status: 200, processed: false, duplicate: false };
+    }
+    const { shop_id: shopId, order_ref: orderRef } = piRow;
+    const sb = getSupabase();
+
+    console.error(
+      `[stripe] DISPUTE ${dispute.id} on order ${orderRef ?? "(no order_ref)"} (shop ${shopId}): ` +
+        `${dispute.amount} ${dispute.currency} reason=${dispute.reason}; requires operator review`,
+    );
+
+    if (orderRef) {
+      const finUpd = await sb
+        .from("orders")
+        .update({ financial_status: "disputed" })
+        .eq("shop_id", shopId)
+        .eq("id", orderRef)
+        .in("state", ["paid", "fulfilled", "partially_refunded"]);
+      if (finUpd.error) {
+        console.error(
+          `[stripe] charge.dispute.created ${event.id}: financial_status stamp to 'disputed' failed for order ${orderRef}`,
+          finUpd.error,
+        );
+      }
+    }
+
+    return { status: 200, processed: true, duplicate: false };
   }
 
   // Only money-moving / status events touch the DB; ack everything else so Stripe stops retrying.

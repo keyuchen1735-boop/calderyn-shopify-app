@@ -8,7 +8,7 @@ import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, saveStoreSettings, DEFAULT_PALETTE } from "~/lib/storefront/settings.server";
-import { getConnectedAccount } from "~/lib/payments/connect.server";
+import { getConnectedAccount, isFullyEnabledAccount } from "~/lib/payments/connect.server";
 import { listProducts as listAdminProducts } from "~/lib/catalog/catalog.server";
 import { expireOverdueExperiment, hasRunningExperiment, latestStudioExperiment } from "~/lib/experiments/store-experiment.server";
 import { injectMissingFunctionalBlocks } from "~/lib/storegen/sanitize";
@@ -281,19 +281,16 @@ async function latestGeneration(shopId: string): Promise<StudioGeneration | null
   };
 }
 
-/** Whether payments are fully set up — same three-flag definition the Payments
- *  screen uses (charges + payouts + details). Advisory only (the publish warn
- *  panel), so a payments read error reports not-ready rather than failing the
- *  whole studio load. Demo (non-uuid) shops have no row and read as not ready. */
+/** Whether payments are fully set up — the SAME fully-enabled definition the
+ *  charge path routes on (isFullyEnabledAccount), so the publish warn panel can
+ *  never desync from what checkout actually enforces. Advisory only (the publish
+ *  warn panel), so a payments read error reports not-ready rather than failing
+ *  the whole studio load. Demo (non-uuid) shops have no row and read as not ready. */
 async function checkoutReady(shopId: string): Promise<boolean> {
   if (!UUID_RE.test(shopId)) return false;
   try {
     const account = await getConnectedAccount(shopId);
-    return (
-      account?.charges_enabled === true &&
-      account.payouts_enabled === true &&
-      account.details_submitted === true
-    );
+    return account != null && isFullyEnabledAccount(account);
   } catch (err) {
     console.error("[studio] checkout readiness read failed; reporting not ready", err);
     return false;

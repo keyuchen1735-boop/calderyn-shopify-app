@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { DraftedAction } from "./types";
 import type { ToolDispatchResult } from "./tools.server";
+import type { ActionReceipt, PendingActionCard } from "./actions/registry-types";
 
 export type CreateMessageFn = (
   params: Anthropic.MessageCreateParamsNonStreaming,
@@ -11,7 +12,11 @@ export interface RunTurnParams {
   model: string;
   system: Anthropic.TextBlockParam[];
   tools: Anthropic.Tool[];
-  dispatchTool: (name: string, input: Record<string, unknown>) => Promise<ToolDispatchResult>;
+  dispatchTool: (
+    name: string,
+    input: Record<string, unknown>,
+    toolUseId: string,
+  ) => Promise<ToolDispatchResult>;
   history: Anthropic.MessageParam[];
   userMessage: string;
   maxToolTurns?: number;
@@ -21,11 +26,15 @@ export interface RunTurnParams {
 export interface RunTurnResult {
   text: string;
   draftedAction: DraftedAction | null;
+  /** Every receipt produced by a dispatched registry action this turn, in order. */
+  receipts: ActionReceipt[];
+  /** The most recent pending (confirm-tier) action card, if one was produced. */
+  pendingAction: PendingActionCard | null;
   stoppedAtCap: boolean;
 }
 
-const DEFAULT_MAX_TOOL_TURNS = 8;
-const DEFAULT_MAX_TOKENS = 1536;
+const DEFAULT_MAX_TOOL_TURNS = 16;
+const DEFAULT_MAX_TOKENS = 2048;
 
 export async function runAssistantTurn(p: RunTurnParams): Promise<RunTurnResult> {
   const maxToolTurns = p.maxToolTurns ?? DEFAULT_MAX_TOOL_TURNS;
@@ -35,6 +44,8 @@ export async function runAssistantTurn(p: RunTurnParams): Promise<RunTurnResult>
     { role: "user", content: p.userMessage },
   ];
   let draftedAction: DraftedAction | null = null;
+  const receipts: ActionReceipt[] = [];
+  let pendingAction: PendingActionCard | null = null;
 
   for (let turn = 0; turn <= maxToolTurns; turn++) {
     const res = await p.createMessage({
@@ -60,12 +71,14 @@ export async function runAssistantTurn(p: RunTurnParams): Promise<RunTurnResult>
           partial ||
           "I ran out of room before I could finish that. Try narrowing the question or asking for one thing at a time.",
         draftedAction,
+        receipts,
+        pendingAction,
         stoppedAtCap: true,
       };
     }
 
     if (res.stop_reason !== "tool_use" || toolUses.length === 0) {
-      return { text: extractText(res), draftedAction, stoppedAtCap: false };
+      return { text: extractText(res), draftedAction, receipts, pendingAction, stoppedAtCap: false };
     }
 
     if (turn === maxToolTurns) {
@@ -75,6 +88,8 @@ export async function runAssistantTurn(p: RunTurnParams): Promise<RunTurnResult>
           partial ||
           "I gathered a lot of data but ran out of steps before finishing. Please ask a more specific follow-up.",
         draftedAction,
+        receipts,
+        pendingAction,
         stoppedAtCap: true,
       };
     }
@@ -83,8 +98,10 @@ export async function runAssistantTurn(p: RunTurnParams): Promise<RunTurnResult>
 
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const tu of toolUses) {
-      const out = await p.dispatchTool(tu.name, (tu.input ?? {}) as Record<string, unknown>);
+      const out = await p.dispatchTool(tu.name, (tu.input ?? {}) as Record<string, unknown>, tu.id);
       if (out.draftedAction) draftedAction = out.draftedAction;
+      if (out.receipt) receipts.push(out.receipt);
+      if (out.pending) pendingAction = out.pending;
       toolResults.push({
         type: "tool_result",
         tool_use_id: tu.id,
@@ -96,7 +113,7 @@ export async function runAssistantTurn(p: RunTurnParams): Promise<RunTurnResult>
   }
 
   // Unreachable (the cap branch returns), but keeps the type checker happy.
-  return { text: "", draftedAction, stoppedAtCap: true };
+  return { text: "", draftedAction, receipts, pendingAction, stoppedAtCap: true };
 }
 
 function extractText(res: Anthropic.Message): string {

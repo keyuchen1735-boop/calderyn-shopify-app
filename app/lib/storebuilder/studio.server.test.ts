@@ -22,7 +22,13 @@ const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experime
       listProducts: vi.fn(),
       listCollections: vi.fn(),
     },
-    connectMock: { getConnectedAccount: vi.fn() },
+    connectMock: {
+      getConnectedAccount: vi.fn(),
+      // Real predicate shape: the studio panel must judge readiness by the same
+      // three-flag definition the charge path routes on.
+      isFullyEnabledAccount: (a: { charges_enabled?: boolean; payouts_enabled?: boolean; details_submitted?: boolean }) =>
+        a.charges_enabled === true && a.payouts_enabled === true && a.details_submitted === true,
+    },
     adminListProducts: vi.fn(),
     experimentsMock: {
       latestStudioExperiment: vi.fn(),

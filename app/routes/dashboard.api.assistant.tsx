@@ -59,6 +59,7 @@ export async function action({ request }: ActionFunctionArgs) {
         shopDomain: session.shopId,
         message: parsed.value.message,
         conversationId: parsed.value.conversationId,
+        allowActions: true,
         deps: {
           flagAlert: (alertId) => acknowledgeAlert(getSupabase(), session.shopId, alertId),
         },
