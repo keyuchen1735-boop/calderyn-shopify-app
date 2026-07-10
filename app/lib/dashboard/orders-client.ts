@@ -254,3 +254,65 @@ export async function createOrderView(name: string, filters: Record<string, unkn
 export async function deleteOrderView(id: string): Promise<void> {
   await apiSend<{ deleted: true }>("DELETE", `/dashboard/api/orders/views?id=${encodeURIComponent(id)}`);
 }
+
+// --- bulk order actions (Phase 2 Task 3) -------------------------------------
+
+/** One order's outcome from a bulk action: ok + a small per-action result, or ok:false + a
+ *  plain-language error — never thrown per-order, since partial failure across a bulk
+ *  selection is normal, expected output. */
+export interface BulkResultVM {
+  orderId: string;
+  ok: boolean;
+  error?: string;
+}
+
+interface BulkResultWire {
+  order_id: string;
+  ok: boolean;
+  error?: string;
+}
+
+function mapBulkResults(rows: BulkResultWire[]): BulkResultVM[] {
+  return rows.map((r) => ({ orderId: r.order_id, ok: r.ok, error: r.error }));
+}
+
+/** Fulfill every selected order in full (no per-order lines/tracking/carrier — that stays a
+ *  single-order-only refinement). Native orders only; imported (shopify:) ids 422 the whole
+ *  request. `idempotencyKey` is the outer key — the server derives one per order internally. */
+export async function bulkFulfillOrders(
+  orderIds: string[],
+  notify: boolean,
+  idempotencyKey: string,
+): Promise<{ results: BulkResultVM[] }> {
+  const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/fulfill", {
+    order_ids: orderIds,
+    notify,
+    idempotency_key: idempotencyKey,
+  });
+  return { results: mapBulkResults(data.results) };
+}
+
+/** Archive or unarchive every selected order. Native orders only. */
+export async function bulkArchiveOrders(
+  orderIds: string[],
+  archived: boolean,
+): Promise<{ results: BulkResultVM[] }> {
+  const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/archive", {
+    order_ids: orderIds,
+    archived,
+  });
+  return { results: mapBulkResults(data.results) };
+}
+
+/** Add tags to every selected order WITHOUT removing any tag already there (additive, never the
+ *  full-replace path setOrderTags uses). Native orders only. */
+export async function bulkAddOrderTags(
+  orderIds: string[],
+  addTags: string[],
+): Promise<{ results: BulkResultVM[] }> {
+  const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/tags", {
+    order_ids: orderIds,
+    add_tags: addTags,
+  });
+  return { results: mapBulkResults(data.results) };
+}

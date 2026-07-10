@@ -2,9 +2,11 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, parseJsonObjectBody, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { isImportedOrderId, stripNativeOrderPrefix } from "~/lib/order/detail.server";
-import { getSupabase } from "~/lib/supabase.server";
+import { setOrderArchived } from "~/lib/order/order.server";
 
-/** Archive/unarchive a native order (Task 10): sets or clears orders.archived_at. Native only. */
+/** Archive/unarchive a native order (Task 10): sets or clears orders.archived_at. Native only.
+ *  The update itself lives in setOrderArchived (order.server.ts), shared with the bulk archive
+ *  route (Phase 2 Task 3) so the query is written exactly once. */
 export async function action({ request, params }: ActionFunctionArgs) {
   requireSameOrigin(request);
   const session = await requireDashboardSession(request);
@@ -24,21 +26,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const archived = body.archived;
 
   return dashboardJson(async () => {
-    const sb = getSupabase();
-    // Existence + write in one round trip: `.select("id")` on the update returns the affected
-    // rows, so an empty result IS the shop-scoped not-found case (same technique order.server.ts's
-    // transitionOrder already uses to detect a 0-row outcome) — no separate SELECT needed first.
-    const updRes = await sb
-      .from("orders")
-      .update({ archived_at: archived ? new Date().toISOString() : null })
-      .eq("shop_id", session.shopId)
-      .eq("id", orderId)
-      .select("id");
-    if (updRes.error) throw updRes.error;
-    if (!updRes.data || (updRes.data as unknown[]).length === 0) {
-      throw jsonError(404, "order_not_found");
-    }
-
-    return { archived };
+    const result = await setOrderArchived(session.shopId, orderId, archived);
+    return { archived: result };
   });
 }
