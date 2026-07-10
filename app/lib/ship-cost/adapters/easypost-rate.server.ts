@@ -110,8 +110,9 @@ export function buildFallbackOptions(req: RateRequest): NormalizedRateOption[] {
   ];
 }
 
-/** Provider-blind Address → EasyPost address body. */
-function toEasyPostAddress(a: Address): Record<string, unknown> {
+/** Provider-blind Address → EasyPost address body (shared with the label adapter so the
+ *  quote and the purchased label always post the same address shape). */
+export function toEasyPostAddress(a: Address): Record<string, unknown> {
   return {
     name: a.name,
     company: a.company,
@@ -125,8 +126,8 @@ function toEasyPostAddress(a: Address): Record<string, unknown> {
   };
 }
 
-/** Provider-blind Parcel → EasyPost parcel body (weight in OUNCES). */
-function toEasyPostParcel(p: Parcel): Record<string, unknown> {
+/** Provider-blind Parcel → EasyPost parcel body (weight in OUNCES). Shared with the label adapter. */
+export function toEasyPostParcel(p: Parcel): Record<string, unknown> {
   return { length: p.lengthIn, width: p.widthIn, height: p.heightIn, weight: p.weightOz };
 }
 

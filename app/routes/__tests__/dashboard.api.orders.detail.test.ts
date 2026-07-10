@@ -37,7 +37,9 @@ vi.mock("~/lib/order/detail.server", async (importOriginal) => ({
 }));
 
 const executeFulfillAction = vi.fn();
-vi.mock("~/lib/order/fulfill.server", () => ({
+// parseFulfillLinesBody stays REAL (importOriginal): it IS the route's boundary validation.
+vi.mock("~/lib/order/fulfill.server", async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
   executeFulfillAction: (...a: unknown[]) => executeFulfillAction(...a),
 }));
 

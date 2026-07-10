@@ -27,6 +27,7 @@ const store = vi.hoisted(() => {
     imported_order: [],
     imported_order_line: [],
     imported_refund: [],
+    integration_credentials: [],
   };
 
   class Builder {
@@ -73,7 +74,9 @@ const store = vi.hoisted(() => {
     }
 
     private wrap(rows: Row[]) {
-      return { data: this.wantSingle ? (rows[0] ?? null) : rows, error: null };
+      // `count` mirrors PostgREST's exact-count response — carrierConnected's
+      // head-count credential probe (canBuyLabel) reads it.
+      return { data: this.wantSingle ? (rows[0] ?? null) : rows, error: null, count: rows.length };
     }
     private matchesJsonPath(row: Row, col: string, val: unknown): boolean {
       const [jsonCol, key] = col.split("->>");

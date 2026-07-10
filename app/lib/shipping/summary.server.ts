@@ -226,8 +226,9 @@ async function loadQuotes30d(shopId: string): Promise<Quotes30dSummary> {
   return { count: total, avgShippingCents, fallbackSharePct, lowConfidenceSharePct, avgPromise };
 }
 
-/** Whether a live carrier credential is stored (existence only — never decrypts). */
-async function carrierConnected(shopId: string): Promise<boolean> {
+/** Whether a live carrier credential is stored (existence only — never decrypts).
+ *  Exported for the order-detail read model's canBuyLabel flag. */
+export async function carrierConnected(shopId: string): Promise<boolean> {
   const { count, error } = await getSupabase()
     .from("integration_credentials")
     .select("shop_id", { count: "exact", head: true })

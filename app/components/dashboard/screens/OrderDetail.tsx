@@ -707,6 +707,14 @@ export default function OrderDetailScreen({
                           </button>
                         </div>
                       )}
+                      {f.labelUrl && (
+                        <div className="cd-caption" style={{ marginTop: 4 }}>
+                          <a href={f.labelUrl} target="_blank" rel="noreferrer">
+                            Shipping label
+                          </a>
+                          {f.labelCostCents != null ? ` · ${money(f.labelCostCents)}` : ""}
+                        </div>
+                      )}
                       {f.notifiedAt && <div className="cd-caption" style={{ marginTop: 4 }}>Customer notified</div>}
                     </div>
                   ))}

@@ -2,7 +2,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, parseJsonObjectBody, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { isImportedOrderId, stripNativeOrderPrefix } from "~/lib/order/detail.server";
-import { executeFulfillAction, type FulfillLineInput } from "~/lib/order/fulfill.server";
+import { executeFulfillAction, parseFulfillLinesBody } from "~/lib/order/fulfill.server";
 
 /**
  * Merchant-initiated fulfillment (orders close-out phase 1, #10). Ships all-or-some order
@@ -32,23 +32,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
   const notify = body.notify;
 
-  let lines: FulfillLineInput[] | undefined;
-  if (body.lines !== undefined && body.lines !== null) {
-    if (!Array.isArray(body.lines)) return jsonError(422, "invalid_lines", "lines must be an array.");
-    lines = [];
-    for (const raw of body.lines) {
-      const row = raw as Record<string, unknown>;
-      const orderLineId = row?.order_line_id;
-      const quantity = row?.quantity;
-      if (typeof orderLineId !== "string" || !orderLineId) {
-        return jsonError(422, "invalid_lines", "Each line needs an order_line_id string.");
-      }
-      if (typeof quantity !== "number" || !Number.isInteger(quantity) || quantity <= 0) {
-        return jsonError(422, "invalid_lines", "Each line's quantity must be a positive whole number.");
-      }
-      lines.push({ orderLineId, quantity });
-    }
-  }
+  const parsed = parseFulfillLinesBody(body.lines);
+  if (!parsed.ok) return jsonError(422, parsed.code, parsed.message);
+  const lines = parsed.lines;
 
   const trackingNumber = typeof body.tracking_number === "string" ? body.tracking_number : null;
   const carrier = typeof body.carrier === "string" ? body.carrier : null;

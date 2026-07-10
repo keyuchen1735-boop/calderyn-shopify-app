@@ -6,8 +6,9 @@ import type { Parcel, Address } from "~/lib/ship-cost/adapters/rate-quote";
 const G_TO_OZ = 0.0352739619;
 const MM_TO_IN = 1 / 25.4;
 
-/** metric variant_shipping row → imperial carrier Parcel (one conversion, shared). */
-function toParcel(row: Record<string, unknown>): Parcel {
+/** metric variant_shipping row → imperial carrier Parcel (one conversion, shared —
+ *  exported so the label flow rates the exact same weights checkout quoted). */
+export function toParcel(row: Record<string, unknown>): Parcel {
   return {
     lengthIn: Number(row.length_mm ?? 0) * MM_TO_IN,
     widthIn: Number(row.width_mm ?? 0) * MM_TO_IN,

@@ -15,6 +15,9 @@ import { effectiveLineQuantities } from "./line-edits.server";
 import { listOrderReturns } from "./returns.server";
 import { buyerOrderSignals } from "./signals.server";
 import { isStuckUnfulfilled, stuckDays } from "~/components/dashboard/screens/order-status";
+import { carrierConnected } from "~/lib/shipping/summary.server";
+import { PICKUP_SERVICE_NAME } from "~/lib/commerce/types";
+import { FULFILLABLE_ORDER_STATES, isOrderState, type OrderState } from "./state";
 import { formatMoney } from "~/lib/storefront/money";
 import type { OrderDetail, OrderDetailFulfillment, OrderDetailLine, OrderSignals, OrderTimelineEvent } from "./detail-types";
 
@@ -125,7 +128,7 @@ export async function loadOrderDetail(shopId: string, sourceId: string): Promise
 // ---------------------------------------------------------------------------
 
 const NATIVE_ORDER_COLS =
-  "id, buyer_id, state, financial_status, subtotal_cents, shipping_cents, tax_cents, total_cents, currency, attribution, channel, archived_at, cancelled_at, cancel_reason, created_at";
+  "id, buyer_id, state, financial_status, subtotal_cents, shipping_cents, shipping_service, tax_cents, total_cents, currency, attribution, channel, archived_at, cancelled_at, cancel_reason, created_at";
 
 async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<OrderDetail | null> {
   const sb = getSupabase();
@@ -154,6 +157,7 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     returns,
     returnEvents,
     buyerSignals,
+    hasCarrier,
   ] = await Promise.all([
     loadNativeLines(sb, shopId, orderId),
     loadFulfillments(sb, shopId, orderId),
@@ -169,6 +173,7 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     listOrderReturns(shopId, orderId, sb),
     loadReturnTimelineEvents(sb, shopId, orderId),
     buyerOrderSignals(shopId, buyerId),
+    carrierConnected(shopId),
   ]);
 
   // `quantity` reflects what the line ACTUALLY totals today (effective, after any reductions);
@@ -237,6 +242,12 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     returns,
     readOnly: false,
     signals,
+    canBuyLabel:
+      hasCarrier &&
+      isOrderState(String(o.state)) &&
+      FULFILLABLE_ORDER_STATES.has(String(o.state) as OrderState) &&
+      shippingAddress != null &&
+      String(o.shipping_service ?? "") !== PICKUP_SERVICE_NAME,
   };
 }
 
@@ -286,7 +297,7 @@ interface FulfillmentAgg {
 async function loadFulfillments(sb: SupabaseClient, shopId: string, orderId: string): Promise<FulfillmentAgg> {
   const { data, error } = await sb
     .from("fulfillment")
-    .select("id, tracking_number, carrier, notified_at, created_at")
+    .select("id, tracking_number, carrier, notified_at, created_at, label_url, label_cost_cents")
     .eq("shop_id", shopId)
     .eq("order_id", orderId);
   if (error) throw new Error(`fulfillment read failed: ${error.message}`);
@@ -318,6 +329,8 @@ async function loadFulfillments(sb: SupabaseClient, shopId: string, orderId: str
     carrier: r.carrier == null ? null : String(r.carrier),
     notifiedAt: r.notified_at == null ? null : String(r.notified_at),
     units: unitsByFulfillment.get(String(r.id)) ?? 0,
+    labelUrl: r.label_url == null ? null : String(r.label_url),
+    labelCostCents: r.label_cost_cents == null ? null : Number(r.label_cost_cents),
   }));
 
   return { fulfillments, fulfilledByLine };
@@ -599,6 +612,7 @@ async function loadImportedOrderDetail(shopId: string, importedId: string): Prom
     // No native fulfillment lifecycle is tracked for an imported order, so stuckUnfulfilled is
     // always false; buyer-history signals still populate off buyer_id when one is linked.
     signals: { stuckUnfulfilled: false, stuckDays: null, ...buyerSignals },
+    canBuyLabel: false, // read-only surface: no fulfill flow, no label buys
   };
 }
 
