@@ -146,6 +146,42 @@ describe("GET /dashboard/api/orders/export", () => {
     expect(csv).toContain('"line1\nline2;vip"');
   });
 
+  it("neutralizes CSV formula injection in buyer email: =HYPERLINK(...) prefixed with single quote and quoted", async () => {
+    listOrdersUnified.mockResolvedValue({
+      rows: [
+        makeRow({
+          buyerEmail: '=HYPERLINK("http://x","y")',
+        }),
+      ],
+      totalCount: 1,
+      offset: 0,
+      limit: 1000,
+    });
+    const { loader } = await import("../dashboard.api.orders.export");
+    const res = (await loader({ request: get("") } as never)) as Response;
+    const csv = await readCsv(res);
+    // The = prefix is neutralized with a single quote, and the whole field is quoted because it now contains the quote char.
+    expect(csv).toContain("\"'=HYPERLINK(\"\"http://x\"\",\"\"y\"\")\"");
+  });
+
+  it("neutralizes CSV formula injection in tag: -vip prefixed with single quote", async () => {
+    listOrdersUnified.mockResolvedValue({
+      rows: [
+        makeRow({
+          tags: ["-vip"],
+        }),
+      ],
+      totalCount: 1,
+      offset: 0,
+      limit: 1000,
+    });
+    const { loader } = await import("../dashboard.api.orders.export");
+    const res = (await loader({ request: get("") } as never)) as Response;
+    const csv = await readCsv(res);
+    // The - prefix is neutralized with a single quote.
+    expect(csv).toContain("'-vip");
+  });
+
   it("passes through filter params to the wrapper, same contract as the list route", async () => {
     listOrdersUnified.mockResolvedValue({ rows: [], totalCount: 0, offset: 0, limit: 1000 });
     const { loader } = await import("../dashboard.api.orders.export");

@@ -32,8 +32,12 @@ const HEADER = [
   "archived",
 ];
 
-/** RFC-4180 field escaper: quote when the value contains a comma, quote, or line break. */
+/** RFC-4180 field escaper with CSV formula-injection protection: prefix risky characters (=, +, -, @, \t) with a single quote; then quote when the value contains a comma, quote, or line break. */
 function csvField(value: string): string {
+  // CSV formula injection protection: neutralize cells that start with formula indicators
+  if (/^[=+\-@\t]/.test(value)) {
+    value = `'${value}`;
+  }
   if (/[,"\r\n]/.test(value)) {
     return `"${value.replace(/"/g, '""')}"`;
   }
