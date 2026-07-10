@@ -12,6 +12,8 @@ vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ saveDraft: saveDraftMock }));
 vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: async (shopId: string) => ({ shopId, storeName: "", logoUrl: null, palette: { primary: "#0f766e", background: "#ffffff", text: "#111827" }, voiceTagline: null, vibe: "minimal" }), saveStoreSettings: saveSettingsMock, hasStoreSettings: hasSettingsMock, DEFAULT_PALETTE: { primary: "#0f766e", background: "#fff", text: "#111" } }));
 vi.mock("./audit.server", () => ({ recordGeneration: recGenMock, recordProposal: recPropMock }));
+// Renamed-handle lookups feed the link set; no DB behind this suite.
+vi.mock("~/lib/storefront/handle-redirect.server", () => ({ listRedirectOldHandles: async () => [] }));
 
 const realShop = "11111111-1111-1111-1111-111111111111";
 const product = (id: string): StoreProduct => ({ id, handle: `h-${id}`, title: `P${id}`, description: "", images: [], variants: [{ id: `v-${id}`, sku: null, title: "D", priceCents: 1000, currency: "USD", available: true }], collections: ["summer"] });

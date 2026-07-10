@@ -35,10 +35,23 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   if (!product) {
     // The handle may have been edited in the dashboard — a redirect row keeps
     // the old link (and anything indexed) working. Permanent by design: search
-    // engines should transfer the old URL's standing to the new one.
-    const currentHandle = await resolveHandleRedirect(shopId, handle);
+    // engines should transfer the old URL's standing to the new one. A lookup
+    // failure must not 500 a public page that was heading to a 404 anyway.
+    let currentHandle: string | null = null;
+    try {
+      currentHandle = await resolveHandleRedirect(shopId, handle);
+    } catch (err) {
+      console.error(`[storefront] handle-redirect lookup failed for shop ${shopId}:`, err);
+    }
     if (currentHandle) {
-      throw redirect(`/storefront/products/${encodeURIComponent(currentHandle)}`, 301);
+      // Preserve the query string, and bound how long browsers may cache the
+      // 301 — heuristically-forever caching would make a rename-undo an
+      // unfixable client-side redirect loop.
+      const url = new URL(request.url);
+      throw redirect(`/storefront/products/${encodeURIComponent(currentHandle)}${url.search}`, {
+        status: 301,
+        headers: { "Cache-Control": "public, max-age=300" },
+      });
     }
     throw new Response(null, { status: 404 });
   }

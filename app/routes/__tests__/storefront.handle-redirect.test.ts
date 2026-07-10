@@ -46,10 +46,42 @@ describe("PDP handle redirect", () => {
     expect(res.headers.get("Location")).toBe("/storefront/products/new-handle");
   });
 
+  it("bounds how long clients may cache the 301 (a rename-undo must stay fixable)", async () => {
+    resolveRedirectMock.mockResolvedValue("new-handle");
+    const res = await thrownResponse("old-handle");
+    expect(res.headers.get("Cache-Control")).toBe("public, max-age=300");
+  });
+
+  it("preserves the original query string on the 301", async () => {
+    resolveRedirectMock.mockResolvedValue("new-handle");
+    let caught: Response | null = null;
+    try {
+      await loader({
+        request: new Request("https://demo.calderyncompany.com/storefront/products/old-handle?utm_source=mail&v=2"),
+        params: { handle: "old-handle" },
+        context: {},
+      } as never);
+    } catch (err) {
+      if (err instanceof Response) caught = err;
+      else throw err;
+    }
+    expect(caught?.status).toBe(301);
+    expect(caught?.headers.get("Location")).toBe("/storefront/products/new-handle?utm_source=mail&v=2");
+  });
+
   it("404s when no redirect row exists", async () => {
     const res = await thrownResponse("never-existed");
     expect(res.status).toBe(404);
     expect(resolveRedirectMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls through to a 404 (never a 500) when the redirect lookup itself fails", async () => {
+    resolveRedirectMock.mockRejectedValue(new Error("redirect table down"));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await thrownResponse("old-handle");
+    expect(res.status).toBe(404);
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 
   it("does not consult the redirect table when the product resolves", async () => {
