@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import type { DashboardCtx } from "../context";
-import { Btn, Card, Pill, Placeholder, TableSkeleton } from "../ui";
+import { Btn, Card, Pill, Placeholder, TableSkeleton, SkelBar } from "../ui";
 import { money, timeAgo } from "../format";
 import { reduced } from "../hero/hero-motion";
 import { CDIcon } from "../icons";
@@ -128,6 +128,7 @@ export default function OrderDetailScreen({
 }) {
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [profit, setProfit] = useState<OrderProfit | null>(null);
+  const [profitLoading, setProfitLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [showFulfill, setShowFulfill] = useState(false);
@@ -199,24 +200,10 @@ export default function OrderDetailScreen({
     (signal?: { alive: boolean }) => {
       setLoading(true);
       setLoadError(false);
-      Promise.all([
-        fetchOrderDetail(sourceId),
-        // The profit card is supplementary analytics, not the order record itself: a failure here
-        // must never take down the whole order view (rule 12 still wants it surfaced — a quiet
-        // toast, not a silent swallow — just not one that blocks the rest of the screen from
-        // loading and not one that replaces the critical "couldn't load this order" path below).
-        fetchOrderProfit(sourceId).catch((err: unknown) => {
-          if (!signal || signal.alive) {
-            const msg = err instanceof DashboardApiError ? err.message : "Couldn't load profit data for this order.";
-            toast(msg, "warn");
-          }
-          return null;
-        }),
-      ])
-        .then(([d, p]) => {
+      fetchOrderDetail(sourceId)
+        .then((d) => {
           if (!signal || signal.alive) {
             setDetail(d);
-            setProfit(p);
           }
         })
         .catch((err: unknown) => {
@@ -231,6 +218,39 @@ export default function OrderDetailScreen({
     },
     [sourceId, toast],
   );
+
+  // Load profit independently in parallel: fetch after order detail resolves, render skeleton
+  // until it lands, and surface any error as a quiet toast (never blocking the order view).
+  const loadProfit = useCallback(
+    (signal?: { alive: boolean }) => {
+      if (!detail) return;
+      setProfitLoading(true);
+      fetchOrderProfit(sourceId)
+        .then((p) => {
+          if (!signal || signal.alive) {
+            setProfit(p);
+          }
+        })
+        .catch((err: unknown) => {
+          if (!signal || signal.alive) {
+            const msg = err instanceof DashboardApiError ? err.message : "Couldn't load profit data for this order.";
+            toast(msg, "warn");
+          }
+        })
+        .finally(() => {
+          if (!signal || signal.alive) setProfitLoading(false);
+        });
+    },
+    [sourceId, detail, toast],
+  );
+
+  useEffect(() => {
+    const signal = { alive: true };
+    loadProfit(signal);
+    return () => {
+      signal.alive = false;
+    };
+  }, [loadProfit]);
 
   useEffect(() => {
     const signal = { alive: true };
@@ -568,7 +588,16 @@ export default function OrderDetailScreen({
               </div>
             </Card>
 
-            {profit && (
+            {profitLoading && !profit ? (
+              <Card className="cd-card-tight">
+                <div className="cd-h2" style={{ marginBottom: 8 }}>Profit</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <SkelBar width="60%" />
+                  <SkelBar width="50%" />
+                  <SkelBar width="70%" />
+                </div>
+              </Card>
+            ) : profit ? (
               <Card className="cd-card-tight">
                 <div className="cd-h2" style={{ marginBottom: 8 }}>Profit</div>
                 <div className="cd-kv-col">
@@ -598,7 +627,9 @@ export default function OrderDetailScreen({
                     <b className="ml-auto tabular-nums">{money(profit.profitCents, detail.currency)}</b>
                   </div>
                   <div className="cd-caption">
-                    {profit.marginPct == null ? "Margin unavailable" : `${profit.marginPct.toFixed(1)}% margin`}
+                    {profit.marginPct == null
+                      ? "Margin unavailable"
+                      : `${profit.marginPct.toFixed(1)}% margin${profit.costsMissing > 0 || profit.carrierCostCents === null ? " (partial)" : ""}`}
                   </div>
                 </div>
                 {detail.readOnly && (
@@ -607,7 +638,7 @@ export default function OrderDetailScreen({
                   </div>
                 )}
               </Card>
-            )}
+            ) : null}
 
             {detail.fulfillments.length > 0 && (
               <Card className="cd-card-tight">

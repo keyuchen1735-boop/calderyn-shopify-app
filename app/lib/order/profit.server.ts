@@ -61,7 +61,11 @@ interface CostLine {
   unitCostCentsSnapshot: number | null;
 }
 
-/** cogsCents excludes any line with a null snapshot; costsMissing counts how many were excluded. */
+/** cogsCents excludes any line with a null snapshot; costsMissing counts how many were excluded.
+ *  IMPORTANT: RETURNS DO NOT REDUCE COGS in v1. A return never writes order_line_edit rows, so
+ *  effectiveLineQuantities remains unchanged — the goods' cost was incurred at sale time; restocked
+ *  value recovery is out of scope here. COGS = sum(effective qty × unit cost) for every line that
+ *  recorded a snapshot at order time, period. */
 function sumCogs(lines: CostLine[]): { cogsCents: number; costsMissing: number } {
   let cogsCents = 0;
   let costsMissing = 0;

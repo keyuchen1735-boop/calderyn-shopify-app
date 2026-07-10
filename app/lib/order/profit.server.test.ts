@@ -189,6 +189,28 @@ describe("orderProfit — native orders", () => {
     expect(typeof p!.profitCents).toBe("number");
   });
 
+  it("returns do not reduce COGS in v1 — closed return leaves effectiveLineQuantities unchanged", async () => {
+    // Order with one line: 5 units @ 1000 cents COGS, total 5000 cents.
+    store.db.orders.push({ id: "order-returns", shop_id: SHOP, total_cents: 5000, attribution: null });
+    store.db.order_line.push({ id: "line-1", shop_id: SHOP, order_id: "order-returns", quantity: 5, unit_cost_cents_snapshot: 1000 });
+    pushCapture("order-returns", 5000);
+
+    const beforeReturn = await orderProfit(SHOP, "order-returns");
+    expect(beforeReturn!.cogsCents).toBe(5000); // 5 * 1000
+
+    // Now simulate a closed return (order_return + line rows exist) — but no order_line_edit row
+    // is ever written for a return, so effectiveLineQuantities is untouched.
+    store.db.transaction_ledger.push({ shop_id: SHOP, order_ref: "order-returns", kind: "refund", amount_cents: -2000 });
+    // (in real life there would be order_return + returned_line rows, but they don't affect the
+    // effectiveLineQuantities computation, so we don't need to mock them for this regression test)
+
+    const afterReturn = await orderProfit(SHOP, "order-returns");
+    // COGS is unchanged because effectiveLineQuantities is still 5 units (no edit rows).
+    expect(afterReturn!.cogsCents).toBe(5000);
+    // Revenue IS reduced (refund captured in transaction_ledger).
+    expect(afterReturn!.revenueCents).toBe(3000); // 5000 - 2000
+  });
+
   it("prefix routing: calderyn: prefix and a bare uuid resolve the same native order", async () => {
     store.db.orders.push({ id: "order-10", shop_id: SHOP, total_cents: 1000, attribution: null });
     pushCapture("order-10", 1000);
