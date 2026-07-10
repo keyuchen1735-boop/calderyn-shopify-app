@@ -4,6 +4,13 @@ import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { buildVariantMatrix } from "~/lib/catalog/variant-matrix";
 import { centsToDollars, dollarsToCents, parseOptionRows } from "~/lib/catalog/product-form";
+import { PRODUCT_HANDLE_RE, PRODUCT_HANDLE_MAX } from "~/lib/catalog/handle";
+import {
+  SEO_TITLE_SOFT_MAX,
+  SEO_DESCRIPTION_SOFT_MAX,
+  SEO_TITLE_MAX,
+  SEO_DESCRIPTION_MAX,
+} from "~/lib/catalog/types";
 import { Card, Btn, Pill, Placeholder, SectionTitle } from "../ui";
 import { CDIcon } from "../icons";
 import InventoryPanel from "./InventoryPanel";
@@ -35,20 +42,12 @@ function restrictedCountriesText(codes?: string[]): string {
   return (codes ?? []).join(", ");
 }
 
-// Mirrors the server's handle rule (validate.ts): lowercase slug segments
-// joined by single hyphens, 1-80 chars. Checked before submit so a typo is a
-// friendly toast, not a 422 round-trip.
-const HANDLE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-// Advisory search-result lengths the counters measure against.
-const SEO_TITLE_SOFT_MAX = 60;
-const SEO_DESCRIPTION_SOFT_MAX = 160;
-
+// In-field character counter against the advisory search-result lengths, same
+// pattern as the Search screen's store-description field (.cd-seo__inputwrap +
+// .cd-seo__count); the over-limit state borrows the existing warning token.
 function CharCounter({ length, max }: { length: number; max: number }) {
   return (
-    <span
-      className="cd-caption"
-      style={{ alignSelf: "flex-end", ...(length > max ? { color: "var(--cd-warning, #b45309)" } : {}) }}
-    >
+    <span className="cd-seo__count" aria-hidden="true" style={length > max ? { color: "var(--orange)" } : undefined}>
       {length}/{max}
     </span>
   );
@@ -218,12 +217,21 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
     }
     // Only a real handle edit is submitted; an emptied field keeps the saved
     // address (there is always a page address, so blank means "no change").
-    const nextHandle = handle.trim().toLowerCase();
-    const handleChanged = Boolean(nextHandle) && nextHandle !== savedHandle;
-    if (handleChanged && !HANDLE_RE.test(nextHandle)) {
+    // `handle` is already normalized — the input's onChange sanitizer is the
+    // single normalization point.
+    const handleChanged = Boolean(handle) && handle !== savedHandle;
+    if (handleChanged && !PRODUCT_HANDLE_RE.test(handle)) {
       app.toast("Page address can use only lowercase letters, numbers, and hyphens.", "warn");
       return;
     }
+    // Submit `seo` only when the merchant actually changed it against the
+    // loaded baseline: an unrelated save must not rewrite (or, from a stale
+    // tab, clobber) the stored override — and when the listing failed to load
+    // (seoListing null) a blind write could wipe an override we never showed.
+    const seoChanged =
+      seoListing !== null &&
+      (metaTitle.trim() !== (seoListing.metaTitle ?? "") ||
+        metaDescription.trim() !== (seoListing.metaDescription ?? ""));
     setSaving(true);
     try {
       const draft: client.ProductDraft = {
@@ -236,8 +244,8 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
         options: parseOptions(options),
         variants,
         collectionIds: selectedCollections,
-        ...(handleChanged ? { handle: nextHandle } : {}),
-        seo: { metaTitle: metaTitle.trim(), metaDescription: metaDescription.trim() },
+        ...(handleChanged ? { handle } : {}),
+        ...(seoChanged ? { seo: { metaTitle: metaTitle.trim(), metaDescription: metaDescription.trim() } } : {}),
       };
       await client.saveProduct(draft, id ?? undefined);
       app.toast("Product saved.", "check");
@@ -249,6 +257,8 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
         app.toast("Page address can use only lowercase letters, numbers, and hyphens.", "warn", "critical");
       } else if (err instanceof DashboardApiError && err.code === "handle_conflict") {
         app.toast("That URL is already used by another product.", "warn", "critical");
+      } else if (err instanceof DashboardApiError && err.code === "editing_conflict") {
+        app.toast("This product's address was just changed somewhere else. Reload it and try again.", "warn", "critical");
       } else {
         app.toast(err instanceof DashboardApiError ? err.message : "Couldn't save the product.", "warn", "critical");
       }
@@ -269,6 +279,15 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
   };
 
   const showStock = useMemo(() => variants.some((v) => v.inventoryTracked !== false), [variants]);
+
+  // Search-listing card derivations. seoListing is null when its server reads
+  // failed — the meta fields render disabled (a blind edit could clobber an
+  // override that never loaded) and onSave omits `seo` from the payload.
+  const seoUnavailable = seoListing === null;
+  const urlPrefix = seoListing?.urlPrefix ?? "/storefront/products/";
+  const previewTitle = metaTitle.trim() || seoListing?.defaultTitle || title;
+  const previewDescription = metaDescription.trim() || seoListing?.defaultDescription || "";
+  const previewUrl = `${urlPrefix}${handle || savedHandle}`;
 
   return (
     <div className="cd-screen" data-screen-label="Product editor">
@@ -338,102 +357,108 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
             <p className="cd-caption" style={{ marginBottom: 10 }}>
               How this product shows up in search results, and its address on your store.
             </p>
-            {(() => {
-              const urlPrefix = seoListing?.urlPrefix ?? "/storefront/products/";
-              const previewTitle = metaTitle.trim() || seoListing?.defaultTitle || title;
-              const previewDescription = metaDescription.trim() || seoListing?.defaultDescription || "";
-              const previewUrl = `${urlPrefix}${handle.trim().toLowerCase() || savedHandle}`;
-              return (
-                <div className="flex flex-col gap-3">
-                  <label className="cd-field">
-                    <span>Page address</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span
-                        className="cd-caption"
-                        title={urlPrefix}
-                        style={{ flex: "0 1 auto", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                      >
-                        {urlPrefix}
-                      </span>
-                      <input
-                        className="cd-input"
-                        maxLength={80}
-                        value={handle}
-                        aria-label="Page address"
-                        onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))}
-                        style={{ flex: "1 1 0", minWidth: 120 }}
-                      />
-                    </div>
-                    <span className="cd-caption">Changing the address redirects the old link to the new one.</span>
-                  </label>
-                  <label className="cd-field">
-                    <span>Search title</span>
-                    <input
-                      className="cd-input"
-                      maxLength={70}
-                      value={metaTitle}
-                      placeholder={seoListing?.defaultTitle ?? ""}
-                      onChange={(e) => setMetaTitle(e.target.value)}
-                    />
-                    <CharCounter length={metaTitle.length} max={SEO_TITLE_SOFT_MAX} />
-                  </label>
-                  <label className="cd-field">
-                    <span>Search description</span>
-                    <textarea
-                      className="cd-input"
-                      rows={2}
-                      maxLength={200}
-                      value={metaDescription}
-                      placeholder={seoListing?.defaultDescription ?? ""}
-                      onChange={(e) => setMetaDescription(e.target.value)}
-                    />
-                    <CharCounter length={metaDescription.length} max={SEO_DESCRIPTION_SOFT_MAX} />
-                  </label>
-                  <div className="cd-field">
-                    <span>Preview</span>
-                    <div
-                      style={{
-                        border: "1px solid var(--hairline)",
-                        borderRadius: 10,
-                        padding: "10px 14px",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 3,
-                        minWidth: 0,
-                      }}
-                    >
-                      <span
-                        style={{
-                          color: "var(--accent)",
-                          fontWeight: 550,
-                          fontSize: "calc(14px * var(--type-scale))",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {previewTitle}
-                      </span>
-                      <span
-                        style={{
-                          color: "var(--green)",
-                          fontSize: "calc(11.5px * var(--type-scale))",
-                          overflowWrap: "anywhere",
-                        }}
-                      >
-                        {previewUrl}
-                      </span>
-                      <span
-                        className="cd-caption"
-                        style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
-                      >
-                        {previewDescription}
-                      </span>
-                    </div>
-                  </div>
+            {seoUnavailable && (
+              <p className="cd-caption" role="status" style={{ marginBottom: 10 }}>
+                Search settings couldn't be loaded right now, so they can't be edited. Your saved
+                settings are unchanged — reload to try again.
+              </p>
+            )}
+            <div className="flex flex-col gap-3">
+              <label className="cd-field">
+                <span>Page address</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span
+                    className="cd-caption"
+                    title={urlPrefix}
+                    style={{ flex: "0 1 auto", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                  >
+                    {urlPrefix}
+                  </span>
+                  <input
+                    className="cd-input"
+                    maxLength={PRODUCT_HANDLE_MAX}
+                    value={handle}
+                    aria-label="Page address"
+                    onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))}
+                    style={{ flex: "1 1 0", minWidth: 120 }}
+                  />
                 </div>
-              );
-            })()}
+                <span className="cd-caption">Changing the address redirects the old link to the new one.</span>
+              </label>
+              <label className="cd-field">
+                <span>Search title</span>
+                <div className="cd-seo__inputwrap" style={{ width: "100%" }}>
+                  <input
+                    className="cd-input"
+                    maxLength={SEO_TITLE_MAX}
+                    value={metaTitle}
+                    placeholder={seoListing?.defaultTitle ?? ""}
+                    disabled={seoUnavailable}
+                    onChange={(e) => setMetaTitle(e.target.value)}
+                    style={{ flex: "1 1 0", paddingRight: 58 }}
+                  />
+                  <CharCounter length={metaTitle.length} max={SEO_TITLE_SOFT_MAX} />
+                </div>
+              </label>
+              <label className="cd-field">
+                <span>Search description</span>
+                <div className="cd-seo__inputwrap" style={{ width: "100%" }}>
+                  <textarea
+                    className="cd-input"
+                    rows={2}
+                    maxLength={SEO_DESCRIPTION_MAX}
+                    value={metaDescription}
+                    placeholder={seoListing?.defaultDescription ?? ""}
+                    disabled={seoUnavailable}
+                    onChange={(e) => setMetaDescription(e.target.value)}
+                    style={{ flex: "1 1 0", paddingRight: 58 }}
+                  />
+                  <CharCounter length={metaDescription.length} max={SEO_DESCRIPTION_SOFT_MAX} />
+                </div>
+              </label>
+              <div className="cd-field">
+                <span>Preview</span>
+                <div
+                  style={{
+                    border: "1px solid var(--hairline)",
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 3,
+                    minWidth: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      color: "var(--accent)",
+                      fontWeight: 550,
+                      fontSize: "calc(14px * var(--type-scale))",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {previewTitle}
+                  </span>
+                  <span
+                    style={{
+                      color: "var(--green)",
+                      fontSize: "calc(11.5px * var(--type-scale))",
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {previewUrl}
+                  </span>
+                  <span
+                    className="cd-caption"
+                    style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
+                  >
+                    {previewDescription}
+                  </span>
+                </div>
+              </div>
+            </div>
           </Card>
 
           <Card>
