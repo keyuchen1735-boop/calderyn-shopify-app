@@ -43,4 +43,33 @@ describe("isValidViewFilters", () => {
     expect(isValidViewFilters({ offset: 5 })).toBeNull();
     expect(isValidViewFilters({ search: 5 })).toBeNull();
   });
+
+  it("rejects a string exceeding 200 characters", () => {
+    const oversized = "a".repeat(201);
+    expect(isValidViewFilters({ search: oversized })).toBeNull();
+  });
+
+  it("accepts a string exactly 200 characters", () => {
+    const maxSize = "a".repeat(200);
+    expect(isValidViewFilters({ search: maxSize })).toEqual({ search: maxSize });
+  });
+
+  it("rejects an array with more than 10 items", () => {
+    const oversized = Array(11).fill("tag");
+    expect(isValidViewFilters({ tag: oversized })).toBeNull();
+  });
+
+  it("accepts an array with exactly 10 items, each under 60 characters", () => {
+    const maxSize = Array(10).fill("a".repeat(60));
+    expect(isValidViewFilters({ tag: maxSize })).toEqual({ tag: maxSize });
+  });
+
+  it("rejects an array item exceeding 60 characters", () => {
+    expect(isValidViewFilters({ tag: ["ok", "a".repeat(61)] })).toBeNull();
+  });
+
+  it("accepts an array with 10 short strings", () => {
+    const items = Array(10).fill("short");
+    expect(isValidViewFilters({ tag: items })).toEqual({ tag: items });
+  });
 });

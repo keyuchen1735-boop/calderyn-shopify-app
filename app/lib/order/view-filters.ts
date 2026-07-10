@@ -22,8 +22,13 @@ export const VIEW_FILTER_KEYS = [
 const KEY_SET = new Set<string>(VIEW_FILTER_KEYS);
 
 function isAcceptedValue(value: unknown): boolean {
-  if (typeof value === "string" || typeof value === "boolean") return true;
-  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+  if (typeof value === "boolean") return true;
+  if (typeof value === "string") return value.length <= 200;
+  if (Array.isArray(value)) {
+    if (value.length > 10) return false;
+    return value.every((entry) => typeof entry === "string" && entry.length <= 60);
+  }
+  return false;
 }
 
 /**

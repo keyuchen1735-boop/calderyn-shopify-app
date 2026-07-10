@@ -59,6 +59,12 @@ export async function listOrderViews(
  * Create a saved view. Enforces MAX_ORDER_VIEWS (checked here, not in SQL) and surfaces the
  * (shop_id, name) unique-constraint violation (Postgres 23505) as ViewNameTakenError instead of
  * an opaque 500 — the same 23505-to-typed-error convention as tenant.server.ts / catalog.server.ts.
+ *
+ * NOTE: The MAX_ORDER_VIEWS check is a SOFT cap. Concurrent creates at or near the limit can
+ * briefly exceed it by one or two due to the non-atomic check-then-insert pattern. This is
+ * cosmetic (views are UI display shortcuts) and acceptable; the hard guarantee is the unique
+ * (shop_id, name) constraint in the database. Folding the count check into DB-side triggers is
+ * deliberately deferred.
  */
 export async function createOrderView(
   shopId: string,
