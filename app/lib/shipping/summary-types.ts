@@ -4,6 +4,7 @@
 /** Merchant ship-from address (shop_origin), or null when never configured. */
 export interface ShipOriginDto {
   street1: string;
+  street2: string;
   city: string;
   state: string;
   zip: string;
@@ -46,10 +47,35 @@ export interface Quotes30dSummary {
   avgPromise: string | null;
 }
 
+/** Merchant rate rules (ship_rules), engine-neutral units: cents + whole days. */
+export interface ShipRulesDtoView {
+  markupPct: number;
+  handlingCents: number;
+  freeShipThresholdCents: number | null;
+  handlingDays: number;
+}
+
+/** One merchant flat rate row (ship_flat_rate), browser-safe. */
+export interface FlatRateRowView {
+  id: string;
+  label: string;
+  zone: "domestic" | "international" | "all";
+  maxWeightOz: number | null;
+  amountCents: number;
+  estTransitDays: number | null;
+  position: number;
+}
+
+/** Which rate source prices checkout right now. */
+export type RateSourceKindView = "carrier" | "flat" | "default";
+
 export interface ShippingSummary {
   origin: ShipOriginDto | null;
   carrierService: CarrierServiceDto | null;
   coverage: ShipCoverage;
   rateCard: RateCardRow[];
   quotes30d: Quotes30dSummary;
+  rules: ShipRulesDtoView;
+  flatRates: FlatRateRowView[];
+  rateSourceKind: RateSourceKindView;
 }

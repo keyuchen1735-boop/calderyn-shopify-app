@@ -4,12 +4,15 @@
 // threaded by shop_id, shaped into DTOs — Supabase rows never leak to the client.
 import { getSupabase } from "~/lib/supabase.server";
 import { buildFallbackOptions } from "~/lib/ship-cost/adapters/easypost-rate.server";
-import type { Address, RateRequest } from "~/lib/ship-cost/adapters/rate-quote";
+import type { Address, NormalizedRateOption, RateRequest } from "~/lib/ship-cost/adapters/rate-quote";
 import { DEFAULT_HANDLING_DAYS } from "./delivery-window";
+import { loadShipRules, type ShipRulesDto } from "./rules.server";
+import { buildFlatRateOptions, loadFlatRates, type FlatRateRow } from "./flat-rate.server";
 import type {
   CarrierServiceDto,
   Quotes30dSummary,
   RateCardRow,
+  RateSourceKindView,
   ShipCoverage,
   ShipOriginDto,
   ShippingSummary,
@@ -90,13 +93,14 @@ export function buildRateCard(originCountry: string): RateCardRow[] {
 async function loadOrigin(shopId: string): Promise<ShipOriginDto | null> {
   const { data, error } = await getSupabase()
     .from("shop_origin")
-    .select("street1, city, state, zip, country, source")
+    .select("street1, street2, city, state, zip, country, source")
     .eq("shop_id", shopId)
     .maybeSingle();
   if (error) throw new Error(`shop_origin read failed: ${error.message}`);
   if (!data) return null;
   return {
     street1: String(data.street1 ?? ""),
+    street2: String(data.street2 ?? ""),
     city: String(data.city ?? ""),
     state: String(data.state ?? ""),
     zip: String(data.zip ?? ""),
@@ -222,18 +226,92 @@ async function loadQuotes30d(shopId: string): Promise<Quotes30dSummary> {
   return { count: total, avgShippingCents, fallbackSharePct, lowConfidenceSharePct, avgPromise };
 }
 
+/** Whether a live carrier credential is stored (existence only — never decrypts). */
+async function carrierConnected(shopId: string): Promise<boolean> {
+  const { count, error } = await getSupabase()
+    .from("integration_credentials")
+    .select("shop_id", { count: "exact", head: true })
+    .eq("shop_id", shopId)
+    .eq("kind", "easypost_ship");
+  if (error) throw new Error(`integration_credentials read failed: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
+function optionToCardRow(o: NormalizedRateOption, handlingDays: number): RateCardRow {
+  return {
+    service: o.serviceName,
+    carrier: o.carrier,
+    amountCents: o.amountCents,
+    estDays:
+      o.estTransitDays != null
+        ? `${o.estTransitDays}–${o.estTransitDays + handlingDays} days`
+        : "—",
+  };
+}
+
+/** The merchant's flat rates for the sample parcel, shaped like the fallback card. */
+export function buildFlatRateCard(
+  rows: FlatRateRow[],
+  originCountry: string,
+  handlingDays: number,
+): RateCardRow[] {
+  const req: RateRequest = {
+    origin: placeholderAddress(originCountry),
+    destination: placeholderAddress(originCountry),
+    parcels: [
+      { lengthIn: 0, widthIn: 0, heightIn: 0, weightOz: RATE_CARD_SAMPLE_WEIGHT_GRAMS * G_TO_OZ },
+    ],
+  };
+  return buildFlatRateOptions(rows, req).map((o) => optionToCardRow(o, handlingDays));
+}
+
 export async function loadShippingSummary(shopId: string): Promise<ShippingSummary> {
-  const [origin, carrierService, coverage, quotes30d] = await Promise.all([
-    loadOrigin(shopId),
-    loadCarrierService(shopId),
-    loadCoverage(shopId),
-    loadQuotes30d(shopId),
-  ]);
+  const [origin, carrierService, coverage, quotes30d, rules, flatRates, hasCarrier] =
+    await Promise.all([
+      loadOrigin(shopId),
+      loadCarrierService(shopId),
+      loadCoverage(shopId),
+      loadQuotes30d(shopId),
+      loadShipRules(shopId),
+      loadFlatRates(shopId),
+      carrierConnected(shopId),
+    ]);
+  const rateSourceKind: RateSourceKindView = hasCarrier
+    ? "carrier"
+    : flatRates.length > 0
+      ? "flat"
+      : "default";
+  const originCountry = origin?.country ?? "US";
   return {
     origin,
     carrierService,
     coverage,
-    rateCard: buildRateCard(origin?.country ?? "US"),
+    // The card mirrors the ACTIVE source: a carrier shop still shows the fallback
+    // table (its live rates vary per quote); a flat-rate shop shows its own rates.
+    rateCard:
+      rateSourceKind === "flat"
+        ? buildFlatRateCard(flatRates, originCountry, rules.handlingDays)
+        : buildRateCard(originCountry),
     quotes30d,
+    rules: toRulesView(rules),
+    flatRates: flatRates.map((r) => ({
+      id: r.id,
+      label: r.label,
+      zone: r.zone,
+      maxWeightOz: r.maxWeightOz,
+      amountCents: r.amountCents,
+      estTransitDays: r.estTransitDays,
+      position: r.position,
+    })),
+    rateSourceKind,
+  };
+}
+
+function toRulesView(rules: ShipRulesDto): ShippingSummary["rules"] {
+  return {
+    markupPct: rules.markupPct,
+    handlingCents: rules.handlingCents,
+    freeShipThresholdCents: rules.freeShipThresholdCents,
+    handlingDays: rules.handlingDays,
   };
 }
