@@ -2,7 +2,13 @@ import { useState } from "react";
 import { Btn } from "../ui";
 import { CDIcon } from "../icons";
 import type { OrderViewVM, OrdersListParams } from "~/lib/dashboard/orders-client";
-import { SYSTEM_VIEWS, type ListFilterPatch } from "./orders-list-state";
+import {
+  SYSTEM_VIEWS,
+  localDayEndIso,
+  localDayStartIso,
+  pinnedDimension,
+  type ListFilterPatch,
+} from "./orders-list-state";
 
 const SORT_OPTIONS: { value: NonNullable<OrdersListParams["sort"]>; label: string }[] = [
   { value: "date", label: "Date" },
@@ -34,13 +40,6 @@ const SOURCE_OPTIONS: { value: NonNullable<OrdersListParams["source"]> | ""; lab
   { value: "calderyn", label: "Calderyn" },
   { value: "shopify", label: "Shopify" },
 ];
-
-/** `dateTo` end-of-day ISO for a same-day range to actually match: an <input type="date"> only
- *  ever gives a bare "YYYY-MM-DD", which as a start-of-day ISO would exclude every order placed
- *  later that same day. Stamping 23:59:59.999Z makes "from today to today" cover the whole day. */
-function dateToEndOfDayIso(raw: string): string | undefined {
-  return raw ? `${raw}T23:59:59.999Z` : undefined;
-}
 
 /** ISO datetime -> the bare "YYYY-MM-DD" an <input type="date"> can display. */
 function isoToDateInputValue(iso: string | undefined): string {
@@ -94,6 +93,12 @@ export default function OrdersToolbar({
   const [savingName, setSavingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
 
+  // A system tab that pins a filter dimension (Unfulfilled -> fulfillmentStatus, Unpaid ->
+  // paymentStatus) already wins that dimension in stateToParams regardless of what's picked here —
+  // so the matching select is disabled and forced to show the tab's own value, rather than letting
+  // the merchant pick a value the query silently ignores.
+  const pinned = pinnedDimension(view);
+
   const confirmSave = () => {
     const name = nameInput.trim();
     if (!name) return;
@@ -142,21 +147,32 @@ export default function OrdersToolbar({
         <select
           className="cd-input"
           aria-label="Payment status"
-          value={paymentStatus?.[0] ?? ""}
+          disabled={pinned === "paymentStatus"}
+          title={pinned === "paymentStatus" ? "Set by the current view tab" : undefined}
+          value={pinned === "paymentStatus" ? "unpaid" : (paymentStatus?.[0] ?? "")}
           onChange={(e) => onFilterChange({ paymentStatus: e.target.value ? [e.target.value] : undefined })}
           style={{ width: "auto" }}
         >
-          {PAYMENT_STATUS_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
+          {pinned === "paymentStatus" ? (
+            <option value="unpaid">Unpaid statuses</option>
+          ) : (
+            PAYMENT_STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))
+          )}
         </select>
         <select
           className="cd-input"
           aria-label="Fulfillment status"
-          title="Shopify-imported orders are excluded when this filter is set"
-          value={fulfillmentStatus ?? ""}
+          disabled={pinned === "fulfillmentStatus"}
+          title={
+            pinned === "fulfillmentStatus"
+              ? "Set by the current view tab"
+              : "Shopify-imported orders are excluded when this filter is set"
+          }
+          value={pinned === "fulfillmentStatus" ? "unfulfilled" : (fulfillmentStatus ?? "")}
           onChange={(e) =>
             onFilterChange({
               fulfillmentStatus: (e.target.value || undefined) as OrdersListParams["fulfillmentStatus"],
@@ -191,7 +207,7 @@ export default function OrdersToolbar({
             type="date"
             aria-label="Date from"
             value={isoToDateInputValue(dateFrom)}
-            onChange={(e) => onFilterChange({ dateFrom: e.target.value || undefined })}
+            onChange={(e) => onFilterChange({ dateFrom: e.target.value ? localDayStartIso(e.target.value) : undefined })}
             style={{ width: "auto" }}
           />
           <span className="cd-caption">to</span>
@@ -200,7 +216,7 @@ export default function OrdersToolbar({
             type="date"
             aria-label="Date to"
             value={isoToDateInputValue(dateTo)}
-            onChange={(e) => onFilterChange({ dateTo: dateToEndOfDayIso(e.target.value) })}
+            onChange={(e) => onFilterChange({ dateTo: e.target.value ? localDayEndIso(e.target.value) : undefined })}
             style={{ width: "auto" }}
           />
         </div>

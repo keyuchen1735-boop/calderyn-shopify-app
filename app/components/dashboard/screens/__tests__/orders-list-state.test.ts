@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   isSystemView,
+  localDayEndIso,
+  localDayStartIso,
   paramsToViewFilters,
+  pinnedDimension,
   resolveViewFilters,
   stateToParams,
   systemViewParams,
@@ -134,6 +137,36 @@ describe("resolveViewFilters", () => {
 
   it("resolves an unknown saved-view id to no extra filters", () => {
     expect(resolveViewFilters("stale-id", [])).toEqual({});
+  });
+});
+
+describe("localDayStartIso / localDayEndIso", () => {
+  it("orders the start of a day before its end, regardless of the runner's timezone", () => {
+    const start = new Date(localDayStartIso("2026-03-15")).getTime();
+    const end = new Date(localDayEndIso("2026-03-15")).getTime();
+    expect(start).toBeLessThan(end);
+  });
+
+  it("spans exactly one day minus a millisecond", () => {
+    const start = new Date(localDayStartIso("2026-03-15")).getTime();
+    const end = new Date(localDayEndIso("2026-03-15")).getTime();
+    expect(end - start).toBe(24 * 60 * 60 * 1000 - 1);
+  });
+});
+
+describe("pinnedDimension", () => {
+  it("pins fulfillmentStatus for the unfulfilled tab", () => {
+    expect(pinnedDimension("unfulfilled")).toBe("fulfillmentStatus");
+  });
+
+  it("pins paymentStatus for the unpaid tab", () => {
+    expect(pinnedDimension("unpaid")).toBe("paymentStatus");
+  });
+
+  it("pins nothing for all/archived/a saved view", () => {
+    expect(pinnedDimension("all")).toBeNull();
+    expect(pinnedDimension("archived")).toBeNull();
+    expect(pinnedDimension("3f9c9b1e-1234-4a1a-8b1b-000000000000")).toBeNull();
   });
 });
 

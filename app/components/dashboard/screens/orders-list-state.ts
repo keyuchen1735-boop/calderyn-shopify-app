@@ -32,6 +32,24 @@ export type ListFilterPatch = Partial<
   Pick<ListState, "paymentStatus" | "fulfillmentStatus" | "source" | "dateFrom" | "dateTo">
 >;
 
+/** Bare "YYYY-MM-DD" (an <input type="date">'s only possible value) -> local midnight ISO, i.e.
+ *  the start of that calendar day in the browser's own timezone. Constructing with
+ *  `new Date(y, m - 1, d)` (the local-time constructor) rather than `new Date(raw)` (which parses
+ *  a bare date as UTC midnight) is what anchors day boundaries to the merchant's browser timezone
+ *  instead of UTC — the previous UTC anchoring cut "today" off hours early for merchants west of
+ *  UTC. */
+export function localDayStartIso(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y, m - 1, d).toISOString();
+}
+
+/** Bare "YYYY-MM-DD" -> local end-of-day ISO (23:59:59.999 in the browser's own timezone), so a
+ *  "from today to today" range covers the whole local day rather than ending at UTC midnight. */
+export function localDayEndIso(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(y, m - 1, d, 23, 59, 59, 999).toISOString();
+}
+
 export const SYSTEM_VIEWS: { id: SystemView; label: string }[] = [
   { id: "all", label: "All" },
   { id: "unfulfilled", label: "Unfulfilled" },
@@ -51,6 +69,16 @@ export function systemViewParams(view: SystemView): Partial<OrdersListParams> {
   if (view === "unpaid") return { paymentStatus: ["pending", "authorized", "partially_paid"] };
   if (view === "archived") return { archived: true };
   return {};
+}
+
+/** Which toolbar filter control (if any) a system tab pins to a fixed value. stateToParams already
+ *  lets that tab's own fixed filter win over a manual control on the same dimension — so without
+ *  this, the control still looks editable while having zero effect on the query. The toolbar uses
+ *  this to disable and force the value of that one control; "archived" has no matching select. */
+export function pinnedDimension(view: string): "fulfillmentStatus" | "paymentStatus" | null {
+  if (view === "unfulfilled") return "fulfillmentStatus";
+  if (view === "unpaid") return "paymentStatus";
+  return null;
 }
 
 /**
