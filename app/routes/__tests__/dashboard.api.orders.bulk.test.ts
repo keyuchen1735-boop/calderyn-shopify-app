@@ -39,10 +39,11 @@ const store = vi.hoisted(() => {
   const db: Record<string, Row[]> = { orders: [], order_tag: [] };
 
   class Builder {
-    private op: "select" | "insert" | "update" = "select";
+    private op: "select" | "insert" | "update" | "upsert" = "select";
     private payload: Row | Row[] = {};
     private vals: Row = {};
     private filters: Array<[string, unknown]> = [];
+    private upsertOpts?: { onConflict?: string; ignoreDuplicates?: boolean };
     private readonly table: string;
     constructor(table: string) {
       this.table = table;
@@ -55,6 +56,12 @@ const store = vi.hoisted(() => {
     update(vals: Row) {
       this.op = "update";
       this.vals = vals;
+      return this;
+    }
+    upsert(payload: Row | Row[], opts?: { onConflict?: string; ignoreDuplicates?: boolean }) {
+      this.op = "upsert";
+      this.payload = payload;
+      this.upsertOpts = opts;
       return this;
     }
     select(_cols?: string) {
@@ -81,6 +88,24 @@ const store = vi.hoisted(() => {
         const matched = t.filter((r) => this.matches(r));
         for (const r of matched) Object.assign(r, this.vals);
         return { data: matched, error: null };
+      }
+      if (this.op === "upsert") {
+        const toUpsert = Array.isArray(this.payload) ? this.payload : [this.payload];
+        const inserted: Row[] = [];
+        for (const row of toUpsert) {
+          // For ignoreDuplicates, only insert if the row doesn't already exist (check PK).
+          if (this.upsertOpts?.ignoreDuplicates) {
+            const exists = t.some((r) => r.shop_id === row.shop_id && r.order_id === row.order_id && r.tag === row.tag);
+            if (!exists) {
+              t.push(row);
+              inserted.push(row);
+            }
+          } else {
+            t.push(row);
+            inserted.push(row);
+          }
+        }
+        return { data: inserted, error: null };
       }
       return { data: t.filter((r) => this.matches(r)), error: null };
     }
