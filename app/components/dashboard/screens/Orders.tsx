@@ -615,6 +615,8 @@ export default function Orders({ app }: { app: DashboardCtx }) {
         toast("This checkout has no customer email on file.", "warn");
       } else if (result.reason === "not_recoverable") {
         toast("This checkout can't be recovered anymore.", "warn");
+      } else if (result.reason === "already_sent") {
+        toast("A recovery email was already sent.", "warn");
       } else {
         toast("Couldn't send the recovery email.", "warn", "critical");
       }

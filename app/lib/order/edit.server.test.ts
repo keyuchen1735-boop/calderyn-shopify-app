@@ -170,6 +170,8 @@ vi.mock("./detail.server", () => ({ loadDefaultShippingAddress: h.loadDefaultShi
 import { executeReduceLineAction, executeEditInvoiceLines } from "./edit.server";
 // eslint-disable-next-line import/first -- same as above; dependency-free, not mocked
 import { ShipRestrictedError } from "~/lib/shipping/errors";
+// eslint-disable-next-line import/first -- shared fixture for sync with reduce-line-preview.test
+import { REDUCTION_TAX_FIXTURE } from "./__tests__/reduction-tax-fixture";
 
 function seedOrder(shopId: string, id: string, state: string, extra: Record<string, unknown> = {}) {
   store.db.orders.push({ id, shop_id: shopId, state, ...extra });
@@ -507,16 +509,20 @@ describe("executeReduceLineAction — concurrent-reduction race", () => {
 });
 
 describe("executeReduceLineAction — proportional tax on reductions", () => {
-  it("prorates the order's captured tax by this reduction's share of subtotal (10000/800, reduce 2500 subtotal -> 200 tax, refund 2700)", async () => {
-    seedOrder("shop-1", "order-1", "paid", { subtotal_cents: 10000, tax_cents: 800 });
-    seedLine("shop-1", "order-1", "line-1", "v-1", 5, 1250); // delta of 2 units * 1250 = 2500 subtotal
+  it("prorates the order's captured tax by this reduction's share of subtotal (shared fixture)", async () => {
+    seedOrder("shop-1", "order-1", "paid", {
+      subtotal_cents: REDUCTION_TAX_FIXTURE.subtotalCents,
+      tax_cents: REDUCTION_TAX_FIXTURE.taxCents
+    });
+    // Unit price: deltaSubtotal / deltaQuantity = 2500 / 2 = 1250
+    seedLine("shop-1", "order-1", "line-1", "v-1", 5, REDUCTION_TAX_FIXTURE.deltaSubtotal / 2);
     h.executeRefundAction.mockResolvedValue({
       auditId: "refund-audit-1",
       outcome: "succeeded",
       refundId: "re_1",
-      amountCents: 2700,
+      amountCents: REDUCTION_TAX_FIXTURE.expectedRefund,
       capturedCents: 10800,
-      refundedTotalCents: 2700,
+      refundedTotalCents: REDUCTION_TAX_FIXTURE.expectedRefund,
       orderState: "partially_refunded",
       restockedLines: 0,
       restockError: null,
@@ -531,13 +537,21 @@ describe("executeReduceLineAction — proportional tax on reductions", () => {
       idempotencyKey: "ktax1",
     });
 
-    expect(store.db.order_line_edit[0]).toMatchObject({ old_quantity: 5, new_quantity: 3, refund_cents: 2700 });
+    expect(store.db.order_line_edit[0]).toMatchObject({
+      old_quantity: 5,
+      new_quantity: 3,
+      refund_cents: REDUCTION_TAX_FIXTURE.expectedRefund
+    });
     expect(h.executeRefundAction).toHaveBeenCalledWith(
       "shop-1",
-      expect.objectContaining({ orderId: "order-1", amountCents: 2700, idempotencyKey: "ktax1:refund" }),
+      expect.objectContaining({
+        orderId: "order-1",
+        amountCents: REDUCTION_TAX_FIXTURE.expectedRefund,
+        idempotencyKey: "ktax1:refund"
+      }),
       store.client,
     );
-    expect(res.refundedCents).toBe(2700);
+    expect(res.refundedCents).toBe(REDUCTION_TAX_FIXTURE.expectedRefund);
   });
 
   it("a zero-tax order refunds the bare unit-price delta only (unchanged behavior)", async () => {

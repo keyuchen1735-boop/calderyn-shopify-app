@@ -1,17 +1,23 @@
 import { describe, expect, it } from "vitest";
 import { reduceLineRefundPreview } from "../reduce-line-preview";
+import { REDUCTION_TAX_FIXTURE } from "~/lib/order/__tests__/reduction-tax-fixture";
 
 describe("reduceLineRefundPreview", () => {
-  it("prorates the order's tax by this reduction's share of subtotal (mirrors edit.server.ts's fixture: 10000/800, reduce 2500 subtotal -> 200 tax, refund 2700)", () => {
+  it("prorates the order's tax by this reduction's share of subtotal (shared fixture)", () => {
     expect(
       reduceLineRefundPreview({
-        unitPriceCents: 1250,
+        unitPriceCents: REDUCTION_TAX_FIXTURE.deltaSubtotal / 2, // 1250
         currentQuantity: 5,
         newQuantity: 3,
-        orderSubtotalCents: 10000,
-        orderTaxCents: 800,
+        orderSubtotalCents: REDUCTION_TAX_FIXTURE.subtotalCents,
+        orderTaxCents: REDUCTION_TAX_FIXTURE.taxCents,
       }),
-    ).toEqual({ deltaQuantity: 2, deltaSubtotalCents: 2500, taxShareCents: 200, refundCents: 2700 });
+    ).toEqual({
+      deltaQuantity: 2,
+      deltaSubtotalCents: REDUCTION_TAX_FIXTURE.deltaSubtotal,
+      taxShareCents: REDUCTION_TAX_FIXTURE.expectedTaxShare,
+      refundCents: REDUCTION_TAX_FIXTURE.expectedRefund
+    });
   });
 
   it("floors the tax share rather than rounding", () => {
