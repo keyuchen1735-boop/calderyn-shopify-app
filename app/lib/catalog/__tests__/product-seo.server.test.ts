@@ -1,8 +1,9 @@
 // Search-listing plumbing: applySeoOverrideInput must delete the seo_page row
 // when both fields are empty (draft wins again) and upsert otherwise;
 // seoListingFor must layer the stored override next to the deterministic
-// defaults, prefer the tenant origin for the URL prefix, and degrade the
-// placeholders (never 500) when the settings read fails.
+// defaults, prefer the tenant origin for the URL prefix, and be FULLY
+// fail-soft: ANY failed read (override included) logs and returns null — the
+// editor renders the card as unavailable instead of the whole editor 500ing.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ProductDetail } from "../types";
 
@@ -20,9 +21,9 @@ vi.mock("~/lib/storefront/settings.server", () => ({
   getStoreSettings: (...a: unknown[]) => getStoreSettings(...a),
 }));
 
-const tenantStorefrontOrigin = vi.hoisted(() => vi.fn());
-vi.mock("~/lib/storefront/tenant-origin.server", () => ({
-  tenantStorefrontOrigin: (...a: unknown[]) => tenantStorefrontOrigin(...a),
+const getShopStorefrontOrigin = vi.hoisted(() => vi.fn());
+vi.mock("~/lib/storefront/shop.server", () => ({
+  getShopStorefrontOrigin: (...a: unknown[]) => getShopStorefrontOrigin(...a),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
@@ -51,7 +52,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   getSeoOverride.mockResolvedValue(null);
   getStoreSettings.mockResolvedValue(SETTINGS);
-  tenantStorefrontOrigin.mockResolvedValue("https://acme.calderyncompany.com");
+  getShopStorefrontOrigin.mockResolvedValue("https://acme.calderyncompany.com");
   upsertSeoOverride.mockResolvedValue(undefined);
   deleteSeoOverride.mockResolvedValue(undefined);
 });
@@ -81,43 +82,56 @@ describe("applySeoOverrideInput", () => {
 
 describe("seoListingFor", () => {
   it("returns deterministic defaults with the tenant-origin URL prefix and no override", async () => {
-    const out = await seoListingFor(req(), SHOP, PRODUCT);
-    expect(out.metaTitle).toBeNull();
-    expect(out.metaDescription).toBeNull();
-    expect(out.defaultTitle).toBe("Cozy Tee · Acme Goods");
-    expect(out.defaultDescription).toBe("Soft cotton tee.");
-    expect(out.urlPrefix).toBe("https://acme.calderyncompany.com/storefront/products/");
+    const out = await seoListingFor(req(), SHOP, PRODUCT.id, PRODUCT);
+    expect(out?.metaTitle).toBeNull();
+    expect(out?.metaDescription).toBeNull();
+    expect(out?.defaultTitle).toBe("Cozy Tee · Acme Goods");
+    expect(out?.defaultDescription).toBe("Soft cotton tee.");
+    expect(out?.urlPrefix).toBe("https://acme.calderyncompany.com/storefront/products/");
   });
 
   it("surfaces a stored override alongside the defaults", async () => {
     getSeoOverride.mockResolvedValue({
       entityType: "product", entityId: "p1", metaTitle: "Hand-set title", metaDescription: null,
     });
-    const out = await seoListingFor(req(), SHOP, PRODUCT);
-    expect(out.metaTitle).toBe("Hand-set title");
-    expect(out.metaDescription).toBeNull();
-    expect(out.defaultTitle).toBe("Cozy Tee · Acme Goods");
+    const out = await seoListingFor(req(), SHOP, PRODUCT.id, PRODUCT);
+    expect(out?.metaTitle).toBe("Hand-set title");
+    expect(out?.metaDescription).toBeNull();
+    expect(out?.defaultTitle).toBe("Cozy Tee · Acme Goods");
+  });
+
+  it("accepts the in-flight product promise (reads run concurrently with getProduct)", async () => {
+    const out = await seoListingFor(req(), SHOP, PRODUCT.id, Promise.resolve(PRODUCT));
+    expect(out?.defaultTitle).toBe("Cozy Tee · Acme Goods");
+    expect(getSeoOverride).toHaveBeenCalledWith(SHOP, "product", PRODUCT.id);
+  });
+
+  it("returns null when the product promise resolves to nothing (route 404s on its own)", async () => {
+    const out = await seoListingFor(req(), SHOP, PRODUCT.id, Promise.resolve(null));
+    expect(out).toBeNull();
   });
 
   it("falls back to the request origin when the shop has no tenant slug", async () => {
-    tenantStorefrontOrigin.mockResolvedValue(null);
-    const out = await seoListingFor(req(), SHOP, PRODUCT);
-    expect(out.urlPrefix).toBe("https://app.calderyncompany.com/storefront/products/");
+    getShopStorefrontOrigin.mockResolvedValue("");
+    const out = await seoListingFor(req(), SHOP, PRODUCT.id, PRODUCT);
+    expect(out?.urlPrefix).toBe("https://app.calderyncompany.com/storefront/products/");
   });
 
-  it("degrades placeholders (never throws) when the settings read fails", async () => {
+  it("returns null (never throws) when the settings read fails", async () => {
     getStoreSettings.mockRejectedValue(new Error("settings down"));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const out = await seoListingFor(req(), SHOP, PRODUCT);
-    expect(out.defaultTitle).toBe("Cozy Tee");
-    expect(out.defaultDescription).toBe("Soft cotton tee.");
-    expect(out.urlPrefix).toBe("https://app.calderyncompany.com/storefront/products/");
+    const out = await seoListingFor(req(), SHOP, PRODUCT.id, PRODUCT);
+    expect(out).toBeNull();
     expect(errSpy).toHaveBeenCalled();
     errSpy.mockRestore();
   });
 
-  it("propagates an override-read failure (load-bearing for the save round-trip)", async () => {
+  it("returns null (never throws) when the override read fails — the editor must not save blind", async () => {
     getSeoOverride.mockRejectedValue(new Error("seo_page read failed"));
-    await expect(seoListingFor(req(), SHOP, PRODUCT)).rejects.toThrow("seo_page read failed");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = await seoListingFor(req(), SHOP, PRODUCT.id, PRODUCT);
+    expect(out).toBeNull();
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 });

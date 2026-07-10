@@ -44,6 +44,24 @@ describe("validateProductInput seo", () => {
     }
   });
 
+  it("clamps by code point — an emoji straddling the cut survives whole, never a lone surrogate", () => {
+    // 69 chars + two emoji = 71 code points; the clamp keeps 70 (the first
+    // emoji intact). A UTF-16 .slice(0, 70) would have cut the first emoji's
+    // surrogate pair in half.
+    const r = run({ metaTitle: "x".repeat(69) + "😀😀", metaDescription: "d".repeat(199) + "🎉🎉" });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.seo?.metaTitle).toBe("x".repeat(69) + "😀");
+      expect(r.value.seo?.metaDescription).toBe("d".repeat(199) + "🎉");
+    }
+  });
+
+  it("leaves an emoji-only value within the limit untouched", () => {
+    const r = run({ metaTitle: "😀".repeat(70), metaDescription: "" });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.seo?.metaTitle).toBe("😀".repeat(70));
+  });
+
   it("rejects a non-object seo block with invalid_seo", () => {
     expect(run("meta")).toEqual({ ok: false, code: "invalid_seo" });
     expect(run(["a"])).toEqual({ ok: false, code: "invalid_seo" });

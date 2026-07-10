@@ -1,4 +1,6 @@
 // app/lib/catalog/validate.ts
+import { PRODUCT_HANDLE_RE, PRODUCT_HANDLE_MAX } from "./handle";
+import { SEO_TITLE_MAX, SEO_DESCRIPTION_MAX } from "./types";
 import type { ProductInput, ProductStatus } from "./types";
 
 const STATUSES: ProductStatus[] = ["draft", "active", "archived"];
@@ -11,14 +13,13 @@ const MAX_VARIANTS = 250;
 // retail_price_cents / unit_cost_cents / inventory_on_hand are Postgres int4;
 // values past this ceiling overflow the column and surface as an opaque 500.
 const INT4_MAX = 2147483647;
-// URL handle: lowercase slug segments joined by single hyphens (no leading/
-// trailing/double hyphen), max 80 chars. Matches what productHandle generates.
-const HANDLE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const HANDLE_MAX = 80;
-// Hard caps on the stored search-listing override — the editor soft-limits at
-// 60/160 (advisory SERP lengths) but the server accepts a little slack.
-const SEO_TITLE_MAX = 70;
-const SEO_DESCRIPTION_MAX = 200;
+// Clamp to a maximum number of Unicode code points. A plain .slice() counts
+// UTF-16 units and can cut a surrogate pair in half (an emoji at the boundary
+// becomes a lone surrogate, rendered as U+FFFD in the PDP title).
+function clampCodePoints(s: string, max: number): string {
+  const points = Array.from(s);
+  return points.length <= max ? s : points.slice(0, max).join("");
+}
 
 export function validateProductInput(
   raw: unknown,
@@ -36,7 +37,7 @@ export function validateProductInput(
   if (r.handle !== undefined && r.handle !== null) {
     if (typeof r.handle !== "string") return { ok: false, code: "invalid_handle" };
     handle = r.handle.trim().toLowerCase();
-    if (handle.length > HANDLE_MAX || !HANDLE_RE.test(handle)) {
+    if (handle.length > PRODUCT_HANDLE_MAX || !PRODUCT_HANDLE_RE.test(handle)) {
       return { ok: false, code: "invalid_handle" };
     }
   }
@@ -53,9 +54,11 @@ export function validateProductInput(
         return { ok: false, code: "invalid_seo" };
       }
     }
+    // Hard caps behind the editor's 60/160 soft limits; the server accepts a
+    // little slack. Clamped by code point so an emoji at the boundary survives.
     seo = {
-      metaTitle: (typeof s.metaTitle === "string" ? s.metaTitle : "").trim().slice(0, SEO_TITLE_MAX),
-      metaDescription: (typeof s.metaDescription === "string" ? s.metaDescription : "").trim().slice(0, SEO_DESCRIPTION_MAX),
+      metaTitle: clampCodePoints((typeof s.metaTitle === "string" ? s.metaTitle : "").trim(), SEO_TITLE_MAX),
+      metaDescription: clampCodePoints((typeof s.metaDescription === "string" ? s.metaDescription : "").trim(), SEO_DESCRIPTION_MAX),
     };
   }
 

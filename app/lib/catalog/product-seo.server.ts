@@ -1,52 +1,44 @@
 // Search-listing plumbing for the product editor: read the stored seo_page
 // override next to the deterministic defaults the storefront would serve
-// without one, and persist the editor's override input. Shared by the
-// dashboard.api.catalog.products routes (kept out of the route modules so no
-// server-importing helper is exported from a route).
+// without one, and persist the editor's override input (the catalog layer's
+// createProduct/updateProduct call applySeoOverrideInput when input.seo is
+// present, so every caller — routes, assistant actions — persists it).
 import { getSeoOverride, upsertSeoOverride, deleteSeoOverride } from "~/lib/seo/seo-store.server";
-import { buildProductDraft, plainText, clampText } from "~/lib/seo/writer.server";
+import { buildProductDraft } from "~/lib/seo/writer.server";
 import { storefrontOrigin } from "~/lib/seo/origin.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
-import { tenantStorefrontOrigin } from "~/lib/storefront/tenant-origin.server";
-import type { ProductDetail, ProductInput } from "./types";
+import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
+import type { ProductDetail, ProductInput, SeoListingVM } from "./types";
 
-/** What the Search-listing card needs: the stored override (null fields = no
- *  override) plus the deterministic defaults the storefront serves without one. */
-export interface SeoListingVM {
-  metaTitle: string | null;
-  metaDescription: string | null;
-  defaultTitle: string;
-  defaultDescription: string;
-  /** Absolute prefix the handle is appended to (".../storefront/products/"). */
-  urlPrefix: string;
-}
-
-// Assemble the card's defaults the same way the PDP serves them (settings +
-// deterministic draft). Failure-isolated like the PDP's own meta build: a
-// settings hiccup degrades the PLACEHOLDERS, it must not 500 the editor. The
-// override read is load-bearing (a blind editor could clobber a stored
-// override), so its errors propagate.
+// Assemble the card's data the same way the PDP serves it (override + settings
+// + deterministic draft). FULLY fail-soft: the card is decoration on the
+// editor, so if ANY read fails we log and return null — the editor renders the
+// card as temporarily unavailable and omits `seo` from the save payload (a
+// blind save could otherwise clobber a stored override it never loaded). The
+// three reads only need ids, so `product` may be the in-flight getProduct
+// promise — everything runs concurrently with it.
 export async function seoListingFor(
   request: Request,
   shopId: string,
-  product: ProductDetail,
-): Promise<SeoListingVM> {
-  const override = await getSeoOverride(shopId, "product", product.id);
-  let defaultTitle = product.title;
-  let defaultDescription = clampText(plainText(product.description ?? ""), 155);
-  let origin = storefrontOrigin(request);
+  productId: string,
+  product: ProductDetail | Promise<ProductDetail | null>,
+): Promise<SeoListingVM | null> {
   try {
-    const [settings, tenantOrigin] = await Promise.all([
+    const [override, settings, tenantOrigin, p] = await Promise.all([
+      getSeoOverride(shopId, "product", productId),
       getStoreSettings(shopId),
-      tenantStorefrontOrigin(shopId),
+      getShopStorefrontOrigin(shopId),
+      product,
     ]);
-    if (tenantOrigin) origin = tenantOrigin;
+    if (!p) return null;
+    // No tenant slug yet ("") → fall back to the request-derived origin.
+    const origin = tenantOrigin || storefrontOrigin(request);
     const draft = buildProductDraft(
       {
-        id: product.id,
-        handle: product.handle,
-        title: product.title,
-        description: product.description ?? "",
+        id: p.id,
+        handle: p.handle,
+        title: p.title,
+        description: p.description ?? "",
         images: [],
         variants: [],
         collections: [],
@@ -54,18 +46,17 @@ export async function seoListingFor(
       settings,
       origin,
     );
-    defaultTitle = draft.title;
-    defaultDescription = draft.description;
+    return {
+      metaTitle: override?.metaTitle ?? null,
+      metaDescription: override?.metaDescription ?? null,
+      defaultTitle: draft.title,
+      defaultDescription: draft.description,
+      urlPrefix: `${origin}/storefront/products/`,
+    };
   } catch (err) {
-    console.error(`[dashboard.api] seo defaults build failed for shop ${shopId}:`, err);
+    console.error(`[dashboard.api] search-listing load failed for shop ${shopId}:`, err);
+    return null;
   }
-  return {
-    metaTitle: override?.metaTitle ?? null,
-    metaDescription: override?.metaDescription ?? null,
-    defaultTitle,
-    defaultDescription,
-    urlPrefix: `${origin}/storefront/products/`,
-  };
 }
 
 /** Persist the validated seo block: both fields empty removes the override

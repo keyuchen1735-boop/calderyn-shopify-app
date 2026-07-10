@@ -10,6 +10,7 @@
 import { runBulkInChunks } from "./orders-client";
 import type { LiveAnalyticsSnapshot } from "./live-analytics-types";
 import type { CatalogSort } from "~/lib/catalog/catalog-sort";
+import type { SeoListingVM } from "~/lib/catalog/types";
 import type { ListingDraftCurrent, ListingPlan } from "~/lib/catalog/listing-prompt";
 import type {
   Alert,
@@ -1207,23 +1208,16 @@ export interface ProductDraft {
   seo?: { metaTitle?: string; metaDescription?: string };
 }
 
-/** Search-listing state for the editor: the stored override (null = none) plus
- *  the deterministic defaults the storefront serves without one. */
-export interface SeoListingVM {
-  metaTitle: string | null;
-  metaDescription: string | null;
-  defaultTitle: string;
-  defaultDescription: string;
-  /** Absolute prefix the handle is appended to (".../storefront/products/"). */
-  urlPrefix: string;
-}
+export type { SeoListingVM } from "~/lib/catalog/types";
 
 export interface ProductDetailVM extends ProductDraft {
   id: string;
   handle: string;
   media: Array<{ id: string; url: string; isPrimary: boolean; alt: string | null; position: number }>;
   updatedAt: string;
-  seoListing: SeoListingVM;
+  /** Null when the search-listing reads failed server-side — the editor shows
+   *  the card as temporarily unavailable and must not submit `seo`. */
+  seoListing: SeoListingVM | null;
 }
 
 export interface CollectionVM {

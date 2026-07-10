@@ -4,13 +4,18 @@ import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/htt
 import { getProduct, updateProduct, setProductStatus } from "~/lib/catalog/catalog.server";
 import { signMediaPaths } from "~/lib/catalog/sign-media.server";
 import { validateProductInput } from "~/lib/catalog/validate";
-import { seoListingFor, applySeoOverrideInput } from "~/lib/catalog/product-seo.server";
+import { seoListingFor } from "~/lib/catalog/product-seo.server";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const id = String(params.id);
   return dashboardJson(async () => {
-    const product = await getProduct(session.shopId, id);
+    // The search-listing reads only need ids, so they run concurrently with the
+    // product fetch itself (seoListingFor awaits the same promise internally and
+    // is fully fail-soft — null renders the card as temporarily unavailable).
+    const productPromise = getProduct(session.shopId, id);
+    const seoPromise = seoListingFor(request, session.shopId, id, productPromise);
+    const product = await productPromise;
     if (!product) throw jsonError(404, "not_found");
     // Reshape the stored detail into the editor view-model:
     //  - options are stored with value rows {id,value}; the editor wants string[]
@@ -21,7 +26,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     //    that doesn't surface a field round-trips it instead of nulling it
     const [signed, seoListing] = await Promise.all([
       signMediaPaths(product.media.map((m) => m.storagePath)),
-      seoListingFor(request, session.shopId, product),
+      seoPromise,
     ]);
     const labelById = new Map<string, string>();
     for (const o of product.options) for (const v of o.values) labelById.set(v.id, v.value);
@@ -90,7 +95,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (!v.ok) return jsonError(422, v.code);
     return dashboardJson(async () => {
       await updateProduct(session.shopId, id, v.value);
-      if (v.value.seo) await applySeoOverrideInput(session.shopId, id, v.value.seo);
       return { ok: true };
     });
   }

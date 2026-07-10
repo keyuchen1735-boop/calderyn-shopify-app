@@ -4,7 +4,6 @@ import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/htt
 import { listProducts, createProduct } from "~/lib/catalog/catalog.server";
 import { signMediaPaths } from "~/lib/catalog/sign-media.server";
 import { validateProductInput } from "~/lib/catalog/validate";
-import { applySeoOverrideInput } from "~/lib/catalog/product-seo.server";
 import { isCatalogSort } from "~/lib/catalog/catalog-sort";
 import type { ProductStatus } from "~/lib/catalog/types";
 
@@ -49,12 +48,6 @@ export async function action({ request }: ActionFunctionArgs) {
   try { body = await request.json(); } catch { return jsonError(422, "invalid_json"); }
   const v = validateProductInput(body);
   if (!v.ok) return jsonError(422, v.code);
-  return dashboardJson(async () => {
-    const created = await createProduct(session.shopId, v.value);
-    // A brand-new product has no override row, so "both empty" needs no delete.
-    if (v.value.seo && (v.value.seo.metaTitle || v.value.seo.metaDescription)) {
-      await applySeoOverrideInput(session.shopId, created.id, v.value.seo);
-    }
-    return created;
-  });
+  // createProduct persists v.value.seo itself when present.
+  return dashboardJson(() => createProduct(session.shopId, v.value));
 }

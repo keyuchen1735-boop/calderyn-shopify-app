@@ -3,6 +3,24 @@
 // routes, and the editor UI (Plan B2).
 export type ProductStatus = "draft" | "active" | "archived";
 
+// Search-listing limits, shared by the server validator (hard clamps) and the
+// editor's counters/maxLength (soft advisory lengths) so they can't drift.
+export const SEO_TITLE_SOFT_MAX = 60;
+export const SEO_DESCRIPTION_SOFT_MAX = 160;
+export const SEO_TITLE_MAX = 70;
+export const SEO_DESCRIPTION_MAX = 200;
+
+/** What the Search-listing card needs: the stored override (null fields = no
+ *  override) plus the deterministic defaults the storefront serves without one. */
+export interface SeoListingVM {
+  metaTitle: string | null;
+  metaDescription: string | null;
+  defaultTitle: string;
+  defaultDescription: string;
+  /** Absolute prefix the handle is appended to (".../storefront/products/"). */
+  urlPrefix: string;
+}
+
 export interface OptionInput {
   name: string;
   values: string[];
