@@ -70,4 +70,10 @@ describe("buildSystemPrompt", () => {
       "Bold only the one key number or name in a reply"
     );
   });
+
+  it("rules out offering an action the current alert's allowed_actions doesn't support", () => {
+    const instructions = ASSISTANT_SYSTEM_INSTRUCTIONS.toLowerCase();
+    expect(instructions).toContain("check that alert's allowed_actions");
+    expect(instructions).toContain("never offer an option you cannot execute");
+  });
 });

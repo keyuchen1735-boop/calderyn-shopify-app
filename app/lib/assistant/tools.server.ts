@@ -1,5 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CalderynClient, CalderynError } from "../calderyn.server";
+import type { Alert } from "../types";
+import { DETECTOR_TO_ACTIONS } from "../labels";
 import type { DraftedAction } from "./types";
 import { COMMERCE_TOOLS, COMMERCE_TOOL_NAMES, handleCommerceTool, type CommerceCtx } from "./commerce-tools.server";
 import { ASSISTANT_ACTIONS, generatedWriteTools } from "./actions/registry.server";
@@ -29,7 +31,7 @@ export const READ_TOOLS: Anthropic.Tool[] = [
   {
     name: "list_alerts",
     description:
-      "List the shop's alerts (issues Calderyn detected), highest priority first. Use to find or filter alerts before explaining them. Returns shaped Alert objects; money fields are in cents.",
+      "List the shop's alerts (issues Calderyn detected), highest priority first. Use to find or filter alerts before explaining them. Returns shaped Alert objects; money fields are in cents. Each alert carries allowed_actions — the action kinds runnable against THAT alert.",
     input_schema: {
       type: "object",
       properties: {
@@ -43,7 +45,7 @@ export const READ_TOOLS: Anthropic.Tool[] = [
   {
     name: "get_alert",
     description:
-      "Fetch one alert by id with its full evidence and narrative. Use when the merchant asks about a specific alert or before proposing an action on it.",
+      "Fetch one alert by id with its full evidence and narrative. Use when the merchant asks about a specific alert or before proposing an action on it. The returned alert carries allowed_actions — the action kinds runnable against THAT alert.",
     input_schema: {
       type: "object",
       properties: { id: { type: "string" } },
@@ -120,6 +122,21 @@ function ok(obj: unknown): ToolDispatchResult {
   return { content: JSON.stringify(obj) };
 }
 
+/**
+ * Enriches an alert with the action kinds actually runnable against it, so the
+ * model never offers an action it can't execute (e.g. create_po_draft on a
+ * campaign-spend alert). Unknown detectors fall back to snooze-only, matching
+ * recommendedAction()'s fallback in labels.ts.
+ */
+function withAllowedActions<T extends Pick<Alert, "detector_id">>(
+  alert: T,
+): T & { allowed_actions: string[] } {
+  return {
+    ...alert,
+    allowed_actions: DETECTOR_TO_ACTIONS[alert.detector_id] ?? ["snooze_alert"],
+  };
+}
+
 function toolError(code: string, message: string): ToolDispatchResult {
   return { content: JSON.stringify({ code, message }), isError: true };
 }
@@ -174,10 +191,10 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
             detector: input.detector_id as string | undefined,
           });
           const limit = Math.min(Number(input.limit ?? 50), LIMIT_CAP);
-          return ok({ alerts: alerts.slice(0, limit) });
+          return ok({ alerts: alerts.slice(0, limit).map(withAllowedActions) });
         }
         case "get_alert":
-          return ok({ alert: await client.alerts.get(String(input.id)) });
+          return ok({ alert: withAllowedActions(await client.alerts.get(String(input.id))) });
         case "list_audit": {
           const entries = await client.audit.list();
           const limit = Math.min(Number(input.limit ?? 50), LIMIT_CAP);

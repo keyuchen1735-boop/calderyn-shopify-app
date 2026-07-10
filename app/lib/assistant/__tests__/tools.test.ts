@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { ASSISTANT_TOOLS, EXTERNAL_TOOLS, makeToolDispatcher } from "../tools.server";
 import { CalderynError } from "../../calderyn.server";
 import type { CalderynClient } from "../../calderyn.server";
+import { DETECTOR_TO_ACTIONS } from "../../labels";
 import * as commerceTools from "../commerce-tools.server";
 import * as executeModule from "../actions/execute.server";
 
@@ -38,7 +39,10 @@ function fakeClient(): {
   listSpy: ReturnType<typeof vi.fn>;
   getSpy: ReturnType<typeof vi.fn>;
 } {
-  const listSpy = vi.fn(async () => [{ id: "a1" }, { id: "a2" }]);
+  const listSpy = vi.fn(async () => [
+    { id: "a1", detector_id: "reorder_timing" },
+    { id: "a2", detector_id: "unknown_future_detector" },
+  ]);
   const getSpy = vi.fn(async (id: string) => {
     if (id === "missing") {
       throw new CalderynError({ code: "ALERT_NOT_FOUND", status: 404, message: "nope" });
@@ -99,6 +103,26 @@ describe("makeToolDispatcher", () => {
     expect(listSpy).toHaveBeenCalledWith({ status: "open", severity: undefined, detector: "cogs_drift" });
     expect(JSON.parse(res.content).alerts).toHaveLength(2);
     expect(res.isError).toBeFalsy();
+  });
+
+  it("list_alerts enriches every alert with allowed_actions from DETECTOR_TO_ACTIONS, falling back for an unknown detector", async () => {
+    const { client } = fakeClient();
+    const dispatch = makeToolDispatcher(client);
+    const res = await dispatch("list_alerts", {}, "tu-0");
+    const alerts = JSON.parse(res.content).alerts as Array<{ detector_id: string; allowed_actions: string[] }>;
+    const reorder = alerts.find((a) => a.detector_id === "reorder_timing");
+    expect(reorder?.allowed_actions).toEqual(DETECTOR_TO_ACTIONS.reorder_timing);
+    const unknown = alerts.find((a) => a.detector_id === "unknown_future_detector");
+    expect(unknown?.allowed_actions).toEqual(["snooze_alert"]);
+  });
+
+  it("get_alert enriches the returned alert with allowed_actions for its detector", async () => {
+    const { client } = fakeClient();
+    const dispatch = makeToolDispatcher(client);
+    const res = await dispatch("get_alert", { id: "a1" }, "tu-0");
+    const { alert } = JSON.parse(res.content);
+    expect(alert.detector_id).toBe("campaign_below_breakeven");
+    expect(alert.allowed_actions).toEqual(DETECTOR_TO_ACTIONS.campaign_below_breakeven);
   });
 
   it("flag_alert acknowledges via the injected callback and reports the flagged alert", async () => {
