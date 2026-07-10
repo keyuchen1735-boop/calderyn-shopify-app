@@ -221,6 +221,46 @@ export async function sendDraftOrderInvoice(
     throw err;
   }
 
+  // Cost snapshot (Phase 4 Task 1): same posture as checkout.server.ts's createCheckout — stamp
+  // unit_cost_cents_snapshot from variant_dim at line-build time so a later catalog cost change
+  // never re-prices an already-invoiced line's profit read model. priceCart's snapshot has no cost
+  // column (buyer-facing price/title only), so this is a dedicated, cost-only read.
+  let costByVariant = new Map<string, number | null>();
+  try {
+    const variantCostRes = await sb
+      .from("variant_dim")
+      .select("id, unit_cost_cents")
+      .eq("shop_id", shopId)
+      .in("id", priced.lines.map((l) => l.variantId));
+    if (variantCostRes.error) throw variantCostRes.error;
+    costByVariant = new Map(
+      ((variantCostRes.data ?? []) as Record<string, unknown>[]).map((r) => [
+        String(r.id),
+        r.unit_cost_cents == null ? null : Number(r.unit_cost_cents),
+      ]),
+    );
+  } catch (err) {
+    // Same stranded-order risk the lineIns failure below guards against: by this point the cart is
+    // already claimed checkout_pending and a zero-line order already exists. Revert both so the
+    // merchant can retry, then rethrow the ORIGINAL error (rule 12).
+    await revertClaim();
+    const orderDel = await sb.from("orders").delete().eq("shop_id", shopId).eq("id", orderId);
+    if (orderDel.error) {
+      console.error(
+        `[invoice] variant cost lookup failed for order ${orderId} (shop ${shopId}); cart ${cartId} was reverted ` +
+          `to 'cart', but the zero-line order could NOT be deleted and needs manual cleanup`,
+        orderDel.error,
+      );
+    } else {
+      console.error(
+        `[invoice] variant cost lookup failed for order ${orderId} (shop ${shopId}); cart ${cartId} reverted to ` +
+          `'cart' and the zero-line order was deleted`,
+        err,
+      );
+    }
+    throw err;
+  }
+
   const lineRows = priced.lines.map((l) => ({
     shop_id: shopId,
     order_id: orderId,
@@ -228,6 +268,7 @@ export async function sendDraftOrderInvoice(
     quantity: l.quantity,
     unit_price_cents: l.unitPriceCents,
     title_snapshot: l.titleSnapshot,
+    unit_cost_cents_snapshot: costByVariant.get(l.variantId) ?? null,
   }));
   const lineIns = await sb.from("order_line").insert(lineRows);
   if (lineIns.error) {

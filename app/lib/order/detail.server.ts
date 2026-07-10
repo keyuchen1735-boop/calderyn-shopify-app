@@ -12,6 +12,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import { formatOrderRef } from "./checkout.server";
 import { remainingRefundableByOrder } from "./list.server";
 import { effectiveLineQuantities } from "./line-edits.server";
+import { listOrderReturns } from "./returns.server";
 import { formatMoney } from "~/lib/storefront/money";
 import type { OrderDetail, OrderDetailFulfillment, OrderDetailLine, OrderTimelineEvent } from "./detail-types";
 
@@ -148,6 +149,8 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     ledgerMap,
     effectiveMap,
     edits,
+    returns,
+    returnEvents,
   ] = await Promise.all([
     loadNativeLines(sb, shopId, orderId),
     loadFulfillments(sb, shopId, orderId),
@@ -160,6 +163,8 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     remainingRefundableByOrder(shopId, [orderId]),
     effectiveLineQuantities(shopId, orderId, sb),
     loadEditEvents(sb, shopId, orderId, currency),
+    listOrderReturns(shopId, orderId, sb),
+    loadReturnTimelineEvents(sb, shopId, orderId),
   ]);
 
   // `quantity` reflects what the line ACTUALLY totals today (effective, after any reductions);
@@ -182,7 +187,14 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
   // Refunded = total - remaining, relying on the invariant that a native order's capture equals total_cents.
   const refundedCents = Math.max(0, totalCents - remainingRefundableCents);
 
-  const timeline = sortTimelineDesc([...transitions, ...notes, ...refunds, ...edits, ...fulfillmentEvents(fulfillments)]);
+  const timeline = sortTimelineDesc([
+    ...transitions,
+    ...notes,
+    ...refunds,
+    ...edits,
+    ...fulfillmentEvents(fulfillments),
+    ...returnEvents,
+  ]);
 
   return {
     source: "calderyn",
@@ -210,6 +222,7 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     fulfillments,
     tags,
     timeline,
+    returns,
     readOnly: false,
   };
 }
@@ -457,6 +470,40 @@ async function loadEditEvents(
   });
 }
 
+/**
+ * Timeline events for order_return rows (Phase 4 Task 1): "Return created" (always), plus either
+ * "Return received" (received_at stamped — v1's receive flow lands here directly, see
+ * returns.server.ts's module header) or "Return cancelled" (status='cancelled', timestamped off
+ * updated_at since there is no dedicated cancelled_at column) when the return moved past `open`.
+ * Sourced straight from order_return, per the binding decision — no action_audit join needed.
+ */
+async function loadReturnTimelineEvents(sb: SupabaseClient, shopId: string, orderId: string): Promise<OrderTimelineEvent[]> {
+  const { data, error } = await sb
+    .from("order_return")
+    .select("status, reason, created_at, received_at, updated_at")
+    .eq("shop_id", shopId)
+    .eq("order_id", orderId);
+  if (error) throw new Error(`order_return read failed: ${error.message}`);
+
+  const events: OrderTimelineEvent[] = [];
+  for (const r of (data ?? []) as Record<string, unknown>[]) {
+    events.push({
+      kind: "return",
+      at: String(r.created_at),
+      title: "Return created",
+      detail: r.reason == null ? null : String(r.reason),
+      author: null,
+    });
+    const status = String(r.status);
+    if (status === "cancelled") {
+      events.push({ kind: "return", at: String(r.updated_at ?? r.created_at), title: "Return cancelled", detail: null, author: null });
+    } else if (r.received_at != null) {
+      events.push({ kind: "return", at: String(r.received_at), title: "Return received", detail: null, author: null });
+    }
+  }
+  return events;
+}
+
 function fulfillmentEvents(fulfillments: OrderDetailFulfillment[]): OrderTimelineEvent[] {
   return fulfillments.map((f) => ({
     kind: "fulfillment" as const,
@@ -533,6 +580,7 @@ async function loadImportedOrderDetail(shopId: string, importedId: string): Prom
     fulfillments: [],
     tags: [],
     timeline,
+    returns: [], // imported (Shopify-paid) orders never went through the native returns spine
     readOnly: true,
   };
 }

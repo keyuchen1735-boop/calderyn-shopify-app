@@ -12,6 +12,8 @@ const store = vi.hoisted(() => {
     orders: [],
     order_line: [],
     order_line_edit: [],
+    order_return: [],
+    order_return_line: [],
     variant_dim: [],
     buyer_dim: [],
     buyer_address: [],
@@ -336,6 +338,79 @@ describe("loadOrderDetail — native branch", () => {
   it("returns null for an unknown native id", async () => {
     const detail = await loadOrderDetail("shop-1", "does-not-exist");
     expect(detail).toBeNull();
+  });
+
+  it("populates the returns card + return timeline events (Phase 4 Task 1)", async () => {
+    store.db.orders.push({
+      id: "order-returns",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "fulfilled",
+      financial_status: "paid",
+      subtotal_cents: 5000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 5000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: "2026-07-01T00:00:00.000Z",
+    });
+    // A closed (received) return and a cancelled one, each with one line.
+    store.db.order_return.push(
+      {
+        id: "return-1",
+        shop_id: "shop-1",
+        order_id: "order-returns",
+        status: "closed",
+        reason: "Wrong size",
+        created_at: "2026-07-02T00:00:00.000Z",
+        received_at: "2026-07-03T00:00:00.000Z",
+        updated_at: "2026-07-03T00:00:00.000Z",
+      },
+      {
+        id: "return-2",
+        shop_id: "shop-1",
+        order_id: "order-returns",
+        status: "cancelled",
+        reason: null,
+        created_at: "2026-07-04T00:00:00.000Z",
+        received_at: null,
+        updated_at: "2026-07-04T05:00:00.000Z",
+      },
+    );
+    store.db.order_return_line.push(
+      { id: "rline-1", shop_id: "shop-1", return_id: "return-1", order_line_id: "line-x", quantity: 1, restock: true, refund_cents: 1000 },
+      { id: "rline-2", shop_id: "shop-1", return_id: "return-2", order_line_id: "line-y", quantity: 1, restock: true, refund_cents: 500 },
+    );
+
+    const detail = await loadOrderDetail("shop-1", "order-returns");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+
+    expect(detail.returns).toHaveLength(2);
+    const closed = detail.returns.find((r) => r.id === "return-1");
+    expect(closed).toMatchObject({ status: "closed", reason: "Wrong size", receivedAt: "2026-07-03T00:00:00.000Z" });
+    expect(closed?.lines).toEqual([{ id: "rline-1", orderLineId: "line-x", quantity: 1, restock: true, refundCents: 1000 }]);
+    const cancelled = detail.returns.find((r) => r.id === "return-2");
+    expect(cancelled).toMatchObject({ status: "cancelled", receivedAt: null });
+
+    const returnEvents = detail.timeline.filter((e) => e.kind === "return");
+    // 2 "created" events + 1 "received" (return-1) + 1 "cancelled" (return-2) = 4.
+    expect(returnEvents).toHaveLength(4);
+    expect(returnEvents.map((e) => e.title).sort()).toEqual([
+      "Return cancelled",
+      "Return created",
+      "Return created",
+      "Return received",
+    ]);
+    const receivedEvent = returnEvents.find((e) => e.title === "Return received");
+    expect(receivedEvent).toMatchObject({ at: "2026-07-03T00:00:00.000Z" });
+    const cancelledEvent = returnEvents.find((e) => e.title === "Return cancelled");
+    expect(cancelledEvent).toMatchObject({ at: "2026-07-04T05:00:00.000Z" });
   });
 
   it("nets a reduced line's quantity and surfaces an edit timeline event", async () => {

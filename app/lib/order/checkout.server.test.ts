@@ -167,9 +167,20 @@ function seedPaymentReady(shopId: string) {
   });
 }
 
-/** Seed a variant_dim row so the oversell read can classify a line as tracked/untracked. */
-function seedVariant(shopId: string, variantId: string, inventoryTracked: boolean | null) {
-  store.db.variant_dim.push({ id: variantId, shop_id: shopId, inventory_tracked: inventoryTracked });
+/** Seed a variant_dim row so the oversell read can classify a line as tracked/untracked, and
+ *  (Phase 4 Task 1) the cost-snapshot read can resolve unit_cost_cents. */
+function seedVariant(
+  shopId: string,
+  variantId: string,
+  inventoryTracked: boolean | null,
+  unitCostCents?: number | null,
+) {
+  store.db.variant_dim.push({
+    id: variantId,
+    shop_id: shopId,
+    inventory_tracked: inventoryTracked,
+    unit_cost_cents: unitCostCents ?? null,
+  });
 }
 
 function seedCartLine(shopId: string, cartId: string, line: Partial<Record<string, unknown>>) {
@@ -252,6 +263,37 @@ describe("createCheckout", () => {
     // The source cart is consumed (cart -> checkout_pending) so open-basket
     // surfaces stop listing it; the order is the record from here on.
     expect(store.db.cart[0]).toMatchObject({ id: "cart-1", state: "checkout_pending" });
+  });
+
+  it("stamps unit_cost_cents_snapshot from variant_dim onto the order_line row (Phase 4 Task 1)", async () => {
+    seedCartLine("shop-1", "cart-cost", { variant_id: "v-tee-s", quantity: 2, unit_price_cents: 1999 });
+    seedVariant("shop-1", "v-tee-s", true, 750);
+
+    const out = await createCheckout("shop-1", "cart-cost", { email: "cost@example.com" });
+
+    expect(store.db.order_line).toHaveLength(1);
+    expect(store.db.order_line[0]).toMatchObject({
+      order_id: out.orderId,
+      variant_id: "v-tee-s",
+      unit_cost_cents_snapshot: 750,
+    });
+  });
+
+  it("snapshots a null unit_cost_cents_snapshot for a variant with no cost recorded (never fabricates 0)", async () => {
+    seedCartLine("shop-1", "cart-nocost", { variant_id: "v-tee-s" });
+    seedVariant("shop-1", "v-tee-s", false, null);
+
+    await createCheckout("shop-1", "cart-nocost", { email: "nocost@example.com" });
+
+    expect(store.db.order_line[0].unit_cost_cents_snapshot).toBeNull();
+  });
+
+  it("snapshots a null unit_cost_cents_snapshot when the variant has no variant_dim row at all", async () => {
+    seedCartLine("shop-1", "cart-novariant", { variant_id: "v-ghost" });
+
+    await createCheckout("shop-1", "cart-novariant", { email: "novariant@example.com" });
+
+    expect(store.db.order_line[0].unit_cost_cents_snapshot).toBeNull();
   });
 
   it("persists the attribution snapshot verbatim on the order (empty default)", async () => {

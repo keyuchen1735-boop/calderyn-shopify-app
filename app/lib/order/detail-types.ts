@@ -3,6 +3,8 @@
 // One shape serves both native (`orders`) and imported (`imported_order`)
 // orders so the detail route/screen (Tasks 10-12) never branches on source.
 
+import type { OrderReturn } from "./returns-types";
+
 export interface OrderDetailLine {
   id: string;
   /** Owned variant_dim id, for the Edit-items variant picker to keep an existing line's identity
@@ -30,7 +32,7 @@ export interface OrderDetailFulfillment {
 }
 
 export interface OrderTimelineEvent {
-  kind: "transition" | "note" | "refund" | "fulfillment" | "edit";
+  kind: "transition" | "note" | "refund" | "fulfillment" | "edit" | "return";
   at: string;
   title: string;
   detail: string | null;
@@ -71,6 +73,9 @@ export interface OrderDetail {
   fulfillments: OrderDetailFulfillment[];
   tags: string[];
   timeline: OrderTimelineEvent[];
+  /** Returns recorded against this order (Phase 4 Task 1). Always [] for an imported (Shopify-paid)
+   *  order — the returns spine only exists for native orders. */
+  returns: OrderReturn[];
   /** true for imported (Shopify-paid) orders — no write actions on this surface. */
   readOnly: boolean;
 }

@@ -14,6 +14,7 @@ const store = vi.hoisted(() => {
     order_line: [],
     stripe_connected_account: [],
     shops: [],
+    variant_dim: [],
   };
 
   class Builder {
@@ -22,6 +23,7 @@ const store = vi.hoisted(() => {
     private vals: Row = {};
     private conflict: string[] = [];
     private filters: Array<[string, unknown]> = [];
+    private inFilters: Array<[string, unknown[]]> = [];
     private wantSingle = false;
     private readonly table: string;
 
@@ -55,6 +57,10 @@ const store = vi.hoisted(() => {
       this.filters.push([col, val]);
       return this;
     }
+    in(col: string, vals: unknown[]) {
+      this.inFilters.push([col, vals]);
+      return this;
+    }
     single() {
       this.wantSingle = true;
       return this;
@@ -77,7 +83,10 @@ const store = vi.hoisted(() => {
       return row;
     }
     private matches(r: Row) {
-      return this.filters.every(([c, v]) => r[c] === v);
+      return (
+        this.filters.every(([c, v]) => r[c] === v) &&
+        this.inFilters.every(([c, vals]) => vals.includes(r[c]))
+      );
     }
     private run(): { data: unknown; error: unknown } {
       const t = db[this.table];
@@ -165,6 +174,11 @@ function seedPaymentReady(shopId: string) {
   });
 }
 
+/** Seed a variant_dim row so the cost-snapshot read (Phase 4 Task 1) can resolve unit_cost_cents. */
+function seedVariant(shopId: string, variantId: string, unitCostCents: number | null) {
+  store.db.variant_dim.push({ id: variantId, shop_id: shopId, unit_cost_cents: unitCostCents });
+}
+
 function seedDraftCart(shopId: string, cartId: string, line: Partial<Record<string, unknown>> = {}) {
   if (!store.db.cart.some((c) => c.id === cartId)) {
     store.db.cart.push({ id: cartId, shop_id: shopId, state: "cart", origin: "merchant_draft" });
@@ -245,6 +259,37 @@ describe("sendDraftOrderInvoice", () => {
     // No inventory reservation, no PaymentIntent creation — invoice.server.ts must never import
     // the inventory engine or a PI-create seam at all (this is a shape assertion via absence).
     expect(stripeCheckout.createCommerceCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("stamps unit_cost_cents_snapshot from variant_dim onto the invoiced line (Phase 4 Task 1)", async () => {
+    seedVariant("shop-1", "v-tee-s", 750);
+    seedDraftCart("shop-1", "cart-cost", { variant_id: "v-tee-s", quantity: 2, unit_price_cents: 1999 });
+
+    const out = await sendDraftOrderInvoice("shop-1", "cart-cost", { email: "cost@example.com" });
+
+    expect(store.db.order_line).toHaveLength(1);
+    expect(store.db.order_line[0]).toMatchObject({
+      order_id: out.orderId,
+      variant_id: "v-tee-s",
+      unit_cost_cents_snapshot: 750,
+    });
+  });
+
+  it("snapshots a null unit_cost_cents_snapshot for a variant with no cost recorded (never fabricates 0)", async () => {
+    seedVariant("shop-1", "v-tee-s", null);
+    seedDraftCart("shop-1", "cart-nocost", { variant_id: "v-tee-s" });
+
+    await sendDraftOrderInvoice("shop-1", "cart-nocost", { email: "nocost@example.com" });
+
+    expect(store.db.order_line[0].unit_cost_cents_snapshot).toBeNull();
+  });
+
+  it("snapshots a null unit_cost_cents_snapshot when the variant has no variant_dim row at all", async () => {
+    seedDraftCart("shop-1", "cart-novariant", { variant_id: "v-ghost" });
+
+    await sendDraftOrderInvoice("shop-1", "cart-novariant", { email: "novariant@example.com" });
+
+    expect(store.db.order_line[0].unit_cost_cents_snapshot).toBeNull();
   });
 
   it("fails CLOSED (409 payments_not_ready) BEFORE any write when the shop cannot accept payments", async () => {
