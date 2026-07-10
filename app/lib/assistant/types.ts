@@ -2,6 +2,7 @@
 // DTOs for the in-app assistant. Kept separate from app/lib/types.ts to avoid
 // churn on that shared file (spec §14).
 import type { ActionKind } from "../types";
+import type { ActionReceipt, PendingActionCard } from "./actions/registry-types";
 
 export type ChatRole = "user" | "assistant";
 
@@ -17,6 +18,8 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   draftedAction: DraftedAction | null;
+  receipts: ActionReceipt[];
+  pendingAction: PendingActionCard | null;
   createdAt: string;
 }
 

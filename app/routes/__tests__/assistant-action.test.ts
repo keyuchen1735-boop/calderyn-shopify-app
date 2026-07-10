@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ActionFunctionArgs } from "@remix-run/node";
 
-const { runTurnSpy, appendSpy, createConvSpy, getMessagesSpy } = vi.hoisted(() => ({
+const { runTurnSpy, appendSpy, createConvSpy, getMessagesSpy, dispatcherDepsSpy } = vi.hoisted(() => ({
   runTurnSpy: vi.fn(),
   appendSpy: vi.fn(),
   createConvSpy: vi.fn(),
   getMessagesSpy: vi.fn(),
+  dispatcherDepsSpy: vi.fn(),
 }));
 
 vi.mock("../../shopify.server", () => ({
@@ -20,7 +21,11 @@ vi.mock("~/lib/assistant/snapshot.server", () => ({ buildSnapshot: async () => "
 vi.mock("~/lib/assistant/prompt.server", () => ({ buildSystemPrompt: () => [] }));
 vi.mock("~/lib/assistant/tools.server", () => ({
   ASSISTANT_TOOLS: [],
-  makeToolDispatcher: () => async () => ({ content: "{}" }),
+  READ_TOOLS: [],
+  makeToolDispatcher: (_client: unknown, deps: unknown) => {
+    dispatcherDepsSpy(deps);
+    return async () => ({ content: "{}" });
+  },
 }));
 vi.mock("~/lib/assistant/loop.server", () => ({
   runAssistantTurn: (...a: unknown[]) => runTurnSpy(...a),
@@ -48,6 +53,7 @@ beforeEach(() => {
   appendSpy.mockReset();
   createConvSpy.mockReset();
   getMessagesSpy.mockReset();
+  dispatcherDepsSpy.mockReset();
   createConvSpy.mockResolvedValue("conv-1");
   getMessagesSpy.mockResolvedValue([]);
   appendSpy.mockImplementation(async (_s, _c, m) => ({
@@ -70,6 +76,10 @@ describe("assistant action", () => {
     expect(appendSpy.mock.calls[1][2]).toMatchObject({ role: "assistant", content: "here is the answer" });
     expect(body.conversationId).toBe("conv-1");
     expect(body.assistantMessage.content).toBe("here is the answer");
+    // Regression guard: the legacy embedded route must never opt into the
+    // write-tool registry (see turn.server.ts allowActions).
+    expect(dispatcherDepsSpy).toHaveBeenCalledTimes(1);
+    expect(dispatcherDepsSpy.mock.calls[0][0]?.actionCtx).toBeUndefined();
   });
 
   it("rejects an empty message with 400 and runs no turn", async () => {

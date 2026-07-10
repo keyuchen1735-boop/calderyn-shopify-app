@@ -1,21 +1,31 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CalderynClient, CalderynError } from "../calderyn.server";
-import { ACTION_LABELS, DETECTOR_TO_ACTIONS } from "../labels";
-import type { ActionKind } from "../types";
 import type { DraftedAction } from "./types";
 import { COMMERCE_TOOLS, COMMERCE_TOOL_NAMES, handleCommerceTool, type CommerceCtx } from "./commerce-tools.server";
+import { ASSISTANT_ACTIONS, generatedWriteTools } from "./actions/registry.server";
+import { runRegistryAction } from "./actions/execute.server";
+import type { ActionCtx, ActionReceipt, PendingActionCard } from "./actions/registry-types";
 
 const COMMERCE_NAME_SET = new Set<string>(COMMERCE_TOOL_NAMES);
+const REGISTRY_NAME_SET = new Set<string>(ASSISTANT_ACTIONS.map((a) => a.name));
 
 export interface ToolDispatchResult {
   content: string; // JSON string handed back to the model as tool_result content
   isError?: boolean;
   draftedAction?: DraftedAction;
+  receipt?: ActionReceipt;
+  pending?: PendingActionCard;
 }
 
 const LIMIT_CAP = 200;
 
-export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
+/**
+ * Read tools + flag_alert, shared by the in-app assistant and external buyer
+ * clients. Also what turn.server.ts advertises to callers that don't set
+ * allowActions (e.g. the legacy embedded surface) — the model never sees a
+ * write tool name it can't actually dispatch.
+ */
+export const READ_TOOLS: Anthropic.Tool[] = [
   {
     name: "list_alerts",
     description:
@@ -82,45 +92,29 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
     name: "flag_alert",
     description:
-      "Flag (acknowledge) an alert, moving it out of the open queue immediately. This EXECUTES right away — call it only when the merchant explicitly asks to flag, acknowledge, or mark an alert as handled. It never touches campaigns, budgets, or inventory; for those use propose_action.",
+      "Flag (acknowledge) an alert, moving it out of the open queue immediately. This EXECUTES right away — call it only when the merchant explicitly asks to flag, acknowledge, or mark an alert as handled. It never touches campaigns, budgets, or inventory; use the dedicated action tools for those.",
     input_schema: {
       type: "object",
       properties: { alert_id: { type: "string" } },
       required: ["alert_id"],
     },
   },
-  {
-    name: "propose_action",
-    description:
-      "Propose an action for the merchant to confirm. Only valid for an EXISTING alert and an action_kind allowed for that alert's detector. On success the merchant sees a confirm button in the chat (or a 'Review & confirm' link for actions that need extra inputs); you never execute the action yourself.",
-    input_schema: {
-      type: "object",
-      properties: {
-        alert_id: { type: "string" },
-        action_kind: {
-          type: "string",
-          enum: [
-            "pause_campaign",
-            "reduce_campaign_budget",
-            "reallocate_budget",
-            "exclude_geo",
-            "reallocate_inventory",
-            "create_po_draft",
-            "issue_refund",
-            "snooze_alert",
-          ],
-        },
-      },
-      required: ["alert_id", "action_kind"],
-    },
-  },
 ];
 
 /**
- * Full toolset advertised to external connected buyer clients (the calderyn-mcp server).
- * The in-app merchant assistant uses ASSISTANT_TOOLS only.
+ * The in-app merchant assistant's full toolset: reads + flag_alert + every
+ * registered store action (registry.server.ts). Confirm-tier actions are
+ * flagged in their description; the tool loop still calls them the same way.
  */
-export const EXTERNAL_TOOLS: Anthropic.Tool[] = [...ASSISTANT_TOOLS, ...COMMERCE_TOOLS];
+export const ASSISTANT_TOOLS: Anthropic.Tool[] = [...READ_TOOLS, ...generatedWriteTools()];
+
+/**
+ * Toolset advertised to external connected buyer clients (the calderyn-mcp server).
+ * Registry write actions are merchant-assistant-only — external callers never get
+ * an actionCtx, so the dispatcher would refuse them anyway (ACTIONS_UNAVAILABLE);
+ * they are kept off this list so the model never even sees them offered.
+ */
+export const EXTERNAL_TOOLS: Anthropic.Tool[] = [...READ_TOOLS, ...COMMERCE_TOOLS];
 
 function ok(obj: unknown): ToolDispatchResult {
   return { content: JSON.stringify(obj) };
@@ -140,12 +134,20 @@ export interface ToolDispatcherDeps {
   /** Shop + OAuth client context required by commerce tool handlers. When present, commerce
    *  tools are available to this caller (frictionless — no scope string required). */
   commerceCtx?: CommerceCtx;
+  /** Shop + conversation identity required to run registry actions. Only the
+   *  in-app merchant assistant (turn.server.ts) sets this, and only when the
+   *  caller opted into allowActions; external/MCP callers and the legacy
+   *  embedded surface never do, so registry tool names come back
+   *  ACTIONS_UNAVAILABLE. idempotencyKey is minted per tool_use inside the
+   *  dispatcher, not supplied by callers. */
+  actionCtx?: Omit<ActionCtx, "idempotencyKey">;
 }
 
 export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherDeps = {}) {
   return async function dispatch(
     name: string,
     input: Record<string, unknown>,
+    toolUseId: string,
   ): Promise<ToolDispatchResult> {
     try {
       if (COMMERCE_NAME_SET.has(name)) {
@@ -153,6 +155,16 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
           return toolError("COMMERCE_UNAVAILABLE", `${name} is only available to a connected commerce client`);
         }
         return await handleCommerceTool(name, input, deps.commerceCtx);
+      }
+      if (REGISTRY_NAME_SET.has(name)) {
+        if (!deps.actionCtx) {
+          return toolError("ACTIONS_UNAVAILABLE", `${name} is only available to the signed-in merchant assistant`);
+        }
+        const out = await runRegistryAction(name, input, {
+          ...deps.actionCtx,
+          idempotencyKey: `assistant:${deps.actionCtx.conversationId}:${toolUseId}`,
+        });
+        return { content: out.content, isError: out.isError, receipt: out.receipt, pending: out.pending };
       }
       switch (name) {
         case "list_alerts": {
@@ -206,8 +218,6 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
             flagged: { id: alert.id, title: alert.title, status: "acknowledged" },
           });
         }
-        case "propose_action":
-          return await proposeAction(client, input);
         default:
           return toolError("UNKNOWN_TOOL", `Unknown tool: ${name}`);
       }
@@ -215,31 +225,5 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
       const e = err as CalderynError;
       return toolError(e.code ?? "ERROR", e.message ?? String(err));
     }
-  };
-}
-
-async function proposeAction(
-  client: CalderynClient,
-  input: Record<string, unknown>,
-): Promise<ToolDispatchResult> {
-  const alertId = String(input.alert_id ?? "");
-  const actionKind = String(input.action_kind ?? "") as ActionKind;
-  const alert = await client.alerts.get(alertId); // throws CalderynError -> caught by caller
-  const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] ?? ["snooze_alert"];
-  if (!allowed.includes(actionKind)) {
-    return toolError(
-      "ACTION_NOT_ALLOWED",
-      `${actionKind} is not valid for ${alert.detector_id}. Allowed: ${allowed.join(", ")}`,
-    );
-  }
-  const drafted: DraftedAction = {
-    alertId: alert.id,
-    actionKind,
-    label: ACTION_LABELS[actionKind],
-    dollarImpact: alert.dollar_impact,
-  };
-  return {
-    content: JSON.stringify({ ok: true, proposed: { ...drafted, alertTitle: alert.title } }),
-    draftedAction: drafted,
   };
 }
