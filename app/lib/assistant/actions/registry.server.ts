@@ -4,12 +4,14 @@
 // auth/session) are excluded by construction — they must never appear here.
 import type Anthropic from "@anthropic-ai/sdk";
 import type { AssistantAction } from "./registry-types";
+import { ALERTS_ACTIONS } from "./alerts-actions.server";
 import { CAMPAIGN_ACTIONS } from "./campaign-actions.server";
 import { CATALOG_ACTIONS } from "./catalog-actions.server";
 import { INVENTORY_ACTIONS } from "./inventory-actions.server";
 import { OPS_ACTIONS } from "./ops-actions.server";
 
 export const ASSISTANT_ACTIONS: AssistantAction[] = [
+  ...ALERTS_ACTIONS,
   ...CAMPAIGN_ACTIONS,
   ...CATALOG_ACTIONS,
   ...INVENTORY_ACTIONS,
