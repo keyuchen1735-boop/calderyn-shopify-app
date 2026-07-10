@@ -10,6 +10,7 @@
 import { runBulkInChunks } from "./orders-client";
 import type { LiveAnalyticsSnapshot } from "./live-analytics-types";
 import type { CatalogSort } from "~/lib/catalog/catalog-sort";
+import type { SeoListingVM } from "~/lib/catalog/types";
 import type { ListingDraftCurrent, ListingPlan } from "~/lib/catalog/listing-prompt";
 import type {
   Alert,
@@ -1193,6 +1194,9 @@ export interface VariantDraft {
 export interface ProductDraft {
   title: string;
   status: "draft" | "active" | "archived";
+  /** URL handle — include only when the merchant edited it (the server keeps
+   *  the stored one otherwise and generates one on create). */
+  handle?: string;
   vendor?: string;
   category?: string;
   description?: string;
@@ -1200,12 +1204,20 @@ export interface ProductDraft {
   options?: Array<{ name: string; values: string[] }>;
   variants: VariantDraft[];
   collectionIds?: string[];
+  /** Search-listing override; both fields empty clears the stored override. */
+  seo?: { metaTitle?: string; metaDescription?: string };
 }
+
+export type { SeoListingVM } from "~/lib/catalog/types";
 
 export interface ProductDetailVM extends ProductDraft {
   id: string;
+  handle: string;
   media: Array<{ id: string; url: string; isPrimary: boolean; alt: string | null; position: number }>;
   updatedAt: string;
+  /** Null when the search-listing reads failed server-side — the editor shows
+   *  the card as temporarily unavailable and must not submit `seo`. */
+  seoListing: SeoListingVM | null;
 }
 
 export interface CollectionVM {

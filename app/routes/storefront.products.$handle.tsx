@@ -5,6 +5,7 @@ import { Form, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
 import { DeliveryPromise } from "~/components/storefront/DeliveryPromise";
 import { getCatalog } from "~/lib/storefront/catalog.server";
+import { resolveHandleRedirect } from "~/lib/storefront/handle-redirect.server";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId, commitCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
@@ -31,7 +32,29 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   const catalog = getCatalog();
   const product = await catalog.getProduct(shopId, handle);
-  if (!product) throw new Response(null, { status: 404 });
+  if (!product) {
+    // The handle may have been edited in the dashboard — a redirect row keeps
+    // the old link (and anything indexed) working. Permanent by design: search
+    // engines should transfer the old URL's standing to the new one. A lookup
+    // failure must not 500 a public page that was heading to a 404 anyway.
+    let currentHandle: string | null = null;
+    try {
+      currentHandle = await resolveHandleRedirect(shopId, handle);
+    } catch (err) {
+      console.error(`[storefront] handle-redirect lookup failed for shop ${shopId}:`, err);
+    }
+    if (currentHandle) {
+      // Preserve the query string, and bound how long browsers may cache the
+      // 301 — heuristically-forever caching would make a rename-undo an
+      // unfixable client-side redirect loop.
+      const url = new URL(request.url);
+      throw redirect(`/storefront/products/${encodeURIComponent(currentHandle)}${url.search}`, {
+        status: 301,
+        headers: { "Cache-Control": "public, max-age=300" },
+      });
+    }
+    throw new Response(null, { status: 404 });
+  }
   // Render the published PDP TEMPLATE bound to this product record. No doc → legacy PDP markup.
   // A/B participation (pdp experiments serve their variant to arm B here; sitewide vibe tests
   // are measured here too) resolves through the shared experiments helper — one bucketing rule

@@ -16,6 +16,7 @@ import { parseBlockPlan, parseBrandPlan, type BrandPlan } from "./block-plan";
 import { BRAND_SYSTEM_PROMPT, buildBrandUserMessage, docSystemPrompt, buildDocUserMessage, HOME_HTML_SYSTEM_PROMPT, buildHomeHtmlUserMessage, HOME_JUDGE_SYSTEM_PROMPT, buildHomeJudgeUserMessage, candidateAngleNudge, homeRevisionSuffix, SECTION_SYSTEM_PROMPT, buildSectionUserMessage, type CatalogMenu } from "./prompts";
 import { sanitizeStoreHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { normalizeStorefrontHref, type StorefrontLinkSet } from "~/lib/storefront/links";
+import { listRedirectOldHandles } from "~/lib/storefront/handle-redirect.server";
 import { assembleDocument } from "./sanitize";
 import { spliceCatalogBlocks } from "./hybrid";
 import { verifyGeneratedDocs, type VerificationReport } from "./verify";
@@ -143,6 +144,21 @@ function catalogMenuOf(
   };
 }
 
+// Every product URL that resolves on the storefront: CURRENT handles plus the
+// shop's renamed-away old handles (product_handle_redirect rows), which still
+// work via the PDP 301. Without the old ones, a still-working renamed link
+// inside an existing page doc would be rewritten to /storefront on regeneration.
+function linkSetOf(
+  products: { handle: string }[],
+  collections: { handle: string }[],
+  oldProductHandles: string[],
+): StorefrontLinkSet {
+  return {
+    productHandles: new Set([...products.map((p) => p.handle), ...oldProductHandles]),
+    collectionHandles: new Set(collections.map((c) => c.handle)),
+  };
+}
+
 /** Tolerant parse of the judge's JSON verdict; null on anything off-contract. */
 export function parseJudgeVerdict(raw: string): { winner: number; score: number; critique: string } | null {
   let s = raw.trim();
@@ -201,13 +217,14 @@ export async function regenerateHomeSection(
   instruction?: string,
 ): Promise<string | null> {
   const catalog = getCatalog();
-  const [products, collections, settings] = await Promise.all([
+  const [products, collections, settings, oldHandles] = await Promise.all([
     catalog.listProducts(shopId),
     catalog.listCollections(shopId),
     getStoreSettings(shopId),
+    listRedirectOldHandles(shopId),
   ]);
   const menu: CatalogMenu = catalogMenuOf(products, collections);
-  const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
+  const linkSet = linkSetOf(products, collections, oldHandles);
   const brand: BrandPlan = {
     storeName: settings.storeName,
     palette: settings.palette,
@@ -245,14 +262,15 @@ export async function regenerateHomeSection(
  */
 export async function generateChallengerHome(shopId: string): Promise<BlockDocument | null> {
   const catalog = getCatalog();
-  const [products, collections, settings] = await Promise.all([
+  const [products, collections, settings, oldHandles] = await Promise.all([
     catalog.listProducts(shopId),
     catalog.listCollections(shopId),
     getStoreSettings(shopId),
+    listRedirectOldHandles(shopId),
   ]);
   const menu: CatalogMenu = catalogMenuOf(products, collections);
   const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
-  const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
+  const linkSet = linkSetOf(products, collections, oldHandles);
   const byCollection: Record<string, number> = {};
   for (const p of products) for (const h of p.collections) byCollection[h] = (byCollection[h] ?? 0) + 1;
   const brand: BrandPlan = {
@@ -289,6 +307,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   const catalog = getCatalog();
   const products = await catalog.listProducts(input.shopId);
   const collections = await catalog.listCollections(input.shopId);
+  const oldHandles = await listRedirectOldHandles(input.shopId);
   const menu: CatalogMenu = catalogMenuOf(products, collections);
   const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
   // Real catalog numbers for the home prompt: copy grounded on these can be concrete
@@ -298,7 +317,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   const counts = { products: products.length, byCollection };
   // Real handles behind every storefront deep-link, so a hallucinated collection/product href is
   // rewritten to the shop home instead of 404-ing (rule 12: never ship a dead link).
-  const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
+  const linkSet = linkSetOf(products, collections, oldHandles);
   let tokenCost = 0;
   let budgetHit = false;
   // Distinguish "the model was never called" (skipLlm / budget) from "the model
