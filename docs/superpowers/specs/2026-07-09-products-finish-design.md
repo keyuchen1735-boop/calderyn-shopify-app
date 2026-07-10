@@ -10,9 +10,9 @@ Bring every section of the dashboard Products area to a finished, consistent, Sh
 
 ## Sections and requirements
 
-### Navigation
-- Products subtab bar grows from 4 to 6 tabs: Catalog, Inventory, Purchase orders, Transfers, Collections, Locations (`app/components/dashboard/subtabs.tsx`).
-- Collections and Locations keep their existing URLs; they simply return to the bar.
+### Navigation (revised after main recon)
+- On main, Products navigation lives in the sidebar rail (`DashboardApp.tsx` NAV_GROUPS), and its children already include Inventory, Purchase orders, Transfers, Collections, and Locations. No subtab-bar work is needed.
+- New requirement instead: `products/collections/<id>` becomes a routable collection-detail URL (`routes.ts` seg/parsePath), reusing the `collections` screen with a param.
 
 ### Catalog (`Catalog.tsx`)
 - Product thumbnails and variant count in the Product cell. The list API already returns `imageUrl` and `variantCount`; render them (fallback glyph when no image).
@@ -25,16 +25,17 @@ Bring every section of the dashboard Products area to a finished, consistent, Sh
 - Debounced search over SKU/product title.
 - Stock-status filter: All / Healthy / Low / Out (reuses existing velocity-based cover status).
 - Load-more offset pagination (stop fetching everything).
-- New columns: Reserved and Available, backed by a new shop-wide balances read (single aggregate query/RPC over the existing ledger; per-variant balances already exist).
-- Inline on-hand editing directly in the grid row (blur/Enter commit, optimistic with rollback + toast on error). Reuses the existing per-variant stock write API. [agentic/ease add #1]
+- New columns: Reserved and Available, backed by a new shop-wide balances read shipped as a SQL RPC (`inventory_list`) so search/filter/pagination happen in one query (PostgREST can't aggregate-with-group client-side; mind the 1000-row clamp).
+- The list becomes variant-grained (each row carries `variantId` + `productId`), replacing the `v_skus_flat` read on this screen only (`fetchSkus` stays for other consumers).
+- Inline on-hand editing directly in the grid row for single-location variants (blur/Enter commit, optimistic with rollback + toast on error; reuses the per-variant stock write API). Multi-location variants open the drawer instead — an aggregate number can't be edited honestly across locations. [agentic/ease add #1]
 - Autopilot presence: Low/Out rows show what Autopilot already did about it (e.g. "Restock draft · 2d ago" linking to the audit row / Purchase orders screen) when a matching restock action exists. Data comes from existing audit/alert records; read-only badge + link, no new engine work. [agentic/ease add #2]
 - Row click opens an inline drawer embedding the existing `InventoryPanel` (per-location on-hand, reserved/incoming, move stock, history) with an "Open product" link to the product editor. ("Both" behavior.)
 - Keep `inventorySkus` cache seeding; extend the cached shape as needed.
 
 ### Purchase orders (`PurchaseOrders.tsx`)
-- Stays a lens over Autopilot `create_po_draft` actions, but gets its own paginated server fetch (no longer bounded by the shell's audit load).
+- Stays a lens over Autopilot `create_po_draft` actions, but gets its own dedicated endpoint reading `action_audit` directly (kind-filtered, paginated) with a purpose-built DTO: PO number, first-line SKU, line count, total cents, outcome, and `hasPdf` computed server-side as `params.po` present — the exact predicate the PDF route 404s on.
 - Honest framing copy stating exactly what the screen is.
-- PDF button renders only when the snapshot params needed by `dashboard.api.audit.$id.po.pdf` are actually present on the row; otherwise no button (no more 404-able button).
+- PDF button renders only when `hasPdf` is true (no more 404-able button).
 - Gains its own screen-cache key + WARM_TARGETS entry.
 
 ### Transfers (`Transfers.tsx`, `TransferModal.tsx`)
@@ -58,9 +59,10 @@ Bring every section of the dashboard Products area to a finished, consistent, Sh
 - API grows POST create and a deactivate write (PUT `active: false` or DELETE mapped to soft-deactivate).
 
 ### Product editor (`ProductEditor.tsx`, `InventoryPanel.tsx`)
-- Image management: reorder (move up/down or drag), set primary, alt text. Likely needs a small media-table migration (position, alt); ship as a checked-in SQL migration if so.
-- Compare-at price per variant.
-- Expose the inventory-tracked toggle (currently read but not editable).
+- Image management: reorder (move up/down), set primary, alt text. The `product_media` table already has `position`, `alt`, and `is_primary` — no migration; the work is media-route intents + surfacing the fields through the client VM and editor UI.
+- Compare-at price per variant (needs a `variant_dim.compare_at_price_cents` migration; render strikethrough on the storefront PDP when set and greater than price).
+- Cost per item per variant (plumbing already exists end-to-end as `unitCostCents`; expose it in the editor).
+- Expose the inventory-tracked toggle (plumbing exists as `inventoryTracked`; expose it per variant).
 - InventoryPanel fixes: `reload()` errors surfaced (no more silent stale data), skeleton loading, controlled inputs that don't desync after reload, "No stock locations yet" links to Locations, history gains "view all".
 
 ### New product flow (`NewProductFlow.tsx`)
