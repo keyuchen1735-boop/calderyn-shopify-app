@@ -8,32 +8,52 @@ type Row = Record<string, unknown>;
 let redirectRow: Row | null = null;
 let listRows: Row[] = [];
 let forcedError: { message: string } | null = null;
-const queries: Array<{ table: string; columns: string; filters: Record<string, unknown> }> = [];
+const queries: Array<{
+  table: string;
+  columns: string;
+  filters: Record<string, unknown>;
+}> = [];
 
 function builder(table: string) {
   let columns = "";
   const filters: Record<string, unknown> = {};
   const b: Record<string, unknown> = {
-    select(cols: string) { columns = cols; return b; },
-    eq(col: string, val: unknown) { filters[col] = val; return b; },
+    select(cols: string) {
+      columns = cols;
+      return b;
+    },
+    eq(col: string, val: unknown) {
+      filters[col] = val;
+      return b;
+    },
     maybeSingle() {
       queries.push({ table, columns, filters });
-      if (forcedError) return Promise.resolve({ data: null, error: forcedError });
+      if (forcedError)
+        return Promise.resolve({ data: null, error: forcedError });
       return Promise.resolve({ data: redirectRow, error: null });
     },
     then(res: (r: unknown) => unknown, rej?: (e: unknown) => unknown) {
       queries.push({ table, columns, filters });
-      if (forcedError) return Promise.resolve({ data: null, error: forcedError }).then(res, rej);
+      if (forcedError)
+        return Promise.resolve({ data: null, error: forcedError }).then(
+          res,
+          rej,
+        );
       return Promise.resolve({ data: listRows, error: null }).then(res, rej);
     },
   };
   return b;
 }
 
-vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: (t: string) => builder(t) }) }));
+vi.mock("~/lib/supabase.server", () => ({
+  getSupabase: () => ({ from: (t: string) => builder(t) }),
+}));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
-import { resolveHandleRedirect, listRedirectOldHandles } from "../handle-redirect.server";
+import {
+  resolveHandleRedirect,
+  listRedirectOldHandles,
+} from "../handle-redirect.server";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";
 
@@ -50,17 +70,26 @@ describe("resolveHandleRedirect", () => {
   });
 
   it("returns the target's current handle when the product is still active", async () => {
-    redirectRow = { old_handle: "old-handle", product_dim: { handle: "new-handle" } };
+    redirectRow = {
+      old_handle: "old-handle",
+      product_dim: { handle: "new-handle" },
+    };
     expect(await resolveHandleRedirect(SHOP, "old-handle")).toBe("new-handle");
   });
 
   it("tolerates an array-shaped embed", async () => {
-    redirectRow = { old_handle: "old-handle", product_dim: [{ handle: "new-handle" }] };
+    redirectRow = {
+      old_handle: "old-handle",
+      product_dim: [{ handle: "new-handle" }],
+    };
     expect(await resolveHandleRedirect(SHOP, "old-handle")).toBe("new-handle");
   });
 
   it("is a single shop-scoped round-trip filtering the embedded target on active", async () => {
-    redirectRow = { old_handle: "old-handle", product_dim: { handle: "new-handle" } };
+    redirectRow = {
+      old_handle: "old-handle",
+      product_dim: { handle: "new-handle" },
+    };
     await resolveHandleRedirect(SHOP, "old-handle");
     expect(queries).toHaveLength(1);
     expect(queries[0].table).toBe("product_handle_redirect");
@@ -73,7 +102,10 @@ describe("resolveHandleRedirect", () => {
   });
 
   it("never redirects a handle to itself (loop guard on a stale row)", async () => {
-    redirectRow = { old_handle: "old-handle", product_dim: { handle: "old-handle" } };
+    redirectRow = {
+      old_handle: "old-handle",
+      product_dim: { handle: "old-handle" },
+    };
     expect(await resolveHandleRedirect(SHOP, "old-handle")).toBeNull();
   });
 
@@ -85,7 +117,9 @@ describe("resolveHandleRedirect", () => {
 
   it("surfaces a supabase error instead of swallowing it", async () => {
     forcedError = { message: "boom" };
-    await expect(resolveHandleRedirect(SHOP, "old-handle")).rejects.toMatchObject({ message: "boom" });
+    await expect(
+      resolveHandleRedirect(SHOP, "old-handle"),
+    ).rejects.toMatchObject({ message: "boom" });
   });
 });
 
@@ -102,8 +136,14 @@ describe("listRedirectOldHandles", () => {
     expect(queries).toHaveLength(0);
   });
 
-  it("surfaces a supabase error instead of swallowing it", async () => {
+  it("fails soft with a server log when the redirect table cannot be read", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
     forcedError = { message: "boom" };
-    await expect(listRedirectOldHandles(SHOP)).rejects.toMatchObject({ message: "boom" });
+    expect(await listRedirectOldHandles(SHOP)).toEqual([]);
+    expect(log).toHaveBeenCalledWith(
+      "[storegen] product handle redirect listing failed",
+      forcedError,
+    );
+    log.mockRestore();
   });
 });

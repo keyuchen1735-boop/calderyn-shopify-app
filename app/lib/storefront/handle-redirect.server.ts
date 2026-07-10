@@ -8,7 +8,10 @@
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
 
-export async function resolveHandleRedirect(shopId: string, handle: string): Promise<string | null> {
+export async function resolveHandleRedirect(
+  shopId: string,
+  handle: string,
+): Promise<string | null> {
   // Demo shells / fixture shops have no uuid rows — nothing to look up.
   if (!isUuid(shopId) || !handle) return null;
   const sb = getSupabase();
@@ -38,12 +41,19 @@ export async function resolveHandleRedirect(shopId: string, handle: string): Pro
  *  URL inside an existing page doc is not rewritten to the shop home on
  *  regeneration. Best-effort bounded read (PostgREST clamps at 1000 rows): a
  *  missed handle only downgrades that one link to /storefront. */
-export async function listRedirectOldHandles(shopId: string): Promise<string[]> {
+export async function listRedirectOldHandles(
+  shopId: string,
+): Promise<string[]> {
   if (!isUuid(shopId)) return [];
   const { data, error } = await getSupabase()
     .from("product_handle_redirect")
     .select("old_handle")
     .eq("shop_id", shopId);
-  if (error) throw error;
+  if (error) {
+    // Store generation is allowed to forget a renamed-away link; aborting the
+    // whole run would be a much larger failure than rewriting that link home.
+    console.error("[storegen] product handle redirect listing failed", error);
+    return [];
+  }
   return (data ?? []).map((r: { old_handle: unknown }) => String(r.old_handle));
 }

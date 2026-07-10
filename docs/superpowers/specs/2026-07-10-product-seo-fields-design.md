@@ -27,13 +27,13 @@ PR #418 deferred "SEO fields". The pieces mostly exist but don't meet:
 - Collection SEO fields (same mechanics, separate follow-up; collections already have stable
   handles).
 - AI listing-flow ops for handle/meta (`ListingOp` union untouched — keep the op contract stable).
-- Changing handle *generation* for new products (random-suffix stays; merchants can now clean it up
+- Changing handle _generation_ for new products (random-suffix stays; merchants can now clean it up
   in the editor afterwards).
 - SEO settings UI changes (Search screen already owns crawler/org settings).
 
 ## Data model
 
-One migration `supabase/migrations/20260710210000_product_handle_redirect.sql`:
+One migration `supabase/migrations/20260710220000_product_handle_redirect.sql`:
 
 ```sql
 create table product_handle_redirect (
@@ -52,19 +52,23 @@ meta_title, meta_description) — no change.
 ## Server changes
 
 ### Handle (catalog layer)
+
 - `ProductDetail` + the editor loader VM (`dashboard.api.catalog.products.$id.tsx`) expose `handle`.
 - `ProductInput`/`validateProductInput` accept optional `handle`: trim, lowercase; must match
   `/^[a-z0-9]+(?:-[a-z0-9]+)*$/`, length 1–80 (422 `invalid_handle`). Absent/unchanged handle =
   no-op (create keeps generating).
-- `updateProduct`: when handle changes —
-  1. update `product_dim.handle` (23505 → 409 `handle_conflict`, surfaced as "That URL is already
-     used by another product");
-  2. upsert `product_handle_redirect (shop_id, old_handle → product_id)`;
+- `updateProduct`: all rejection guards (including removed-variant stock) run before the first
+  write. When the handle changes, writes are retry-safe and concurrency-aware:
+  1. upsert `product_handle_redirect (shop_id, old_handle → product_id)` so an interrupted rename
+     cannot lose the old URL;
+  2. compare-and-set `product_dim.handle` against the handle read before the guards (23505 → 409
+     `handle_conflict`; zero matched rows → 409 `editing_conflict`);
   3. delete any redirect row whose `old_handle` equals the **new** handle (handle reclaimed);
   4. redirect rows pointing at this product from older renames stay (all old URLs keep working).
 - Title edits never touch the handle (collection-rename precedent).
 
 ### Meta override (seo layer write path)
+
 - Product save payload gains optional `seo: { metaTitle?: string; metaDescription?: string }`
   (trimmed; clamp metaTitle ≤ 70, metaDescription ≤ 200 — soft-limit UI at 60/160; 422
   `invalid_seo` on non-string). In the `$id` action, after `updateProduct`: both empty →
@@ -75,6 +79,7 @@ meta_title, meta_description) — no change.
   = what renders today without an override.
 
 ### Storefront 301
+
 - `storefront.products.$handle.tsx` loader: when `getProduct` misses, look up
   `product_handle_redirect` by `(shopId, handle)`; if found and the target product is still active,
   fetch its current handle and `throw redirect(\`/storefront/products/${current}\`, 301)`; else 404
@@ -86,8 +91,8 @@ meta_title, meta_description) — no change.
 New `Card` "Search listing" after the Description/first card:
 
 - **Page address**: prefix label with the store origin (`https://<slug>.calderyncompany.com/storefront/products/`)
-  + handle input; helper text "Changing the address redirects the old link to the new one."
-  Invalid slug / conflict errors surface inline via the existing toast + field error patterns.
+  - handle input; helper text "Changing the address redirects the old link to the new one."
+    Invalid slug / conflict errors surface inline via the existing toast + field error patterns.
 - **Search title** input, counter `n/60`, placeholder = deterministic default title.
 - **Search description** textarea, counter `n/160`, placeholder = deterministic default.
 - A small live preview (title line + URL line + description) styled like a search result, using
