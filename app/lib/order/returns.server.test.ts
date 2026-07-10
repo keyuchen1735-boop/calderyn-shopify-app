@@ -13,6 +13,7 @@ const store = vi.hoisted(() => {
     fulfillment: [],
     fulfillment_line: [],
     variant_dim: [],
+    inventory_ledger: [],
   };
 
   class Builder {
@@ -353,6 +354,62 @@ describe("cancelOrderReturn", () => {
   it("return_not_cancellable: 409s a return that isn't open", async () => {
     store.db.order_return.push({ id: "return-1", shop_id: "shop-1", order_id: "order-1", status: "closed" });
     await expect(cancelOrderReturn("shop-1", "return-1")).rejects.toMatchObject({ code: "return_not_cancellable", status: 409 });
+  });
+});
+
+describe("cancelOrderReturn — restock guard (Fix 2b)", () => {
+  it("cancels fine on a pristine open return with no committed restocks", async () => {
+    store.db.order_return.push({ id: "return-1", shop_id: "shop-1", order_id: "order-1", status: "open" });
+    store.db.order_return_line.push({
+      id: "rline-1",
+      shop_id: "shop-1",
+      return_id: "return-1",
+      order_line_id: "line-1",
+      quantity: 1,
+      restock: true,
+      refund_cents: 1000,
+    });
+    const res = await cancelOrderReturn("shop-1", "return-1");
+    expect(res).toEqual({ returnId: "return-1", status: "cancelled" });
+  });
+
+  it("return_has_restocks: refuses to cancel after a partial crash already committed a line's restock", async () => {
+    store.db.order_return.push({ id: "return-2", shop_id: "shop-1", order_id: "order-1", status: "open" });
+    store.db.order_return_line.push({
+      id: "rline-2",
+      shop_id: "shop-1",
+      return_id: "return-2",
+      order_line_id: "line-1",
+      quantity: 1,
+      restock: true,
+      refund_cents: 1000,
+    });
+    // Simulates a crashed receive attempt that committed the per-line restock (its own
+    // restockreturn:<return-line-id> ledger key) but died before the CAS flip.
+    store.db.inventory_ledger.push({ id: "il-1", shop_id: "shop-1", idempotency_key: "restockreturn:rline-2" });
+
+    await expect(cancelOrderReturn("shop-1", "return-2")).rejects.toMatchObject({
+      code: "return_has_restocks",
+      status: 409,
+    });
+    expect(store.db.order_return.find((r) => r.id === "return-2")!.status).toBe("open");
+  });
+
+  it("does not false-positive on an unrelated ledger row for a different return's line id", async () => {
+    store.db.order_return.push({ id: "return-3", shop_id: "shop-1", order_id: "order-1", status: "open" });
+    store.db.order_return_line.push({
+      id: "rline-3",
+      shop_id: "shop-1",
+      return_id: "return-3",
+      order_line_id: "line-1",
+      quantity: 1,
+      restock: true,
+      refund_cents: 1000,
+    });
+    store.db.inventory_ledger.push({ id: "il-2", shop_id: "shop-1", idempotency_key: "restockreturn:some-other-line" });
+
+    const res = await cancelOrderReturn("shop-1", "return-3");
+    expect(res).toEqual({ returnId: "return-3", status: "cancelled" });
   });
 });
 

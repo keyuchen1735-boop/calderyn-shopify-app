@@ -2,7 +2,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const store = vi.hoisted(() => {
   type Row = Record<string, any>;
-  const db: Record<string, Row[]> = { order_line: [], order_line_edit: [], variant_dim: [], location_dim: [], inventory_reservation: [] };
+  const db: Record<string, Row[]> = {
+    order_line: [],
+    order_line_edit: [],
+    variant_dim: [],
+    location_dim: [],
+    inventory_reservation: [],
+    order_return: [],
+    order_return_line: [],
+  };
   const rpc = vi.fn(async () => ({ data: null, error: null }));
   class Builder {
     private filters: Array<[string, unknown]> = [];
@@ -102,6 +110,62 @@ describe("restockOrderLines", () => {
       created_at: "2026-07-01T00:00:00.000Z",
     });
     const res = await restockOrderLines("shop-1", "o-1", "refund");
+    expect(res.restockedLines).toBe(0);
+    expect(store.rpc).not.toHaveBeenCalled();
+  });
+
+  it("nets a completed (closed) restocked return line so a later whole-order restock returns only the REMAINING effective units", async () => {
+    // ol-1 sold 2 units (v-tracked); a return already came back for 1 of them, was received, and
+    // restocked (restockLine, its own restockreturn:<line-id> key — a DIFFERENT key from
+    // restock:<order>:<variant>, so this RPC's own idempotency would NOT dedup the overlap). A
+    // later whole-order restock (cancel / full refund) must return only the remaining 1 unit.
+    store.db.order_return.push({ id: "ret-1", shop_id: "shop-1", order_id: "o-1", status: "closed" });
+    store.db.order_return_line.push({
+      id: "rline-1",
+      shop_id: "shop-1",
+      return_id: "ret-1",
+      order_line_id: "ol-1",
+      quantity: 1,
+      restock: true,
+    });
+    const res = await restockOrderLines("shop-1", "o-1", "refund");
+    expect(res.restockedLines).toBe(1);
+    expect(store.rpc).toHaveBeenCalledWith("inventory_restock", {
+      p_shop_id: "shop-1", p_variant_id: "v-tracked", p_location_id: "loc-1",
+      p_qty: 1, p_idempotency_key: "restock:o-1:v-tracked", p_reason: "refund",
+    });
+  });
+
+  it("an OPEN return's restock=true line has not restocked anything yet, so it does not net", async () => {
+    store.db.order_return.push({ id: "ret-2", shop_id: "shop-1", order_id: "o-1", status: "open" });
+    store.db.order_return_line.push({
+      id: "rline-2",
+      shop_id: "shop-1",
+      return_id: "ret-2",
+      order_line_id: "ol-1",
+      quantity: 1,
+      restock: true,
+    });
+    const res = await restockOrderLines("shop-1", "o-1", "refund");
+    expect(res.restockedLines).toBe(1);
+    expect(store.rpc).toHaveBeenCalledWith("inventory_restock", {
+      p_shop_id: "shop-1", p_variant_id: "v-tracked", p_location_id: "loc-1",
+      p_qty: 2, p_idempotency_key: "restock:o-1:v-tracked", p_reason: "refund",
+    });
+  });
+
+  it("floors at 0 rather than going negative when a completed return's restocked quantity meets or exceeds the effective quantity", async () => {
+    store.db.order_return.push({ id: "ret-3", shop_id: "shop-1", order_id: "o-1", status: "closed" });
+    store.db.order_return_line.push({
+      id: "rline-3",
+      shop_id: "shop-1",
+      return_id: "ret-3",
+      order_line_id: "ol-1",
+      quantity: 2,
+      restock: true,
+    });
+    const res = await restockOrderLines("shop-1", "o-1", "refund");
+    // v-tracked's return-netted quantity is 0; v-untracked is untracked anyway, so nothing restocks.
     expect(res.restockedLines).toBe(0);
     expect(store.rpc).not.toHaveBeenCalled();
   });

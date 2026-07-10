@@ -765,10 +765,11 @@ interface OrderProfitWire {
   costs_missing: number;
   carrier_cost_cents: number | null;
   fee_estimate_cents: number;
-  profit_cents: number;
+  profit_cents: number | null;
   margin_pct: number | null;
   estimated: boolean;
   attribution_label: string | null;
+  not_captured?: boolean;
 }
 
 function mapProfit(p: OrderProfitWire): OrderProfit {
@@ -783,6 +784,7 @@ function mapProfit(p: OrderProfitWire): OrderProfit {
     marginPct: p.margin_pct,
     estimated: p.estimated,
     attributionLabel: p.attribution_label,
+    notCaptured: p.not_captured,
   };
 }
 

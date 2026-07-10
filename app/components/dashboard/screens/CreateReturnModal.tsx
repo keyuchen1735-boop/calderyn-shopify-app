@@ -194,7 +194,7 @@ export default function CreateReturnModal({
                       />
                     </label>
                     <label className="cd-field" style={{ width: 120 }}>
-                      <span>Refund (USD)</span>
+                      <span>Refund ({order.currency.toUpperCase()})</span>
                       <input
                         className="cd-input tabular-nums"
                         type="number"

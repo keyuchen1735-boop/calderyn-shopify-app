@@ -128,14 +128,18 @@ export async function seedInitialStock(shopId: string, variantId: string, onHand
 // tracked variants restock (untracked lines never held ledger stock). Idempotent:
 // the ledger key restock:<order>:<variant> makes a replayed refund/cancel a no-op.
 //
-// EFFECTIVE-QUANTITY NETTING (orders phase 3): quantities are netted through
-// effectiveLineQuantities, NOT read raw off the order_line snapshot. A line reduced via
-// executeReduceLineAction either already put its reduced units back (restockLine, its own
-// editrestock:<edit-row-id> ledger key — a DIFFERENT key from restock:<order>:<variant>, so
+// EFFECTIVE-QUANTITY NETTING (orders phase 3, extended phase 4): quantities are netted through
+// effectiveLineQuantities, NOT read raw off the order_line snapshot, AND further netted against
+// any COMPLETED (received/closed) return that already restocked some of those units. A line
+// reduced via executeReduceLineAction either already put its reduced units back (restockLine, its
+// own editrestock:<edit-row-id> ledger key — a DIFFERENT key from restock:<order>:<variant>, so
 // idempotency would NOT catch the overlap) or the merchant explicitly chose not to restock
-// them at reduction time. Either way, a later whole-order restock (cancel / full refund)
-// must return only the EFFECTIVE units, or a reduced-then-refunded order would inflate
-// on_hand above what was ever actually sold.
+// them at reduction time. Likewise, a completed return line with restock=true already put its
+// units back (restockLine, its own restockreturn:<return-line-id> ledger key — again a DIFFERENT
+// key, so idempotency would NOT catch this overlap either). Either way, a later whole-order
+// restock (cancel / full refund) must return only the units NEITHER a reduction NOR a completed
+// return already accounted for, or a reduced-or-returned-then-refunded order would inflate on_hand
+// above what was ever actually sold.
 //
 // PARTIAL-PROGRESS CONTRACT: each variant's inventory_restock RPC commits independently
 // (its own atomic Postgres function), so a failure on one variant midway through the loop
@@ -147,6 +151,37 @@ export async function seedInitialStock(shopId: string, variantId: string, onHand
 // variants truly were restocked. So we keep going past a failed variant, log every failure
 // loudly, and report exactly what happened: how many lines succeeded and which variants
 // failed, so the caller can record a truthful, actionable audit trail.
+/** Units already put back by a COMPLETED (received/closed) return with restock=true, per
+ *  order_line — mirrors returns.server.ts's own COMPLETED_RETURN_STATUSES set (that module isn't
+ *  imported here to avoid a cross-module dependency for one literal pair; both must be kept in
+ *  sync if the return lifecycle ever grows a new terminal status). An open/cancelled return never
+ *  restocked anything, so it contributes nothing here — only received/closed lines count. */
+async function completedReturnRestockByLine(
+  sb: ReturnType<typeof getSupabase>,
+  shopId: string,
+  orderId: string,
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  const returnsRes = await sb.from("order_return").select("id, status").eq("shop_id", shopId).eq("order_id", orderId);
+  if (returnsRes.error) throw returnsRes.error;
+  const returnIds = ((returnsRes.data ?? []) as Array<{ id: string; status: string }>)
+    .filter((r) => r.status === "received" || r.status === "closed")
+    .map((r) => String(r.id));
+  if (returnIds.length === 0) return map;
+  const linesRes = await sb
+    .from("order_return_line")
+    .select("order_line_id, quantity, restock")
+    .eq("shop_id", shopId)
+    .in("return_id", returnIds);
+  if (linesRes.error) throw linesRes.error;
+  for (const r of (linesRes.data ?? []) as Array<{ order_line_id: string; quantity: number; restock: boolean }>) {
+    if (!r.restock) continue;
+    const id = String(r.order_line_id);
+    map.set(id, (map.get(id) ?? 0) + Number(r.quantity ?? 0));
+  }
+  return map;
+}
+
 export async function restockOrderLines(
   shopId: string, orderId: string, reason: string,
 ): Promise<{ restockedLines: number; failedVariantIds: string[] }> {
@@ -157,11 +192,17 @@ export async function restockOrderLines(
     .eq("shop_id", shopId)
     .eq("order_id", orderId);
   if (lErr) throw lErr;
-  const effectiveMap = await effectiveLineQuantities(shopId, orderId, sb);
+  const [effectiveMap, returnRestockByLine] = await Promise.all([
+    effectiveLineQuantities(shopId, orderId, sb),
+    completedReturnRestockByLine(sb, shopId, orderId),
+  ]);
   const byVariant = new Map<string, number>();
   for (const l of (lines ?? []) as Array<Record<string, unknown>>) {
     const v = String(l.variant_id);
-    const qty = effectiveMap.get(String(l.id))?.effective ?? Number(l.quantity ?? 0);
+    const lineId = String(l.id);
+    const effective = effectiveMap.get(lineId)?.effective ?? Number(l.quantity ?? 0);
+    const alreadyReturned = returnRestockByLine.get(lineId) ?? 0;
+    const qty = Math.max(0, effective - alreadyReturned);
     byVariant.set(v, (byVariant.get(v) ?? 0) + qty);
   }
   if (byVariant.size === 0) return { restockedLines: 0, failedVariantIds: [] };

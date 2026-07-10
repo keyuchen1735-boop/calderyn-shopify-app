@@ -26,6 +26,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         margin_pct: profit.marginPct,
         estimated: profit.estimated,
         attribution_label: profit.attributionLabel,
+        ...(profit.notCaptured ? { not_captured: true } : {}),
       },
     };
   });

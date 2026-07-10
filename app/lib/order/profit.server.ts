@@ -32,6 +32,12 @@
 //  - Revenue = total_cents - ledger refunds. Reuses remainingRefundableByOrder's transaction_ledger
 //    read (list.server.ts) — the SAME cheap query loadOrderDetail's refundedCents is built from —
 //    rather than loading the whole OrderDetail DTO (13 parallel reads) just for one number.
+//  - A native order with ZERO capture rows AND a state that was never paid-like (not
+//    paid/partially_fulfilled/fulfilled/partially_refunded/refunded — i.e. still checkout_pending,
+//    or cancelled before ever capturing) never took any money at all: revenueCents/feeEstimateCents
+//    are 0 and profitCents/marginPct are null, plus notCaptured: true, rather than fabricating a
+//    breakdown via the one-assumed-capture floor below (that floor is for a PAID-LIKE order whose
+//    capture ledger is unexpectedly empty, a data-completeness gap, not "never paid").
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { isImportedOrderId, stripNativeOrderPrefix } from "./detail.server";
@@ -45,6 +51,21 @@ const SHOPIFY_PREFIX = "shopify:";
  *  produce (no real processor-fee data exists). See the module header. */
 const FEE_PCT = 0.029;
 const FEE_FLAT_CENTS = 30;
+
+/** Paid-like native order states (fix: never-captured orders). Zero transaction_ledger capture
+ *  rows is unexpected ONLY inside these states (see summarizeCaptures's one-assumed-capture
+ *  floor) — a checkout_pending invoice or an abandoned cart with zero captures never took any
+ *  money at all, so nativeOrderProfit returns a distinct notCaptured shape for those instead of
+ *  falling into that floor. Includes 'refunded' (unlike REFUNDABLE_ORDER_STATES/order-status.ts):
+ *  a fully refunded order DID capture and pay out at some point, so it's paid-like even though
+ *  nothing is refundable on it anymore. */
+const PAID_LIKE_STATES: ReadonlySet<string> = new Set([
+  "paid",
+  "partially_fulfilled",
+  "fulfilled",
+  "partially_refunded",
+  "refunded",
+]);
 
 /** Same 4-line extraction list.server.ts/detail.server.ts each keep privately — duplicated rather
  *  than exported/shared, per those modules' own comment: it's a pure function, and this read model
@@ -80,12 +101,15 @@ function sumCogs(lines: CostLine[]): { cogsCents: number; costsMissing: number }
 }
 
 /** Number of transaction_ledger `capture` rows for this order, and their summed amount — the
- *  "captured revenue" the fee estimate is a percentage of. A paid native order with ZERO capture
- *  rows is unexpected (every Stripe-paid order records exactly one on payment_intent.succeeded,
- *  and a multi-capture invoice order — post-#400 — records more than one) but must never silently
- *  zero the fee estimate: fall back to ONE assumed capture at the order total so the estimate
- *  stays an honest approximation rather than understating fees to $0. The same one-assumed-capture
- *  floor is used outright for imported orders, which never had a Calderyn-owned capture ledger. */
+ *  "captured revenue" the fee estimate is a percentage of. A PAID-LIKE native order with ZERO
+ *  capture rows is unexpected (every Stripe-paid order records exactly one on
+ *  payment_intent.succeeded, and a multi-capture invoice order — post-#400 — records more than
+ *  one) but must never silently zero the fee estimate: fall back to ONE assumed capture at the
+ *  order total so the estimate stays an honest approximation rather than understating fees to $0.
+ *  The same one-assumed-capture floor is used outright for imported orders, which never had a
+ *  Calderyn-owned capture ledger. This function is never even reached for a NOT-paid-like order
+ *  with zero captures — nativeOrderProfit returns the distinct notCapturedProfit shape for that
+ *  case before summarizeCaptures would otherwise fabricate a fee estimate on money never taken. */
 function summarizeCaptures(
   rows: { amountCents: number }[],
   fallbackTotalCents: number,
@@ -96,6 +120,31 @@ function summarizeCaptures(
   return {
     captureCount: rows.length,
     capturedRevenueCents: rows.reduce((sum, r) => sum + r.amountCents, 0),
+  };
+}
+
+/** Distinct shape for a native order with zero captures that never took any money at all (see
+ *  PAID_LIKE_STATES above) — never a fabricated revenue/fee breakdown built on a capture that
+ *  doesn't exist. cogsCents/carrierCostCents describe real order-line/shipping facts independent
+ *  of payment, but the money fields are honestly empty rather than approximated. */
+function notCapturedProfit(args: {
+  cogsCents: number;
+  costsMissing: number;
+  carrierCostCents: number | null;
+  attributionLabel: string | null;
+}): OrderProfit {
+  return {
+    source: "calderyn",
+    revenueCents: 0,
+    cogsCents: args.cogsCents,
+    costsMissing: args.costsMissing,
+    carrierCostCents: args.carrierCostCents,
+    feeEstimateCents: 0,
+    profitCents: null,
+    marginPct: null,
+    estimated: true,
+    attributionLabel: args.attributionLabel,
+    notCaptured: true,
   };
 }
 
@@ -201,7 +250,7 @@ async function loadNativeCostLines(sb: SupabaseClient, shopId: string, orderId: 
   });
 }
 
-const NATIVE_ORDER_COLS = "id, total_cents, attribution";
+const NATIVE_ORDER_COLS = "id, total_cents, attribution, state";
 
 async function nativeOrderProfit(shopId: string, orderId: string): Promise<OrderProfit | null> {
   const sb = getSupabase();
@@ -210,6 +259,7 @@ async function nativeOrderProfit(shopId: string, orderId: string): Promise<Order
   const o = orderRes.data as Record<string, unknown> | null;
   if (!o) return null;
   const totalCents = Number(o.total_cents ?? 0);
+  const state = String(o.state ?? "");
 
   // Independent reads — none depends on another's result — run together.
   const [lines, remainingMap, captureRows, carrierCostCents] = await Promise.all([
@@ -219,12 +269,21 @@ async function nativeOrderProfit(shopId: string, orderId: string): Promise<Order
     loadCarrierCostForNativeOrder(sb, shopId, orderId),
   ]);
 
+  const { cogsCents, costsMissing } = sumCogs(lines);
+
+  // Fix: zero captures + a state that was never paid-like means this order never took any money
+  // (an unpaid invoice, an abandoned checkout) — return the distinct notCaptured shape instead of
+  // falling into summarizeCaptures' one-assumed-capture floor, which would fabricate a revenue/fee
+  // breakdown for money that was never taken.
+  if (captureRows.length === 0 && !PAID_LIKE_STATES.has(state)) {
+    return notCapturedProfit({ cogsCents, costsMissing, carrierCostCents, attributionLabel: attributionLabel(o.attribution) });
+  }
+
   // Same derivation as detail.server.ts's refundedCents: ledger truth is remaining = captured -
   // already-refunded; a native order's capture is its total_cents, so refunded = total - remaining.
   const remainingRefundableCents = remainingMap.get(orderId) ?? totalCents;
   const refundedCents = Math.max(0, totalCents - remainingRefundableCents);
 
-  const { cogsCents, costsMissing } = sumCogs(lines);
   const { captureCount, capturedRevenueCents } = summarizeCaptures(captureRows, totalCents);
 
   return computeProfit({

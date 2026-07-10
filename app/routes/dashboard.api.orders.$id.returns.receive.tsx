@@ -1,14 +1,17 @@
 // app/routes/dashboard.api.orders.$id.returns.receive.tsx
 // POST { return_id, idempotency_key } -> executeReturnReceivedAction (orders Phase 4, Task 2):
-// restocks the return's requested lines and refunds its total, then flips it closed. Every domain
+// refunds the return's total and restocks its requested lines, then flips it closed. Every domain
 // failure (return_not_found, return_not_open, over_refund, qty_exceeds_returnable, ...) is a
 // CalderynError the executor already throws; dashboardJson maps it, this route adds no handling
-// of its own beyond boundary validation.
+// of its own beyond boundary validation and verifying return_id belongs to the URL's :id (404
+// return_not_found on a mismatch) — a returnId alone carries no order scoping, so without this
+// check a caller could receive some OTHER order's return through this order's URL.
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, parseJsonObjectBody, requireSameOrigin } from "~/lib/dashboard/http.server";
-import { isImportedOrderId } from "~/lib/order/detail.server";
-import { executeReturnReceivedAction } from "~/lib/order/returns.server";
+import { CalderynError } from "~/lib/calderyn.server";
+import { isImportedOrderId, stripNativeOrderPrefix } from "~/lib/order/detail.server";
+import { executeReturnReceivedAction, returnBelongsToOrder } from "~/lib/order/returns.server";
 
 export async function action({ request, params }: ActionFunctionArgs) {
   requireSameOrigin(request);
@@ -19,6 +22,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (isImportedOrderId(rawId)) {
     return jsonError(422, "imported_read_only", "Imported orders cannot have returns received here.");
   }
+  const orderId = stripNativeOrderPrefix(rawId);
 
   const body = await parseJsonObjectBody(request);
   if (!body) return jsonError(400, "bad_body", "Expected a JSON body.");
@@ -30,6 +34,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!idempotencyKey) return jsonError(422, "missing_idempotency_key", "idempotency_key is required.");
 
   return dashboardJson(async () => {
+    if (!(await returnBelongsToOrder(session.shopId, returnId, orderId))) {
+      throw new CalderynError({
+        code: "return_not_found",
+        status: 404,
+        message: `Return ${returnId} not found on order ${orderId}.`,
+      });
+    }
     const result = await executeReturnReceivedAction(session.shopId, {
       returnId,
       idempotencyKey,

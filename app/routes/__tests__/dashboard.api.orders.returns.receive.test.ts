@@ -24,7 +24,7 @@ vi.mock("~/lib/dashboard/http.server", async (importOriginal) => ({
   ...(await importOriginal<typeof HttpServer>()),
 }));
 
-const returns = vi.hoisted(() => ({ executeReturnReceivedAction: vi.fn() }));
+const returns = vi.hoisted(() => ({ executeReturnReceivedAction: vi.fn(), returnBelongsToOrder: vi.fn() }));
 vi.mock("~/lib/order/returns.server", () => returns);
 
 function req(url: string, method: string, body?: unknown, origin: string | null = ORIGIN): Request {
@@ -50,6 +50,7 @@ beforeEach(() => {
     restockErrors: null,
     replayed: false,
   });
+  returns.returnBelongsToOrder.mockResolvedValue(true);
 });
 
 describe("POST /dashboard/api/orders/:id/returns/receive", () => {
@@ -61,6 +62,7 @@ describe("POST /dashboard/api/orders/:id/returns/receive", () => {
     } as never)) as Response;
 
     expect(res.status).toBe(200);
+    expect(returns.returnBelongsToOrder).toHaveBeenCalledWith("shop-1", "ret-1", ORDER_ID);
     expect(returns.executeReturnReceivedAction).toHaveBeenCalledWith("shop-1", {
       returnId: "ret-1",
       idempotencyKey: "k1",
@@ -111,6 +113,18 @@ describe("POST /dashboard/api/orders/:id/returns/receive", () => {
     } as never)) as Response;
     expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("missing_idempotency_key");
+    expect(returns.executeReturnReceivedAction).not.toHaveBeenCalled();
+  });
+
+  it("404s return_not_found when the return_id does not belong to this order's URL", async () => {
+    returns.returnBelongsToOrder.mockResolvedValue(false);
+    const { action } = await import("../dashboard.api.orders.$id.returns.receive");
+    const res = (await action({
+      request: req(URL_, "POST", { return_id: "ret-1", idempotency_key: "k6" }),
+      params: { id: ORDER_ID },
+    } as never)) as Response;
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("return_not_found");
     expect(returns.executeReturnReceivedAction).not.toHaveBeenCalled();
   });
 

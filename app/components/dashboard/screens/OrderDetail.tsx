@@ -615,42 +615,52 @@ export default function OrderDetailScreen({
             ) : profit ? (
               <Card className="cd-card-tight">
                 <div className="cd-h2" style={{ marginBottom: 8 }}>Profit</div>
-                <div className="cd-kv-col">
-                  <div className="cd-kv"><span>Revenue</span><b className="ml-auto tabular-nums">{money(profit.revenueCents, detail.currency)}</b></div>
-                  <div className="cd-kv"><span>COGS</span><b className="ml-auto tabular-nums">-{money(profit.cogsCents, detail.currency)}</b></div>
-                  {profit.costsMissing > 0 && (
-                    <div className="cd-caption">
-                      {profit.costsMissing} line{profit.costsMissing === 1 ? "" : "s"} missing cost data
+                {profit.notCaptured ? (
+                  <span className="cd-caption">No payment captured yet.</span>
+                ) : (
+                  <>
+                    <div className="cd-kv-col">
+                      <div className="cd-kv"><span>Revenue</span><b className="ml-auto tabular-nums">{money(profit.revenueCents, detail.currency)}</b></div>
+                      <div className="cd-kv"><span>COGS</span><b className="ml-auto tabular-nums">-{money(profit.cogsCents, detail.currency)}</b></div>
+                      {profit.costsMissing > 0 && (
+                        <div className="cd-caption">
+                          {profit.costsMissing} line{profit.costsMissing === 1 ? "" : "s"} missing cost data
+                        </div>
+                      )}
+                      <div className="cd-kv">
+                        <span>Carrier cost</span>
+                        <b className="ml-auto tabular-nums">
+                          {profit.carrierCostCents == null ? (
+                            <span aria-hidden="true" />
+                          ) : (
+                            `-${money(profit.carrierCostCents, detail.currency)}`
+                          )}
+                        </b>
+                      </div>
+                      {profit.carrierCostCents == null && (
+                        <div className="cd-caption">No carrier cost recorded</div>
+                      )}
+                      <div className="cd-kv"><span>Payment fees</span><b className="ml-auto tabular-nums">-{money(profit.feeEstimateCents, detail.currency)}</b></div>
+                      <div className="cd-caption">Estimated at 2.9% + 30 cents</div>
+                      {profit.attributionLabel && (
+                        <div className="cd-caption">Attributed to {profit.attributionLabel}</div>
+                      )}
+                      <div className="cd-kv" style={{ marginTop: 6, paddingTop: 10, borderTop: "0.5px solid var(--hairline)" }}>
+                        <span>Profit</span>
+                        <b className="ml-auto tabular-nums">{profit.profitCents == null ? null : money(profit.profitCents, detail.currency)}</b>
+                      </div>
+                      <div className="cd-caption">
+                        {profit.marginPct == null
+                          ? "Margin unavailable"
+                          : `${profit.marginPct.toFixed(1)}% margin${profit.costsMissing > 0 || profit.carrierCostCents === null ? " (partial)" : ""}`}
+                      </div>
                     </div>
-                  )}
-                  <div className="cd-kv">
-                    <span>Carrier cost</span>
-                    <b className="ml-auto tabular-nums">
-                      {profit.carrierCostCents == null ? "—" : `-${money(profit.carrierCostCents, detail.currency)}`}
-                    </b>
-                  </div>
-                  {profit.carrierCostCents == null && (
-                    <div className="cd-caption">No carrier cost recorded</div>
-                  )}
-                  <div className="cd-kv"><span>Payment fees</span><b className="ml-auto tabular-nums">-{money(profit.feeEstimateCents, detail.currency)}</b></div>
-                  <div className="cd-caption">Estimated at 2.9% + 30 cents</div>
-                  {profit.attributionLabel && (
-                    <div className="cd-caption">Attributed to {profit.attributionLabel}</div>
-                  )}
-                  <div className="cd-kv" style={{ marginTop: 6, paddingTop: 10, borderTop: "0.5px solid var(--hairline)" }}>
-                    <span>Profit</span>
-                    <b className="ml-auto tabular-nums">{money(profit.profitCents, detail.currency)}</b>
-                  </div>
-                  <div className="cd-caption">
-                    {profit.marginPct == null
-                      ? "Margin unavailable"
-                      : `${profit.marginPct.toFixed(1)}% margin${profit.costsMissing > 0 || profit.carrierCostCents === null ? " (partial)" : ""}`}
-                  </div>
-                </div>
-                {detail.readOnly && (
-                  <div className="cd-caption" style={{ marginTop: 8 }}>
-                    Estimates — this order was placed on Shopify, so costs and fees are approximated.
-                  </div>
+                    {detail.readOnly && (
+                      <div className="cd-caption" style={{ marginTop: 8 }}>
+                        Estimates: this order was placed on Shopify, so costs and fees are approximated.
+                      </div>
+                    )}
+                  </>
                 )}
               </Card>
             ) : null}

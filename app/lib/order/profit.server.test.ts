@@ -168,13 +168,15 @@ describe("orderProfit — native orders", () => {
     expect(p!.feeEstimateCents).toBe(350);
   });
 
-  it("zero capture rows falls back to ONE assumed capture at the order total (never a $0 fee)", async () => {
-    store.db.orders.push({ id: "order-8", shop_id: SHOP, total_cents: 2000, attribution: null });
-    // No transaction_ledger rows at all for this order.
+  it("paid order without capture rows: zero captures falls back to ONE assumed capture at the order total (never a $0 fee) — fallback unchanged", async () => {
+    store.db.orders.push({ id: "order-8", shop_id: SHOP, total_cents: 2000, attribution: null, state: "paid" });
+    // No transaction_ledger rows at all for this order, but the state IS paid-like, so this is a
+    // data-completeness gap (fee.server.ts's one-assumed-capture floor), not "never paid".
 
     const p = await orderProfit(SHOP, "order-8");
     // fee = round(2000*0.029) + 1*30 = 58 + 30 = 88
     expect(p!.feeEstimateCents).toBe(88);
+    expect(p!.notCaptured).toBeUndefined();
   });
 
   it("margin is null only when revenue is 0", async () => {
@@ -230,6 +232,49 @@ describe("orderProfit — native orders", () => {
     store.db.orders.push({ id: "order-11", shop_id: "other-shop", total_cents: 1000, attribution: null });
     const p = await orderProfit(SHOP, "order-11");
     expect(p).toBeNull();
+  });
+});
+
+describe("orderProfit — never-captured native orders (Fix 3)", () => {
+  it("unpaid invoice order (checkout_pending, zero captures): notCaptured shape, not a fabricated fee/revenue breakdown", async () => {
+    store.db.orders.push({ id: "order-invoice", shop_id: SHOP, total_cents: 5000, attribution: { channel: "meta" }, state: "checkout_pending" });
+    store.db.order_line.push({ id: "line-1", shop_id: SHOP, order_id: "order-invoice", quantity: 1, unit_cost_cents_snapshot: 1000 });
+    // No transaction_ledger capture rows -- this invoice was never paid.
+
+    const p = await orderProfit(SHOP, "order-invoice");
+    expect(p).toEqual({
+      source: "calderyn",
+      revenueCents: 0,
+      cogsCents: 1000,
+      costsMissing: 0,
+      carrierCostCents: null,
+      feeEstimateCents: 0,
+      profitCents: null,
+      marginPct: null,
+      estimated: true,
+      attributionLabel: "meta",
+      notCaptured: true,
+    });
+  });
+
+  it("cancelled order that never captured anything: also notCaptured", async () => {
+    store.db.orders.push({ id: "order-abandoned", shop_id: SHOP, total_cents: 3000, attribution: null, state: "cancelled" });
+
+    const p = await orderProfit(SHOP, "order-abandoned");
+    expect(p!.notCaptured).toBe(true);
+    expect(p!.revenueCents).toBe(0);
+    expect(p!.feeEstimateCents).toBe(0);
+    expect(p!.profitCents).toBeNull();
+    expect(p!.marginPct).toBeNull();
+  });
+
+  it("a fully refunded order (paid-like) with zero capture rows is NOT notCaptured -- falls back as usual", async () => {
+    store.db.orders.push({ id: "order-refunded-nocap", shop_id: SHOP, total_cents: 1500, attribution: null, state: "refunded" });
+
+    const p = await orderProfit(SHOP, "order-refunded-nocap");
+    expect(p!.notCaptured).toBeUndefined();
+    // fee = round(1500*0.029) + 1*30 = 44 + 30 = 74 (one-assumed-capture floor, same as order-8)
+    expect(p!.feeEstimateCents).toBe(74);
   });
 });
 

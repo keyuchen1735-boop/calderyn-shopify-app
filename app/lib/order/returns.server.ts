@@ -10,34 +10,46 @@
 //      and any client-supplied refund_cents does not exceed the server-computed default (unit price
 //      x qty + a proportional tax share, mirroring edit.server.ts's reduction-tax formula exactly —
 //      both derive a refund from a quantity delta against the order's captured subtotal/tax).
-//   2. executeReturnReceivedAction — the merchant confirms the item physically arrived: restocks
-//      each requested line (tracked variants only, best-effort like every other restock path in this
-//      module family), refunds the return's total (delegated to actions/refund.server.ts with a
-//      nested idempotency key, same pattern edit.server.ts's nested refund uses), then flips the
-//      return open -> closed in one CAS update, stamping received_at + the caller's idempotency key.
+//   2. executeReturnReceivedAction — the merchant confirms the item physically arrived: refunds the
+//      return's total FIRST (delegated to actions/refund.server.ts with a nested idempotency key,
+//      same pattern edit.server.ts's nested refund uses) so a refund failure can never strand a
+//      committed restock behind a return that's still open and cancellable; THEN restocks each
+//      requested line (tracked variants only, best-effort like every other restock path in this
+//      module family — a restock failure at this point is the already-tolerated surfaced path,
+//      logged and reported in the result/audit params rather than thrown, mirroring
+//      edit.server.ts's own restock-after-refund stance); then flips the return open -> closed in
+//      one CAS update, stamping received_at + the caller's idempotency key.
 //
 // CRASH WINDOW (rule 12, same shape as edit.server.ts's header): executeReturnReceivedAction's steps
 // are several non-transactional PostgREST/RPC calls, so a crash between any two of them must not
 // turn a safe retry into either a false over_refund 409 or a lost audit tail. Two separate windows,
 // two separate detectors:
-//   - Refund committed, flip not yet reached (between the nested refund call and the CAS status
-//     flip below): status is still 'open' and received_idempotency_key is still null, so a naive
-//     retry falls into the FRESH branch and re-runs the over-refund pre-check against a ledger that
-//     already reflects THIS return's own prior refund — a false, permanent over_refund 409 (money
-//     moved, return stuck open forever, the one-open-return index blocking any new return on the
-//     order). Detected by a proven `<idempotencyKey>:refund` execution FOR THIS ORDER (mirrors
+//   - Refund committed, flip not yet reached (anywhere between the nested refund call and the CAS
+//     status flip below — which now includes the restock step, since refund runs BEFORE restock):
+//     status is still 'open' and received_idempotency_key is still null, so a naive retry falls
+//     into the FRESH branch and re-runs the over-refund pre-check against a ledger that already
+//     reflects THIS return's own prior refund — a false, permanent over_refund 409 (money moved,
+//     return stuck open forever, the one-open-return index blocking any new return on the order).
+//     Detected by a proven `<idempotencyKey>:refund` execution FOR THIS ORDER (mirrors
 //     cancel.server.ts's priorRefundBelongsToThisOrder — action_kind + outcome + params.order_id,
 //     not a literal sub-key match alone, since idempotency keys are caller-supplied strings). Once
 //     proven, the resume skips the pre-check AND the refund call (already done, amount taken from
-//     the verified prior execution) and re-runs the per-line restocks (idempotent), then the CAS
-//     flip + audit tail as normal. A zero-refund return never reaches the refund call in the first
-//     place, so its crash resumes naturally via the idempotent restocks + flip below — no marker
-//     needed, nothing to detect.
+//     the verified prior execution) and re-runs the per-line restocks (idempotent — a crash mid-
+//     restock on the FIRST attempt just means some lines restock again here, harmlessly, since each
+//     restock is keyed per return-line row id), then the CAS flip + audit tail as normal. A
+//     zero-refund return never reaches the refund call in the first place, so its crash resumes
+//     naturally via the idempotent restocks + flip below — no marker needed, nothing to detect.
 //   - Flip committed, audit tail not yet reached (after the CAS flip, before the action_audit
 //     insert): the row is already non-open but carries THIS key on received_idempotency_key — the
-//     flip's own key stamp is the proof. Resumes by re-entering restock/refund (both independently
-//     idempotent: restock keyed per return-line row id, the refund delegate replays via its own
-//     nested idempotency key) and writing the missing audit tail.
+//     flip's own key stamp is the proof. Resumes by re-entering refund/restock (both independently
+//     idempotent: the refund delegate replays via its own nested idempotency key, restock keyed per
+//     return-line row id) and writing the missing audit tail.
+//
+// CANCEL GUARD (belt-and-braces): cancelOrderReturn below refuses (409 return_has_restocks) to
+// cancel a return that already has a committed restock in the ledger — the crash window above can
+// leave a return 'open' with one or more of its lines already restocked, and cancelling that return
+// would let a merchant re-open the same units for a SECOND restock later without ever refunding
+// this one. See cancelOrderReturn's own comment for the exact check.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { CalderynError } from "../calderyn.server";
@@ -375,6 +387,32 @@ export async function cancelOrderReturn(
     throw new CalderynError({ code: "invalid_return", status: 422, message: "returnId is required." });
   }
 
+  // Belt-and-braces restock guard (module header, "CANCEL GUARD"): a crash between the (now
+  // refund-first) nested refund and the CAS flip in executeReturnReceivedAction can leave a return
+  // still 'open' with one or more of its lines already restocked to the ledger. Cancelling such a
+  // return would free it up to be re-received later — restocking those same units a SECOND time
+  // while the original refund from the crashed attempt is never issued. restockReturnLines' own
+  // idempotency key is deterministic (`restockreturn:<return-line row id>`), so this is a single
+  // exact .in() lookup against the ledger, not a LIKE scan. A return with no lines yet (shouldn't
+  // happen — createOrderReturn always inserts at least one) skips the query outright.
+  const returnLines = await loadReturnLines(sb, shopId, returnId);
+  if (returnLines.length > 0) {
+    const restockKeys = returnLines.map((l) => `restockreturn:${l.id}`);
+    const ledgerRes = await sb
+      .from("inventory_ledger")
+      .select("id")
+      .eq("shop_id", shopId)
+      .in("idempotency_key", restockKeys);
+    if (ledgerRes.error) throw ledgerRes.error;
+    if ((ledgerRes.data ?? []).length > 0) {
+      throw new CalderynError({
+        code: "return_has_restocks",
+        status: 409,
+        message: `Return ${returnId} already has a committed restock and cannot be cancelled.`,
+      });
+    }
+  }
+
   // Atomic CAS claim (mirrors invoice.server.ts's draft-cart claim): only a currently-`open` return
   // flips to `cancelled`. Zero rows matched means either no such return, or one that already moved
   // on (received/closed/cancelled) — a follow-up read distinguishes the two for the right error.
@@ -401,6 +439,27 @@ export async function cancelOrderReturn(
   }
 
   return { returnId, status: "cancelled" };
+}
+
+/** Order-ownership check for the receive/cancel routes (a returnId alone carries no order scoping
+ *  of its own — every write route accepts BOTH the URL's :id and a body-supplied return_id, and
+ *  must refuse a mismatch rather than silently letting one order's URL act on some OTHER order's
+ *  return). Shop-scoped; false for a missing return OR one that belongs to a different order. */
+export async function returnBelongsToOrder(
+  shopId: string,
+  returnId: string,
+  orderId: string,
+  sb: SupabaseClient = getSupabase(),
+): Promise<boolean> {
+  const { data, error } = await sb
+    .from("order_return")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("id", returnId)
+    .eq("order_id", orderId)
+    .maybeSingle();
+  if (error) throw error;
+  return !!data;
 }
 
 // ---------------------------------------------------------------------------
@@ -564,8 +623,10 @@ async function verifyPriorRefundForReturn(
  * return open -> closed (CAS, tolerant of a concurrent retry already having flipped it), and audit.
  *
  * Binding flow (see module header for the crash-window rationale): replay via priorExecutionForKey
- * -> load return + lines (+ order, for the over-refund fallback) -> resume-or-validate -> per-line
- * restock -> refund the line total when > 0 -> CAS status flip -> one action_audit row.
+ * -> load return + lines (+ order, for the over-refund fallback) -> resume-or-validate -> refund
+ * the line total when > 0 -> per-line restock -> CAS status flip -> one action_audit row. Refund
+ * runs BEFORE restock (see module header, Fix 2): a refund failure must never strand a committed
+ * restock behind a return that's still open and cancellable.
  */
 export async function executeReturnReceivedAction(
   shopId: string,
@@ -593,7 +654,7 @@ export async function executeReturnReceivedAction(
 
   // 3. Crash-window resume check (module header): this exact idempotency key already stamped
   //    received_idempotency_key at the same time it flipped the row non-open, but the outer audit
-  //    tail never landed. Resume straight into restock/refund (both independently idempotent) and
+  //    tail never landed. Resume straight into refund/restock (both independently idempotent) and
   //    skip the (now potentially stale, given the ledger already reflects the earlier refund)
   //    over-refund pre-check, rather than re-deriving it from the current state.
   const isResume = ret.status !== "open" && ret.receivedIdempotencyKey === input.idempotencyKey;
@@ -659,16 +720,13 @@ export async function executeReturnReceivedAction(
     }
   }
 
-  // 4. Per-line restock (tracked only, best-effort — see restockReturnLines's own header). Always
-  //    re-run, resume or not — each restock is idempotent (keyed per return-line row id), so
-  //    re-issuing it on a resume is a safe no-op, not a double restock.
-  const { restockedLines, restockErrors } = await restockReturnLines(sb, shopId, ret.orderId, lines);
-
-  // 5. Refund the return's total via the shared executor, nested idempotency key. Skipped when the
-  //    total is 0 (e.g. every line refunds $0 — a restocking-fee-only return, mirrors
-  //    edit.server.ts's zero-price-line skip) OR when resumeAfterRefundCommit already proved this
-  //    exact refund committed pre-crash — the verified amount from that prior execution is reused
-  //    directly instead of calling the refund executor again.
+  // 4. Refund the return's total via the shared executor, nested idempotency key, BEFORE any
+  //    restock (Fix 2, module header): a refund failure here must never leave a committed restock
+  //    behind a return that's still open and cancellable. Skipped when the total is 0 (e.g. every
+  //    line refunds $0 — a restocking-fee-only return, mirrors edit.server.ts's zero-price-line
+  //    skip) OR when resumeAfterRefundCommit already proved this exact refund committed pre-crash —
+  //    the verified amount from that prior execution is reused directly instead of calling the
+  //    refund executor again.
   let refundedCents = 0;
   if (resumeAfterRefundCommit) {
     refundedCents = resumedRefundedCents;
@@ -681,12 +739,20 @@ export async function executeReturnReceivedAction(
         idempotencyKey: `${input.idempotencyKey}:refund`,
         actor: input.actor,
         reason: "return received",
-        restock: false, // restock is handled per-line above, not by the refund executor's whole-order path
+        restock: false, // restock is handled per-line below, not by the refund executor's whole-order path
       },
       sb,
     );
     refundedCents = refundResult.amountCents;
   }
+
+  // 5. Per-line restock (tracked only, best-effort — see restockReturnLines's own header), AFTER
+  //    the refund above has committed (Fix 2): a restock failure at this point is the already-
+  //    tolerated surfaced path — logged and reported in the result/audit params below, never thrown
+  //    past the audit tail, mirroring edit.server.ts's own restock-after-refund stance. Always
+  //    re-run, resume or not — each restock is idempotent (keyed per return-line row id), so
+  //    re-issuing it on a resume is a safe no-op, not a double restock.
+  const { restockedLines, restockErrors } = await restockReturnLines(sb, shopId, ret.orderId, lines);
 
   // 6. CAS status flip: open -> closed, stamping received_at + this key. Tolerant of 0 rows matched
   //    (module header: a concurrent execution of this SAME key already flipped it) — the restock and

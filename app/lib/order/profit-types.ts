@@ -22,14 +22,15 @@ export interface OrderProfit {
    *  processor-fee data exists anywhere in this schema (application_fee_cents is Calderyn's own
    *  commission, never a processing fee, and is never read for this). */
   feeEstimateCents: number;
-  /** revenueCents - cogsCents - (carrierCostCents ?? 0) - feeEstimateCents. Never null: an
-   *  unmatched carrier cost or an incomplete COGS is treated as its best-known partial value
-   *  (0-for-the-gap) rather than blocking the whole calculation — costsMissing and a null
-   *  carrierCostCents are how the UI flags "this number is partial," not a null profitCents. */
-  profitCents: number;
-  /** profitCents / revenueCents * 100. Null ONLY when revenueCents is 0 (undefined ratio) — a
-   *  margin is still computed when costs are incomplete or the carrier is unmatched, same
-   *  partial-value reasoning as profitCents. */
+  /** revenueCents - cogsCents - (carrierCostCents ?? 0) - feeEstimateCents. Null ONLY when
+   *  notCaptured is true (see below) — otherwise an unmatched carrier cost or an incomplete COGS is
+   *  treated as its best-known partial value (0-for-the-gap) rather than blocking the whole
+   *  calculation; costsMissing and a null carrierCostCents are how the UI flags "this number is
+   *  partial," not a null profitCents. */
+  profitCents: number | null;
+  /** profitCents / revenueCents * 100. Null when revenueCents is 0 (undefined ratio) OR when
+   *  notCaptured is true — a margin is still computed when costs are incomplete or the carrier is
+   *  unmatched, same partial-value reasoning as profitCents. */
   marginPct: number | null;
   /** Always true today: feeEstimateCents is always a label-only estimate (no real fee source
    *  exists anywhere), so every order's profit figure carries at least one estimated component.
@@ -40,4 +41,12 @@ export interface OrderProfit {
    *  every imported (Shopify-paid) order — Calderyn never captured attribution for a sale made on
    *  Shopify. */
   attributionLabel: string | null;
+  /** True for a native order that has ZERO transaction_ledger capture rows AND is not in a
+   *  paid-like state (paid/partially_fulfilled/fulfilled/partially_refunded/refunded) — i.e. an
+   *  unpaid invoice or an abandoned checkout that never captured any money. When true,
+   *  revenueCents/feeEstimateCents are 0 and profitCents/marginPct are null rather than a
+   *  fabricated breakdown built on money that was never taken; the card should render "No payment
+   *  captured yet." instead of the usual line items. Omitted (undefined) for every other order —
+   *  imported orders never set it, since they were only ever imported once actually paid. */
+  notCaptured?: boolean;
 }

@@ -23,7 +23,7 @@ vi.mock("~/lib/dashboard/http.server", async (importOriginal) => ({
   ...(await importOriginal<typeof HttpServer>()),
 }));
 
-const returns = vi.hoisted(() => ({ cancelOrderReturn: vi.fn() }));
+const returns = vi.hoisted(() => ({ cancelOrderReturn: vi.fn(), returnBelongsToOrder: vi.fn() }));
 vi.mock("~/lib/order/returns.server", () => returns);
 
 function req(url: string, method: string, body?: unknown, origin: string | null = ORIGIN): Request {
@@ -40,6 +40,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.DASHBOARD_PUBLIC_URL = ORIGIN;
   returns.cancelOrderReturn.mockResolvedValue({ returnId: "ret-1", status: "cancelled" });
+  returns.returnBelongsToOrder.mockResolvedValue(true);
 });
 
 describe("POST /dashboard/api/orders/:id/returns/cancel", () => {
@@ -51,8 +52,21 @@ describe("POST /dashboard/api/orders/:id/returns/cancel", () => {
     } as never)) as Response;
 
     expect(res.status).toBe(200);
+    expect(returns.returnBelongsToOrder).toHaveBeenCalledWith("shop-1", "ret-1", ORDER_ID);
     expect(returns.cancelOrderReturn).toHaveBeenCalledWith("shop-1", "ret-1");
     expect(await res.json()).toEqual({ return_id: "ret-1", status: "cancelled" });
+  });
+
+  it("404s return_not_found when the return_id does not belong to this order's URL", async () => {
+    returns.returnBelongsToOrder.mockResolvedValue(false);
+    const { action } = await import("../dashboard.api.orders.$id.returns.cancel");
+    const res = (await action({
+      request: req(URL_, "POST", { return_id: "ret-1" }),
+      params: { id: ORDER_ID },
+    } as never)) as Response;
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("return_not_found");
+    expect(returns.cancelOrderReturn).not.toHaveBeenCalled();
   });
 
   it("refuses an imported (shopify:) order id", async () => {

@@ -62,7 +62,7 @@ export const ORDER_ACTIONS: AssistantAction[] = [
     },
     confirmSummary: async (_ctx, i) => {
       const notify = i.notify === true;
-      return `Fulfill everything remaining on order ${String(i.order_id)}${notify ? " and email the customer a shipping confirmation" : ""} — this changes the order's status.`;
+      return `Fulfill everything remaining on order ${String(i.order_id)}${notify ? " and email the customer a shipping confirmation" : ""}. This changes the order's status.`;
     },
     run: async (ctx, i): Promise<ActionReceipt> => {
       const orderId = requireNativeOrderId(String(i.order_id), "fulfilled");
