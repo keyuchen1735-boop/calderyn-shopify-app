@@ -535,10 +535,153 @@ export async function setProductStatus(shopId: string, productId: string, status
   await projectProductToSkuDim(productId);
 }
 
-export async function listCollections(shopId: string): Promise<Array<{ id: string; title: string; handle: string }>> {
-  const { data, error } = await getSupabase().from("collection_dim").select("id, title, handle").eq("shop_id", shopId).order("title");
+export async function listCollections(
+  shopId: string,
+): Promise<Array<{ id: string; title: string; handle: string; productCount: number }>> {
+  const sb = getSupabase();
+  const { data, error } = await sb.from("collection_dim").select("id, title, handle").eq("shop_id", shopId).order("title");
   if (error) throw error;
-  return (data ?? []).map((c: Record<string, unknown>) => ({ id: String(c.id), title: String(c.title), handle: String(c.handle) }));
+  const rows = (data ?? []).map((c: Record<string, unknown>) => ({ id: String(c.id), title: String(c.title), handle: String(c.handle) }));
+
+  // Membership counts folded from ONE select over this page's collection ids —
+  // never a per-collection query (N+1 on every Collections paint).
+  const countById = new Map<string, number>();
+  if (rows.length) {
+    const { data: memberships, error: mErr } = await sb
+      .from("product_collection")
+      .select("collection_id")
+      .in("collection_id", rows.map((r) => r.id));
+    if (mErr) throw mErr;
+    for (const m of (memberships ?? []) as Array<{ collection_id: string }>) {
+      const k = String(m.collection_id);
+      countById.set(k, (countById.get(k) ?? 0) + 1);
+    }
+  }
+  return rows.map((r) => ({ ...r, productCount: countById.get(r.id) ?? 0 }));
+}
+
+// Shop-scoped existence check shared by every membership/rename/delete path:
+// a foreign or missing collection id is a clean 404, never a cross-tenant write.
+async function requireOwnedCollection(sb: Supa, shopId: string, collectionId: string): Promise<void> {
+  const { data, error } = await sb
+    .from("collection_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("id", collectionId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new CalderynError({ code: "collection_not_found", status: 404, message: "collection not found" });
+}
+
+/** Rename only — the handle stays unchanged so storefront links keep working. */
+export async function updateCollection(shopId: string, collectionId: string, title: string): Promise<void> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("collection_dim")
+    .update({ title: title.trim() })
+    .eq("shop_id", shopId)
+    .eq("id", collectionId)
+    .select("id");
+  if (error) throw error;
+  if (!data?.length) throw new CalderynError({ code: "collection_not_found", status: 404, message: "collection not found" });
+}
+
+/** Delete a collection: memberships first (no FK orphans), then the row itself.
+ *  Products are untouched — they simply leave the collection. */
+export async function deleteCollection(shopId: string, collectionId: string): Promise<void> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  const { error: mErr } = await sb.from("product_collection").delete().eq("collection_id", collectionId);
+  if (mErr) throw mErr;
+  const { error } = await sb.from("collection_dim").delete().eq("shop_id", shopId).eq("id", collectionId);
+  if (error) throw error;
+}
+
+/** Members of a collection, with the storage path of each product's primary
+ *  image so the route can batch-sign thumbnails (mirrors listProducts). */
+export async function listCollectionProducts(
+  shopId: string,
+  collectionId: string,
+): Promise<Array<{ id: string; title: string; status: ProductStatus; primaryImagePath: string | null }>> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  const { data: memberships, error: mErr } = await sb
+    .from("product_collection")
+    .select("product_id")
+    .eq("collection_id", collectionId);
+  if (mErr) throw mErr;
+  const memberIds = (memberships ?? []).map((m: { product_id: string }) => String(m.product_id));
+  if (!memberIds.length) return [];
+
+  const { data: products, error: pErr } = await sb
+    .from("product_dim")
+    .select("id, title, status")
+    .eq("shop_id", shopId)
+    .in("id", memberIds)
+    .order("title");
+  if (pErr) throw pErr;
+  const ids = (products ?? []).map((p: { id: string }) => String(p.id));
+
+  // Bucket-backed primaries only, same rule as listProducts: a promoted mirror
+  // image carries an external_url and no storage_path.
+  const mediaByProduct = new Map<string, string>();
+  if (ids.length) {
+    const { data: media, error: medErr } = await sb
+      .from("product_media")
+      .select("product_id, storage_path")
+      .in("product_id", ids)
+      .eq("is_primary", true)
+      .not("storage_path", "is", null);
+    if (medErr) throw medErr;
+    for (const m of media ?? []) mediaByProduct.set(String(m.product_id), String(m.storage_path));
+  }
+
+  return (products ?? []).map((p: Record<string, unknown>) => ({
+    id: String(p.id),
+    title: String(p.title),
+    status: p.status as ProductStatus,
+    primaryImagePath: mediaByProduct.get(String(p.id)) ?? null,
+  }));
+}
+
+// Both membership writes verify ownership on BOTH sides — collection and
+// product — before touching product_collection, so a guessed foreign id can
+// neither attach to nor detach from another shop's data.
+async function requireOwnedProduct(sb: Supa, shopId: string, productId: string): Promise<void> {
+  const { data, error } = await sb
+    .from("product_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("id", productId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new CalderynError({ code: "product_not_found", status: 404, message: "product not found" });
+}
+
+export async function addProductToCollection(shopId: string, collectionId: string, productId: string): Promise<void> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  await requireOwnedProduct(sb, shopId, productId);
+  // Re-adding an existing member is a clean no-op, not a PK 500.
+  const { error } = await sb
+    .from("product_collection")
+    .upsert(
+      { product_id: productId, collection_id: collectionId },
+      { onConflict: "product_id,collection_id", ignoreDuplicates: true },
+    );
+  if (error) throw error;
+}
+
+export async function removeProductFromCollection(shopId: string, collectionId: string, productId: string): Promise<void> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  await requireOwnedProduct(sb, shopId, productId);
+  const { error } = await sb
+    .from("product_collection")
+    .delete()
+    .eq("collection_id", collectionId)
+    .eq("product_id", productId);
+  if (error) throw error;
 }
 
 export async function createCollection(shopId: string, title: string): Promise<{ id: string }> {

@@ -1308,6 +1308,16 @@ export interface CollectionVM {
   id: string;
   title: string;
   handle: string;
+  /** Number of products in the collection (server-folded membership count). */
+  productCount: number;
+}
+
+/** One collection member row for the detail view — thumbnail pre-signed. */
+export interface CollectionProductVM {
+  id: string;
+  title: string;
+  status: "draft" | "active" | "archived";
+  imageUrl: string | null;
 }
 
 export async function fetchProducts(
@@ -1433,8 +1443,35 @@ export async function fetchCollections(): Promise<CollectionVM[]> {
 export async function createCollection(title: string): Promise<CollectionVM> {
   const data = await apiSend<{ id: string }>("POST", "/dashboard/api/catalog/collections", { title });
   // Optimistic handle via the SAME shared helper the server uses, so the row
-  // labels itself with the authoritative slug immediately (no drift).
-  return { id: data.id, title, handle: collectionHandle(title) };
+  // labels itself with the authoritative slug immediately (no drift). A brand
+  // new collection has no members yet, so the count is authoritatively zero.
+  return { id: data.id, title, handle: collectionHandle(title), productCount: 0 };
+}
+
+/** Rename a collection. The handle is deliberately left unchanged server-side
+ *  so existing storefront links keep resolving. */
+export async function renameCollection(id: string, title: string): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}`, { title });
+}
+
+/** Delete a collection (memberships included). Products are untouched. */
+export async function deleteCollection(id: string): Promise<void> {
+  await apiSend("DELETE", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}`);
+}
+
+export async function fetchCollectionProducts(id: string): Promise<CollectionProductVM[]> {
+  const data = await apiGet<{ products: CollectionProductVM[] }>(
+    `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`,
+  );
+  return data.products;
+}
+
+export async function addToCollection(id: string, productId: string): Promise<void> {
+  await apiSend("POST", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`, { productId });
+}
+
+export async function removeFromCollection(id: string, productId: string): Promise<void> {
+  await apiSend("DELETE", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`, { productId });
 }
 
 /** Upload one product image. Multipart, so this uses a raw fetch (apiSend forces
