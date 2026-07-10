@@ -4,6 +4,7 @@ import { Btn, Card } from "../ui";
 import { money } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { refundOrder, type OrderRow } from "~/lib/dashboard/orders-client";
+import { useModalEntrance } from "./order-modal-motion";
 
 // Issue a Stripe refund on an owned order (#3b). Full by default; a merchant can enter a
 // smaller partial amount. The idempotency key is minted once per open so a double-submit
@@ -27,6 +28,7 @@ export default function RefundModal({
   const [busy, setBusy] = useState(false);
   // One stable key per refund intent (survives re-renders); reused on retry so Stripe dedups.
   const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const { overlayRef, dialogRef } = useModalEntrance();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -73,26 +75,15 @@ export default function RefundModal({
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 80,
-        background: "color-mix(in oklch, black 32%, transparent)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-      }}
-      onClick={onClose}
-      role="presentation"
-    >
+    <div ref={overlayRef} className="cd-modal-overlay" onClick={onClose} role="presentation">
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Issue refund"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 420 }}
+        className="cd-modal-dialog"
+        style={{ maxWidth: 420 }}
       >
         <Card>
           <div className="cd-h2" style={{ marginBottom: 4 }}>Refund {order.ref}</div>

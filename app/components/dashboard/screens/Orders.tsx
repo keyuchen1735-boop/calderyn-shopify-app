@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import { Btn, Card, Pill, Placeholder, TableSkeleton, Tooltip } from "../ui";
 import { money, timeAgo } from "../format";
+import { reduced } from "../hero/hero-motion";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   bulkAddOrderTags,
@@ -166,7 +169,7 @@ function UnifiedOrdersList({
 
   const cols = "auto 1fr 1.2fr 0.9fr 0.9fr 0.9fr 1fr auto";
   return (
-    <Card pad={false}>
+    <Card pad={false} className="cd-orders-table">
       <div className="cd-tablehd" style={{ gridTemplateColumns: cols }}>
         <span>
           {anySelectable && (
@@ -180,7 +183,7 @@ function UnifiedOrdersList({
         </span>
         <span>Order</span>
         <span>Customer</span>
-        <span>Total</span>
+        <span style={{ textAlign: "right" }}>Total</span>
         <span>Date</span>
         <span>Payment</span>
         <span>Fulfillment</span>
@@ -225,7 +228,9 @@ function UnifiedOrdersList({
               {r.source === "shopify" && <div className="cd-caption">Shopify</div>}
             </div>
             <div className="truncate">{r.customer ?? (r.source === "shopify" ? "" : "Guest")}</div>
-            <div className="cd-row-num tabular-nums">{money(r.totalCents, r.currency)}</div>
+            <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
+              {money(r.totalCents, r.currency)}
+            </div>
             <div className="cd-caption">{r.createdAt ? timeAgo(r.createdAt) : ""}</div>
             <div>
               <PaymentPill status={r.financialStatus} />
@@ -495,6 +500,45 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     [ordersListPage],
   );
 
+  // Subtle staggered rise on every fresh page of rows — initial load, a tab switch, a filter
+  // change, paging. Keyed on the page object itself (a new reference every fetch), scoped to just
+  // this table so it can never pick up a `.cd-trow` from an unrelated screen.
+  const listRef = useRef<HTMLDivElement>(null);
+  useGSAP(
+    () => {
+      if (reduced() || !displayRows || displayRows.length === 0 || !listRef.current) return;
+      const rows = listRef.current.querySelectorAll<HTMLElement>(".cd-trow");
+      if (!rows.length) return;
+      gsap.from(rows, {
+        autoAlpha: 0,
+        y: 6,
+        duration: 0.25,
+        stagger: 0.02,
+        ease: "power2.out",
+        clearProps: "opacity,visibility,transform",
+      });
+    },
+    { dependencies: [ordersListPage] },
+  );
+
+  // A very quick fade on the "Showing X-Y of N" summary when the range or total changes — a small
+  // acknowledgement that the count just moved, never a count-up (money/counts here are exact, not
+  // animated toward).
+  const pageSummaryRef = useRef<HTMLSpanElement>(null);
+  const pageSummaryKey = ordersListPage
+    ? `${ordersListPage.offset}:${ordersListPage.rows.length}:${ordersListPage.totalCount}`
+    : null;
+  const pageSummarySeen = useRef<string | null>(null);
+  useGSAP(
+    () => {
+      const prev = pageSummarySeen.current;
+      pageSummarySeen.current = pageSummaryKey;
+      if (reduced() || !pageSummaryKey || prev === null || prev === pageSummaryKey || !pageSummaryRef.current) return;
+      gsap.fromTo(pageSummaryRef.current, { opacity: 0.35 }, { opacity: 1, duration: 0.2, ease: "power1.out" });
+    },
+    { dependencies: [pageSummaryKey] },
+  );
+
   const selectableIds = useMemo(
     () => (displayRows ?? []).filter((r) => r.source === "calderyn").map((r) => r.id),
     [displayRows],
@@ -509,6 +553,42 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   useEffect(() => {
     setSelected(new Set());
   }, [ordersListPage]);
+
+  // Bulk bar slide/fade: kept mounted for the duration of its exit tween rather than vanishing the
+  // instant the selection clears, so "out" is an actual animation and not a instant unmount. The
+  // `bulkMounted && !hasSelection` bail-out below is the standard React "adjust state while
+  // rendering" pattern — it commits mount and hasSelection together in one paint, so the entrance
+  // tween's ref is never null on the frame it's meant to run.
+  const hasSelection = selected.size > 0;
+  const [bulkMounted, setBulkMounted] = useState(false);
+  if (hasSelection && !bulkMounted) setBulkMounted(true);
+  const bulkBarRef = useRef<HTMLDivElement>(null);
+  const bulkWasOpen = useRef(false);
+  useGSAP(
+    () => {
+      const el = bulkBarRef.current;
+      if (!el) return;
+      const was = bulkWasOpen.current;
+      bulkWasOpen.current = hasSelection;
+      if (reduced()) {
+        if (!hasSelection) setBulkMounted(false);
+        return;
+      }
+      if (was === hasSelection) return;
+      if (hasSelection) {
+        gsap.fromTo(el, { autoAlpha: 0, y: -8 }, { autoAlpha: 1, y: 0, duration: 0.25, ease: "power2.out" });
+      } else {
+        gsap.to(el, {
+          autoAlpha: 0,
+          y: -8,
+          duration: 0.18,
+          ease: "power2.in",
+          onComplete: () => setBulkMounted(false),
+        });
+      }
+    },
+    { dependencies: [hasSelection] },
+  );
 
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
 
@@ -735,60 +815,60 @@ export default function Orders({ app }: { app: DashboardCtx }) {
             onFilterChange={updateFilter}
           />
 
-          {selected.size > 0 && (
-            <Card>
-              <div className="flex items-center gap-3" style={{ flexWrap: "wrap" }}>
-                <span className="cd-row-title">{selected.size} selected</span>
-                <label className="flex items-center gap-2 cd-caption">
-                  <input
-                    type="checkbox"
-                    checked={notifyOnFulfill}
-                    onChange={(e) => setNotifyOnFulfill(e.target.checked)}
-                  />
-                  Notify customers
-                </label>
-                <Btn small icon="truck" disabled={bulkBusy} onClick={bulkFulfill}>
-                  Fulfill
+          {bulkMounted && (
+            <div ref={bulkBarRef} className="cd-bulkbar">
+              <span className="cd-row-title">{selected.size} selected</span>
+              <label className="flex items-center gap-2 cd-caption">
+                <input
+                  type="checkbox"
+                  checked={notifyOnFulfill}
+                  onChange={(e) => setNotifyOnFulfill(e.target.checked)}
+                />
+                Notify customers
+              </label>
+              <Btn small icon="truck" disabled={bulkBusy} onClick={bulkFulfill}>
+                Fulfill
+              </Btn>
+              <Btn small icon="archive" disabled={bulkBusy} onClick={() => bulkArchive(!isArchivedView)}>
+                {isArchivedView ? "Unarchive" : "Archive"}
+              </Btn>
+              <div className="flex items-center gap-2">
+                <input
+                  className="cd-input"
+                  placeholder="Add tag"
+                  aria-label="Tag to add"
+                  value={bulkTagInput}
+                  onChange={(e) => setBulkTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") bulkAddTag();
+                  }}
+                  style={{ width: 140 }}
+                />
+                <Btn small icon="tag" disabled={bulkBusy || !bulkTagInput.trim()} onClick={bulkAddTag}>
+                  Add tag
                 </Btn>
-                <Btn small icon="archive" disabled={bulkBusy} onClick={() => bulkArchive(!isArchivedView)}>
-                  {isArchivedView ? "Unarchive" : "Archive"}
-                </Btn>
-                <div className="flex items-center gap-2">
-                  <input
-                    className="cd-input"
-                    placeholder="Add tag"
-                    aria-label="Tag to add"
-                    value={bulkTagInput}
-                    onChange={(e) => setBulkTagInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") bulkAddTag();
-                    }}
-                    style={{ width: 140 }}
-                  />
-                  <Btn small icon="tag" disabled={bulkBusy || !bulkTagInput.trim()} onClick={bulkAddTag}>
-                    Add tag
-                  </Btn>
-                </div>
               </div>
-            </Card>
+            </div>
           )}
 
-          <UnifiedOrdersList
-            rows={displayRows}
-            loading={ordersListLoading}
-            isDefaultView={isDefaultView}
-            onRefund={setRefundOrder}
-            onOpen={(sourceId) => app.navigate("orders", sourceId)}
-            selected={selected}
-            onToggleRow={toggleRow}
-            onToggleAll={toggleAll}
-            allSelected={allSelected}
-            anySelectable={selectableIds.length > 0}
-          />
+          <div ref={listRef}>
+            <UnifiedOrdersList
+              rows={displayRows}
+              loading={ordersListLoading}
+              isDefaultView={isDefaultView}
+              onRefund={setRefundOrder}
+              onOpen={(sourceId) => app.navigate("orders", sourceId)}
+              selected={selected}
+              onToggleRow={toggleRow}
+              onToggleAll={toggleAll}
+              allSelected={allSelected}
+              anySelectable={selectableIds.length > 0}
+            />
+          </div>
 
           {ordersListPage && ordersListPage.totalCount > 0 && (
-            <div className="flex items-center justify-between" style={{ padding: "10px 4px" }}>
-              <span className="cd-caption">
+            <div className="cd-orders-pagination">
+              <span ref={pageSummaryRef} className="cd-caption">
                 Showing {ordersListPage.offset + 1}-
                 {Math.min(ordersListPage.offset + ordersListPage.rows.length, ordersListPage.totalCount)} of{" "}
                 {ordersListPage.totalCount.toLocaleString("en-US")}

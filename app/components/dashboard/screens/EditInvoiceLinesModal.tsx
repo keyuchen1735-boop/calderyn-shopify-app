@@ -6,6 +6,7 @@ import { money } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { editInvoiceLines, type OrderDetail } from "~/lib/dashboard/orders-client";
 import VariantPicker, { type PickedVariant } from "./VariantPicker";
+import { useModalEntrance } from "./order-modal-motion";
 
 interface EditLine {
   variantId: string;
@@ -55,6 +56,7 @@ export default function EditInvoiceLinesModal({
     return [...byVariant.values()];
   });
   const [busy, setBusy] = useState(false);
+  const { overlayRef, dialogRef } = useModalEntrance();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -110,26 +112,15 @@ export default function EditInvoiceLinesModal({
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 80,
-        background: "color-mix(in oklch, black 32%, transparent)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-      }}
-      onClick={onClose}
-      role="presentation"
-    >
+    <div ref={overlayRef} className="cd-modal-overlay" onClick={onClose} role="presentation">
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Edit invoice items"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 520 }}
+        className="cd-modal-dialog"
+        style={{ maxWidth: 520 }}
       >
         <Card>
           <div className="cd-h2" style={{ marginBottom: 4 }}>Edit {order.ref}</div>

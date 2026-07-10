@@ -3,6 +3,7 @@ import type { DashboardCtx } from "../context";
 import { Btn, Card } from "../ui";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { fulfillOrder, type OrderDetail } from "~/lib/dashboard/orders-client";
+import { useModalEntrance } from "./order-modal-motion";
 
 // Ship some or all of an order's open lines. Defaults every line's quantity to what's still
 // remaining (quantity - fulfilledQuantity) so the common case — ship everything in one go — is
@@ -28,6 +29,7 @@ export default function FulfillModal({
   const [notify, setNotify] = useState(true);
   const [busy, setBusy] = useState(false);
   const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const { overlayRef, dialogRef } = useModalEntrance();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -74,26 +76,15 @@ export default function FulfillModal({
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 80,
-        background: "color-mix(in oklch, black 32%, transparent)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-      }}
-      onClick={onClose}
-      role="presentation"
-    >
+    <div ref={overlayRef} className="cd-modal-overlay" onClick={onClose} role="presentation">
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Fulfill order"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 480 }}
+        className="cd-modal-dialog"
+        style={{ maxWidth: 480 }}
       >
         <Card>
           <div className="cd-h2" style={{ marginBottom: 4 }}>Fulfill {order.ref}</div>

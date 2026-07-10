@@ -5,6 +5,7 @@ import { money } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { reduceOrderLine, type OrderDetail, type OrderDetailLine } from "~/lib/dashboard/orders-client";
 import { reduceLineRefundPreview } from "./reduce-line-preview";
+import { useModalEntrance } from "./order-modal-motion";
 
 // Reduce a single paid-order line's quantity, refunding the delta (unit price + a proportional
 // share of the order's captured tax) and optionally restocking it. Mirrors RefundModal/
@@ -32,6 +33,7 @@ export default function ReduceLineModal({
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const { overlayRef, dialogRef } = useModalEntrance();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -92,26 +94,15 @@ export default function ReduceLineModal({
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 80,
-        background: "color-mix(in oklch, black 32%, transparent)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-      }}
-      onClick={onClose}
-      role="presentation"
-    >
+    <div ref={overlayRef} className="cd-modal-overlay" onClick={onClose} role="presentation">
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Reduce line quantity"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 420 }}
+        className="cd-modal-dialog"
+        style={{ maxWidth: 420 }}
       >
         <Card>
           <div className="cd-h2" style={{ marginBottom: 4 }}>Reduce {line.title}</div>

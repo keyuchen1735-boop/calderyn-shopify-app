@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import type { DashboardCtx } from "../context";
 import { Btn, Card, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { money, timeAgo } from "../format";
+import { reduced } from "../hero/hero-motion";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   deleteMerchantDraft,
@@ -12,6 +15,7 @@ import {
   type MerchantDraftVM,
 } from "~/lib/dashboard/orders-client";
 import VariantPicker, { type PickedVariant } from "./VariantPicker";
+import { useModalEntrance } from "./order-modal-motion";
 
 interface ComposerLine {
   variantId: string;
@@ -82,6 +86,39 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
   const [sending, setSending] = useState(false);
   const [showSendConfirm, setShowSendConfirm] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Gentle one-time entrance: header first, then the item/customer/drafts cards stagger in. Mounts
+  // once per composer visit (nav.param "new" -> a fresh OrderComposer instance), so this never
+  // replays on line edits or draft saves.
+  const screenRef = useRef<HTMLDivElement>(null);
+  useGSAP(
+    () => {
+      if (reduced() || !screenRef.current) return;
+      const header = screenRef.current.querySelector<HTMLElement>(".cd-screen-head");
+      const cards = screenRef.current.querySelectorAll<HTMLElement>(".cd-card");
+      if (header) {
+        gsap.from(header, {
+          autoAlpha: 0,
+          y: -6,
+          duration: 0.3,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        });
+      }
+      if (cards.length) {
+        gsap.from(cards, {
+          autoAlpha: 0,
+          y: 10,
+          duration: 0.32,
+          stagger: 0.035,
+          delay: 0.05,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        });
+      }
+    },
+    { scope: screenRef },
+  );
 
   const resumeDraft = (d: MerchantDraftVM) => {
     setCartId(d.id);
@@ -244,7 +281,7 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
   const busy = saving || sending;
 
   return (
-    <div className="cd-screen" data-screen-label="Create order">
+    <div ref={screenRef} className="cd-screen" data-screen-label="Create order">
       <header className="cd-screen-head">
         <div className="flex items-center" style={{ gap: 10 }}>
           <Btn small icon="chevronLeft" onClick={back}>Back</Btn>
@@ -256,13 +293,13 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
         style={{
           display: "grid",
           gridTemplateColumns: "minmax(0,1fr) 320px",
-          gap: 16,
+          gap: 14,
           alignItems: "start",
         }}
       >
-        <div className="flex flex-col" style={{ gap: 16 }}>
-          <Card>
-            <div className="cd-h2" style={{ marginBottom: 10 }}>Items</div>
+        <div className="flex flex-col" style={{ gap: 12 }}>
+          <Card className="cd-card-tight">
+            <div className="cd-h2" style={{ marginBottom: 8 }}>Items</div>
             {lines.length === 0 ? (
               <div className="cd-caption" style={{ marginBottom: 12 }}>No items yet. Search below to add some.</div>
             ) : (
@@ -304,8 +341,8 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
             <VariantPicker onPick={addVariant} disabled={busy} />
           </Card>
 
-          <Card>
-            <div className="cd-h2" style={{ marginBottom: 10 }}>Customer</div>
+          <Card className="cd-card-tight">
+            <div className="cd-h2" style={{ marginBottom: 8 }}>Customer</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <label className="cd-field">
                 <span>Email</span>
@@ -409,9 +446,9 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
           </div>
         </div>
 
-        <div className="flex flex-col" style={{ gap: 16 }}>
-          <Card>
-            <div className="cd-h2" style={{ marginBottom: 10 }}>Saved drafts</div>
+        <div className="flex flex-col" style={{ gap: 12 }}>
+          <Card className="cd-card-tight">
+            <div className="cd-h2" style={{ marginBottom: 8 }}>Saved drafts</div>
             {draftsLoading ? (
               <div className="cd-caption">Loading…</div>
             ) : draftsError ? (
@@ -455,45 +492,77 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
       </div>
 
       {showSendConfirm && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 80,
-            background: "color-mix(in oklch, black 32%, transparent)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-          onClick={() => !sending && setShowSendConfirm(false)}
-          role="presentation"
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Send invoice"
-            onClick={(e) => e.stopPropagation()}
-            style={{ width: "100%", maxWidth: 420 }}
-          >
-            <Card>
-              <div className="cd-h2" style={{ marginBottom: 4 }}>Send this invoice?</div>
-              <div className="cd-caption" style={{ marginBottom: 12 }}>
-                {lines.length} item{lines.length === 1 ? "" : "s"}, subtotal {money(subtotalCents, currency)}, to {email.trim()}.
-                {hasAddress
-                  ? " Shipping and tax will be quoted from the address you entered when this sends."
-                  : " No shipping address was entered, so this invoices the subtotal only."}
-              </div>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                <Btn onClick={() => setShowSendConfirm(false)} disabled={sending}>Keep editing</Btn>
-                <Btn kind="primary" icon="mail" onClick={confirmSend} disabled={sending}>
-                  {sending ? "Sending…" : "Send invoice"}
-                </Btn>
-              </div>
-            </Card>
-          </div>
-        </div>
+        <SendConfirmDialog
+          itemCount={lines.length}
+          subtotalCents={subtotalCents}
+          currency={currency}
+          email={email}
+          hasAddress={hasAddress}
+          sending={sending}
+          onCancel={() => setShowSendConfirm(false)}
+          onConfirm={confirmSend}
+        />
       )}
+    </div>
+  );
+}
+
+/** The composer's own send-confirm dialog, split out as its own component (rather than an inline
+ *  conditional block) purely so it mounts fresh each time it opens — matching every other order
+ *  modal's lifecycle (see RefundModal etc.), which is what lets useModalEntrance's mount-time
+ *  animation fire on every open instead of only once for the whole composer screen. */
+function SendConfirmDialog({
+  itemCount,
+  subtotalCents,
+  currency,
+  email,
+  hasAddress,
+  sending,
+  onCancel,
+  onConfirm,
+}: {
+  itemCount: number;
+  subtotalCents: number;
+  currency: string;
+  email: string;
+  hasAddress: boolean;
+  sending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { overlayRef, dialogRef } = useModalEntrance();
+  return (
+    <div
+      ref={overlayRef}
+      className="cd-modal-overlay"
+      onClick={() => !sending && onCancel()}
+      role="presentation"
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Send invoice"
+        onClick={(e) => e.stopPropagation()}
+        className="cd-modal-dialog"
+        style={{ maxWidth: 420 }}
+      >
+        <Card>
+          <div className="cd-h2" style={{ marginBottom: 4 }}>Send this invoice?</div>
+          <div className="cd-caption" style={{ marginBottom: 12 }}>
+            {itemCount} item{itemCount === 1 ? "" : "s"}, subtotal {money(subtotalCents, currency)}, to {email.trim()}.
+            {hasAddress
+              ? " Shipping and tax will be quoted from the address you entered when this sends."
+              : " No shipping address was entered, so this invoices the subtotal only."}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Btn onClick={onCancel} disabled={sending}>Keep editing</Btn>
+            <Btn kind="primary" icon="mail" onClick={onConfirm} disabled={sending}>
+              {sending ? "Sending…" : "Send invoice"}
+            </Btn>
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }

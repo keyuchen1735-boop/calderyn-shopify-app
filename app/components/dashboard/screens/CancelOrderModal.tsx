@@ -4,6 +4,7 @@ import { Btn, Card } from "../ui";
 import { money } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cancelOrder, type OrderDetail } from "~/lib/dashboard/orders-client";
+import { useModalEntrance } from "./order-modal-motion";
 
 // Abandon an order before or during fulfillment. When the order captured money, the merchant
 // chooses whether to refund it (and whether to restock) in the same step — mirrors the server's
@@ -29,6 +30,7 @@ export default function CancelOrderModal({
   const [restock, setRestock] = useState(true);
   const [busy, setBusy] = useState(false);
   const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const { overlayRef, dialogRef } = useModalEntrance();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -61,26 +63,15 @@ export default function CancelOrderModal({
   };
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 80,
-        background: "color-mix(in oklch, black 32%, transparent)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 16,
-      }}
-      onClick={onClose}
-      role="presentation"
-    >
+    <div ref={overlayRef} className="cd-modal-overlay" onClick={onClose} role="presentation">
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Cancel order"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 420 }}
+        className="cd-modal-dialog"
+        style={{ maxWidth: 420 }}
       >
         <Card>
           <div className="cd-h2" style={{ marginBottom: 4 }}>Cancel {order.ref}</div>
