@@ -14,9 +14,24 @@ function mockDeps() {
   vi.doMock("./rate-source.server", () => ({ getRateSource: async () => ({ getRates: async () => ({ options: [], currency: "usd" }) }) }));
   vi.doMock("./tax.server", () => ({ calculateTax: async () => 80 }));
   vi.doMock("~/lib/shipping/parcel.server", () => ({
-    buildParcel: async () => ({ weightOz: 8, lengthIn: 6, widthIn: 4, heightIn: 2 }),
-    restrictedVariants: async () => [],
+    cartShipInfo: async () => ({
+      blocked: [],
+      maxHandlingDays: 0,
+      parcelByVariant: new Map([["V1", { weightOz: 8, lengthIn: 6, widthIn: 4, heightIn: 2 }]]),
+    }),
   }));
+  vi.doMock("~/lib/shipping/rules.server", async (importOriginal) => {
+    const actual = (await importOriginal()) as Record<string, unknown>;
+    return {
+      ...actual,
+      loadShipRules: async () => ({
+        markupPct: 0,
+        handlingCents: 0,
+        freeShipThresholdCents: null,
+        handlingDays: 1,
+      }),
+    };
+  });
   vi.doMock("~/lib/shipping/engine.server", () => ({
     getShippingEngine: () => async () => ({
       options: [{ service: "ground", serviceName: "Ground", carrier: "USPS", amountCents: 500, baseAmountCents: 500, appliedRules: [], currency: "usd", deliveryWindow: { earliest: "2026-07-02", latest: "2026-07-05" }, guaranteed: false, pickupAvailable: false }],
@@ -52,9 +67,24 @@ describe("quoteCart", () => {
     vi.doMock("./rate-source.server", () => ({ getRateSource: async () => ({}) }));
     vi.doMock("./tax.server", () => ({ calculateTax: taxSpy }));
     vi.doMock("~/lib/shipping/parcel.server", () => ({
-      buildParcel: async () => ({ weightOz: 8, lengthIn: 6, widthIn: 4, heightIn: 2 }),
-      restrictedVariants: async () => [],
+      cartShipInfo: async () => ({
+        blocked: [],
+        maxHandlingDays: 0,
+        parcelByVariant: new Map([["V1", { weightOz: 8, lengthIn: 6, widthIn: 4, heightIn: 2 }]]),
+      }),
     }));
+    vi.doMock("~/lib/shipping/rules.server", async (importOriginal) => {
+      const actual = (await importOriginal()) as Record<string, unknown>;
+      return {
+        ...actual,
+        loadShipRules: async () => ({
+          markupPct: 0,
+          handlingCents: 0,
+          freeShipThresholdCents: null,
+          handlingDays: 1,
+        }),
+      };
+    });
     vi.doMock("~/lib/shipping/engine.server", () => ({
       getShippingEngine: () => async () => ({
         options: [{ service: "ground", serviceName: "Ground", carrier: "USPS", amountCents: 500, baseAmountCents: 500, appliedRules: [], currency: "usd", deliveryWindow: null, guaranteed: false, pickupAvailable: false }],

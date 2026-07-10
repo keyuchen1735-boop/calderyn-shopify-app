@@ -4,6 +4,7 @@ const QUOTE = {
   lines: [{ variantId: "V1", quantity: 1, unitPriceCents: 1000, currency: "usd", titleSnapshot: "Widget" }],
   subtotalCents: 1000, shippingCents: 500, taxCents: 80, totalCents: 1580, currency: "usd",
   deliveryEarliest: null, deliveryLatest: null, lowConfidence: false, fallbackUsed: false,
+  shippingService: null,
 };
 
 describe("quote-store", () => {

@@ -20,7 +20,7 @@ function fmtDate(iso: string | null): string {
 export function DeliveryPromise({ variantId }: { variantId: string }) {
   const [zip, setZip] = useState("");
   const [est, setEst] = useState<Estimate | null>(null);
-  const [state, setState] = useState<"idle" | "loading" | "none">("idle");
+  const [state, setState] = useState<"idle" | "loading" | "none" | "restricted">("idle");
 
   async function check() {
     if (!/^\d{5}$/.test(zip)) return;
@@ -31,7 +31,10 @@ export function DeliveryPromise({ variantId }: { variantId: string }) {
         `/storefront/api/delivery-promise?variantId=${encodeURIComponent(variantId)}&qty=1&zip=${zip}&country=US`,
       );
       if (!res.ok) {
-        setState("none");
+        // The API returns only an error CODE (no internals); a restriction gets its
+        // own honest message instead of the generic "no estimate".
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        setState(body?.error === "SHIP_RESTRICTED" ? "restricted" : "none");
         return;
       }
       setEst((await res.json()) as Estimate);
@@ -58,6 +61,9 @@ export function DeliveryPromise({ variantId }: { variantId: string }) {
       </label>
       {state === "loading" && <p className="cd-pdp__promise-line">Checking…</p>}
       {state === "none" && <p className="cd-pdp__promise-line">No estimate for that ZIP.</p>}
+      {state === "restricted" && (
+        <p className="cd-pdp__promise-line">This item can&apos;t be shipped to that location.</p>
+      )}
       {est && (
         <p className="cd-pdp__promise-line">
           Get it by <strong>{fmtDate(est.cheapest.deliveryLatest)}</strong> for{" "}

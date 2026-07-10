@@ -39,3 +39,34 @@ export async function getShopOrigin(shopId: string): Promise<Address> {
 
   throw new OriginNotConfiguredError(shopId);
 }
+
+/** Merchant-set ship-from address (dashboard Shipping screen). source='merchant'
+ *  wins over the Shopify-imported cache on every subsequent read (stored row is
+ *  checked first), so a native-only shop can quote without any Shopify history. */
+export async function saveShopOrigin(
+  shopId: string,
+  origin: Omit<Address, "street2"> & { street2?: string | null },
+): Promise<void> {
+  if (!shopId) throw new Error("shopId is required");
+  if (!isComplete({ ...origin, street2: origin.street2 ?? undefined })) {
+    throw new Error("origin requires street1, city, state, zip, country");
+  }
+  const { error } = await getSupabase()
+    .from("shop_origin")
+    .upsert(
+      {
+        shop_id: shopId,
+        name: origin.name ?? null,
+        street1: origin.street1,
+        street2: origin.street2 ?? null,
+        city: origin.city,
+        state: origin.state,
+        zip: origin.zip,
+        country: origin.country.toUpperCase(),
+        source: "merchant",
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "shop_id" },
+    );
+  if (error) throw new Error(`shop_origin write failed: ${error.message}`);
+}

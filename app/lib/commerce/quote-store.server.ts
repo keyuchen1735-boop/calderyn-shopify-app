@@ -68,6 +68,8 @@ export async function getQuote(shopId: string, quoteId: string): Promise<LockedQ
     deliveryLatest: r.delivery_latest == null ? null : String(r.delivery_latest),
     lowConfidence: Boolean(r.low_confidence),
     fallbackUsed: Boolean(r.fallback_used),
+    // Not persisted on commerce_quote_fact (display-only field; the order row carries it).
+    shippingService: null,
     expiresAt: String(r.expires_at),
   };
 }

@@ -18,8 +18,12 @@ import { priceCart } from "~/lib/order/cart.server";
 import { createCheckout, OutOfStockError } from "~/lib/order/checkout.server";
 import { paymentsReadiness } from "~/lib/payments/connect.server";
 import { PaymentsNotReadyError } from "~/lib/payments/errors";
-import { ShipRestrictedError } from "~/lib/shipping/errors";
+import { ShipRestrictedError, ShippingOptionUnavailableError } from "~/lib/shipping/errors";
 import { OriginNotConfiguredError } from "~/lib/commerce/errors";
+import { RateSourceNotConfiguredError } from "~/lib/commerce/rate-source.server";
+import { quoteCartOptions } from "~/lib/commerce/quote.server";
+import type { CartShippingOption } from "~/lib/commerce/types";
+import { COUNTRIES, isKnownCountry } from "~/lib/storefront/countries";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { getBuyerSession } from "~/lib/buyer/session.server";
 import { defaultShippingAddress, getBuyerEmail } from "~/lib/buyer/account.server";
@@ -93,21 +97,28 @@ const CHECKOUT_POLICY_VERSION = "2026-06-29";
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 // Stripe Tax + the shipping-rate engine require an ISO 3166-1 alpha-2 country (e.g. "US"). The
-// free-text field lets a browser autofill a full country name, which Stripe Tax rejects deep in
-// createCheckout -> quoteCart -> calculateTax, surfacing as an opaque 502 the buyer hits on every
-// retry. Normalise at the action boundary: accept a 2-letter code directly, or map a few common
-// full names; anything else is rejected with a friendly 400 BEFORE any Stripe call.
+// UI is a code-valued <select>, but a hand-crafted POST or aggressive autofill can still send a
+// full country name or a bogus code, which Stripe Tax rejects deep in createCheckout ->
+// quoteCart -> calculateTax, surfacing as an opaque 502 the buyer hits on every retry.
+// Normalise at the action boundary against the SAME country list the select renders: a known
+// 2-letter code passes, a full display name (or common alias) maps to its code, anything else
+// is rejected with a friendly 400 BEFORE any Stripe call.
 const COUNTRY_ALIASES: Record<string, string> = {
-  "united states": "US",
   usa: "US",
-  "united kingdom": "GB",
+  "united states of america": "US",
   uk: "GB",
-  canada: "CA",
+  "great britain": "GB",
 };
+const COUNTRY_BY_NAME = new Map<string, string>(
+  COUNTRIES.map((c) => [c.name.toLowerCase(), c.code]),
+);
 function toIsoCountry(raw: string): string | null {
   const v = raw.trim();
-  if (/^[A-Za-z]{2}$/.test(v)) return v.toUpperCase();
-  return COUNTRY_ALIASES[v.toLowerCase()] ?? null;
+  if (/^[A-Za-z]{2}$/.test(v)) {
+    const code = v.toUpperCase();
+    return isKnownCountry(code) ? code : null;
+  }
+  return COUNTRY_BY_NAME.get(v.toLowerCase()) ?? COUNTRY_ALIASES[v.toLowerCase()] ?? null;
 }
 
 export const meta: MetaFunction = ({ matches }) => {
@@ -203,17 +214,76 @@ function str(form: FormData, key: string): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+/**
+ * Buyer-actionable copy for a destination-restricted cart: name the blocked items
+ * (best-effort — a pricing hiccup degrades to a count-free message) and the country
+ * by display name, so the buyer knows exactly what to remove or change.
+ */
+async function shipRestrictedMessage(
+  shopId: string,
+  cartId: string,
+  err: ShipRestrictedError,
+): Promise<string> {
+  let titles: string[] = [];
+  try {
+    const priced = await priceCart(shopId, cartId);
+    const blocked = new Set(err.variantIds);
+    titles = priced.lines.filter((l) => blocked.has(l.variantId)).map((l) => l.titleSnapshot);
+  } catch (priceErr) {
+    console.error(`[checkout] could not resolve blocked-item titles for cart ${cartId} (shop ${shopId}):`, priceErr);
+    titles = [];
+  }
+  const countryName =
+    COUNTRIES.find((c) => c.code === err.destinationCountry.toUpperCase())?.name ??
+    err.destinationCountry;
+  if (titles.length === 0) {
+    return `Some items in your cart can't be shipped to ${countryName}. Please remove them or use a different address.`;
+  }
+  const pronoun = titles.length === 1 ? "it" : "them";
+  return `${titles.join(", ")} can't be shipped to ${countryName}. Please remove ${pronoun} from your cart or use a different address.`;
+}
+
+/**
+ * Shared mapping of typed quote-path errors to buyer-facing responses — used by BOTH
+ * the options step and the pay step so their copy and status codes can never drift.
+ * Returns null for errors the caller maps itself (or the generic fallback).
+ */
+async function mapShippingError(
+  err: unknown,
+  shopId: string,
+  cartId: string,
+): Promise<Response | null> {
+  // Destination-restricted items: actionable — name the items so the buyer knows
+  // exactly what to remove or that a different address would work.
+  if (err instanceof ShipRestrictedError) {
+    return json({ error: await shipRestrictedMessage(shopId, cartId, err) }, { status: 422 });
+  }
+  // The merchant hasn't set a ship-from address / any rate config the promise path
+  // trusts. Retrying can't help the buyer; say so honestly.
+  if (err instanceof OriginNotConfiguredError || err instanceof RateSourceNotConfiguredError) {
+    console.error(`[checkout] shop ${shopId} cannot quote shipping; refused (lost revenue):`, err);
+    return json(
+      { error: "This store can't ship orders yet. Your cart is saved — please check back soon." },
+      { status: 503 },
+    );
+  }
+  return null;
+}
+
 export async function action({ request }: ActionFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   if (shopId === DEMO_SHOP_ID) return redirect("/storefront/cart");
   const cartId = await readCartId(request);
   if (!cartId) return redirect("/storefront/cart");
 
-  // Each submission quotes live carrier rates and mints a Stripe PaymentIntent,
-  // so throttle per-IP and per-cart to blunt card-testing and cost abuse.
+  // Each submission quotes live carrier rates and (on pay) mints a Stripe
+  // PaymentIntent, so throttle per-IP and per-cart to blunt card-testing and cost
+  // abuse. A normal checkout is now two POSTs (quote options, then pay), and every
+  // address correction burns an extra quote POST, so the per-cart hourly budget is
+  // sized for ~10 full attempts with edits — the old single-POST flow's allowance.
   if (
-    !(await rateLimit(clientIpKey(request, "sf-checkout"), 5, 60_000)) ||
-    !(await rateLimit(`sf-checkout:${cartId}`, 10, 3_600_000))
+    !(await rateLimit(clientIpKey(request, "sf-checkout"), 8, 60_000)) ||
+    !(await rateLimit(`sf-checkout:${cartId}`, 30, 3_600_000))
   ) {
     return json(
       { error: "Too many checkout attempts. Please wait a moment and try again." },
@@ -266,23 +336,58 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: `Please provide ${missing.join(", ")}.` }, { status: 400 });
   }
   // Reject a non-ISO country here (fail visibly, rule 12) so a full-name autofill can never reach
-  // Stripe Tax and 502 the buyer. countryIso is what flows into createCheckout from here on.
+  // Stripe Tax and 502 the buyer. The UI is a code-valued <select>, so this only fires on a
+  // hand-crafted POST. countryIso is what flows into the quote/checkout from here on.
   const countryIso = toIsoCountry(country);
   if (!countryIso) {
     return json(
-      { error: "Please enter a valid country as a two-letter code, e.g. US." },
+      { error: "Please choose a country from the list." },
       { status: 400 },
     );
   }
-  // Consent is mandatory and must be EXPLICIT — reject (fail visibly) if not accepted, never
-  // silently proceed (the buyer helper records tos/privacy as accepted=true unconditionally, so
-  // the gate is here at the boundary).
+
+  // Step 1 of 2: quote the shipping options for this address — no consent needed yet,
+  // no DB write, no PaymentIntent. The buyer picks an option, then posts intent=pay.
+  const intent = str(form, "intent") || "pay";
+  if (intent === "quote") {
+    try {
+      const priced = await priceCart(shopId, cartId);
+      if (priced.lines.length === 0) return redirect("/storefront/cart");
+      const { options, currency } = await quoteCartOptions(
+        shopId,
+        priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
+        {
+          street1: line1,
+          street2: line2 || undefined,
+          city,
+          state: region,
+          zip: postal,
+          country: countryIso,
+        },
+        { subtotalCentsOverride: priced.subtotalCents },
+      );
+      return json({ shippingOptions: options, optionsCurrency: currency });
+    } catch (err) {
+      const mapped = await mapShippingError(err, shopId, cartId);
+      if (mapped) return mapped;
+      console.error(`[checkout] shipping options failed for shop ${shopId}, cart ${cartId}:`, err);
+      return json(
+        { error: "We couldn't get shipping options for that address. Please check it and try again." },
+        { status: 502 },
+      );
+    }
+  }
+
+  // Step 2 of 2: pay. Consent is mandatory and must be EXPLICIT — reject (fail visibly) if not
+  // accepted, never silently proceed (the buyer helper records tos/privacy as accepted=true
+  // unconditionally, so the gate is here at the boundary).
   if (!tosAccepted || !privacyAccepted) {
     return json(
       { error: "You must accept the Terms of Service and Privacy Policy to place an order." },
       { status: 400 },
     );
   }
+  const shippingService = str(form, "shippingService") || null;
 
   // Consent proof: WHO/WHERE accepted. x-forwarded-for's first hop is the client; fall back to
   // x-real-ip. Captured for legal proof only — never logged, never sent to the warehouse.
@@ -328,6 +433,7 @@ export async function action({ request }: ActionFunctionArgs) {
         consent: { version: CHECKOUT_POLICY_VERSION, marketingOptIn, sourceIp, ua },
       },
       { live_session_id: visitor.sessionId, ...experimentAttribution },
+      { shippingService },
     );
 
     // Return the client secret + confirmation token AND the amounts actually charged (subtotal +
@@ -344,6 +450,9 @@ export async function action({ request }: ActionFunctionArgs) {
         taxCents: result.taxCents,
         totalCents: result.totalCents,
         currency: result.currency,
+        shippingService: result.shippingService,
+        deliveryEarliest: result.deliveryEarliest,
+        deliveryLatest: result.deliveryLatest,
       },
       { headers: visitor.headers },
     );
@@ -366,24 +475,20 @@ export async function action({ request }: ActionFunctionArgs) {
         { status: 503 },
       );
     }
-    // Destination-restricted items: actionable — the buyer can remove them or change address.
-    if (err instanceof ShipRestrictedError) {
+    // The buyer's chosen rate vanished between the options step and pay (carrier drift).
+    // The error response replaces the fetched options, so the UI lands back on the
+    // address step — the copy matches that: continue again for fresh options.
+    if (err instanceof ShippingOptionUnavailableError) {
       return json(
         {
-          error: `Some items in your cart can't be shipped to ${err.destinationCountry}. Please remove them or use a different address.`,
+          error:
+            "That shipping option just changed. Please continue to shipping again and pick from the updated options.",
         },
-        { status: 422 },
+        { status: 409 },
       );
     }
-    // The merchant hasn't set a ship-from address, so nothing can be quoted. Retrying
-    // can't help the buyer; say so honestly.
-    if (err instanceof OriginNotConfiguredError) {
-      console.error(`[checkout] shop ${shopId} has no ship-from origin; checkout refused (lost revenue)`);
-      return json(
-        { error: "This store can't ship orders yet. Your cart is saved — please check back soon." },
-        { status: 503 },
-      );
-    }
+    const mapped = await mapShippingError(err, shopId, cartId);
+    if (mapped) return mapped;
     console.error(`[checkout] failed to originate checkout for shop ${shopId}, cart ${cartId}:`, err);
     return json({ error: "We couldn't start your payment. Please try again." }, { status: 502 });
   }
@@ -430,21 +535,47 @@ function PaymentStep({ confirmationUrl, total }: { confirmationUrl: string; tota
   );
 }
 
+// "Arrives Jul 14–16" from the quote's ISO calendar dates. Locale + UTC pinned so
+// SSR/hydration and every buyer timezone render the promised dates identically.
+function fmtArrival(earliest: string | null, latest: string | null): string | null {
+  if (!earliest) return null;
+  const fmt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  const e = new Date(earliest);
+  if (Number.isNaN(e.getTime())) return null;
+  const eTxt = fmt.format(e);
+  if (!latest || latest === earliest) return `Arrives ${eTxt}`;
+  const l = new Date(latest);
+  if (Number.isNaN(l.getTime())) return `Arrives ${eTxt}`;
+  return `Arrives ${eTxt}–${fmt.format(l)}`;
+}
+
 export default function StorefrontCheckout() {
   const { publishableKey, paymentsReady, origin, summary, prefill } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const [stripePromise] = useState(() => (publishableKey ? loadStripe(publishableKey) : null));
+  // Buyer stepped back to edit the address after seeing options; cleared again on submit.
+  const [editingAddress, setEditingAddress] = useState(false);
 
   const data = fetcher.data;
   const clientSecret = data && "clientSecret" in data ? data.clientSecret : undefined;
   const confirmationToken = data && "confirmationToken" in data ? data.confirmationToken : undefined;
   const formError = data && "error" in data ? data.error : undefined;
+  const shippingOptions: CartShippingOption[] | undefined =
+    data && "shippingOptions" in data ? data.shippingOptions : undefined;
   // Once the action has quoted shipping + tax, show the real charged amounts; before that only
   // the subtotal is known.
   const charged = data && "totalCents" in data ? data : null;
   const total = charged
     ? money(charged.totalCents, charged.currency)
     : money(summary.subtotalCents, summary.currency);
+  const chargedArrival = charged ? fmtArrival(charged.deliveryEarliest, charged.deliveryLatest) : null;
+
+  // Which half of the single form is visible. Address inputs stay MOUNTED (hidden)
+  // on the options step so the pay submit re-posts the address the options were
+  // quoted for; consent renders only on the options step (a hidden required
+  // checkbox would block the quote submit).
+  const onOptionsStep = !!shippingOptions && shippingOptions.length > 0 && !editingAddress;
+  const busy = fetcher.state !== "idle";
 
   return (
     <section className="cd-checkout">
@@ -469,9 +600,20 @@ export default function StorefrontCheckout() {
               <span>{money(charged.subtotalCents, charged.currency)}</span>
             </div>
             <div className="cd-checkout__row">
-              <span>Shipping</span>
-              <span>{money(charged.shippingCents, charged.currency)}</span>
+              <span>
+                Shipping
+                {charged.shippingService ? ` (${charged.shippingService})` : ""}
+              </span>
+              <span>
+                {charged.shippingCents === 0 ? "Free" : money(charged.shippingCents, charged.currency)}
+              </span>
             </div>
+            {chargedArrival ? (
+              <div className="cd-checkout__row">
+                <span>{chargedArrival}</span>
+                <span />
+              </div>
+            ) : null}
             <div className="cd-checkout__row">
               <span>Tax</span>
               <span>{money(charged.taxCents, charged.currency)}</span>
@@ -494,73 +636,124 @@ export default function StorefrontCheckout() {
           This store isn&apos;t accepting payments yet. Your cart is saved — please check back soon.
         </p>
       ) : !clientSecret ? (
-        <fetcher.Form method="post" className="cd-checkout__form">
-          {prefill ? (
-            <p className="cd-checkout__signedin">Using your saved details — edit any field below if needed.</p>
+        <fetcher.Form
+          method="post"
+          className="cd-checkout__form"
+          onSubmit={() => setEditingAddress(false)}
+        >
+          <div hidden={onOptionsStep}>
+            {prefill ? (
+              <p className="cd-checkout__signedin">Using your saved details — edit any field below if needed.</p>
+            ) : null}
+            <h2>Contact</h2>
+            <label className="cd-checkout__field">
+              <span>Email</span>
+              <input type="email" name="email" autoComplete="email" defaultValue={prefill?.email} required />
+            </label>
+
+            <h2>Shipping address</h2>
+            <label className="cd-checkout__field">
+              <span>Full name</span>
+              <input type="text" name="name" autoComplete="name" defaultValue={prefill?.name} required />
+            </label>
+            <label className="cd-checkout__field">
+              <span>Address</span>
+              <input type="text" name="line1" autoComplete="address-line1" defaultValue={prefill?.line1} required />
+            </label>
+            <label className="cd-checkout__field">
+              <span>Apartment, suite, etc. (optional)</span>
+              <input type="text" name="line2" autoComplete="address-line2" defaultValue={prefill?.line2} />
+            </label>
+            <label className="cd-checkout__field">
+              <span>City</span>
+              <input type="text" name="city" autoComplete="address-level2" defaultValue={prefill?.city} required />
+            </label>
+            <label className="cd-checkout__field">
+              <span>State / region</span>
+              <input type="text" name="region" autoComplete="address-level1" defaultValue={prefill?.region} required />
+            </label>
+            <label className="cd-checkout__field">
+              <span>Postal code</span>
+              <input type="text" name="postal" autoComplete="postal-code" defaultValue={prefill?.postal} required />
+            </label>
+            <label className="cd-checkout__field">
+              <span>Country</span>
+              <select name="country" autoComplete="country" defaultValue={prefill?.country || "US"} required>
+                {COUNTRIES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="cd-checkout__field">
+              <span>Phone (optional)</span>
+              <input type="tel" name="phone" autoComplete="tel" defaultValue={prefill?.phone} />
+            </label>
+          </div>
+
+          {onOptionsStep && shippingOptions ? (
+            <div className="cd-checkout__shipping">
+              <h2>Shipping method</h2>
+              {shippingOptions.map((o, i) => {
+                const arrival = fmtArrival(o.deliveryEarliest, o.deliveryLatest);
+                return (
+                  <label key={o.service} className="cd-checkout__option">
+                    <input type="radio" name="shippingService" value={o.service} defaultChecked={i === 0} />
+                    <span className="cd-checkout__option-label">
+                      <span className="cd-checkout__option-name">{o.label}</span>
+                      {arrival ? <span className="cd-checkout__option-arrival">{arrival}</span> : null}
+                    </span>
+                    <span className="cd-checkout__option-price">
+                      {o.amountCents === 0 ? "Free" : money(o.amountCents, summary.currency)}
+                    </span>
+                  </label>
+                );
+              })}
+              <button
+                type="button"
+                className="cd-checkout__back"
+                onClick={() => setEditingAddress(true)}
+              >
+                Edit address
+              </button>
+
+              <label className="cd-checkout__consent">
+                <input type="checkbox" name="tos" required /> <span>I accept the Terms of Service.</span>
+              </label>
+              <label className="cd-checkout__consent">
+                <input type="checkbox" name="privacy" required />{" "}
+                <span>I accept the Privacy Policy.</span>
+              </label>
+              <label className="cd-checkout__consent">
+                <input type="checkbox" name="marketing" />{" "}
+                <span>Send me occasional product updates (optional).</span>
+              </label>
+            </div>
           ) : null}
-          <h2>Contact</h2>
-          <label className="cd-checkout__field">
-            <span>Email</span>
-            <input type="email" name="email" autoComplete="email" defaultValue={prefill?.email} required />
-          </label>
-
-          <h2>Shipping address</h2>
-          <label className="cd-checkout__field">
-            <span>Full name</span>
-            <input type="text" name="name" autoComplete="name" defaultValue={prefill?.name} required />
-          </label>
-          <label className="cd-checkout__field">
-            <span>Address</span>
-            <input type="text" name="line1" autoComplete="address-line1" defaultValue={prefill?.line1} required />
-          </label>
-          <label className="cd-checkout__field">
-            <span>Apartment, suite, etc. (optional)</span>
-            <input type="text" name="line2" autoComplete="address-line2" defaultValue={prefill?.line2} />
-          </label>
-          <label className="cd-checkout__field">
-            <span>City</span>
-            <input type="text" name="city" autoComplete="address-level2" defaultValue={prefill?.city} required />
-          </label>
-          <label className="cd-checkout__field">
-            <span>State / region</span>
-            <input type="text" name="region" autoComplete="address-level1" defaultValue={prefill?.region} required />
-          </label>
-          <label className="cd-checkout__field">
-            <span>Postal code</span>
-            <input type="text" name="postal" autoComplete="postal-code" defaultValue={prefill?.postal} required />
-          </label>
-          <label className="cd-checkout__field">
-            <span>Country (2-letter code, e.g. US)</span>
-            <input
-              type="text"
-              name="country"
-              autoComplete="country"
-              maxLength={2}
-              placeholder="US"
-              defaultValue={prefill?.country}
-              required
-            />
-          </label>
-          <label className="cd-checkout__field">
-            <span>Phone (optional)</span>
-            <input type="tel" name="phone" autoComplete="tel" defaultValue={prefill?.phone} />
-          </label>
-
-          <label className="cd-checkout__consent">
-            <input type="checkbox" name="tos" /> <span>I accept the Terms of Service.</span>
-          </label>
-          <label className="cd-checkout__consent">
-            <input type="checkbox" name="privacy" /> <span>I accept the Privacy Policy.</span>
-          </label>
-          <label className="cd-checkout__consent">
-            <input type="checkbox" name="marketing" />{" "}
-            <span>Send me occasional product updates (optional).</span>
-          </label>
 
           {formError ? <p className="cd-checkout__error">{formError}</p> : null}
-          <button type="submit" className="cd-checkout__submit" disabled={fetcher.state !== "idle"}>
-            {fetcher.state !== "idle" ? "Starting…" : "Continue to payment"}
-          </button>
+          {onOptionsStep ? (
+            <button
+              type="submit"
+              name="intent"
+              value="pay"
+              className="cd-checkout__submit"
+              disabled={busy}
+            >
+              {busy ? "Starting…" : "Continue to payment"}
+            </button>
+          ) : (
+            <button
+              type="submit"
+              name="intent"
+              value="quote"
+              className="cd-checkout__submit"
+              disabled={busy}
+            >
+              {busy ? "Checking rates…" : "Continue to shipping"}
+            </button>
+          )}
         </fetcher.Form>
       ) : (
         <Elements stripe={stripePromise} options={{ clientSecret }}>

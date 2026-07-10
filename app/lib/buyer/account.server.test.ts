@@ -4,13 +4,14 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // the account helpers use (eq/is/order/maybeSingle/delete).
 const store = vi.hoisted(() => {
   type Row = Record<string, any>;
-  const db: Record<string, Row[]> = { buyer_dim: [], buyer_address: [], orders: [] };
+  const db: Record<string, Row[]> = { buyer_dim: [], buyer_address: [], orders: [], order_fulfillment: [] };
 
   class Builder {
     private op: "select" | "delete" = "select";
     private filters: Array<[string, unknown]> = [];
     private inFilters: Array<[string, unknown[]]> = [];
     private nullFilters: string[] = [];
+    private notNullFilters: string[] = [];
     private wantSingle = false;
     private readonly table: string;
     constructor(table: string) {
@@ -35,6 +36,11 @@ const store = vi.hoisted(() => {
       this.nullFilters.push(col);
       return this;
     }
+    not(col: string, _op: "is", _val: null) {
+      // Models PostgREST `.not(col, "is", null)` — the only negated shape used here.
+      this.notNullFilters.push(col);
+      return this;
+    }
     order() {
       return this;
     }
@@ -49,7 +55,8 @@ const store = vi.hoisted(() => {
       return (
         this.filters.every(([c, v]) => r[c] === v) &&
         this.inFilters.every(([c, vals]) => vals.includes(r[c])) &&
-        this.nullFilters.every((c) => r[c] == null)
+        this.nullFilters.every((c) => r[c] == null) &&
+        this.notNullFilters.every((c) => r[c] != null)
       );
     }
     private run(): { data: unknown; error: unknown } {
@@ -77,6 +84,7 @@ beforeEach(() => {
   store.db.buyer_dim = [{ id: "buyer-1", shop_id: "shop-1", email_normalized: "casey@shop.com", stripe_customer_id: "cus_1" }];
   store.db.buyer_address = [];
   store.db.orders = [];
+  store.db.order_fulfillment = [];
   deleteBuyerStripeCustomer.mockClear();
 });
 
@@ -100,6 +108,22 @@ describe("listBuyerOrders", () => {
     const orders = await listBuyerOrders("shop-1", "buyer-1");
     // The abandoned checkout is gone; the paid + partially_refunded orders remain.
     expect(orders.map((o) => o.orderId).sort()).toEqual(["ok", "opr"]);
+  });
+
+  it("attaches the latest fulfillment tracking to shipped orders (null when none recorded)", async () => {
+    store.db.orders.push(
+      { id: "o1", shop_id: "shop-1", buyer_id: "buyer-1", state: "fulfilled", financial_status: "paid", total_cents: 4957, currency: "usd", created_at: "2026-07-01T00:00:00Z", confirmation_token: "tok1" },
+      { id: "o2", shop_id: "shop-1", buyer_id: "buyer-1", state: "paid", financial_status: "paid", total_cents: 100, currency: "usd", created_at: "2026-07-02T00:00:00Z", confirmation_token: "tok2" },
+    );
+    store.db.order_fulfillment.push(
+      { id: "f1", shop_id: "shop-1", order_id: "o1", tracking_number: "9400111899220001", carrier: "USPS", created_at: "2026-07-03T00:00:00Z" },
+      { id: "f0", shop_id: "shop-1", order_id: "o1", tracking_number: null, carrier: null, created_at: "2026-07-02T00:00:00Z" },
+    );
+    const orders = await listBuyerOrders("shop-1", "buyer-1");
+    const shipped = orders.find((o) => o.orderId === "o1");
+    const unshipped = orders.find((o) => o.orderId === "o2");
+    expect(shipped).toMatchObject({ trackingNumber: "9400111899220001", trackingCarrier: "USPS" });
+    expect(unshipped).toMatchObject({ trackingNumber: null, trackingCarrier: null });
   });
 });
 

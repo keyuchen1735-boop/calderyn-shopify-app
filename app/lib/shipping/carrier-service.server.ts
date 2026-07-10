@@ -23,18 +23,18 @@ import { randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "../supabase.server";
 import type { AdminGraphqlClient } from "../shopify/inventory.server";
-import {
-  buildFallbackOptions,
-  easyPostRateAdapter,
-} from "../ship-cost/adapters/easypost-rate.server";
+import { buildFallbackOptions } from "../ship-cost/adapters/easypost-rate.server";
+import { getRateSource } from "../commerce/rate-source.server";
 import type {
   RateQuoteResult,
   RateQuoteSource,
   RateRequest,
 } from "../ship-cost/adapters/rate-quote";
 import { getShippingEngine } from "./engine.server";
+import { loadShipRules, toMerchantShipRules } from "./rules.server";
 import type {
   Address,
+  MerchantShipRules,
   QuoteShipping,
   ShippingQuote,
   ShippingQuoteLine,
@@ -392,15 +392,25 @@ const fallbackRateSource: RateQuoteSource = {
 };
 
 async function defaultConnectRateSource(shopId: string): Promise<RateQuoteSource> {
-  // connect() returns null when the shop has no credential, and may THROW on a
-  // structurally broken one — both degrade to the fallback source (caught upstream).
-  const src = await easyPostRateAdapter.connect(shopId);
-  return src ?? fallbackRateSource;
+  // Same resolution chain as native checkout (carrier → merchant flat rates → default
+  // bands) so a dual-run Shopify checkout quotes the SAME prices as the native one —
+  // a merchant's flat rates must not silently apply on only one surface. A broken
+  // credential still THROWS and degrades to the fallback source (caught upstream).
+  return getRateSource(shopId);
+}
+
+async function defaultLoadRules(shopId: string): Promise<MerchantShipRules | undefined> {
+  // ponytail: Shopify's rate body carries SHOPIFY variant ids, not variant_dim UUIDs,
+  // so the per-variant handling_days fold the native path applies cannot run here —
+  // shop-level rules only. Dual-run delivery windows may under-promise for
+  // slow-handling items until an id-mapping lands.
+  return toMerchantShipRules(await loadShipRules(shopId));
 }
 
 export interface CarrierCallbackDeps {
   resolveShop?: (token: string) => Promise<{ shopId: string } | null>;
   connectRateSource?: (shopId: string) => Promise<RateQuoteSource>;
+  loadRules?: (shopId: string) => Promise<MerchantShipRules | undefined>;
   engine?: QuoteShipping;
 }
 
@@ -426,6 +436,7 @@ export async function handleCarrierRateCallback(
 ): Promise<CarrierCallbackResult> {
   const resolveShop = deps.resolveShop ?? resolveCarrierShopByToken;
   const connectRateSource = deps.connectRateSource ?? defaultConnectRateSource;
+  const loadRulesForShop = deps.loadRules ?? defaultLoadRules;
   const engine = deps.engine ?? getShippingEngine();
 
   const shop = await resolveShop(token);
@@ -449,12 +460,23 @@ export async function handleCarrierRateCallback(
     rateSource = fallbackRateSource;
   }
 
+  // Merchant rules (markup / handling / free-ship / handling window) apply on this
+  // surface too, so a dual-run Shopify checkout shows the same prices as the native
+  // one. A rules read failure quotes rule-less rather than blocking checkout.
+  let rules: MerchantShipRules | undefined;
+  try {
+    rules = await loadRulesForShop(shop.shopId);
+  } catch (err) {
+    console.error(`[carrier-service] ship_rules read failed for shop ${shop.shopId}; quoting without rules`, err);
+    rules = undefined;
+  }
+
   // The engine is contractually never-throw, but a 500 reaching Shopify here means
   // the buyer sees NO rates -> checkout blocked. Fail closed to a well-formed empty
   // rate set instead (rule 12 — this surface's invariant is "always a valid response").
   let quote: ShippingQuote;
   try {
-    quote = await engine(req, rateSource);
+    quote = await engine(req, rateSource, rules);
   } catch (err) {
     console.error(`[carrier-service] engine threw for shop ${shop.shopId}`, err);
     return { status: 200, body: EMPTY_RATES };
