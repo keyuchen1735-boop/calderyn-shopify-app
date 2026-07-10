@@ -1,5 +1,6 @@
-// Pure list-state helpers for the Catalog screen. Framework-free so both the
-// screen and the server route share one definition of the sort vocabulary.
+// Pure sort helpers for the catalog list. Framework-free so the Catalog
+// screen, the client fetcher, and the server route share one definition of
+// the sort vocabulary.
 export type CatalogSort = "updated" | "title_asc" | "title_desc";
 
 export const CATALOG_SORTS: Array<{ value: CatalogSort; label: string }> = [

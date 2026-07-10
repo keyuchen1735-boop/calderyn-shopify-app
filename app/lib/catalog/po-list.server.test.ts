@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapPoRow } from "./po-list.server";
+import { hasPoSnapshot, mapPoRow } from "./po-list.server";
 
 const BASE = {
   id: "audit-1",
@@ -84,5 +84,15 @@ describe("mapPoRow", () => {
     expect(row.poNumber).toBeNull();
     expect(row.lineCount).toBe(0);
     expect(row.hasPdf).toBe(false);
+  });
+});
+
+describe("hasPoSnapshot", () => {
+  it("accepts only a PO snapshot object, matching the PDF route's 404", () => {
+    expect(hasPoSnapshot({ po: { po_number: "PO-X", lines: [] } })).toBe(true);
+    expect(hasPoSnapshot({})).toBe(false);
+    expect(hasPoSnapshot(null)).toBe(false);
+    // A non-object po (however truthy) must not light the download button.
+    expect(hasPoSnapshot({ po: "PO-X" })).toBe(false);
   });
 });

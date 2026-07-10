@@ -116,9 +116,16 @@ export default function TransferModal({
   }, [activeVariantId, from]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Capture phase + stopPropagation: this modal can sit on top of the
+    // Inventory drawer, whose own bubble-phase Escape listener would otherwise
+    // fire on the same keypress and close both dialogs at once.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [onClose]);
 
   // Focus the first control (picker input or From select) when the dialog opens.

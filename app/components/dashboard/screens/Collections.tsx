@@ -3,7 +3,7 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
-import { Card, Btn, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
+import { Card, Btn, ClearableSearchInput, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
 
 // URL-only pages (/dashboard/products/collections[/<id>]): no Products subtab
@@ -272,7 +272,7 @@ function CollectionDetail({ app, id }: { app: DashboardCtx; id: string }) {
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   useEffect(() => {
-    const t = setTimeout(() => setQuery(search.trim()), 250);
+    const t = setTimeout(() => setQuery(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
 
@@ -418,14 +418,14 @@ function CollectionDetail({ app, id }: { app: DashboardCtx; id: string }) {
 
       <div style={{ marginTop: 18 }}>
         <SectionTitle>Add products</SectionTitle>
-        <input
-          className="cd-input"
-          placeholder="Search your catalog"
-          aria-label="Search products to add"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ width: "auto", minWidth: 220, maxWidth: 360, marginBottom: 10 }}
-        />
+        <div style={{ maxWidth: 360, marginBottom: 10 }}>
+          <ClearableSearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Search your catalog"
+            ariaLabel="Search products to add"
+          />
+        </div>
         {query && (
           <Card pad={false}>
             {searching ? (

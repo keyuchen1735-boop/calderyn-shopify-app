@@ -31,6 +31,14 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
+/** True when an audit row's params carry a PO snapshot object. THE shared
+ *  predicate: the list's download button (mapPoRow.hasPdf) and the PDF route's
+ *  404 both use it, so the button can never render for a row the route
+ *  rejects. */
+export function hasPoSnapshot(params: unknown): boolean {
+  return asObject(asObject(params)?.po) != null;
+}
+
 /** Map one raw audit row to a list row. Pure and exported so the mapping —
  *  including the PDF-availability predicate, which must mirror the PDF
  *  route's 404 check exactly (create_po_draft AND a params.po snapshot) —
@@ -56,7 +64,7 @@ export function mapPoRow(raw: PoAuditRow): PurchaseOrderRow {
     outcome: raw.outcome,
     createdAt: raw.created_at,
     lastError: raw.last_error,
-    hasPdf: raw.action_kind === "create_po_draft" && poValue != null,
+    hasPdf: raw.action_kind === "create_po_draft" && hasPoSnapshot(raw.params),
   };
 }
 

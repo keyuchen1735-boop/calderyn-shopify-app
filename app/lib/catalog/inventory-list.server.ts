@@ -89,21 +89,6 @@ export async function listInventory(
   };
 }
 
-/** The sku a create_po_draft audit row restocks: the first PO line's sku from
- *  the params snapshot, or null when the snapshot is absent or malformed. Pure
- *  and exported for unit tests. */
-export function restockKeyFromParams(params: unknown): string | null {
-  if (typeof params !== "object" || params === null) return null;
-  const po = (params as Record<string, unknown>).po;
-  if (typeof po !== "object" || po === null) return null;
-  const lines = (po as Record<string, unknown>).lines;
-  if (!Array.isArray(lines) || lines.length === 0) return null;
-  const first = lines[0];
-  if (typeof first !== "object" || first === null) return null;
-  const sku = (first as Record<string, unknown>).sku;
-  return typeof sku === "string" && sku ? sku : null;
-}
-
 const RESTOCK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
@@ -115,9 +100,12 @@ const RESTOCK_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 export async function attachRestockPresence(shopId: string, rows: InventoryRow[]): Promise<InventoryRow[]> {
   if (rows.length === 0) return rows;
   const cutoff = new Date(Date.now() - RESTOCK_WINDOW_MS).toISOString();
+  // JSON-path projection: only the first PO line's sku matters here, so let
+  // PostgREST extract it server-side instead of downloading every row's full
+  // multi-line PO snapshot in params.
   const { data, error } = await getSupabase()
     .from("action_audit")
-    .select("id, params, outcome, created_at")
+    .select("id, outcome, created_at, sku:params->po->lines->0->>sku")
     .eq("shop_id", shopId)
     .eq("action_kind", "create_po_draft")
     .gte("created_at", cutoff)
@@ -128,7 +116,8 @@ export async function attachRestockPresence(shopId: string, rows: InventoryRow[]
   // Newest-first order + "keep first seen" = each sku maps to its latest draft.
   const bySku = new Map<string, RestockPresence>();
   for (const entry of data ?? []) {
-    const sku = restockKeyFromParams(entry.params);
+    // The projection yields null for an absent/malformed snapshot.
+    const sku = typeof entry.sku === "string" && entry.sku ? entry.sku : null;
     if (!sku || bySku.has(sku)) continue;
     bySku.set(sku, {
       auditId: String(entry.id),

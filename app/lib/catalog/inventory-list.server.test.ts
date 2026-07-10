@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { escapeLike, mapInventoryRow, restockKeyFromParams } from "./inventory-list.server";
+import { escapeLike, mapInventoryRow } from "./inventory-list.server";
 
 describe("mapInventoryRow", () => {
   it("maps snake_case RPC output and null single_location_id", () => {
@@ -31,16 +31,5 @@ describe("escapeLike", () => {
   });
   it("escapes backslash before wildcards so mixed input stays literal", () => {
     expect(escapeLike("\\%_")).toBe("\\\\\\%\\_");
-  });
-});
-
-describe("restockKeyFromParams", () => {
-  it("extracts the first PO line sku", () => {
-    expect(restockKeyFromParams({ po: { lines: [{ sku: "SKU-1" }] } })).toBe("SKU-1");
-  });
-  it("returns null when the snapshot is absent or malformed", () => {
-    expect(restockKeyFromParams(null)).toBeNull();
-    expect(restockKeyFromParams({})).toBeNull();
-    expect(restockKeyFromParams({ po: { lines: [] } })).toBeNull();
   });
 });

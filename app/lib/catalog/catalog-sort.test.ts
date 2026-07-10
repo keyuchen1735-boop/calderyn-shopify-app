@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogSortToOrder, CATALOG_SORTS } from "../catalog-list-state";
+import { catalogSortToOrder, CATALOG_SORTS } from "./catalog-sort";
 
 describe("catalogSortToOrder", () => {
   it("maps updated to updated_at desc", () => {

@@ -3,10 +3,10 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, catalogCacheKey } from "~/lib/dashboard/screen-cache";
-import { Card, Btn, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
+import { Card, Btn, ClearableSearchInput, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
 import { money } from "../format";
-import { CATALOG_SORTS, isCatalogSort, type CatalogSort } from "./catalog-list-state";
+import { CATALOG_SORTS, isCatalogSort, type CatalogSort } from "~/lib/catalog/catalog-sort";
 
 type StatusFilter = "All" | "active" | "draft" | "archived";
 
@@ -55,7 +55,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   // Debounce the search box so each keystroke doesn't fire a request.
   const [query, setQuery] = useState("");
   useEffect(() => {
-    const t = setTimeout(() => setQuery(search.trim()), 250);
+    const t = setTimeout(() => setQuery(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
 
@@ -137,9 +137,14 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
 
   // --- bulk selection ---------------------------------------------------------
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Key the reset on the id COMPOSITION, not the array identity: a background
+  // revalidation of the seeded cache lands a new array of the same rows, and
+  // clearing on it would wipe an in-progress selection mid-click. A real
+  // page/filter change still changes the ids and clears.
+  const idsKey = useMemo(() => products.map((p) => p.id).join("|"), [products]);
   useEffect(() => {
     setSelected(new Set());
-  }, [products]);
+  }, [idsKey]);
 
   const allSelected = products.length > 0 && products.every((p) => selected.has(p.id));
 
@@ -276,40 +281,12 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
       </header>
 
       <div className="flex items-center gap-2.5" style={{ marginBottom: 10, flexWrap: "wrap" }}>
-        <div style={{ position: "relative", flex: "1 1 220px", minWidth: 220 }}>
-          <input
-            className="cd-input"
-            placeholder="Search products"
-            aria-label="Search products"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ width: "100%", paddingRight: search ? 30 : undefined }}
-          />
-          {search && (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => setSearch("")}
-              style={{
-                position: "absolute",
-                right: 6,
-                top: "50%",
-                transform: "translateY(-50%)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 22,
-                height: 22,
-                background: "none",
-                border: 0,
-                color: "inherit",
-                cursor: "pointer",
-              }}
-            >
-              <CDIcon name="x" size={13} />
-            </button>
-          )}
-        </div>
+        <ClearableSearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search products"
+          ariaLabel="Search products"
+        />
         <Segmented small value={status} onChange={(v) => setStatus(v as StatusFilter)} options={STATUS_OPTIONS} />
         <select
           className="cd-input"

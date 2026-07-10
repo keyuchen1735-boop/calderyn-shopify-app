@@ -642,14 +642,24 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
         // Sequential and in tile order: the first successful upload becomes
         // the primary image server-side, so order is meaningful.
         let failed = 0;
-        for (const p of photos) {
+        let mainFailed = false;
+        for (const [i, p] of photos.entries()) {
           try {
             await client.uploadProductImage(id, p.file);
           } catch {
             failed += 1;
+            // Losing tile 0 silently promotes the next photo to the
+            // storefront lead image — that needs its own callout.
+            if (i === 0) mainFailed = true;
           }
         }
-        if (failed > 0) {
+        if (mainFailed) {
+          app.toast(
+            "Saved, but your main photo didn't upload — the storefront is using the next photo. Fix it from the product editor.",
+            "warn",
+            "critical",
+          );
+        } else if (failed > 0) {
           app.toast(`Saved, but ${failed} photo(s) didn't upload — add them from the product editor.`, "warn", "critical");
         }
       }

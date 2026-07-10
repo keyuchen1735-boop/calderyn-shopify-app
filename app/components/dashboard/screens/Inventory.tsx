@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Btn, Card, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Btn, Card, ClearableSearchInput, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -187,6 +187,35 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [openRow, closeDrawer]);
 
+  // Focus the first control when the drawer opens (same as TransferModal).
+  const drawerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!openRow) return;
+    drawerRef.current?.querySelector<HTMLElement>("button, input, select")?.focus();
+  }, [openRow]);
+
+  // Keep Tab cycling inside the drawer while it's open (mirrors TransferModal).
+  const onDrawerKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Tab") return;
+    const nodes = drawerRef.current?.querySelectorAll<HTMLElement>("button, input, select");
+    if (!nodes) return;
+    const focusable = Array.from(nodes).filter((n) => !n.hasAttribute("disabled"));
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const inside = active instanceof HTMLElement && drawerRef.current?.contains(active);
+    if (e.shiftKey) {
+      if (!inside || active === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (!inside || active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
   const filtered = Boolean(query) || stock !== "all";
   const shown = rows ?? [];
 
@@ -204,40 +233,12 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
       </header>
 
       <div className="flex items-center gap-2.5" style={{ marginBottom: 10, flexWrap: "wrap" }}>
-        <div style={{ position: "relative", flex: "1 1 220px", minWidth: 220 }}>
-          <input
-            className="cd-input"
-            placeholder="Search by product, variant, or SKU"
-            aria-label="Search inventory"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ width: "100%", paddingRight: search ? 30 : undefined }}
-          />
-          {search && (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => setSearch("")}
-              style={{
-                position: "absolute",
-                right: 6,
-                top: "50%",
-                transform: "translateY(-50%)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 22,
-                height: 22,
-                background: "none",
-                border: 0,
-                color: "inherit",
-                cursor: "pointer",
-              }}
-            >
-              <CDIcon name="x" size={13} />
-            </button>
-          )}
-        </div>
+        <ClearableSearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search by product, variant, or SKU"
+          ariaLabel="Search inventory"
+        />
         <Segmented small value={stock} onChange={(v) => setStock(v as StockFilter)} options={STOCK_OPTIONS} />
       </div>
 
@@ -327,7 +328,16 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                           if (e.key === "Enter") e.currentTarget.blur();
                         }}
                         onBlur={(e) => {
-                          const next = Math.max(0, Math.trunc(Number(e.target.value)) || 0);
+                          const raw = e.target.value.trim();
+                          const parsed = Number(raw);
+                          // An empty or unparseable field never commits — ''
+                          // coerces to 0 and would zero out real stock. Restore
+                          // the current value instead.
+                          if (raw === "" || !Number.isFinite(parsed)) {
+                            e.target.value = String(r.onHand);
+                            return;
+                          }
+                          const next = Math.max(0, Math.trunc(parsed));
                           if (next !== r.onHand) void commitQty(r, next);
                         }}
                       />
@@ -402,10 +412,12 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
           }}
         >
           <div
+            ref={drawerRef}
             role="dialog"
             aria-modal="true"
             aria-label="Stock details"
             onClick={(e) => e.stopPropagation()}
+            onKeyDown={onDrawerKeyDown}
             style={{
               position: "fixed",
               top: 0,

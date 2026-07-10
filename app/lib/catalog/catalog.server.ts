@@ -5,7 +5,7 @@ import { projectProductToSkuDim } from "./project-sku-dim.server";
 import { seedInitialStock } from "../inventory/engine.server";
 import { escapeLike } from "./inventory-list.server";
 import { collectionHandle, productHandleBase } from "./handle";
-import { catalogSortToOrder, type CatalogSort } from "~/components/dashboard/screens/catalog-list-state";
+import { catalogSortToOrder, type CatalogSort } from "./catalog-sort";
 import type { ProductInput, ProductStatus, ProductSummary, ProductDetail, VariantInput } from "./types";
 
 type Supa = ReturnType<typeof getSupabase>;
@@ -546,18 +546,28 @@ export async function listCollections(
   if (error) throw error;
   const rows = (data ?? []).map((c: Record<string, unknown>) => ({ id: String(c.id), title: String(c.title), handle: String(c.handle) }));
 
-  // Membership counts folded from ONE select over this page's collection ids —
-  // never a per-collection query (N+1 on every Collections paint).
+  // Membership counts folded from a paged select over this page's collection
+  // ids — never a per-collection query (N+1 on every Collections paint).
+  // Paged because PostgREST clamps every response at 1000 rows: a single
+  // select would silently truncate past that and undercount.
   const countById = new Map<string, number>();
   if (rows.length) {
-    const { data: memberships, error: mErr } = await sb
-      .from("product_collection")
-      .select("collection_id")
-      .in("collection_id", rows.map((r) => r.id));
-    if (mErr) throw mErr;
-    for (const m of (memberships ?? []) as Array<{ collection_id: string }>) {
-      const k = String(m.collection_id);
-      countById.set(k, (countById.get(k) ?? 0) + 1);
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data: memberships, error: mErr } = await sb
+        .from("product_collection")
+        .select("collection_id")
+        .in("collection_id", rows.map((r) => r.id))
+        .order("collection_id")
+        .order("product_id")
+        .range(from, from + PAGE - 1);
+      if (mErr) throw mErr;
+      const page = (memberships ?? []) as Array<{ collection_id: string }>;
+      for (const m of page) {
+        const k = String(m.collection_id);
+        countById.set(k, (countById.get(k) ?? 0) + 1);
+      }
+      if (page.length < PAGE) break;
     }
   }
   return rows.map((r) => ({ ...r, productCount: countById.get(r.id) ?? 0 }));
@@ -608,12 +618,22 @@ export async function listCollectionProducts(
 ): Promise<Array<{ id: string; title: string; status: ProductStatus; primaryImagePath: string | null }>> {
   const sb = getSupabase();
   await requireOwnedCollection(sb, shopId, collectionId);
-  const { data: memberships, error: mErr } = await sb
-    .from("product_collection")
-    .select("product_id")
-    .eq("collection_id", collectionId);
-  if (mErr) throw mErr;
-  const memberIds = (memberships ?? []).map((m: { product_id: string }) => String(m.product_id));
+  // Paged: PostgREST clamps every response at 1000 rows, so a single select
+  // would silently drop members of a >1000-product collection.
+  const memberIds: string[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data: memberships, error: mErr } = await sb
+      .from("product_collection")
+      .select("product_id")
+      .eq("collection_id", collectionId)
+      .order("product_id")
+      .range(from, from + PAGE - 1);
+    if (mErr) throw mErr;
+    const page = (memberships ?? []) as Array<{ product_id: string }>;
+    for (const m of page) memberIds.push(String(m.product_id));
+    if (page.length < PAGE) break;
+  }
   if (!memberIds.length) return [];
 
   const { data: products, error: pErr } = await sb
