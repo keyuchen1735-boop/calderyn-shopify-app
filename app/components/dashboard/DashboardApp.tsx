@@ -1609,6 +1609,18 @@ export default function DashboardApp({
                 <CDIcon name="bug" size={18} strokeWidth={1.8} />
                 <span>Report a bug</span>
               </button>
+              <button
+                type="button"
+                className="cd-more-item"
+                data-danger="1"
+                onClick={() => {
+                  setMoreOpen(false);
+                  void signOut();
+                }}
+              >
+                <CDIcon name="logout" size={18} strokeWidth={1.8} />
+                <span>Sign out</span>
+              </button>
             </div>
             <div className="cd-more-foot">
               <div className="cd-live-row">

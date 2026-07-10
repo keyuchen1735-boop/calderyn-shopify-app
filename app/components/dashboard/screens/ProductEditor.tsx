@@ -420,14 +420,14 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
                     placeholder="Option name (e.g. Size)"
                     value={o.name}
                     onChange={(e) => regen(options.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-                    style={{ flex: "0 0 180px" }}
+                    style={{ flex: "0 1 180px", minWidth: 90 }}
                   />
                   <input
                     className="cd-input"
                     placeholder="Values, comma-separated (S, M, L)"
                     value={o.valuesText}
                     onChange={(e) => regen(options.map((x, j) => (j === i ? { ...x, valuesText: e.target.value } : x)))}
-                    style={{ flex: "1 1 0" }}
+                    style={{ flex: "1 1 0", minWidth: 0 }}
                   />
                   <Btn small onClick={() => regen(options.filter((_, j) => j !== i))}>
                     Remove

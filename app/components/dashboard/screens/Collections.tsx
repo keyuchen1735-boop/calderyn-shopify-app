@@ -3,7 +3,7 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
-import { Card, Btn, ClearableSearchInput, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
+import { Card, Btn, ClearableSearchInput, Pan, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
 
 // URL-only pages (/dashboard/products/collections[/<id>]): no Products subtab
@@ -158,7 +158,7 @@ function CollectionsList({ app }: { app: DashboardCtx }) {
         ) : items.length === 0 ? (
           <Placeholder icon="tag" title="No collections yet" sub="Create one to group products in your storefront." />
         ) : (
-          <>
+          <Pan min={560}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
               <span>Collection</span>
               <span>Handle</span>
@@ -220,7 +220,7 @@ function CollectionsList({ app }: { app: DashboardCtx }) {
                 </div>
               </div>
             ))}
-          </>
+          </Pan>
         )}
       </Card>
     </div>
@@ -374,7 +374,7 @@ function CollectionDetail({ app, id }: { app: DashboardCtx; id: string }) {
         ) : members && members.length === 0 ? (
           <Placeholder icon="tag" title="No products yet" sub="Search your catalog below to add products." />
         ) : (
-          <>
+          <Pan min={480}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: MEMBER_GRID }}>
               <span aria-hidden="true" />
               <span>Product</span>
@@ -412,7 +412,7 @@ function CollectionDetail({ app, id }: { app: DashboardCtx; id: string }) {
                 </div>
               </div>
             ))}
-          </>
+          </Pan>
         )}
       </Card>
 
@@ -439,7 +439,8 @@ function CollectionDetail({ app, id }: { app: DashboardCtx; id: string }) {
                 sub="Anything already in this collection is hidden from results."
               />
             ) : (
-              candidates.map((p) => (
+              <Pan min={480}>
+                {candidates.map((p) => (
                 <div key={p.id} className="cd-trow" style={{ gridTemplateColumns: MEMBER_GRID }}>
                   <div
                     style={{
@@ -469,7 +470,8 @@ function CollectionDetail({ app, id }: { app: DashboardCtx; id: string }) {
                     </Btn>
                   </div>
                 </div>
-              ))
+                ))}
+              </Pan>
             )}
           </Card>
         )}

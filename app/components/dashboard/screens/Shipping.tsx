@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { Btn, Card, Pill, Placeholder } from "../ui";
+import { Btn, Card, Pan, Pill, Placeholder } from "../ui";
 import { money } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
@@ -320,7 +320,7 @@ function FlatRatesCard({
         </p>
       </div>
       {rates.length > 0 ? (
-        <>
+        <Pan min={620}>
           <div className="cd-tablehd" style={{ gridTemplateColumns: FLAT_GRID }}>
             <span>Name</span>
             <span>Ships to</span>
@@ -349,7 +349,7 @@ function FlatRatesCard({
               </div>
             </div>
           ))}
-        </>
+        </Pan>
       ) : null}
       <div className="cd-pad-x" style={{ paddingTop: 12, paddingBottom: 16 }}>
         <form onSubmit={onSubmit}>
@@ -555,7 +555,7 @@ export default function Shipping({ app }: { app: DashboardCtx }) {
                 sub="The quote engine returned no rates."
               />
             ) : (
-              <>
+              <Pan min={480}>
                 <div className="cd-tablehd" style={{ gridTemplateColumns: RATE_GRID }}>
                   <span>Carrier · service</span>
                   <span>Rate</span>
@@ -581,7 +581,7 @@ export default function Shipping({ app }: { app: DashboardCtx }) {
                     <div className="cd-caption">{r.estDays}</div>
                   </div>
                 ))}
-              </>
+              </Pan>
             )}
           </Card>
 
@@ -619,7 +619,7 @@ export default function Shipping({ app }: { app: DashboardCtx }) {
             <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
                 <h2 className="cd-h2">Product ship data coverage</h2>
-                <div className="flex gap-8" style={{ marginTop: 10 }}>
+                <div className="flex gap-8" style={{ marginTop: 10, flexWrap: "wrap", rowGap: 12 }}>
                   <CoverageStat
                     value={`${page.coverage.withShipData} / ${page.coverage.variantsTotal}`}
                     label="variants with ship data"

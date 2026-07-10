@@ -105,14 +105,14 @@ function OptionRows({ opts, onChange }: { opts: OptRow[]; onChange: (next: OptRo
             placeholder="Option (e.g. Size)"
             value={o.name}
             onChange={(e) => onChange(opts.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
-            style={{ flex: "0 0 150px" }}
+            style={{ flex: "0 1 150px", minWidth: 84 }}
           />
           <input
             className="cd-input"
             placeholder="Values, comma-separated (S, M, L)"
             value={o.values}
             onChange={(e) => onChange(opts.map((x, j) => (j === i ? { ...x, values: e.target.value } : x)))}
-            style={{ flex: "1 1 0" }}
+            style={{ flex: "1 1 0", minWidth: 0 }}
           />
           <button
             type="button"
@@ -151,12 +151,12 @@ function ComboTable({
     <div className="flex flex-col gap-2" style={{ marginTop: 10 }}>
       <div className="cd-caption" style={{ display: "flex", gap: 8 }}>
         <span style={{ flex: "1 1 0" }}>Variant</span>
-        <span style={{ width: 110, textAlign: "right" }}>Price ($)</span>
-        <span style={{ width: 90, textAlign: "right" }}>Stock</span>
+        <span style={{ width: 96, textAlign: "right" }}>Price ($)</span>
+        <span style={{ width: 76, textAlign: "right" }}>Stock</span>
       </div>
       {combos.map((label) => (
         <div key={label} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span className="cd-row-title truncate" style={{ flex: "1 1 0", minWidth: 100 }}>
+          <span className="cd-row-title truncate" style={{ flex: "1 1 0", minWidth: 60 }}>
             {label}
           </span>
           <input
@@ -169,7 +169,7 @@ function ComboTable({
             aria-label={`Price for ${label}`}
             value={cells[label]?.price ?? ""}
             onChange={(e) => onCell(label, { price: e.target.value })}
-            style={{ width: 110, textAlign: "right" }}
+            style={{ width: 96, textAlign: "right" }}
           />
           <input
             className="cd-input tabular-nums"
@@ -181,7 +181,7 @@ function ComboTable({
             aria-label={`Stock for ${label}`}
             value={cells[label]?.stock ?? ""}
             onChange={(e) => onCell(label, { stock: e.target.value })}
-            style={{ width: 90, textAlign: "right" }}
+            style={{ width: 76, textAlign: "right" }}
           />
         </div>
       ))}
@@ -836,6 +836,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, flex: i < STEP_ORDER.length - 1 ? "1 1 0" : "0 0 auto" }}>
                 <button
                   type="button"
+                  aria-label={s.label}
                   onClick={() => i < stepIdx && setStep(s.id)}
                   style={{ display: "flex", alignItems: "center", gap: 7, border: 0, background: "transparent", cursor: i < stepIdx ? "pointer" : "default", padding: 0 }}
                 >
@@ -856,7 +857,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                   >
                     {done ? <CDIcon name="check" size={13} strokeWidth={2.4} /> : i + 1}
                   </span>
-                  <span className="cd-row-title" style={{ color: active ? "var(--text-1)" : "var(--text-3)", whiteSpace: "nowrap" }}>
+                  <span className="cd-row-title npf-step-lab" data-active={active ? "1" : "0"}>
                     {s.label}
                   </span>
                 </button>

@@ -148,24 +148,9 @@
   }
 
   /* ============ mobile (phone) — sidebar collapses to a bottom tab bar ============ */
-  /* The tab bar, the More sheet, and the inventory card list exist only under the
-     phone breakpoint; hidden (and inert) at desktop/tablet widths. */
-  .cd-tabbar, .cd-more-overlay, .cd-sku-list { display: none; }
-
-  /* Stacked SKU cards (mobile inventory) — the wide table becomes one card per
-     SKU. Styled globally; the .cd-sku-list container gates visibility. */
-  .cd-sku-card { background: var(--card-solid); border-radius: var(--radius); box-shadow: var(--shadow-card); padding: 13px 15px; }
-  .cd-sku-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-  .cd-sku-card-title { font-size: calc(14px * var(--type-scale)); font-weight: 550; letter-spacing: -0.01em; color: var(--text-1); }
-  .cd-sku-card-sku { font-size: 11px; font-family: ui-monospace, Menlo, monospace; color: var(--text-3); margin-top: 1px; }
-  .cd-sku-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 11px; }
-  .cd-sku-tile { background: var(--gray-bg); border-radius: 9px; padding: 7px 8px; min-width: 0; }
-  .cd-sku-tile-val { font-size: calc(14px * var(--type-scale)); font-weight: 620; letter-spacing: -0.01em; color: var(--text-1); }
-  /* Ship-P&L tile reuses <ShipPnlCell> (.cd-row-num) for its color/provenance;
-     match it to the other tiles' value typography so the 4-up grid is uniform. */
-  .cd-sku-tile .cd-row-num { font-size: calc(14px * var(--type-scale)); font-weight: 620; letter-spacing: -0.01em; }
-  .cd-sku-tile-lab { font-size: 10px; color: var(--text-3); margin-top: 1px; white-space: nowrap; }
-  .cd-sku-card-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  /* The tab bar and the More sheet exist only under the phone breakpoint;
+     hidden (and inert) at desktop/tablet widths. */
+  .cd-tabbar, .cd-more-overlay { display: none; }
 
   @media (max-width: 767px) {
     /* shell: hide the rail, give the screen room and clearance for the tab bar */
@@ -229,6 +214,8 @@
     }
     .cd-more-item svg { color: var(--accent); opacity: 0.85; }
     .cd-more-item[data-active="1"] { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+    .cd-more-item[data-danger="1"],
+    .cd-more-item[data-danger="1"] svg { color: var(--red); }
     /* Disclosed sub-views under a section, shown inline so every sub-view stays
        reachable on phones (the rail is hidden at this width). */
     .cd-more-sec { display: flex; flex-direction: column; }
@@ -248,14 +235,6 @@
     /* Utility actions (Ask Calderyn / Report a bug) separated from the screen nav. */
     .cd-more-group { display: flex; flex-direction: column; gap: 1px; margin-top: 4px; padding-top: 4px; border-top: 0.5px solid var(--hairline); }
     .cd-more-foot { display: flex; flex-direction: column; gap: 8px; padding: 12px 10px 2px; margin-top: 6px; border-top: 0.5px solid var(--hairline); }
-
-    /* inventory: table -> cards. The list's outer <Card> is just the desktop
-       table frame; on mobile the SKU cards stand alone on the background, so
-       strip the wrapper's chrome (the success state is the only one with a
-       .cd-sku-list child — loading/empty placeholders keep their card). */
-    .cd-table-scroll { display: none; }
-    .cd-card:has(> .cd-sku-list) { background: none; box-shadow: none; backdrop-filter: none; border-radius: 0; }
-    .cd-sku-list { display: flex; flex-direction: column; gap: 11px; padding: 0; }
   }
 
   @keyframes cd-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
@@ -394,18 +373,6 @@
     font-size: calc(11.5px * var(--type-scale)); font-weight: 550;
     color: var(--text-3); letter-spacing: -0.002em;
   }
-  /* Wide data tables (Inventory): the 12 columns need ~1200px, but the screen
-     caps content below that, so flex-shrink was crushing every column together
-     (headers wrapped, numbers ran into each other). Pin the head + rows to their
-     natural width and scroll any overflow horizontally, so each column keeps its
-     full width instead of being squeezed. Scoped to .cd-table-scroll so the
-     shared .cd-rows / .cd-table-head styles other screens use are untouched. */
-  .cd-table-scroll { overflow-x: auto; }
-  .cd-table-scroll > .cd-table-head,
-  .cd-table-scroll > .cd-rows { min-width: 1200px; }
-  .cd-table-scroll .cd-table-head > *:not(:first-child),
-  .cd-table-scroll .cd-row > *:not(:first-child) { flex-shrink: 0; }
-
   /* ============ focus card ============ */
   .cd-focus-title { font-size: calc(21px * var(--type-scale)); font-weight: 650; letter-spacing: -0.022em; margin: 0; font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif; }
   .cd-focus-foot {
@@ -2666,3 +2633,55 @@
   display: flex; align-items: center; justify-content: center; padding: 16px;
 }
 .cd-modal-dialog { width: 100%; }
+
+/* ============ phone-width layout (≤767px) ============ */
+/* Customer detail: content column beside a 300px meta rail on wide screens,
+   one stacked column once the rail can no longer fit beside real content
+   (1100px matches .cd-grid-main — the 230px nav rail eats into anything less). */
+.cd-cust-detail { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: calc(18px * var(--density)); align-items: start; }
+@media (max-width: 1100px) { .cd-cust-detail { grid-template-columns: 1fr; } }
+
+/* New-product step rail labels (the ≤560px rule below hides inactive ones). */
+.npf-step-lab { color: var(--text-3); white-space: nowrap; }
+.npf-step-lab[data-active="1"] { color: var(--text-1); }
+
+@media (max-width: 767px) {
+  /* Wide tables become horizontal pan areas (<Pan> in ui.tsx): the wrapper
+     scrolls, the content keeps its --pan-min width so columns stay readable.
+     Scoped to phones so desktop keeps overflow visible (row tooltips, row
+     entrance animations) and pays for no scroll containers. */
+  .cd-pan { overflow-x: auto; overflow-y: hidden; }
+  .cd-pan-in { min-width: var(--pan-min, 560px); }
+
+  /* Focus-card footer holds up to two action buttons plus a caption; let it
+     wrap instead of overflowing the card when action labels run long. */
+  .cd-focus-foot { flex-wrap: wrap; }
+
+  /* Settings rows clip anything wider than the card (overflow: hidden), so let
+     the control drop below its label and let segmented chips wrap. */
+  .cd-setting { flex-wrap: wrap; row-gap: 10px; }
+  .cd-setting .cd-seg { flex-wrap: wrap; }
+
+  /* Store studio: the fixed 340px chat rail leaves no room for the preview on
+     a phone — stack the stage above the rail instead. The rail's bottom
+     padding keeps the composer clear of the fixed tab bar (the storefront
+     screen opts out of the shell's usual bottom clearance). */
+  .cd-studio { flex-direction: column; }
+  .cd-stage { order: 1; flex: 1 1 auto; min-height: 46vh; }
+  .cd-stage-page { padding: 4px 14px 18px; }
+  .cd-rail {
+    order: 2; width: 100%; flex: 0 0 44vh;
+    border-right: 0; border-top: 0.5px solid var(--hairline-strong);
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+  .cd-build-float { width: auto; left: 14px; right: 14px; }
+
+  /* Evidence facts read better as a single column at phone width. */
+  .cd-eg-facts { grid-template-columns: 1fr; }
+}
+
+/* New-product step rail: four nowrap labels don't fit a phone — keep only the
+   current step's label; the numbered dots still show progress. */
+@media (max-width: 560px) {
+  .npf-step-lab:not([data-active="1"]) { display: none; }
+}

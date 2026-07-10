@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { Btn, Card, Pill, Placeholder, TableSkeleton, Tooltip } from "../ui";
+import { Btn, Card, Pan, Pill, Placeholder, TableSkeleton, Tooltip } from "../ui";
 import { money, timeAgo } from "../format";
 import { reduced } from "../hero/hero-motion";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -171,6 +171,7 @@ function UnifiedOrdersList({
   const cols = "auto 1fr 1.2fr 0.9fr 0.9fr 0.9fr 1fr auto";
   return (
     <Card pad={false} className="cd-orders-table">
+      <Pan min={760}>
       <div className="cd-tablehd" style={{ gridTemplateColumns: cols }}>
         <span>
           {anySelectable && (
@@ -267,6 +268,7 @@ function UnifiedOrdersList({
           </div>
         );
       })}
+      </Pan>
     </Card>
   );
 }
@@ -924,7 +926,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
               sub="Carrier-invoice lines from your ship-cost imports land here, matched to orders."
             />
           ) : (
-            <>
+            <Pan min={600}>
               <div className="cd-tablehd" style={{ gridTemplateColumns: "1fr 1.3fr 1.6fr 0.9fr 1.1fr" }}>
                 <span>Order</span>
                 <span>Carrier</span>
@@ -953,7 +955,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                   </div>
                 </div>
               ))}
-            </>
+            </Pan>
           )}
         </Card>
       ) : sub === "drafts" ? (
@@ -965,7 +967,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
               sub="In-progress baskets that haven't reached checkout show up here."
             />
           ) : (
-            <>
+            <Pan min={600}>
               <div className="cd-tablehd" style={{ gridTemplateColumns: "1fr 1.5fr 1.2fr 0.9fr 1.4fr" }}>
                 <span>Cart</span>
                 <span>Customer</span>
@@ -984,7 +986,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                   <div className="cd-caption">{timeAgo(r.createdAt)}</div>
                 </div>
               ))}
-            </>
+            </Pan>
           )}
         </Card>
       ) : (
@@ -996,7 +998,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
               sub="Checkouts that stall for over an hour before payment show up here."
             />
           ) : (
-            <>
+            <Pan min={680}>
               <div className="cd-tablehd" style={{ gridTemplateColumns: "1fr 1.6fr 0.9fr 0.8fr 1.1fr auto" }}>
                 <span>Checkout</span>
                 <span>Customer</span>
@@ -1029,7 +1031,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                   </div>
                 </div>
               ))}
-            </>
+            </Pan>
           )}
         </Card>
       )}
