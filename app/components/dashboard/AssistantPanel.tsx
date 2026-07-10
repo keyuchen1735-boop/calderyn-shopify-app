@@ -524,9 +524,9 @@ export default function AssistantPanel({
     if (prev === state) return;
     if (prev === "open" && state === "docked") {
       // Docking pulls the panel out of the pointer/tab interaction surface —
-      // release focus so aria-hidden doesn't trap it and a merchant who kept
-      // typing after navigating away isn't silently typing into a hidden
-      // composer.
+      // release focus explicitly rather than relying on the inert toggle
+      // below to land in the same commit, so a merchant who kept typing
+      // after navigating away isn't silently typing into a hidden composer.
       const active = document.activeElement;
       if (active instanceof HTMLElement && panelRef.current?.contains(active)) {
         active.blur();
@@ -553,6 +553,22 @@ export default function AssistantPanel({
     // state === "closed": nothing to animate, the panel unmounts below.
   }, [state]);
 
+  // `inert` — not just aria-hidden — must cover the panel whenever it isn't
+  // fully open. Docked/peek only *look* hidden (opacity/pointer-events), so
+  // without `inert` every control inside stays tab-reachable and
+  // Enter-activatable: a merchant tabbing through the page could land on a
+  // PendingConfirmCard's "Confirm" button they can't see and fire a real
+  // action (e.g. a refund). `inert` also strips the subtree from the
+  // accessibility tree, which is why the old aria-hidden on this node is
+  // gone — pairing aria-hidden with focusable descendants was itself a WCAG
+  // 4.1.2 violation. Set via a ref effect rather than the `inert` JSX prop:
+  // the installed @types/react only exposes `inert` in experimental.d.ts, so
+  // the prop doesn't typecheck against the stable React types this repo
+  // pins.
+  useEffect(() => {
+    panelRef.current?.toggleAttribute("inert", state !== "open");
+  }, [state]);
+
   const openFull = () => setState("open");
   const enterDockZone = () => setState((cur) => (cur === "docked" ? "peek" : cur));
   const leaveDockZone = () => setState((cur) => (cur === "peek" ? "docked" : cur));
@@ -567,7 +583,6 @@ export default function AssistantPanel({
         data-state={state}
         role="dialog"
         aria-label="Ask Calderyn"
-        aria-hidden={state !== "open"}
       >
         <div className="cd-chat-head">
           <div className="cd-chat-head-title">
@@ -705,34 +720,55 @@ export default function AssistantPanel({
           Send
         </Btn>
       </div>
+      </div>
 
       {state === "peek" && (
-        // The preview behind this is presentational only (pointer-events
-        // disabled via .cd-chat-panel[data-state="peek"]); this single
-        // full-cover control — nested so it shares the panel's fixed box —
-        // is what "clicking anywhere on it" hits. It's what aria-hidden above
-        // hides from assistive tech during peek; the sibling pill below
-        // stays exposed as the accessible way to reopen.
+        // Rendered as a sibling of the panel, not nested inside it, so it
+        // sits outside the inert subtree above and stays clickable while the
+        // panel itself is inert (the preview behind it is presentational
+        // only — pointer-events disabled via .cd-chat-panel[data-state
+        // ="peek"]). This full-cover control is what "clicking anywhere on
+        // it" hits. It's mouse-only by design: aria-hidden + tabIndex=-1
+        // keep it out of the tab order and accessibility tree, since the
+        // dock pill below is the accessible way to reopen.
         <button
           type="button"
           className="cd-chat-peek-catch"
           aria-label="Open assistant"
+          aria-hidden="true"
+          tabIndex={-1}
           onClick={openFull}
         />
       )}
-      </div>
 
       {(state === "docked" || state === "peek") && (
-        <button
-          ref={pillRef}
-          type="button"
-          className="cd-chat-dock"
-          aria-label="Reopen assistant"
-          onClick={openFull}
-        >
-          <CDIcon name="assist" size={16} strokeWidth={2} />
-          <span>Chat</span>
-        </button>
+        <div className="cd-chat-dock-wrap">
+          <button
+            ref={pillRef}
+            type="button"
+            className="cd-chat-dock"
+            aria-label="Reopen assistant"
+            onClick={openFull}
+          >
+            <CDIcon name="assist" size={16} strokeWidth={2} />
+            <span>Chat</span>
+          </button>
+          <button
+            type="button"
+            className="cd-chat-dock-dismiss"
+            aria-label="Dismiss assistant"
+            onClick={(e) => {
+              // The dismiss button is a sibling of the pill, not nested
+              // inside it, so this click wouldn't bubble into the pill's own
+              // onClick anyway — stop it explicitly so a future restructure
+              // can't silently reopen-then-close on the same click.
+              e.stopPropagation();
+              setState("closed");
+            }}
+          >
+            <CDIcon name="x" size={11} strokeWidth={2.4} />
+          </button>
+        </div>
       )}
     </div>
   );
