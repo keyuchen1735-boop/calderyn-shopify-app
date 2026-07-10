@@ -60,6 +60,7 @@ describe("POST /dashboard/api/orders/drafts/send", () => {
       email: "buyer@example.com",
       address: undefined,
       note: null,
+      exchangeForReturnId: null,
     });
     expect(await res.json()).toEqual({
       order_id: "order-1",
@@ -94,7 +95,32 @@ describe("POST /dashboard/api/orders/drafts/send", () => {
         phone: null,
       },
       note: "Please pay within 7 days",
+      exchangeForReturnId: null,
     });
+  });
+
+  it("passes through a valid exchange_for_return_id (Phase 4 Task 2)", async () => {
+    const RETURN_ID = "9f9a2b1c-2222-4e5f-8a9b-0c1d2e3f4a5b";
+    const { action } = await import("../dashboard.api.orders.drafts.send");
+    await action({
+      request: req(URL_, "POST", { cart_id: CART_ID, email: "b@example.com", exchange_for_return_id: RETURN_ID }),
+    } as never);
+    expect(invoice.sendDraftOrderInvoice).toHaveBeenCalledWith("shop-1", CART_ID, {
+      email: "b@example.com",
+      address: undefined,
+      note: null,
+      exchangeForReturnId: RETURN_ID,
+    });
+  });
+
+  it("422s a non-uuid exchange_for_return_id", async () => {
+    const { action } = await import("../dashboard.api.orders.drafts.send");
+    const res = (await action({
+      request: req(URL_, "POST", { cart_id: CART_ID, email: "b@example.com", exchange_for_return_id: "not-a-uuid" }),
+    } as never)) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_exchange_for_return_id");
+    expect(invoice.sendDraftOrderInvoice).not.toHaveBeenCalled();
   });
 
   it("422s a non-uuid cart_id", async () => {

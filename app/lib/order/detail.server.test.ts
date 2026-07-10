@@ -12,6 +12,8 @@ const store = vi.hoisted(() => {
     orders: [],
     order_line: [],
     order_line_edit: [],
+    order_return: [],
+    order_return_line: [],
     variant_dim: [],
     buyer_dim: [],
     buyer_address: [],
@@ -338,6 +340,79 @@ describe("loadOrderDetail — native branch", () => {
     expect(detail).toBeNull();
   });
 
+  it("populates the returns card + return timeline events (Phase 4 Task 1)", async () => {
+    store.db.orders.push({
+      id: "order-returns",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "fulfilled",
+      financial_status: "paid",
+      subtotal_cents: 5000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 5000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: "2026-07-01T00:00:00.000Z",
+    });
+    // A closed (received) return and a cancelled one, each with one line.
+    store.db.order_return.push(
+      {
+        id: "return-1",
+        shop_id: "shop-1",
+        order_id: "order-returns",
+        status: "closed",
+        reason: "Wrong size",
+        created_at: "2026-07-02T00:00:00.000Z",
+        received_at: "2026-07-03T00:00:00.000Z",
+        updated_at: "2026-07-03T00:00:00.000Z",
+      },
+      {
+        id: "return-2",
+        shop_id: "shop-1",
+        order_id: "order-returns",
+        status: "cancelled",
+        reason: null,
+        created_at: "2026-07-04T00:00:00.000Z",
+        received_at: null,
+        updated_at: "2026-07-04T05:00:00.000Z",
+      },
+    );
+    store.db.order_return_line.push(
+      { id: "rline-1", shop_id: "shop-1", return_id: "return-1", order_line_id: "line-x", quantity: 1, restock: true, refund_cents: 1000 },
+      { id: "rline-2", shop_id: "shop-1", return_id: "return-2", order_line_id: "line-y", quantity: 1, restock: true, refund_cents: 500 },
+    );
+
+    const detail = await loadOrderDetail("shop-1", "order-returns");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+
+    expect(detail.returns).toHaveLength(2);
+    const closed = detail.returns.find((r) => r.id === "return-1");
+    expect(closed).toMatchObject({ status: "closed", reason: "Wrong size", receivedAt: "2026-07-03T00:00:00.000Z" });
+    expect(closed?.lines).toEqual([{ id: "rline-1", orderLineId: "line-x", quantity: 1, restock: true, refundCents: 1000 }]);
+    const cancelled = detail.returns.find((r) => r.id === "return-2");
+    expect(cancelled).toMatchObject({ status: "cancelled", receivedAt: null });
+
+    const returnEvents = detail.timeline.filter((e) => e.kind === "return");
+    // 2 "created" events + 1 "received" (return-1) + 1 "cancelled" (return-2) = 4.
+    expect(returnEvents).toHaveLength(4);
+    expect(returnEvents.map((e) => e.title).sort()).toEqual([
+      "Return cancelled",
+      "Return created",
+      "Return created",
+      "Return received",
+    ]);
+    const receivedEvent = returnEvents.find((e) => e.title === "Return received");
+    expect(receivedEvent).toMatchObject({ at: "2026-07-03T00:00:00.000Z" });
+    const cancelledEvent = returnEvents.find((e) => e.title === "Return cancelled");
+    expect(cancelledEvent).toMatchObject({ at: "2026-07-04T05:00:00.000Z" });
+  });
+
   it("nets a reduced line's quantity and surfaces an edit timeline event", async () => {
     store.db.orders.push({
       id: "order-edit-1",
@@ -387,6 +462,162 @@ describe("loadOrderDetail — native branch", () => {
 
     const editEvent = detail.timeline.find((e) => e.kind === "edit");
     expect(editEvent).toMatchObject({ title: "Reduced Cotton Tee to 2", detail: "Refunded $30.00" });
+  });
+});
+
+describe("loadOrderDetail — signals (Phase 4 Task 4)", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  it("flags stuckUnfulfilled for a paid order created more than 3 days ago, with stuckDays set", async () => {
+    const occurredAt = new Date(Date.now() - 4 * DAY_MS).toISOString();
+    store.db.orders.push({
+      id: "order-stuck",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "paid",
+      financial_status: "paid",
+      subtotal_cents: 1000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 1000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: occurredAt,
+    });
+
+    const detail = await loadOrderDetail("shop-1", "order-stuck");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+    expect(detail.signals.stuckUnfulfilled).toBe(true);
+    expect(detail.signals.stuckDays).toBe(4);
+  });
+
+  it("does not flag a fresh paid order (under 3 days)", async () => {
+    const occurredAt = new Date(Date.now() - 1 * DAY_MS).toISOString();
+    store.db.orders.push({
+      id: "order-fresh",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "paid",
+      financial_status: "paid",
+      subtotal_cents: 1000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 1000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: occurredAt,
+    });
+
+    const detail = await loadOrderDetail("shop-1", "order-fresh");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+    expect(detail.signals.stuckUnfulfilled).toBe(false);
+    expect(detail.signals.stuckDays).toBeNull();
+  });
+
+  it("does not flag a fulfilled order regardless of age", async () => {
+    const occurredAt = new Date(Date.now() - 30 * DAY_MS).toISOString();
+    store.db.orders.push({
+      id: "order-old-fulfilled",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "fulfilled",
+      financial_status: "paid",
+      subtotal_cents: 1000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 1000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: occurredAt,
+    });
+
+    const detail = await loadOrderDetail("shop-1", "order-old-fulfilled");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+    expect(detail.signals.stuckUnfulfilled).toBe(false);
+  });
+
+  it("populates repeatCustomer + refundRisk from the buyer's other orders", async () => {
+    store.db.buyer_dim.push({ id: "buyer-signals", shop_id: "shop-1", email_normalized: "signals@example.com" });
+    store.db.orders.push(
+      {
+        id: "order-signals-current",
+        shop_id: "shop-1",
+        buyer_id: "buyer-signals",
+        state: "paid",
+        financial_status: "paid",
+        subtotal_cents: 5000,
+        shipping_cents: 0,
+        tax_cents: 0,
+        total_cents: 5000,
+        currency: "usd",
+        attribution: null,
+        channel: "storefront",
+        archived_at: null,
+        cancelled_at: null,
+        cancel_reason: null,
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: "order-signals-prior",
+        shop_id: "shop-1",
+        buyer_id: "buyer-signals",
+        state: "refunded",
+        channel: "storefront",
+      },
+    );
+    store.db.transaction_ledger.push(
+      { shop_id: "shop-1", order_ref: "order-signals-current", kind: "capture", amount_cents: 5000 },
+      { shop_id: "shop-1", order_ref: "order-signals-prior", kind: "capture", amount_cents: 5000 },
+      { shop_id: "shop-1", order_ref: "order-signals-prior", kind: "refund", amount_cents: -4000 },
+    );
+
+    const detail = await loadOrderDetail("shop-1", "order-signals-current");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+
+    // 2 purchase-state orders -> repeat customer; refund ratio 4000/10000 = 40% > 30% -> risk.
+    expect(detail.signals).toMatchObject({ repeatCustomer: true, buyerOrderCount: 2, refundRisk: true });
+  });
+
+  it("reads all-quiet buyer signals for a guest order (no buyer_id)", async () => {
+    store.db.orders.push({
+      id: "order-guest",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "paid",
+      financial_status: "paid",
+      subtotal_cents: 1000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 1000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: new Date().toISOString(),
+    });
+
+    const detail = await loadOrderDetail("shop-1", "order-guest");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+    expect(detail.signals).toMatchObject({ repeatCustomer: false, buyerOrderCount: 0, refundRisk: false });
   });
 });
 

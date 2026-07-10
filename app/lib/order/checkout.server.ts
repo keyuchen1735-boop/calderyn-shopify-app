@@ -239,6 +239,24 @@ export async function createCheckout(
   if (!orderIns.data) throw new Error("orders insert returned no row");
   const orderId = String((orderIns.data as Record<string, unknown>).id);
 
+  // Cost snapshot (Phase 4 Task 1) + tracked-variant classification (oversell protection below), in
+  // ONE shop-scoped query. unit_cost_cents_snapshot is stamped onto order_line at insert time — same
+  // snapshot posture as unit_price_cents/title_snapshot — so a later catalog cost change never
+  // re-prices an already-sold line's profit read model. priced.lines (from priceCart) carries no
+  // cost column (buyer-facing price/title snapshot only), so this is a dedicated read; the oversell
+  // check below reuses its `tracked` set rather than re-querying variant_dim a second time.
+  const variantRes = await sb
+    .from("variant_dim")
+    .select("id, inventory_tracked, unit_cost_cents")
+    .eq("shop_id", shopId)
+    .in("id", priced.lines.map((l) => l.variantId));
+  if (variantRes.error) throw variantRes.error;
+  const variantRows = (variantRes.data ?? []) as Record<string, unknown>[];
+  const costByVariant = new Map<string, number | null>(
+    variantRows.map((r) => [String(r.id), r.unit_cost_cents == null ? null : Number(r.unit_cost_cents)]),
+  );
+  const tracked = new Set(variantRows.filter((r) => r.inventory_tracked === true).map((r) => String(r.id)));
+
   // Snapshot the cart lines onto the order (variant_id + price + title carried verbatim from
   // the cart_line snapshot — what the buyer saw is what is recorded on the order).
   const lineRows = priced.lines.map((l) => ({
@@ -248,6 +266,7 @@ export async function createCheckout(
     quantity: l.quantity,
     unit_price_cents: l.unitPriceCents,
     title_snapshot: l.titleSnapshot,
+    unit_cost_cents_snapshot: costByVariant.get(l.variantId) ?? null,
   }));
   const lineIns = await sb.from("order_line").insert(lineRows);
   if (lineIns.error) throw lineIns.error;
@@ -258,19 +277,7 @@ export async function createCheckout(
   // The reservation is keyed on the ORDER id: the Stripe webhook commits it by that same key on
   // payment success (turning holds into on_hand decrements), and the reaper releases it if the
   // checkout is abandoned. Untracked/digital lines (inventory_tracked false/null) hold no ledger
-  // balance, so they are skipped — reserving them would 422 a perfectly valid sale. Runs here,
-  // after the order + lines are persisted, so the checkout_ref (= orderId) is a stable key.
-  const trackedRes = await sb
-    .from("variant_dim")
-    .select("id, inventory_tracked")
-    .eq("shop_id", shopId)
-    .in("id", priced.lines.map((l) => l.variantId));
-  if (trackedRes.error) throw trackedRes.error;
-  const tracked = new Set(
-    ((trackedRes.data ?? []) as Record<string, unknown>[])
-      .filter((r) => r.inventory_tracked === true)
-      .map((r) => String(r.id)),
-  );
+  // balance, so they are skipped — reserving them would 422 a perfectly valid sale.
   if (tracked.size > 0) {
     const soldOut: string[] = [];
     for (const line of priced.lines) {

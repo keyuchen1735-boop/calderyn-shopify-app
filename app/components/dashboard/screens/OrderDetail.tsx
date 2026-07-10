@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import type { DashboardCtx } from "../context";
-import { Btn, Card, Pill, Placeholder, TableSkeleton } from "../ui";
+import { Btn, Card, Pill, Placeholder, TableSkeleton, SkelBar } from "../ui";
 import { money, timeAgo } from "../format";
 import { reduced } from "../hero/hero-motion";
 import { CDIcon } from "../icons";
@@ -10,26 +10,35 @@ import { carrierTrackingUrl } from "~/lib/shipping/tracking-url";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   fetchOrderDetail,
+  fetchOrderProfit,
   addOrderNote,
   setOrderTags,
   setOrderArchived,
   cancelOrder,
   resendInvoiceEmail,
+  receiveOrderReturn,
+  cancelOrderReturn,
   type OrderDetail,
   type OrderDetailLine,
   type OrderRow,
+  type OrderReturn,
+  type OrderProfit,
 } from "~/lib/dashboard/orders-client";
 import RefundModal from "./RefundModal";
 import FulfillModal from "./FulfillModal";
 import CancelOrderModal from "./CancelOrderModal";
 import ReduceLineModal from "./ReduceLineModal";
 import EditInvoiceLinesModal from "./EditInvoiceLinesModal";
+import CreateReturnModal from "./CreateReturnModal";
 import {
   fulfillmentBadge,
   paymentPillStyle,
+  returnStatusPill,
   REFUNDABLE_ORDER_STATES,
   CANCELLABLE_ORDER_STATES,
 } from "./order-status";
+import { anyLineReturnable, hasOpenReturn } from "./return-preview";
+import { buildPrefillParam } from "./order-composer-prefill";
 
 /** Order states where a paid line's quantity can still be reduced. Mirrors EDITABLE_STATES in
  *  app/lib/order/edit.server.ts so the per-line Reduce affordance only ever shows where the
@@ -105,6 +114,7 @@ const TIMELINE_DOT: Record<OrderDetail["timeline"][number]["kind"], string> = {
   refund: "var(--orange)",
   fulfillment: "var(--green)",
   edit: "var(--red)",
+  return: "var(--orange)",
 };
 
 export default function OrderDetailScreen({
@@ -117,13 +127,29 @@ export default function OrderDetailScreen({
   seed?: OrderDetailSeed | null;
 }) {
   const [detail, setDetail] = useState<OrderDetail | null>(null);
+  const [profit, setProfit] = useState<OrderProfit | null>(null);
+  const [profitLoading, setProfitLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [showFulfill, setShowFulfill] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
   const [showEditInvoice, setShowEditInvoice] = useState(false);
+  const [showCreateReturn, setShowCreateReturn] = useState(false);
   const [reduceTarget, setReduceTarget] = useState<OrderDetailLine | null>(null);
   const [refundTarget, setRefundTarget] = useState<OrderRow | null>(null);
+  const [busyReturnId, setBusyReturnId] = useState<string | null>(null);
+  // One stable idempotency key per return, minted the first time it's needed and reused across a
+  // retried "Mark received" submit — the same per-intent-key pattern voidIdempotencyKey uses below,
+  // just keyed per return since a screen visit can act on more than one.
+  const receiveKeysRef = useRef<Map<string, string>>(new Map());
+  const receiveKeyFor = (returnId: string): string => {
+    let key = receiveKeysRef.current.get(returnId);
+    if (!key) {
+      key = crypto.randomUUID();
+      receiveKeysRef.current.set(returnId, key);
+    }
+    return key;
+  };
   const [resendingInvoice, setResendingInvoice] = useState(false);
   const [voidingInvoice, setVoidingInvoice] = useState(false);
   // One stable key per screen visit (the sibling modals' key-per-open pattern) so a retried Void
@@ -176,7 +202,9 @@ export default function OrderDetailScreen({
       setLoadError(false);
       fetchOrderDetail(sourceId)
         .then((d) => {
-          if (!signal || signal.alive) setDetail(d);
+          if (!signal || signal.alive) {
+            setDetail(d);
+          }
         })
         .catch((err: unknown) => {
           if (signal && !signal.alive) return;
@@ -190,6 +218,39 @@ export default function OrderDetailScreen({
     },
     [sourceId, toast],
   );
+
+  // Load profit independently in parallel: fetch after order detail resolves, render skeleton
+  // until it lands, and surface any error as a quiet toast (never blocking the order view).
+  const loadProfit = useCallback(
+    (signal?: { alive: boolean }) => {
+      if (!detail) return;
+      setProfitLoading(true);
+      fetchOrderProfit(sourceId)
+        .then((p) => {
+          if (!signal || signal.alive) {
+            setProfit(p);
+          }
+        })
+        .catch((err: unknown) => {
+          if (!signal || signal.alive) {
+            const msg = err instanceof DashboardApiError ? err.message : "Couldn't load profit data for this order.";
+            toast(msg, "warn");
+          }
+        })
+        .finally(() => {
+          if (!signal || signal.alive) setProfitLoading(false);
+        });
+    },
+    [sourceId, detail, toast],
+  );
+
+  useEffect(() => {
+    const signal = { alive: true };
+    loadProfit(signal);
+    return () => {
+      signal.alive = false;
+    };
+  }, [loadProfit]);
 
   useEffect(() => {
     const signal = { alive: true };
@@ -231,6 +292,17 @@ export default function OrderDetailScreen({
     CANCELLABLE_ORDER_STATES.has(detail.state) &&
     !detail.cancelledAt &&
     !isUnpaidInvoice;
+  // Create return (Phase 4 Task 2): native, at least one line still has returnable quantity, and
+  // no return already open (createOrderReturn's one-open-return guard, mirrored here so the button
+  // never invites a 409 the server would refuse anyway). Must also gate on order state: a return
+  // can only be created on orders in states where refund is possible (mirroring REFUNDABLE_ORDER_STATES
+  // so a cancelled/refunded order never renders the "Create return" action).
+  const canCreateReturn =
+    !!detail &&
+    !detail.readOnly &&
+    REFUNDABLE_ORDER_STATES.has(detail.state) &&
+    !hasOpenReturn(detail.returns) &&
+    anyLineReturnable(detail.lines, detail.returns);
 
   const addNote = async () => {
     if (!detail || noteSaving || !noteText.trim()) return;
@@ -325,6 +397,43 @@ export default function OrderDetailScreen({
     }
   };
 
+  const markReturnReceived = async (ret: OrderReturn) => {
+    if (!detail || busyReturnId) return;
+    const totalRefundCents = ret.lines.reduce((sum, l) => sum + l.refundCents, 0);
+    if (!window.confirm(`Restock the selected items and refund ${money(totalRefundCents, detail.currency)}?`)) return;
+    setBusyReturnId(ret.id);
+    try {
+      const res = await receiveOrderReturn(detail.id, { returnId: ret.id, idempotencyKey: receiveKeyFor(ret.id) });
+      app.toast(
+        `Refunded ${money(res.refundedCents, detail.currency)}.${res.restockedLines > 0 ? ` ${res.restockedLines} item(s) restocked.` : ""}`,
+        "check",
+      );
+      if (res.restockErrors && res.restockErrors.length > 0) {
+        app.toast("Return received, but some items could not be restocked. Check your inventory.", "warn");
+      }
+      load();
+    } catch (err) {
+      app.toast(err instanceof DashboardApiError ? err.message : "Couldn't mark this return received.", "warn", "critical");
+    } finally {
+      setBusyReturnId(null);
+    }
+  };
+
+  const cancelReturn = async (ret: OrderReturn) => {
+    if (!detail || busyReturnId) return;
+    if (!window.confirm("Cancel this return? No refund is issued and nothing is restocked.")) return;
+    setBusyReturnId(ret.id);
+    try {
+      await cancelOrderReturn(detail.id, ret.id);
+      app.toast("Return cancelled.", "check");
+      load();
+    } catch (err) {
+      app.toast(err instanceof DashboardApiError ? err.message : "Couldn't cancel this return.", "warn", "critical");
+    } finally {
+      setBusyReturnId(null);
+    }
+  };
+
   return (
     <div ref={screenRef} className="cd-screen" data-screen-label="Order">
       <header className="cd-screen-head">
@@ -372,6 +481,11 @@ export default function OrderDetailScreen({
                     Cancel
                   </Btn>
                 )}
+                {canCreateReturn && (
+                  <Btn small icon="undo" onClick={() => setShowCreateReturn(true)}>
+                    Create return
+                  </Btn>
+                )}
                 {isUnpaidInvoice && (
                   <>
                     <Btn small icon="mail" onClick={resendInvoice} disabled={resendingInvoice}>
@@ -399,6 +513,21 @@ export default function OrderDetailScreen({
           </div>
         )}
       </header>
+
+      {detail &&
+        (detail.signals.repeatCustomer || detail.signals.refundRisk || detail.signals.stuckUnfulfilled) && (
+          <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
+            {detail.signals.repeatCustomer && (
+              <Pill tone="neutral">Repeat customer ({detail.signals.buyerOrderCount} orders)</Pill>
+            )}
+            {detail.signals.refundRisk && <Pill tone="warn">High refund history</Pill>}
+            {detail.signals.stuckUnfulfilled && (
+              <Pill tone="warn">
+                Unfulfilled for {detail.signals.stuckDays} day{detail.signals.stuckDays === 1 ? "" : "s"}
+              </Pill>
+            )}
+          </div>
+        )}
 
       {detail?.readOnly && (
         <Card className="cd-card-tight">
@@ -474,6 +603,68 @@ export default function OrderDetailScreen({
               </div>
             </Card>
 
+            {profitLoading && !profit ? (
+              <Card className="cd-card-tight">
+                <div className="cd-h2" style={{ marginBottom: 8 }}>Profit</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <SkelBar width="60%" />
+                  <SkelBar width="50%" />
+                  <SkelBar width="70%" />
+                </div>
+              </Card>
+            ) : profit ? (
+              <Card className="cd-card-tight">
+                <div className="cd-h2" style={{ marginBottom: 8 }}>Profit</div>
+                {profit.notCaptured ? (
+                  <span className="cd-caption">No payment captured yet.</span>
+                ) : (
+                  <>
+                    <div className="cd-kv-col">
+                      <div className="cd-kv"><span>Revenue</span><b className="ml-auto tabular-nums">{money(profit.revenueCents, detail.currency)}</b></div>
+                      <div className="cd-kv"><span>COGS</span><b className="ml-auto tabular-nums">-{money(profit.cogsCents, detail.currency)}</b></div>
+                      {profit.costsMissing > 0 && (
+                        <div className="cd-caption">
+                          {profit.costsMissing} line{profit.costsMissing === 1 ? "" : "s"} missing cost data
+                        </div>
+                      )}
+                      <div className="cd-kv">
+                        <span>Carrier cost</span>
+                        <b className="ml-auto tabular-nums">
+                          {profit.carrierCostCents == null ? (
+                            <span aria-hidden="true" />
+                          ) : (
+                            `-${money(profit.carrierCostCents, detail.currency)}`
+                          )}
+                        </b>
+                      </div>
+                      {profit.carrierCostCents == null && (
+                        <div className="cd-caption">No carrier cost recorded</div>
+                      )}
+                      <div className="cd-kv"><span>Payment fees</span><b className="ml-auto tabular-nums">-{money(profit.feeEstimateCents, detail.currency)}</b></div>
+                      <div className="cd-caption">Estimated at 2.9% + 30 cents</div>
+                      {profit.attributionLabel && (
+                        <div className="cd-caption">Attributed to {profit.attributionLabel}</div>
+                      )}
+                      <div className="cd-kv" style={{ marginTop: 6, paddingTop: 10, borderTop: "0.5px solid var(--hairline)" }}>
+                        <span>Profit</span>
+                        <b className="ml-auto tabular-nums">{profit.profitCents == null ? null : money(profit.profitCents, detail.currency)}</b>
+                      </div>
+                      <div className="cd-caption">
+                        {profit.marginPct == null
+                          ? "Margin unavailable"
+                          : `${profit.marginPct.toFixed(1)}% margin${profit.costsMissing > 0 || profit.carrierCostCents === null ? " (partial)" : ""}`}
+                      </div>
+                    </div>
+                    {detail.readOnly && (
+                      <div className="cd-caption" style={{ marginTop: 8 }}>
+                        Estimates: this order was placed on Shopify, so costs and fees are approximated.
+                      </div>
+                    )}
+                  </>
+                )}
+              </Card>
+            ) : null}
+
             {detail.fulfillments.length > 0 && (
               <Card className="cd-card-tight">
                 <div className="cd-h2" style={{ marginBottom: 8 }}>Fulfillments</div>
@@ -519,6 +710,62 @@ export default function OrderDetailScreen({
                       {f.notifiedAt && <div className="cd-caption" style={{ marginTop: 4 }}>Customer notified</div>}
                     </div>
                   ))}
+                </div>
+              </Card>
+            )}
+
+            {detail.returns.length > 0 && (
+              <Card className="cd-card-tight">
+                <div className="cd-h2" style={{ marginBottom: 8 }}>Returns</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {detail.returns.map((r) => {
+                    const pill = returnStatusPill(r.status);
+                    const refundCents = r.lines.reduce((sum, l) => sum + l.refundCents, 0);
+                    const unitCount = r.lines.reduce((sum, l) => sum + l.quantity, 0);
+                    const isOpen = r.status === "open";
+                    const isClosed = r.status === "closed" || r.status === "received";
+                    const busy = busyReturnId === r.id;
+                    return (
+                      <div key={r.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div className="flex items-center justify-between" style={{ gap: 8, flexWrap: "wrap" }}>
+                          <div className="flex items-center" style={{ gap: 8 }}>
+                            <Pill tone={pill.tone}>{pill.label}</Pill>
+                            <span className="cd-row-title">
+                              {unitCount} unit{unitCount === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                          <span className="cd-row-num tabular-nums">{money(refundCents, detail.currency)}</span>
+                        </div>
+                        <div className="cd-caption">
+                          {timeAgo(r.createdAt)}
+                          {r.reason ? ` · ${r.reason}` : ""}
+                        </div>
+                        {(isOpen || isClosed) && (
+                          <div className="flex items-center" style={{ gap: 8 }}>
+                            {isOpen && (
+                              <>
+                                <Btn small icon="check" onClick={() => markReturnReceived(r)} disabled={busy}>
+                                  {busy ? "Working…" : "Mark received"}
+                                </Btn>
+                                <Btn small kind="danger" icon="x" onClick={() => cancelReturn(r)} disabled={busy}>
+                                  Cancel return
+                                </Btn>
+                              </>
+                            )}
+                            {isClosed && (
+                              <Btn
+                                small
+                                icon="swap"
+                                onClick={() => app.navigate("orders", buildPrefillParam(detail.id, r.id))}
+                              >
+                                Create replacement order
+                              </Btn>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </Card>
             )}
@@ -670,6 +917,14 @@ export default function OrderDetailScreen({
           app={app}
           order={detail}
           onClose={() => setShowEditInvoice(false)}
+          onDone={() => load()}
+        />
+      )}
+      {showCreateReturn && detail && (
+        <CreateReturnModal
+          app={app}
+          order={detail}
+          onClose={() => setShowCreateReturn(false)}
           onDone={() => load()}
         />
       )}

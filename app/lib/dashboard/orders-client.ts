@@ -11,11 +11,15 @@ import type {
 import type { ImportedOrdersPage } from "~/lib/order/imported-list-types";
 import type { OrderDetail, OrderDetailLine } from "~/lib/order/detail-types";
 import type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage } from "~/lib/order/unified-list-types";
+import type { OrderReturn, OrderReturnLine, OrderReturnStatus } from "~/lib/order/returns-types";
+import type { OrderProfit } from "~/lib/order/profit-types";
 
 export type { OrderRow, DraftCartRow, AbandonedCheckoutRow, ShipChargeRow, OrdersPage };
 export type { ImportedOrdersPage };
 export type { OrderDetail, OrderDetailLine };
 export type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage };
+export type { OrderReturn, OrderReturnLine, OrderReturnStatus };
+export type { OrderProfit };
 
 export async function fetchOrdersPage(): Promise<OrdersPage> {
   return apiGet<OrdersPage>("/dashboard/api/orders");
@@ -571,12 +575,15 @@ export interface SendInvoiceResult {
 }
 
 /** Turn a merchant-draft cart into a real invoice and email the buyer a pay link. 409s
- *  (DashboardApiError, code "payments_not_ready") if the shop can't take payments yet. */
+ *  (DashboardApiError, code "payments_not_ready") if the shop can't take payments yet.
+ *  `exchangeForReturnId` (Phase 4 Task 2) threads a replacement-order's source return into the new
+ *  order's attribution — the return's refund and this invoice's charge stay separate transactions. */
 export async function sendDraftInvoice(input: {
   cartId: string;
   email: string;
   address?: InvoiceAddressInput;
   note?: string;
+  exchangeForReturnId?: string;
 }): Promise<SendInvoiceResult> {
   const data = await apiSend<{
     order_id: string;
@@ -589,6 +596,7 @@ export async function sendDraftInvoice(input: {
     email: input.email,
     address: input.address,
     note: input.note,
+    exchange_for_return_id: input.exchangeForReturnId,
   });
   return {
     orderId: data.order_id,
@@ -608,4 +616,183 @@ export async function resendInvoiceEmail(orderId: string): Promise<{ sent: boole
     `/dashboard/api/orders/${encodeURIComponent(orderId)}/resend-invoice`,
     {},
   );
+}
+
+// --- merchant returns (Phase 4 Task 2) ---------------------------------------
+
+interface OrderReturnLineWire {
+  id: string;
+  order_line_id: string;
+  quantity: number;
+  restock: boolean;
+  refund_cents: number;
+}
+
+interface OrderReturnWire {
+  id: string;
+  order_id: string;
+  status: OrderReturnStatus;
+  reason: string | null;
+  created_at: string;
+  received_at: string | null;
+  lines: OrderReturnLineWire[];
+}
+
+function mapReturnLine(l: OrderReturnLineWire): OrderReturnLine {
+  return { id: l.id, orderLineId: l.order_line_id, quantity: l.quantity, restock: l.restock, refundCents: l.refund_cents };
+}
+
+function mapReturn(r: OrderReturnWire): OrderReturn {
+  return {
+    id: r.id,
+    orderId: r.order_id,
+    status: r.status,
+    reason: r.reason,
+    createdAt: r.created_at,
+    receivedAt: r.received_at,
+    lines: r.lines.map(mapReturnLine),
+  };
+}
+
+/** Every return recorded against an order, newest first. Native orders only — an imported
+ *  (Shopify-paid) order always resolves to an empty list, the returns spine never touched it. */
+export async function fetchOrderReturns(orderId: string): Promise<OrderReturn[]> {
+  const data = await apiGet<{ returns: OrderReturnWire[] }>(
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/returns`,
+  );
+  return data.returns.map(mapReturn);
+}
+
+export interface CreateReturnLineInput {
+  orderLineId: string;
+  quantity: number;
+  restock: boolean;
+  /** Omit to take the server-computed default (unit price x quantity + a proportional tax share).
+   *  A supplied value may not exceed that default — 422 refund_exceeds_default otherwise. */
+  refundCents?: number;
+}
+
+export interface CreateOrderReturnResult {
+  returnId: string;
+  status: "open";
+  lines: OrderReturnLine[];
+}
+
+/** Open a new return against a native order. 409s (DashboardApiError, code "return_already_open")
+ *  when the order already has one open — only one return may be in flight at a time. */
+export async function createOrderReturn(
+  orderId: string,
+  args: { lines: CreateReturnLineInput[]; reason?: string },
+): Promise<CreateOrderReturnResult> {
+  const data = await apiSend<{ return_id: string; status: "open"; lines: OrderReturnLineWire[] }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/returns`,
+    {
+      lines: args.lines.map((l) => ({
+        order_line_id: l.orderLineId,
+        quantity: l.quantity,
+        restock: l.restock,
+        refund_cents: l.refundCents,
+      })),
+      reason: args.reason,
+    },
+  );
+  return { returnId: data.return_id, status: data.status, lines: data.lines.map(mapReturnLine) };
+}
+
+export interface ReceiveOrderReturnResult {
+  auditId: string;
+  returnId: string;
+  orderId: string;
+  status: "closed";
+  refundedCents: number;
+  restockedLines: number;
+  restockErrors: string[] | null;
+  replayed: boolean;
+}
+
+/** Mark an open return received: restocks its requested lines (best-effort, tracked variants
+ *  only) and refunds its total. Native orders only. `idempotencyKey` dedups the whole operation
+ *  across a retried submit — reuse the SAME key on retry, never mint a fresh one per click. */
+export async function receiveOrderReturn(
+  orderId: string,
+  args: { returnId: string; idempotencyKey: string },
+): Promise<ReceiveOrderReturnResult> {
+  const data = await apiSend<{
+    audit_id: string;
+    return_id: string;
+    order_id: string;
+    status: "closed";
+    refunded_cents: number;
+    restocked_lines: number;
+    restock_errors: string[] | null;
+    replayed: boolean;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/returns/receive`, {
+    return_id: args.returnId,
+    idempotency_key: args.idempotencyKey,
+  });
+  return {
+    auditId: data.audit_id,
+    returnId: data.return_id,
+    orderId: data.order_id,
+    status: data.status,
+    refundedCents: data.refunded_cents,
+    restockedLines: data.restocked_lines,
+    restockErrors: data.restock_errors,
+    replayed: data.replayed,
+  };
+}
+
+/** Cancel an open return with no refund/restock effect. Native orders only. */
+export async function cancelOrderReturn(
+  orderId: string,
+  returnId: string,
+): Promise<{ returnId: string; status: "cancelled" }> {
+  const data = await apiSend<{ return_id: string; status: "cancelled" }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/returns/cancel`,
+    { return_id: returnId },
+  );
+  return { returnId: data.return_id, status: data.status };
+}
+
+// --- profit read model (Phase 4 Task 3) --------------------------------------
+
+interface OrderProfitWire {
+  source: "calderyn" | "shopify";
+  revenue_cents: number;
+  cogs_cents: number;
+  costs_missing: number;
+  carrier_cost_cents: number | null;
+  fee_estimate_cents: number;
+  profit_cents: number | null;
+  margin_pct: number | null;
+  estimated: boolean;
+  attribution_label: string | null;
+  not_captured?: boolean;
+}
+
+function mapProfit(p: OrderProfitWire): OrderProfit {
+  return {
+    source: p.source,
+    revenueCents: p.revenue_cents,
+    cogsCents: p.cogs_cents,
+    costsMissing: p.costs_missing,
+    carrierCostCents: p.carrier_cost_cents,
+    feeEstimateCents: p.fee_estimate_cents,
+    profitCents: p.profit_cents,
+    marginPct: p.margin_pct,
+    estimated: p.estimated,
+    attributionLabel: p.attribution_label,
+    notCaptured: p.not_captured,
+  };
+}
+
+/** Per-order profit read model: revenue/COGS/carrier cost/estimated fees/margin for one order,
+ *  native or imported. A plain snapshot at fetch time — no live recompute on the client. */
+export async function fetchOrderProfit(sourceId: string): Promise<OrderProfit> {
+  const data = await apiGet<{ profit: OrderProfitWire }>(
+    `/dashboard/api/orders/${encodeURIComponent(sourceId)}/profit`,
+  );
+  return mapProfit(data.profit);
 }

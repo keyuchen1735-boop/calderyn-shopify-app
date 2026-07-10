@@ -56,4 +56,19 @@ describe("orders route param plumbing", () => {
     const path = pathFor({ screen: "orders", param: null, sub: "labels" });
     expect(path).toBe("/dashboard/orders/labels");
   });
+
+  it("orders/new_<uuid>_<uuid> (composer prefill) round-trips through buildPath and parsePath", () => {
+    const uuid1 = "550e8400-e29b-41d4-a716-446655440000";
+    const uuid2 = "660f9511-f3ac-52e5-b827-557766551111";
+    const param = `new_${uuid1}_${uuid2}`;
+    const path = pathFor({ screen: "orders", param, sub: null });
+    expect(path).toBe(`/dashboard/orders/${encodeURIComponent(param)}`);
+
+    const parsed = parsePath(path);
+    expect(parsed).toEqual({
+      screen: "orders",
+      param,
+      sub: null,
+    });
+  });
 });

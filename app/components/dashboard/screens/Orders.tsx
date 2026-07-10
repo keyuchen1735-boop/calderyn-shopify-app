@@ -30,7 +30,8 @@ import RefundModal from "./RefundModal";
 import OrderDetailScreen from "./OrderDetail";
 import OrderComposer from "./OrderComposer";
 import OrdersToolbar from "./OrdersToolbar";
-import { fulfillmentBadge, paymentPillStyle, REFUNDABLE_ORDER_STATES } from "./order-status";
+import { fulfillmentBadge, isStuckUnfulfilled, paymentPillStyle, REFUNDABLE_ORDER_STATES, stuckDays } from "./order-status";
+import { isPrefillParam } from "./order-composer-prefill";
 import {
   isSystemView,
   paramsToViewFilters,
@@ -192,6 +193,10 @@ function UnifiedOrdersList({
       {rows.map((r) => {
         const refundable = r.refundRow && REFUNDABLE_ORDER_STATES.has(r.state) ? r.refundRow : null;
         const fulfillment = r.source === "calderyn" ? fulfillmentBadge(r.state, r.cancelledAt) : null;
+        // Stuck-unfulfilled badge: native orders only, paid > 3 days with nothing shipped.
+        const now = Date.now();
+        const stuck = r.source === "calderyn" && r.createdAt ? isStuckUnfulfilled(r.state, r.createdAt, now) : false;
+        const stuckN = stuck && r.createdAt ? stuckDays(r.createdAt, now) : null;
         const open = () => onOpen(displayOrderSourceId(r));
         const selectableId = r.source === "calderyn" ? r.id : null;
         return (
@@ -235,12 +240,13 @@ function UnifiedOrdersList({
             <div>
               <PaymentPill status={r.financialStatus} />
             </div>
-            <div>
+            <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap" }}>
               {fulfillment && (
                 <span className="cd-badge" style={{ color: fulfillment.tone, background: "var(--gray-bg)" }}>
                   {fulfillment.label}
                 </span>
               )}
+              {stuckN != null && <Pill tone="warn">Unfulfilled {stuckN}d</Pill>}
             </div>
             <div
               style={{ display: "flex", justifyContent: "flex-end" }}
@@ -749,10 +755,13 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   const sub = app.nav.sub ?? "orders";
 
   // Reserved param "new" -> the Create-order composer, same idiom as Campaigns' navigate("campaigns",
-  // "new"). Must be checked BEFORE the row-click/deep-link branch below, which otherwise treats any
+  // "new"). A "new_<orderId>_<returnId>" param (order-composer-prefill.ts) is the SAME composer
+  // with a replacement-order prefill (Phase 4 Task 2, from a closed return's "Create replacement
+  // order" button) — isPrefillParam only matches that reserved shape, never a bare order sourceId.
+  // Must be checked BEFORE the row-click/deep-link branch below, which otherwise treats any
   // non-null param as an order's sourceId.
-  if (app.nav.param === "new") {
-    return <OrderComposer app={app} />;
+  if (app.nav.param === "new" || (app.nav.param && isPrefillParam(app.nav.param))) {
+    return <OrderComposer app={app} prefillParam={app.nav.param === "new" ? null : app.nav.param} />;
   }
 
   // Row-click / deep-link: nav.param carries the selected order's sourceId (`shopify:<id>` for

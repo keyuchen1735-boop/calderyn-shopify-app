@@ -10,12 +10,14 @@ import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   deleteMerchantDraft,
   fetchMerchantDrafts,
+  fetchOrderDetail,
   saveMerchantDraft,
   sendDraftInvoice,
   type MerchantDraftVM,
 } from "~/lib/dashboard/orders-client";
 import VariantPicker, { type PickedVariant } from "./VariantPicker";
 import { useModalEntrance } from "./order-modal-motion";
+import { parsePrefillParam } from "./order-composer-prefill";
 
 interface ComposerLine {
   variantId: string;
@@ -53,7 +55,13 @@ function addressHasAnyValue(a: Address): boolean {
 // reserved nav.param "new" the same way Campaigns' composer does. Builds a merchant-draft cart
 // (saveMerchantDraft), optionally resumes/deletes an existing one (fetchMerchantDrafts), then
 // either leaves it as a draft or turns it into a real invoice + pay-link email (sendDraftInvoice).
-export default function OrderComposer({ app }: { app: DashboardCtx }) {
+//
+// `prefillParam` (Phase 4 Task 2, exchange-lite): when set, this visit came from a closed return's
+// "Create replacement order" button (order-composer-prefill.ts's URL-encoded param — see that
+// module's header for why a URL, not sessionStorage/nav state, was chosen: it survives a refresh).
+// Parsed on mount, then the source order is re-fetched by id and the return's own lines seed the
+// cart — a stale/foreign/malformed param just falls back to a blank composer rather than throwing.
+export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx; prefillParam?: string | null }) {
   const back = () => app.navigate("orders", null);
 
   const [drafts, setDrafts] = useState<MerchantDraftVM[] | null>(null);
@@ -86,6 +94,56 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
   const [sending, setSending] = useState(false);
   const [showSendConfirm, setShowSendConfirm] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Exchange-lite prefill (Phase 4 Task 2): non-null once a valid prefillParam resolves to a real
+  // return with at least one still-known variant. Threaded into the send call so the new order's
+  // attribution records `{ exchange_for: <returnId> }`.
+  const [exchangeForReturnId, setExchangeForReturnId] = useState<string | null>(null);
+  const [exchangeOrderRef, setExchangeOrderRef] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!prefillParam) return;
+    const parsed = parsePrefillParam(prefillParam);
+    if (!parsed) return;
+    let alive = true;
+    fetchOrderDetail(parsed.orderId)
+      .then((detail) => {
+        if (!alive) return;
+        const target = detail.returns.find((r) => r.id === parsed.returnId);
+        if (!target) {
+          app.toast("Couldn't find that return to prefill from.", "warn");
+          return;
+        }
+        const lineById = new Map(detail.lines.map((l) => [l.id, l]));
+        const prefilled: ComposerLine[] = [];
+        for (const rl of target.lines) {
+          const src = lineById.get(rl.orderLineId);
+          if (!src || !src.variantId) continue;
+          prefilled.push({
+            variantId: src.variantId,
+            title: src.title,
+            unitPriceCents: src.unitPriceCents,
+            quantity: rl.quantity,
+            currency: detail.currency,
+          });
+        }
+        if (prefilled.length === 0) {
+          app.toast("That return's items are no longer available to re-order.", "warn");
+          return;
+        }
+        setLines(prefilled);
+        setExchangeForReturnId(target.id);
+        setExchangeOrderRef(detail.ref);
+      })
+      .catch(() => {
+        if (alive) app.toast("Couldn't load the return to prefill from.", "warn", "critical");
+      });
+    return () => {
+      alive = false;
+    };
+    // One-shot prefill on mount — prefillParam is stable for the life of this composer visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillParam]);
 
   // Gentle one-time entrance: header first, then the item/customer/drafts cards stagger in. Mounts
   // once per composer visit (nav.param "new" -> a fresh OrderComposer instance), so this never
@@ -262,6 +320,7 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
             }
           : undefined,
         note: note.trim() || undefined,
+        exchangeForReturnId: exchangeForReturnId ?? undefined,
       });
       app.toast(
         result.emailSent
@@ -288,6 +347,16 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
           <h1 className="cd-h1" style={{ fontSize: 22 }}>Create order</h1>
         </div>
       </header>
+
+      {exchangeForReturnId && (
+        <Card className="cd-card-tight">
+          <span className="cd-caption">
+            Replacement for return on order {exchangeOrderRef ?? "…"}. The refund and the
+            replacement order are separate transactions. The customer is refunded for the return
+            and pays for the replacement normally.
+          </span>
+        </Card>
+      )}
 
       <div
         style={{

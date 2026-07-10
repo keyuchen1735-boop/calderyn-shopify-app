@@ -7,9 +7,16 @@ import { COMMERCE_TOOLS, COMMERCE_TOOL_NAMES, handleCommerceTool, type CommerceC
 import { ASSISTANT_ACTIONS, generatedWriteTools } from "./actions/registry.server";
 import { runRegistryAction } from "./actions/execute.server";
 import type { ActionCtx, ActionReceipt, PendingActionCard } from "./actions/registry-types";
+import { listOrdersUnified } from "../order/unified-list.server";
+import { loadOrderDetail } from "../order/detail.server";
+import { FULFILLMENT_STATUSES, SOURCES } from "../order/list-vocab";
+import type { OrdersListParams, UnifiedOrderRow } from "../order/unified-list-types";
+import { fulfillmentBadge, isStuckUnfulfilled } from "~/components/dashboard/screens/order-status";
+import { formatMoney } from "~/lib/storefront/money";
 
 const COMMERCE_NAME_SET = new Set<string>(COMMERCE_TOOL_NAMES);
 const REGISTRY_NAME_SET = new Set<string>(ASSISTANT_ACTIONS.map((a) => a.name));
+const ORDER_TOOL_NAMES = new Set<string>(["search_orders", "get_order"]);
 
 export interface ToolDispatchResult {
   content: string; // JSON string handed back to the model as tool_result content
@@ -104,11 +111,49 @@ export const READ_TOOLS: Anthropic.Tool[] = [
 ];
 
 /**
- * The in-app merchant assistant's full toolset: reads + flag_alert + every
- * registered store action (registry.server.ts). Confirm-tier actions are
- * flagged in their description; the tool loop still calls them the same way.
+ * Order search/detail (Phase 4 Task 5) — deliberately NOT part of READ_TOOLS. READ_TOOLS is
+ * shared with EXTERNAL_TOOLS (external connected buyer clients on the calderyn-mcp seam, see
+ * commerce-tools.server.ts) and the legacy embedded surface's no-allowActions call; either of
+ * those handing a random buyer/shopper's AI client a tool that lists or reads ANY order in the
+ * shop — even with the customer email masked — would leak other buyers' purchase history and
+ * order totals. These two tools are merchant-assistant-only: the dispatcher below refuses them
+ * without an actionCtx, the same gate registry (write) actions use, and dashboard.api.assistant.tsx
+ * is the only caller that ever sets allowActions (and therefore actionCtx) today.
  */
-export const ASSISTANT_TOOLS: Anthropic.Tool[] = [...READ_TOOLS, ...generatedWriteTools()];
+export const ORDER_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "search_orders",
+    description:
+      "Search this shop's orders (native + imported). Use this FIRST to find the right order_id, then call get_order for full detail — never guess an order_id. Returns compact rows with a masked customer email; total_count reports how many matched beyond what's shown (e.g. 'showing 10 of 88').",
+    input_schema: {
+      type: "object",
+      properties: {
+        search: { type: "string", description: "Free-text match (order ref, customer, etc.)" },
+        payment_status: { type: "string", description: "e.g. paid, refunded, partially_refunded" },
+        fulfillment_status: { type: "string", enum: [...FULFILLMENT_STATUSES] },
+        source: { type: "string", enum: [...SOURCES] },
+        limit: { type: "number", description: "Max rows (<=20, default 10)" },
+      },
+    },
+  },
+  {
+    name: "get_order",
+    description:
+      "Fetch one order's full detail by id — pass the id exactly as returned by search_orders (imported orders carry a `shopify:`-prefixed id). Returns totals, line items, the 5 most recent timeline events, buyer-history signals, and any returns. Customer email is masked.",
+    input_schema: {
+      type: "object",
+      properties: { order_id: { type: "string" } },
+      required: ["order_id"],
+    },
+  },
+];
+
+/**
+ * The in-app merchant assistant's full toolset: reads + flag_alert + order search/detail + every
+ * registered store action (registry.server.ts). Confirm-tier actions are flagged in their
+ * description; the tool loop still calls them the same way.
+ */
+export const ASSISTANT_TOOLS: Anthropic.Tool[] = [...READ_TOOLS, ...ORDER_TOOLS, ...generatedWriteTools()];
 
 /**
  * Toolset advertised to external connected buyer clients (the calderyn-mcp server).
@@ -139,6 +184,29 @@ function withAllowedActions<T extends Pick<Alert, "detector_id">>(
 
 function toolError(code: string, message: string): ToolDispatchResult {
   return { content: JSON.stringify({ code, message }), isError: true };
+}
+
+const ORDER_SEARCH_DEFAULT_LIMIT = 10;
+const ORDER_SEARCH_LIMIT_CAP = 20;
+const ORDER_TIMELINE_CAP = 5;
+const ORDER_LINES_CAP = 20;
+
+/** "m***@domain.com" — first character, a fixed mask, then the full domain, so the model can
+ *  recognize repeat customers across a search without ever seeing a usable email address. A
+ *  missing/empty email returns null; an unparseable one (no '@') falls back to first-char+mask
+ *  rather than guessing a domain. */
+function maskEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  const at = email.indexOf("@");
+  if (at <= 0) return `${email.charAt(0)}***`;
+  return `${email.charAt(0)}***${email.slice(at)}`;
+}
+
+/** `orders/<sourceId>` form for a unified-list row — `shopify:`-prefixed for a migrated order,
+ *  mirroring Orders.tsx's private displayOrderSourceId (duplicated rather than exported, the same
+ *  reasoning the order read models already use for their own small private helpers). */
+function orderSourceId(row: UnifiedOrderRow): string {
+  return row.source === "shopify" ? `shopify:${row.id}` : row.id;
 }
 
 export interface ToolDispatcherDeps {
@@ -182,6 +250,85 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
           idempotencyKey: `assistant:${deps.actionCtx.conversationId}:${toolUseId}`,
         });
         return { content: out.content, isError: out.isError, receipt: out.receipt, pending: out.pending };
+      }
+      if (ORDER_TOOL_NAMES.has(name)) {
+        if (!deps.actionCtx) {
+          return toolError("ORDERS_UNAVAILABLE", `${name} is only available to the signed-in merchant assistant`);
+        }
+        const shopId = deps.actionCtx.shopId;
+        if (name === "search_orders") {
+          const rawLimit = Number(input.limit ?? ORDER_SEARCH_DEFAULT_LIMIT);
+          const limit = Math.min(
+            Math.max(Number.isFinite(rawLimit) ? Math.trunc(rawLimit) : ORDER_SEARCH_DEFAULT_LIMIT, 1),
+            ORDER_SEARCH_LIMIT_CAP,
+          );
+          const params: OrdersListParams = { limit };
+          if (typeof input.search === "string" && input.search.trim()) params.search = input.search.trim();
+          if (typeof input.payment_status === "string" && input.payment_status.trim()) {
+            params.paymentStatus = [input.payment_status.trim()];
+          }
+          if (typeof input.fulfillment_status === "string" && FULFILLMENT_STATUSES.has(input.fulfillment_status)) {
+            params.fulfillmentStatus = input.fulfillment_status as OrdersListParams["fulfillmentStatus"];
+          }
+          if (typeof input.source === "string" && SOURCES.has(input.source)) {
+            params.source = input.source as OrdersListParams["source"];
+          }
+          const page = await listOrdersUnified(shopId, params);
+          const now = Date.now();
+          const orders = page.rows.map((row) => ({
+            ref: row.ref,
+            id: orderSourceId(row),
+            source: row.source,
+            customer: maskEmail(row.buyerEmail),
+            total: formatMoney(row.totalCents, row.currency),
+            payment_status: row.paymentStatus,
+            fulfillment_status:
+              row.source === "calderyn" ? (fulfillmentBadge(row.state, row.cancelledAt)?.label ?? null) : null,
+            date: row.occurredAt,
+            stuck: row.source === "calderyn" ? isStuckUnfulfilled(row.state, row.occurredAt, now) : false,
+          }));
+          return ok({ orders, total_count: page.totalCount });
+        }
+        // get_order
+        const orderId = typeof input.order_id === "string" ? input.order_id.trim() : "";
+        if (!orderId) return toolError("INVALID_INPUT", "order_id is required");
+        const detail = await loadOrderDetail(shopId, orderId);
+        if (!detail) return toolError("ORDER_NOT_FOUND", `Order ${orderId} not found`);
+        const lines = detail.lines.slice(0, ORDER_LINES_CAP).map((l) => ({
+          title: l.title,
+          quantity: l.quantity + l.reducedQuantity,
+          effective_quantity: l.quantity,
+          fulfilled: l.fulfilledQuantity,
+        }));
+        const latestTimeline = detail.timeline
+          .slice(0, ORDER_TIMELINE_CAP)
+          .map((e) => ({ title: e.title, at: e.at }));
+        const returns = detail.returns.map((r) => ({
+          status: r.status,
+          refund_cents: r.lines.reduce((sum, line) => sum + line.refundCents, 0),
+        }));
+        return ok({
+          order: {
+            ref: detail.ref,
+            source: detail.source,
+            state: detail.state,
+            payment_status: detail.financialStatus,
+            created: detail.createdAt,
+            totals: {
+              subtotal: formatMoney(detail.subtotalCents, detail.currency),
+              shipping: formatMoney(detail.shippingCents, detail.currency),
+              tax: formatMoney(detail.taxCents, detail.currency),
+              total: formatMoney(detail.totalCents, detail.currency),
+              refunded: formatMoney(detail.refundedCents, detail.currency),
+            },
+            customer: maskEmail(detail.buyer?.email),
+            lines,
+            latest_timeline: latestTimeline,
+            signals: detail.signals,
+            returns,
+            tags: detail.tags,
+          },
+        });
       }
       switch (name) {
         case "list_alerts": {

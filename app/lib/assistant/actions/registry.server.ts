@@ -9,6 +9,7 @@ import { CAMPAIGN_ACTIONS } from "./campaign-actions.server";
 import { CATALOG_ACTIONS } from "./catalog-actions.server";
 import { INVENTORY_ACTIONS } from "./inventory-actions.server";
 import { OPS_ACTIONS } from "./ops-actions.server";
+import { ORDER_ACTIONS } from "./order-actions.server";
 
 export const ASSISTANT_ACTIONS: AssistantAction[] = [
   ...ALERTS_ACTIONS,
@@ -16,6 +17,7 @@ export const ASSISTANT_ACTIONS: AssistantAction[] = [
   ...CATALOG_ACTIONS,
   ...INVENTORY_ACTIONS,
   ...OPS_ACTIONS,
+  ...ORDER_ACTIONS,
 ];
 
 export function actionByName(name: string): AssistantAction | undefined {

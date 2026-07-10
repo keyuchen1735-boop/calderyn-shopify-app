@@ -220,3 +220,37 @@ Draft-order discounts, mark-as-paid (bypasses the money ledger), payment terms, 
 ## 5. Rollout
 
 Branch `feat/orders-create-edit` off main; one PR (5). Migrations applied to prod with object verification. Same gate + browser e2e as Phases 1-2.
+
+---
+
+# Phase 4 — returns + the Calderyn layer (designed 2026-07-10; adversarially verified, 11 revisions folded in)
+
+## 1. Returns (merchant-recorded RMA, v1)
+
+- Tables: `order_return` (shop_id, order_id composite FK, status check in ('open','received','closed','cancelled'), reason, created_at, received_at, closed_at, received_idempotency_key, RLS+revoke) and `order_return_line` (return_id, order_line_id composite FKs, quantity > 0, restock boolean, refund_cents >= 0).
+- **Concurrency guard:** ONE open return per order (unique partial index on (shop_id, order_id) where status='open') — coarse, honest v1; quantities are re-validated at receive time against fulfilled − previously-received-returns (returns cover SHIPPED units; reductions cover unshipped — the two pools are disjoint by the existing below-fulfilled edit guard).
+- Lifecycle: create (open; line picker per-line max = fulfilled − already-returned; per-line refund_cents defaults to unit price + proportional tax share, editable down) → **Mark received** (one bespoke executor with the edit-executor's idempotency/resume discipline: replay short-circuit, restock per line via the existing per-line wrapper keyed `restockreturn:<returnLineId>`, refund Σ refund_cents via executeRefundAction sub-key `:refund` — over-refund pre-checked against remaining refundable BEFORE any write, audit row 'return_received' (new action_kind), status flip last with CAS on status='open') → closed. Cancel an open return freely.
+- **Exchange-lite (explicit two-transaction v1):** "Create replacement order" on a return prefills the invoice composer with the returned lines; the new order links via attribution {exchange_for: returnId}. The refund and the replacement charge are independent transactions — stated plainly in merchant-facing copy; netting/credits are a later phase.
+- Detail page: Returns card + timeline events; explicit v1 cuts (stated, not silent): customer self-service returns portal (no buyer accounts exist yet), prepaid return labels, balanced-payment exchanges.
+
+## 2. Profit per order (detail-page card, native orders first)
+
+- `order_line.unit_cost_cents_snapshot` (new nullable column): populated at checkout AND invoice-send from variant_dim.unit_cost_cents; one-time backfill of existing native lines from current variant costs (labeled estimate). NOTE (verified): no existing pipeline populates any cost snapshot anywhere — this is all new plumbing.
+- `orderProfit(shopId, orderId)` read model: revenue (total − ledger refunds) − COGS (Σ effective qty × cost snapshot; missing costs → "cost data incomplete" flag, never fake zeros) − carrier cost (SUM of shipping_invoice_line grouped by matched order_fact linkage — native paid orders DO emit order_fact rows; when no match: "no carrier cost recorded") − payment fees (ALWAYS the labeled estimate 2.9% + 30¢ — verified: no real Stripe processing-fee data exists in the ledger; application_fee_cents is Calderyn's own commission, never used here).
+- Attribution row: shows WHICH campaign/channel drove the order (from attribution jsonb). Per-order ad-spend allocation is explicitly deferred (spend is campaign-day-grained); this narrows the parent spec's "ad attribution" bullet to attribution display, stated deliberately.
+- Surfaces: Profit card on native order detail (breakdown + margin %); imported orders get the card with costs marked estimated where snapshots are null. NO list column in v1 (the unified list RPC already carries expensive laterals).
+
+## 3. Autopilot order signals (v1, read-time)
+
+- `stuckUnfulfilled` badge in the LIST (state paid && occurred_at > 3 days — zero new query cost) and detail.
+- Detail-only buyer signals via ONE bulk buyer-scoped aggregate (the directory.server purchaseAggregates pattern — never per-row laterals): `repeatCustomer` (≥2 orders), `refundRisk` (refund ratio > 30% with ≥2 orders). Signals strip on the detail page with plain-language labels.
+- No new Python detectors; optionally one app-side stuck-orders detector via the existing TS detector registry (api.detectors.run) if trivially additive — else deferred.
+
+## 4. Ask Calderyn order tools
+
+- Read tools (touches the shared dispatcher — READ_TOOLS array + switch in tools.server.ts; noted, not zero-touch): `search_orders` wrapping listOrdersUnified (param subset: search/status/source/limit ≤20; compact rows: ref, source, customer, total, payment/fulfillment status, date, id) and `get_order` wrapping loadOrderDetail through a NEW compact projection (header + money + line titles/qtys + latest 5 timeline titles + signals; no addresses/emails beyond masked, no full timeline — token discipline; nothing reusable exists so the projection is defined here).
+- Write tools via the existing ASSISTANT_ACTIONS registry (zero core edits): `fulfill_order` (notify param; confirm tier — it emails a customer), `add_order_note`, `add_order_tags` (additive). Refunds/cancels already exist as live confirm-tier registry actions — not duplicated.
+
+## 5. Rollout
+
+Branch `feat/orders-returns-layer` (already carries the UI-polish commits shipped separately as PR #420 — the Phase 4 PR is opened after #420 merges or rebased so its diff stays clean). One PR (6). Migrations applied to prod with verification. Same gate + browser e2e.

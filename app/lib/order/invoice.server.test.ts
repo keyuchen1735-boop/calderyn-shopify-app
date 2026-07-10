@@ -12,8 +12,10 @@ const store = vi.hoisted(() => {
     buyer_address: [],
     orders: [],
     order_line: [],
+    order_return: [],
     stripe_connected_account: [],
     shops: [],
+    variant_dim: [],
   };
 
   class Builder {
@@ -22,6 +24,7 @@ const store = vi.hoisted(() => {
     private vals: Row = {};
     private conflict: string[] = [];
     private filters: Array<[string, unknown]> = [];
+    private inFilters: Array<[string, unknown[]]> = [];
     private wantSingle = false;
     private readonly table: string;
 
@@ -55,6 +58,10 @@ const store = vi.hoisted(() => {
       this.filters.push([col, val]);
       return this;
     }
+    in(col: string, vals: unknown[]) {
+      this.inFilters.push([col, vals]);
+      return this;
+    }
     single() {
       this.wantSingle = true;
       return this;
@@ -77,7 +84,10 @@ const store = vi.hoisted(() => {
       return row;
     }
     private matches(r: Row) {
-      return this.filters.every(([c, v]) => r[c] === v);
+      return (
+        this.filters.every(([c, v]) => r[c] === v) &&
+        this.inFilters.every(([c, vals]) => vals.includes(r[c]))
+      );
     }
     private run(): { data: unknown; error: unknown } {
       const t = db[this.table];
@@ -165,6 +175,11 @@ function seedPaymentReady(shopId: string) {
   });
 }
 
+/** Seed a variant_dim row so the cost-snapshot read (Phase 4 Task 1) can resolve unit_cost_cents. */
+function seedVariant(shopId: string, variantId: string, unitCostCents: number | null) {
+  store.db.variant_dim.push({ id: variantId, shop_id: shopId, unit_cost_cents: unitCostCents });
+}
+
 function seedDraftCart(shopId: string, cartId: string, line: Partial<Record<string, unknown>> = {}) {
   if (!store.db.cart.some((c) => c.id === cartId)) {
     store.db.cart.push({ id: cartId, shop_id: shopId, state: "cart", origin: "merchant_draft" });
@@ -245,6 +260,37 @@ describe("sendDraftOrderInvoice", () => {
     // No inventory reservation, no PaymentIntent creation — invoice.server.ts must never import
     // the inventory engine or a PI-create seam at all (this is a shape assertion via absence).
     expect(stripeCheckout.createCommerceCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("stamps unit_cost_cents_snapshot from variant_dim onto the invoiced line (Phase 4 Task 1)", async () => {
+    seedVariant("shop-1", "v-tee-s", 750);
+    seedDraftCart("shop-1", "cart-cost", { variant_id: "v-tee-s", quantity: 2, unit_price_cents: 1999 });
+
+    const out = await sendDraftOrderInvoice("shop-1", "cart-cost", { email: "cost@example.com" });
+
+    expect(store.db.order_line).toHaveLength(1);
+    expect(store.db.order_line[0]).toMatchObject({
+      order_id: out.orderId,
+      variant_id: "v-tee-s",
+      unit_cost_cents_snapshot: 750,
+    });
+  });
+
+  it("snapshots a null unit_cost_cents_snapshot for a variant with no cost recorded (never fabricates 0)", async () => {
+    seedVariant("shop-1", "v-tee-s", null);
+    seedDraftCart("shop-1", "cart-nocost", { variant_id: "v-tee-s" });
+
+    await sendDraftOrderInvoice("shop-1", "cart-nocost", { email: "nocost@example.com" });
+
+    expect(store.db.order_line[0].unit_cost_cents_snapshot).toBeNull();
+  });
+
+  it("snapshots a null unit_cost_cents_snapshot when the variant has no variant_dim row at all", async () => {
+    seedDraftCart("shop-1", "cart-novariant", { variant_id: "v-ghost" });
+
+    await sendDraftOrderInvoice("shop-1", "cart-novariant", { email: "novariant@example.com" });
+
+    expect(store.db.order_line[0].unit_cost_cents_snapshot).toBeNull();
   });
 
   it("fails CLOSED (409 payments_not_ready) BEFORE any write when the shop cannot accept payments", async () => {
@@ -419,6 +465,65 @@ describe("sendDraftOrderInvoice", () => {
       expect.objectContaining({ note: "Pay within 7 days" }),
     );
     expect(store.db.buyer_dim.some((b) => "consent" in b)).toBe(false);
+  });
+
+  it("stamps exchange_for into attribution when this invoice replaces a return (Phase 4 Task 2)", async () => {
+    seedDraftCart("shop-1", "cart-exchange");
+    const returnId = "9f9a2b1c-2222-4e5f-8a9b-0c1d2e3f4a5b";
+    store.db.order_return.push({ id: returnId, shop_id: "shop-1", order_id: "order-prior", status: "open" });
+
+    await sendDraftOrderInvoice("shop-1", "cart-exchange", {
+      email: "exchange@example.com",
+      exchangeForReturnId: returnId,
+    });
+    expect(store.db.orders[0].attribution).toEqual({
+      channel: "invoice",
+      exchange_for: returnId,
+    });
+  });
+
+  it("omits exchange_for from attribution for an ordinary (non-replacement) invoice", async () => {
+    seedDraftCart("shop-1", "cart-ordinary");
+    await sendDraftOrderInvoice("shop-1", "cart-ordinary", { email: "ordinary@example.com" });
+    expect(store.db.orders[0].attribution).toEqual({ channel: "invoice" });
+  });
+
+  it("422s unknown_return when exchange_for_return_id references a non-existent return, before any buyer/order write", async () => {
+    seedDraftCart("shop-1", "cart-badreturn");
+    const ghostReturnId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+
+    await expect(
+      sendDraftOrderInvoice("shop-1", "cart-badreturn", {
+        email: "badreturn@example.com",
+        exchangeForReturnId: ghostReturnId,
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "unknown_return",
+    });
+
+    expect(store.db.buyer_dim).toHaveLength(0);
+    expect(store.db.orders).toHaveLength(0);
+    expect(store.db.order_line).toHaveLength(0);
+  });
+
+  it("422s unknown_return when exchange_for_return_id belongs to a different shop, before any buyer/order write", async () => {
+    seedDraftCart("shop-1", "cart-othershop");
+    const otherReturnId = "9f9a2b1c-2222-4e5f-8a9b-0c1d2e3f4a5b";
+    store.db.order_return.push({ id: otherReturnId, shop_id: "shop-other", order_id: "order-other", status: "open" });
+
+    await expect(
+      sendDraftOrderInvoice("shop-1", "cart-othershop", {
+        email: "othershop@example.com",
+        exchangeForReturnId: otherReturnId,
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "unknown_return",
+    });
+
+    expect(store.db.buyer_dim).toHaveLength(0);
+    expect(store.db.orders).toHaveLength(0);
   });
 });
 
