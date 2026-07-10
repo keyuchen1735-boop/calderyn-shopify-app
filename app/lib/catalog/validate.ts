@@ -15,6 +15,10 @@ const INT4_MAX = 2147483647;
 // trailing/double hyphen), max 80 chars. Matches what productHandle generates.
 const HANDLE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const HANDLE_MAX = 80;
+// Hard caps on the stored search-listing override — the editor soft-limits at
+// 60/160 (advisory SERP lengths) but the server accepts a little slack.
+const SEO_TITLE_MAX = 70;
+const SEO_DESCRIPTION_MAX = 200;
 
 export function validateProductInput(
   raw: unknown,
@@ -35,6 +39,24 @@ export function validateProductInput(
     if (handle.length > HANDLE_MAX || !HANDLE_RE.test(handle)) {
       return { ok: false, code: "invalid_handle" };
     }
+  }
+
+  // Search-listing override, also opt-in. Non-string fields are a crafted body
+  // (422 invalid_seo); values are trimmed and clamped, and empties are kept —
+  // "both empty" is the route's cue to delete the stored override.
+  let seo: { metaTitle: string; metaDescription: string } | undefined;
+  if (r.seo !== undefined && r.seo !== null) {
+    if (typeof r.seo !== "object" || Array.isArray(r.seo)) return { ok: false, code: "invalid_seo" };
+    const s = r.seo as Record<string, unknown>;
+    for (const field of [s.metaTitle, s.metaDescription]) {
+      if (field !== undefined && field !== null && typeof field !== "string") {
+        return { ok: false, code: "invalid_seo" };
+      }
+    }
+    seo = {
+      metaTitle: (typeof s.metaTitle === "string" ? s.metaTitle : "").trim().slice(0, SEO_TITLE_MAX),
+      metaDescription: (typeof s.metaDescription === "string" ? s.metaDescription : "").trim().slice(0, SEO_DESCRIPTION_MAX),
+    };
   }
 
   const status = STATUSES.includes(r.status as ProductStatus) ? (r.status as ProductStatus) : null;
@@ -113,6 +135,7 @@ export function validateProductInput(
       title,
       status,
       handle,
+      seo,
       vendor: typeof r.vendor === "string" ? r.vendor : undefined,
       category: typeof r.category === "string" ? r.category : undefined,
       description: typeof r.description === "string" ? r.description : undefined,

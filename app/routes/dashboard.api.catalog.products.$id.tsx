@@ -4,6 +4,7 @@ import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/htt
 import { getProduct, updateProduct, setProductStatus } from "~/lib/catalog/catalog.server";
 import { signMediaPaths } from "~/lib/catalog/sign-media.server";
 import { validateProductInput } from "~/lib/catalog/validate";
+import { seoListingFor, applySeoOverrideInput } from "~/lib/catalog/product-seo.server";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
@@ -18,7 +19,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     //  - media storage paths -> short-lived signed URLs (private bucket)
     //  - nullable scalars (vendor/category/description) -> undefined so an edit
     //    that doesn't surface a field round-trips it instead of nulling it
-    const signed = await signMediaPaths(product.media.map((m) => m.storagePath));
+    const [signed, seoListing] = await Promise.all([
+      signMediaPaths(product.media.map((m) => m.storagePath)),
+      seoListingFor(request, session.shopId, product),
+    ]);
     const labelById = new Map<string, string>();
     for (const o of product.options) for (const v of o.values) labelById.set(v.id, v.value);
     return {
@@ -62,6 +66,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         })),
         collectionIds: product.collectionIds,
         updatedAt: product.updatedAt,
+        seoListing,
       },
     };
   });
@@ -85,6 +90,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     if (!v.ok) return jsonError(422, v.code);
     return dashboardJson(async () => {
       await updateProduct(session.shopId, id, v.value);
+      if (v.value.seo) await applySeoOverrideInput(session.shopId, id, v.value.seo);
       return { ok: true };
     });
   }
