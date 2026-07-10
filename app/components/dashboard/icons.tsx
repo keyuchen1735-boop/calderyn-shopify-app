@@ -50,6 +50,7 @@ import {
   PenLine,
   Play,
   Plus,
+  Printer,
   Radar,
   Rocket,
   RotateCcw,
@@ -167,6 +168,8 @@ export const CD_ICONS: Record<string, LucideIcon> = {
   snowflake: Snowflake,
   mapPin: MapPin,
   locate: LocateFixed,
+  printer: Printer,
+  arrowDown: ArrowDown,
 };
 
 export function CDIcon({

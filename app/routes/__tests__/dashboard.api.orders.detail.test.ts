@@ -484,9 +484,14 @@ describe("POST /dashboard/api/orders/:id/archive", () => {
 
   it("404s archive on an unknown order", async () => {
     const { action } = await import("../dashboard.api.orders.$id.archive");
-    await expect(
-      action({ request: post(url, { archived: true }), params: { id: "order-5" } } as never),
-    ).rejects.toMatchObject({ status: 404 });
+    // setOrderArchived (order.server.ts) throws a CalderynError like the fulfill/cancel
+    // executors do, so dashboardJson resolves a 404 Response rather than rejecting.
+    const res = (await action({
+      request: post(url, { archived: true }),
+      params: { id: "order-5" },
+    } as never)) as Response;
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe("order_not_found");
   });
 
   it("rejects a cross-origin request without writing", async () => {

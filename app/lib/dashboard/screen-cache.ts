@@ -70,7 +70,9 @@ export function prefetchScreenData<T>(key: string, fetcher: () => Promise<T>): P
 export const SCREEN_CACHE_KEYS = {
   liveAnalytics: "live-analytics",
   orders: "orders",
-  importedOrders: "imported-orders",
+  // The unified orders-list read model (Phase 2 Task 6), default view only (all, no search, page
+  // 1, default sort) — any other filter/search/sort/page combination is a live fetch, never cached.
+  ordersList: "orders-list",
   customers: "customers",
   collections: "collections",
   shipping: "shipping",

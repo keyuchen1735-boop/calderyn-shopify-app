@@ -16,7 +16,7 @@ import {
   fetchSkus,
   fetchUnmatchedShipCharges,
 } from "./client";
-import { fetchImportedOrders, fetchOrdersPage } from "./orders-client";
+import { fetchOrdersList, fetchOrdersPage } from "./orders-client";
 import { fetchCustomersPage } from "./customers-client";
 import { fetchShippingSummary } from "./shipping-client";
 import { fetchPaymentsPage } from "./payments-client";
@@ -38,6 +38,9 @@ import {
 // cache is hot and they cost nothing.
 const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.orders, fetchOrdersPage],
+  // Unified orders list (Phase 2 Task 6), default view only — the screen's own mount fetch reads
+  // this exact key/params, so the seed always matches what it would have fetched itself.
+  [SCREEN_CACHE_KEYS.ordersList, () => fetchOrdersList({})],
   [analyticsCacheKey(30), () => fetchCommerceAnalytics(30)],
   [SCREEN_CACHE_KEYS.customers, fetchCustomersPage],
   [SCREEN_CACHE_KEYS.shipping, fetchShippingSummary],
@@ -54,9 +57,6 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.shipCost, fetchShipCost],
   [SCREEN_CACHE_KEYS.unmatchedShip, fetchUnmatchedShipCharges],
   [SCREEN_CACHE_KEYS.learnedRules, fetchLearnedRules],
-  // Historical import history: warmed late (only imported shops have rows, and
-  // most sessions never open the subtab), but seeded so the first open paints.
-  [SCREEN_CACHE_KEYS.importedOrders, fetchImportedOrders],
   [SCREEN_CACHE_KEYS.liveAnalytics, fetchLiveAnalytics],
   [catalogCacheKey("", undefined), () => fetchProducts()],
 ];

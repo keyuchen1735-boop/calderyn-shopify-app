@@ -139,3 +139,49 @@ Each send lands a timeline event.
 - Isolated worktree `feat/orders-core` off `origin/main` (never on top of in-flight branches).
 - Sequential PRs, each independently gated: **(1)** refund restock + refund-reason UI + agentic reserve, **(2)** fulfillment/cancel spine + tables + emails, **(3)** order detail page + list changes + modals.
 - Prod migrations land with their PR, verified by object existence.
+
+---
+
+# Phase 2 — list power tools (designed 2026-07-09 after Phase 1; adversarially verified, revisions folded in)
+
+## 1. Unified list read model (the foundation)
+
+**SQL function `list_orders_unified(...)`** (plain function, `set search_path=''`, service-role called, shop_id always bound) UNIONs native `orders` (excluding `channel='test'`, excluding stalled `checkout_pending` past the 1-hour abandon cutoff, exactly like today's `listOrders`) and `imported_order` into one row shape:
+
+- `source` ('calderyn' | 'shopify'), `id`, `ref` (native: first-8 hex of the uuid, uppercased; imported: `order_number`), `buyer_email` (`buyer_dim` join on both — imported rows use their relinked `buyer_id`, which finally gives migrated history a customer column), `total_cents`, `currency`, `payment_status` (both sides' `financial_status`; native falls back to 'pending'), `state` (imported rows carry their financial status here, mirroring the shipped client convention so the fulfillment badge stays native-only), `cancelled_at`/`archived_at` (native only, null for imported), `occurred_at` (`created_at` vs `processed_at`), `item_count` (lateral sum), `tags` (native lateral array_agg; empty for imported), `remaining_refundable_cents` (native lateral over `transaction_ledger` capture/refund sums, gross-total fallback — the list row's Refund button depends on it), `full_count` (`count(*) over ()`).
+
+**Parameters:** `p_search` (matches ref prefix — native via `replace(id::text,'-','')`, imported via `order_number` — OR buyer email substring OR exact tag, case-insensitive), `p_payment_status[]`, `p_fulfillment_status` ('unfulfilled' | 'partially_fulfilled' | 'fulfilled'), `p_source`, `p_date_from/to`, `p_tag`, `p_archived` (default excludes archived), `p_sort` ('date' | 'total' | 'customer', asc/desc), `p_offset` + `p_limit` (≤100; UI uses 50).
+
+**Fulfillment-filter rule (explicit):** a fulfillment-status filter EXCLUDES imported rows — they carry no fulfillment concept, and the filter's job is a work queue. The UI notes this next to the control. Native mapping: unfulfilled = state 'paid' with no coverage; partially_fulfilled / fulfilled = their states.
+
+## 2. Saved views
+
+New `order_view` table (id, shop_id, name 1-60, filters jsonb, position, created_at; RLS shop_scope + revoke, unique (shop_id, name)). System preset tabs are code, not rows: All / Unfulfilled / Unpaid / Archived. CRUD: list+create+delete (rename = delete+create; no edit-in-place in phase 2).
+
+## 3. Bulk actions (native orders only, ≤25 ids per call)
+
+- `POST dashboard.api.orders.bulk.fulfill` — body `{ order_ids, notify, idempotency_key }`. NO tracking/carrier fields — bulk fulfill is "mark all remaining lines shipped" only; tracking entry stays per-order in FulfillModal (one tracking number must never be stamped on 25 shipments).
+- `POST dashboard.api.orders.bulk.archive` — `{ order_ids, archived }`.
+- `POST dashboard.api.orders.bulk.tags` — `{ order_ids, add_tags }` — ADDITIVE ONLY via a new union helper (existing ∪ add_tags, capped at 20). The single-order full-replace route is never used for bulk (silent tag wipe-out).
+- Each loops the existing audited executors/helpers with derived per-order keys `${idempotency_key}:${orderId}`, parallel batches of 5, and returns a per-order result array `{ order_id, ok, error? }` — partial failure is normal output, and a client retry with the same key is idempotent per order.
+- `vercel.json` gains `maxDuration: 60` for the two mutation-heavy routes (bulk.fulfill and export); default budgets are too thin for 25 executor loops.
+
+## 4. CSV export
+
+`GET dashboard.api.orders.export` honoring the exact list filters; loops `list_orders_unified` pages of **1000** (PostgREST clamps every response at 1000 rows — a larger p_limit silently truncates), 10k row cap with a truncation marker row, streams `text/csv` as an attachment. Columns: ref, date, source, customer, total, currency, payment status, fulfillment status, item count, tags, cancelled, archived.
+
+## 5. Printable packing slips + invoices
+
+`app/routes/dashboard.orders.print.$id.tsx` — full-page NON-SPA route (`requireDashboardSession`), `?doc=packing-slip|invoice`, rendered from the existing `loadOrderDetail`, minimal print-friendly inline-styled HTML (no dashboard chrome), browser print → PDF. **Opened via `window.open`/`target=_blank` only** (the po.pdf precedent) — never `app.navigate`; the SPA router cannot and should not parse this path. Packing slip: items + quantities + shipping address, no prices. Invoice: items with prices, payment breakdown, shop name. Print buttons live on the order detail screen.
+
+## 6. UI (Orders screen rework)
+
+- Toolbar above the list: debounced search input, filter controls (payment status, fulfillment status, source, date range), sort menu, view tabs (system presets + saved views with a "Save current view" affordance + per-view delete).
+- Pagination footer ("1-50 of N", prev/next).
+- Row checkboxes + select-page; bulk bar (Fulfill, Archive/Unarchive, Add tag) appears on selection with per-order failure reporting in the completion toast.
+- **Data flow + cache (explicit):** a NEW `GET dashboard.api.orders.list` route wraps the RPC; the old bundle endpoint (`dashboard.api.orders`) keeps serving drafts/abandoned/shipCharges for the other subtabs (its `orders` field stays for back-compat but the screen stops reading it). `fetchImportedOrders` leaves the Orders screen (endpoint kept — other consumers unaffected). Screen cache: the DEFAULT view's first page seeds + writes through under a new `SCREEN_CACHE_KEYS.ordersList`, with a matching `WARM_TARGETS` swap (list default view replaces the importedOrders warm entry); filtered/paged results are fetched live, never warm-cached.
+- The detail screen, modals, drafts/abandoned/ship-charges tabs are untouched.
+
+## 7. Rollout
+
+Branch `feat/orders-power-tools` stacked on `feat/orders-detail-ui`; one PR (4/4 of this train) stacked on #403. Migration applied to prod with object verification before the PR opens. Same gate as Phase 1.

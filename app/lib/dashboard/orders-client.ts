@@ -1,6 +1,6 @@
 // Client fetchers for the owned-orders dashboard surface. Kept in its own
 // module (not client.ts) so parallel surface work never collides on one file.
-import { apiGet, apiSend } from "./client";
+import { apiGet, apiSend, DashboardApiError } from "./client";
 import type {
   OrderRow,
   DraftCartRow,
@@ -10,10 +10,12 @@ import type {
 } from "~/lib/order/list-types";
 import type { ImportedOrdersPage } from "~/lib/order/imported-list-types";
 import type { OrderDetail } from "~/lib/order/detail-types";
+import type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage } from "~/lib/order/unified-list-types";
 
 export type { OrderRow, DraftCartRow, AbandonedCheckoutRow, ShipChargeRow, OrdersPage };
 export type { ImportedOrdersPage };
 export type { OrderDetail };
+export type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage };
 
 export async function fetchOrdersPage(): Promise<OrdersPage> {
   return apiGet<OrdersPage>("/dashboard/api/orders");
@@ -155,4 +157,225 @@ export async function setOrderArchived(orderId: string, archived: boolean): Prom
     { archived },
   );
   return data.archived;
+}
+
+// --- unified list + saved views (Phase 2 Task 2) ----------------------------
+
+interface UnifiedOrderRowWire {
+  source: "calderyn" | "shopify";
+  id: string;
+  ref: string;
+  buyer_email: string | null;
+  total_cents: number;
+  currency: string;
+  payment_status: string;
+  state: string;
+  cancelled_at: string | null;
+  archived_at: string | null;
+  occurred_at: string;
+  item_count: number;
+  tags: string[];
+  remaining_refundable_cents: number;
+}
+
+function mapUnifiedRow(row: UnifiedOrderRowWire): UnifiedOrderRow {
+  return {
+    source: row.source,
+    id: row.id,
+    ref: row.ref,
+    buyerEmail: row.buyer_email,
+    totalCents: row.total_cents,
+    currency: row.currency,
+    paymentStatus: row.payment_status,
+    state: row.state,
+    cancelledAt: row.cancelled_at,
+    archivedAt: row.archived_at,
+    occurredAt: row.occurred_at,
+    itemCount: row.item_count,
+    tags: row.tags,
+    remainingRefundableCents: row.remaining_refundable_cents,
+  };
+}
+
+/** OrdersListParams -> the query string the list/export routes both parse (parseOrdersListParams
+ *  on the server). Shared by fetchOrdersList and the Export CSV link (dashboard.api.orders.export)
+ *  so the two routes are ALWAYS handed an identical filter surface for "the same view" — building
+ *  the export URL any other way risks a silent drift between what's on screen and what's exported.
+ *  Omits any param that's undefined/empty so the querystring stays minimal. */
+export function ordersListParamsToQueryString(params: OrdersListParams): string {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set("search", params.search);
+  if (params.paymentStatus?.length) qs.set("payment_status", params.paymentStatus.join(","));
+  if (params.fulfillmentStatus) qs.set("fulfillment_status", params.fulfillmentStatus);
+  if (params.source) qs.set("source", params.source);
+  if (params.dateFrom) qs.set("date_from", params.dateFrom);
+  if (params.dateTo) qs.set("date_to", params.dateTo);
+  if (params.tag) qs.set("tag", params.tag);
+  if (params.archived !== undefined) qs.set("archived", params.archived ? "true" : "false");
+  if (params.sort) qs.set("sort", params.sort);
+  if (params.dir) qs.set("dir", params.dir);
+  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  return qs.toString();
+}
+
+/** Search/filter/sort/paginate across native + imported orders (Phase 2 list power tools). */
+export async function fetchOrdersList(params: OrdersListParams): Promise<UnifiedOrdersPage> {
+  const qsString = ordersListParamsToQueryString(params);
+  const suffix = qsString ? `?${qsString}` : "";
+
+  const data = await apiGet<{
+    rows: UnifiedOrderRowWire[];
+    total_count: number;
+    offset: number;
+    limit: number;
+  }>(`/dashboard/api/orders/list${suffix}`);
+  return {
+    rows: data.rows.map(mapUnifiedRow),
+    totalCount: data.total_count,
+    offset: data.offset,
+    limit: data.limit,
+  };
+}
+
+/** A merchant-saved orders-list filter preset. */
+export interface OrderViewVM {
+  id: string;
+  name: string;
+  filters: Record<string, unknown>;
+  position: number;
+}
+
+/** List the shop's saved order-list views, in display order. */
+export async function fetchOrderViews(): Promise<OrderViewVM[]> {
+  const data = await apiGet<{ views: OrderViewVM[] }>("/dashboard/api/orders/views");
+  return data.views;
+}
+
+/** Save the current toolbar filters as a named view. 409s (DashboardApiError) on a duplicate
+ *  name; 422s past the per-shop saved-view cap. */
+export async function createOrderView(name: string, filters: Record<string, unknown>): Promise<OrderViewVM> {
+  const data = await apiSend<{ view: OrderViewVM }>("POST", "/dashboard/api/orders/views", { name, filters });
+  return data.view;
+}
+
+/** Delete a saved view by id. */
+export async function deleteOrderView(id: string): Promise<void> {
+  await apiSend<{ deleted: true }>("DELETE", `/dashboard/api/orders/views?id=${encodeURIComponent(id)}`);
+}
+
+// --- bulk order actions (Phase 2 Task 3) -------------------------------------
+
+/** One order's outcome from a bulk action: ok + a small per-action result, or ok:false + a
+ *  plain-language error — never thrown per-order, since partial failure across a bulk
+ *  selection is normal, expected output. */
+export interface BulkResultVM {
+  orderId: string;
+  ok: boolean;
+  error?: string;
+}
+
+interface BulkResultWire {
+  order_id: string;
+  ok: boolean;
+  error?: string;
+}
+
+function mapBulkResults(rows: BulkResultWire[]): BulkResultVM[] {
+  return rows.map((r) => ({ orderId: r.order_id, ok: r.ok, error: r.error }));
+}
+
+// The orders list's page size is 50 (fetchOrdersList's default limit), so "select all on this
+// page" can hand these functions up to 50 ids — but the server-side bulk routes cap a single
+// request at MAX_BULK_ORDERS = 25 (app/lib/order/bulk.server.ts) and 422 the WHOLE request over
+// that, taking the entire selection down with it. Chunk into slices of at most this size and send
+// them one at a time (never Promise.all) so a full-page bulk action never doubles the server's
+// intended concurrent load.
+const BULK_CHUNK_SIZE = 25;
+
+/** Split `items` into consecutive slices of at most `size` elements each. */
+export function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+/** Run a bulk-action sender over `orderIds` in <=BULK_CHUNK_SIZE slices, SEQUENTIALLY (each slice
+ *  awaited before the next is sent), concatenating every slice's `results` into one flat array so
+ *  callers see the same shape they would from a single request.
+ *
+ *  A single request's per-order failures are already captured inside its `results` (that's
+ *  runBulkOrderAction's whole design, server-side) and never throw. But now that one logical bulk
+ *  action can span 2-3 HTTP requests, a WHOLE chunk can still reject outright (network blip,
+ *  expired session, a 5xx) after one or more earlier chunks already succeeded. Losing those
+ *  already-applied results by letting the rejection propagate would both discard real work from
+ *  the caller's summary AND skip its post-action refetch, leaving the screen showing stale data
+ *  for orders that in fact changed. So a chunk-level rejection is caught here and downgraded to
+ *  per-order `ok:false` entries for just that slice — the same "partial failure is normal, never
+ *  a whole-request throw" contract runBulkOrderAction already guarantees within one request. */
+async function runBulkInChunks(
+  orderIds: string[],
+  send: (slice: string[]) => Promise<{ results: BulkResultVM[] }>,
+): Promise<{ results: BulkResultVM[] }> {
+  const results: BulkResultVM[] = [];
+  for (const slice of chunk(orderIds, BULK_CHUNK_SIZE)) {
+    try {
+      const { results: sliceResults } = await send(slice);
+      results.push(...sliceResults);
+    } catch (err) {
+      const message = err instanceof DashboardApiError ? err.message : "Something went wrong.";
+      for (const orderId of slice) results.push({ orderId, ok: false, error: message });
+    }
+  }
+  return { results };
+}
+
+/** Fulfill every selected order in full (no per-order lines/tracking/carrier — that stays a
+ *  single-order-only refinement). Native orders only; imported (shopify:) ids 422 the whole
+ *  request. `idempotencyKey` is the outer key — the server derives one per order internally, so
+ *  reusing it across chunked requests below is safe (each order still gets its own derived key). */
+export async function bulkFulfillOrders(
+  orderIds: string[],
+  notify: boolean,
+  idempotencyKey: string,
+): Promise<{ results: BulkResultVM[] }> {
+  return runBulkInChunks(orderIds, async (slice) => {
+    const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/fulfill", {
+      order_ids: slice,
+      notify,
+      idempotency_key: idempotencyKey,
+    });
+    return { results: mapBulkResults(data.results) };
+  });
+}
+
+/** Archive or unarchive every selected order. Native orders only. */
+export async function bulkArchiveOrders(
+  orderIds: string[],
+  archived: boolean,
+): Promise<{ results: BulkResultVM[] }> {
+  return runBulkInChunks(orderIds, async (slice) => {
+    const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/archive", {
+      order_ids: slice,
+      archived,
+    });
+    return { results: mapBulkResults(data.results) };
+  });
+}
+
+/** Add tags to every selected order WITHOUT removing any tag already there (additive, never the
+ *  full-replace path setOrderTags uses). Native orders only. */
+export async function bulkAddOrderTags(
+  orderIds: string[],
+  addTags: string[],
+): Promise<{ results: BulkResultVM[] }> {
+  return runBulkInChunks(orderIds, async (slice) => {
+    const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/tags", {
+      order_ids: slice,
+      add_tags: addTags,
+    });
+    return { results: mapBulkResults(data.results) };
+  });
 }
