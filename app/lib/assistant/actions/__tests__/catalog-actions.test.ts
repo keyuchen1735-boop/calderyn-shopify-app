@@ -20,6 +20,12 @@ vi.mock("../../../calderyn.server", () => ({
   calderynClient: () => ({ guardrails: { get: async () => ({ max_price_change_pct: 20 }) } }),
 }));
 
+const updateLocationDetails = vi.fn(async () => undefined);
+
+vi.mock("../../../catalog/locations.server", () => ({
+  updateLocationDetails: (...a: unknown[]) => updateLocationDetails(...(a as [])),
+}));
+
 vi.mock("../../../supabase.server", () => ({
   getSupabase: () => ({
     from: () => ({
@@ -56,6 +62,7 @@ describe("catalog actions", () => {
     vi.mocked(saveStudioAccent).mockClear();
     vi.mocked(saveStudioVibe).mockClear();
     vi.mocked(publishStudioStore).mockClear();
+    updateLocationDetails.mockClear();
   });
 
   it("create_product builds a draft ProductInput with one variant at price_cents", async () => {
@@ -206,5 +213,48 @@ describe("catalog actions", () => {
     expect(v.ok).toBe(true);
     await a.run(ctx, (v as OkV).value);
     expect(saveStudioVibe).toHaveBeenCalledWith("shop-1", "bold");
+  });
+
+  describe("set_location_details", () => {
+    it("requires location_id", () => {
+      const a = byName("set_location_details");
+      expect(a.validate({ priority: 1 }).ok).toBe(false);
+      expect(a.validate({ location_id: "loc-1" }).ok).toBe(false);
+    });
+
+    it("rejects when no patch field is present besides location_id", () => {
+      const a = byName("set_location_details");
+      const v = a.validate({ location_id: "loc-1" });
+      expect(v.ok).toBe(false);
+    });
+
+    it("builds a partial LocationPatch from only the present fields", () => {
+      const a = byName("set_location_details");
+      const v = a.validate({ location_id: "loc-1", city: "Austin", priority: 2 });
+      expect(v.ok).toBe(true);
+      expect((v as OkV).value).toEqual({ location_id: "loc-1", patch: { city: "Austin", priority: 2 } });
+    });
+
+    it("accepts lat/lng as null (to clear them)", () => {
+      const a = byName("set_location_details");
+      const v = a.validate({ location_id: "loc-1", lat: null, lng: null });
+      expect(v.ok).toBe(true);
+      expect((v as OkV).value).toEqual({ location_id: "loc-1", patch: { lat: null, lng: null } });
+    });
+
+    it("calls updateLocationDetails(sb, shopId, locationId, patch)", async () => {
+      const a = byName("set_location_details");
+      const v = a.validate({ location_id: "loc-1", city: "Austin" });
+      expect(v.ok).toBe(true);
+      const r = await a.run(ctx, (v as OkV).value);
+      expect(updateLocationDetails).toHaveBeenCalledWith(expect.anything(), "shop-1", "loc-1", { city: "Austin" });
+      expect(r.summary).toBe("Updated the location");
+    });
+
+    it("is execute-tier, not undoable", () => {
+      const a = byName("set_location_details");
+      expect(a.tier).toBe("execute");
+      expect(a.undoable).toBe(false);
+    });
   });
 });

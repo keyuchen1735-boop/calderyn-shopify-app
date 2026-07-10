@@ -21,6 +21,7 @@ import {
   publishStudioStore,
 } from "../../storebuilder/studio.server";
 import type { StudioVibe } from "../../storebuilder/studio-types";
+import { updateLocationDetails, type LocationPatch } from "../../catalog/locations.server";
 import type { ActionReceipt, AssistantAction, ValidationResult } from "./registry-types";
 
 function str(v: unknown): string | null {
@@ -312,6 +313,72 @@ export const CATALOG_ACTIONS: AssistantAction[] = [
         summary: "Published the store",
         auditId: null,
         undoable: false,
+      };
+    },
+  },
+  {
+    name: "set_location_details",
+    description:
+      "Update a fulfillment location's address, priority, or geocoordinates. location_id comes from catalog/location reads. priority is an integer (lower ranks first for allocation); lat/lng are numbers, or null to clear them; street1/street2/city/region/postal_code/country are plain strings. At least one field besides location_id is required.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        location_id: { type: "string" },
+        priority: { type: "number" },
+        lat: { type: "number" },
+        lng: { type: "number" },
+        street1: { type: "string" },
+        street2: { type: "string" },
+        city: { type: "string" },
+        region: { type: "string" },
+        postal_code: { type: "string" },
+        country: { type: "string" },
+      },
+      required: ["location_id"],
+    },
+    tier: "execute",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      const locationId = str(i.location_id);
+      if (!locationId) return { ok: false, message: "location_id is required" };
+
+      const patch: LocationPatch = {};
+      if (i.priority !== undefined && i.priority !== null) {
+        const p = Number(i.priority);
+        if (!Number.isInteger(p)) return { ok: false, message: "priority must be an integer" };
+        patch.priority = p;
+      }
+      if (i.lat !== undefined) {
+        if (i.lat !== null && typeof i.lat !== "number") return { ok: false, message: "lat must be a number or null" };
+        patch.lat = i.lat === null ? null : i.lat;
+      }
+      if (i.lng !== undefined) {
+        if (i.lng !== null && typeof i.lng !== "number") return { ok: false, message: "lng must be a number or null" };
+        patch.lng = i.lng === null ? null : i.lng;
+      }
+      const stringKeys = ["street1", "street2", "city", "region", "postal_code", "country"] as const;
+      for (const key of stringKeys) {
+        if (i[key] !== undefined) {
+          if (typeof i[key] !== "string") return { ok: false, message: `${key} must be a string` };
+          patch[key] = i[key];
+        }
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return { ok: false, message: "at least one field to update is required (besides location_id)" };
+      }
+      return { ok: true, value: { location_id: locationId, patch } };
+    },
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      const locationId = String(i.location_id);
+      const patch = i.patch as LocationPatch;
+      await updateLocationDetails(getSupabase(), ctx.shopId, locationId, patch);
+      return {
+        action: "set_location_details",
+        summary: "Updated the location",
+        auditId: null,
+        undoable: false,
+        detail: { location_id: locationId, patch },
       };
     },
   },

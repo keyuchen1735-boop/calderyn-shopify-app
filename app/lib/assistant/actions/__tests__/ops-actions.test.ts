@@ -65,6 +65,17 @@ vi.mock("../../../calderyn.server", () => ({
 
 vi.mock("../../../supabase.server", () => ({ getSupabase: () => ({}) }));
 
+const setShipCostMode = vi.fn(async () => undefined);
+const saveTypedPeriodTotal = vi.fn(async () => undefined);
+const setManualOverride = vi.fn(async () => undefined);
+
+vi.mock("../../../ship-cost/inputs.server", () => ({
+  SHIP_COST_MODES: ["auto", "force_measured", "force_reconciled"],
+  setShipCostMode: (...a: unknown[]) => setShipCostMode(...(a as [])),
+  saveTypedPeriodTotal: (...a: unknown[]) => saveTypedPeriodTotal(...(a as [])),
+  setManualOverride: (...a: unknown[]) => setManualOverride(...(a as [])),
+}));
+
 // eslint-disable-next-line import/first -- import must follow vi.mock setup
 import { OPS_ACTIONS } from "../ops-actions.server";
 // eslint-disable-next-line import/first -- import must follow vi.mock setup
@@ -99,6 +110,9 @@ describe("ops actions", () => {
     guardrailsUpdate.mockClear();
     integrationsDisconnect.mockClear();
     consentSet.mockClear();
+    setShipCostMode.mockClear();
+    saveTypedPeriodTotal.mockClear();
+    setManualOverride.mockClear();
   });
 
   describe("snooze_alert", () => {
@@ -302,6 +316,100 @@ describe("ops actions", () => {
     });
   });
 
+  describe("set_ship_cost_mode", () => {
+    it("is execute-tier and only accepts auto|force_measured|force_reconciled", () => {
+      const a = byName("set_ship_cost_mode");
+      expect(a.tier).toBe("execute");
+      expect(a.undoable).toBe(false);
+      expect(a.validate({}).ok).toBe(false);
+      expect(a.validate({ mode: "bogus" }).ok).toBe(false);
+      expect(a.validate({ mode: "force_measured" }).ok).toBe(true);
+    });
+
+    it("calls setShipCostMode(sb, shopId, mode)", async () => {
+      const a = byName("set_ship_cost_mode");
+      await a.run(ctx, { mode: "force_reconciled" });
+      expect(setShipCostMode).toHaveBeenCalledWith(expect.anything(), "shop-1", "force_reconciled");
+    });
+  });
+
+  describe("add_ship_cost_period", () => {
+    it("requires amount_cents (positive int), period_start, period_end", () => {
+      const a = byName("add_ship_cost_period");
+      expect(a.validate({}).ok).toBe(false);
+      expect(a.validate({ amount_cents: 0, period_start: "2026-06-01", period_end: "2026-06-30" }).ok).toBe(false);
+      expect(a.validate({ amount_cents: -100, period_start: "2026-06-01", period_end: "2026-06-30" }).ok).toBe(false);
+      expect(a.validate({ amount_cents: 4200, period_start: "", period_end: "2026-06-30" }).ok).toBe(false);
+      expect(a.validate({ amount_cents: 4200, period_start: "2026-06-01", period_end: "2026-06-30" }).ok).toBe(true);
+    });
+
+    it("passes amount_cents through as totalCents without multiplying, plus carrier/period mapping", async () => {
+      const a = byName("add_ship_cost_period");
+      await a.run(ctx, {
+        amount_cents: 4200,
+        period_start: "2026-06-01",
+        period_end: "2026-06-30",
+        carrier: "ups",
+      });
+      expect(saveTypedPeriodTotal).toHaveBeenCalledWith(expect.anything(), "shop-1", {
+        totalCents: 4200,
+        carrier: "ups",
+        periodStart: "2026-06-01",
+        periodEnd: "2026-06-30",
+        shopCountry: null,
+      });
+    });
+
+    it("defaults carrier to null when omitted", async () => {
+      const a = byName("add_ship_cost_period");
+      await a.run(ctx, { amount_cents: 100, period_start: "2026-06-01", period_end: "2026-06-30" });
+      expect(saveTypedPeriodTotal).toHaveBeenCalledWith(
+        expect.anything(),
+        "shop-1",
+        expect.objectContaining({ carrier: null }),
+      );
+    });
+
+    it("is execute-tier", () => {
+      expect(byName("add_ship_cost_period").tier).toBe("execute");
+    });
+  });
+
+  describe("set_order_ship_cost_override", () => {
+    it("requires order_id; amount_cents is optional and must be a non-negative int when present", () => {
+      const a = byName("set_order_ship_cost_override");
+      expect(a.validate({}).ok).toBe(false);
+      expect(a.validate({ order_id: "o1", amount_cents: -1 }).ok).toBe(false);
+      expect(a.validate({ order_id: "o1" }).ok).toBe(true);
+      expect(a.validate({ order_id: "o1", amount_cents: 0 }).ok).toBe(true);
+      expect(a.validate({ order_id: "o1", amount_cents: 500 }).ok).toBe(true);
+    });
+
+    it("passes cents: null when amount_cents is omitted (clears the override)", async () => {
+      const a = byName("set_order_ship_cost_override");
+      await a.run(ctx, { order_id: "o1" });
+      expect(setManualOverride).toHaveBeenCalledWith(expect.anything(), "shop-1", {
+        orderId: "o1",
+        cents: null,
+        shopCountry: null,
+      });
+    });
+
+    it("passes cents: amount_cents when present", async () => {
+      const a = byName("set_order_ship_cost_override");
+      await a.run(ctx, { order_id: "o1", amount_cents: 750 });
+      expect(setManualOverride).toHaveBeenCalledWith(expect.anything(), "shop-1", {
+        orderId: "o1",
+        cents: 750,
+        shopCountry: null,
+      });
+    });
+
+    it("is execute-tier", () => {
+      expect(byName("set_order_ship_cost_override").tier).toBe("execute");
+    });
+  });
+
   it("every OPS_ACTIONS entry has the expected tier", () => {
     const executeNames = [
       "snooze_alert",
@@ -310,6 +418,9 @@ describe("ops actions", () => {
       "toggle_feature_autonomy",
       "start_import",
       "set_peer_consent",
+      "set_ship_cost_mode",
+      "add_ship_cost_period",
+      "set_order_ship_cost_override",
     ];
     const confirmNames = ["issue_refund", "update_guardrails", "disconnect_integration"];
     for (const n of executeNames) expect(byName(n).tier).toBe("execute");

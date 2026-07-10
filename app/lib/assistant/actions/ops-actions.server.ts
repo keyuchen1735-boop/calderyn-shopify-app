@@ -14,6 +14,13 @@ import { startImport, kickDrainSoon } from "../../import/run.server";
 import { calderynClient } from "../../calderyn.server";
 import { validateGuardrailPatch } from "../../dashboard/guardrails-validation";
 import { getSupabase } from "../../supabase.server";
+import {
+  setShipCostMode,
+  saveTypedPeriodTotal,
+  setManualOverride,
+  SHIP_COST_MODES,
+  type ShipCostMode,
+} from "../../ship-cost/inputs.server";
 import type { ActionKind, GuardrailConfig } from "../../types";
 import type { ActionReceipt, AssistantAction, ValidationResult } from "./registry-types";
 
@@ -25,6 +32,10 @@ function str(v: unknown): string | null {
 function posInt(v: unknown): number | null {
   const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : null;
+}
+function nonNegInt(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 // Same list as dashboard.api.guardrails.tsx's PATCHABLE_KEYS — kept in sync
@@ -326,6 +337,129 @@ export const OPS_ACTIONS: AssistantAction[] = [
         auditId: null,
         undoable: false,
         detail: { patch, guardrails: updated },
+      };
+    },
+  },
+  {
+    name: "set_ship_cost_mode",
+    description:
+      "Set how this shop's per-order shipping cost is estimated: auto (best available signal), force_measured (always prefer carrier-measured cost when present), or force_reconciled (always prefer the reconciled/typed period total).",
+    inputSchema: {
+      type: "object",
+      properties: { mode: { type: "string", enum: [...SHIP_COST_MODES] } },
+      required: ["mode"],
+    },
+    tier: "execute",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      const mode = str(i.mode);
+      if (!mode || !(SHIP_COST_MODES as readonly string[]).includes(mode)) {
+        return { ok: false, message: `mode must be one of ${SHIP_COST_MODES.join(", ")}` };
+      }
+      return { ok: true, value: { mode } };
+    },
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      const mode = i.mode as ShipCostMode;
+      await setShipCostMode(getSupabase(), ctx.shopId, mode);
+      return {
+        action: "set_ship_cost_mode",
+        summary: `Set the shipping-cost mode to ${mode}`,
+        auditId: null,
+        undoable: false,
+        detail: { mode },
+      };
+    },
+  },
+  {
+    name: "add_ship_cost_period",
+    description:
+      "Record a known total shipping spend (e.g. from a carrier invoice) for a date range, used to reconcile per-order shipping cost estimates. amount_cents is the total spend in cents; period_start/period_end are ISO date strings (e.g. 2026-06-01). carrier is optional (e.g. ups, usps, fedex).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        amount_cents: { type: "number" },
+        period_start: { type: "string" },
+        period_end: { type: "string" },
+        carrier: { type: "string" },
+      },
+      required: ["amount_cents", "period_start", "period_end"],
+    },
+    tier: "execute",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      const amountCents = posInt(i.amount_cents);
+      const periodStart = str(i.period_start);
+      const periodEnd = str(i.period_end);
+      if (!amountCents) return { ok: false, message: "amount_cents must be a positive integer (cents)" };
+      if (!periodStart) return { ok: false, message: "period_start is required (ISO date)" };
+      if (!periodEnd) return { ok: false, message: "period_end is required (ISO date)" };
+      const value: Record<string, unknown> = {
+        amount_cents: amountCents,
+        period_start: periodStart,
+        period_end: periodEnd,
+      };
+      const carrier = str(i.carrier);
+      if (carrier) value.carrier = carrier;
+      return { ok: true, value };
+    },
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      const amountCents = Number(i.amount_cents);
+      const periodStart = String(i.period_start);
+      const periodEnd = String(i.period_end);
+      const carrier = typeof i.carrier === "string" ? i.carrier : null;
+      await saveTypedPeriodTotal(getSupabase(), ctx.shopId, {
+        totalCents: amountCents,
+        carrier,
+        periodStart,
+        periodEnd,
+        shopCountry: null,
+      });
+      return {
+        action: "add_ship_cost_period",
+        summary: `Recorded $${(amountCents / 100).toFixed(2)} shipping spend for ${periodStart} to ${periodEnd}`,
+        auditId: null,
+        undoable: false,
+        detail: { amount_cents: amountCents, period_start: periodStart, period_end: periodEnd, carrier },
+      };
+    },
+  },
+  {
+    name: "set_order_ship_cost_override",
+    description:
+      "Manually set (or clear) an order's shipping cost override. order_id is the orders.id from order reads (not the Shopify order id). amount_cents is in cents; omit it (or pass null) to clear the override and fall back to the computed estimate.",
+    inputSchema: {
+      type: "object",
+      properties: { order_id: { type: "string" }, amount_cents: { type: "number" } },
+      required: ["order_id"],
+    },
+    tier: "execute",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      const orderId = str(i.order_id);
+      if (!orderId) return { ok: false, message: "order_id is required" };
+      let amountCents: number | undefined;
+      if (i.amount_cents !== undefined && i.amount_cents !== null) {
+        const cents = nonNegInt(i.amount_cents);
+        if (cents === null) return { ok: false, message: "amount_cents must be a non-negative integer (cents)" };
+        amountCents = cents;
+      }
+      const value: Record<string, unknown> = { order_id: orderId };
+      if (amountCents !== undefined) value.amount_cents = amountCents;
+      return { ok: true, value };
+    },
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      const orderId = String(i.order_id);
+      const cents = i.amount_cents === undefined || i.amount_cents === null ? null : Number(i.amount_cents);
+      await setManualOverride(getSupabase(), ctx.shopId, { orderId, cents, shopCountry: null });
+      return {
+        action: "set_order_ship_cost_override",
+        summary:
+          cents === null
+            ? `Cleared the shipping cost override for order ${orderId}`
+            : `Set order ${orderId}'s shipping cost override to $${(cents / 100).toFixed(2)}`,
+        auditId: null,
+        undoable: false,
+        detail: { order_id: orderId, amount_cents: cents },
       };
     },
   },
