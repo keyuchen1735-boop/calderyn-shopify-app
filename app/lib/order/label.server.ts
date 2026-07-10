@@ -26,7 +26,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
-import { decrypt } from "~/lib/crypto.server";
+import { loadEasyPostApiKey } from "~/lib/ship-cost/adapters/easypost.server";
 import { CalderynError } from "../calderyn.server";
 import { getShopOrigin } from "~/lib/commerce/origin.server";
 import { PICKUP_SERVICE_NAME } from "~/lib/commerce/types";
@@ -62,21 +62,15 @@ const REAL_ADAPTER: LabelAdapter = {
 };
 
 async function loadApiKey(shopId: string, sb: SupabaseClient): Promise<string> {
-  const { data, error } = await sb
-    .from("integration_credentials")
-    .select("access_token_encrypted")
-    .eq("shop_id", shopId)
-    .eq("kind", "easypost_ship")
-    .maybeSingle();
-  if (error) throw error;
-  if (!data?.access_token_encrypted) {
+  const apiKey = await loadEasyPostApiKey(shopId, sb);
+  if (!apiKey) {
     throw new CalderynError({
       code: "no_label_carrier",
       status: 422,
       message: "Connect EasyPost in Settings before buying shipping labels.",
     });
   }
-  return decrypt(data.access_token_encrypted as string); // throws on broken ciphertext (rule 12)
+  return apiKey;
 }
 
 interface LabelOrderContext {
