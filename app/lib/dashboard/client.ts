@@ -1598,6 +1598,28 @@ export async function fetchInventoryList(
     `/dashboard/api/catalog/inventory${qs ? `?${qs}` : ""}`,
   );
 }
+/** One purchase-order draft row: a create_po_draft audit entry with its PO
+ *  snapshot summarized. `hasPdf` mirrors the PDF route's 404 predicate, so the
+ *  download button only renders when the download can actually succeed. */
+export interface PurchaseOrderVM {
+  id: string;
+  poNumber: string | null;
+  sku: string | null;
+  lineCount: number;
+  totalCents: number | null;
+  outcome: string;
+  createdAt: string;
+  lastError: string | null;
+  hasPdf: boolean;
+}
+export async function fetchPurchaseOrders(
+  opts: { offset?: number } = {},
+): Promise<{ rows: PurchaseOrderVM[]; total: number }> {
+  const qs = opts.offset ? `?offset=${encodeURIComponent(String(opts.offset))}` : "";
+  return apiGet<{ rows: PurchaseOrderVM[]; total: number }>(
+    `/dashboard/api/catalog/purchase-orders${qs}`,
+  );
+}
 // ----- Import from Shopify (#13.promote) -----
 export interface ImportRunVM {
   id: string;

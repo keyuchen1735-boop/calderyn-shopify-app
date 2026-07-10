@@ -13,6 +13,7 @@ import {
   fetchLiveAnalytics,
   fetchLocations,
   fetchProducts,
+  fetchPurchaseOrders,
   fetchShipCost,
   fetchUnmatchedShipCharges,
 } from "./client";
@@ -54,6 +55,7 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.collections, fetchCollections],
   [SCREEN_CACHE_KEYS.transfers, fetchAllPendingTransfers],
   [SCREEN_CACHE_KEYS.locations, fetchLocations],
+  [SCREEN_CACHE_KEYS.purchaseOrders, () => fetchPurchaseOrders({})],
   [SCREEN_CACHE_KEYS.shipCost, fetchShipCost],
   [SCREEN_CACHE_KEYS.unmatchedShip, fetchUnmatchedShipCharges],
   [SCREEN_CACHE_KEYS.learnedRules, fetchLearnedRules],
