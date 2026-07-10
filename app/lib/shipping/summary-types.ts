@@ -53,6 +53,10 @@ export interface ShipRulesDtoView {
   handlingCents: number;
   freeShipThresholdCents: number | null;
   handlingDays: number;
+  /** Offer a free local-pickup option at checkout (fulfilled from the ship-from origin). */
+  pickupEnabled: boolean;
+  /** Optional buyer-facing pickup instructions shown under the checkout option. */
+  pickupNote: string | null;
 }
 
 /** One merchant flat rate row (ship_flat_rate), browser-safe. */

@@ -12,6 +12,10 @@ export interface ShipRulesDto {
   handlingCents: number;
   freeShipThresholdCents: number | null;
   handlingDays: number;
+  /** Offer a free "Pick up" option at checkout, fulfilled from shop_origin (one location v1). */
+  pickupEnabled: boolean;
+  /** Optional buyer-facing pickup instructions (hours, entrance, …), shown under the option. */
+  pickupNote: string | null;
 }
 
 export const DEFAULT_SHIP_RULES: ShipRulesDto = {
@@ -19,13 +23,15 @@ export const DEFAULT_SHIP_RULES: ShipRulesDto = {
   handlingCents: 0,
   freeShipThresholdCents: null,
   handlingDays: DEFAULT_HANDLING_DAYS,
+  pickupEnabled: false,
+  pickupNote: null,
 };
 
 export async function loadShipRules(shopId: string): Promise<ShipRulesDto> {
   if (!shopId) throw new Error("shopId is required");
   const { data, error } = await getSupabase()
     .from("ship_rules")
-    .select("markup_pct, handling_cents, free_ship_threshold_cents, handling_days")
+    .select("markup_pct, handling_cents, free_ship_threshold_cents, handling_days, pickup_enabled, pickup_note")
     .eq("shop_id", shopId)
     .maybeSingle();
   if (error) throw new Error(`ship_rules read failed: ${error.message}`);
@@ -36,6 +42,8 @@ export async function loadShipRules(shopId: string): Promise<ShipRulesDto> {
     freeShipThresholdCents:
       data.free_ship_threshold_cents == null ? null : Number(data.free_ship_threshold_cents),
     handlingDays: Number(data.handling_days ?? DEFAULT_HANDLING_DAYS),
+    pickupEnabled: data.pickup_enabled === true,
+    pickupNote: data.pickup_note == null ? null : String(data.pickup_note),
   };
 }
 
@@ -50,6 +58,8 @@ export async function saveShipRules(shopId: string, rules: ShipRulesDto): Promis
         handling_cents: rules.handlingCents,
         free_ship_threshold_cents: rules.freeShipThresholdCents,
         handling_days: rules.handlingDays,
+        pickup_enabled: rules.pickupEnabled,
+        pickup_note: rules.pickupNote,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "shop_id" },

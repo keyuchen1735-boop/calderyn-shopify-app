@@ -15,6 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { sendEmail } from "~/lib/email/send.server";
 import { formatOrderRef } from "./checkout.server";
+import { PICKUP_SERVICE_NAME } from "~/lib/commerce/types";
 import { carrierTrackingUrl } from "~/lib/shipping/tracking-url";
 import { escapeHtml } from "~/lib/pilot-invite/content";
 import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
@@ -38,6 +39,8 @@ interface OrderAndBuyer {
   ref: string;
   currency: string;
   email: string;
+  /** orders.shipping_service — "Store pickup" flips the fulfillment email to ready-for-pickup copy. */
+  shippingService: string | null;
 }
 
 /**
@@ -50,7 +53,7 @@ async function loadOrderAndBuyer(shopId: string, orderId: string): Promise<Order
   const sb: SupabaseClient = getSupabase();
   const orderRes = await sb
     .from("orders")
-    .select("id, buyer_id, currency")
+    .select("id, buyer_id, currency, shipping_service")
     .eq("shop_id", shopId)
     .eq("id", orderId)
     .maybeSingle();
@@ -77,7 +80,51 @@ async function loadOrderAndBuyer(shopId: string, orderId: string): Promise<Order
     return null;
   }
 
-  return { ref: formatOrderRef(orderId), currency: String(order.currency ?? "usd"), email };
+  return {
+    ref: formatOrderRef(orderId),
+    currency: String(order.currency ?? "usd"),
+    email,
+    shippingService: order.shipping_service == null ? null : String(order.shipping_service),
+  };
+}
+
+/**
+ * Where (and how) to collect a pickup order: the shop's origin address + the merchant's
+ * pickup note, read at send time. Best-effort — a read hiccup degrades to the bare
+ * "ready for pickup" email rather than blocking the notification.
+ */
+async function loadPickupDetails(
+  shopId: string,
+  orderId: string,
+): Promise<{ where: string | null; note: string | null }> {
+  try {
+    const sb = getSupabase();
+    const [originRes, rulesRes] = await Promise.all([
+      sb
+        .from("shop_origin")
+        .select("street1, street2, city, state, zip")
+        .eq("shop_id", shopId)
+        .maybeSingle(),
+      sb.from("ship_rules").select("pickup_note").eq("shop_id", shopId).maybeSingle(),
+    ]);
+    if (originRes.error) throw originRes.error;
+    if (rulesRes.error) throw rulesRes.error;
+    const o = (originRes.data ?? {}) as Record<string, unknown>;
+    const parts = [o.street1, o.street2, o.city, o.state, o.zip]
+      .map((v) => (v == null ? "" : String(v).trim()))
+      .filter(Boolean);
+    const noteRaw = (rulesRes.data as Record<string, unknown> | null)?.pickup_note;
+    return {
+      where: parts.length ? parts.join(", ") : null,
+      note: noteRaw == null ? null : String(noteRaw),
+    };
+  } catch (err) {
+    console.warn(
+      `[order-notify] pickup-details read failed for order ${orderId} (shop ${shopId}); sending without address:`,
+      err instanceof Error ? err.message : err,
+    );
+    return { where: null, note: null };
+  }
 }
 
 /** Resolves the Resend transport config, or null when it isn't configured (fail visibly, rule 12). */
@@ -129,26 +176,44 @@ export async function sendShippingConfirmation(
       return { sent: false, error: "email transport not configured" };
     }
 
-    const subject = `Order ${found.ref} is on the way`;
+    // A pickup order never ships: the same fulfillment flow tells the buyer it's ready to
+    // collect instead of on the way. Tracking inputs are neutralized ONCE here so every
+    // derived line below (and any future one) is pickup-correct without its own guard.
+    const isPickup = found.shippingService === PICKUP_SERVICE_NAME;
+    const trackingNumber = isPickup ? null : opts.trackingNumber ?? null;
+    const carrier = isPickup ? null : opts.carrier ?? null;
+    const pickup = isPickup ? await loadPickupDetails(shopId, orderId) : null;
+
+    const subject = isPickup
+      ? `Order ${found.ref} is ready for pickup`
+      : `Order ${found.ref} is on the way`;
     // Known carriers get a click-to-track link in the HTML body; the plain-text part
     // carries the URL on its own line so text-only clients can still follow it.
-    const trackingUrl = carrierTrackingUrl(opts.carrier, opts.trackingNumber);
-    const trackingLine = opts.trackingNumber
-      ? `Tracking: ${opts.carrier ? `${opts.carrier} ` : ""}${opts.trackingNumber}`
+    const trackingUrl = carrierTrackingUrl(carrier, trackingNumber);
+    const trackingLine = trackingNumber
+      ? `Tracking: ${carrier ? `${carrier} ` : ""}${trackingNumber}`
       : null;
+    const lead = isPickup
+      ? `Good news! Your order ${found.ref} is ready for pickup.`
+      : `Good news! Your order ${found.ref} has shipped.`;
     const text = [
-      `Good news! Your order ${found.ref} has shipped.`,
+      lead,
+      ...(pickup?.where ? ["", `Pick it up at: ${pickup.where}`] : []),
+      ...(pickup?.note ? [pickup.note] : []),
       ...(trackingLine ? ["", trackingLine] : []),
       ...(trackingUrl ? [`Track it: ${trackingUrl}`] : []),
     ].join("\n");
-    const escapedNumber = opts.trackingNumber ? escapeHtml(opts.trackingNumber) : null;
+    const escapedNumber = trackingNumber ? escapeHtml(trackingNumber) : null;
     const htmlTrackingLine = escapedNumber
-      ? `Tracking: ${opts.carrier ? `${escapeHtml(opts.carrier)} ` : ""}${
+      ? `Tracking: ${carrier ? `${escapeHtml(carrier)} ` : ""}${
           trackingUrl ? `<a href="${trackingUrl}">${escapedNumber}</a>` : escapedNumber
         }`
       : null;
     const html =
-      `<p>Good news! Your order ${found.ref} has shipped.</p>` + (htmlTrackingLine ? `<p>${htmlTrackingLine}</p>` : "");
+      `<p>${lead}</p>` +
+      (pickup?.where ? `<p>Pick it up at: ${escapeHtml(pickup.where)}</p>` : "") +
+      (pickup?.note ? `<p>${escapeHtml(pickup.note)}</p>` : "") +
+      (htmlTrackingLine ? `<p>${htmlTrackingLine}</p>` : "");
 
     const delivery = await sendEmail({ apiKey: config.apiKey, from: config.from, to: found.email, subject, text, html });
     if (!delivery.sent) {

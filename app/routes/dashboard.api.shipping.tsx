@@ -12,6 +12,7 @@ import { loadShippingSummary } from "~/lib/shipping/summary.server";
 import { saveShipRules } from "~/lib/shipping/rules.server";
 import { deleteFlatRate, upsertFlatRate, type FlatRateInput } from "~/lib/shipping/flat-rate.server";
 import { saveShopOrigin } from "~/lib/commerce/origin.server";
+import { PICKUP_SERVICE_NAME } from "~/lib/commerce/types";
 import { isKnownCountry } from "~/lib/storefront/countries";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -88,12 +89,17 @@ export async function action({ request }: ActionFunctionArgs) {
       if (threshold == null) return jsonError(422, "invalid_threshold");
       freeShipThresholdCents = Math.round(threshold * 100);
     }
+    const pickupEnabled = body.pickup_enabled === true;
+    const pickupNote = String(body.pickup_note ?? "").trim();
+    if (pickupNote.length > 200) return jsonError(422, "pickup_note_too_long");
     return applyAndRefresh(() =>
       saveShipRules(shopId, {
         markupPct,
         handlingCents: Math.round(handling * 100),
         freeShipThresholdCents,
         handlingDays: Math.round(handlingDays),
+        pickupEnabled,
+        pickupNote: pickupNote || null,
       }),
     );
   }
@@ -125,6 +131,16 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent === "add_flat_rate" || intent === "update_flat_rate") {
     const input = parseFlatRateInput(body);
     if (!input) return jsonError(422, "invalid_flat_rate");
+    // Flat-rate labels flow verbatim into orders.shipping_service, which pickup-aware
+    // surfaces (emails, receipts) treat as the pickup discriminator — a rate named like
+    // the pickup option would misclassify genuinely shipped orders as pickups.
+    if (input.label.toLowerCase() === PICKUP_SERVICE_NAME.toLowerCase()) {
+      return jsonError(
+        422,
+        "reserved_label",
+        `"${PICKUP_SERVICE_NAME}" is reserved for the local pickup option (Rates & rules). Name this rate something else.`,
+      );
+    }
     const id = intent === "update_flat_rate" ? String(body.id ?? "").trim() : undefined;
     if (intent === "update_flat_rate" && !id) return jsonError(422, "missing_id");
     return applyAndRefresh(() => upsertFlatRate(shopId, input, id));

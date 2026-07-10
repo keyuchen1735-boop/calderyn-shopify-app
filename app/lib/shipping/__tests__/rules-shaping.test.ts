@@ -13,6 +13,7 @@ describe("toMerchantShipRules", () => {
   it("carries configured knobs and converts nothing", () => {
     expect(
       toMerchantShipRules({
+        ...DEFAULT_SHIP_RULES,
         markupPct: 10,
         handlingCents: 250,
         freeShipThresholdCents: 5000,

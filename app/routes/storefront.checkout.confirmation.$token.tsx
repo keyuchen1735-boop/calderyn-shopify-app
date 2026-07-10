@@ -13,6 +13,7 @@ import { clearCartId, readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import { findOrderByConfirmationToken, formatOrderRef } from "~/lib/order/checkout.server";
+import { PICKUP_SERVICE_NAME } from "~/lib/commerce/types";
 import { getCartState } from "~/lib/order/cart.server";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
@@ -137,10 +138,15 @@ const STATUS_COPY: Record<"confirmed" | "processing" | "cancelled" | "refunded",
 export default function StorefrontCheckoutConfirmation() {
   const { ref, status, subtotalCents, shippingCents, shippingService, taxCents, totalCents, currency, lines } =
     useLoaderData<typeof loader>();
+  const pickup = shippingService === PICKUP_SERVICE_NAME;
+  const statusCopy =
+    pickup && status === "confirmed"
+      ? "Payment confirmed. We'll email you as soon as your order is ready for pickup."
+      : STATUS_COPY[status];
   return (
     <section className="cd-confirm">
       <h1>{HEADING[status]}</h1>
-      <p className="cd-confirm__status">{STATUS_COPY[status]}</p>
+      <p className="cd-confirm__status">{statusCopy}</p>
       <p className="cd-confirm__ref">
         Order reference <strong>{ref}</strong>
       </p>
@@ -157,7 +163,7 @@ export default function StorefrontCheckoutConfirmation() {
         <span>{money(subtotalCents, currency)}</span>
       </div>
       <div className="cd-confirm__row">
-        <span>Shipping{shippingService ? ` (${shippingService})` : ""}</span>
+        <span>{pickup ? "Pickup" : `Shipping${shippingService ? ` (${shippingService})` : ""}`}</span>
         <span>{shippingCents === 0 ? "Free" : money(shippingCents, currency)}</span>
       </div>
       <div className="cd-confirm__row">

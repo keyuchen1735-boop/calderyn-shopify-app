@@ -313,5 +313,7 @@ function toRulesView(rules: ShipRulesDto): ShippingSummary["rules"] {
     handlingCents: rules.handlingCents,
     freeShipThresholdCents: rules.freeShipThresholdCents,
     handlingDays: rules.handlingDays,
+    pickupEnabled: rules.pickupEnabled,
+    pickupNote: rules.pickupNote,
   };
 }

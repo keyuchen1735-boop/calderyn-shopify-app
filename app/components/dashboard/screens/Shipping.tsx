@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { Btn, Card, Pan, Pill, Placeholder } from "../ui";
+import { Btn, Card, Pan, Pill, Placeholder, Toggle } from "../ui";
 import { money } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
@@ -85,6 +85,8 @@ function RulesCard({ rules, api }: { rules: ShipRulesDtoView; api: SaveApi }) {
   const [handlingFee, setHandlingFee] = useState(dollars(rules.handlingCents));
   const [freeShip, setFreeShip] = useState(dollars(rules.freeShipThresholdCents));
   const [handlingDays, setHandlingDays] = useState(rules.handlingDays.toString());
+  const [pickup, setPickup] = useState(rules.pickupEnabled);
+  const [pickupNote, setPickupNote] = useState(rules.pickupNote ?? "");
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -95,6 +97,8 @@ function RulesCard({ rules, api }: { rules: ShipRulesDtoView; api: SaveApi }) {
         handling_fee: handlingFee === "" ? 0 : handlingFee,
         free_ship_threshold: freeShip,
         handling_days: handlingDays === "" ? 1 : handlingDays,
+        pickup_enabled: pickup,
+        pickup_note: pickupNote,
       },
       "Shipping rules saved.",
     );
@@ -160,6 +164,32 @@ function RulesCard({ rules, api }: { rules: ShipRulesDtoView; api: SaveApi }) {
           within&rdquo; sets the handling time buyers see in delivery estimates; an item&rsquo;s own
           handling time is used when it&rsquo;s longer.
         </p>
+        <div
+          className="flex items-center justify-between gap-3 flex-wrap"
+          style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--cd-border, rgba(0,0,0,0.08))" }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div className="cd-row-title">Local pickup</div>
+            <p className="cd-caption" style={{ marginTop: 2 }}>
+              Offer a free &ldquo;Pick up&rdquo; option at checkout, collected at your ship-from
+              address. Ready after your &ldquo;Ships within&rdquo; window.
+            </p>
+          </div>
+          <Toggle value={pickup} onChange={setPickup} ariaLabel="Offer local pickup" />
+        </div>
+        {pickup ? (
+          <div style={{ marginTop: 10 }}>
+            <Field label="Pickup instructions (optional, shown to buyers)">
+              <input
+                className="cd-input"
+                maxLength={200}
+                placeholder="e.g. Mon to Sat, 10am to 6pm, side entrance on 5th Ave"
+                value={pickupNote}
+                onChange={(e) => setPickupNote(e.target.value)}
+              />
+            </Field>
+          </div>
+        ) : null}
         <div style={{ marginTop: 12 }}>
           <Btn kind="primary" type="submit" disabled={api.saving}>
             {api.saving ? "Saving…" : "Save rules"}
