@@ -52,7 +52,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     issued_at: detail.orderedAt ?? detail.createdAt,
     shop_domain: buyer,
     lines: detail.lines.map((line) => ({
-      sku: line.sku ?? line.variantId.slice(0, 8).toUpperCase(),
+      // The sku/title snapshots survive variant deletion (variantId null).
+      sku: line.sku ?? line.variantId?.slice(0, 8).toUpperCase() ?? "—",
       title: line.title ?? line.sku ?? "Item",
       quantity: line.qtyOrdered,
       unit_cost_cents: line.unitCostCents,

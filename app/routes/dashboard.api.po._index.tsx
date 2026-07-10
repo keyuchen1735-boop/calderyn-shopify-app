@@ -1,15 +1,17 @@
 // /dashboard/api/po — the real purchase-order collection.
-// GET  ?status=&offset= → { pos, total, promotedAuditIds } (promoted ids let the
-//      screen hide already-converted Autopilot drafts).
+// GET  ?offset=&auditIds=a,b,c → { pos, total, promotedAuditIds } — auditIds is
+//      the screen's VISIBLE Autopilot drafts (bounded ≤50); the response says
+//      which of them were already converted so the screen can hide them.
+//      Pagination requests (offset > 0) skip the promoted lookup entirely.
 // POST { intent: "create", ...po } | { intent: "promote_draft", auditId }.
 
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { CalderynError } from "~/lib/calderyn.server";
+import { isUuid } from "~/lib/ids";
 import {
   createPurchaseOrder,
-  isPoStatus,
   listPromotedAuditIds,
   listPurchaseOrders,
   promoteAuditDraft,
@@ -19,14 +21,15 @@ import {
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const url = new URL(request.url);
-  const statusRaw = url.searchParams.get("status");
-  if (statusRaw && !isPoStatus(statusRaw)) return jsonError(422, "invalid_status");
-  const status = statusRaw && isPoStatus(statusRaw) ? statusRaw : undefined;
   const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset"))) || 0);
+  const auditIds = (url.searchParams.get("auditIds") ?? "")
+    .split(",")
+    .filter((id) => isUuid(id))
+    .slice(0, 50);
   return dashboardJson(async () => {
     const [page, promotedAuditIds] = await Promise.all([
-      listPurchaseOrders(session.shopId, { status, offset }),
-      listPromotedAuditIds(session.shopId),
+      listPurchaseOrders(session.shopId, { offset }),
+      offset === 0 ? listPromotedAuditIds(session.shopId, auditIds) : Promise.resolve([]),
     ]);
     return { pos: page.pos, total: page.total, promotedAuditIds };
   });

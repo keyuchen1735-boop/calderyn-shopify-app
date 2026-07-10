@@ -5,25 +5,9 @@
 
 import { CalderynError } from "~/lib/calderyn.server";
 import { getSupabase } from "~/lib/supabase.server";
+import type { SupplierDto, SupplierInput } from "./types";
 
-export interface SupplierDto {
-  id: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  notes: string | null;
-  leadTimeDays: number | null;
-  active: boolean;
-  createdAt: string;
-}
-
-export interface SupplierInput {
-  name: string;
-  email?: string | null;
-  phone?: string | null;
-  notes?: string | null;
-  leadTimeDays?: number | null;
-}
+export type { SupplierDto, SupplierInput } from "./types";
 
 const SUPPLIER_COLUMNS = "id, name, email, phone, notes, lead_time_days, active, created_at";
 
