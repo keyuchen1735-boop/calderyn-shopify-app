@@ -4,6 +4,10 @@ import { dashboardJson, jsonError, parseJsonObjectBody, requireSameOrigin } from
 import { validateBulkOrderIds, validateIdempotencyKey, runBulkOrderAction } from "~/lib/order/bulk.server";
 import { executeFulfillAction } from "~/lib/order/fulfill.server";
 
+// Bulk fulfill loops up to 25 audited executors (each ~10 DB round trips, plus an
+// optional buyer email); the platform default duration is too thin for that.
+export const config = { maxDuration: 60 };
+
 /**
  * Bulk fulfill (orders power tools, Phase 2 Task 3): ships every requested order in full — no
  * per-order lines/tracking/carrier here, that stays a single-order-only refinement

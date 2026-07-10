@@ -6,9 +6,7 @@
   "functions": {
     "api/engine/run.py": { "maxDuration": 300, "includeFiles": "engine/**" },
     "api/engine/moat_train.py": { "maxDuration": 300, "includeFiles": "engine/**" },
-    "api/engine/autopilot_train.py": { "maxDuration": 300, "includeFiles": "engine/**" },
-    "app/routes/dashboard.api.orders.bulk.fulfill.tsx": { "maxDuration": 60 },
-    "app/routes/dashboard.api.orders.export.tsx": { "maxDuration": 60 }
+    "api/engine/autopilot_train.py": { "maxDuration": 300, "includeFiles": "engine/**" }
   },
   "rewrites": [
     {
