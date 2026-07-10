@@ -2506,3 +2506,85 @@
 .cd-sections__actions button:disabled { opacity: 0.35; cursor: default; }
 .cd-sections__redo { display: flex; gap: 6px; width: 100%; padding-top: 4px; }
 .cd-sections__redo input { flex: 1; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; }
+
+/* ---- Orders: compact toolbar, list density, motion (additive — scoped to Orders only) ------ */
+
+/* Toolbar's primary row: search + Filters on the left, sort + Export on the right. */
+.cd-orders-toolbar-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+
+/* Compact search field: icon inset, grows a little on focus. A plain (non-input) wrapper owns the
+   icon + width so the CDIcon glyph never needs to be swapped for a background-image hack. */
+.cd-orders-search {
+  position: relative; display: inline-flex; align-items: center;
+  width: 240px; max-width: 100%;
+  transition: width 0.18s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.cd-orders-search:focus-within { width: 300px; }
+.cd-orders-search > svg { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
+.cd-orders-search > input {
+  width: 100%; padding: 8px 10px 8px 30px; border: none; border-radius: 10px;
+  background: var(--gray-bg); color: var(--text-1); font-family: inherit;
+  font-size: calc(13.5px * var(--type-scale)); outline: none;
+  transition: box-shadow 0.15s ease, background 0.15s ease;
+}
+.cd-orders-search > input:focus { background: var(--card-solid); box-shadow: 0 0 0 3.5px color-mix(in oklch, var(--accent) 28%, transparent); }
+
+/* Filters toggle: a regular small secondary button plus a soft count badge when a filter is set. */
+.cd-orders-filter-toggle { position: relative; }
+.cd-orders-filter-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: 999px;
+  background: var(--accent); color: var(--on-accent);
+  font-size: 10px; font-weight: 700; line-height: 1;
+}
+
+/* Collapsible filter row: height/opacity are driven imperatively by GSAP (see OrdersToolbar.tsx);
+   this just supplies the clip so the tween has something to animate against. */
+.cd-orders-filter-panel { overflow: hidden; height: 0; opacity: 0; }
+
+/* Saved-view chip: same seg-btn look as a system tab, plus an inline delete glyph. */
+.cd-orders-saved-view { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.cd-orders-saved-view-x {
+  display: inline-flex; background: none; border: 0; padding: 0; cursor: pointer;
+  color: inherit; opacity: 0.6; transition: opacity 0.12s ease;
+}
+.cd-orders-saved-view-x:hover { opacity: 1; }
+
+/* Tightened row rhythm + right-aligned numerics + a calm, scoped hover — the shared .cd-trow /
+   .cd-tablehd rules (dashboard.css, generic tables) are used by half a dozen other screens, so
+   Orders' own density lives entirely behind this ancestor class instead of touching them. */
+.cd-orders-table .cd-tablehd,
+.cd-orders-table .cd-trow { padding: 9px 18px; gap: 12px; }
+.cd-orders-table .cd-trow { font-size: 13px; }
+.cd-orders-table .cd-trow[role="button"] { transition: background 0.12s ease; }
+.cd-orders-table .cd-trow[role="button"]:hover { background: var(--gray-bg); }
+.cd-orders-table .cd-trow[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Bulk bar: a floating action strip, not a form row — elevated off the list rather than boxed
+   like a Card. Mounted only while a selection exists (see Orders.tsx); GSAP handles its
+   slide/fade in and out. */
+.cd-bulkbar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; border-radius: 14px;
+  background: var(--card-solid); box-shadow: var(--shadow-pop);
+  border: 0.5px solid var(--hairline-strong);
+  margin-bottom: 10px;
+}
+
+/* Pagination footer: quieter, tighter than the old form-row padding. */
+.cd-orders-pagination { display: flex; align-items: center; justify-content: space-between; padding: 8px 2px; }
+
+/* Detail / composer: a tighter card padding for the info-dense two-column layouts. Compound
+   selector (`.cd-card-tight.cd-pad`) beats the base `.cd-pad` rule on specificity alone, so this
+   never depends on being declared after it in the cascade. */
+.cd-card-tight.cd-pad { padding: calc(14px * var(--density)) calc(16px * var(--density)); }
+
+/* Shared order-modal overlay/dialog (Refund/Fulfill/Cancel/Reduce/Edit invoice lines + the
+   composer's send-confirm dialog). GSAP drives the entrance (see order-modal-motion.ts); this
+   only supplies the static layout previously inlined per-modal. */
+.cd-modal-overlay {
+  position: fixed; inset: 0; z-index: 80;
+  background: color-mix(in oklch, black 32%, transparent);
+  display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.cd-modal-dialog { width: 100%; }

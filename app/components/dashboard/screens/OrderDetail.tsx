@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import type { DashboardCtx } from "../context";
 import { Btn, Card, Pill, Placeholder, TableSkeleton } from "../ui";
 import { money, timeAgo } from "../format";
+import { reduced } from "../hero/hero-motion";
 import { CDIcon } from "../icons";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
@@ -132,6 +135,39 @@ export default function OrderDetailScreen({
   const [archiving, setArchiving] = useState(false);
   const narrow = useNarrowViewport();
   const toast = app.toast;
+  const screenRef = useRef<HTMLDivElement>(null);
+
+  // Gentle entrance: header first, then the cards stagger in. Keyed on the order's own id (not on
+  // `detail` itself, which gets a new object reference on every load()) so a post-action refetch —
+  // fulfill, cancel, add a note — never replays this; it only fires once per order actually opened.
+  useGSAP(
+    () => {
+      if (reduced() || !detail || !screenRef.current) return;
+      const header = screenRef.current.querySelector<HTMLElement>(".cd-screen-head");
+      const cards = screenRef.current.querySelectorAll<HTMLElement>(".cd-card");
+      if (header) {
+        gsap.from(header, {
+          autoAlpha: 0,
+          y: -6,
+          duration: 0.3,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        });
+      }
+      if (cards.length) {
+        gsap.from(cards, {
+          autoAlpha: 0,
+          y: 10,
+          duration: 0.32,
+          stagger: 0.035,
+          delay: 0.05,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        });
+      }
+    },
+    { dependencies: [detail?.id], scope: screenRef },
+  );
 
   const load = useCallback(
     (signal?: { alive: boolean }) => {
@@ -289,15 +325,15 @@ export default function OrderDetailScreen({
   };
 
   return (
-    <div className="cd-screen" data-screen-label="Order">
+    <div ref={screenRef} className="cd-screen" data-screen-label="Order">
       <header className="cd-screen-head">
-        <div className="flex items-center" style={{ gap: 10, flexWrap: "wrap" }}>
+        <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
           <Btn small icon="chevronLeft" onClick={back}>
             Back
           </Btn>
           <div>
             <div className="flex items-center" style={{ gap: 8 }}>
-              <h1 className="cd-h1" style={{ fontSize: 22 }}>{ref ?? "Order"}</h1>
+              <h1 className="cd-h1" style={{ fontSize: 20 }}>{ref ?? "Order"}</h1>
               {financialStatus && (
                 <Pill tone={paymentPillStyle(financialStatus).tone}>
                   {paymentPillStyle(financialStatus).label}
@@ -316,43 +352,43 @@ export default function OrderDetailScreen({
             </div>
           </div>
         </div>
-        {detail && !detail.readOnly && (
+        {detail && (
           <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
-            {canFulfill && (
-              <Btn small icon="truck" onClick={() => setShowFulfill(true)}>
-                Fulfill
-              </Btn>
-            )}
-            {canRefund && (
-              <Btn small icon="rotate" onClick={() => setRefundTarget(buildRefundRow(detail))}>
-                Refund
-              </Btn>
-            )}
-            {canCancel && (
-              <Btn small icon="ban" onClick={() => setShowCancel(true)}>
-                Cancel
-              </Btn>
-            )}
-            {isUnpaidInvoice && (
+            {!detail.readOnly && (
               <>
-                <Btn small icon="mail" onClick={resendInvoice} disabled={resendingInvoice}>
-                  {resendingInvoice ? "Resending…" : "Re-send invoice"}
-                </Btn>
-                <Btn small icon="pencil" onClick={() => setShowEditInvoice(true)}>
-                  Edit items
-                </Btn>
-                <Btn small kind="danger" icon="ban" onClick={voidInvoice} disabled={voidingInvoice}>
-                  {voidingInvoice ? "Voiding…" : "Void invoice"}
+                {canFulfill && (
+                  <Btn small icon="truck" onClick={() => setShowFulfill(true)}>
+                    Fulfill
+                  </Btn>
+                )}
+                {canRefund && (
+                  <Btn small icon="rotate" onClick={() => setRefundTarget(buildRefundRow(detail))}>
+                    Refund
+                  </Btn>
+                )}
+                {canCancel && (
+                  <Btn small icon="ban" onClick={() => setShowCancel(true)}>
+                    Cancel
+                  </Btn>
+                )}
+                {isUnpaidInvoice && (
+                  <>
+                    <Btn small icon="mail" onClick={resendInvoice} disabled={resendingInvoice}>
+                      {resendingInvoice ? "Resending…" : "Re-send invoice"}
+                    </Btn>
+                    <Btn small icon="pencil" onClick={() => setShowEditInvoice(true)}>
+                      Edit items
+                    </Btn>
+                    <Btn small kind="danger" icon="ban" onClick={voidInvoice} disabled={voidingInvoice}>
+                      {voidingInvoice ? "Voiding…" : "Void invoice"}
+                    </Btn>
+                  </>
+                )}
+                <Btn small icon="archive" onClick={toggleArchived} disabled={archiving}>
+                  {detail.archivedAt ? "Unarchive" : "Archive"}
                 </Btn>
               </>
             )}
-            <Btn small icon="archive" onClick={toggleArchived} disabled={archiving}>
-              {detail.archivedAt ? "Unarchive" : "Archive"}
-            </Btn>
-          </div>
-        )}
-        {detail && (
-          <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
             <Btn small icon="printer" onClick={() => printDoc("packing-slip")}>
               Print packing slip
             </Btn>
@@ -364,7 +400,7 @@ export default function OrderDetailScreen({
       </header>
 
       {detail?.readOnly && (
-        <Card>
+        <Card className="cd-card-tight">
           <span className="cd-caption">
             This order was placed and paid on Shopify. It&apos;s shown here as part of your imported
             history.
@@ -387,13 +423,13 @@ export default function OrderDetailScreen({
           style={{
             display: "grid",
             gridTemplateColumns: narrow ? "minmax(0,1fr)" : "minmax(0,1fr) 300px",
-            gap: 16,
+            gap: 14,
             alignItems: "start",
           }}
         >
-          <div className="flex flex-col" style={{ gap: 16 }}>
-            <Card>
-              <div className="cd-h2" style={{ marginBottom: 10 }}>Items</div>
+          <div className="flex flex-col" style={{ gap: 12 }}>
+            <Card className="cd-card-tight">
+              <div className="cd-h2" style={{ marginBottom: 8 }}>Items</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {detail.lines.map((l) => (
                   <div key={l.id} className="flex items-center justify-between" style={{ gap: 12 }}>
@@ -418,8 +454,8 @@ export default function OrderDetailScreen({
               </div>
             </Card>
 
-            <Card>
-              <div className="cd-h2" style={{ marginBottom: 10 }}>Payment</div>
+            <Card className="cd-card-tight">
+              <div className="cd-h2" style={{ marginBottom: 8 }}>Payment</div>
               <div className="cd-kv-col">
                 <div className="cd-kv"><span>Subtotal</span><b className="ml-auto tabular-nums">{money(detail.subtotalCents, detail.currency)}</b></div>
                 <div className="cd-kv"><span>Shipping</span><b className="ml-auto tabular-nums">{money(detail.shippingCents, detail.currency)}</b></div>
@@ -438,8 +474,8 @@ export default function OrderDetailScreen({
             </Card>
 
             {detail.fulfillments.length > 0 && (
-              <Card>
-                <div className="cd-h2" style={{ marginBottom: 10 }}>Fulfillments</div>
+              <Card className="cd-card-tight">
+                <div className="cd-h2" style={{ marginBottom: 8 }}>Fulfillments</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   {detail.fulfillments.map((f) => (
                     <div key={f.id}>
@@ -477,8 +513,8 @@ export default function OrderDetailScreen({
               </Card>
             )}
 
-            <Card>
-              <div className="cd-h2" style={{ marginBottom: 10 }}>Timeline</div>
+            <Card className="cd-card-tight">
+              <div className="cd-h2" style={{ marginBottom: 8 }}>Timeline</div>
               {!detail.readOnly && (
                 <div className="flex items-center" style={{ gap: 8, marginBottom: 14 }}>
                   <input
@@ -519,9 +555,9 @@ export default function OrderDetailScreen({
             </Card>
           </div>
 
-          <div className="flex flex-col" style={{ gap: 16 }}>
-            <Card>
-              <div className="cd-h2" style={{ marginBottom: 10 }}>Customer</div>
+          <div className="flex flex-col" style={{ gap: 12 }}>
+            <Card className="cd-card-tight">
+              <div className="cd-h2" style={{ marginBottom: 8 }}>Customer</div>
               {detail.buyer ? (
                 <button
                   type="button"
@@ -536,8 +572,8 @@ export default function OrderDetailScreen({
               )}
             </Card>
 
-            <Card>
-              <div className="cd-h2" style={{ marginBottom: 10 }}>Shipping address</div>
+            <Card className="cd-card-tight">
+              <div className="cd-h2" style={{ marginBottom: 8 }}>Shipping address</div>
               {detail.shippingAddress ? (
                 <div className="cd-caption" style={{ lineHeight: 1.6 }}>
                   {detail.shippingAddress.name && <div>{detail.shippingAddress.name}</div>}
@@ -556,8 +592,8 @@ export default function OrderDetailScreen({
             </Card>
 
             {!detail.readOnly && (
-              <Card>
-                <div className="cd-h2" style={{ marginBottom: 10 }}>Tags</div>
+              <Card className="cd-card-tight">
+                <div className="cd-h2" style={{ marginBottom: 8 }}>Tags</div>
                 <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
                   {detail.tags.length === 0 && <span className="cd-caption">No tags yet.</span>}
                   {detail.tags.map((t) => (
