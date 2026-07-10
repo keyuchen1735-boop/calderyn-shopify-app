@@ -449,18 +449,20 @@ export async function processStripeEvent(
       // order that reaches `paid` with NOTHING ever reserved for it (a variant flipped to
       // inventory_tracked=true only after checkout, a reserveStock bug, a manually-created order)
       // makes commitReservation a silent no-op, so the sale never decrements on_hand — a silent
-      // oversell hiding behind captured payment. Detect that case by reading whether ANY
-      // inventory_reservation row (held or since committed) exists for this checkout_ref; zero
-      // rows means nothing was ever held, so fall back to a direct decrement. Runs on EVERY
-      // succeeded delivery like commitReservation itself: the fallback RPC's per-(order,variant)
-      // idempotency key makes a redelivery a no-op. NEVER thrown past — the payment already
-      // happened, so a failure here must never fail the webhook (rule 12: log loudly instead).
+      // oversell hiding behind captured payment. Detect that case by reading whether a held or
+      // committed inventory_reservation row exists for this checkout_ref; a released row (30-min
+      // hold TTL expired, buyer paid later) means nothing was ever committed, so fall back to a
+      // direct decrement. Runs on EVERY succeeded delivery like commitReservation itself: the
+      // fallback RPC's per-(order,variant) idempotency key makes a redelivery a no-op. NEVER
+      // thrown past — the payment already happened, so a failure here must never fail the webhook
+      // (rule 12: log loudly instead).
       try {
         const heldRes = await getSupabase()
           .from("inventory_reservation")
           .select("id")
           .eq("shop_id", shopId)
           .eq("checkout_ref", orderRef)
+          .in("state", ["held", "committed"])
           .limit(1);
         if (heldRes.error) throw heldRes.error;
         if (!heldRes.data || heldRes.data.length === 0) {

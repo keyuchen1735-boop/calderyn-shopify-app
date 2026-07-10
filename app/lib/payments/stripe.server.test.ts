@@ -69,7 +69,13 @@ vi.mock("~/lib/supabase.server", () => ({
       }
       if (table === "inventory_reservation") {
         return {
-          select: () => ({ eq: () => ({ eq: () => ({ limit: () => h.reservationLookup() }) }) }),
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                in: () => ({ limit: () => h.reservationLookup() }),
+              }),
+            }),
+          }),
         };
       }
       return {
@@ -628,6 +634,17 @@ describe("processStripeEvent", () => {
       await processStripeEvent("raw-body", "sig");
 
       expect(h.saleFallbackForOrder).not.toHaveBeenCalled();
+    });
+
+    it("falls back when a reservation was released (30-min hold TTL expired before payment)", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [], error: null }); // no held/committed rows
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(h.saleFallbackForOrder).toHaveBeenCalledTimes(1);
+      expect(h.saleFallbackForOrder).toHaveBeenCalledWith("shop-1", "order-1");
     });
 
     it("never fails the webhook when the stock fallback throws — payment already happened, logged loudly instead", async () => {
