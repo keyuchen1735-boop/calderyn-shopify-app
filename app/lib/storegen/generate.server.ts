@@ -125,6 +125,24 @@ export function extractStoreHtml(raw: string): string {
   return "";
 }
 
+// One capped catalog menu for every prompt of a run — champion, challenger and section
+// revisions must all see the same catalog view. photo: true marks products whose real
+// photography the page may reference via <img data-cd-media="<id>"> markers.
+function catalogMenuOf(
+  products: { id: string; handle: string; title: string; images: { url: string }[] }[],
+  collections: { handle: string; title: string }[],
+): CatalogMenu {
+  return {
+    products: products.slice(0, MENU_PRODUCT_CAP).map((p) => ({
+      id: p.id,
+      handle: p.handle,
+      title: p.title,
+      ...(p.images.length > 0 ? { photo: true as const } : {}),
+    })),
+    collections: collections.slice(0, MENU_COLLECTION_CAP).map((c) => ({ handle: c.handle, title: c.title })),
+  };
+}
+
 /** Tolerant parse of the judge's JSON verdict; null on anything off-contract. */
 export function parseJudgeVerdict(raw: string): { winner: number; score: number; critique: string } | null {
   let s = raw.trim();
@@ -188,10 +206,7 @@ export async function regenerateHomeSection(
     catalog.listCollections(shopId),
     getStoreSettings(shopId),
   ]);
-  const menu: CatalogMenu = {
-    products: products.slice(0, MENU_PRODUCT_CAP).map((p) => ({ id: p.id, handle: p.handle, title: p.title })),
-    collections: collections.slice(0, MENU_COLLECTION_CAP).map((c) => ({ handle: c.handle, title: c.title })),
-  };
+  const menu: CatalogMenu = catalogMenuOf(products, collections);
   const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
   const brand: BrandPlan = {
     storeName: settings.storeName,
@@ -235,10 +250,7 @@ export async function generateChallengerHome(shopId: string): Promise<BlockDocum
     catalog.listCollections(shopId),
     getStoreSettings(shopId),
   ]);
-  const menu: CatalogMenu = {
-    products: products.slice(0, MENU_PRODUCT_CAP).map((p) => ({ id: p.id, handle: p.handle, title: p.title })),
-    collections: collections.slice(0, MENU_COLLECTION_CAP).map((c) => ({ handle: c.handle, title: c.title })),
-  };
+  const menu: CatalogMenu = catalogMenuOf(products, collections);
   const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
   const linkSet: StorefrontLinkSet = { productHandles: new Set(products.map((p) => p.handle)), collectionHandles: new Set(collections.map((c) => c.handle)) };
   const byCollection: Record<string, number> = {};
@@ -277,10 +289,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   const catalog = getCatalog();
   const products = await catalog.listProducts(input.shopId);
   const collections = await catalog.listCollections(input.shopId);
-  const menu: CatalogMenu = {
-    products: products.slice(0, MENU_PRODUCT_CAP).map((p) => ({ id: p.id, handle: p.handle, title: p.title })),
-    collections: collections.slice(0, MENU_COLLECTION_CAP).map((c) => ({ handle: c.handle, title: c.title })),
-  };
+  const menu: CatalogMenu = catalogMenuOf(products, collections);
   const valid: ValidIds = { productIds: new Set(products.map((p) => p.id)), collectionHandles: new Set(collections.map((c) => c.handle)) };
   // Real catalog numbers for the home prompt: copy grounded on these can be concrete
   // ("Explore 21 certified devices") without the model inventing figures.

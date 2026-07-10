@@ -2,7 +2,8 @@
 import { describe, it, expect } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { STARTER_BLOCKS } from "./blocks";
+import { STARTER_BLOCKS, resolveMediaMarkers } from "./blocks";
+import { getBlockMeta } from "./registry";
 import { PREVIEW_LINKS } from "./links";
 import type { RenderContext } from "./types";
 import type { StoreProduct } from "~/lib/storefront/catalog";
@@ -150,5 +151,40 @@ describe("starter blocks", () => {
     const button = STARTER_BLOCKS.find((b) => b.type === "button")!;
     const btnPreview = renderToStaticMarkup(createElement(button.Component, { props: button.validateProps({ href: "/storefront" }), ctx: { ...ctx(), links: PREVIEW_LINKS } }));
     expect(btnPreview).toContain("/dashboard/store/preview?page=home"); // a /storefront CTA folds back into the preview home
+  });
+});
+
+describe("resolveMediaMarkers (real product photography in generated HTML)", () => {
+  const product = (id: string, url: string) => ({
+    id, handle: `h-${id}`, title: `P${id}`, description: "",
+    images: [{ url, alt: null }], variants: [], collections: [],
+  });
+
+  it("wires the product's live photo into a data-cd-media img and strips any smuggled src", () => {
+    const html = '<section><img data-cd-media="p1" alt="The mug" src="https://evil.example/pixel.gif"></section>';
+    const out = resolveMediaMarkers(html, { p1: product("p1", "https://cdn.example/mug.jpg?sig=a&b=c") } as never);
+    expect(out).toContain('src="https://cdn.example/mug.jpg?sig=a&amp;b=c"');
+    expect(out).toContain('alt="The mug"');
+    expect(out).not.toContain("evil.example");
+  });
+
+  it("drops the img entirely when the product is gone or has no photo (never a broken frame)", () => {
+    const html = '<section><img data-cd-media="ghost" alt="x"><p>copy</p></section>';
+    expect(resolveMediaMarkers(html, {} as never)).toBe("<section><p>copy</p></section>");
+    expect(resolveMediaMarkers(html, undefined)).toBe("<section><p>copy</p></section>");
+  });
+
+  it("leaves marker-free HTML untouched", () => {
+    const html = "<section><h1>Hi</h1></section>";
+    expect(resolveMediaMarkers(html, {} as never)).toBe(html);
+  });
+});
+
+describe("rawHtml catalogRefs (photo markers drive data resolution)", () => {
+  it("reports every referenced product id", () => {
+    const meta = getBlockMeta("rawHtml")!;
+    const refs = meta.catalogRefs({ html: '<img data-cd-media="a"><div><img data-cd-media="b" alt=""></div>' } as never);
+    expect(refs.productIds).toEqual(["a", "b"]);
+    expect(refs.collectionHandles).toEqual([]);
   });
 });

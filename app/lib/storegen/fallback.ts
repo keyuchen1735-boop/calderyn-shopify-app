@@ -204,9 +204,12 @@ export function fallbackDoc(pageKey: PageKey, brand: BrandFacts, context?: Fallb
   const noun = (topCollection?.title || topProduct?.title || "").trim() || null;
   // Collection-sourced when the catalog has one — a real handle, never invented (D2/D4).
   const source = topCollection ? { kind: "collection" as const, handle: topCollection.handle } : { kind: "all" as const };
-  // The first product with imagery becomes the hero backdrop — deterministic, always renders, and
-  // turns the plain text hero into a full-bleed image hero on the no-credits path (empty when none).
-  const heroImage = products.find((p) => p.imageUrl)?.imageUrl ?? "";
+  // The first product with STABLE imagery becomes the hero backdrop — deterministic, always
+  // renders, and turns the plain text hero into a full-bleed image hero on the no-credits path
+  // (empty when none). Signed private-bucket URLs are excluded: they expire within the hour,
+  // and a baked-in signed URL would leave a broken hero on every later view.
+  const stable = (url?: string) => !!url && !url.includes("/object/sign/");
+  const heroImage = products.find((p) => stable(p.imageUrl))?.imageUrl ?? "";
 
   const blocks: Block[] = [];
   let y = 0;
