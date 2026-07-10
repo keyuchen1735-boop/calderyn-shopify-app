@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 
 import * as client from "~/lib/dashboard/client";
 import { AssistantSendError } from "~/lib/dashboard/client";
@@ -14,6 +16,9 @@ import { money } from "./format";
 import { Btn } from "./ui";
 import type { ActionKind as DashActionKind, DashboardCtx } from "./context";
 import type { AlertVM } from "./view-models";
+import { reduced } from "./hero/hero-motion";
+
+gsap.registerPlugin(useGSAP);
 
 // Kinds the dashboard can truly execute inline come from DASH_INLINE_ACTIONS
 // (executeAction has a live endpoint for them). Everything else — exclude_geo,
@@ -21,6 +26,36 @@ import type { AlertVM } from "./view-models";
 // of faking a run.
 let localSeq = 0;
 const nextLocalId = () => `chat-local-${++localSeq}`;
+
+/** closed: unmounted. open: full interactive panel. docked: minimized to a
+ *  pill on the right edge (after navigating away with the panel open). peek:
+ *  a non-interactive hover preview of the docked panel, click-to-open. */
+type PanelState = "closed" | "open" | "docked" | "peek";
+
+/** Below this width the chat panel is already effectively full-screen (see
+ *  the `.cd-chat-panel` max-width rule in dashboard.css), so there's no edge
+ *  to dock into — navigating away just leaves it open, matching pre-dock
+ *  behavior, per the phone-mode carve-out in the design brief. */
+const DOCK_MIN_WIDTH_QUERY = "(max-width: 767px)";
+
+/** The panel's GSAP-owned end-state per non-closed PanelState. One table
+ *  driving one tween executor (below) instead of a hand-written function per
+ *  transition, so docked/peek/open can't drift out of sync with each other. */
+const PANEL_TARGET: Record<
+  "open" | "docked" | "peek",
+  { xPercent: number; scale: number; opacity: number; pointerEvents: "auto" | "none"; duration: number; ease: string }
+> = {
+  open: { xPercent: 0, scale: 1, opacity: 1, pointerEvents: "auto", duration: 0.4, ease: "power3.out" },
+  docked: { xPercent: 100, scale: 0.9, opacity: 0, pointerEvents: "none", duration: 0.38, ease: "power2.inOut" },
+  peek: { xPercent: 50, scale: 1, opacity: 1, pointerEvents: "none", duration: 0.35, ease: "power3.out" },
+};
+
+/** The dock pill's resting look per state it's visible in ("open" has no
+ *  pill — it's unmounted). */
+const PILL_TARGET: Record<"docked" | "peek", { opacity: number; scale: number }> = {
+  docked: { opacity: 1, scale: 1 },
+  peek: { opacity: 0, scale: 1 },
+};
 
 function DraftActionCard({
   action,
@@ -258,13 +293,28 @@ export default function AssistantPanel({
    *  the next user turn. `n` makes re-sends of the same text distinct. */
   prompt?: { n: number; text: string } | null;
 }) {
-  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<PanelState>("closed");
 
   // The sidebar "Ask Calderyn" button and the mobile "More" sheet open the
-  // panel by bumping openSignal. Each increment re-opens it.
+  // panel by bumping openSignal. Each increment re-opens it fully, whatever
+  // the current state (closed/docked/peek) — a deliberate reopen always wins.
   useEffect(() => {
-    if (openSignal) setOpen(true);
+    if (openSignal) setState("open");
   }, [openSignal]);
+
+  // Navigating away while the panel is open docks it to a pill instead of
+  // leaving it floating over the new screen. Navigating while docked/peek/
+  // closed does nothing — only a genuinely open panel needs to get out of
+  // the way. Skipped on the phone breakpoint (no edge to dock into there).
+  const prevScreenRef = useRef(app.nav.screen);
+  useEffect(() => {
+    const screenChanged = prevScreenRef.current !== app.nav.screen;
+    prevScreenRef.current = app.nav.screen;
+    if (!screenChanged) return;
+    if (typeof window !== "undefined" && window.matchMedia(DOCK_MIN_WIDTH_QUERY).matches) return;
+    setState((cur) => (cur === "open" ? "docked" : cur));
+  }, [app.nav.screen]);
+
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -276,9 +326,15 @@ export default function AssistantPanel({
   const msgsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load history once, the first time the panel opens.
+  // Load history once, the first time the panel becomes visible. Gated on a
+  // ref (not just `!historyLoaded`) so a merchant who docks/peeks/re-opens
+  // before the fetch resolves can't retrigger it — `state` now has 4 values
+  // instead of a single open/closed bool, and every one of docked/peek/open
+  // re-runs this effect while the fetch is still in flight.
+  const historyFetchStartedRef = useRef(false);
   useEffect(() => {
-    if (!open || historyLoaded) return;
+    if (state === "closed" || historyFetchStartedRef.current) return;
+    historyFetchStartedRef.current = true;
     let alive = true;
     client
       .fetchAssistantHistory()
@@ -296,11 +352,15 @@ export default function AssistantPanel({
     return () => {
       alive = false;
     };
-  }, [open, historyLoaded]);
+  }, [state]);
 
+  // Only a genuinely open (or opening-toward) panel needs its scroll position
+  // kept pinned to the latest message — skip the extra reflow on every
+  // docked<->peek hover toggle, when the thread isn't meaningfully visible.
   useEffect(() => {
+    if (state === "closed" || state === "docked") return;
     msgsRef.current?.scrollTo({ top: msgsRef.current.scrollHeight });
-  }, [messages, sending, open]);
+  }, [messages, sending, state]);
 
   const sendText = useCallback(
     async (raw: string) => {
@@ -362,55 +422,215 @@ export default function AssistantPanel({
   const [queuedPrompts, setQueuedPrompts] = useState<{ n: number; text: string }[]>([]);
   useEffect(() => {
     if (!prompt?.text) return;
-    setOpen(true);
+    // The merchant explicitly sent a prompt, so it always reopens the panel
+    // fully — even if it was docked or peeking at the time.
+    setState("open");
     // Keyed on n so a re-run with the same hand-off (StrictMode) can't
     // enqueue it twice.
     setQueuedPrompts((q) => (q.some((p) => p.n === prompt.n) ? q : [...q, prompt]));
   }, [prompt]);
   useEffect(() => {
-    if (!open || queuedPrompts.length === 0 || !historyLoaded || sending) return;
+    if (state !== "open" || queuedPrompts.length === 0 || !historyLoaded || sending) return;
     const [next, ...rest] = queuedPrompts;
     setQueuedPrompts(rest);
     void sendText(next.text);
-  }, [open, queuedPrompts, historyLoaded, sending, sendText]);
+  }, [state, queuedPrompts, historyLoaded, sending, sendText]);
   useEffect(() => {
-    if (!open) setQueuedPrompts([]);
-  }, [open]);
+    if (state === "closed") setQueuedPrompts([]);
+  }, [state]);
 
   // Opening the panel is a context switch — put the caret in the composer so
   // the next keystrokes land in the conversation, not behind the dialog.
+  // Only fires for a genuinely open panel, not a dock/peek transition.
   useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
+    if (state === "open") inputRef.current?.focus();
+  }, [state]);
 
-  if (!open) return null;
+  // ---- dock / peek / open GSAP choreography ----
+  const containerRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef<HTMLButtonElement>(null);
+  // The peek click-catcher shares the panel's exact base box (see
+  // .cd-chat-peek-catch) and is driven by the same transition executor below,
+  // so its hit area always coincides with whatever the panel visually shows —
+  // including in peek, where the panel is slid mostly off-screen and only a
+  // sliver remains visible.
+  const peekCatchRef = useRef<HTMLButtonElement>(null);
+  const prevPanelStateRef = useRef<PanelState>("closed");
+
+  const { contextSafe } = useGSAP({ scope: containerRef });
+
+  // One contextSafe-wrapped executor, built once (lazy ref-init, not on every
+  // render — contextSafe(fn) allocates a fresh wrapper on every call, and this
+  // component re-renders on every keystroke in the composer) instead of a
+  // hand-written function per transition. Driven by the PANEL_TARGET/
+  // PILL_TARGET tables above, so docked/peek/open can't drift out of sync
+  // with each other the way five independent functions could.
+  const runTransitionRef = useRef<
+    ((target: "open" | "docked" | "peek", opts?: { pulse?: boolean }) => void) | null
+  >(null);
+  if (runTransitionRef.current === null) {
+    runTransitionRef.current = contextSafe((target: "open" | "docked" | "peek", opts?: { pulse?: boolean }) => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const pill = pillRef.current;
+      const catchEl = peekCatchRef.current;
+      const p = PANEL_TARGET[target];
+      // The catcher only ever needs to intercept clicks in peek — in every
+      // other state the real panel (open) or nothing at all (docked) should
+      // handle them, so pointer-events is derived from `target` directly
+      // rather than reused from PANEL_TARGET (whose own peek entry is "none",
+      // since the *panel* mustn't catch clicks while it's non-interactive).
+      const catchPointerEvents: "auto" | "none" = target === "peek" ? "auto" : "none";
+      if (reduced()) {
+        gsap.set(panel, {
+          xPercent: p.xPercent,
+          scale: p.scale,
+          opacity: p.opacity,
+          pointerEvents: p.pointerEvents,
+        });
+        if (catchEl) {
+          gsap.set(catchEl, { xPercent: p.xPercent, scale: p.scale, pointerEvents: catchPointerEvents });
+        }
+        if (pill && target !== "open") gsap.set(pill, PILL_TARGET[target]);
+        return;
+      }
+      gsap.to(panel, {
+        xPercent: p.xPercent,
+        scale: p.scale,
+        opacity: p.opacity,
+        pointerEvents: p.pointerEvents,
+        duration: p.duration,
+        ease: p.ease,
+        overwrite: "auto",
+      });
+      if (catchEl) {
+        // Same xPercent/scale/duration/ease as the panel above — tracking it
+        // exactly, frame for frame, is what keeps the hit box glued to the
+        // visible sliver instead of a static box that drifts out of register.
+        gsap.to(catchEl, {
+          xPercent: p.xPercent,
+          scale: p.scale,
+          pointerEvents: catchPointerEvents,
+          duration: p.duration,
+          ease: p.ease,
+          overwrite: "auto",
+        });
+      }
+      if (pill && target !== "open") {
+        if (opts?.pulse) {
+          // One subtle attention pulse announcing the dock — not a loop.
+          // killTweensOf first so a rapid re-dock (open->dock->open->dock)
+          // can't stack a second pulse on top of one still settling.
+          gsap.killTweensOf(pill);
+          gsap
+            .timeline({ delay: 0.12 })
+            .fromTo(pill, { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1.08, duration: 0.3, ease: "power3.out" })
+            .to(pill, { scale: 1, duration: 0.18, ease: "power2.out" });
+        } else {
+          gsap.to(pill, { ...PILL_TARGET[target], duration: 0.3, ease: "power2.out", overwrite: "auto" });
+        }
+      }
+    });
+  }
+
+  useEffect(() => {
+    const prev = prevPanelStateRef.current;
+    prevPanelStateRef.current = state;
+    if (prev === state) return;
+    if (prev === "open" && state === "docked") {
+      // Docking pulls the panel out of the pointer/tab interaction surface —
+      // release focus explicitly rather than relying on the inert toggle
+      // below to land in the same commit, so a merchant who kept typing
+      // after navigating away isn't silently typing into a hidden composer.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && panelRef.current?.contains(active)) {
+        active.blur();
+      }
+    }
+    const run = runTransitionRef.current;
+    if (!run) return;
+    if (state === "open") {
+      if (prev === "closed") {
+        // The very first open (mount from closed) is played by the existing
+        // CSS drawer-in keyframe on .cd-chat-panel — this just normalizes the
+        // GSAP-owned transform/opacity/pointer-events so a later dock/peek
+        // tween has a correct starting point, without fighting that CSS
+        // animation with a redundant tween of its own.
+        gsap.set(panelRef.current, { xPercent: 0, scale: 1, opacity: 1, pointerEvents: "auto" });
+        // Give the catcher a defined starting transform too (matched to
+        // "open", where it must never intercept anything) so the first
+        // dock/peek tween it ever runs starts from a known box instead of
+        // whatever the browser defaulted an untouched transform to.
+        if (peekCatchRef.current) {
+          gsap.set(peekCatchRef.current, { xPercent: 0, scale: 1, pointerEvents: "none" });
+        }
+      } else {
+        run("open");
+      }
+    } else if (state === "docked") {
+      run("docked", { pulse: prev === "open" });
+    } else if (state === "peek") {
+      run("peek");
+    }
+    // state === "closed": nothing to animate, the panel unmounts below.
+  }, [state]);
+
+  // `inert` — not just aria-hidden — must cover the panel whenever it isn't
+  // fully open. Docked/peek only *look* hidden (opacity/pointer-events), so
+  // without `inert` every control inside stays tab-reachable and
+  // Enter-activatable: a merchant tabbing through the page could land on a
+  // PendingConfirmCard's "Confirm" button they can't see and fire a real
+  // action (e.g. a refund). `inert` also strips the subtree from the
+  // accessibility tree, which is why the old aria-hidden on this node is
+  // gone — pairing aria-hidden with focusable descendants was itself a WCAG
+  // 4.1.2 violation. Set via a ref effect rather than the `inert` JSX prop:
+  // the installed @types/react only exposes `inert` in experimental.d.ts, so
+  // the prop doesn't typecheck against the stable React types this repo
+  // pins.
+  useEffect(() => {
+    panelRef.current?.toggleAttribute("inert", state !== "open");
+  }, [state]);
+
+  const openFull = () => setState("open");
+  const enterDockZone = () => setState((cur) => (cur === "docked" ? "peek" : cur));
+  const leaveDockZone = () => setState((cur) => (cur === "peek" ? "docked" : cur));
+
+  if (state === "closed") return null;
 
   return (
-    <div className="cd-chat-panel" role="dialog" aria-label="Ask Calderyn">
-      <div className="cd-chat-head">
-        <div className="cd-chat-head-title">
-          <span className="cd-chat-head-mark">
-            <CDIcon name="assist" size={15} strokeWidth={2} />
-          </span>
-          <div>
-            <div className="cd-h3">Ask Calderyn</div>
-            <div className="cd-caption">Sees your store and can act on it</div>
+    <div ref={containerRef} onMouseEnter={enterDockZone} onMouseLeave={leaveDockZone}>
+      <div
+        ref={panelRef}
+        className="cd-chat-panel"
+        data-state={state}
+        role="dialog"
+        aria-label="Ask Calderyn"
+      >
+        <div className="cd-chat-head">
+          <div className="cd-chat-head-title">
+            <span className="cd-chat-head-mark">
+              <CDIcon name="assist" size={15} strokeWidth={2} />
+            </span>
+            <div>
+              <div className="cd-h3">Ask Calderyn</div>
+              <div className="cd-caption">Sees your store and can act on it</div>
+            </div>
+          </div>
+          <div className="cd-chat-head-btns">
+            <Btn small onClick={newChat}>
+              New chat
+            </Btn>
+            <button
+              type="button"
+              className="cd-chat-close"
+              aria-label="Close assistant"
+              onClick={() => setState("closed")}
+            >
+              <CDIcon name="x" size={16} strokeWidth={2} />
+            </button>
           </div>
         </div>
-        <div className="cd-chat-head-btns">
-          <Btn small onClick={newChat}>
-            New chat
-          </Btn>
-          <button
-            type="button"
-            className="cd-chat-close"
-            aria-label="Close assistant"
-            onClick={() => setOpen(false)}
-          >
-            <CDIcon name="x" size={16} strokeWidth={2} />
-          </button>
-        </div>
-      </div>
 
       <div className="cd-chat-msgs" ref={msgsRef}>
         {historyLoaded && messages.length === 0 && (
@@ -452,7 +672,7 @@ export default function AssistantPanel({
                 <DraftActionCard
                   action={m.draftedAction}
                   app={app}
-                  onClose={() => setOpen(false)}
+                  onClose={() => setState("closed")}
                 />
               )}
               {m.receipts.map((r, i) => (
@@ -523,6 +743,65 @@ export default function AssistantPanel({
           Send
         </Btn>
       </div>
+      </div>
+
+      {
+        // Rendered as a sibling of the panel, not nested inside it, so it
+        // sits outside the inert subtree above and stays clickable while the
+        // panel itself is inert. Always mounted (not just during peek) so
+        // peekCatchRef is stable across state changes and the GSAP executor
+        // above can tween it in lockstep with the panel — sharing the
+        // panel's own base box (.cd-chat-peek-catch) plus the identical
+        // per-state xPercent means this control's hit area always coincides
+        // with whatever the panel visually shows: nothing in closed/open (no
+        // catch needed there — open is where the real panel takes clicks),
+        // and exactly the visible sliver in peek. `data-state` plus the
+        // pointerEvents the executor sets are the belt-and-braces gate: it
+        // only ever catches clicks while state is "peek". Mouse-only by
+        // design: aria-hidden + tabIndex=-1 keep it out of the tab order and
+        // accessibility tree, since the dock pill is the accessible way to
+        // reopen.
+      }
+      <button
+        ref={peekCatchRef}
+        type="button"
+        className="cd-chat-peek-catch"
+        data-state={state}
+        aria-label="Open assistant"
+        aria-hidden="true"
+        tabIndex={-1}
+        onClick={openFull}
+      />
+
+      {(state === "docked" || state === "peek") && (
+        <div className="cd-chat-dock-wrap">
+          <button
+            ref={pillRef}
+            type="button"
+            className="cd-chat-dock"
+            aria-label="Reopen assistant"
+            onClick={openFull}
+          >
+            <CDIcon name="assist" size={16} strokeWidth={2} />
+            <span>Chat</span>
+          </button>
+          <button
+            type="button"
+            className="cd-chat-dock-dismiss"
+            aria-label="Dismiss assistant"
+            onClick={(e) => {
+              // The dismiss button is a sibling of the pill, not nested
+              // inside it, so this click wouldn't bubble into the pill's own
+              // onClick anyway — stop it explicitly so a future restructure
+              // can't silently reopen-then-close on the same click.
+              e.stopPropagation();
+              setState("closed");
+            }}
+          >
+            <CDIcon name="x" size={11} strokeWidth={2.4} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

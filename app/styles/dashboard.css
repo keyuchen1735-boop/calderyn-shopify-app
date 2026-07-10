@@ -884,6 +884,83 @@
   }
   .cd-chat-input { flex: 1; resize: none; min-height: 38px; max-height: 120px; }
 
+  /* Minimized panel: navigating away with the panel open docks it to this
+     pill instead of leaving it floating over the new screen. GSAP owns the
+     transform/opacity dance between docked/peek/open (see AssistantPanel's
+     dockFromOpen/dockFromPeek/toPeek/toOpen); this block only owns the pill's
+     resting position and look. Kept off small screens — the chat panel is
+     already effectively full-screen there (see the width rule above), so
+     there's no edge to dock into. The fixed positioning lives on the wrap so
+     the dismiss button (added on top of the pill) has a sized, positioned
+     box to anchor its corner offset to. */
+  .cd-chat-dock-wrap {
+    position: fixed; top: 50%; right: 16px; margin-top: -22px; z-index: 71;
+    display: inline-flex;
+  }
+  .cd-chat-dock {
+    position: relative;
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 44px; padding: 0 16px 0 14px; border: none; cursor: pointer;
+    border-radius: 999px; background: var(--accent); color: var(--on-accent);
+    box-shadow: var(--shadow-pop);
+    font-family: inherit; font-size: calc(13px * var(--type-scale)); font-weight: 600;
+    letter-spacing: -0.006em; white-space: nowrap;
+  }
+  .cd-chat-dock:hover { filter: brightness(1.06); }
+  .cd-chat-dock:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-pop), 0 0 0 3.5px color-mix(in oklch, var(--accent) 35%, transparent);
+  }
+
+  /* Small dismiss control on the pill itself, so the panel can be fully
+     closed without reopening it first. Hidden until the pill is hovered or
+     focused (mirrors .cd-chat-close, scaled down); a real <button>, so it's
+     keyboard-reachable in its own right — Tab from the pill lands here
+     whether or not it's currently visible. */
+  .cd-chat-dock-dismiss {
+    position: absolute; top: -6px; right: -6px; z-index: 1;
+    width: 18px; height: 18px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: none; background: var(--gray-bg); color: var(--text-2); cursor: pointer;
+    opacity: 0; transition: opacity 0.14s ease, background 0.13s ease;
+  }
+  .cd-chat-dock-wrap:hover .cd-chat-dock-dismiss,
+  .cd-chat-dock-dismiss:focus-visible {
+    opacity: 1;
+  }
+  .cd-chat-dock-dismiss:hover { background: rgba(120, 120, 128, 0.18); }
+
+  /* Peek: a half-open, non-interactive preview of the docked panel shown on
+     hover (see .cd-chat-panel[data-state] below, which disables pointer
+     events on the real content) — this full-cover control is the only thing
+     that responds to a click, opening the panel fully from anywhere on it.
+     Rendered as a sibling of .cd-chat-panel (outside the inert subtree) with
+     the SAME base fixed box as the panel; AssistantPanel's GSAP executor
+     applies the identical xPercent transform to both refs per state, so this
+     box always coincides exactly with whatever slice of the panel is
+     visible (docked/open it's tucked fully out of view same as the panel;
+     peek it overlaps only the visible sliver, reaching the true viewport
+     edge because the panel's own sliver does too). Pointer-events default to
+     none here and are enabled only for the peek data-state — belt-and-braces
+     alongside the inline pointerEvents the GSAP executor sets, so a
+     mid-transition frame can never leave it catching clicks outside peek. */
+  .cd-chat-peek-catch {
+    position: fixed; top: 16px; right: 16px; bottom: 16px;
+    width: 420px; max-width: calc(100vw - 32px);
+    z-index: 70; pointer-events: none;
+    background: transparent; border: none; cursor: pointer; padding: 0;
+  }
+  .cd-chat-peek-catch[data-state="peek"] {
+    pointer-events: auto;
+  }
+  .cd-chat-panel[data-state="docked"],
+  .cd-chat-panel[data-state="peek"] {
+    pointer-events: none;
+  }
+  @media (max-width: 767px) {
+    .cd-chat-dock-wrap { display: none; }
+  }
+
   /* assistant markdown (shared .calderyn-md, dashboard skin) */
   .calderyn-md { font-size: calc(13.5px * var(--type-scale)); line-height: 1.55; color: var(--text-1); overflow-wrap: break-word; }
   .calderyn-md > *:first-child { margin-top: 0; }
