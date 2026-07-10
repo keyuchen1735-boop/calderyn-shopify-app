@@ -462,27 +462,6 @@ export async function processStripeEvent(
         try {
           await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded");
 
-          // AMOUNT-MISMATCH SENTINEL (fix C2c, rule 12): the PaymentIntent's captured amount should
-          // always equal the order's own total_cents — the same total the checkout/invoice path
-          // quoted and asked Stripe to charge. A mismatch (a pricing-path bug, a race with a
-          // concurrent order edit, or a tampered PI) is never silently accepted, but it's also never
-          // worth failing an otherwise-successful payment over: log it LOUDLY for manual
-          // reconciliation and let the order proceed to paid. Best-effort in its own try/catch — a
-          // failure reading total_cents here must not be mistaken for an illegal-transition error by
-          // the catch below, nor block the confirmation email.
-          try {
-            const totalRes = await getSupabase().from("orders").select("total_cents").eq("shop_id", shopId).eq("id", orderRef).maybeSingle();
-            if (totalRes.error) throw totalRes.error;
-            const orderTotalCents = totalRes.data ? Number((totalRes.data as Record<string, unknown>).total_cents ?? 0) : null;
-            if (orderTotalCents !== null && pi.amount_received !== orderTotalCents) {
-              console.error(
-                `[stripe] AMOUNT MISMATCH: PaymentIntent ${pi.id} captured ${pi.amount_received} cents but order ${orderRef} (shop ${shopId}) total_cents is ${orderTotalCents}; reconcile manually`,
-              );
-            }
-          } catch (mismatchErr) {
-            console.error(`[stripe] could not verify captured amount for order ${orderRef} (shop ${shopId})`, mismatchErr);
-          }
-
           // ORDER-CONFIRMATION EMAIL (#2c-2) — first delivery ONLY, so the buyer is emailed
           // at-most-once and only for an order that genuinely reached `paid`. sendOrderConfirmation
           // never throws (a delivery failure is logged + swallowed inside it), so a flaky mailer
@@ -556,10 +535,34 @@ export async function processStripeEvent(
       // land BETWEEN two deliveries of the same Stripe event. Re-reading the order's CURRENT state
       // and only proceeding while it's still paid-like closes that gap: a cancelled/refunded order
       // must never have its stock decremented by a stray redelivery's fallback.
+      // COMBINED READ (consolidation): the AMOUNT-MISMATCH sentinel (fix C2c, needs total_cents,
+      // first delivery only) and this paid-without-hold stock-fallback gate (fix C2b, needs state,
+      // every succeeded delivery) used to run two single-column reads of the same `orders` row
+      // back-to-back in this handler; one round trip now serves both.
       try {
-        const stateRes = await getSupabase().from("orders").select("state").eq("shop_id", shopId).eq("id", orderRef).maybeSingle();
-        if (stateRes.error) throw stateRes.error;
-        const currentState = stateRes.data ? String((stateRes.data as Record<string, unknown>).state) : null;
+        const orderRes = await getSupabase()
+          .from("orders")
+          .select("state, total_cents")
+          .eq("shop_id", shopId)
+          .eq("id", orderRef)
+          .maybeSingle();
+        if (orderRes.error) throw orderRes.error;
+        const orderRow = orderRes.data as Record<string, unknown> | null;
+        const currentState = orderRow ? String(orderRow.state) : null;
+        const orderTotalCents = orderRow ? Number(orderRow.total_cents ?? 0) : null;
+
+        // AMOUNT-MISMATCH SENTINEL (fix C2c, rule 12): the PaymentIntent's captured amount should
+        // always equal the order's own total_cents — the same total the checkout/invoice path
+        // quoted and asked Stripe to charge. A mismatch (a pricing-path bug, a race with a
+        // concurrent order edit, or a tampered PI) is never silently accepted, but it's also never
+        // worth failing an otherwise-successful payment over: log it LOUDLY for manual
+        // reconciliation and let the order proceed to paid. First delivery only, same as before.
+        if (processed && orderTotalCents !== null && pi.amount_received !== orderTotalCents) {
+          console.error(
+            `[stripe] AMOUNT MISMATCH: PaymentIntent ${pi.id} captured ${pi.amount_received} cents but order ${orderRef} (shop ${shopId}) total_cents is ${orderTotalCents}; reconcile manually`,
+          );
+        }
+
         if (currentState && PAID_LIKE_STATES.has(currentState)) {
           const heldRes = await getSupabase()
             .from("inventory_reservation")

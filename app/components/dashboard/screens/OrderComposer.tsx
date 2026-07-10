@@ -122,9 +122,14 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
           l.variantId === v.variantId ? { ...l, quantity: Math.min(MAX_QTY, l.quantity + 1) } : l,
         );
       }
-      // PickedVariant carries no currency (see ComposerLine's comment) — default "usd" until this
-      // line round-trips through a save, which stamps the shop's real priced currency.
-      return [...cur, { variantId: v.variantId, title: v.title, unitPriceCents: v.unitPriceCents, quantity: 1, currency: "usd" }];
+      // PickedVariant carries no currency (see ComposerLine's comment) — a brand-new line can't
+      // know its own currency. But once a RESUMED draft already has lines, they carry the shop's
+      // real priced currency (MerchantDraftLineVM.currency) — inherit that instead of hard-coding
+      // "usd", so a non-USD shop adding a 2nd+ item to an existing draft doesn't flash the wrong
+      // symbol. "usd" remains the true fallback only for a from-scratch draft's first line, and is
+      // corrected the moment saveDraft's server-priced response replaces it.
+      const inheritedCurrency = cur[0]?.currency ?? "usd";
+      return [...cur, { variantId: v.variantId, title: v.title, unitPriceCents: v.unitPriceCents, quantity: 1, currency: inheritedCurrency }];
     });
   };
 

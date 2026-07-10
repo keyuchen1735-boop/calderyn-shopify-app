@@ -337,6 +337,34 @@ describe("sendDraftOrderInvoice", () => {
     expect(store.db.cart.find((c) => c.id === "cart-revert")).toMatchObject({ state: "cart" });
   });
 
+  it("reverts the CAS claim AND deletes the zero-line order when the order_line insert fails", async () => {
+    seedDraftCart("shop-1", "cart-lineins-fail", { quantity: 1, unit_price_cents: 1500 });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const realFrom = store.client.from;
+    const fromSpy = vi.spyOn(store.client, "from").mockImplementation((table: string) => {
+      if (table === "order_line") {
+        return { insert: () => Promise.resolve({ data: null, error: new Error("order_line insert blew up") }) } as any;
+      }
+      return realFrom(table);
+    });
+
+    await expect(
+      sendDraftOrderInvoice("shop-1", "cart-lineins-fail", { email: "b@example.com" }),
+    ).rejects.toThrow(/order_line insert blew up/);
+
+    // Cart reverted back to retryable, and the zero-line order it briefly created is gone —
+    // never a stranded checkout_pending cart with an orphan zero-line invoice order.
+    expect(store.db.cart.find((c) => c.id === "cart-lineins-fail")).toMatchObject({ state: "cart" });
+    expect(store.db.orders).toHaveLength(0);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/order_line insert failed.*cart-lineins-fail.*reverted.*zero-line order was deleted/s),
+      expect.any(Error),
+    );
+
+    fromSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
   it("rejects an empty draft (422) without writing anything", async () => {
     store.db.cart.push({ id: "cart-empty", shop_id: "shop-1", state: "cart", origin: "merchant_draft" });
 

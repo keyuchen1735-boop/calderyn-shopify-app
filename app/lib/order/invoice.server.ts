@@ -230,7 +230,31 @@ export async function sendDraftOrderInvoice(
     title_snapshot: l.titleSnapshot,
   }));
   const lineIns = await sb.from("order_line").insert(lineRows);
-  if (lineIns.error) throw lineIns.error;
+  if (lineIns.error) {
+    // Revert gap (flagged twice independently): by this point the cart is already claimed
+    // checkout_pending (unretryable — the CAS above never runs twice) AND a zero-line `orders` row
+    // already exists. Leaving either behind here strands the draft: the merchant can neither retry
+    // sending it (the claim is gone) nor see it (it has no lines), with no way back into the
+    // composer. Best-effort-undo BOTH — revert the cart to 'cart', delete the just-created
+    // zero-line order (shop-scoped, by id) — then rethrow the ORIGINAL error either way (rule 12:
+    // a cleanup failure is logged loudly, never masks the real cause).
+    await revertClaim();
+    const orderDel = await sb.from("orders").delete().eq("shop_id", shopId).eq("id", orderId);
+    if (orderDel.error) {
+      console.error(
+        `[invoice] order_line insert failed for order ${orderId} (shop ${shopId}); cart ${cartId} was reverted ` +
+          `to 'cart', but the zero-line order could NOT be deleted and needs manual cleanup`,
+        orderDel.error,
+      );
+    } else {
+      console.error(
+        `[invoice] order_line insert failed for order ${orderId} (shop ${shopId}); cart ${cartId} reverted to ` +
+          `'cart' and the zero-line order was deleted`,
+        lineIns.error,
+      );
+    }
+    throw lineIns.error;
+  }
 
   // Deliberately NO reserveStock and NO createPaymentIntent here: the draft becomes a real order
   // the moment the invoice is sent, but nothing is held or charged until the buyer opens the pay
@@ -390,11 +414,7 @@ export async function payableInvoiceSession(
   // a session that is already gone.
   const priorSessionId = row.invoice_session_id ? String(row.invoice_session_id) : null;
   if (priorSessionId) {
-    try {
-      await getStripe().checkout.sessions.expire(priorSessionId);
-    } catch {
-      // Already completed or already expired — nothing to do.
-    }
+    await expireStripeSessionBestEffort(priorSessionId);
   }
 
   let session: { sessionId: string; url: string };
@@ -447,12 +467,25 @@ export async function expireInvoiceSession(shopId: string, orderId: string): Pro
   const sessionId = row?.invoice_session_id ? String(row.invoice_session_id) : null;
   if (!sessionId) return;
 
-  try {
-    await getStripe().checkout.sessions.expire(sessionId);
-  } catch {
-    // Already completed or already expired — nothing to do.
-  }
+  await expireStripeSessionBestEffort(sessionId);
 
   const clear = await sb.from("orders").update({ invoice_session_id: null }).eq("shop_id", shopId).eq("id", orderId);
   if (clear.error) throw clear.error;
+}
+
+/**
+ * Best-effort expire of a Stripe hosted Checkout Session, shared by payableInvoiceSession
+ * (expiring the PRIOR session before minting a replacement) and expireInvoiceSession (killing the
+ * currently-persisted session outright). Stripe throws when the session is already completed or
+ * already expired, and either case means there is nothing left to do — that failure is swallowed
+ * rather than propagated (both callers have their own already-decided state change to make), but
+ * it is NOT silent (rule 12): a one-line console.warn names the session id and the Stripe error so
+ * a genuine API/auth failure is still visible, distinct from the routine already-gone case.
+ */
+async function expireStripeSessionBestEffort(sessionId: string): Promise<void> {
+  try {
+    await getStripe().checkout.sessions.expire(sessionId);
+  } catch (err) {
+    console.warn(`[invoice] could not expire Stripe session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }

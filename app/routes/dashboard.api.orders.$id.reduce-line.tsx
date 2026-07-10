@@ -5,6 +5,8 @@ import { isImportedOrderId, stripNativeOrderPrefix } from "~/lib/order/detail.se
 import { executeReduceLineAction } from "~/lib/order/edit.server";
 import { getSupabase } from "~/lib/supabase.server";
 
+const MAX_REASON_LENGTH = 500;
+
 /**
  * Merchant-initiated line reduction on a paid order (orders phase 3, Task 3). Records an
  * append-only order_line_edit row, refunds the exact delta through the shared refund executor,
@@ -42,8 +44,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!idempotencyKey) return jsonError(422, "missing_idempotency_key", "idempotency_key is required.");
 
   const reason = typeof body.reason === "string" ? body.reason : null;
-  if (reason !== null && reason.length > 500) {
-    return jsonError(422, "invalid_reason", "reason must be 500 characters or fewer.");
+  if (reason !== null && reason.length > MAX_REASON_LENGTH) {
+    return jsonError(422, "invalid_reason", `reason must be ${MAX_REASON_LENGTH} characters or fewer.`);
   }
 
   return dashboardJson(async () => {
