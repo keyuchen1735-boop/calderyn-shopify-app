@@ -31,6 +31,7 @@ import OrderDetailScreen from "./OrderDetail";
 import OrderComposer from "./OrderComposer";
 import OrdersToolbar from "./OrdersToolbar";
 import { fulfillmentBadge, paymentPillStyle, REFUNDABLE_ORDER_STATES } from "./order-status";
+import { isPrefillParam } from "./order-composer-prefill";
 import {
   isSystemView,
   paramsToViewFilters,
@@ -749,10 +750,13 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   const sub = app.nav.sub ?? "orders";
 
   // Reserved param "new" -> the Create-order composer, same idiom as Campaigns' navigate("campaigns",
-  // "new"). Must be checked BEFORE the row-click/deep-link branch below, which otherwise treats any
+  // "new"). A "new_<orderId>_<returnId>" param (order-composer-prefill.ts) is the SAME composer
+  // with a replacement-order prefill (Phase 4 Task 2, from a closed return's "Create replacement
+  // order" button) — isPrefillParam only matches that reserved shape, never a bare order sourceId.
+  // Must be checked BEFORE the row-click/deep-link branch below, which otherwise treats any
   // non-null param as an order's sourceId.
-  if (app.nav.param === "new") {
-    return <OrderComposer app={app} />;
+  if (app.nav.param === "new" || (app.nav.param && isPrefillParam(app.nav.param))) {
+    return <OrderComposer app={app} prefillParam={app.nav.param === "new" ? null : app.nav.param} />;
   }
 
   // Row-click / deep-link: nav.param carries the selected order's sourceId (`shopify:<id>` for

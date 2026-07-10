@@ -465,6 +465,24 @@ describe("sendDraftOrderInvoice", () => {
     );
     expect(store.db.buyer_dim.some((b) => "consent" in b)).toBe(false);
   });
+
+  it("stamps exchange_for into attribution when this invoice replaces a return (Phase 4 Task 2)", async () => {
+    seedDraftCart("shop-1", "cart-exchange");
+    await sendDraftOrderInvoice("shop-1", "cart-exchange", {
+      email: "exchange@example.com",
+      exchangeForReturnId: "9f9a2b1c-2222-4e5f-8a9b-0c1d2e3f4a5b",
+    });
+    expect(store.db.orders[0].attribution).toEqual({
+      channel: "invoice",
+      exchange_for: "9f9a2b1c-2222-4e5f-8a9b-0c1d2e3f4a5b",
+    });
+  });
+
+  it("omits exchange_for from attribution for an ordinary (non-replacement) invoice", async () => {
+    seedDraftCart("shop-1", "cart-ordinary");
+    await sendDraftOrderInvoice("shop-1", "cart-ordinary", { email: "ordinary@example.com" });
+    expect(store.db.orders[0].attribution).toEqual({ channel: "invoice" });
+  });
 });
 
 describe("payableInvoiceSession", () => {

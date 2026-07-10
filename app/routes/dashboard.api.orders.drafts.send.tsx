@@ -80,8 +80,24 @@ export async function action({ request }: ActionFunctionArgs) {
     note = body.note;
   }
 
+  // Exchange-lite (Phase 4 Task 2): an optional return this invoice replaces. Validated as a uuid
+  // here — the same shape guard every other id in this route gets — before it reaches
+  // sendDraftOrderInvoice, which trusts it and stamps it straight into attribution.
+  let exchangeForReturnId: string | null = null;
+  if (body.exchange_for_return_id !== undefined && body.exchange_for_return_id !== null) {
+    if (typeof body.exchange_for_return_id !== "string" || !isUuid(body.exchange_for_return_id)) {
+      return jsonError(422, "invalid_exchange_for_return_id", "exchange_for_return_id must be a uuid.");
+    }
+    exchangeForReturnId = body.exchange_for_return_id;
+  }
+
   return dashboardJson(async () => {
-    const result = await sendDraftOrderInvoice(session.shopId, cartId, { email, address: addr.value, note });
+    const result = await sendDraftOrderInvoice(session.shopId, cartId, {
+      email,
+      address: addr.value,
+      note,
+      exchangeForReturnId,
+    });
     return {
       order_id: result.orderId,
       confirmation_token: result.confirmationToken,

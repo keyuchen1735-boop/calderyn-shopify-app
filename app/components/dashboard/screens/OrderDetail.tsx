@@ -15,21 +15,28 @@ import {
   setOrderArchived,
   cancelOrder,
   resendInvoiceEmail,
+  receiveOrderReturn,
+  cancelOrderReturn,
   type OrderDetail,
   type OrderDetailLine,
   type OrderRow,
+  type OrderReturn,
 } from "~/lib/dashboard/orders-client";
 import RefundModal from "./RefundModal";
 import FulfillModal from "./FulfillModal";
 import CancelOrderModal from "./CancelOrderModal";
 import ReduceLineModal from "./ReduceLineModal";
 import EditInvoiceLinesModal from "./EditInvoiceLinesModal";
+import CreateReturnModal from "./CreateReturnModal";
 import {
   fulfillmentBadge,
   paymentPillStyle,
+  returnStatusPill,
   REFUNDABLE_ORDER_STATES,
   CANCELLABLE_ORDER_STATES,
 } from "./order-status";
+import { anyLineReturnable, hasOpenReturn } from "./return-preview";
+import { buildPrefillParam } from "./order-composer-prefill";
 
 /** Order states where a paid line's quantity can still be reduced. Mirrors EDITABLE_STATES in
  *  app/lib/order/edit.server.ts so the per-line Reduce affordance only ever shows where the
@@ -123,8 +130,22 @@ export default function OrderDetailScreen({
   const [showFulfill, setShowFulfill] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
   const [showEditInvoice, setShowEditInvoice] = useState(false);
+  const [showCreateReturn, setShowCreateReturn] = useState(false);
   const [reduceTarget, setReduceTarget] = useState<OrderDetailLine | null>(null);
   const [refundTarget, setRefundTarget] = useState<OrderRow | null>(null);
+  const [busyReturnId, setBusyReturnId] = useState<string | null>(null);
+  // One stable idempotency key per return, minted the first time it's needed and reused across a
+  // retried "Mark received" submit — the same per-intent-key pattern voidIdempotencyKey uses below,
+  // just keyed per return since a screen visit can act on more than one.
+  const receiveKeysRef = useRef<Map<string, string>>(new Map());
+  const receiveKeyFor = (returnId: string): string => {
+    let key = receiveKeysRef.current.get(returnId);
+    if (!key) {
+      key = crypto.randomUUID();
+      receiveKeysRef.current.set(returnId, key);
+    }
+    return key;
+  };
   const [resendingInvoice, setResendingInvoice] = useState(false);
   const [voidingInvoice, setVoidingInvoice] = useState(false);
   // One stable key per screen visit (the sibling modals' key-per-open pattern) so a retried Void
@@ -232,6 +253,11 @@ export default function OrderDetailScreen({
     CANCELLABLE_ORDER_STATES.has(detail.state) &&
     !detail.cancelledAt &&
     !isUnpaidInvoice;
+  // Create return (Phase 4 Task 2): native, at least one line still has returnable quantity, and
+  // no return already open (createOrderReturn's one-open-return guard, mirrored here so the button
+  // never invites a 409 the server would refuse anyway).
+  const canCreateReturn =
+    !!detail && !detail.readOnly && !hasOpenReturn(detail.returns) && anyLineReturnable(detail.lines, detail.returns);
 
   const addNote = async () => {
     if (!detail || noteSaving || !noteText.trim()) return;
@@ -326,6 +352,43 @@ export default function OrderDetailScreen({
     }
   };
 
+  const markReturnReceived = async (ret: OrderReturn) => {
+    if (!detail || busyReturnId) return;
+    const totalRefundCents = ret.lines.reduce((sum, l) => sum + l.refundCents, 0);
+    if (!window.confirm(`Restock the selected items and refund ${money(totalRefundCents, detail.currency)}?`)) return;
+    setBusyReturnId(ret.id);
+    try {
+      const res = await receiveOrderReturn(detail.id, { returnId: ret.id, idempotencyKey: receiveKeyFor(ret.id) });
+      app.toast(
+        `Refunded ${money(res.refundedCents, detail.currency)}.${res.restockedLines > 0 ? ` ${res.restockedLines} item(s) restocked.` : ""}`,
+        "check",
+      );
+      if (res.restockErrors && res.restockErrors.length > 0) {
+        app.toast("Return received, but some items could not be restocked. Check your inventory.", "warn");
+      }
+      load();
+    } catch (err) {
+      app.toast(err instanceof DashboardApiError ? err.message : "Couldn't mark this return received.", "warn", "critical");
+    } finally {
+      setBusyReturnId(null);
+    }
+  };
+
+  const cancelReturn = async (ret: OrderReturn) => {
+    if (!detail || busyReturnId) return;
+    if (!window.confirm("Cancel this return? No refund is issued and nothing is restocked.")) return;
+    setBusyReturnId(ret.id);
+    try {
+      await cancelOrderReturn(detail.id, ret.id);
+      app.toast("Return cancelled.", "check");
+      load();
+    } catch (err) {
+      app.toast(err instanceof DashboardApiError ? err.message : "Couldn't cancel this return.", "warn", "critical");
+    } finally {
+      setBusyReturnId(null);
+    }
+  };
+
   return (
     <div ref={screenRef} className="cd-screen" data-screen-label="Order">
       <header className="cd-screen-head">
@@ -371,6 +434,11 @@ export default function OrderDetailScreen({
                 {canCancel && (
                   <Btn small icon="ban" onClick={() => setShowCancel(true)}>
                     Cancel
+                  </Btn>
+                )}
+                {canCreateReturn && (
+                  <Btn small icon="undo" onClick={() => setShowCreateReturn(true)}>
+                    Create return
                   </Btn>
                 )}
                 {isUnpaidInvoice && (
@@ -524,6 +592,62 @@ export default function OrderDetailScreen({
               </Card>
             )}
 
+            {detail.returns.length > 0 && (
+              <Card className="cd-card-tight">
+                <div className="cd-h2" style={{ marginBottom: 8 }}>Returns</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {detail.returns.map((r) => {
+                    const pill = returnStatusPill(r.status);
+                    const refundCents = r.lines.reduce((sum, l) => sum + l.refundCents, 0);
+                    const unitCount = r.lines.reduce((sum, l) => sum + l.quantity, 0);
+                    const isOpen = r.status === "open";
+                    const isClosed = r.status === "closed" || r.status === "received";
+                    const busy = busyReturnId === r.id;
+                    return (
+                      <div key={r.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div className="flex items-center justify-between" style={{ gap: 8, flexWrap: "wrap" }}>
+                          <div className="flex items-center" style={{ gap: 8 }}>
+                            <Pill tone={pill.tone}>{pill.label}</Pill>
+                            <span className="cd-row-title">
+                              {unitCount} unit{unitCount === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                          <span className="cd-row-num tabular-nums">{money(refundCents, detail.currency)}</span>
+                        </div>
+                        <div className="cd-caption">
+                          {timeAgo(r.createdAt)}
+                          {r.reason ? ` · ${r.reason}` : ""}
+                        </div>
+                        {(isOpen || isClosed) && (
+                          <div className="flex items-center" style={{ gap: 8 }}>
+                            {isOpen && (
+                              <>
+                                <Btn small icon="check" onClick={() => markReturnReceived(r)} disabled={busy}>
+                                  {busy ? "Working…" : "Mark received"}
+                                </Btn>
+                                <Btn small kind="danger" icon="x" onClick={() => cancelReturn(r)} disabled={busy}>
+                                  Cancel return
+                                </Btn>
+                              </>
+                            )}
+                            {isClosed && (
+                              <Btn
+                                small
+                                icon="swap"
+                                onClick={() => app.navigate("orders", buildPrefillParam(detail.id, r.id))}
+                              >
+                                Create replacement order
+                              </Btn>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            )}
+
             <Card className="cd-card-tight">
               <div className="cd-h2" style={{ marginBottom: 8 }}>Timeline</div>
               {!detail.readOnly && (
@@ -671,6 +795,14 @@ export default function OrderDetailScreen({
           app={app}
           order={detail}
           onClose={() => setShowEditInvoice(false)}
+          onDone={() => load()}
+        />
+      )}
+      {showCreateReturn && detail && (
+        <CreateReturnModal
+          app={app}
+          order={detail}
+          onClose={() => setShowCreateReturn(false)}
           onDone={() => load()}
         />
       )}

@@ -37,6 +37,12 @@ export interface InvoiceBuyerInput {
   email: string;
   address?: BuyerAddressInput;
   note?: string | null;
+  /** Exchange-lite (Phase 4 Task 2): when this invoice is a replacement order for a closed return,
+   *  the return's id — stamped into the new order's attribution as `{ exchange_for }` so the two
+   *  orders are traceably linked without coupling their money: the return's refund and this
+   *  invoice's charge are separate transactions, never netted against each other. Validated as a
+   *  uuid at the route boundary before it ever reaches here. */
+  exchangeForReturnId?: string | null;
 }
 
 export interface SendInvoiceResult {
@@ -205,7 +211,10 @@ export async function sendDraftOrderInvoice(
         tax_cents: taxCents,
         total_cents: totalCents,
         currency: priced.currency,
-        attribution: { channel: "invoice" },
+        attribution: {
+          channel: "invoice",
+          ...(buyer.exchangeForReturnId ? { exchange_for: buyer.exchangeForReturnId } : {}),
+        },
         confirmation_token: confirmationToken,
       })
       .select("id")

@@ -59,3 +59,21 @@ function statusTitle(status: string): string {
 export function paymentPillStyle(status: string): { label: string; tone: PaymentPillTone } {
   return PAYMENT_STATUS_STYLE[status] ?? { label: statusTitle(status), tone: "neutral" };
 }
+
+export type ReturnStatusTone = "warn" | "success" | "neutral" | "critical";
+
+// order_return.status vocabulary (returns-types.ts's OrderReturnStatus) → Returns card pill.
+const RETURN_STATUS_STYLE: Record<string, { label: string; tone: ReturnStatusTone }> = {
+  open: { label: "Open", tone: "warn" },
+  // v1's receive flow flips straight to 'closed' (returns.server.ts); 'received' is a reserved
+  // future value for an async fulfillment-style intake step — styled the same as 'closed' either way.
+  received: { label: "Received", tone: "success" },
+  closed: { label: "Closed", tone: "success" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
+};
+
+/** Pill label/tone for a return's status. Pure so it's unit-testable the same way
+ *  paymentPillStyle drives the Payment pill. */
+export function returnStatusPill(status: string): { label: string; tone: ReturnStatusTone } {
+  return RETURN_STATUS_STYLE[status] ?? { label: statusTitle(status), tone: "neutral" };
+}
