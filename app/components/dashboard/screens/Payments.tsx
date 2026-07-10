@@ -171,7 +171,13 @@ export default function Payments({ app }: { app: DashboardCtx }) {
             </Card>
           </div>
 
-          <PayoutsCard app={app} />
+          <PayoutsCard
+            app={app}
+            onBillingUpdate={(b) => {
+              setBilling(b);
+              setBillingFailed(false);
+            }}
+          />
 
           <section>
             <SectionTitle>Recent transactions</SectionTitle>
