@@ -88,10 +88,12 @@ export const ALERTS_ACTIONS: AssistantAction[] = [
       }
       return {
         action: "create_po_draft",
-        summary: "Drafted a purchase order",
+        summary:
+          "Drafted the purchase order — view or download it below, or under Products → Purchase orders.",
         auditId: result.auditId,
         undoable: false,
         detail: { audit_id: result.auditId },
+        link: { label: "View PO (PDF)", href: `/dashboard/api/audit/${result.auditId}/po.pdf` },
       };
     },
   },

@@ -179,18 +179,31 @@ function ReceiptChip({ receipt }: { receipt: ActionReceipt }) {
           <CDIcon name="check" size={13} strokeWidth={2.2} /> {receipt.summary}
         </span>
       </div>
-      {canUndo &&
-        (state === "undone" ? (
-          <span className="cd-chat-action-done">
-            <CDIcon name="check" size={13} strokeWidth={2.2} /> Undone
-          </span>
-        ) : (
-          <div className="cd-chat-action-btns">
-            <Btn small disabled={state === "undoing"} onClick={undo}>
-              {state === "undoing" ? "Undoing…" : "Undo"}
-            </Btn>
-          </div>
-        ))}
+      {(receipt.link || canUndo) && (
+        <div className="cd-chat-action-btns">
+          {receipt.link && (
+            <a
+              href={receipt.link.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="cd-btn cd-btn-secondary cd-btn-sm"
+            >
+              <CDIcon name="download" size={14} strokeWidth={1.9} />
+              {receipt.link.label}
+            </a>
+          )}
+          {canUndo &&
+            (state === "undone" ? (
+              <span className="cd-chat-action-done">
+                <CDIcon name="check" size={13} strokeWidth={2.2} /> Undone
+              </span>
+            ) : (
+              <Btn small disabled={state === "undoing"} onClick={undo}>
+                {state === "undoing" ? "Undoing…" : "Undo"}
+              </Btn>
+            ))}
+        </div>
+      )}
       {errorText && <div className="cd-chat-error">{errorText}</div>}
     </div>
   );
