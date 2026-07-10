@@ -73,6 +73,80 @@ export async function refundOrder(
   };
 }
 
+export interface ReduceLineResult {
+  auditId: string;
+  orderState: string;
+  refundedCents: number;
+  restocked: boolean;
+  restockError: string | null;
+}
+
+/**
+ * Reduce a paid order's line to a lower quantity, refunding the delta (and optionally
+ * restocking it). Native orders only. idempotencyKey dedups the reduction AND is handed to the
+ * nested refund executor, so a retried submit can never double-refund.
+ */
+export async function reduceOrderLine(
+  orderId: string,
+  args: { orderLineId: string; newQuantity: number; restock: boolean; reason?: string; idempotencyKey: string },
+): Promise<ReduceLineResult> {
+  const data = await apiSend<{
+    audit_id: string;
+    order_state: string;
+    refunded_cents: number;
+    restocked: boolean;
+    restock_error: string | null;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/reduce-line`, {
+    order_line_id: args.orderLineId,
+    new_quantity: args.newQuantity,
+    restock: args.restock,
+    reason: args.reason,
+    idempotency_key: args.idempotencyKey,
+  });
+  return {
+    auditId: data.audit_id,
+    orderState: data.order_state,
+    refundedCents: data.refunded_cents,
+    restocked: data.restocked,
+    restockError: data.restock_error,
+  };
+}
+
+export interface EditInvoiceLinesResult {
+  orderId: string;
+  subtotalCents: number;
+  shippingCents: number;
+  taxCents: number;
+  totalCents: number;
+  currency: string;
+}
+
+/** Replace every line on an UNPAID invoice order (channel='invoice', state='checkout_pending'
+ *  only — 409s otherwise) and recompute totals. */
+export async function editInvoiceLines(
+  orderId: string,
+  lines: Array<{ variantId: string; quantity: number }>,
+): Promise<EditInvoiceLinesResult> {
+  const data = await apiSend<{
+    order_id: string;
+    subtotal_cents: number;
+    shipping_cents: number;
+    tax_cents: number;
+    total_cents: number;
+    currency: string;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/edit-lines`, {
+    lines: lines.map((l) => ({ variant_id: l.variantId, quantity: l.quantity })),
+  });
+  return {
+    orderId: data.order_id,
+    subtotalCents: data.subtotal_cents,
+    shippingCents: data.shipping_cents,
+    taxCents: data.tax_cents,
+    totalCents: data.total_cents,
+    currency: data.currency,
+  };
+}
+
 /** Fetch a single order's detail view (native or imported read-only). */
 export async function fetchOrderDetail(sourceId: string): Promise<OrderDetail> {
   const data = await apiGet<{ order: OrderDetail }>(

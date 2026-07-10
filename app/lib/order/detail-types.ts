@@ -7,7 +7,11 @@ export interface OrderDetailLine {
   id: string;
   title: string;
   sku: string | null;
+  /** Effective quantity today (snapshot minus any reductions) — what the line actually totals. */
   quantity: number;
+  /** Units reduced off this line via order_line_edit; 0 for an unedited line. Additive detail
+   *  alongside `quantity`, not a replacement for it. */
+  reducedQuantity: number;
   unitPriceCents: number;
   fulfilledQuantity: number;
 }
@@ -22,7 +26,7 @@ export interface OrderDetailFulfillment {
 }
 
 export interface OrderTimelineEvent {
-  kind: "transition" | "note" | "refund" | "fulfillment";
+  kind: "transition" | "note" | "refund" | "fulfillment" | "edit";
   at: string;
   title: string;
   detail: string | null;

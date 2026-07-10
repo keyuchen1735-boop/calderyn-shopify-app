@@ -7,6 +7,7 @@
 // existing engine reads the owned numbers. Keyed by shop_id.
 import { getSupabase } from "../supabase.server";
 import { orderLocations, type Loc, type Dest } from "./allocate";
+import { effectiveLineQuantities } from "../order/line-edits.server";
 import { projectLevelFact } from "./project-level-fact.server";
 
 const HOLD_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -122,6 +123,15 @@ export async function seedInitialStock(shopId: string, variantId: string, onHand
 // tracked variants restock (untracked lines never held ledger stock). Idempotent:
 // the ledger key restock:<order>:<variant> makes a replayed refund/cancel a no-op.
 //
+// EFFECTIVE-QUANTITY NETTING (orders phase 3): quantities are netted through
+// effectiveLineQuantities, NOT read raw off the order_line snapshot. A line reduced via
+// executeReduceLineAction either already put its reduced units back (restockLine, its own
+// editrestock:<edit-row-id> ledger key — a DIFFERENT key from restock:<order>:<variant>, so
+// idempotency would NOT catch the overlap) or the merchant explicitly chose not to restock
+// them at reduction time. Either way, a later whole-order restock (cancel / full refund)
+// must return only the EFFECTIVE units, or a reduced-then-refunded order would inflate
+// on_hand above what was ever actually sold.
+//
 // PARTIAL-PROGRESS CONTRACT: each variant's inventory_restock RPC commits independently
 // (its own atomic Postgres function), so a failure on one variant midway through the loop
 // does NOT roll back the variants already restocked before it. Because the ledger key is
@@ -138,14 +148,16 @@ export async function restockOrderLines(
   const sb = getSupabase();
   const { data: lines, error: lErr } = await sb
     .from("order_line")
-    .select("variant_id, quantity")
+    .select("id, variant_id, quantity")
     .eq("shop_id", shopId)
     .eq("order_id", orderId);
   if (lErr) throw lErr;
+  const effectiveMap = await effectiveLineQuantities(shopId, orderId, sb);
   const byVariant = new Map<string, number>();
   for (const l of (lines ?? []) as Array<Record<string, unknown>>) {
     const v = String(l.variant_id);
-    byVariant.set(v, (byVariant.get(v) ?? 0) + Number(l.quantity ?? 0));
+    const qty = effectiveMap.get(String(l.id))?.effective ?? Number(l.quantity ?? 0);
+    byVariant.set(v, (byVariant.get(v) ?? 0) + qty);
   }
   if (byVariant.size === 0) return { restockedLines: 0, failedVariantIds: [] };
 
@@ -186,6 +198,35 @@ export async function restockOrderLines(
     restockedLines += 1;
   }
   return { restockedLines, failedVariantIds };
+}
+
+// Per-line restock for the paid-order line-reduction flow (edit.server.ts): put back ONE line's
+// reduced units at the shop's primary location. Distinct from restockOrderLines above (whole-
+// order, amount-refund shape) — this is per-variant/qty, keyed by the CALLER's own idempotency
+// key rather than a derived `restock:<order>:<variant>` one, because a single order can have
+// several independent line reductions for the SAME variant (each needing its own restock, not a
+// dedup collision). edit.server.ts derives the key from the order_line_edit row id
+// (`editrestock:<edit-row-id>`) — one row, one restock, naturally idempotent on replay. The
+// tracked-variant gate lives in the caller (it already has variant_dim loaded for pricing).
+export async function restockLine(
+  shopId: string,
+  orderId: string,
+  variantId: string,
+  qty: number,
+  idempotencyKey: string,
+): Promise<void> {
+  if (qty <= 0) return;
+  const locationId = await ensurePrimaryLocation(shopId);
+  const { error } = await getSupabase().rpc("inventory_restock", {
+    p_shop_id: shopId,
+    p_variant_id: variantId,
+    p_location_id: locationId,
+    p_qty: qty,
+    p_idempotency_key: idempotencyKey,
+    p_reason: `line_reduction:${orderId}`,
+  });
+  if (error) throw error;
+  await projectLevelFact(shopId, variantId, locationId);
 }
 
 // Paid-without-hold fallback: an order that reached `paid` with NOTHING held in

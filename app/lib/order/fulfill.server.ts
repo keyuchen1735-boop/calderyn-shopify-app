@@ -21,6 +21,7 @@ import { transitionOrder } from "./order.server";
 import { isOrderState, type OrderState } from "./state";
 import { priorExecutionForKey, insertAuditWithIdempotency } from "../actions/execute.server";
 import { sendShippingConfirmation } from "./notify-email.server";
+import { effectiveLineQuantities } from "./line-edits.server";
 
 /** Order states a fulfillment may act on. Cart/checkout_pending are unpaid; fulfilled/cancelled/
  *  refunded/partially_refunded are past this action's reach. */
@@ -132,10 +133,15 @@ export async function executeFulfillAction(
     }
   }
 
+  // Remaining is computed off the EFFECTIVE quantity (snapshot net of any order_line_edit
+  // reductions), never the raw snapshot — a merchant who reduced a line to 1 unit must not be
+  // offered "fulfill the other 4" just because order_line.quantity still says 5.
+  const effectiveMap = await effectiveLineQuantities(shopId, input.orderId, sb);
   const remaining = new Map<string, number>();
   for (const l of orderLines) {
     const id = String(l.id);
-    remaining.set(id, Number(l.quantity) - (fulfilledByLine.get(id) ?? 0));
+    const effectiveQty = effectiveMap.get(id)?.effective ?? Number(l.quantity);
+    remaining.set(id, effectiveQty - (fulfilledByLine.get(id) ?? 0));
   }
 
   // 4. Resolve requested lines against `remaining`.

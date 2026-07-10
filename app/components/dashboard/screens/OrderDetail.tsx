@@ -90,6 +90,7 @@ const TIMELINE_DOT: Record<OrderDetail["timeline"][number]["kind"], string> = {
   note: "var(--accent)",
   refund: "var(--orange)",
   fulfillment: "var(--green)",
+  edit: "var(--red)",
 };
 
 export default function OrderDetailScreen({

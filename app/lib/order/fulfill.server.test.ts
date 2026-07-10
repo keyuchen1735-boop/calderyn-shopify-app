@@ -6,7 +6,13 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // bare mocks.
 const store = vi.hoisted(() => {
   type Row = Record<string, any>;
-  const db: Record<string, Row[]> = { orders: [], order_line: [], fulfillment: [], fulfillment_line: [] };
+  const db: Record<string, Row[]> = {
+    orders: [],
+    order_line: [],
+    order_line_edit: [],
+    fulfillment: [],
+    fulfillment_line: [],
+  };
 
   class Builder {
     private op: "select" | "insert" | "update" = "select";
@@ -352,5 +358,33 @@ describe("executeFulfillAction", () => {
     await expect(
       executeFulfillAction("shop-1", { orderId: "ghost", notify: false, idempotencyKey: "k9" }),
     ).rejects.toMatchObject({ code: "order_not_found", status: 404 });
+  });
+
+  it("remaining respects a reduced line: a line's order_line_edit reduction shrinks what's left to ship, not the raw snapshot", async () => {
+    seedOrder("shop-1", "order-10", "paid");
+    seedOrderLine("shop-1", "order-10", "line-r", 5); // snapshot 5, but reduced to 2 below
+    store.db.order_line_edit.push({
+      id: "edit-1",
+      shop_id: "shop-1",
+      order_id: "order-10",
+      order_line_id: "line-r",
+      new_quantity: 2,
+      created_at: "2026-07-01T00:00:00.000Z",
+    });
+
+    // Requesting the full raw snapshot (5) must be refused as over-fulfil — only 2 are effective.
+    await expect(
+      executeFulfillAction("shop-1", {
+        orderId: "order-10",
+        lines: [{ orderLineId: "line-r", quantity: 5 }],
+        notify: false,
+        idempotencyKey: "k10a",
+      }),
+    ).rejects.toMatchObject({ code: "over_fulfil", status: 422 });
+
+    // The default (no lines given) path fulfills exactly the EFFECTIVE remaining (2), not 5.
+    const res = await executeFulfillAction("shop-1", { orderId: "order-10", notify: false, idempotencyKey: "k10b" });
+    expect(res.fulfilledUnits).toBe(2);
+    expect(store.db.fulfillment_line[0].quantity).toBe(2);
   });
 });

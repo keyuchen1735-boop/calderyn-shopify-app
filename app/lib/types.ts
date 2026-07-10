@@ -24,7 +24,8 @@ export type ActionKind =
   | "snooze_alert"
   | "push_creative_draft"
   | "fulfill_order"
-  | "cancel_order";
+  | "cancel_order"
+  | "edit_order";
 export type DetectorId =
   | "ad_tax_overload"
   | "campaign_below_breakeven"
