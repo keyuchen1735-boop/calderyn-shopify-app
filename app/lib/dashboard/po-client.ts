@@ -102,6 +102,15 @@ export async function fetchPoScreen(): Promise<PoScreenData> {
   };
 }
 
+/** One further page of the PO list (the screen's Load more). Only the default
+ *  offset-0 payload is ever cached; paged-in rows stay screen-local. */
+export async function fetchPoPage(offset: number): Promise<{ pos: PoListItemVM[]; total: number }> {
+  const d = await apiGet<{ pos: PoListItemVM[]; total: number }>(
+    `/dashboard/api/po?offset=${encodeURIComponent(String(offset))}`,
+  );
+  return { pos: d.pos, total: d.total };
+}
+
 export async function fetchPoDetail(poId: string): Promise<PoDetailVM> {
   const d = await apiGet<{ po: PoDetailVM }>(`/dashboard/api/po/${encodeURIComponent(poId)}`);
   return d.po;
