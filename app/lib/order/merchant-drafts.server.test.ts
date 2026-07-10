@@ -218,6 +218,23 @@ describe("replaceMerchantDraftLines", () => {
     expect(store.db.cart_line.filter((l) => l.cart_id === draft.id)).toHaveLength(1);
   });
 
+  it("422s (unknown_variant) on a bad variant id and leaves the ORIGINAL lines untouched", async () => {
+    const draft = await createMerchantDraft("shop-1", [{ variantId: "v-tee-s", quantity: 1 }]);
+
+    await expect(
+      replaceMerchantDraftLines("shop-1", draft.id, [
+        { variantId: "v-tee-s", quantity: 2 },
+        { variantId: "v-missing", quantity: 1 },
+      ]),
+    ).rejects.toMatchObject({ status: 422, code: "unknown_variant" });
+
+    // Nothing cleared: the original line (and only the original line) is still there, at its
+    // original quantity — the bad id must never wipe the draft mid-edit.
+    const lines = store.db.cart_line.filter((l) => l.cart_id === draft.id);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ variant_id: "v-tee-s", quantity: 1 });
+  });
+
   it("404s (draft_not_found) on an unknown cart id", async () => {
     await expect(
       replaceMerchantDraftLines("shop-1", "no-such-cart", [{ variantId: "v-tee-s", quantity: 1 }]),

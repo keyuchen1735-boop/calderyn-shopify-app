@@ -11,12 +11,14 @@
 // creation (an invoice is not a checkout — the buyer hasn't paid, or even necessarily agreed to
 // buy, yet) and never records consent (the merchant is entering this on the buyer's behalf).
 //
-// payableInvoiceSession is intentionally STATELESS: it never stores a Stripe session id. Every
-// call for a still-pending invoice mints a brand-new hosted Checkout Session via
-// createCommerceCheckoutSession. Stripe tolerates multiple open sessions against the same order
-// (each gets its own PaymentIntent); whichever one the buyer actually completes reconciles the
-// order via the session/PI's shop_id + order_ref metadata (webhooks.stripe.tsx), so there is
-// nothing to expire or garbage-collect here.
+// payableInvoiceSession is STATEFUL-LITE (migration 20260710170000): it persists the id of the
+// last hosted Checkout Session it minted on orders.invoice_session_id. Each call for a still-
+// pending invoice best-effort EXPIRES that prior session before minting a replacement, so a
+// buyer with two open tabs (or a merchant who resent the pay link) cannot complete two payments
+// against the same invoice. This narrows, but does not close, the race: completing the prior
+// session in the gap between its expire call and the new session's persist still produces a
+// second successful PaymentIntent. That surplus-capture case is caught loudly (not silently) by
+// the webhook's already-paid guard in stripe.server.ts rather than prevented here.
 import { randomBytes } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
 import { CalderynError } from "~/lib/calderyn.server";
@@ -25,7 +27,9 @@ import { upsertGuestBuyer, addBuyerAddress, type BuyerAddressInput } from "~/lib
 import { paymentsReadiness } from "~/lib/payments/connect.server";
 import { quoteCart } from "~/lib/commerce/quote.server";
 import { isSupportedCurrency } from "~/lib/payments/stripe.server";
+import { getStripe } from "~/lib/payments/stripe-client.server";
 import { createCommerceCheckoutSession } from "~/lib/commerce/stripe-checkout.server";
+import { PaymentsNotReadyError } from "~/lib/payments/errors";
 import { sendInvoiceEmail } from "./notify-email.server";
 
 export interface InvoiceBuyerInput {
@@ -73,7 +77,7 @@ export async function sendDraftOrderInvoice(
   const sb = getSupabase();
   const cartRes = await sb
     .from("cart")
-    .select("id, origin")
+    .select("id, origin, state")
     .eq("shop_id", shopId)
     .eq("id", cartId)
     .maybeSingle();
@@ -84,6 +88,20 @@ export async function sendDraftOrderInvoice(
       code: "not_a_draft",
       status: 404,
       message: `No merchant draft cart ${cartId} found for this shop.`,
+    });
+  }
+  // Two-field guard mirroring isMerchantDraftCart (merchant-drafts.server.ts): origin alone is
+  // not enough — a draft that already sent (cart.state advanced past 'cart' at the bottom of
+  // this function) must never be invoiced a second time. Without this a double-click / retried
+  // request on the send-invoice button would price + insert a SECOND order and email a SECOND
+  // pay link off the same consumed draft. Kept as its own check (not a reuse of the boolean
+  // helper) so the two failure shapes stay distinguishable: "never was a draft" (404) vs.
+  // "was a draft, already sent" (409).
+  if (cartRow.state !== "cart") {
+    throw new CalderynError({
+      code: "draft_already_sent",
+      status: 409,
+      message: `Draft cart ${cartId} was already invoiced; refusing to send a duplicate.`,
     });
   }
 
@@ -209,7 +227,8 @@ export async function sendDraftOrderInvoice(
 export type PayableInvoiceSession =
   | { kind: "pay"; url: string }
   | { kind: "paid"; confirmationToken: string }
-  | { kind: "void" };
+  | { kind: "void" }
+  | { kind: "not_ready" };
 
 // States that mean the invoice was already paid (or is further along than paid) — the pay-link
 // route sends the buyer straight to the existing confirmation page rather than minting a new
@@ -233,7 +252,7 @@ export async function payableInvoiceSession(
   const sb = getSupabase();
   const orderRes = await sb
     .from("orders")
-    .select("id, state, channel, total_cents, currency")
+    .select("id, state, channel, total_cents, currency, invoice_session_id")
     .eq("shop_id", shopId)
     .eq("confirmation_token", token)
     .maybeSingle();
@@ -245,14 +264,44 @@ export async function payableInvoiceSession(
   if (PAID_STATES.has(state)) return { kind: "paid", confirmationToken: token };
   if (VOID_STATES.has(state)) return { kind: "void" };
 
-  // checkout_pending: mint a FRESH hosted session every time — stateless by design (see the
-  // module comment above). No session id is ever persisted on the order.
   const orderId = String(row.id);
-  const session = await createCommerceCheckoutSession(shopId, {
-    orderId,
-    totalCents: Number(row.total_cents),
-    currency: String(row.currency),
-    confirmationToken: token,
-  });
+
+  // Expire the PRIOR hosted session (if any) before minting a replacement — see the module
+  // comment for why this only narrows, rather than closes, the double-pay race. Best-effort:
+  // Stripe throws when the session is already completed or already expired, and either case
+  // means there is nothing left to expire, so we swallow it rather than fail the pay link over
+  // a session that is already gone.
+  const priorSessionId = row.invoice_session_id ? String(row.invoice_session_id) : null;
+  if (priorSessionId) {
+    try {
+      await getStripe().checkout.sessions.expire(priorSessionId);
+    } catch {
+      // Already completed or already expired — nothing to do.
+    }
+  }
+
+  let session: { sessionId: string; url: string };
+  try {
+    session = await createCommerceCheckoutSession(shopId, {
+      orderId,
+      totalCents: Number(row.total_cents),
+      currency: String(row.currency),
+      confirmationToken: token,
+    });
+  } catch (err) {
+    // The shop's Stripe readiness can regress AFTER the invoice was originally sent (e.g. the
+    // merchant's Connect account got disabled). Rather than 500 a buyer trying to pay, hand the
+    // route a friendly "not ready" kind it can render as a standalone page.
+    if (err instanceof PaymentsNotReadyError) return { kind: "not_ready" };
+    throw err;
+  }
+
+  const persist = await sb
+    .from("orders")
+    .update({ invoice_session_id: session.sessionId })
+    .eq("shop_id", shopId)
+    .eq("id", orderId);
+  if (persist.error) throw persist.error;
+
   return { kind: "pay", url: session.url };
 }

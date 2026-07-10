@@ -120,6 +120,7 @@ const store = vi.hoisted(() => {
 const stripeCheckout = vi.hoisted(() => ({ createCommerceCheckoutSession: vi.fn() }));
 const emailer = vi.hoisted(() => ({ sendInvoiceEmail: vi.fn() }));
 const quote = vi.hoisted(() => ({ quoteCart: vi.fn() }));
+const stripeClient = vi.hoisted(() => ({ expire: vi.fn() }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
 vi.mock("~/lib/commerce/stripe-checkout.server", () => ({
@@ -127,9 +128,14 @@ vi.mock("~/lib/commerce/stripe-checkout.server", () => ({
 }));
 vi.mock("~/lib/commerce/quote.server", () => ({ quoteCart: quote.quoteCart }));
 vi.mock("./notify-email.server", () => ({ sendInvoiceEmail: emailer.sendInvoiceEmail }));
+vi.mock("~/lib/payments/stripe-client.server", () => ({
+  getStripe: () => ({ checkout: { sessions: { expire: stripeClient.expire } } }),
+}));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { sendDraftOrderInvoice, payableInvoiceSession } from "./invoice.server";
+// eslint-disable-next-line import/first -- follows vi.mock like the import above
+import { PaymentsNotReadyError } from "~/lib/payments/errors";
 
 function seedPaymentReady(shopId: string) {
   store.db.stripe_connected_account.push({
@@ -170,6 +176,7 @@ beforeEach(() => {
   seedPaymentReady("shop-1");
   emailer.sendInvoiceEmail.mockResolvedValue({ sent: true, id: "email-1" });
   stripeCheckout.createCommerceCheckoutSession.mockResolvedValue({ sessionId: "cs_1", url: "https://stripe/pay/cs_1" });
+  stripeClient.expire.mockResolvedValue({});
 });
 
 describe("sendDraftOrderInvoice", () => {
@@ -261,6 +268,22 @@ describe("sendDraftOrderInvoice", () => {
     expect(store.db.orders).toHaveLength(0);
   });
 
+  it("rejects re-invoicing an already-consumed draft (409 draft_already_sent) without writing anything", async () => {
+    // origin is still 'merchant_draft' but state already advanced past 'cart' — this is the
+    // double-click / retried-request shape Fix 1 guards: the draft was already turned into an
+    // invoice once (sendDraftOrderInvoice's own cart update at the bottom of this function).
+    store.db.cart.push({ id: "cart-sent", shop_id: "shop-1", state: "checkout_pending", origin: "merchant_draft" });
+
+    await expect(sendDraftOrderInvoice("shop-1", "cart-sent", { email: "b@example.com" })).rejects.toMatchObject({
+      status: 409,
+      code: "draft_already_sent",
+    });
+    expect(store.db.buyer_dim).toHaveLength(0);
+    expect(store.db.orders).toHaveLength(0);
+    expect(store.db.order_line).toHaveLength(0);
+    expect(emailer.sendInvoiceEmail).not.toHaveBeenCalled();
+  });
+
   it("rejects an empty draft (422) without writing anything", async () => {
     store.db.cart.push({ id: "cart-empty", shop_id: "shop-1", state: "cart", origin: "merchant_draft" });
 
@@ -334,7 +357,7 @@ describe("payableInvoiceSession", () => {
     return row;
   }
 
-  it("mints a fresh hosted session for a checkout_pending invoice", async () => {
+  it("mints a fresh hosted session for a checkout_pending invoice and persists its id", async () => {
     seedInvoiceOrder();
     const result = await payableInvoiceSession("shop-1", "tok-abc");
     expect(result).toEqual({ kind: "pay", url: "https://stripe/pay/cs_1" });
@@ -344,9 +367,34 @@ describe("payableInvoiceSession", () => {
       currency: "usd",
       confirmationToken: "tok-abc",
     });
+    // No prior session on this order, so nothing to expire.
+    expect(stripeClient.expire).not.toHaveBeenCalled();
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: "cs_1" });
   });
 
-  it("mints a NEW session on every call (stateless — no session id stored/reused)", async () => {
+  it("expires the PRIOR hosted session before minting + persisting a replacement", async () => {
+    seedInvoiceOrder({ invoice_session_id: "cs_prev" });
+    stripeCheckout.createCommerceCheckoutSession.mockResolvedValue({ sessionId: "cs_new", url: "https://stripe/pay/cs_new" });
+
+    const result = await payableInvoiceSession("shop-1", "tok-abc");
+
+    expect(stripeClient.expire).toHaveBeenCalledWith("cs_prev");
+    expect(result).toEqual({ kind: "pay", url: "https://stripe/pay/cs_new" });
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: "cs_new" });
+  });
+
+  it("swallows an expire failure (session already completed/expired) and still mints + persists a fresh session", async () => {
+    seedInvoiceOrder({ invoice_session_id: "cs_prev" });
+    stripeClient.expire.mockRejectedValueOnce(new Error("No such checkout session"));
+    stripeCheckout.createCommerceCheckoutSession.mockResolvedValue({ sessionId: "cs_new", url: "https://stripe/pay/cs_new" });
+
+    const result = await payableInvoiceSession("shop-1", "tok-abc");
+
+    expect(result).toEqual({ kind: "pay", url: "https://stripe/pay/cs_new" });
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: "cs_new" });
+  });
+
+  it("mints a NEW session on every call, expiring the previous one each time", async () => {
     seedInvoiceOrder();
     stripeCheckout.createCommerceCheckoutSession
       .mockResolvedValueOnce({ sessionId: "cs_1", url: "https://stripe/pay/cs_1" })
@@ -356,6 +404,21 @@ describe("payableInvoiceSession", () => {
     expect(first).toEqual({ kind: "pay", url: "https://stripe/pay/cs_1" });
     expect(second).toEqual({ kind: "pay", url: "https://stripe/pay/cs_2" });
     expect(stripeCheckout.createCommerceCheckoutSession).toHaveBeenCalledTimes(2);
+    // Second call finds the first call's persisted session id and expires it.
+    expect(stripeClient.expire).toHaveBeenCalledWith("cs_1");
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: "cs_2" });
+  });
+
+  it("maps a PaymentsNotReadyError from session creation to kind not_ready, without persisting anything", async () => {
+    seedInvoiceOrder();
+    stripeCheckout.createCommerceCheckoutSession.mockRejectedValueOnce(
+      new PaymentsNotReadyError("shop-1", "onboarding_incomplete"),
+    );
+
+    const result = await payableInvoiceSession("shop-1", "tok-abc");
+
+    expect(result).toEqual({ kind: "not_ready" });
+    expect(store.db.orders[0].invoice_session_id).toBeUndefined();
   });
 
   it("returns paid for a paid order, WITHOUT minting a session", async () => {

@@ -5,6 +5,7 @@
 // (resolveStorefrontShop), then the token is looked up scoped to that shop.
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
+import { useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { payableInvoiceSession } from "~/lib/order/invoice.server";
 
@@ -22,15 +23,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   if (resolved.kind === "paid") {
     return redirect(`/storefront/checkout/confirmation/${resolved.confirmationToken}`);
   }
-  // kind === "void": cancelled/refunded — nothing left to pay. Render a minimal standalone
-  // page (mirrors dashboard.orders.print.$id.tsx's non-SPA approach: its own tiny inline
-  // style, no dashboard/storefront chrome) rather than a bare 404 or redirect.
-  return json({ kind: "void" as const });
+  // kind === "void" (cancelled/refunded, nothing left to pay) or "not_ready" (the shop's
+  // payments regressed after the invoice was sent). Both render the same minimal standalone
+  // page (mirrors dashboard.orders.print.$id.tsx's non-SPA approach: its own tiny inline style,
+  // no dashboard/storefront chrome) rather than a bare 404, redirect, or 500.
+  return json({ kind: resolved.kind });
 }
 
 export default function StorefrontInvoicePay() {
   // The loader always redirects for "pay"/"paid" before this component ever renders, so the
-  // only state reachable here is "void".
+  // only states reachable here are "void" and "not_ready".
+  const data = useLoaderData<typeof loader>();
+  const notReady = data.kind === "not_ready";
   return (
     <>
       <style>{`
@@ -49,8 +53,12 @@ export default function StorefrontInvoicePay() {
         .invoice-void p { font-size: 14px; color: #555; margin: 0; }
       `}</style>
       <div className="invoice-void">
-        <h1>This invoice is no longer payable.</h1>
-        <p>Please contact the merchant if you have questions about this order.</p>
+        <h1>{notReady ? "Payment is temporarily unavailable." : "This invoice is no longer payable."}</h1>
+        <p>
+          {notReady
+            ? "This store cannot take payment right now. Please try again later or contact the seller."
+            : "Please contact the merchant if you have questions about this order."}
+        </p>
       </div>
     </>
   );

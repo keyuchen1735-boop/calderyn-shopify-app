@@ -7,6 +7,7 @@
 // unique-per-variant line semantics.
 import { getSupabase } from "~/lib/supabase.server";
 import { CalderynError } from "~/lib/calderyn.server";
+import { getCatalog } from "~/lib/storefront/catalog.server";
 import { buildCart, addCartLine, clearCart, priceCart, type CartLine } from "./cart.server";
 
 export interface MerchantDraftLineInput {
@@ -54,6 +55,27 @@ async function isMerchantDraftCart(shopId: string, cartId: string): Promise<bool
     .maybeSingle();
   if (error) throw error;
   return data != null;
+}
+
+function unknownVariant(variantId: string): CalderynError {
+  return new CalderynError({
+    code: "unknown_variant",
+    status: 422,
+    message: `variant ${variantId} does not exist or is not purchasable`,
+  });
+}
+
+/** Resolve every line's variant against ONE shop-scoped catalog read and 422 (CalderynError) on
+ *  the FIRST unknown or unavailable id, WITHOUT touching the cart. Lets replaceMerchantDraftLines
+ *  validate the whole incoming batch up front, so a bad id in the request can never leave a
+ *  draft mid-edit (see its doc comment for the crash window that remains after this guard). */
+async function assertLinesResolve(shopId: string, lines: MerchantDraftLineInput[]): Promise<void> {
+  const products = await getCatalog().listProducts(shopId);
+  const byVariantId = new Map(products.flatMap((p) => p.variants.map((v) => [v.id, v] as const)));
+  for (const line of lines) {
+    const variant = byVariantId.get(line.variantId);
+    if (!variant || !variant.available) throw unknownVariant(line.variantId);
+  }
 }
 
 function draftNotFound(cartId: string): CalderynError {
@@ -127,7 +149,15 @@ export async function createMerchantDraft(
 /** Replace every line on an existing merchant-draft cart: clears the current lines, then adds
  *  `lines` fresh (so each is re-snapshotted at its current catalog price). 404s (CalderynError)
  *  when `cartId` isn't an open merchant-draft cart for this shop — a merchant can never edit an
- *  already-invoiced or foreign-shop cart through this path. */
+ *  already-invoiced or foreign-shop cart through this path.
+ *
+ *  Every line's variant is resolved up front (assertLinesResolve) and 422s on the first unknown
+ *  or unavailable id BEFORE clearCart runs, so a bad id in the request never wipes the original
+ *  lines out from under the merchant. A narrower crash window remains AFTER this guard passes:
+ *  a DB failure between clearCart and the add loop (or between two adds) can still leave the
+ *  draft with an inconsistent line set. That is recoverable, not data-destroying — this is a
+ *  pre-invoice draft, so the merchant just re-submits replaceMerchantDraftLines; nothing has
+ *  shipped or been paid for yet. */
 export async function replaceMerchantDraftLines(
   shopId: string,
   cartId: string,
@@ -136,6 +166,7 @@ export async function replaceMerchantDraftLines(
   if (!shopId) throw new Error("shopId is required");
   if (!cartId) throw new Error("cartId is required");
   if (!(await isMerchantDraftCart(shopId, cartId))) throw draftNotFound(cartId);
+  await assertLinesResolve(shopId, lines);
 
   await clearCart(shopId, cartId);
   for (const line of lines) {

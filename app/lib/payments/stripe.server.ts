@@ -106,6 +106,66 @@ async function findOwnedPaymentIntent(piId: string): Promise<OwnedPaymentIntentR
 }
 
 /**
+ * Best-effort lookup of the OTHER succeeded PaymentIntent already recorded against `orderRef`
+ * (excluding `excludePiId`) — used only to enrich the duplicate-capture CRITICAL log below with
+ * both PI ids when we can find the prior one cheaply. Never throws past the caller: a lookup
+ * failure just means the log names one PI instead of two, which is not worth losing the
+ * duplicate-capture signal over.
+ */
+async function findOtherSucceededPaymentIntentId(orderRef: string, excludePiId: string): Promise<string | null> {
+  const { data, error } = await getSupabase().from("payment_intent").select("stripe_pi_id, status").eq("order_ref", orderRef);
+  if (error) throw error;
+  const rows = (data ?? []) as Record<string, unknown>[];
+  const other = rows.find((r) => String(r.stripe_pi_id) !== excludePiId && r.status === "succeeded");
+  return other ? String(other.stripe_pi_id) : null;
+}
+
+/**
+ * Two concurrently-open pay sessions for the same invoice (a narrow race even with the
+ * hosted-session expiry in payableInvoiceSession/invoice.server.ts — see migration
+ * 20260710170000) can each mint their own PaymentIntent; if the buyer completes BOTH, Stripe
+ * sends a SECOND payment_intent.succeeded for an order already `paid`, which is an illegal
+ * paid->paid transition. This is NOT the ordinary duplicate-delivery replay (that is the
+ * `!processed` branch in processStripeEvent and is already a guarded no-op) — it is a genuinely
+ * NEW PaymentIntent capturing money on top of an already-paid order: a real, un-refunded surplus
+ * charge. transitionOrder throws rather than silently no-op (rule 12), so instead of failing the
+ * whole webhook delivery (which Stripe would retry forever and which would never resolve on its
+ * own), we surface it LOUDLY here and let execution continue: the financial_status stamp, emit,
+ * and inventory-commit steps below are all already state-guarded no-ops for an order that was
+ * already paid, so nothing further needs to happen for money/inventory to stay correct — only an
+ * operator refunding the surplus PaymentIntent by hand can fix the double capture itself.
+ *
+ * Rethrows anything that is NOT this specific shape (any other illegal transition, an order that
+ * no longer exists, a transient DB error) unchanged, confirmed by RE-READING the order's current
+ * state rather than trusting the error message alone.
+ */
+async function handleDuplicateCaptureOrRethrow(
+  err: unknown,
+  shopId: string,
+  orderRef: string,
+  piId: string,
+): Promise<void> {
+  const isIllegalTransition = err instanceof Error && /illegal order transition/.test(err.message);
+  if (!isIllegalTransition) throw err;
+
+  const reread = await getSupabase().from("orders").select("state").eq("shop_id", shopId).eq("id", orderRef).maybeSingle();
+  if (reread.error) throw err; // could not confirm the shape — do not mask the original error
+  const currentState = reread.data ? String((reread.data as Record<string, unknown>).state) : null;
+  const alreadyPaidLike =
+    currentState !== null &&
+    (["paid", "fulfilled", "partially_fulfilled", "partially_refunded"] as string[]).includes(currentState);
+  if (!alreadyPaidLike) throw err;
+
+  const priorPiId = await findOtherSucceededPaymentIntentId(orderRef, piId).catch(() => null);
+  console.error(
+    `[stripe] CRITICAL duplicate capture: order ${orderRef} (shop ${shopId}) is already '${currentState}' but ` +
+      `PaymentIntent ${piId} just succeeded against it` +
+      (priorPiId ? ` (already captured by PaymentIntent ${priorPiId})` : "") +
+      `; this is a duplicate capture on an already-paid order. Refund the surplus PaymentIntent ${piId} in Stripe.`,
+  );
+}
+
+/**
  * Verify + idempotently process a Stripe webhook event over the RAW request body.
  * Returns the HTTP status the route should send plus whether this was a first
  * delivery (processed) or a duplicate (no-op). Writes nothing on bad/missing signature.
@@ -389,14 +449,22 @@ export async function processStripeEvent(
       // checkout_pending -> paid is legal; the state machine REJECTS (throws) a force-pay of any
       // other state, so an already-paid/cancelled order is never silently re-paid.
       if (processed) {
-        // First delivery: perform the SoT transition + at-most-once confirmation email.
-        await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded");
+        // First delivery: perform the SoT transition + at-most-once confirmation email. A
+        // paid->paid attempt here (this event is genuinely new, but the order already reached
+        // `paid` through a DIFFERENT PaymentIntent — the two-live-sessions race) throws an
+        // illegal-transition error rather than a silent no-op; handleDuplicateCaptureOrRethrow
+        // confirms that shape and surfaces it loudly instead of failing this whole delivery.
+        try {
+          await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded");
 
-        // ORDER-CONFIRMATION EMAIL (#2c-2) — first delivery ONLY, so the buyer is emailed
-        // at-most-once and only for an order that genuinely reached `paid`. sendOrderConfirmation
-        // never throws (a delivery failure is logged + swallowed inside it), so a flaky mailer
-        // can never break payment processing or trigger a Stripe retry storm.
-        await sendOrderConfirmation(shopId, orderRef);
+          // ORDER-CONFIRMATION EMAIL (#2c-2) — first delivery ONLY, so the buyer is emailed
+          // at-most-once and only for an order that genuinely reached `paid`. sendOrderConfirmation
+          // never throws (a delivery failure is logged + swallowed inside it), so a flaky mailer
+          // can never break payment processing or trigger a Stripe retry storm.
+          await sendOrderConfirmation(shopId, orderRef);
+        } catch (err) {
+          await handleDuplicateCaptureOrRethrow(err, shopId, orderRef, pi.id);
+        }
       } else {
         // REDELIVERY SELF-HEAL (rule 12): a first-delivery TRANSIENT failure AFTER
         // record_stripe_event committed but BEFORE the paid transition leaves the event recorded
