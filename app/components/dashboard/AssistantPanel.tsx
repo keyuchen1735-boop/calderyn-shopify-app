@@ -463,6 +463,12 @@ export default function AssistantPanel({
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
+  // The peek click-catcher shares the panel's exact base box (see
+  // .cd-chat-peek-catch) and is driven by the same transition executor below,
+  // so its hit area always coincides with whatever the panel visually shows —
+  // including in peek, where the panel is slid mostly off-screen and only a
+  // sliver remains visible.
+  const peekCatchRef = useRef<HTMLButtonElement>(null);
   const prevPanelStateRef = useRef<PanelState>("closed");
 
   const { contextSafe } = useGSAP({ scope: containerRef });
@@ -481,7 +487,14 @@ export default function AssistantPanel({
       const panel = panelRef.current;
       if (!panel) return;
       const pill = pillRef.current;
+      const catchEl = peekCatchRef.current;
       const p = PANEL_TARGET[target];
+      // The catcher only ever needs to intercept clicks in peek — in every
+      // other state the real panel (open) or nothing at all (docked) should
+      // handle them, so pointer-events is derived from `target` directly
+      // rather than reused from PANEL_TARGET (whose own peek entry is "none",
+      // since the *panel* mustn't catch clicks while it's non-interactive).
+      const catchPointerEvents: "auto" | "none" = target === "peek" ? "auto" : "none";
       if (reduced()) {
         gsap.set(panel, {
           xPercent: p.xPercent,
@@ -489,6 +502,9 @@ export default function AssistantPanel({
           opacity: p.opacity,
           pointerEvents: p.pointerEvents,
         });
+        if (catchEl) {
+          gsap.set(catchEl, { xPercent: p.xPercent, scale: p.scale, pointerEvents: catchPointerEvents });
+        }
         if (pill && target !== "open") gsap.set(pill, PILL_TARGET[target]);
         return;
       }
@@ -501,6 +517,19 @@ export default function AssistantPanel({
         ease: p.ease,
         overwrite: "auto",
       });
+      if (catchEl) {
+        // Same xPercent/scale/duration/ease as the panel above — tracking it
+        // exactly, frame for frame, is what keeps the hit box glued to the
+        // visible sliver instead of a static box that drifts out of register.
+        gsap.to(catchEl, {
+          xPercent: p.xPercent,
+          scale: p.scale,
+          pointerEvents: catchPointerEvents,
+          duration: p.duration,
+          ease: p.ease,
+          overwrite: "auto",
+        });
+      }
       if (pill && target !== "open") {
         if (opts?.pulse) {
           // One subtle attention pulse announcing the dock — not a loop.
@@ -542,6 +571,13 @@ export default function AssistantPanel({
         // tween has a correct starting point, without fighting that CSS
         // animation with a redundant tween of its own.
         gsap.set(panelRef.current, { xPercent: 0, scale: 1, opacity: 1, pointerEvents: "auto" });
+        // Give the catcher a defined starting transform too (matched to
+        // "open", where it must never intercept anything) so the first
+        // dock/peek tween it ever runs starts from a known box instead of
+        // whatever the browser defaulted an untouched transform to.
+        if (peekCatchRef.current) {
+          gsap.set(peekCatchRef.current, { xPercent: 0, scale: 1, pointerEvents: "none" });
+        }
       } else {
         run("open");
       }
@@ -722,24 +758,33 @@ export default function AssistantPanel({
       </div>
       </div>
 
-      {state === "peek" && (
+      {
         // Rendered as a sibling of the panel, not nested inside it, so it
         // sits outside the inert subtree above and stays clickable while the
-        // panel itself is inert (the preview behind it is presentational
-        // only — pointer-events disabled via .cd-chat-panel[data-state
-        // ="peek"]). This full-cover control is what "clicking anywhere on
-        // it" hits. It's mouse-only by design: aria-hidden + tabIndex=-1
-        // keep it out of the tab order and accessibility tree, since the
-        // dock pill below is the accessible way to reopen.
-        <button
-          type="button"
-          className="cd-chat-peek-catch"
-          aria-label="Open assistant"
-          aria-hidden="true"
-          tabIndex={-1}
-          onClick={openFull}
-        />
-      )}
+        // panel itself is inert. Always mounted (not just during peek) so
+        // peekCatchRef is stable across state changes and the GSAP executor
+        // above can tween it in lockstep with the panel — sharing the
+        // panel's own base box (.cd-chat-peek-catch) plus the identical
+        // per-state xPercent means this control's hit area always coincides
+        // with whatever the panel visually shows: nothing in closed/open (no
+        // catch needed there — open is where the real panel takes clicks),
+        // and exactly the visible sliver in peek. `data-state` plus the
+        // pointerEvents the executor sets are the belt-and-braces gate: it
+        // only ever catches clicks while state is "peek". Mouse-only by
+        // design: aria-hidden + tabIndex=-1 keep it out of the tab order and
+        // accessibility tree, since the dock pill is the accessible way to
+        // reopen.
+      }
+      <button
+        ref={peekCatchRef}
+        type="button"
+        className="cd-chat-peek-catch"
+        data-state={state}
+        aria-label="Open assistant"
+        aria-hidden="true"
+        tabIndex={-1}
+        onClick={openFull}
+      />
 
       {(state === "docked" || state === "peek") && (
         <div className="cd-chat-dock-wrap">

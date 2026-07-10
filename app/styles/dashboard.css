@@ -934,14 +934,24 @@
      hover (see .cd-chat-panel[data-state] below, which disables pointer
      events on the real content) — this full-cover control is the only thing
      that responds to a click, opening the panel fully from anywhere on it.
-     Rendered as a sibling of .cd-chat-panel now (outside the inert subtree),
-     so it needs its own fixed positioning matching the panel's box instead
-     of the absolute+inset:0 it used when nested inside it. */
+     Rendered as a sibling of .cd-chat-panel (outside the inert subtree) with
+     the SAME base fixed box as the panel; AssistantPanel's GSAP executor
+     applies the identical xPercent transform to both refs per state, so this
+     box always coincides exactly with whatever slice of the panel is
+     visible (docked/open it's tucked fully out of view same as the panel;
+     peek it overlaps only the visible sliver, reaching the true viewport
+     edge because the panel's own sliver does too). Pointer-events default to
+     none here and are enabled only for the peek data-state — belt-and-braces
+     alongside the inline pointerEvents the GSAP executor sets, so a
+     mid-transition frame can never leave it catching clicks outside peek. */
   .cd-chat-peek-catch {
     position: fixed; top: 16px; right: 16px; bottom: 16px;
     width: 420px; max-width: calc(100vw - 32px);
-    z-index: 70; pointer-events: auto;
+    z-index: 70; pointer-events: none;
     background: transparent; border: none; cursor: pointer; padding: 0;
+  }
+  .cd-chat-peek-catch[data-state="peek"] {
+    pointer-events: auto;
   }
   .cd-chat-panel[data-state="docked"],
   .cd-chat-panel[data-state="peek"] {
