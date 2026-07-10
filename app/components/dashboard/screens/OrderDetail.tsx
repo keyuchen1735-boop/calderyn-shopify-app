@@ -10,6 +10,7 @@ import { carrierTrackingUrl } from "~/lib/shipping/tracking-url";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   fetchOrderDetail,
+  fetchOrderProfit,
   addOrderNote,
   setOrderTags,
   setOrderArchived,
@@ -21,6 +22,7 @@ import {
   type OrderDetailLine,
   type OrderRow,
   type OrderReturn,
+  type OrderProfit,
 } from "~/lib/dashboard/orders-client";
 import RefundModal from "./RefundModal";
 import FulfillModal from "./FulfillModal";
@@ -125,6 +127,7 @@ export default function OrderDetailScreen({
   seed?: OrderDetailSeed | null;
 }) {
   const [detail, setDetail] = useState<OrderDetail | null>(null);
+  const [profit, setProfit] = useState<OrderProfit | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [showFulfill, setShowFulfill] = useState(false);
@@ -196,9 +199,25 @@ export default function OrderDetailScreen({
     (signal?: { alive: boolean }) => {
       setLoading(true);
       setLoadError(false);
-      fetchOrderDetail(sourceId)
-        .then((d) => {
-          if (!signal || signal.alive) setDetail(d);
+      Promise.all([
+        fetchOrderDetail(sourceId),
+        // The profit card is supplementary analytics, not the order record itself: a failure here
+        // must never take down the whole order view (rule 12 still wants it surfaced — a quiet
+        // toast, not a silent swallow — just not one that blocks the rest of the screen from
+        // loading and not one that replaces the critical "couldn't load this order" path below).
+        fetchOrderProfit(sourceId).catch((err: unknown) => {
+          if (!signal || signal.alive) {
+            const msg = err instanceof DashboardApiError ? err.message : "Couldn't load profit data for this order.";
+            toast(msg, "warn");
+          }
+          return null;
+        }),
+      ])
+        .then(([d, p]) => {
+          if (!signal || signal.alive) {
+            setDetail(d);
+            setProfit(p);
+          }
         })
         .catch((err: unknown) => {
           if (signal && !signal.alive) return;
@@ -548,6 +567,47 @@ export default function OrderDetailScreen({
                 )}
               </div>
             </Card>
+
+            {profit && (
+              <Card className="cd-card-tight">
+                <div className="cd-h2" style={{ marginBottom: 8 }}>Profit</div>
+                <div className="cd-kv-col">
+                  <div className="cd-kv"><span>Revenue</span><b className="ml-auto tabular-nums">{money(profit.revenueCents, detail.currency)}</b></div>
+                  <div className="cd-kv"><span>COGS</span><b className="ml-auto tabular-nums">-{money(profit.cogsCents, detail.currency)}</b></div>
+                  {profit.costsMissing > 0 && (
+                    <div className="cd-caption">
+                      {profit.costsMissing} line{profit.costsMissing === 1 ? "" : "s"} missing cost data
+                    </div>
+                  )}
+                  <div className="cd-kv">
+                    <span>Carrier cost</span>
+                    <b className="ml-auto tabular-nums">
+                      {profit.carrierCostCents == null ? "—" : `-${money(profit.carrierCostCents, detail.currency)}`}
+                    </b>
+                  </div>
+                  {profit.carrierCostCents == null && (
+                    <div className="cd-caption">No carrier cost recorded</div>
+                  )}
+                  <div className="cd-kv"><span>Payment fees</span><b className="ml-auto tabular-nums">-{money(profit.feeEstimateCents, detail.currency)}</b></div>
+                  <div className="cd-caption">Estimated at 2.9% + 30 cents</div>
+                  {profit.attributionLabel && (
+                    <div className="cd-caption">Attributed to {profit.attributionLabel}</div>
+                  )}
+                  <div className="cd-kv" style={{ marginTop: 6, paddingTop: 10, borderTop: "0.5px solid var(--hairline)" }}>
+                    <span>Profit</span>
+                    <b className="ml-auto tabular-nums">{money(profit.profitCents, detail.currency)}</b>
+                  </div>
+                  <div className="cd-caption">
+                    {profit.marginPct == null ? "Margin unavailable" : `${profit.marginPct.toFixed(1)}% margin`}
+                  </div>
+                </div>
+                {detail.readOnly && (
+                  <div className="cd-caption" style={{ marginTop: 8 }}>
+                    Estimates — this order was placed on Shopify, so costs and fees are approximated.
+                  </div>
+                )}
+              </Card>
+            )}
 
             {detail.fulfillments.length > 0 && (
               <Card className="cd-card-tight">

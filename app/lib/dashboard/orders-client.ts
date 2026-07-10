@@ -12,12 +12,14 @@ import type { ImportedOrdersPage } from "~/lib/order/imported-list-types";
 import type { OrderDetail, OrderDetailLine } from "~/lib/order/detail-types";
 import type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage } from "~/lib/order/unified-list-types";
 import type { OrderReturn, OrderReturnLine, OrderReturnStatus } from "~/lib/order/returns-types";
+import type { OrderProfit } from "~/lib/order/profit-types";
 
 export type { OrderRow, DraftCartRow, AbandonedCheckoutRow, ShipChargeRow, OrdersPage };
 export type { ImportedOrdersPage };
 export type { OrderDetail, OrderDetailLine };
 export type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage };
 export type { OrderReturn, OrderReturnLine, OrderReturnStatus };
+export type { OrderProfit };
 
 export async function fetchOrdersPage(): Promise<OrdersPage> {
   return apiGet<OrdersPage>("/dashboard/api/orders");
@@ -752,4 +754,43 @@ export async function cancelOrderReturn(
     { return_id: returnId },
   );
   return { returnId: data.return_id, status: data.status };
+}
+
+// --- profit read model (Phase 4 Task 3) --------------------------------------
+
+interface OrderProfitWire {
+  source: "calderyn" | "shopify";
+  revenue_cents: number;
+  cogs_cents: number;
+  costs_missing: number;
+  carrier_cost_cents: number | null;
+  fee_estimate_cents: number;
+  profit_cents: number;
+  margin_pct: number | null;
+  estimated: boolean;
+  attribution_label: string | null;
+}
+
+function mapProfit(p: OrderProfitWire): OrderProfit {
+  return {
+    source: p.source,
+    revenueCents: p.revenue_cents,
+    cogsCents: p.cogs_cents,
+    costsMissing: p.costs_missing,
+    carrierCostCents: p.carrier_cost_cents,
+    feeEstimateCents: p.fee_estimate_cents,
+    profitCents: p.profit_cents,
+    marginPct: p.margin_pct,
+    estimated: p.estimated,
+    attributionLabel: p.attribution_label,
+  };
+}
+
+/** Per-order profit read model: revenue/COGS/carrier cost/estimated fees/margin for one order,
+ *  native or imported. A plain snapshot at fetch time — no live recompute on the client. */
+export async function fetchOrderProfit(sourceId: string): Promise<OrderProfit> {
+  const data = await apiGet<{ profit: OrderProfitWire }>(
+    `/dashboard/api/orders/${encodeURIComponent(sourceId)}/profit`,
+  );
+  return mapProfit(data.profit);
 }
