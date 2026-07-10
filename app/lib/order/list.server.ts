@@ -116,7 +116,9 @@ export async function listOrders(shopId: string): Promise<OrderRow[]> {
  * Only orders that carry at least one capture row appear in the map; callers fall back to the gross
  * total for the rest. Batched in one shop-scoped read over the fetched order ids.
  */
-async function remainingRefundableByOrder(
+// Exported (Task 9, order-detail read model): detail.server.ts reuses this exact summing
+// shape for a single order rather than re-deriving refundable totals from the ledger.
+export async function remainingRefundableByOrder(
   shopId: string,
   orderIds: string[],
 ): Promise<Map<string, number>> {

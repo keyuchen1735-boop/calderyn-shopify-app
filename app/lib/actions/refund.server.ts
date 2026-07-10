@@ -32,11 +32,13 @@ import { restockOrderLines } from "../inventory/engine.server";
 import { transitionOrder } from "../order/order.server";
 import { isOrderState, type OrderState } from "../order/state";
 import { createStripeRefund, type StripeRefundInput, type StripeRefundResult } from "../payments/refund.server";
+import { sendRefundNotice } from "../order/notify-email.server";
 import { priorExecutionForKey, insertAuditWithIdempotency } from "./execute.server";
 
 /** Owned-order states a refund may act on. checkout_pending/cancelled/cart are not refundable. */
 const REFUNDABLE_STATES: ReadonlySet<OrderState> = new Set<OrderState>([
   "paid",
+  "partially_fulfilled",
   "fulfilled",
   "partially_refunded",
 ]);
@@ -120,7 +122,7 @@ async function loadOrder(sb: SupabaseClient, shopId: string, orderId: string): P
     throw new CalderynError({
       code: "order_not_refundable",
       status: 409,
-      message: `Order ${orderId} is '${state}'; only a paid, fulfilled, or partially-refunded order can be refunded.`,
+      message: `Order ${orderId} is '${state}'; only a paid, partially-fulfilled, fulfilled, or partially-refunded order can be refunded.`,
     });
   }
   return { state, currency: String((data as Record<string, unknown>).currency ?? "usd") };
@@ -448,6 +450,11 @@ export async function executeRefundAction(
     );
     throw err;
   }
+
+  // 10. Best-effort buyer notification — fires only on this fresh success path (a replay returns
+  // early from resultFromAudit in step 1), so the notice is at-most-once. sendRefundNotice never
+  // throws; its result is intentionally not awaited into the return value below.
+  await sendRefundNotice(shopId, input.orderId, { amountCents });
 
   return {
     auditId: audit.id,
