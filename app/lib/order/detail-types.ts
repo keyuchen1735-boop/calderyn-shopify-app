@@ -39,6 +39,21 @@ export interface OrderTimelineEvent {
   author: string | null;
 }
 
+/**
+ * Order + buyer-history signals (Phase 4 Task 4), read-time only. `stuckDays` is non-null exactly
+ * when `stuckUnfulfilled` is true. For an imported (Shopify-paid) order, `stuckUnfulfilled` is
+ * always false (no native fulfillment lifecycle is tracked for it) — the buyer signals still
+ * populate when the order's buyer_id is linked to a buyer_dim row, else the whole buyer-history
+ * trio reads all-quiet (see signals.server.ts's QUIET_BUYER_SIGNALS).
+ */
+export interface OrderSignals {
+  stuckUnfulfilled: boolean;
+  stuckDays: number | null;
+  repeatCustomer: boolean;
+  buyerOrderCount: number;
+  refundRisk: boolean;
+}
+
 export interface OrderDetail {
   source: "calderyn" | "shopify";
   id: string;
@@ -78,4 +93,5 @@ export interface OrderDetail {
   returns: OrderReturn[];
   /** true for imported (Shopify-paid) orders — no write actions on this surface. */
   readOnly: boolean;
+  signals: OrderSignals;
 }

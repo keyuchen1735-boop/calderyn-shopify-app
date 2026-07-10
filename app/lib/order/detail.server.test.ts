@@ -465,6 +465,162 @@ describe("loadOrderDetail — native branch", () => {
   });
 });
 
+describe("loadOrderDetail — signals (Phase 4 Task 4)", () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  it("flags stuckUnfulfilled for a paid order created more than 3 days ago, with stuckDays set", async () => {
+    const occurredAt = new Date(Date.now() - 4 * DAY_MS).toISOString();
+    store.db.orders.push({
+      id: "order-stuck",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "paid",
+      financial_status: "paid",
+      subtotal_cents: 1000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 1000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: occurredAt,
+    });
+
+    const detail = await loadOrderDetail("shop-1", "order-stuck");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+    expect(detail.signals.stuckUnfulfilled).toBe(true);
+    expect(detail.signals.stuckDays).toBe(4);
+  });
+
+  it("does not flag a fresh paid order (under 3 days)", async () => {
+    const occurredAt = new Date(Date.now() - 1 * DAY_MS).toISOString();
+    store.db.orders.push({
+      id: "order-fresh",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "paid",
+      financial_status: "paid",
+      subtotal_cents: 1000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 1000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: occurredAt,
+    });
+
+    const detail = await loadOrderDetail("shop-1", "order-fresh");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+    expect(detail.signals.stuckUnfulfilled).toBe(false);
+    expect(detail.signals.stuckDays).toBeNull();
+  });
+
+  it("does not flag a fulfilled order regardless of age", async () => {
+    const occurredAt = new Date(Date.now() - 30 * DAY_MS).toISOString();
+    store.db.orders.push({
+      id: "order-old-fulfilled",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "fulfilled",
+      financial_status: "paid",
+      subtotal_cents: 1000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 1000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: occurredAt,
+    });
+
+    const detail = await loadOrderDetail("shop-1", "order-old-fulfilled");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+    expect(detail.signals.stuckUnfulfilled).toBe(false);
+  });
+
+  it("populates repeatCustomer + refundRisk from the buyer's other orders", async () => {
+    store.db.buyer_dim.push({ id: "buyer-signals", shop_id: "shop-1", email_normalized: "signals@example.com" });
+    store.db.orders.push(
+      {
+        id: "order-signals-current",
+        shop_id: "shop-1",
+        buyer_id: "buyer-signals",
+        state: "paid",
+        financial_status: "paid",
+        subtotal_cents: 5000,
+        shipping_cents: 0,
+        tax_cents: 0,
+        total_cents: 5000,
+        currency: "usd",
+        attribution: null,
+        channel: "storefront",
+        archived_at: null,
+        cancelled_at: null,
+        cancel_reason: null,
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: "order-signals-prior",
+        shop_id: "shop-1",
+        buyer_id: "buyer-signals",
+        state: "refunded",
+        channel: "storefront",
+      },
+    );
+    store.db.transaction_ledger.push(
+      { shop_id: "shop-1", order_ref: "order-signals-current", kind: "capture", amount_cents: 5000 },
+      { shop_id: "shop-1", order_ref: "order-signals-prior", kind: "capture", amount_cents: 5000 },
+      { shop_id: "shop-1", order_ref: "order-signals-prior", kind: "refund", amount_cents: -4000 },
+    );
+
+    const detail = await loadOrderDetail("shop-1", "order-signals-current");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+
+    // 2 purchase-state orders -> repeat customer; refund ratio 4000/10000 = 40% > 30% -> risk.
+    expect(detail.signals).toMatchObject({ repeatCustomer: true, buyerOrderCount: 2, refundRisk: true });
+  });
+
+  it("reads all-quiet buyer signals for a guest order (no buyer_id)", async () => {
+    store.db.orders.push({
+      id: "order-guest",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "paid",
+      financial_status: "paid",
+      subtotal_cents: 1000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 1000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: new Date().toISOString(),
+    });
+
+    const detail = await loadOrderDetail("shop-1", "order-guest");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+    expect(detail.signals).toMatchObject({ repeatCustomer: false, buyerOrderCount: 0, refundRisk: false });
+  });
+});
+
 describe("humanizeTransitionReason", () => {
   it("hides machine-generated reasons and preserves human text", async () => {
     // Import the helper by testing it through transitions

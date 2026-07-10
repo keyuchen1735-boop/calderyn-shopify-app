@@ -30,7 +30,7 @@ import RefundModal from "./RefundModal";
 import OrderDetailScreen from "./OrderDetail";
 import OrderComposer from "./OrderComposer";
 import OrdersToolbar from "./OrdersToolbar";
-import { fulfillmentBadge, paymentPillStyle, REFUNDABLE_ORDER_STATES } from "./order-status";
+import { fulfillmentBadge, isStuckUnfulfilled, paymentPillStyle, REFUNDABLE_ORDER_STATES, stuckDays } from "./order-status";
 import { isPrefillParam } from "./order-composer-prefill";
 import {
   isSystemView,
@@ -193,6 +193,10 @@ function UnifiedOrdersList({
       {rows.map((r) => {
         const refundable = r.refundRow && REFUNDABLE_ORDER_STATES.has(r.state) ? r.refundRow : null;
         const fulfillment = r.source === "calderyn" ? fulfillmentBadge(r.state, r.cancelledAt) : null;
+        // Stuck-unfulfilled badge: native orders only, paid > 3 days with nothing shipped.
+        const now = Date.now();
+        const stuck = r.source === "calderyn" && r.createdAt ? isStuckUnfulfilled(r.state, r.createdAt, now) : false;
+        const stuckN = stuck && r.createdAt ? stuckDays(r.createdAt, now) : null;
         const open = () => onOpen(displayOrderSourceId(r));
         const selectableId = r.source === "calderyn" ? r.id : null;
         return (
@@ -236,12 +240,13 @@ function UnifiedOrdersList({
             <div>
               <PaymentPill status={r.financialStatus} />
             </div>
-            <div>
+            <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap" }}>
               {fulfillment && (
                 <span className="cd-badge" style={{ color: fulfillment.tone, background: "var(--gray-bg)" }}>
                   {fulfillment.label}
                 </span>
               )}
+              {stuckN != null && <Pill tone="warn">Unfulfilled {stuckN}d</Pill>}
             </div>
             <div
               style={{ display: "flex", justifyContent: "flex-end" }}

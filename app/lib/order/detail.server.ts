@@ -13,8 +13,10 @@ import { formatOrderRef } from "./checkout.server";
 import { remainingRefundableByOrder } from "./list.server";
 import { effectiveLineQuantities } from "./line-edits.server";
 import { listOrderReturns } from "./returns.server";
+import { buyerOrderSignals } from "./signals.server";
+import { isStuckUnfulfilled, stuckDays } from "~/components/dashboard/screens/order-status";
 import { formatMoney } from "~/lib/storefront/money";
-import type { OrderDetail, OrderDetailFulfillment, OrderDetailLine, OrderTimelineEvent } from "./detail-types";
+import type { OrderDetail, OrderDetailFulfillment, OrderDetailLine, OrderSignals, OrderTimelineEvent } from "./detail-types";
 
 const SHOPIFY_PREFIX = "shopify:";
 const CALDERYN_PREFIX = "calderyn:";
@@ -151,6 +153,7 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     edits,
     returns,
     returnEvents,
+    buyerSignals,
   ] = await Promise.all([
     loadNativeLines(sb, shopId, orderId),
     loadFulfillments(sb, shopId, orderId),
@@ -165,6 +168,7 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     loadEditEvents(sb, shopId, orderId, currency),
     listOrderReturns(shopId, orderId, sb),
     loadReturnTimelineEvents(sb, shopId, orderId),
+    buyerOrderSignals(shopId, buyerId),
   ]);
 
   // `quantity` reflects what the line ACTUALLY totals today (effective, after any reductions);
@@ -196,6 +200,14 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     ...returnEvents,
   ]);
 
+  const now = Date.now();
+  const stuck = isStuckUnfulfilled(String(o.state), String(o.created_at), now);
+  const signals: OrderSignals = {
+    stuckUnfulfilled: stuck,
+    stuckDays: stuck ? stuckDays(String(o.created_at), now) : null,
+    ...buyerSignals,
+  };
+
   return {
     source: "calderyn",
     id: String(o.id),
@@ -224,6 +236,7 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     timeline,
     returns,
     readOnly: false,
+    signals,
   };
 }
 
@@ -537,10 +550,11 @@ async function loadImportedOrderDetail(shopId: string, importedId: string): Prom
   const currency = String(o.currency ?? "USD").toUpperCase();
   const orderProcessedAt = o.processed_at == null ? null : String(o.processed_at);
 
-  const [lines, refundRows, buyer] = await Promise.all([
+  const [lines, refundRows, buyer, buyerSignals] = await Promise.all([
     loadImportedLines(sb, shopId, importedId),
     loadImportedRefunds(sb, shopId, importedId),
     buyerId ? loadBuyer(sb, shopId, buyerId) : Promise.resolve(null),
+    buyerOrderSignals(shopId, buyerId),
   ]);
 
   const refundedCents = refundRows.reduce((sum, r) => sum + r.subtotalCents, 0);
@@ -582,6 +596,9 @@ async function loadImportedOrderDetail(shopId: string, importedId: string): Prom
     timeline,
     returns: [], // imported (Shopify-paid) orders never went through the native returns spine
     readOnly: true,
+    // No native fulfillment lifecycle is tracked for an imported order, so stuckUnfulfilled is
+    // always false; buyer-history signals still populate off buyer_id when one is linked.
+    signals: { stuckUnfulfilled: false, stuckDays: null, ...buyerSignals },
   };
 }
 

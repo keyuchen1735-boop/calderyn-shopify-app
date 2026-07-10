@@ -514,6 +514,21 @@ export default function OrderDetailScreen({
         )}
       </header>
 
+      {detail &&
+        (detail.signals.repeatCustomer || detail.signals.refundRisk || detail.signals.stuckUnfulfilled) && (
+          <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
+            {detail.signals.repeatCustomer && (
+              <Pill tone="neutral">Repeat customer ({detail.signals.buyerOrderCount} orders)</Pill>
+            )}
+            {detail.signals.refundRisk && <Pill tone="warn">High refund history</Pill>}
+            {detail.signals.stuckUnfulfilled && (
+              <Pill tone="warn">
+                Unfulfilled for {detail.signals.stuckDays} day{detail.signals.stuckDays === 1 ? "" : "s"}
+              </Pill>
+            )}
+          </div>
+        )}
+
       {detail?.readOnly && (
         <Card className="cd-card-tight">
           <span className="cd-caption">
