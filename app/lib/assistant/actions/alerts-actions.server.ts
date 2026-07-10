@@ -36,7 +36,7 @@ export const ALERTS_ACTIONS: AssistantAction[] = [
   {
     name: "create_po_draft",
     description:
-      "Draft a purchase order for the SKU behind an alert (alert_id from list_alerts). quantity is a positive whole number of units; unit_cost_cents is optional (cents, blank for TBD).",
+      "Draft a purchase order for the SKU behind an alert (alert_id from list_alerts). Requires an alert whose allowed_actions includes create_po_draft — a reorder/shortage alert (regional_shortage_risk, reorder_timing, scaling_sku_fulfillment_risk), not a campaign-spend alert. For a stocked-out SKU with ad spend (sku_stockout_vs_spend), the right backing alert is that SKU's reorder/shortage alert, not the campaign alert. quantity is a positive whole number of units; unit_cost_cents is optional (cents, blank for TBD).",
     inputSchema: {
       type: "object",
       properties: {
