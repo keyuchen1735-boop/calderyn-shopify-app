@@ -13,6 +13,10 @@ const store = vi.hoisted(() => {
     fulfillment_line: [],
     variant_dim: [],
   };
+  // Set by a test to simulate a genuinely concurrent order_line_edit commit landing between this
+  // executor's own read (currentEffective) and its own insert — consumed once, on the next insert
+  // into order_line_edit, so the DB-level uniqueness guards can be exercised without a real race.
+  const race: { row: Row | null } = { row: null };
 
   class Builder {
     private op: "select" | "insert" | "update" | "delete" = "select";
@@ -73,15 +77,39 @@ const store = vi.hoisted(() => {
     private run(): { data: unknown; error: unknown } {
       const t = db[this.table];
       if (this.op === "insert") {
-        // Simulate the unique index on (shop_id, idempotency_key) for order_line_edit.
         if (this.table === "order_line_edit") {
+          // A test-armed race: land the "concurrent" commit now, right before checking OUR own
+          // insert for conflicts — mirrors a genuinely concurrent request's insert landing in the
+          // window between this executor's read and its own insert.
+          if (race.row) {
+            const injected = { id: `order_line_edit-${t.length + 1}`, created_at: new Date().toISOString(), ...race.row };
+            t.push(injected);
+            race.row = null;
+          }
           const rows = Array.isArray(this.payload) ? this.payload : [this.payload];
           for (const p of rows) {
+            // Unique index on (shop_id, idempotency_key).
             if (
               p.idempotency_key &&
               t.some((r) => r.shop_id === p.shop_id && r.idempotency_key === p.idempotency_key)
             ) {
               return { data: null, error: { code: "23505", message: "duplicate key value violates unique constraint" } };
+            }
+            // Unique index order_line_edit_baseline on (shop_id, order_line_id, old_quantity) —
+            // migration 20260710190000: old_quantity strictly decreases along a line's edit chain,
+            // so a repeat of (line, old_quantity) can only be a concurrent duplicate.
+            if (
+              t.some(
+                (r) =>
+                  r.shop_id === p.shop_id &&
+                  r.order_line_id === p.order_line_id &&
+                  r.old_quantity === p.old_quantity,
+              )
+            ) {
+              return {
+                data: null,
+                error: { code: "23505", message: 'duplicate key value violates unique constraint "order_line_edit_baseline"' },
+              };
             }
           }
         }
@@ -105,7 +133,7 @@ const store = vi.hoisted(() => {
   }
 
   const client = { from: (table: string) => new Builder(table) };
-  return { db, client };
+  return { db, client, race };
 });
 
 const h = vi.hoisted(() => ({
@@ -140,6 +168,8 @@ vi.mock("./detail.server", () => ({ loadDefaultShippingAddress: h.loadDefaultShi
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { executeReduceLineAction, executeEditInvoiceLines } from "./edit.server";
+// eslint-disable-next-line import/first -- same as above; dependency-free, not mocked
+import { ShipRestrictedError } from "~/lib/shipping/errors";
 
 function seedOrder(shopId: string, id: string, state: string, extra: Record<string, unknown> = {}) {
   store.db.orders.push({ id, shop_id: shopId, state, ...extra });
@@ -150,6 +180,7 @@ function seedLine(shopId: string, orderId: string, id: string, variantId: string
 
 beforeEach(() => {
   for (const k of Object.keys(store.db)) store.db[k].length = 0;
+  store.race.row = null;
   vi.clearAllMocks();
   h.prior.mockResolvedValue(null);
   h.insertAudit.mockResolvedValue({ id: "audit-1", outcome: "succeeded" });
@@ -447,6 +478,112 @@ describe("executeReduceLineAction — happy path", () => {
   });
 });
 
+describe("executeReduceLineAction — concurrent-reduction race", () => {
+  it("concurrent_edit: a baseline-index conflict (different key, same line, same old_quantity) surfaces a 409, not a resume or a refund", async () => {
+    seedOrder("shop-1", "order-1", "paid");
+    seedLine("shop-1", "order-1", "line-1", "v-1", 5, 1000);
+    // Arm the race: a DIFFERENT caller's insert lands right before ours, landing on the SAME
+    // old_quantity (5) our own read also computed — the exact concurrent-different-key race the
+    // baseline unique index (migration 20260710190000) exists to catch.
+    store.race.row = {
+      shop_id: "shop-1",
+      order_id: "order-1",
+      order_line_id: "line-1",
+      old_quantity: 5,
+      new_quantity: 3,
+      refund_cents: 2000,
+      idempotency_key: "other-caller-key",
+    };
+
+    await expect(
+      executeReduceLineAction("shop-1", { orderId: "order-1", orderLineId: "line-1", newQuantity: 2, restock: false, idempotencyKey: "k-race" }),
+    ).rejects.toMatchObject({ code: "concurrent_edit", status: 409 });
+
+    expect(h.executeRefundAction).not.toHaveBeenCalled();
+    // Only the injected "winner" row exists — ours never landed.
+    expect(store.db.order_line_edit).toHaveLength(1);
+    expect(store.db.order_line_edit[0]).toMatchObject({ idempotency_key: "other-caller-key" });
+  });
+});
+
+describe("executeReduceLineAction — proportional tax on reductions", () => {
+  it("prorates the order's captured tax by this reduction's share of subtotal (10000/800, reduce 2500 subtotal -> 200 tax, refund 2700)", async () => {
+    seedOrder("shop-1", "order-1", "paid", { subtotal_cents: 10000, tax_cents: 800 });
+    seedLine("shop-1", "order-1", "line-1", "v-1", 5, 1250); // delta of 2 units * 1250 = 2500 subtotal
+    h.executeRefundAction.mockResolvedValue({
+      auditId: "refund-audit-1",
+      outcome: "succeeded",
+      refundId: "re_1",
+      amountCents: 2700,
+      capturedCents: 10800,
+      refundedTotalCents: 2700,
+      orderState: "partially_refunded",
+      restockedLines: 0,
+      restockError: null,
+      replayed: false,
+    });
+
+    const res = await executeReduceLineAction("shop-1", {
+      orderId: "order-1",
+      orderLineId: "line-1",
+      newQuantity: 3,
+      restock: false,
+      idempotencyKey: "ktax1",
+    });
+
+    expect(store.db.order_line_edit[0]).toMatchObject({ old_quantity: 5, new_quantity: 3, refund_cents: 2700 });
+    expect(h.executeRefundAction).toHaveBeenCalledWith(
+      "shop-1",
+      expect.objectContaining({ orderId: "order-1", amountCents: 2700, idempotencyKey: "ktax1:refund" }),
+      store.client,
+    );
+    expect(res.refundedCents).toBe(2700);
+  });
+
+  it("a zero-tax order refunds the bare unit-price delta only (unchanged behavior)", async () => {
+    seedOrder("shop-1", "order-1", "paid", { subtotal_cents: 5000, tax_cents: 0 });
+    seedLine("shop-1", "order-1", "line-1", "v-1", 5, 1000);
+
+    await executeReduceLineAction("shop-1", {
+      orderId: "order-1",
+      orderLineId: "line-1",
+      newQuantity: 3,
+      restock: false,
+      idempotencyKey: "ktax2",
+    });
+
+    expect(store.db.order_line_edit[0].refund_cents).toBe(2000);
+  });
+
+  it("floors the prorated tax share instead of rounding (10000/799, reduce 2500 subtotal -> 199 tax, refund 2699)", async () => {
+    seedOrder("shop-1", "order-1", "paid", { subtotal_cents: 10000, tax_cents: 799 });
+    seedLine("shop-1", "order-1", "line-1", "v-1", 5, 1250);
+
+    await executeReduceLineAction("shop-1", {
+      orderId: "order-1",
+      orderLineId: "line-1",
+      newQuantity: 3,
+      restock: false,
+      idempotencyKey: "ktax3",
+    });
+
+    expect(store.db.order_line_edit[0].refund_cents).toBe(2699);
+  });
+
+  it("chained edits (5->3 then 3->1) each prorate tax off the SAME order-level subtotal/tax captured at time of sale", async () => {
+    seedOrder("shop-1", "order-1", "paid", { subtotal_cents: 5000, tax_cents: 400 });
+    seedLine("shop-1", "order-1", "line-1", "v-1", 5, 1000);
+
+    await executeReduceLineAction("shop-1", { orderId: "order-1", orderLineId: "line-1", newQuantity: 3, restock: false, idempotencyKey: "ktax4a" });
+    store.db.orders.find((o) => o.id === "order-1")!.state = "partially_refunded";
+    await executeReduceLineAction("shop-1", { orderId: "order-1", orderLineId: "line-1", newQuantity: 1, restock: false, idempotencyKey: "ktax4b" });
+
+    // Each reduction: delta 2 * 1000 = 2000 subtotal; tax share floor(400*2000/5000) = 160; refund 2160.
+    expect(store.db.order_line_edit[0]).toMatchObject({ old_quantity: 5, new_quantity: 3, refund_cents: 2160 });
+    expect(store.db.order_line_edit[1]).toMatchObject({ old_quantity: 3, new_quantity: 1, refund_cents: 2160 });
+  });
+});
+
 describe("executeEditInvoiceLines", () => {
   function baseOrder(overrides: Record<string, unknown> = {}) {
     seedOrder("shop-1", "order-1", "checkout_pending", { channel: "invoice", buyer_id: null, ...overrides });
@@ -532,5 +669,41 @@ describe("executeEditInvoiceLines", () => {
       { subtotalCentsOverride: 3000 },
     );
     expect(res).toEqual({ orderId: "order-1", subtotalCents: 3000, shippingCents: 700, taxCents: 240, totalCents: 3940, currency: "usd" });
+  });
+
+  it("treats a buyer address with a blank line1 like no address at all: no quoteCart call, 0/0 shipping+tax, no crash", async () => {
+    baseOrder({ buyer_id: "buyer-1" });
+    h.loadDefaultShippingAddress.mockResolvedValue({
+      name: "Buyer",
+      line1: "",
+      line2: null,
+      city: "Springfield",
+      region: "IL",
+      postal: "62701",
+      country: "US",
+    });
+
+    const res = await executeEditInvoiceLines("shop-1", "order-1", [{ variantId: "v-1", quantity: 2 }]);
+
+    expect(h.quoteCart).not.toHaveBeenCalled();
+    expect(res).toEqual({ orderId: "order-1", subtotalCents: 3000, shippingCents: 0, taxCents: 0, totalCents: 3000, currency: "usd" });
+  });
+
+  it("translates a ShipRestrictedError from quoteCart into a typed 422 ship_restricted, not an opaque 500", async () => {
+    baseOrder({ buyer_id: "buyer-1" });
+    h.loadDefaultShippingAddress.mockResolvedValue({
+      name: "Buyer",
+      line1: "1 Main St",
+      line2: null,
+      city: "Springfield",
+      region: "IL",
+      postal: "62701",
+      country: "US",
+    });
+    h.quoteCart.mockRejectedValue(new ShipRestrictedError("XX", ["v-1"]));
+
+    await expect(
+      executeEditInvoiceLines("shop-1", "order-1", [{ variantId: "v-1", quantity: 2 }]),
+    ).rejects.toMatchObject({ code: "ship_restricted", status: 422 });
   });
 });

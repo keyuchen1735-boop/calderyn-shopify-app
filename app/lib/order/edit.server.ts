@@ -34,6 +34,22 @@
 // old/new/refund_cents and resumes straight into the refund + restock + audit tail (both of which
 // are independently idempotent on their own derived keys), instead of re-deriving anything from
 // the current (already-mutated) state.
+//
+// CONCURRENT-REDUCTION RACE (closed by migration 20260710190000): the same non-atomicity above
+// also let two DIFFERENT idempotency keys race on the SAME line. Two concurrent reduction
+// requests could both read the same currentEffective (e.g. 5), both pass validation, and both
+// insert an order_line_edit row with old_quantity=5 — each then triggering its OWN nested refund,
+// for a combined refund up to the SUM of both deltas: a real overpayment, not merely a duplicated
+// audit row. old_quantity strictly decreases along a line's edit chain (new_quantity < old_quantity
+// is a table check), so two edit rows sharing the same (order_line_id, old_quantity) can only be
+// concurrent duplicates, never two legitimate edits — a unique index on
+// (shop_id, order_line_id, old_quantity) lets the database reject the loser outright instead of
+// letting it complete and refund. The loser's insert now fails 23505 with no row under its OWN
+// idempotency_key (see the insert's error handling below), which this executor reports as a typed
+// 409 concurrent_edit rather than silently resuming or refunding. The remaining read-validate-
+// insert window (a legitimate SAME-key retry racing the resume-detection SELECT, or the sequence
+// simply not being one atomic statement) stays the same security-definer-RPC upgrade deferred by
+// fulfill/refund/cancel's siblings — this fix closes the money-losing case, not every race.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { CalderynError } from "../calderyn.server";
@@ -94,12 +110,26 @@ interface LineRow {
   unitPriceCents: number;
 }
 
-async function loadOrderState(sb: SupabaseClient, shopId: string, orderId: string): Promise<OrderState | null> {
-  const { data, error } = await sb.from("orders").select("state").eq("shop_id", shopId).eq("id", orderId).maybeSingle();
+interface OrderMoneyRow {
+  state: OrderState;
+  /** Needed to prorate tax on a reduction refund (fix: proportional tax). */
+  subtotalCents: number;
+  taxCents: number;
+}
+
+async function loadOrderState(sb: SupabaseClient, shopId: string, orderId: string): Promise<OrderMoneyRow | null> {
+  const { data, error } = await sb
+    .from("orders")
+    .select("state, subtotal_cents, tax_cents")
+    .eq("shop_id", shopId)
+    .eq("id", orderId)
+    .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  const state = String((data as Record<string, unknown>).state);
-  return isOrderState(state) ? state : null;
+  const row = data as Record<string, unknown>;
+  const state = String(row.state);
+  if (!isOrderState(state)) return null;
+  return { state, subtotalCents: Number(row.subtotal_cents ?? 0), taxCents: Number(row.tax_cents ?? 0) };
 }
 
 async function loadLine(sb: SupabaseClient, shopId: string, orderId: string, orderLineId: string): Promise<LineRow> {
@@ -194,15 +224,15 @@ export async function executeReduceLineAction(
   } else {
     // 3. Fresh path: load + validate the order, the line, the currently-effective quantity, and
     //    what's already shipped, THEN insert the canonical edit row.
-    const fromState = await loadOrderState(sb, shopId, input.orderId);
-    if (!fromState) {
+    const order = await loadOrderState(sb, shopId, input.orderId);
+    if (!order) {
       throw new CalderynError({ code: "order_not_found", status: 404, message: `Order ${input.orderId} not found.` });
     }
-    if (!EDITABLE_STATES.has(fromState)) {
+    if (!EDITABLE_STATES.has(order.state)) {
       throw new CalderynError({
         code: "order_not_editable",
         status: 409,
-        message: `Order ${input.orderId} is '${fromState}'; only a paid, partially-fulfilled, fulfilled, or partially-refunded order can have a line reduced.`,
+        message: `Order ${input.orderId} is '${order.state}'; only a paid, partially-fulfilled, fulfilled, or partially-refunded order can have a line reduced.`,
       });
     }
 
@@ -231,7 +261,14 @@ export async function executeReduceLineAction(
     }
 
     const delta = currentEffective - input.newQuantity;
-    const refundCents = delta * line.unitPriceCents;
+    const deltaSubtotal = delta * line.unitPriceCents;
+    // Proportional tax: refunding unit price only shorts the buyer the tax on the returned units.
+    // Prorate the order's captured tax_cents by this reduction's share of subtotal_cents (floored,
+    // matching how Stripe/most tax engines round down on partial adjustments). Zero-subtotal orders
+    // (shouldn't happen for a paid order, but defend anyway) skip the prorate rather than divide by
+    // zero. Clamp defensively to never refund LESS than the bare unit-price delta.
+    const taxShare = order.subtotalCents > 0 ? Math.floor((order.taxCents * deltaSubtotal) / order.subtotalCents) : 0;
+    const refundCents = Math.max(deltaSubtotal + taxShare, deltaSubtotal);
 
     const ins = await sb
       .from("order_line_edit")
@@ -248,10 +285,16 @@ export async function executeReduceLineAction(
       .select("id, old_quantity, new_quantity, refund_cents")
       .single();
     if (ins.error) {
-      // Extremely narrow race: two concurrent requests bearing the SAME caller-supplied
-      // idempotency key both passed the resume-detection SELECT above before either inserted.
-      // The unique index on (shop_id, idempotency_key) lets exactly one insert win; the loser
-      // reads back the winner's row rather than erroring the whole request.
+      // A 23505 here can now come from EITHER of two unique indexes:
+      //  (a) SAME caller-supplied idempotency key raced past the resume-detection SELECT above
+      //      (unique index on (shop_id, idempotency_key)) — the loser reads back the winner's row
+      //      and resumes, same as before.
+      //  (b) a DIFFERENT idempotency key targeting the SAME line raced onto the SAME
+      //      currentEffective (order_line_edit_baseline on (shop_id, order_line_id, old_quantity),
+      //      migration 20260710190000) — a genuinely concurrent different-key reduction. There is
+      //      no row under OUR key to resume from, so distinguish by re-selecting on OUR key: found
+      //      -> lane (a), resume; not found -> lane (b), reject with a typed 409 instead of
+      //      silently refunding on top of the winner.
       const code = (ins.error as { code?: string }).code;
       const isDup = code === "23505" || String(ins.error.message ?? "").includes("duplicate");
       if (!isDup) throw ins.error;
@@ -262,7 +305,13 @@ export async function executeReduceLineAction(
         .eq("idempotency_key", input.idempotencyKey)
         .maybeSingle();
       if (sel.error) throw sel.error;
-      if (!sel.data) throw ins.error;
+      if (!sel.data) {
+        throw new CalderynError({
+          code: "concurrent_edit",
+          status: 409,
+          message: "The order changed while you were editing. Reload and try again.",
+        });
+      }
       const row = sel.data as Record<string, unknown>;
       editRow = { id: String(row.id), oldQuantity: Number(row.old_quantity), newQuantity: Number(row.new_quantity), refundCents: Number(row.refund_cents) };
     } else {
@@ -282,18 +331,32 @@ export async function executeReduceLineAction(
   let refundedCents = 0;
   let orderStateFromRefund: OrderState | null = null;
   if (editRow.refundCents > 0) {
-    const refundResult = await executeRefundAction(
-      shopId,
-      {
-        orderId: input.orderId,
-        amountCents: editRow.refundCents,
-        idempotencyKey: `${input.idempotencyKey}:refund`,
-        actor: input.actor,
-        reason: input.reason ?? "line reduction",
-        restock: false, // restock is handled per-line below, not by the refund executor's whole-order path
-      },
-      sb,
-    );
+    let refundResult;
+    try {
+      refundResult = await executeRefundAction(
+        shopId,
+        {
+          orderId: input.orderId,
+          amountCents: editRow.refundCents,
+          idempotencyKey: `${input.idempotencyKey}:refund`,
+          actor: input.actor,
+          reason: input.reason ?? "line reduction",
+          restock: false, // restock is handled per-line below, not by the refund executor's whole-order path
+        },
+        sb,
+      );
+    } catch (err) {
+      // record_refund_ledger / Stripe are the authoritative over-refund guards (verified: they cap
+      // at remaining captured), so this refundCents — bare delta + prorated tax, clamped above —
+      // should never actually exceed what's refundable. If the ledger ever rejects it anyway, log
+      // loudly with the edit row so it's reconcilable, then let the error surface (rule 12): the
+      // edit row already committed, so this is NOT silently swallowed.
+      console.error(
+        `[edit] order ${input.orderId} line ${input.orderLineId}: nested refund for edit row ${editRow.id} (refund_cents=${editRow.refundCents}) was rejected by the ledger`,
+        err,
+      );
+      throw err;
+    }
     refundedCents = refundResult.amountCents;
     orderStateFromRefund = refundResult.orderState;
   }
@@ -330,7 +393,7 @@ export async function executeReduceLineAction(
     }
   }
 
-  const orderState = orderStateFromRefund ?? (await loadOrderState(sb, shopId, input.orderId)) ?? "paid";
+  const orderState = orderStateFromRefund ?? (await loadOrderState(sb, shopId, input.orderId))?.state ?? "paid";
 
   // 6. One append-only action_audit row + idempotency marker.
   const audit = await insertAuditWithIdempotency(
