@@ -18,6 +18,7 @@ class Builder {
   private op: "select" | "update" = "select";
   private vals: Row = {};
   private filters: Array<[string, unknown]> = [];
+  private neqFilters: Array<[string, unknown]> = [];
   private ltFilters: Array<[string, unknown]> = [];
   private orderCol: string | null = null;
   private limitN: number | null = null;
@@ -35,6 +36,13 @@ class Builder {
   }
   eq(col: string, val: unknown) {
     this.filters.push([col, val]);
+    return this;
+  }
+  // Mirrors real PostgREST/Postgres `<>` null semantics: a NULL column value never satisfies
+  // `.neq()` (the underlying SQL comparison evaluates to NULL, not TRUE), so a null-valued row is
+  // dropped exactly like a row that matches the excluded value.
+  neq(col: string, val: unknown) {
+    this.neqFilters.push([col, val]);
     return this;
   }
   lt(col: string, val: unknown) {
@@ -56,6 +64,7 @@ class Builder {
     let rows = store.db[this.table].filter(
       (r) =>
         this.filters.every(([c, v]) => r[c] === v) &&
+        this.neqFilters.every(([c, v]) => r[c] != null && r[c] !== v) &&
         this.ltFilters.every(([c, v]) => r[c] < (v as string)),
     );
     if (this.op === "update") {
@@ -99,8 +108,8 @@ const NOW = new Date("2026-07-09T12:00:00.000Z");
 const STALE_25H = new Date(NOW.getTime() - 25 * 60 * 60 * 1000).toISOString();
 const FRESH_1H = new Date(NOW.getTime() - 1 * 60 * 60 * 1000).toISOString();
 
-function seedOrder(id: string, shopId: string, state: string, createdAt: string) {
-  store.db.orders.push({ id, shop_id: shopId, state, created_at: createdAt });
+function seedOrder(id: string, shopId: string, state: string, createdAt: string, channel = "storefront") {
+  store.db.orders.push({ id, shop_id: shopId, state, created_at: createdAt, channel });
 }
 function seedPI(orderRef: string, shopId: string, stripePiId: string, status: string) {
   store.db.payment_intent.push({ order_ref: orderRef, shop_id: shopId, stripe_pi_id: stripePiId, status });
@@ -271,6 +280,34 @@ describe("reapAbandonedCheckouts", () => {
       "cron:abandoned_checkout",
     );
     expect(result).toEqual({ scanned: 2, cancelled: 1, skippedPaidRace: 0, failed: 1 });
+  });
+
+  it("never reaps a stale channel='invoice' order — its payment_intent row may not exist yet", async () => {
+    seedOrder("order-invoice", "shop-1", "checkout_pending", STALE_25H, "invoice");
+
+    const result = await reapAbandonedCheckouts();
+
+    expect(stripe.cancel).not.toHaveBeenCalled();
+    expect(orderLib.transitionOrder).not.toHaveBeenCalled();
+    expect(result).toEqual({ scanned: 0, cancelled: 0, skippedPaidRace: 0, failed: 0 });
+    expect(store.db.orders.find((o) => o.id === "order-invoice")?.state).toBe("checkout_pending");
+  });
+
+  it("still reaps a stale channel='storefront' order alongside an excluded invoice one", async () => {
+    seedOrder("order-invoice-2", "shop-1", "checkout_pending", STALE_25H, "invoice");
+    seedOrder("order-storefront", "shop-1", "checkout_pending", STALE_25H, "storefront");
+    seedPI("order-storefront", "shop-1", "pi_storefront", "requires_payment_method");
+
+    const result = await reapAbandonedCheckouts();
+
+    expect(orderLib.transitionOrder).toHaveBeenCalledTimes(1);
+    expect(orderLib.transitionOrder).toHaveBeenCalledWith(
+      "shop-1",
+      "order-storefront",
+      "cancelled",
+      "cron:abandoned_checkout",
+    );
+    expect(result).toEqual({ scanned: 1, cancelled: 1, skippedPaidRace: 0, failed: 0 });
   });
 
   it("never selects orders younger than 24h or orders in other states", async () => {

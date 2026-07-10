@@ -93,6 +93,12 @@ export async function reapAbandonedCheckouts(): Promise<AbandonReaperResult> {
     .select("id, shop_id")
     .eq("state", "checkout_pending")
     .lt("created_at", cutoff)
+    // STRANDED-MONEY GUARD: hosted invoice-checkout sessions create no payment_intent row until
+    // the buyer completes payment at Stripe's hosted page, so the paid-race check below (which
+    // reads payment_intent by order_ref) is BLIND to an in-flight invoice payment — a buyer who is
+    // mid-checkout on a stale invoice link would have their order voided and PI-less payment
+    // stranded out from under them. Exclude channel='invoice' orders from this sweep entirely.
+    .neq("channel", "invoice")
     .order("created_at", { ascending: true })
     .limit(BATCH_LIMIT);
   if (staleRes.error) throw staleRes.error;

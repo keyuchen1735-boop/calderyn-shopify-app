@@ -3,7 +3,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import { transitionOrder } from "~/lib/order/order.server";
 import { emitPaidOrder } from "~/lib/order/emit.server";
 import { sendOrderConfirmation } from "~/lib/order/confirmation-email.server";
-import { commitReservation } from "~/lib/inventory/engine.server";
+import { commitReservation, saleFallbackForOrder } from "~/lib/inventory/engine.server";
 import { isLegalTransition, isOrderState, type OrderState } from "~/lib/order/state";
 // Singleton lives in stripe-client.server so connect.server can use it without
 // importing this module (which imports connect.server — would be a cycle).
@@ -444,6 +444,35 @@ export async function processStripeEvent(
       // This is the counterpart to createCheckout's reserveStock — reserve at checkout, commit on
       // payment — that makes the storefront path actually decrement stock instead of overselling.
       await commitReservation(shopId, orderRef);
+
+      // PAID-WITHOUT-HOLD FALLBACK — inventory_commit only flips rows that were actually HELD; an
+      // order that reaches `paid` with NOTHING ever reserved for it (a variant flipped to
+      // inventory_tracked=true only after checkout, a reserveStock bug, a manually-created order)
+      // makes commitReservation a silent no-op, so the sale never decrements on_hand — a silent
+      // oversell hiding behind captured payment. Detect that case by reading whether ANY
+      // inventory_reservation row (held or since committed) exists for this checkout_ref; zero
+      // rows means nothing was ever held, so fall back to a direct decrement. Runs on EVERY
+      // succeeded delivery like commitReservation itself: the fallback RPC's per-(order,variant)
+      // idempotency key makes a redelivery a no-op. NEVER thrown past — the payment already
+      // happened, so a failure here must never fail the webhook (rule 12: log loudly instead).
+      try {
+        const heldRes = await getSupabase()
+          .from("inventory_reservation")
+          .select("id")
+          .eq("shop_id", shopId)
+          .eq("checkout_ref", orderRef)
+          .limit(1);
+        if (heldRes.error) throw heldRes.error;
+        if (!heldRes.data || heldRes.data.length === 0) {
+          await saleFallbackForOrder(shopId, orderRef);
+        }
+      } catch (fallbackErr) {
+        console.error(
+          `[stripe] paid-without-hold stock fallback failed for order ${orderRef} (shop ${shopId}) — ` +
+            `payment already captured; on_hand may be overstated until reconciled manually:`,
+          fallbackErr,
+        );
+      }
     }
   }
   return { status: 200, processed, duplicate: !processed };

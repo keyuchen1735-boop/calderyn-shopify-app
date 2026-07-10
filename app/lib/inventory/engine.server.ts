@@ -188,6 +188,59 @@ export async function restockOrderLines(
   return { restockedLines, failedVariantIds };
 }
 
+// Paid-without-hold fallback: an order that reached `paid` with NOTHING held in
+// inventory_reservation for it (e.g. a variant went tracked=true only after checkout, or a
+// reserveStock bug) leaves commitReservation's inventory_commit a silent no-op — flip already-
+// held rows to committed finds none, so on_hand never decrements even though the sale genuinely
+// happened. This directly decrements via the sale-fallback RPC instead, one call per tracked
+// variant on the order, keyed `salefb:<order>:<variant>` so a Stripe redelivery of the same
+// event is a no-op. Same read pattern as restockOrderLines: sum order_line by variant, resolve
+// the tracked set from variant_dim, skip untracked (untracked lines never held ledger stock).
+export async function saleFallbackForOrder(
+  shopId: string, orderId: string,
+): Promise<{ decremented: number }> {
+  const sb = getSupabase();
+  const { data: lines, error: lErr } = await sb
+    .from("order_line")
+    .select("variant_id, quantity")
+    .eq("shop_id", shopId)
+    .eq("order_id", orderId);
+  if (lErr) throw lErr;
+  const byVariant = new Map<string, number>();
+  for (const l of (lines ?? []) as Array<Record<string, unknown>>) {
+    const v = String(l.variant_id);
+    byVariant.set(v, (byVariant.get(v) ?? 0) + Number(l.quantity ?? 0));
+  }
+  if (byVariant.size === 0) return { decremented: 0 };
+
+  const { data: variants, error: vErr } = await sb
+    .from("variant_dim")
+    .select("id, inventory_tracked")
+    .eq("shop_id", shopId)
+    .in("id", [...byVariant.keys()]);
+  if (vErr) throw vErr;
+  const tracked = new Set(
+    ((variants ?? []) as Array<Record<string, unknown>>)
+      .filter((r) => r.inventory_tracked === true)
+      .map((r) => String(r.id)),
+  );
+  if (tracked.size === 0) return { decremented: 0 };
+
+  const locationId = await ensurePrimaryLocation(shopId);
+  let decremented = 0;
+  for (const [variantId, qty] of byVariant) {
+    if (!tracked.has(variantId) || qty <= 0) continue;
+    const { error } = await sb.rpc("inventory_sale_fallback", {
+      p_shop_id: shopId, p_variant_id: variantId, p_location_id: locationId,
+      p_qty: qty, p_idempotency_key: `salefb:${orderId}:${variantId}`,
+    });
+    if (error) throw error;
+    await projectLevelFact(shopId, variantId, locationId);
+    decremented += qty;
+  }
+  return { decremented };
+}
+
 export async function adjustStock(shopId: string, variantId: string, locationId: string, newOnHand: number, reason?: string): Promise<void> {
   const { error } = await getSupabase().rpc("inventory_adjust", {
     p_shop_id: shopId, p_variant_id: variantId, p_location_id: locationId,

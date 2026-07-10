@@ -20,6 +20,14 @@ const h = vi.hoisted(() => ({
   transitionOrder: vi.fn(),
   emitPaidOrder: vi.fn(),
   commitReservation: vi.fn(),
+  saleFallbackForOrder: vi.fn(),
+  // inventory_reservation lookup (paid-without-hold fallback gate) by checkout_ref. Default: a row
+  // is found (as a normal checkout would have — held then committed), so the fallback is NOT
+  // triggered by default; tests that need the no-hold path override this to an empty array.
+  reservationLookup: vi.fn(async (): Promise<{ data: Array<{ id: string }> | null; error: null }> => ({
+    data: [{ id: "resv-1" }],
+    error: null,
+  })),
   routedCreate: vi.fn(),
   applyAccountUpdate: vi.fn(),
   // payment_intent row lookup by stripe_pi_id (charge.refunded / charge.dispute.created). Default:
@@ -59,6 +67,11 @@ vi.mock("~/lib/supabase.server", () => ({
           select: () => ({ eq: () => ({ maybeSingle: () => h.piLookup() }) }),
         };
       }
+      if (table === "inventory_reservation") {
+        return {
+          select: () => ({ eq: () => ({ eq: () => ({ limit: () => h.reservationLookup() }) }) }),
+        };
+      }
       return {
         insert: h.insert,
         upsert: h.upsert,
@@ -85,7 +98,10 @@ vi.mock("~/lib/order/order.server", () => ({ transitionOrder: h.transitionOrder 
 vi.mock("~/lib/order/emit.server", () => ({ emitPaidOrder: h.emitPaidOrder }));
 // commitReservation turns the checkout's held reservations into on_hand decrements on payment
 // success; the engine RPCs are unit-tested in the inventory suite — here we assert the WIRING.
-vi.mock("~/lib/inventory/engine.server", () => ({ commitReservation: h.commitReservation }));
+vi.mock("~/lib/inventory/engine.server", () => ({
+  commitReservation: h.commitReservation,
+  saleFallbackForOrder: h.saleFallbackForOrder,
+}));
 
 // Routing + fallback + decline semantics are unit-tested against
 // createRoutedPaymentIntent in connect.server.test.ts; here we assert the WIRING —
@@ -119,6 +135,8 @@ beforeEach(() => {
   });
   h.emitPaidOrder.mockResolvedValue({ externalId: "gid://calderyn/Order/order-1", sourceVersion: 1, lineCount: 1, clickRefCount: 0, skipped: false });
   h.commitReservation.mockResolvedValue(undefined);
+  h.saleFallbackForOrder.mockResolvedValue({ decremented: 0 });
+  h.reservationLookup.mockResolvedValue({ data: [{ id: "resv-1" }], error: null });
   h.applyAccountUpdate.mockResolvedValue(true);
   h.upsert.mockResolvedValue({ error: null });
   h.orderState = "paid";
@@ -589,6 +607,45 @@ describe("processStripeEvent", () => {
       await processStripeEvent("raw-body", "sig"); // redelivery: recovery must be a no-op
 
       expect(h.transitionOrder).toHaveBeenCalledTimes(1); // never re-transitioned
+    });
+
+    it("falls back to a direct stock decrement when NO reservation was ever held for the order", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [], error: null }); // nothing held
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(h.saleFallbackForOrder).toHaveBeenCalledTimes(1);
+      expect(h.saleFallbackForOrder).toHaveBeenCalledWith("shop-1", "order-1");
+    });
+
+    it("does NOT fall back when a reservation was held for the order (the ordinary commit path)", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [{ id: "resv-1" }], error: null });
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(h.saleFallbackForOrder).not.toHaveBeenCalled();
+    });
+
+    it("never fails the webhook when the stock fallback throws — payment already happened, logged loudly instead", async () => {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [], error: null });
+      h.saleFallbackForOrder.mockRejectedValueOnce(new Error("inventory_sale_fallback: deadlock"));
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.saleFallbackForOrder).toHaveBeenCalledTimes(1);
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/paid-without-hold stock fallback failed/),
+        expect.any(Error),
+      );
+      errSpy.mockRestore();
     });
 
     it("skips the transition (with a warning) when a succeeded PI carries no order_ref", async () => {
