@@ -34,6 +34,7 @@ import { priorExecutionForKey, insertAuditWithIdempotency } from "../actions/exe
 import { restockOrderLines, releaseReservation } from "../inventory/engine.server";
 import { executeRefundAction } from "../actions/refund.server";
 import { sendCancellationNotice } from "./notify-email.server";
+import { expireInvoiceSession } from "./invoice.server";
 
 /** Order states a cancellation may act on. `cart`/`fulfilled`/`cancelled`/`refunded`/
  *  `partially_refunded` are out of reach (already shipped, already terminal, or never an order). */
@@ -197,7 +198,7 @@ export async function executeCancelAction(
   }
 
   // 2. Load order + already-cancelled / cancellable-state guards.
-  const orderRes = await sb.from("orders").select("id, state, cancelled_at").eq("shop_id", shopId).eq("id", input.orderId).maybeSingle();
+  const orderRes = await sb.from("orders").select("id, state, cancelled_at, channel").eq("shop_id", shopId).eq("id", input.orderId).maybeSingle();
   if (orderRes.error) throw orderRes.error;
   if (!orderRes.data) {
     throw new CalderynError({ code: "order_not_found", status: 404, message: `Order ${input.orderId} not found.` });
@@ -287,6 +288,22 @@ export async function executeCancelAction(
           `[cancel] order ${input.orderId}: restock partially failed for variants ${r.failedVariantIds.join(", ")} -- reconcile inventory manually`,
         );
       }
+    }
+  }
+
+  // 5b. Fix C2: an invoice-channel order can have a hosted pay-link session sitting open in a
+  // buyer's browser — kill it now that the order is cancelled/refunded, so that session can never
+  // complete a payment on an order the merchant just voided. Best-effort: the cancellation itself
+  // already succeeded and committed above, so a failure clearing the session must never turn an
+  // otherwise-successful cancel into a 500 -- log loudly and move on (rule 12).
+  if (orderRow.channel === "invoice") {
+    try {
+      await expireInvoiceSession(shopId, input.orderId);
+    } catch (err) {
+      console.error(
+        `[cancel] order ${input.orderId}: could not expire the invoice's hosted pay-link session -- reconcile manually if the buyer reports a stale link`,
+        err,
+      );
     }
   }
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const store = vi.hoisted(() => {
   type Row = Record<string, any>;
-  const db: Record<string, Row[]> = { order_line: [], variant_dim: [], location_dim: [], inventory_reservation: [] };
+  const db: Record<string, Row[]> = { order_line: [], order_line_edit: [], variant_dim: [], location_dim: [], inventory_reservation: [] };
   const rpc = vi.fn(async () => ({ data: null, error: null }));
   class Builder {
     private filters: Array<[string, unknown]> = [];
@@ -66,6 +66,43 @@ describe("restockOrderLines", () => {
     const res = await restockOrderLines("shop-1", "o-1", "refund");
     expect(res.restockedLines).toBe(0);
     expect(res.failedVariantIds).toEqual([]);
+    expect(store.rpc).not.toHaveBeenCalled();
+  });
+
+  it("nets a reduced line to its EFFECTIVE quantity so a prior per-line restock is never double-counted", async () => {
+    // ol-1 sold 2 units but was reduced to 1 (order_line_edit); the reduced unit was either
+    // already restocked via restockLine (its own editrestock:<edit-id> key — a DIFFERENT
+    // idempotency key, so the RPC would NOT dedup it) or deliberately not restocked. Either
+    // way the whole-order restock must return only the effective 1, not the snapshot 2.
+    store.db.order_line_edit.push({
+      id: "edit-1",
+      shop_id: "shop-1",
+      order_id: "o-1",
+      order_line_id: "ol-1",
+      old_quantity: 2,
+      new_quantity: 1,
+      created_at: "2026-07-01T00:00:00.000Z",
+    });
+    const res = await restockOrderLines("shop-1", "o-1", "refund");
+    expect(res.restockedLines).toBe(1);
+    expect(store.rpc).toHaveBeenCalledWith("inventory_restock", {
+      p_shop_id: "shop-1", p_variant_id: "v-tracked", p_location_id: "loc-1",
+      p_qty: 1, p_idempotency_key: "restock:o-1:v-tracked", p_reason: "refund",
+    });
+  });
+
+  it("skips a line reduced to zero entirely (effective 0 restocks nothing)", async () => {
+    store.db.order_line_edit.push({
+      id: "edit-1",
+      shop_id: "shop-1",
+      order_id: "o-1",
+      order_line_id: "ol-1",
+      old_quantity: 2,
+      new_quantity: 0,
+      created_at: "2026-07-01T00:00:00.000Z",
+    });
+    const res = await restockOrderLines("shop-1", "o-1", "refund");
+    expect(res.restockedLines).toBe(0);
     expect(store.rpc).not.toHaveBeenCalled();
   });
 

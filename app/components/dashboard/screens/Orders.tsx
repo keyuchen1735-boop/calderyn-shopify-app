@@ -12,6 +12,7 @@ import {
   fetchOrdersList,
   fetchOrdersPage,
   ordersListParamsToQueryString,
+  sendOrderRecoveryEmail,
   type BulkResultVM,
   type OrderRow,
   type OrderViewVM,
@@ -24,6 +25,7 @@ import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dash
 import type { DashboardCtx } from "../context";
 import RefundModal from "./RefundModal";
 import OrderDetailScreen from "./OrderDetail";
+import OrderComposer from "./OrderComposer";
 import OrdersToolbar from "./OrdersToolbar";
 import { fulfillmentBadge, paymentPillStyle, REFUNDABLE_ORDER_STATES } from "./order-status";
 import {
@@ -583,6 +585,52 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     }
   };
 
+  // Abandoned tab: manual recovery-email resend. Honest, reason-specific toasts (rather than a
+  // generic failure) when sendOrderRecoveryEmail resolves {sent:false, reason} — the same
+  // eligibility checks the automatic sweep applies (recovery.server.ts), surfaced plainly rather
+  // than as an opaque error.
+  const [recoverySending, setRecoverySending] = useState<Set<string>>(new Set());
+  const sendRecovery = async (orderId: string) => {
+    if (recoverySending.has(orderId)) return;
+    setRecoverySending((prev) => new Set(prev).add(orderId));
+    try {
+      const result = await sendOrderRecoveryEmail(orderId);
+      if (result.sent) {
+        toast("Recovery email sent.", "check");
+        setPage((prev) =>
+          prev
+            ? {
+                ...prev,
+                abandoned: prev.abandoned.map((r) =>
+                  r.id === orderId ? { ...r, recoveryEmailSentAt: new Date().toISOString() } : r,
+                ),
+              }
+            : prev,
+        );
+      } else if (result.reason === "no_consent") {
+        toast("This customer has not opted into marketing emails.", "warn");
+      } else if (result.reason === "no_storefront_origin") {
+        toast("Your storefront domain is not set up yet.", "warn");
+      } else if (result.reason === "no_buyer_email") {
+        toast("This checkout has no customer email on file.", "warn");
+      } else if (result.reason === "not_recoverable") {
+        toast("This checkout can't be recovered anymore.", "warn");
+      } else if (result.reason === "already_sent") {
+        toast("A recovery email was already sent.", "warn");
+      } else {
+        toast("Couldn't send the recovery email.", "warn", "critical");
+      }
+    } catch (err) {
+      toast(err instanceof DashboardApiError ? err.message : "Couldn't send the recovery email.", "warn", "critical");
+    } finally {
+      setRecoverySending((prev) => {
+        const next = new Set(prev);
+        next.delete(orderId);
+        return next;
+      });
+    }
+  };
+
   const bulkAddTag = async () => {
     const tag = bulkTagInput.trim();
     const ids = Array.from(selected);
@@ -620,6 +668,13 @@ export default function Orders({ app }: { app: DashboardCtx }) {
 
   const sub = app.nav.sub ?? "orders";
 
+  // Reserved param "new" -> the Create-order composer, same idiom as Campaigns' navigate("campaigns",
+  // "new"). Must be checked BEFORE the row-click/deep-link branch below, which otherwise treats any
+  // non-null param as an order's sourceId.
+  if (app.nav.param === "new") {
+    return <OrderComposer app={app} />;
+  }
+
   // Row-click / deep-link: nav.param carries the selected order's sourceId (`shopify:<id>` for
   // migrated orders, a bare id for native ones) — same idiom as Campaigns' selected-campaign branch.
   if (app.nav.param) {
@@ -651,6 +706,9 @@ export default function Orders({ app }: { app: DashboardCtx }) {
         <div>
           <h1 className="cd-h1">Orders</h1>
         </div>
+        <Btn kind="primary" small icon="plus" onClick={() => app.navigate("orders", "new")}>
+          Create order
+        </Btn>
       </header>
 
       {sub === "orders" ? (
@@ -850,15 +908,16 @@ export default function Orders({ app }: { app: DashboardCtx }) {
             />
           ) : (
             <>
-              <div className="cd-tablehd" style={{ gridTemplateColumns: "1fr 1.8fr 0.9fr 1fr 1.3fr" }}>
+              <div className="cd-tablehd" style={{ gridTemplateColumns: "1fr 1.6fr 0.9fr 0.8fr 1.1fr auto" }}>
                 <span>Checkout</span>
                 <span>Customer</span>
                 <span style={{ textAlign: "right" }}>Value</span>
                 <span>Stage</span>
                 <span>Started</span>
+                <span />
               </div>
               {page.abandoned.map((r) => (
-                <div key={r.id} className="cd-trow" style={{ gridTemplateColumns: "1fr 1.8fr 0.9fr 1fr 1.3fr" }}>
+                <div key={r.id} className="cd-trow" style={{ gridTemplateColumns: "1fr 1.6fr 0.9fr 0.8fr 1.1fr auto" }}>
                   <div className="cd-row-title tabular-nums">{r.ref}</div>
                   <div className="truncate">{r.buyerEmail ?? "Guest"}</div>
                   <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
@@ -866,6 +925,19 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                   </div>
                   <div className="cd-caption">Payment</div>
                   <div className="cd-caption">{timeAgo(r.createdAt)}</div>
+                  <div className="flex items-center" style={{ gap: 8, justifyContent: "flex-end" }}>
+                    {r.recoveryEmailSentAt && (
+                      <span className="cd-caption">Sent {timeAgo(r.recoveryEmailSentAt)}</span>
+                    )}
+                    <Btn
+                      small
+                      icon="mail"
+                      disabled={recoverySending.has(r.id)}
+                      onClick={() => sendRecovery(r.id)}
+                    >
+                      {recoverySending.has(r.id) ? "Sending…" : r.recoveryEmailSentAt ? "Resend" : "Send recovery email"}
+                    </Btn>
+                  </div>
                 </div>
               ))}
             </>

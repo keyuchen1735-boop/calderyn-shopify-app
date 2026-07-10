@@ -17,11 +17,13 @@ import { sendEmail } from "~/lib/email/send.server";
 import { formatOrderRef } from "./checkout.server";
 import { carrierTrackingUrl } from "~/lib/shipping/tracking-url";
 import { escapeHtml } from "~/lib/pilot-invite/content";
+import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 
 export interface OrderEmailResult {
   sent: boolean;
   id?: string;
   error?: string;
+  reason?: string;
 }
 
 /** Format integer cents for display only. Money stays integer cents everywhere else. */
@@ -84,6 +86,20 @@ function transportConfig(): { apiKey: string; from: string } | null {
   const from = process.env.ORDER_CONFIRM_FROM || process.env.PILOT_FROM || process.env.DIGEST_FROM;
   if (!apiKey || !from) return null;
   return { apiKey, from };
+}
+
+/**
+ * Resolves the TENANT storefront origin (https://<org_slug>.calderyncompany.com) a buyer-facing
+ * email link must point at. Storefront routes (recover/$token, invoice/$token/pay) resolve their
+ * shop from the request's Host subdomain (storefront/shop.server.ts's storefrontSlug/
+ * resolveTenantShopId) — never from the platform app/apex host, which falls back to the demo shop
+ * and 404s. publicBaseUrl() returns that app/apex host, so it must never be used to build a link
+ * that goes in an email. Returns null when the shop has no live storefront yet (no org_slug) —
+ * callers must not send a dead link in that case.
+ */
+async function storefrontOriginForShop(shopId: string): Promise<string | null> {
+  const origin = await getShopStorefrontOrigin(shopId);
+  return origin || null;
 }
 
 /**
@@ -195,6 +211,165 @@ export async function sendRefundNotice(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`[order-notify] error sending refund notice for order ${orderId} (shop ${shopId}): ${message}`);
+    return { sent: false, error: message };
+  }
+}
+
+/**
+ * Send the merchant-drafted invoice email for an order (Phase 3 Task 2). Never throws — a
+ * delivery failure must not break sendDraftOrderInvoice, which has already committed the
+ * order + lines + consumed cart by the time this is called. Reuses loadOrderAndBuyer so the
+ * buyer email is read back off the order the caller just wrote (no email is threaded through
+ * separately), same shop-scoped posture as the other three senders in this module.
+ */
+export async function sendInvoiceEmail(
+  shopId: string,
+  orderId: string,
+  opts: {
+    confirmationToken: string;
+    lines: Array<{ title: string; quantity: number }>;
+    totalCents: number;
+    note?: string | null;
+  },
+): Promise<OrderEmailResult> {
+  try {
+    if (!shopId || !orderId) {
+      return { sent: false, error: "shopId and orderId are required" };
+    }
+
+    const found = await loadOrderAndBuyer(shopId, orderId);
+    if (!found) {
+      return { sent: false, error: "order not found or no buyer email" };
+    }
+
+    const config = transportConfig();
+    if (!config) {
+      console.warn(
+        `[order-notify] cannot send invoice email for order ${orderId} (shop ${shopId}): email transport not configured`,
+      );
+      return { sent: false, error: "email transport not configured" };
+    }
+
+    const origin = await storefrontOriginForShop(shopId);
+    if (!origin) {
+      console.warn(
+        `[order-notify] cannot send invoice email for order ${orderId} (shop ${shopId}): no storefront origin`,
+      );
+      return { sent: false, reason: "no_storefront_origin" };
+    }
+
+    const payLink = `${origin}/storefront/invoice/${opts.confirmationToken}/pay`;
+    const total = money(opts.totalCents, found.currency);
+    const lineText = opts.lines.map((l) => `${l.title} x ${l.quantity}`).join("\n");
+    const subject = `Invoice for order ${found.ref}`;
+    const text = [
+      `You have a new invoice for order ${found.ref}.`,
+      "",
+      lineText,
+      "",
+      `Total: ${total}`,
+      ...(opts.note ? ["", `Note: ${opts.note}`] : []),
+      "",
+      `Pay online: ${payLink}`,
+    ].join("\n");
+    const lineHtml = opts.lines.map((l) => `<li>${escapeHtml(l.title)} x ${l.quantity}</li>`).join("");
+    const html = [
+      `<p>You have a new invoice for order ${found.ref}.</p>`,
+      `<ul>${lineHtml}</ul>`,
+      `<p>Total: ${total}</p>`,
+      opts.note ? `<p>Note: ${escapeHtml(opts.note)}</p>` : "",
+      `<p><a href="${payLink}">Pay online</a></p>`,
+    ].join("");
+
+    const delivery = await sendEmail({ apiKey: config.apiKey, from: config.from, to: found.email, subject, text, html });
+    if (!delivery.sent) {
+      console.warn(
+        `[order-notify] invoice-email delivery failed for order ${orderId} (shop ${shopId}): ${delivery.error ?? "unknown"}`,
+      );
+    }
+    return delivery;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[order-notify] error sending invoice email for order ${orderId} (shop ${shopId}):`, message);
+    return { sent: false, error: message };
+  }
+}
+
+/**
+ * Send the abandoned-checkout resume-link email for an order (Phase 3 Task 4). Never throws — a
+ * delivery failure must not break sendRecoveryEmail (recovery.server.ts), which decides on its
+ * own whether to stamp `recovery_email_sent_at` from the returned OrderEmailResult. Mirrors
+ * sendInvoiceEmail's shape (same loadOrderAndBuyer lookup, same transport config) but points at
+ * a resume link instead of a pay link: a stalled storefront checkout already has an open
+ * PaymentIntent from createCheckout, so nothing new needs to be minted the way an invoice's pay
+ * link lazily mints a hosted Checkout Session.
+ */
+export async function sendRecoveryEmailMessage(
+  shopId: string,
+  orderId: string,
+  opts: {
+    confirmationToken: string;
+    lines: Array<{ title: string; quantity: number }>;
+    totalCents: number;
+  },
+): Promise<OrderEmailResult> {
+  try {
+    if (!shopId || !orderId) {
+      return { sent: false, error: "shopId and orderId are required" };
+    }
+
+    const found = await loadOrderAndBuyer(shopId, orderId);
+    if (!found) {
+      return { sent: false, error: "order not found or no buyer email" };
+    }
+
+    const config = transportConfig();
+    if (!config) {
+      console.warn(
+        `[order-notify] cannot send recovery email for order ${orderId} (shop ${shopId}): email transport not configured`,
+      );
+      return { sent: false, error: "email transport not configured" };
+    }
+
+    const origin = await storefrontOriginForShop(shopId);
+    if (!origin) {
+      console.warn(
+        `[order-notify] cannot send recovery email for order ${orderId} (shop ${shopId}): no storefront origin`,
+      );
+      return { sent: false, reason: "no_storefront_origin" };
+    }
+
+    const resumeLink = `${origin}/storefront/recover/${opts.confirmationToken}`;
+    const total = money(opts.totalCents, found.currency);
+    const lineText = opts.lines.map((l) => `${l.title} x ${l.quantity}`).join("\n");
+    const subject = "Your order is waiting";
+    const text = [
+      `You started an order (${found.ref}, ${total}) but did not finish checking out.`,
+      "",
+      lineText,
+      "",
+      "Prices and availability may have changed since you started, so your cart will be re-priced when you return.",
+      "",
+      `Resume your order: ${resumeLink}`,
+    ].join("\n");
+    const lineHtml = opts.lines.map((l) => `<li>${escapeHtml(l.title)} x ${l.quantity}</li>`).join("");
+    const html = [
+      `<p>You started an order (${found.ref}, ${total}) but did not finish checking out.</p>`,
+      `<ul>${lineHtml}</ul>`,
+      `<p>Prices and availability may have changed since you started, so your cart will be re-priced when you return.</p>`,
+      `<p><a href="${resumeLink}">Resume your order</a></p>`,
+    ].join("");
+
+    const delivery = await sendEmail({ apiKey: config.apiKey, from: config.from, to: found.email, subject, text, html });
+    if (!delivery.sent) {
+      console.warn(
+        `[order-notify] recovery-email delivery failed for order ${orderId} (shop ${shopId}): ${delivery.error ?? "unknown"}`,
+      );
+    }
+    return delivery;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[order-notify] error sending recovery email for order ${orderId} (shop ${shopId}):`, message);
     return { sent: false, error: message };
   }
 }

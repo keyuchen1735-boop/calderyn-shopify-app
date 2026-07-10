@@ -14,7 +14,7 @@ import { readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { ensureVisitorSession } from "~/lib/storefront/visitor-cookie.server";
 import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
-import { priceCart } from "~/lib/order/cart.server";
+import { priceCart, getCartOrigin } from "~/lib/order/cart.server";
 import { createCheckout, OutOfStockError } from "~/lib/order/checkout.server";
 import { paymentsReadiness } from "~/lib/payments/connect.server";
 import { PaymentsNotReadyError } from "~/lib/payments/errors";
@@ -88,6 +88,29 @@ async function checkoutExperimentAttribution(
   const served = await resolveServedExperiment(shopId, request, "checkout");
   if (!served.experimentId || !served.variantKey) return {};
   return { experiment_id: served.experimentId, variant_key: served.variantKey };
+}
+
+const RECOVERY_ORIGIN_RE = /^recovery:(.+)$/;
+
+/**
+ * When this cart was minted by the abandoned-checkout resume link (storefront.recover.$token.tsx
+ * stamps `cart.origin = 'recovery:<orderId>'`), thread the original order id into the new order's
+ * attribution snapshot as `recovered_from` — the smallest honest way to make a recovered sale
+ * traceable without adding a new column or touching createCheckout's contract. Best-effort: a
+ * lookup hiccup must never break checkout over an attribution nicety.
+ */
+async function recoveryAttribution(shopId: string, cartId: string): Promise<Record<string, string>> {
+  try {
+    const origin = await getCartOrigin(shopId, cartId);
+    const match = origin ? RECOVERY_ORIGIN_RE.exec(origin) : null;
+    return match ? { recovered_from: match[1] } : {};
+  } catch (err) {
+    console.error(
+      `[checkout] recovery-attribution lookup failed for cart ${cartId} (shop ${shopId}); continuing without it:`,
+      err,
+    );
+    return {};
+  }
 }
 
 // The policy text version the buyer accepts at checkout — recorded verbatim on buyer_consent as
@@ -407,9 +430,10 @@ export async function action({ request }: ActionFunctionArgs) {
   // buyer happening to revisit the confirmation page.
   // Independent reads — resolved concurrently so the experiment lookup never adds latency
   // in front of createCheckout, the most conversion-sensitive call in the app.
-  const [visitor, experimentAttribution] = await Promise.all([
+  const [visitor, experimentAttribution, recovery] = await Promise.all([
     ensureVisitorSession(request),
     checkoutExperimentAttribution(shopId, request),
+    recoveryAttribution(shopId, cartId),
   ]);
 
   try {
@@ -432,7 +456,7 @@ export async function action({ request }: ActionFunctionArgs) {
         },
         consent: { version: CHECKOUT_POLICY_VERSION, marketingOptIn, sourceIp, ua },
       },
-      { live_session_id: visitor.sessionId, ...experimentAttribution },
+      { live_session_id: visitor.sessionId, ...experimentAttribution, ...recovery },
       { shippingService },
     );
 

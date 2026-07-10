@@ -11,6 +11,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { formatOrderRef } from "./checkout.server";
 import { remainingRefundableByOrder } from "./list.server";
+import { effectiveLineQuantities } from "./line-edits.server";
 import { formatMoney } from "~/lib/storefront/money";
 import type { OrderDetail, OrderDetailFulfillment, OrderDetailLine, OrderTimelineEvent } from "./detail-types";
 
@@ -132,6 +133,8 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     transitions,
     refunds,
     ledgerMap,
+    effectiveMap,
+    edits,
   ] = await Promise.all([
     loadNativeLines(sb, shopId, orderId),
     loadFulfillments(sb, shopId, orderId),
@@ -142,12 +145,23 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
     loadTransitions(sb, shopId, orderId),
     loadRefundAudits(sb, shopId, orderId, currency),
     remainingRefundableByOrder(shopId, [orderId]),
+    effectiveLineQuantities(shopId, orderId, sb),
+    loadEditEvents(sb, shopId, orderId, currency),
   ]);
 
-  const linesWithFulfillment: OrderDetailLine[] = lines.map((l) => ({
-    ...l,
-    fulfilledQuantity: fulfilledByLine.get(l.id) ?? 0,
-  }));
+  // `quantity` reflects what the line ACTUALLY totals today (effective, after any reductions);
+  // `reducedQuantity` is additive detail for the UI to show "3 of 5" rather than losing the
+  // original snapshot outright. A line with no edits has reducedQuantity 0 and quantity ===
+  // its snapshot, unchanged from before this field existed.
+  const linesWithFulfillment: OrderDetailLine[] = lines.map((l) => {
+    const eff = effectiveMap.get(l.id);
+    return {
+      ...l,
+      quantity: eff ? eff.effective : l.quantity,
+      reducedQuantity: eff ? eff.reduced : 0,
+      fulfilledQuantity: fulfilledByLine.get(l.id) ?? 0,
+    };
+  });
 
   // Ledger truth: remaining = captured − already-refunded (floored at 0 by the shared
   // helper); a native order's capture is its total_cents, so refunded = total − remaining.
@@ -155,7 +169,7 @@ async function loadNativeOrderDetail(shopId: string, orderId: string): Promise<O
   // Refunded = total - remaining, relying on the invariant that a native order's capture equals total_cents.
   const refundedCents = Math.max(0, totalCents - remainingRefundableCents);
 
-  const timeline = sortTimelineDesc([...transitions, ...notes, ...refunds, ...fulfillmentEvents(fulfillments)]);
+  const timeline = sortTimelineDesc([...transitions, ...notes, ...refunds, ...edits, ...fulfillmentEvents(fulfillments)]);
 
   return {
     source: "calderyn",
@@ -191,7 +205,7 @@ async function loadNativeLines(
   sb: SupabaseClient,
   shopId: string,
   orderId: string,
-): Promise<Array<Omit<OrderDetailLine, "fulfilledQuantity">>> {
+): Promise<Array<Omit<OrderDetailLine, "fulfilledQuantity" | "reducedQuantity">>> {
   const { data, error } = await sb
     .from("order_line")
     .select("id, variant_id, quantity, unit_price_cents, title_snapshot")
@@ -216,6 +230,7 @@ async function loadNativeLines(
 
   return rows.map((r) => ({
     id: String(r.id),
+    variantId: String(r.variant_id),
     title: String(r.title_snapshot),
     sku: skuByVariant.get(String(r.variant_id)) ?? null,
     quantity: Number(r.quantity ?? 0),
@@ -282,7 +297,10 @@ async function loadBuyer(sb: SupabaseClient, shopId: string, buyerId: string): P
   return { id: String(row.id), email: String(row.email_normalized ?? "") };
 }
 
-async function loadDefaultShippingAddress(
+/** The buyer's default shipping address, or null when they have none on file. Exported so
+ *  edit.server.ts's invoice-line re-quote (executeEditInvoiceLines) reads the SAME shape/query
+ *  this detail read model already uses, rather than a second hand-rolled buyer_address query. */
+export async function loadDefaultShippingAddress(
   sb: SupabaseClient,
   shopId: string,
   buyerId: string,
@@ -375,6 +393,52 @@ async function loadRefundAudits(
       at: String(r.created_at),
       title: "Refund issued",
       detail: formatMoney(amountCents, currency),
+      author: null,
+    };
+  });
+}
+
+/**
+ * Timeline events for order_line_edit rows ("Reduced {title} to {n}" + the refund amount when
+ * one was recorded). Independent read (not fed off the already-loaded `lines` list) so this
+ * helper is self-contained like the other timeline-source loaders in this file.
+ */
+async function loadEditEvents(
+  sb: SupabaseClient,
+  shopId: string,
+  orderId: string,
+  currency: string,
+): Promise<OrderTimelineEvent[]> {
+  const { data, error } = await sb
+    .from("order_line_edit")
+    .select("order_line_id, new_quantity, refund_cents, created_at")
+    .eq("shop_id", shopId)
+    .eq("order_id", orderId);
+  if (error) throw new Error(`order_line_edit read failed: ${error.message}`);
+  const rows = (data ?? []) as Record<string, unknown>[];
+  if (rows.length === 0) return [];
+
+  const lineIds = [...new Set(rows.map((r) => String(r.order_line_id)))];
+  const { data: lineRows, error: lineErr } = await sb
+    .from("order_line")
+    .select("id, title_snapshot")
+    .eq("shop_id", shopId)
+    .in("id", lineIds);
+  if (lineErr) throw new Error(`order_line read failed: ${lineErr.message}`);
+  const titleById = new Map<string, string>();
+  for (const l of (lineRows ?? []) as Record<string, unknown>[]) {
+    titleById.set(String(l.id), String(l.title_snapshot ?? "item"));
+  }
+
+  return rows.map((r) => {
+    const title = titleById.get(String(r.order_line_id)) ?? "item";
+    const newQty = Number(r.new_quantity ?? 0);
+    const refundCents = Number(r.refund_cents ?? 0);
+    return {
+      kind: "edit" as const,
+      at: String(r.created_at),
+      title: `Reduced ${title} to ${newQty}`,
+      detail: refundCents > 0 ? `Refunded ${formatMoney(refundCents, currency)}` : null,
       author: null,
     };
   });
@@ -479,9 +543,13 @@ async function loadImportedLines(
     const skuRow = Array.isArray(rel) ? (rel[0] ?? null) : rel;
     return {
       id: String(r.id),
+      // Imported lines key off sku_dim, not an owned variant_dim row.
+      variantId: null,
       title: skuRow?.title ?? "Unknown item",
       sku: skuRow?.sku ?? null,
       quantity: Number(r.quantity ?? 0),
+      // Imported (Shopify-paid) orders never go through the native order_line_edit spine.
+      reducedQuantity: 0,
       unitPriceCents: Number(r.price_cents ?? 0),
       // No fulfillment tracking is promoted for imported orders (fulfillments stay []),
       // so there is no source of truth for per-line fulfilled units — report 0 rather

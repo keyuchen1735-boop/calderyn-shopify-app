@@ -293,6 +293,26 @@ export async function getCartState(shopId: string, cartId: string): Promise<stri
   return data ? String((data as Record<string, unknown>).state) : null;
 }
 
+/**
+ * The cart's `origin` stamp (e.g. 'merchant_draft', 'recovery:<orderId>'), or null when the cart
+ * doesn't exist for this shop or carries no origin. Read by the checkout route (Task 4) to detect
+ * a recovery-resumed cart and thread `recovered_from` into the order's attribution snapshot.
+ */
+export async function getCartOrigin(shopId: string, cartId: string): Promise<string | null> {
+  if (!shopId || !cartId) return null;
+  assertPersistableShop(shopId);
+  const { data, error } = await getSupabase()
+    .from("cart")
+    .select("origin")
+    .eq("shop_id", shopId)
+    .eq("id", cartId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const origin = (data as Record<string, unknown>).origin;
+  return origin == null ? null : String(origin);
+}
+
 /** Empty a cart: delete every line. Shop + cart scoped; an already-empty cart is a harmless no-op. */
 export async function clearCart(shopId: string, cartId: string): Promise<void> {
   if (!shopId) throw new Error("shopId is required");

@@ -9,12 +9,12 @@ import type {
   OrdersPage,
 } from "~/lib/order/list-types";
 import type { ImportedOrdersPage } from "~/lib/order/imported-list-types";
-import type { OrderDetail } from "~/lib/order/detail-types";
+import type { OrderDetail, OrderDetailLine } from "~/lib/order/detail-types";
 import type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage } from "~/lib/order/unified-list-types";
 
 export type { OrderRow, DraftCartRow, AbandonedCheckoutRow, ShipChargeRow, OrdersPage };
 export type { ImportedOrdersPage };
-export type { OrderDetail };
+export type { OrderDetail, OrderDetailLine };
 export type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage };
 
 export async function fetchOrdersPage(): Promise<OrdersPage> {
@@ -70,6 +70,80 @@ export async function refundOrder(
     capturedCents: data.captured_cents,
     restockedLines: data.restocked_lines,
     restockError: data.restock_error,
+  };
+}
+
+export interface ReduceLineResult {
+  auditId: string;
+  orderState: string;
+  refundedCents: number;
+  restocked: boolean;
+  restockError: string | null;
+}
+
+/**
+ * Reduce a paid order's line to a lower quantity, refunding the delta (and optionally
+ * restocking it). Native orders only. idempotencyKey dedups the reduction AND is handed to the
+ * nested refund executor, so a retried submit can never double-refund.
+ */
+export async function reduceOrderLine(
+  orderId: string,
+  args: { orderLineId: string; newQuantity: number; restock: boolean; reason?: string; idempotencyKey: string },
+): Promise<ReduceLineResult> {
+  const data = await apiSend<{
+    audit_id: string;
+    order_state: string;
+    refunded_cents: number;
+    restocked: boolean;
+    restock_error: string | null;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/reduce-line`, {
+    order_line_id: args.orderLineId,
+    new_quantity: args.newQuantity,
+    restock: args.restock,
+    reason: args.reason,
+    idempotency_key: args.idempotencyKey,
+  });
+  return {
+    auditId: data.audit_id,
+    orderState: data.order_state,
+    refundedCents: data.refunded_cents,
+    restocked: data.restocked,
+    restockError: data.restock_error,
+  };
+}
+
+export interface EditInvoiceLinesResult {
+  orderId: string;
+  subtotalCents: number;
+  shippingCents: number;
+  taxCents: number;
+  totalCents: number;
+  currency: string;
+}
+
+/** Replace every line on an UNPAID invoice order (channel='invoice', state='checkout_pending'
+ *  only — 409s otherwise) and recompute totals. */
+export async function editInvoiceLines(
+  orderId: string,
+  lines: Array<{ variantId: string; quantity: number }>,
+): Promise<EditInvoiceLinesResult> {
+  const data = await apiSend<{
+    order_id: string;
+    subtotal_cents: number;
+    shipping_cents: number;
+    tax_cents: number;
+    total_cents: number;
+    currency: string;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/edit-lines`, {
+    lines: lines.map((l) => ({ variant_id: l.variantId, quantity: l.quantity })),
+  });
+  return {
+    orderId: data.order_id,
+    subtotalCents: data.subtotal_cents,
+    shippingCents: data.shipping_cents,
+    taxCents: data.tax_cents,
+    totalCents: data.total_cents,
+    currency: data.currency,
   };
 }
 
@@ -130,6 +204,18 @@ export async function cancelOrder(
     refunded: data.refunded,
     restockedLines: data.restocked_lines,
   };
+}
+
+/** Resend the abandoned-checkout recovery email for an order. Native orders only; `reason` is
+ *  populated (and `sent` false) when the order isn't eligible (not_recoverable, no_consent,
+ *  no_buyer_email, delivery_failed) — the caller shows the reason honestly rather than a generic
+ *  failure toast. */
+export async function sendOrderRecoveryEmail(orderId: string): Promise<{ sent: boolean; reason?: string }> {
+  return apiSend<{ sent: boolean; reason?: string }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/recovery-email`,
+    {},
+  );
 }
 
 /** Add a staff note to an order's timeline. Native orders only. */
@@ -378,4 +464,142 @@ export async function bulkAddOrderTags(
     });
     return { results: mapBulkResults(data.results) };
   });
+}
+
+// --- merchant drafts + send-invoice (Phase 3 Task 2) -------------------------
+
+export interface DraftLineVM {
+  id: string;
+  variantId: string;
+  title: string;
+  quantity: number;
+  unitPriceCents: number;
+  currency: string;
+}
+
+export interface MerchantDraftVM {
+  id: string;
+  lines: DraftLineVM[];
+  subtotalCents: number;
+  currency: string;
+  createdAt: string;
+}
+
+interface DraftLineWire {
+  id: string;
+  variant_id: string;
+  title: string;
+  quantity: number;
+  unit_price_cents: number;
+  currency: string;
+}
+
+interface MerchantDraftWire {
+  id: string;
+  lines: DraftLineWire[];
+  subtotal_cents: number;
+  currency: string;
+  created_at: string;
+}
+
+function mapDraft(d: MerchantDraftWire): MerchantDraftVM {
+  return {
+    id: d.id,
+    lines: d.lines.map((l) => ({
+      id: l.id,
+      variantId: l.variant_id,
+      title: l.title,
+      quantity: l.quantity,
+      unitPriceCents: l.unit_price_cents,
+      currency: l.currency,
+    })),
+    subtotalCents: d.subtotal_cents,
+    currency: d.currency,
+    createdAt: d.created_at,
+  };
+}
+
+/** List every open merchant-draft cart for the session's shop. */
+export async function fetchMerchantDrafts(): Promise<MerchantDraftVM[]> {
+  const data = await apiGet<{ drafts: MerchantDraftWire[] }>("/dashboard/api/orders/drafts");
+  return data.drafts.map(mapDraft);
+}
+
+/** Create a new merchant draft (omit cartId) or replace an existing one's lines (cartId given).
+ *  1-50 lines, qty 1-999 each; an unknown/unavailable variant 422s (DashboardApiError). */
+export async function saveMerchantDraft(input: {
+  cartId?: string;
+  lines: Array<{ variantId: string; quantity: number }>;
+}): Promise<MerchantDraftVM> {
+  const data = await apiSend<{ draft: MerchantDraftWire }>("POST", "/dashboard/api/orders/drafts", {
+    cart_id: input.cartId,
+    lines: input.lines.map((l) => ({ variant_id: l.variantId, quantity: l.quantity })),
+  });
+  return mapDraft(data.draft);
+}
+
+/** Delete a merchant-draft cart outright. 404s (DashboardApiError) on an unknown/foreign/non-draft id. */
+export async function deleteMerchantDraft(cartId: string): Promise<void> {
+  await apiSend<{ deleted: true }>("DELETE", `/dashboard/api/orders/drafts?id=${encodeURIComponent(cartId)}`);
+}
+
+/** Buyer address captured for a sent invoice (mirrors BuyerAddressInput, browser-safe copy). */
+export interface InvoiceAddressInput {
+  kind?: "shipping" | "billing";
+  name?: string;
+  line1: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postal?: string;
+  country?: string;
+  phone?: string;
+}
+
+export interface SendInvoiceResult {
+  orderId: string;
+  confirmationToken: string;
+  totalCents: number;
+  currency: string;
+  emailSent: boolean;
+}
+
+/** Turn a merchant-draft cart into a real invoice and email the buyer a pay link. 409s
+ *  (DashboardApiError, code "payments_not_ready") if the shop can't take payments yet. */
+export async function sendDraftInvoice(input: {
+  cartId: string;
+  email: string;
+  address?: InvoiceAddressInput;
+  note?: string;
+}): Promise<SendInvoiceResult> {
+  const data = await apiSend<{
+    order_id: string;
+    confirmation_token: string;
+    total_cents: number;
+    currency: string;
+    email_sent: boolean;
+  }>("POST", "/dashboard/api/orders/drafts/send", {
+    cart_id: input.cartId,
+    email: input.email,
+    address: input.address,
+    note: input.note,
+  });
+  return {
+    orderId: data.order_id,
+    confirmationToken: data.confirmation_token,
+    totalCents: data.total_cents,
+    currency: data.currency,
+    emailSent: data.email_sent,
+  };
+}
+
+/** Re-send the pay-link email for an unpaid invoice order (Phase 3 Task 5). The pay link itself
+ *  is stable across a resend; `sent: false` with a `reason` means the shop's email transport or
+ *  storefront origin isn't set up yet, not that the invoice itself is invalid. */
+export async function resendInvoiceEmail(orderId: string): Promise<{ sent: boolean; reason?: string }> {
+  return apiSend<{ sent: boolean; reason?: string }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/resend-invoice`,
+    {},
+  );
 }

@@ -38,6 +38,9 @@ export interface AbandonedCheckoutRow {
   totalCents: number;
   currency: string;
   createdAt: string;
+  /** When the abandoned-checkout recovery email was last sent (recovery.server.ts), or null if
+   *  none has gone out yet. Null-safe: rows predate this column and most never get one. */
+  recoveryEmailSentAt: string | null;
 }
 
 export interface ShipChargeRow {

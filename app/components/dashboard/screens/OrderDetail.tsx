@@ -10,18 +10,28 @@ import {
   addOrderNote,
   setOrderTags,
   setOrderArchived,
+  cancelOrder,
+  resendInvoiceEmail,
   type OrderDetail,
+  type OrderDetailLine,
   type OrderRow,
 } from "~/lib/dashboard/orders-client";
 import RefundModal from "./RefundModal";
 import FulfillModal from "./FulfillModal";
 import CancelOrderModal from "./CancelOrderModal";
+import ReduceLineModal from "./ReduceLineModal";
+import EditInvoiceLinesModal from "./EditInvoiceLinesModal";
 import {
   fulfillmentBadge,
   paymentPillStyle,
   REFUNDABLE_ORDER_STATES,
   CANCELLABLE_ORDER_STATES,
 } from "./order-status";
+
+/** Order states where a paid line's quantity can still be reduced. Mirrors EDITABLE_STATES in
+ *  app/lib/order/edit.server.ts so the per-line Reduce affordance only ever shows where the
+ *  server would actually accept the reduction. */
+const REDUCIBLE_ORDER_STATES = new Set(["paid", "partially_fulfilled", "fulfilled", "partially_refunded"]);
 
 /** What the Orders list already knows about a row, handed down so the header paints instantly
  *  (ref/total/badges) while the full detail fetch is still in flight — the screen-cache "seed"
@@ -91,6 +101,7 @@ const TIMELINE_DOT: Record<OrderDetail["timeline"][number]["kind"], string> = {
   note: "var(--accent)",
   refund: "var(--orange)",
   fulfillment: "var(--green)",
+  edit: "var(--red)",
 };
 
 export default function OrderDetailScreen({
@@ -107,7 +118,14 @@ export default function OrderDetailScreen({
   const [loadError, setLoadError] = useState(false);
   const [showFulfill, setShowFulfill] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
+  const [showEditInvoice, setShowEditInvoice] = useState(false);
+  const [reduceTarget, setReduceTarget] = useState<OrderDetailLine | null>(null);
   const [refundTarget, setRefundTarget] = useState<OrderRow | null>(null);
+  const [resendingInvoice, setResendingInvoice] = useState(false);
+  const [voidingInvoice, setVoidingInvoice] = useState(false);
+  // One stable key per screen visit (the sibling modals' key-per-open pattern) so a retried Void
+  // after a timed-out-but-succeeded request dedups on the server instead of re-cancelling.
+  const [voidIdempotencyKey] = useState(() => crypto.randomUUID());
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [tagInput, setTagInput] = useState("");
@@ -167,8 +185,16 @@ export default function OrderDetailScreen({
     detail.lines.some((l) => l.fulfilledQuantity < l.quantity) &&
     (detail.state === "paid" || detail.state === "partially_fulfilled");
   const canRefund = !!detail && !detail.readOnly && REFUNDABLE_ORDER_STATES.has(detail.state);
+  // An unpaid invoice gets its own Re-send/Edit items/Void actions below instead of the generic
+  // Cancel button — "Void invoice" IS executeCancelAction (refund:false, restock:false), just with
+  // invoice-specific copy, so it must not also show as a second, differently-worded Cancel button.
+  const isUnpaidInvoice = !!detail && !detail.readOnly && detail.channel === "invoice" && detail.state === "checkout_pending";
   const canCancel =
-    !!detail && !detail.readOnly && CANCELLABLE_ORDER_STATES.has(detail.state) && !detail.cancelledAt;
+    !!detail &&
+    !detail.readOnly &&
+    CANCELLABLE_ORDER_STATES.has(detail.state) &&
+    !detail.cancelledAt &&
+    !isUnpaidInvoice;
 
   const addNote = async () => {
     if (!detail || noteSaving || !noteText.trim()) return;
@@ -230,6 +256,39 @@ export default function OrderDetailScreen({
     }
   };
 
+  const resendInvoice = async () => {
+    if (!detail || resendingInvoice) return;
+    setResendingInvoice(true);
+    try {
+      const res = await resendInvoiceEmail(detail.id);
+      toast(
+        res.sent ? "Invoice email resent." : "Couldn't resend the invoice email right now.",
+        res.sent ? "check" : "warn",
+      );
+    } catch (err) {
+      toast(err instanceof DashboardApiError ? err.message : "Couldn't resend this invoice.", "warn", "critical");
+    } finally {
+      setResendingInvoice(false);
+    }
+  };
+
+  // Void = the shared cancel executor with refund:false (an unpaid invoice never captured
+  // anything to refund) and restock:false (nothing was ever reserved for it either).
+  const voidInvoice = async () => {
+    if (!detail || voidingInvoice) return;
+    if (!window.confirm("Void this invoice? The pay link will stop working.")) return;
+    setVoidingInvoice(true);
+    try {
+      await cancelOrder(detail.id, { refund: false, restock: false, idempotencyKey: voidIdempotencyKey });
+      toast("Invoice voided.", "check");
+      load();
+    } catch (err) {
+      toast(err instanceof DashboardApiError ? err.message : "Couldn't void this invoice.", "warn", "critical");
+    } finally {
+      setVoidingInvoice(false);
+    }
+  };
+
   return (
     <div className="cd-screen" data-screen-label="Order">
       <header className="cd-screen-head">
@@ -274,6 +333,19 @@ export default function OrderDetailScreen({
               <Btn small icon="ban" onClick={() => setShowCancel(true)}>
                 Cancel
               </Btn>
+            )}
+            {isUnpaidInvoice && (
+              <>
+                <Btn small icon="mail" onClick={resendInvoice} disabled={resendingInvoice}>
+                  {resendingInvoice ? "Resending…" : "Re-send invoice"}
+                </Btn>
+                <Btn small icon="pencil" onClick={() => setShowEditInvoice(true)}>
+                  Edit items
+                </Btn>
+                <Btn small kind="danger" icon="ban" onClick={voidInvoice} disabled={voidingInvoice}>
+                  {voidingInvoice ? "Voiding…" : "Void invoice"}
+                </Btn>
+              </>
             )}
             <Btn small icon="archive" onClick={toggleArchived} disabled={archiving}>
               {detail.archivedAt ? "Unarchive" : "Archive"}
@@ -337,6 +409,11 @@ export default function OrderDetailScreen({
                     <div className="cd-row-num tabular-nums" style={{ flexShrink: 0 }}>
                       {money(l.unitPriceCents * l.quantity, detail.currency)}
                     </div>
+                    {!detail.readOnly && REDUCIBLE_ORDER_STATES.has(detail.state) && l.quantity > l.fulfilledQuantity && (
+                      <Btn small icon="reduce" onClick={() => setReduceTarget(l)}>
+                        Reduce
+                      </Btn>
+                    )}
                   </div>
                 ))}
               </div>
@@ -540,6 +617,23 @@ export default function OrderDetailScreen({
           app={app}
           order={refundTarget}
           onClose={() => setRefundTarget(null)}
+          onDone={() => load()}
+        />
+      )}
+      {reduceTarget && detail && (
+        <ReduceLineModal
+          app={app}
+          order={detail}
+          line={reduceTarget}
+          onClose={() => setReduceTarget(null)}
+          onDone={() => load()}
+        />
+      )}
+      {showEditInvoice && detail && (
+        <EditInvoiceLinesModal
+          app={app}
+          order={detail}
+          onClose={() => setShowEditInvoice(false)}
           onDone={() => load()}
         />
       )}

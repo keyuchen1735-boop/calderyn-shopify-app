@@ -8,7 +8,7 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
+import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { clearCartId, readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
@@ -25,10 +25,16 @@ export const meta: MetaFunction = ({ matches }) => [
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   const token = params.token ?? "";
+  // The demo shell has no shop row behind it (uuid-keyed orders table can't hold its sentinel id,
+  // same reasoning as storefront.invoice.$token.pay.tsx): an unknown host can never own a real
+  // order, so refuse before any DB read rather than let a non-uuid shop_id 500 the `.eq()` filter
+  // inside findOrderByConfirmationToken.
+  if (!token || shopId === DEMO_SHOP_ID) throw new Response("Order not found", { status: 404 });
+
   // Look the order up by its unguessable token, scoped to the shop. A missing/unknown/foreign
   // token yields null -> 404, so the confirmation URL can never be enumerated into another
-  // buyer's order. (No token -> skip the DB read entirely.)
-  const order = token ? await findOrderByConfirmationToken(shopId, token) : null;
+  // buyer's order.
+  const order = await findOrderByConfirmationToken(shopId, token);
   if (!order) throw new Response("Order not found", { status: 404 });
 
   // A valid token only proves the checkout was ORIGINATED, not paid — the order sits in

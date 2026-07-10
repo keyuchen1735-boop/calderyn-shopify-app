@@ -91,6 +91,9 @@ describe("alerts actions", () => {
       );
       expect(receipt.auditId).toBe("audit-po-1");
       expect(receipt.undoable).toBe(false);
+      expect(receipt.link?.href).toBe("/dashboard/api/audit/audit-po-1/po.pdf");
+      expect(receipt.summary.toLowerCase()).toContain("purchase order");
+      expect(receipt.summary.toLowerCase()).not.toContain("shopify");
     });
 
     it("defaults unitCost to a blank string when unit_cost_cents is omitted", async () => {
