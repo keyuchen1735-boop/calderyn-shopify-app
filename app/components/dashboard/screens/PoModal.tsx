@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Btn, Card } from "../ui";
 import { CDIcon } from "../icons";
+import { useModalChrome } from "../use-modal-chrome";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
@@ -11,6 +12,8 @@ import {
   type PoDraftInputVM,
   type SupplierVM,
 } from "~/lib/dashboard/po-client";
+import { defaultEta } from "~/lib/po/format";
+import { centsToDollars, dollarsToCents } from "~/lib/catalog/product-form";
 import { cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 
 // Create or edit a draft purchase order: supplier (optional), destination
@@ -26,10 +29,6 @@ interface LineDraft {
   qty: number;
   /** Dollars as typed; converted to cents on submit. Empty = cost unknown. */
   cost: string;
-}
-
-function etaFromLeadTime(days: number): string {
-  return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 }
 
 export default function PoModal({
@@ -57,14 +56,22 @@ export default function PoModal({
   // supplier change must not silently overwrite it.
   const etaTouched = useRef(Boolean(existing?.expectedAt));
   const [notes, setNotes] = useState(existing?.notes ?? "");
+  // Lines whose variant was deleted (variantId null) can't be re-saved — the
+  // edit drops them (the server would reject them anyway).
   const [lines, setLines] = useState<LineDraft[]>(() =>
-    (existing?.lines ?? []).map((l) => ({
-      variantId: l.variantId,
-      sku: l.sku,
-      title: l.title ?? l.sku ?? "Item",
-      qty: l.qtyOrdered,
-      cost: l.unitCostCents == null ? "" : (l.unitCostCents / 100).toFixed(2),
-    })),
+    (existing?.lines ?? []).flatMap((l) =>
+      l.variantId == null
+        ? []
+        : [
+            {
+              variantId: l.variantId,
+              sku: l.sku,
+              title: l.title ?? l.sku ?? "Item",
+              qty: l.qtyOrdered,
+              cost: centsToDollars(l.unitCostCents ?? undefined),
+            },
+          ],
+    ),
   );
   const [busy, setBusy] = useState(false);
 
@@ -74,7 +81,12 @@ export default function PoModal({
   const [pickRows, setPickRows] = useState<client.InventoryRowVM[] | null>(null);
   const [pickError, setPickError] = useState<string | null>(null);
 
-  const dialogRef = useRef<HTMLDivElement | null>(null);
+  // Escape/autofocus/Tab-cycle. Capture phase so an Escape here can't also
+  // close an underlying drawer (same layering rule as TransferModal).
+  const { ref: dialogRef, onKeyDown: onDialogKeyDown } = useModalChrome<HTMLDivElement>({
+    onClose,
+    escape: "capture",
+  });
   const toast = app.toast;
 
   useEffect(() => {
@@ -123,50 +135,11 @@ export default function PoModal({
     };
   }, [pickQuery]);
 
-  useEffect(() => {
-    // Capture phase + stopPropagation so an Escape here can't also close an
-    // underlying drawer (same layering rule as TransferModal).
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.stopPropagation();
-      onClose();
-    };
-    window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [onClose]);
-
-  useEffect(() => {
-    dialogRef.current?.querySelector<HTMLElement>("button, input, select, textarea")?.focus();
-  }, []);
-
-  const onDialogKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Tab") return;
-    const nodes = dialogRef.current?.querySelectorAll<HTMLElement>(
-      "button, input, select, textarea",
-    );
-    if (!nodes) return;
-    const focusable = Array.from(nodes).filter((n) => !n.hasAttribute("disabled"));
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
-    const inside = active instanceof HTMLElement && dialogRef.current?.contains(active);
-    if (e.shiftKey) {
-      if (!inside || active === first) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else if (!inside || active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
-
   const onSupplierChange = (id: string) => {
     setSupplierId(id);
     if (etaTouched.current) return;
     const supplier = suppliers.find((s) => s.id === id);
-    if (supplier?.leadTimeDays != null) setEta(etaFromLeadTime(supplier.leadTimeDays));
+    if (supplier?.leadTimeDays != null) setEta(defaultEta(supplier.leadTimeDays));
   };
 
   const addLine = (row: client.InventoryRowVM) => {
@@ -210,12 +183,12 @@ export default function PoModal({
       }
       let unitCostCents: number | null = null;
       if (line.cost.trim() !== "") {
-        const dollars = Number(line.cost);
-        if (!Number.isFinite(dollars) || dollars < 0) {
+        const cents = dollarsToCents(line.cost);
+        if (cents === undefined) {
           toast("Unit costs must be zero or more.", "warn");
           return;
         }
-        unitCostCents = Math.round(dollars * 100);
+        unitCostCents = cents;
       }
       payloadLines.push({ variantId: line.variantId, qty: line.qty, unitCostCents });
     }

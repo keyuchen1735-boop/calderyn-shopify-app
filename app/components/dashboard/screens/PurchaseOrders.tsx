@@ -1,13 +1,8 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Btn, Card, Pan, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
-import { money, timeAgo } from "../format";
+import { money, shortDateYear, timeAgo } from "../format";
+import { useModalChrome } from "../use-modal-chrome";
 import {
   DashboardApiError,
   fetchPurchaseOrders,
@@ -49,18 +44,6 @@ function StatusPill({ status }: { status: PoStatusVM }) {
   if (status === "received") return <Pill tone="success" icon="check">Received</Pill>;
   if (status === "cancelled") return <Pill icon="x">Cancelled</Pill>;
   return <Pill icon="doc">Draft</Pill>;
-}
-
-/** "2026-08-01" → "Aug 1, 2026" (UTC — date-only strings are UTC days). */
-function etaLabel(date: string): string {
-  const t = Date.parse(`${date}T00:00:00Z`);
-  if (!Number.isFinite(t)) return date;
-  return new Date(t).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  });
 }
 
 // ---- legacy Autopilot drafts (audit-backed) --------------------------------------
@@ -110,27 +93,28 @@ function DraftRow({
       <div className="cd-caption">{timeAgo(row.createdAt)}</div>
       <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
         <OutcomeBadge outcome={row.outcome} />
-        {/* Both actions need the PO snapshot in the audit row; hasPdf is that
-            exact predicate, so neither button can dead-end. */}
+        {/* Convert needs a SETTLED snapshot: a retrying executor may still
+            rewrite it, so only succeeded drafts are convertible. The PDF only
+            needs the snapshot to exist (hasPdf — the PDF route's predicate). */}
+        {row.hasPdf && row.outcome === "succeeded" && (
+          <Btn small icon="plus" disabled={promoting} onClick={onConvert}>
+            {promoting ? "Converting…" : "Convert to PO"}
+          </Btn>
+        )}
         {row.hasPdf && (
-          <>
-            <Btn small icon="plus" disabled={promoting} onClick={onConvert}>
-              {promoting ? "Converting…" : "Convert to PO"}
-            </Btn>
-            <Btn
-              small
-              icon="download"
-              onClick={() =>
-                window.open(
-                  `/dashboard/api/audit/${encodeURIComponent(row.id)}/po.pdf`,
-                  "_blank",
-                  "noopener",
-                )
-              }
-            >
-              PDF
-            </Btn>
-          </>
+          <Btn
+            small
+            icon="download"
+            onClick={() =>
+              window.open(
+                `/dashboard/api/audit/${encodeURIComponent(row.id)}/po.pdf`,
+                "_blank",
+                "noopener",
+              )
+            }
+          >
+            PDF
+          </Btn>
         )}
       </div>
     </div>
@@ -143,7 +127,7 @@ function DrawerMeta({ detail }: { detail: PoDetailVM }) {
   const rows: Array<[string, string]> = [
     ["Supplier", detail.supplierName ?? "—"],
     ["Deliver to", detail.destinationName],
-    ["Expected", detail.expectedAt ? etaLabel(detail.expectedAt) : "—"],
+    ["Expected", detail.expectedAt ? shortDateYear(detail.expectedAt) : "—"],
     ["Created", timeAgo(detail.createdAt)],
   ];
   if (detail.orderedAt) rows.push(["Ordered", timeAgo(detail.orderedAt)]);
@@ -168,25 +152,72 @@ function DrawerMeta({ detail }: { detail: PoDetailVM }) {
   );
 }
 
+/** Remaining-to-receive prefill per line. Lines whose variant was deleted
+ *  can't be received (the server refuses), so they prefill 0 — shared by the
+ *  receive panel's open and its "Receive all". */
+function remainingQtys(detail: PoDetailVM): Record<string, string> {
+  const qtys: Record<string, string> = {};
+  for (const line of detail.lines) {
+    qtys[line.id] = String(
+      line.variantId == null ? 0 : Math.max(0, line.qtyOrdered - line.qtyReceived),
+    );
+  }
+  return qtys;
+}
+
+/** All drawer-scoped state, reset as one unit at open/close so nothing (like
+ *  receive quantities) can leak from one PO into another. */
+interface DrawerState {
+  poId: string | null;
+  detail: PoDetailVM | null;
+  error: string | null;
+  receiveOpen: boolean;
+  receiveQtys: Record<string, string>;
+  /** One receive SUBMISSION id: generated when the receive panel opens and
+   *  reused if the same submission is retried, so the server treats a replay
+   *  as a no-op instead of double-counting stock. */
+  receiptId: string | null;
+  confirmCancel: boolean;
+  busy: string | null;
+}
+
+const DRAWER_CLOSED: DrawerState = {
+  poId: null,
+  detail: null,
+  error: null,
+  receiveOpen: false,
+  receiveQtys: {},
+  receiptId: null,
+  confirmCancel: false,
+  busy: null,
+};
+
 export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
   // Seeded from the session cache so a return visit paints instantly; the
   // mount fetch below revalidates and writes back through. Only the default
   // offset-0 payload touches the cache — paged-in rows stay local.
   const seeded = cachedScreenData<PoScreenData>(SCREEN_CACHE_KEYS.po);
+  const seededDrafts = cachedScreenData<{ rows: PurchaseOrderVM[]; total: number }>(
+    SCREEN_CACHE_KEYS.purchaseOrders,
+  );
   const [pos, setPos] = useState<PoListItemVM[] | null>(() => seeded?.pos ?? null);
   const [total, setTotal] = useState(() => seeded?.total ?? 0);
   const [suppliers, setSuppliers] = useState<SupplierVM[]>(() => seeded?.suppliers ?? []);
   const [promotedIds, setPromotedIds] = useState<Set<string>>(
     () => new Set(seeded?.promotedAuditIds ?? []),
   );
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !seeded);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [staleWarning, setStaleWarning] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
   // Legacy Autopilot drafts (audit rows) for the section below the PO table.
-  const [drafts, setDrafts] = useState<PurchaseOrderVM[] | null>(null);
+  const [drafts, setDrafts] = useState<PurchaseOrderVM[] | null>(
+    () => seededDrafts?.rows ?? null,
+  );
+  const [draftsTotal, setDraftsTotal] = useState(() => seededDrafts?.total ?? 0);
   const [draftsError, setDraftsError] = useState<string | null>(null);
+  const [loadingMoreDrafts, setLoadingMoreDrafts] = useState(false);
   const [promoting, setPromoting] = useState<string | null>(null);
 
   const [reloadKey, setReloadKey] = useState(0);
@@ -194,14 +225,9 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
   const [editing, setEditing] = useState<PoDetailVM | null>(null);
   const [suppliersOpen, setSuppliersOpen] = useState(false);
 
-  // Drawer state. openPoId is set on row click; the detail loads after.
-  const [openPoId, setOpenPoId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<PoDetailVM | null>(null);
-  const [detailError, setDetailError] = useState<string | null>(null);
-  const [receiveOpen, setReceiveOpen] = useState(false);
-  const [receiveQtys, setReceiveQtys] = useState<Record<string, string>>({});
-  const [confirmCancel, setConfirmCancel] = useState(false);
-  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  // Drawer state (one object — see DrawerState). poId is set on row click;
+  // the detail loads after.
+  const [drawer, setDrawer] = useState<DrawerState>(DRAWER_CLOSED);
 
   const toast = app.toast;
   const posRef = useRef(pos);
@@ -209,47 +235,89 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    // The real-PO payload and the legacy drafts list load together but fail
-    // independently — one failing must not blank the other.
-    void Promise.allSettled([fetchPoScreen(), fetchPurchaseOrders({})]).then(([main, legacy]) => {
-      if (!alive) return;
-      if (main.status === "fulfilled") {
-        cacheScreenData(SCREEN_CACHE_KEYS.po, main.value);
-        setPos(main.value.pos);
-        setTotal(main.value.total);
-        setSuppliers(main.value.suppliers);
-        setPromotedIds(new Set(main.value.promotedAuditIds));
+    if (!posRef.current) setLoading(true);
+    void (async () => {
+      // The legacy drafts load first: their audit ids are what the main
+      // payload's promoted-draft filter is scoped to (bounded, never the
+      // unbounded promoted list). The two still fail independently.
+      let auditIds: string[] = [];
+      try {
+        const legacy = await fetchPurchaseOrders({});
+        if (!alive) return;
+        cacheScreenData(SCREEN_CACHE_KEYS.purchaseOrders, legacy);
+        setDrafts(legacy.rows);
+        setDraftsTotal(legacy.total);
+        setDraftsError(null);
+        auditIds = legacy.rows.map((r) => r.id);
+      } catch (err) {
+        if (!alive) return;
+        setDraftsError(
+          err instanceof DashboardApiError ? err.message : "Couldn't load Autopilot drafts.",
+        );
+      }
+      try {
+        const main = await fetchPoScreen(auditIds);
+        if (!alive) return;
+        cacheScreenData(SCREEN_CACHE_KEYS.po, main);
+        setPos(main.pos);
+        setTotal(main.total);
+        setSuppliers(main.suppliers);
+        // Only replace the promoted set when it was computed against real
+        // draft ids — after a drafts failure it would be empty and would
+        // resurrect converted drafts still seeded from the cache.
+        if (auditIds.length) setPromotedIds(new Set(main.promotedAuditIds));
         setStaleWarning(false);
         setLoadError(null);
-      } else if (posRef.current) {
-        setStaleWarning(true);
-      } else {
-        setLoadError(
-          main.reason instanceof DashboardApiError
-            ? main.reason.message
-            : "Couldn't load purchase orders.",
-        );
+      } catch (err) {
+        if (!alive) return;
+        if (posRef.current) {
+          setStaleWarning(true);
+        } else {
+          setLoadError(
+            err instanceof DashboardApiError ? err.message : "Couldn't load purchase orders.",
+          );
+        }
+      } finally {
+        if (alive) setLoading(false);
       }
-      if (legacy.status === "fulfilled") {
-        cacheScreenData(SCREEN_CACHE_KEYS.purchaseOrders, legacy.value);
-        setDrafts(legacy.value.rows);
-        setDraftsError(null);
-      } else {
-        setDraftsError(
-          legacy.reason instanceof DashboardApiError
-            ? legacy.reason.message
-            : "Couldn't load Autopilot drafts.",
-        );
-      }
-      setLoading(false);
-    });
+    })();
     return () => {
       alive = false;
     };
   }, [reloadKey]);
 
+  /** Full refetch — only for mutations that ADD rows (create, convert). Drawer
+   *  actions patch the affected row in place instead (patchPo). */
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  /** Write a mutated PO back into the list + screen cache from the returned
+   *  detail — every list field is on the detail, so no refetch and no
+   *  collapse of paged-in rows. */
+  const patchPo = useCallback((updated: PoDetailVM) => {
+    const item: PoListItemVM = {
+      id: updated.id,
+      poNumber: updated.poNumber,
+      supplierName: updated.supplierName,
+      destinationName: updated.destinationName,
+      status: updated.status,
+      expectedAt: updated.expectedAt,
+      source: updated.source,
+      lineCount: updated.lineCount,
+      unitsOrdered: updated.unitsOrdered,
+      unitsReceived: updated.unitsReceived,
+      totalCents: updated.totalCents,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+    };
+    setPos((cur) => (cur ? cur.map((p) => (p.id === item.id ? item : p)) : cur));
+    const cached = cachedScreenData<PoScreenData>(SCREEN_CACHE_KEYS.po);
+    if (cached?.pos.some((p) => p.id === item.id)) {
+      cacheScreenData(SCREEN_CACHE_KEYS.po, {
+        ...cached,
+        pos: cached.pos.map((p) => (p.id === item.id ? item : p)),
+      });
+    }
+  }, []);
 
   const loadMore = async () => {
     if (!pos) return;
@@ -273,79 +341,71 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
     }
   };
 
-  // ---- drawer plumbing -------------------------------------------------------
-
-  const openPo = (poId: string) => {
-    setOpenPoId(poId);
-    setDetail(null);
-    setDetailError(null);
-    setReceiveOpen(false);
-    setConfirmCancel(false);
+  const loadMoreDrafts = async () => {
+    if (!drafts) return;
+    setLoadingMoreDrafts(true);
+    try {
+      const page = await fetchPurchaseOrders({ offset: drafts.length });
+      // De-dupe by id: a draft created between pages shifts the window, so a
+      // paged-in row may already be shown (avoids duplicate keys).
+      setDrafts((cur) => {
+        const current = cur ?? [];
+        const seen = new Set(current.map((d) => d.id));
+        return [...current, ...page.rows.filter((d) => !seen.has(d.id))];
+      });
+      setDraftsTotal(page.total);
+    } catch (err) {
+      toast(
+        err instanceof DashboardApiError ? err.message : "Couldn't load more drafts.",
+        "warn",
+        "critical",
+      );
+    } finally {
+      setLoadingMoreDrafts(false);
+    }
   };
 
+  // ---- drawer plumbing -------------------------------------------------------
+
+  const openPo = (poId: string) => setDrawer({ ...DRAWER_CLOSED, poId });
+  const closeDrawer = useCallback(() => setDrawer(DRAWER_CLOSED), []);
+
+  const drawerDetailId = drawer.detail?.id ?? null;
   useEffect(() => {
-    if (!openPoId) return;
+    const poId = drawer.poId;
+    if (!poId) return;
+    if (drawerDetailId === poId) return; // already delivered (e.g. convert)
     let alive = true;
-    fetchPoDetail(openPoId)
+    fetchPoDetail(poId)
       .then((d) => {
-        if (alive) setDetail(d);
+        if (alive) setDrawer((cur) => (cur.poId === poId ? { ...cur, detail: d } : cur));
       })
       .catch((err: unknown) => {
         if (!alive) return;
-        setDetailError(
-          err instanceof DashboardApiError ? err.message : "Couldn't load the purchase order.",
+        setDrawer((cur) =>
+          cur.poId === poId
+            ? {
+                ...cur,
+                error:
+                  err instanceof DashboardApiError
+                    ? err.message
+                    : "Couldn't load the purchase order.",
+              }
+            : cur,
         );
       });
     return () => {
       alive = false;
     };
-  }, [openPoId]);
+  }, [drawer.poId, drawerDetailId]);
 
-  const closeDrawer = useCallback(() => {
-    setOpenPoId(null);
-    setDetail(null);
-    setDetailError(null);
-    setReceiveOpen(false);
-    setConfirmCancel(false);
-  }, []);
-
-  useEffect(() => {
-    if (!openPoId) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeDrawer();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [openPoId, closeDrawer]);
-
-  // Focus the first control when the drawer opens (same as TransferModal).
-  const drawerRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!openPoId) return;
-    drawerRef.current?.querySelector<HTMLElement>("button, input, select")?.focus();
-  }, [openPoId]);
-
-  // Keep Tab cycling inside the drawer while it's open (mirrors TransferModal).
-  const onDrawerKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Tab") return;
-    const nodes = drawerRef.current?.querySelectorAll<HTMLElement>("button, input, select");
-    if (!nodes) return;
-    const focusable = Array.from(nodes).filter((n) => !n.hasAttribute("disabled"));
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
-    const inside = active instanceof HTMLElement && drawerRef.current?.contains(active);
-    if (e.shiftKey) {
-      if (!inside || active === first) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else if (!inside || active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
+  // Escape closes, first control focuses, Tab cycles inside — shared chrome.
+  // Bubble-phase Escape: a PoModal stacked on top swallows it in capture.
+  const { ref: drawerRef, onKeyDown: onDrawerKeyDown } = useModalChrome<HTMLDivElement>({
+    onClose: closeDrawer,
+    enabled: drawer.poId != null,
+    escape: "bubble",
+  });
 
   // ---- actions -----------------------------------------------------------------
 
@@ -354,15 +414,24 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
     fn: () => Promise<PoDetailVM>,
     successMessage: string,
   ) => {
-    if (actionBusy) return;
-    setActionBusy(key);
+    if (drawer.busy) return;
+    setDrawer((cur) => ({ ...cur, busy: key }));
     try {
       const updated = await fn();
-      setDetail(updated);
-      setReceiveOpen(false);
-      setConfirmCancel(false);
+      setDrawer((cur) =>
+        cur.poId === updated.id
+          ? {
+              ...cur,
+              detail: updated,
+              receiveOpen: false,
+              receiveQtys: {},
+              receiptId: null,
+              confirmCancel: false,
+            }
+          : cur,
+      );
+      patchPo(updated);
       toast(successMessage, "check");
-      reload();
     } catch (err) {
       toast(
         err instanceof DashboardApiError ? err.message : "That didn't go through — try again.",
@@ -370,31 +439,32 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
         "critical",
       );
     } finally {
-      setActionBusy(null);
+      setDrawer((cur) => ({ ...cur, busy: null }));
     }
   };
 
   const startReceive = () => {
-    if (!detail) return;
-    const prefill: Record<string, string> = {};
-    for (const line of detail.lines) {
-      prefill[line.id] = String(Math.max(0, line.qtyOrdered - line.qtyReceived));
-    }
-    setReceiveQtys(prefill);
-    setReceiveOpen(true);
+    setDrawer((cur) =>
+      cur.detail
+        ? {
+            ...cur,
+            receiveOpen: true,
+            receiveQtys: remainingQtys(cur.detail),
+            receiptId: crypto.randomUUID(),
+          }
+        : cur,
+    );
   };
 
   const receiveAll = () => {
-    if (!detail) return;
-    const all: Record<string, string> = {};
-    for (const line of detail.lines) {
-      all[line.id] = String(Math.max(0, line.qtyOrdered - line.qtyReceived));
-    }
-    setReceiveQtys(all);
+    setDrawer((cur) =>
+      cur.detail ? { ...cur, receiveQtys: remainingQtys(cur.detail) } : cur,
+    );
   };
 
   const submitReceive = () => {
-    if (!detail) return;
+    const { detail, receiveQtys, receiptId } = drawer;
+    if (!detail || !receiptId) return;
     const entries: Array<{ lineId: string; qty: number }> = [];
     for (const line of detail.lines) {
       const qty = Math.trunc(Number(receiveQtys[line.id])) || 0;
@@ -409,7 +479,11 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
       toast("Enter a quantity to receive on at least one line.", "warn");
       return;
     }
-    void runAction("receive", () => receivePoLines(detail.id, entries), "Stock received.");
+    void runAction(
+      "receive",
+      () => receivePoLines(detail.id, entries, receiptId),
+      "Stock received.",
+    );
   };
 
   const onConvertDraft = (auditId: string) => {
@@ -420,9 +494,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
         toast("Converted to a purchase order.", "check");
         setPromotedIds((cur) => new Set([...cur, auditId]));
         reload();
-        setOpenPoId(po.id);
-        setDetail(po);
-        setDetailError(null);
+        setDrawer({ ...DRAWER_CLOSED, poId: po.id, detail: po });
       })
       .catch((err: unknown) => {
         toast(
@@ -442,6 +514,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
 
   const visibleDrafts = (drafts ?? []).filter((d) => !promotedIds.has(d.id));
   const shown = pos ?? [];
+  const detail = drawer.detail;
 
   const canEdit = detail?.status === "draft";
   const canOrder = detail?.status === "draft";
@@ -529,7 +602,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                 <div className="cd-caption truncate">{row.supplierName ?? "—"}</div>
                 <div className="cd-caption truncate">{row.destinationName}</div>
                 <div className="cd-caption tabular-nums">
-                  {row.expectedAt ? etaLabel(row.expectedAt) : "—"}
+                  {row.expectedAt ? shortDateYear(row.expectedAt) : "—"}
                 </div>
                 <div className="min-w-0">
                   <div className="cd-row-title tabular-nums truncate">
@@ -553,7 +626,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
         )}
       </Card>
 
-      {!loading && !loadError && pos && pos.length < total && (
+      {!loadError && pos && pos.length < total && (
         <div style={{ display: "flex", justifyContent: "center", marginTop: 12 }}>
           <Btn disabled={loadingMore} onClick={() => { void loadMore(); }}>
             {loadingMore ? "Loading…" : `Load more (${pos.length} of ${total})`}
@@ -564,16 +637,23 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
       <div style={{ marginTop: 20 }}>
         <SectionTitle>Autopilot drafts</SectionTitle>
         <Card pad={false}>
-          {draftsError ? (
+          {draftsError && drafts == null ? (
             <Placeholder icon="warn" title="Drafts unavailable" sub={draftsError} />
           ) : drafts == null ? (
             <TableSkeleton rows={3} />
           ) : visibleDrafts.length === 0 ? (
-            <Placeholder
-              icon="doc"
-              title="No restock drafts"
-              sub="When Calderyn drafts a PO from an inventory alert it lands here, ready to convert."
-            />
+            <>
+              <Placeholder
+                icon="doc"
+                title="No restock drafts"
+                sub="When Calderyn drafts a PO from an inventory alert it lands here, ready to convert."
+              />
+              <div className="flex justify-center" style={{ paddingBottom: 28 }}>
+                <Btn small icon="bell" onClick={() => app.navigate("alerts")}>
+                  View alerts
+                </Btn>
+              </div>
+            </>
           ) : (
             <Pan min={620}>
               <div className="cd-tablehd" style={{ gridTemplateColumns: DRAFT_GRID }}>
@@ -593,9 +673,16 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
             </Pan>
           )}
         </Card>
+        {!draftsError && drafts && drafts.length < draftsTotal && (
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 12 }}>
+            <Btn disabled={loadingMoreDrafts} onClick={() => { void loadMoreDrafts(); }}>
+              {loadingMoreDrafts ? "Loading…" : `Load more (${drafts.length} of ${draftsTotal})`}
+            </Btn>
+          </div>
+        )}
       </div>
 
-      {openPoId && (
+      {drawer.poId && (
         <div
           role="presentation"
           onClick={closeDrawer}
@@ -664,8 +751,8 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                 </button>
               </div>
 
-              {detailError ? (
-                <Placeholder icon="warn" title="Couldn't load this PO" sub={detailError} />
+              {drawer.error ? (
+                <Placeholder icon="warn" title="Couldn't load this PO" sub={drawer.error} />
               ) : !detail ? (
                 <TableSkeleton rows={4} />
               ) : (
@@ -684,7 +771,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                           >
                             <div className="min-w-0" style={{ flex: 1 }}>
                               <div className="cd-row-title truncate">
-                                {line.sku ?? line.title ?? line.variantId.slice(0, 8)}
+                                {line.sku ?? line.title ?? "Deleted product"}
                               </div>
                               {line.title && line.sku && (
                                 <div className="cd-caption truncate">{line.title}</div>
@@ -696,7 +783,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                             <div className="cd-caption tabular-nums" style={{ flexShrink: 0 }}>
                               {line.unitCostCents != null ? money(line.unitCostCents) : "TBD"}
                             </div>
-                            {receiveOpen && (
+                            {drawer.receiveOpen && (
                               <input
                                 className="cd-input tabular-nums"
                                 type="number"
@@ -704,11 +791,11 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                                 max={remaining}
                                 aria-label={`Receive quantity for ${line.sku ?? line.title ?? "line"}`}
                                 style={{ width: 76, flexShrink: 0 }}
-                                value={receiveQtys[line.id] ?? ""}
+                                value={drawer.receiveQtys[line.id] ?? ""}
                                 onChange={(e) =>
-                                  setReceiveQtys((cur) => ({
+                                  setDrawer((cur) => ({
                                     ...cur,
-                                    [line.id]: e.target.value,
+                                    receiveQtys: { ...cur.receiveQtys, [line.id]: e.target.value },
                                   }))
                                 }
                               />
@@ -722,21 +809,25 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                     </div>
                   </div>
 
-                  {receiveOpen ? (
+                  {drawer.receiveOpen ? (
                     <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
                       <Btn small onClick={receiveAll}>Receive all</Btn>
                       <div style={{ flex: 1 }} />
-                      <Btn small onClick={() => setReceiveOpen(false)} disabled={actionBusy != null}>
+                      <Btn
+                        small
+                        onClick={() => setDrawer((cur) => ({ ...cur, receiveOpen: false }))}
+                        disabled={drawer.busy != null}
+                      >
                         Back
                       </Btn>
                       <Btn
                         small
                         kind="primary"
                         icon="check"
-                        disabled={actionBusy != null}
+                        disabled={drawer.busy != null}
                         onClick={submitReceive}
                       >
-                        {actionBusy === "receive" ? "Receiving…" : "Receive"}
+                        {drawer.busy === "receive" ? "Receiving…" : "Receive"}
                       </Btn>
                     </div>
                   ) : (
@@ -751,7 +842,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                           small
                           kind="primary"
                           icon="truck"
-                          disabled={actionBusy != null}
+                          disabled={drawer.busy != null}
                           onClick={() => {
                             void runAction(
                               "order",
@@ -760,7 +851,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                             );
                           }}
                         >
-                          {actionBusy === "order" ? "Ordering…" : "Mark ordered"}
+                          {drawer.busy === "order" ? "Ordering…" : "Mark ordered"}
                         </Btn>
                       )}
                       {canReceive && (
@@ -777,13 +868,20 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                       </Btn>
                       <div style={{ flex: 1 }} />
                       {canCancel &&
-                        (confirmCancel ? (
+                        (drawer.confirmCancel ? (
                           <>
-                            <Btn small onClick={() => setConfirmCancel(false)}>Keep it</Btn>
+                            <Btn
+                              small
+                              onClick={() =>
+                                setDrawer((cur) => ({ ...cur, confirmCancel: false }))
+                              }
+                            >
+                              Keep it
+                            </Btn>
                             <Btn
                               small
                               kind="danger"
-                              disabled={actionBusy != null}
+                              disabled={drawer.busy != null}
                               onClick={() => {
                                 void runAction(
                                   "cancel",
@@ -792,11 +890,15 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                                 );
                               }}
                             >
-                              {actionBusy === "cancel" ? "Cancelling…" : "Confirm cancel"}
+                              {drawer.busy === "cancel" ? "Cancelling…" : "Confirm cancel"}
                             </Btn>
                           </>
                         ) : (
-                          <Btn small icon="x" onClick={() => setConfirmCancel(true)}>
+                          <Btn
+                            small
+                            icon="x"
+                            onClick={() => setDrawer((cur) => ({ ...cur, confirmCancel: true }))}
+                          >
                             Cancel PO
                           </Btn>
                         ))}
@@ -816,9 +918,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
           onClose={() => setCreating(false)}
           onDone={(po) => {
             reload();
-            setOpenPoId(po.id);
-            setDetail(po);
-            setDetailError(null);
+            setDrawer({ ...DRAWER_CLOSED, poId: po.id, detail: po });
           }}
         />
       )}
@@ -830,8 +930,8 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
           existing={editing}
           onClose={() => setEditing(null)}
           onDone={(po) => {
-            reload();
-            setDetail(po);
+            patchPo(po);
+            setDrawer((cur) => (cur.poId === po.id ? { ...cur, detail: po } : cur));
           }}
         />
       )}

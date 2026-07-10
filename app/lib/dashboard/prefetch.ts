@@ -25,7 +25,7 @@ import { fetchStudio } from "./store-client";
 import { fetchDiscover } from "./discover-client";
 import { fetchSearchOverview } from "./search-client";
 import { fetchAllPendingTransfers } from "./transfers-client";
-import { fetchPoScreen } from "./po-client";
+import { cachedDraftAuditIds, fetchPoScreen } from "./po-client";
 import { fetchCommerceAnalytics } from "./commerce-analytics-client";
 import {
   analyticsCacheKey,
@@ -56,8 +56,10 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.collections, fetchCollections],
   [SCREEN_CACHE_KEYS.transfers, fetchAllPendingTransfers],
   [SCREEN_CACHE_KEYS.locations, fetchLocations],
-  [SCREEN_CACHE_KEYS.po, fetchPoScreen],
+  // Drafts warm before the PO screen: fetchPoScreen sends the cached drafts'
+  // audit ids so the promoted-draft filter warms with real data (best effort).
   [SCREEN_CACHE_KEYS.purchaseOrders, () => fetchPurchaseOrders({})],
+  [SCREEN_CACHE_KEYS.po, () => fetchPoScreen(cachedDraftAuditIds())],
   [SCREEN_CACHE_KEYS.shipCost, fetchShipCost],
   [SCREEN_CACHE_KEYS.unmatchedShip, fetchUnmatchedShipCharges],
   [SCREEN_CACHE_KEYS.learnedRules, fetchLearnedRules],

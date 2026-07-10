@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Btn, Card, Pill } from "../ui";
+import { useModalChrome } from "../use-modal-chrome";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   createSupplier,
@@ -11,8 +12,9 @@ import {
 } from "~/lib/dashboard/po-client";
 
 // Manage the shop's suppliers inline: list + create/edit form + active toggle.
-// Every successful mutation reports the fresh list upward via onChanged so the
-// PO screen (and its cache) stays in sync without a refetch.
+// Fully controlled: the list always renders from the `suppliers` prop (one
+// source of truth — the PO screen's state/cache); every successful mutation
+// reports the fresh list upward via onChanged.
 
 interface FormState {
   name: string;
@@ -45,56 +47,20 @@ export default function PoSuppliersModal({
   onChanged: (suppliers: SupplierVM[]) => void;
   onClose: () => void;
 }) {
-  const [list, setList] = useState<SupplierVM[]>(suppliers);
   /** null = list view; "" = creating; an id = editing that supplier. */
   const [editing, setEditing] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
+  // Escape/autofocus/Tab-cycle; capture phase — same layering rule as PoModal.
+  const { ref: dialogRef, onKeyDown: onDialogKeyDown } = useModalChrome<HTMLDivElement>({
+    onClose,
+    escape: "capture",
+  });
   const toast = app.toast;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.stopPropagation();
-      onClose();
-    };
-    window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [onClose]);
-
-  useEffect(() => {
-    dialogRef.current?.querySelector<HTMLElement>("button, input, select, textarea")?.focus();
-  }, []);
-
-  const onDialogKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Tab") return;
-    const nodes = dialogRef.current?.querySelectorAll<HTMLElement>(
-      "button, input, select, textarea",
-    );
-    if (!nodes) return;
-    const focusable = Array.from(nodes).filter((n) => !n.hasAttribute("disabled"));
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
-    const inside = active instanceof HTMLElement && dialogRef.current?.contains(active);
-    if (e.shiftKey) {
-      if (!inside || active === first) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else if (!inside || active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
-
   const applyList = (next: SupplierVM[]) => {
-    const sorted = [...next].sort((a, b) => a.name.localeCompare(b.name));
-    setList(sorted);
-    onChanged(sorted);
+    onChanged([...next].sort((a, b) => a.name.localeCompare(b.name)));
   };
 
   const submitForm = async () => {
@@ -123,11 +89,11 @@ export default function PoSuppliersModal({
     try {
       if (editing) {
         const updated = await updateSupplier(editing, input);
-        applyList(list.map((s) => (s.id === updated.id ? updated : s)));
+        applyList(suppliers.map((s) => (s.id === updated.id ? updated : s)));
         toast("Supplier updated.", "check");
       } else {
         const created = await createSupplier(input);
-        applyList([...list, created]);
+        applyList([...suppliers, created]);
         toast("Supplier added.", "check");
       }
       setEditing(null);
@@ -148,7 +114,7 @@ export default function PoSuppliersModal({
     setToggling(supplier.id);
     try {
       const updated = await setSupplierActive(supplier.id, !supplier.active);
-      applyList(list.map((s) => (s.id === updated.id ? updated : s)));
+      applyList(suppliers.map((s) => (s.id === updated.id ? updated : s)));
     } catch (err) {
       toast(
         err instanceof DashboardApiError ? err.message : "Couldn't update the supplier.",
@@ -254,12 +220,12 @@ export default function PoSuppliersModal({
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {list.length === 0 ? (
+              {suppliers.length === 0 ? (
                 <div className="cd-caption" style={{ padding: "12px 0" }}>
                   No suppliers yet. Add one to prefill lead times on new purchase orders.
                 </div>
               ) : (
-                list.map((s) => (
+                suppliers.map((s) => (
                   <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}>
                     <div className="min-w-0" style={{ flex: 1 }}>
                       <div className="cd-row-title truncate">{s.name}</div>

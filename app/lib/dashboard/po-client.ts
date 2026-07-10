@@ -1,58 +1,29 @@
 // Client fetchers for the Purchase orders surface. Kept in its own module
 // (not client.ts) so parallel surface work never collides on one file. The VM
-// shapes mirror the /dashboard/api/po DTOs one-to-one; errors throw
-// DashboardApiError via the shared apiGet/apiSend plumbing.
+// shapes ARE the shared wire types in ~/lib/po/types (one definition for both
+// sides); errors throw DashboardApiError via the shared apiGet/apiSend
+// plumbing.
 import { apiGet, apiSend } from "./client";
+import { cachedScreenData, SCREEN_CACHE_KEYS } from "./screen-cache";
+import type {
+  CreatePoInput,
+  PoDetailDto,
+  PoLineDto,
+  PoLineInput,
+  PoListItemDto,
+  PoStatus,
+  SupplierDto,
+  SupplierInput,
+} from "~/lib/po/types";
 
-export type PoStatusVM = "draft" | "ordered" | "partial" | "received" | "cancelled";
-
-export interface SupplierVM {
-  id: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  notes: string | null;
-  leadTimeDays: number | null;
-  active: boolean;
-  createdAt: string;
-}
-
-export interface PoLineVM {
-  id: string;
-  variantId: string;
-  sku: string | null;
-  title: string | null;
-  qtyOrdered: number;
-  qtyReceived: number;
-  unitCostCents: number | null;
-}
-
-export interface PoListItemVM {
-  id: string;
-  poNumber: string;
-  supplierName: string | null;
-  destinationName: string;
-  status: PoStatusVM;
-  expectedAt: string | null;
-  source: "manual" | "autopilot";
-  lineCount: number;
-  unitsOrdered: number;
-  unitsReceived: number;
-  totalCents: number | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface PoDetailVM extends PoListItemVM {
-  supplierId: string | null;
-  destinationLocationId: string;
-  notes: string | null;
-  auditId: string | null;
-  orderedAt: string | null;
-  receivedAt: string | null;
-  cancelledAt: string | null;
-  lines: PoLineVM[];
-}
+export type PoStatusVM = PoStatus;
+export type SupplierVM = SupplierDto;
+export type PoLineVM = PoLineDto;
+export type PoListItemVM = PoListItemDto;
+export type PoDetailVM = PoDetailDto;
+export type PoLineInputVM = PoLineInput;
+export type PoDraftInputVM = CreatePoInput;
+export type SupplierInputVM = SupplierInput;
 
 /** Everything the Purchase orders screen caches under SCREEN_CACHE_KEYS.po —
  *  the prefetch warm target MUST return exactly this shape or the seed misses. */
@@ -63,34 +34,26 @@ export interface PoScreenData {
   promotedAuditIds: string[];
 }
 
-export interface PoLineInputVM {
-  variantId: string;
-  qty: number;
-  unitCostCents: number | null;
-}
-
-export interface PoDraftInputVM {
-  supplierId: string | null;
-  destinationLocationId: string;
-  expectedAt: string | null;
-  notes: string | null;
-  lines: PoLineInputVM[];
-}
-
-export interface SupplierInputVM {
-  name: string;
-  email: string | null;
-  phone: string | null;
-  notes: string | null;
-  leadTimeDays: number | null;
-}
-
 // ---- reads ------------------------------------------------------------------
 
-export async function fetchPoScreen(): Promise<PoScreenData> {
+/** Audit ids of the Autopilot drafts currently in the session cache — what the
+ *  prefetch warm target passes to fetchPoScreen so the promoted-draft filter
+ *  is warm too (best effort; the screen re-sends the live ids on mount). */
+export function cachedDraftAuditIds(): string[] {
+  const cached = cachedScreenData<{ rows: Array<{ id: string }> }>(
+    SCREEN_CACHE_KEYS.purchaseOrders,
+  );
+  return (cached?.rows ?? []).map((r) => r.id).slice(0, 50);
+}
+
+/** The screen's offset-0 payload. `auditIds` is the visible Autopilot drafts
+ *  (bounded ≤50); the server reports which of those were already promoted. */
+export async function fetchPoScreen(auditIds: string[] = []): Promise<PoScreenData> {
+  const ids = auditIds.slice(0, 50);
+  const qs = ids.length ? `?auditIds=${encodeURIComponent(ids.join(","))}` : "";
   const [list, suppliers] = await Promise.all([
     apiGet<{ pos: PoListItemVM[]; total: number; promotedAuditIds: string[] }>(
-      "/dashboard/api/po",
+      `/dashboard/api/po${qs}`,
     ),
     apiGet<{ suppliers: SupplierVM[] }>("/dashboard/api/po/suppliers"),
   ]);
@@ -149,14 +112,18 @@ export async function markPoOrdered(poId: string): Promise<PoDetailVM> {
   return d.po;
 }
 
+/** `receiptId` is one uuid per receive SUBMISSION (crypto.randomUUID(), reused
+ *  when the same submission is retried after a network error) — the server
+ *  keys its stock writes on it so a replay can never double-count. */
 export async function receivePoLines(
   poId: string,
   lines: Array<{ lineId: string; qty: number }>,
+  receiptId: string,
 ): Promise<PoDetailVM> {
   const d = await apiSend<{ po: PoDetailVM }>(
     "POST",
     `/dashboard/api/po/${encodeURIComponent(poId)}`,
-    { intent: "receive", lines },
+    { intent: "receive", receiptId, lines },
   );
   return d.po;
 }
