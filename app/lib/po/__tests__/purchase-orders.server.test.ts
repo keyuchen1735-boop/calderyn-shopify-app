@@ -5,6 +5,19 @@
 // during browser verification, not here.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CalderynError } from "~/lib/calderyn.server";
+import {
+  cancelPurchaseOrder,
+  createPurchaseOrder,
+  defaultEta,
+  generatePoNumber,
+  markOrdered,
+  promoteAuditDraft,
+  receiveLines,
+  sumTotalCents,
+  updateDraftPurchaseOrder,
+  validatePoBody,
+  validateReceiveBody,
+} from "../purchase-orders.server";
 
 const projectLevelFact = vi.hoisted(() => vi.fn());
 vi.mock("~/lib/inventory/project-level-fact.server", () => ({
@@ -90,20 +103,6 @@ vi.mock("~/lib/supabase.server", () => ({
     return { from, rpc: state.rpc } as never;
   },
 }));
-
-import {
-  cancelPurchaseOrder,
-  createPurchaseOrder,
-  defaultEta,
-  generatePoNumber,
-  markOrdered,
-  promoteAuditDraft,
-  receiveLines,
-  sumTotalCents,
-  updateDraftPurchaseOrder,
-  validatePoBody,
-  validateReceiveBody,
-} from "../purchase-orders.server";
 
 /** Run a synchronous thrower and hand back what it threw (fails if it didn't). */
 function capture(fn: () => unknown): unknown {

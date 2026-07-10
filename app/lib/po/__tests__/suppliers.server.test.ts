@@ -1,6 +1,13 @@
 // Unit tests for the supplier lib: boundary validation and the named 422/404
 // mappings (duplicate name, missing row). Supabase is a minimal queued mock.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  createSupplier,
+  listSuppliers,
+  setSupplierActive,
+  updateSupplier,
+  validateSupplierInput,
+} from "../suppliers.server";
 
 interface Res {
   data: unknown;
@@ -35,14 +42,6 @@ vi.mock("~/lib/supabase.server", () => ({
     return { from: () => b } as never;
   },
 }));
-
-import {
-  createSupplier,
-  listSuppliers,
-  setSupplierActive,
-  updateSupplier,
-  validateSupplierInput,
-} from "../suppliers.server";
 
 function capture(fn: () => unknown): unknown {
   try {
