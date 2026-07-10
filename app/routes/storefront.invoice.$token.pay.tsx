@@ -6,7 +6,7 @@
 import type { LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
+import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { payableInvoiceSession } from "~/lib/order/invoice.server";
 
 export const meta: MetaFunction = () => [{ name: "robots", content: "noindex" }];
@@ -14,6 +14,11 @@ export const meta: MetaFunction = () => [{ name: "robots", content: "noindex" }]
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   const token = params.token ?? "";
+  // The demo shell has no shop row behind it (uuid-keyed invoice/order tables can't hold its
+  // sentinel id): an unknown host can never own a payable invoice, so refuse before any DB
+  // read rather than let a non-uuid shop_id 500 the `.eq()` filter below.
+  if (!token || shopId === DEMO_SHOP_ID) throw new Response("Invoice not found", { status: 404 });
+
   const resolved = token ? await payableInvoiceSession(shopId, token) : null;
   // Unknown token, foreign-shop token, or an order that isn't channel='invoice' all resolve to
   // null (IDOR-safe, same posture as the confirmation route) -> 404, exposing nothing.

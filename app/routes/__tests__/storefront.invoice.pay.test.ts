@@ -9,6 +9,7 @@ const payableInvoiceSession = vi.fn();
 
 vi.mock("~/lib/storefront/shop.server", () => ({
   resolveStorefrontShop: (...a: unknown[]) => resolveStorefrontShop(...a),
+  DEMO_SHOP_ID: "demo-shop",
 }));
 vi.mock("~/lib/order/invoice.server", () => ({
   payableInvoiceSession: (...a: unknown[]) => payableInvoiceSession(...a),
@@ -63,6 +64,14 @@ describe("storefront.invoice.$token.pay loader", () => {
 
   it("404s on a missing token without calling the resolver", async () => {
     const err = await loader(args(undefined)).catch((e) => e);
+    expect(err).toBeInstanceOf(Response);
+    expect((err as Response).status).toBe(404);
+    expect(payableInvoiceSession).not.toHaveBeenCalled();
+  });
+
+  it("404s for the demo shell instead of 500ing on a non-uuid shop id", async () => {
+    resolveStorefrontShop.mockResolvedValue("demo-shop");
+    const err = await loader(args("tok-abc")).catch((e) => e);
     expect(err).toBeInstanceOf(Response);
     expect((err as Response).status).toBe(404);
     expect(payableInvoiceSession).not.toHaveBeenCalled();
