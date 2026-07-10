@@ -57,7 +57,7 @@ export default function RefundModal({
         restock: full ? restock : undefined,
       });
       app.toast(
-        `Refunded ${money(res.amountCents, order.currency)} — order is now ${res.orderState.replace("_", " ")}.${res.restockedLines > 0 ? " Items restocked." : ""}`,
+        `Refunded ${money(res.amountCents, order.currency)}. Order is now ${res.orderState.replace("_", " ")}.${res.restockedLines > 0 ? " Items restocked." : ""}`,
         "check",
       );
       if (res.restockError) {

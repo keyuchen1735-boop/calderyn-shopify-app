@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Btn, Card, Pill, Placeholder, TableSkeleton, Tooltip } from "../ui";
 import { money, timeAgo } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -13,67 +13,15 @@ import type { ImportedOrderRow } from "~/lib/order/imported-list-types";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 import RefundModal from "./RefundModal";
-
-// Order-state → badge tone. The vocabulary is the order spine's shared state
-// set (app/lib/order/state.ts).
-const STATE_TONE: Record<string, string> = {
-  paid: "var(--green)",
-  fulfilled: "var(--green)",
-  checkout_pending: "var(--orange)",
-  cancelled: "var(--text-3)",
-  refunded: "var(--orange)",
-  partially_refunded: "var(--orange)",
-  cart: "var(--text-3)",
-};
-
-const STATE_LABEL: Record<string, string> = {
-  paid: "Paid",
-  fulfilled: "Fulfilled",
-  checkout_pending: "Checkout pending",
-  cancelled: "Cancelled",
-  refunded: "Refunded",
-  partially_refunded: "Partially refunded",
-  cart: "Cart",
-};
-
-// Only an owned order that has captured money (and isn't already fully refunded) can be
-// refunded through Calderyn — mirrors REFUNDABLE_STATES in refund.server.ts.
-const REFUNDABLE_STATES = new Set(["paid", "fulfilled", "partially_refunded"]);
+import OrderDetailScreen from "./OrderDetail";
+import { fulfillmentBadge, paymentPillStyle, REFUNDABLE_ORDER_STATES } from "./order-status";
 
 // Migrated Shopify orders whose money was captured at Shopify: Calderyn can't
 // reverse that charge, so the merchant is told, plainly, to refund it in Shopify.
 const SHOPIFY_REFUND_HINT_STATES = new Set(["paid", "partially_refunded", "partially_paid"]);
 
-function StateBadge({ state }: { state: string }) {
-  return (
-    <span
-      className="cd-badge"
-      style={{ color: STATE_TONE[state] ?? "var(--text-2)", background: "var(--gray-bg)" }}
-    >
-      {STATE_LABEL[state] ?? state}
-    </span>
-  );
-}
-
-// Shopify financial statuses on migrated orders → dashboard pill. Same visual
-// vocabulary as the native badge so the merged list reads as one history.
-const IMPORTED_STATUS: Record<string, { label: string; tone: "success" | "warn" | "neutral" }> = {
-  paid: { label: "Paid", tone: "success" },
-  partially_paid: { label: "Partially paid", tone: "warn" },
-  partially_refunded: { label: "Partially refunded", tone: "warn" },
-  refunded: { label: "Refunded", tone: "warn" },
-  pending: { label: "Pending", tone: "neutral" },
-  authorized: { label: "Authorized", tone: "neutral" },
-  voided: { label: "Voided", tone: "neutral" },
-  expired: { label: "Expired", tone: "neutral" },
-};
-
-function statusTitle(s: string): string {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/_/g, " ") : "Unknown";
-}
-
-function ImportedStatusPill({ status }: { status: string }) {
-  const s = IMPORTED_STATUS[status] ?? { label: statusTitle(status), tone: "neutral" as const };
+function PaymentPill({ status }: { status: string }) {
+  const s = paymentPillStyle(status);
   return <Pill tone={s.tone}>{s.label}</Pill>;
 }
 
@@ -86,12 +34,24 @@ type DisplayOrder = {
   customer: string | null;
   totalCents: number;
   currency: string;
+  // Native: the OrderState lifecycle enum (paid/partially_fulfilled/fulfilled/cancelled/...) —
+  // drives the Fulfillment badge. Imported: the same value as financialStatus (Shopify never
+  // hands this surface a separate lifecycle state), so its Fulfillment badge is always skipped.
   state: string;
+  // financial_status vocabulary (paid/refunded/partially_refunded/...) — drives the Payment pill
+  // for BOTH origins.
+  financialStatus: string;
   source: "calderyn" | "shopify";
   // The native OrderRow (for the refund modal) when this row is a Calderyn
   // order; null for migrated orders (their money lives at Shopify).
   refundRow: OrderRow | null;
 };
+
+/** `orders/<sourceId>` id for a display row — `shopify:`-prefixed for migrated orders, matching
+ *  the prefix loadOrderDetail (detail.server.ts) and the write routes expect. */
+function displayOrderSourceId(r: DisplayOrder): string {
+  return r.source === "shopify" ? `shopify:${r.id}` : r.id;
+}
 
 function mergeOrders(native: OrderRow[] | null, imported: ImportedOrderRow[] | null): DisplayOrder[] {
   const rows: DisplayOrder[] = [];
@@ -104,6 +64,7 @@ function mergeOrders(native: OrderRow[] | null, imported: ImportedOrderRow[] | n
       totalCents: o.totalCents,
       currency: o.currency,
       state: o.state,
+      financialStatus: o.financialStatus,
       source: "calderyn",
       refundRow: o,
     });
@@ -117,6 +78,7 @@ function mergeOrders(native: OrderRow[] | null, imported: ImportedOrderRow[] | n
       totalCents: o.totalCents,
       currency: o.currency,
       state: o.financialStatus,
+      financialStatus: o.financialStatus,
       source: "shopify",
       refundRow: null,
     });
@@ -138,12 +100,14 @@ function UnifiedOrdersList({
   totalCount,
   loading,
   onRefund,
+  onOpen,
 }: {
   native: OrderRow[] | null;
   imported: ImportedOrderRow[] | null;
   totalCount: number;
   loading: boolean;
   onRefund: (order: OrderRow) => void;
+  onOpen: (sourceId: string) => void;
 }) {
   if (native == null && imported == null) {
     return (
@@ -175,7 +139,7 @@ function UnifiedOrdersList({
   }
 
   const shown = merged.slice(0, ORDERS_VISIBLE);
-  const cols = "1fr 1.4fr 1fr 1fr 1fr auto";
+  const cols = "1fr 1.2fr 0.9fr 0.9fr 0.9fr 1fr auto";
   return (
     <Card pad={false}>
       <div className="cd-tablehd" style={{ gridTemplateColumns: cols }}>
@@ -183,13 +147,29 @@ function UnifiedOrdersList({
         <span>Customer</span>
         <span>Total</span>
         <span>Date</span>
-        <span>Status</span>
+        <span>Payment</span>
+        <span>Fulfillment</span>
         <span />
       </div>
       {shown.map((r) => {
-        const refundable = r.refundRow && REFUNDABLE_STATES.has(r.state) ? r.refundRow : null;
+        const refundable = r.refundRow && REFUNDABLE_ORDER_STATES.has(r.state) ? r.refundRow : null;
+        const fulfillment = r.source === "calderyn" ? fulfillmentBadge(r.state, null) : null;
+        const open = () => onOpen(displayOrderSourceId(r));
         return (
-          <div key={`${r.source}:${r.id}`} className="cd-trow" style={{ gridTemplateColumns: cols }}>
+          <div
+            key={`${r.source}:${r.id}`}
+            className="cd-trow"
+            style={{ gridTemplateColumns: cols, cursor: "pointer" }}
+            role="button"
+            tabIndex={0}
+            onClick={open}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                open();
+              }
+            }}
+          >
             <div>
               <div className="cd-row-title tabular-nums">{r.ref}</div>
               {r.source === "shopify" && <div className="cd-caption">Shopify</div>}
@@ -198,13 +178,19 @@ function UnifiedOrdersList({
             <div className="cd-row-num tabular-nums">{money(r.totalCents, r.currency)}</div>
             <div className="cd-caption">{r.createdAt ? timeAgo(r.createdAt) : ""}</div>
             <div>
-              {r.source === "shopify" ? (
-                <ImportedStatusPill status={r.state} />
-              ) : (
-                <StateBadge state={r.state} />
+              <PaymentPill status={r.financialStatus} />
+            </div>
+            <div>
+              {fulfillment && (
+                <span className="cd-badge" style={{ color: fulfillment.tone, background: "var(--gray-bg)" }}>
+                  {fulfillment.label}
+                </span>
               )}
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <div
+              style={{ display: "flex", justifyContent: "flex-end" }}
+              onClick={(e) => e.stopPropagation()}
+            >
               {refundable ? (
                 <Btn small icon="rotate" onClick={() => onRefund(refundable)}>
                   Refund
@@ -295,12 +281,61 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     };
   }, []);
 
+  // Order-detail actions (fulfill/cancel/refund/archive) mutate the native list this screen
+  // already holds in memory, so a plain return-to-list doesn't see the change until a refetch.
+  // Rather than thread an onChanged callback through every modal on the detail screen, this
+  // component (which owns `load`) just refetches the moment nav.param goes from "viewing an
+  // order" back to null — i.e. on the Back button, wherever the visit came from.
+  const wasViewingOrder = useRef(false);
+  useEffect(() => {
+    if (app.nav.param) {
+      wasViewingOrder.current = true;
+      return;
+    }
+    if (wasViewingOrder.current) {
+      wasViewingOrder.current = false;
+      load();
+    }
+  }, [app.nav.param, load]);
+
   const sub = app.nav.sub ?? "orders";
 
   // Unified order count = native rows shown + the true migrated total. The
   // subtab navigation lives in the sidebar rail; this screen renders the view
   // for the active sub only.
   const ordersTotal = (page?.orders.length ?? 0) + (imported?.totalCount ?? 0);
+
+  // Merged rows, kept only to seed the detail screen instantly from whatever's already loaded —
+  // recomputed with the list, so it's never stale by the time a row is clicked.
+  const merged = useMemo(
+    () => mergeOrders(page?.orders ?? null, imported?.orders ?? null),
+    [page, imported],
+  );
+
+  // Row-click / deep-link: nav.param carries the selected order's sourceId (`shopify:<id>` for
+  // migrated orders, a bare id for native ones) — same idiom as Campaigns' selected-campaign branch.
+  if (app.nav.param) {
+    const seedRow = merged.find((r) => displayOrderSourceId(r) === app.nav.param) ?? null;
+    return (
+      <OrderDetailScreen
+        app={app}
+        sourceId={app.nav.param}
+        seed={
+          seedRow
+            ? {
+                ref: seedRow.ref,
+                totalCents: seedRow.totalCents,
+                currency: seedRow.currency,
+                createdAt: seedRow.createdAt,
+                source: seedRow.source,
+                state: seedRow.state,
+                financialStatus: seedRow.financialStatus,
+              }
+            : null
+        }
+      />
+    );
+  }
 
   return (
     <div className="cd-screen">
@@ -317,6 +352,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
           totalCount={ordersTotal}
           loading={loading && importedLoading}
           onRefund={setRefundOrder}
+          onOpen={(sourceId) => app.navigate("orders", sourceId)}
         />
       ) : !page ? (
         <Card pad={false}>

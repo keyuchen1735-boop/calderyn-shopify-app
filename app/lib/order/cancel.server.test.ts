@@ -163,6 +163,7 @@ describe("executeCancelAction", () => {
     expect(res.refunded).toBe(false);
     const audit = h.insertAudit.mock.calls[0][2];
     expect(audit.params.refund_skipped).toBe("not_captured");
+    expect(audit.params.order_id).toBe("order-1b");
   });
 
   it("paid + refund: delegates to executeRefundAction with the ':refund' idempotency suffix and restock passthrough, and does NOT call transitionOrder", async () => {
@@ -194,6 +195,8 @@ describe("executeCancelAction", () => {
     expect(store.db.orders[0].cancelled_at).toBeTruthy();
     expect(store.db.orders[0].cancel_reason).toBe("buyer changed mind");
     expect(h.sendCancellationNotice).toHaveBeenCalledWith("shop-1", "order-2", { refunded: true });
+    const audit = h.insertAudit.mock.calls[0][2];
+    expect(audit.params.order_id).toBe("order-2");
   });
 
   it("paid without refund: transitions to cancelled and restocks when asked", async () => {
@@ -214,6 +217,8 @@ describe("executeCancelAction", () => {
     expect(res.refunded).toBe(false);
     expect(res.restockedLines).toBe(3);
     expect(h.sendCancellationNotice).toHaveBeenCalledWith("shop-1", "order-3", { refunded: false });
+    const audit = h.insertAudit.mock.calls[0][2];
+    expect(audit.params.order_id).toBe("order-3");
   });
 
   it("paid without refund and restock:false never calls restockOrderLines", async () => {
@@ -276,6 +281,7 @@ describe("executeCancelAction", () => {
     expect(h.insertAudit).toHaveBeenCalledTimes(1);
     const audit = h.insertAudit.mock.calls[0][2];
     expect(audit.params.resumed_after_refund_crash).toBe(true);
+    expect(audit.params.order_id).toBe("order-9");
     expect(h.sendCancellationNotice).not.toHaveBeenCalled();
   });
 

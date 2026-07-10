@@ -152,6 +152,11 @@ describe("executeFulfillAction", () => {
     expect(audit.write_target).toBe("owned_sot");
     expect(audit.pre_state).toEqual({ state: "paid" });
     expect(audit.post_state).toMatchObject({ state: "fulfilled" });
+    // order_id (snake_case) must be present alongside orderId so the detail read model's
+    // params->>order_id query (and cross-executor lookups like cancel's crash-resume check)
+    // find this row the same way they find refund/cancel audits.
+    expect(audit.params.order_id).toBe("order-1");
+    expect(audit.params.orderId).toBe("order-1");
   });
 
   it("explicit partial fulfillment moves to partially_fulfilled; a second partial on the same order records rows WITHOUT a transition", async () => {

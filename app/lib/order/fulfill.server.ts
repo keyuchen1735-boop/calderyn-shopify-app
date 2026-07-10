@@ -285,6 +285,7 @@ export async function executeFulfillAction(
       alert_id: null,
       action_kind: "fulfill_order",
       params: {
+        order_id: input.orderId,
         orderId: input.orderId,
         lines: resolved,
         trackingNumber: input.trackingNumber ?? null,
