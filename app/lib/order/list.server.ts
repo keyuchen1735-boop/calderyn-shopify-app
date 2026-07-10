@@ -194,7 +194,7 @@ export async function listAbandonedCheckouts(
   const cutoff = new Date(Date.now() - ABANDON_AFTER_MS).toISOString();
   const { data, error } = await getSupabase()
     .from("orders")
-    .select("id, buyer_id, total_cents, currency, created_at")
+    .select("id, buyer_id, total_cents, currency, created_at, recovery_email_sent_at")
     .eq("shop_id", shopId)
     .eq("state", "checkout_pending")
     .lt("created_at", cutoff)
@@ -220,6 +220,7 @@ export async function listAbandonedCheckouts(
     totalCents: Number(s.total_cents ?? 0),
     currency: String(s.currency ?? "usd"),
     createdAt: String(s.created_at),
+    recoveryEmailSentAt: s.recovery_email_sent_at == null ? null : String(s.recovery_email_sent_at),
   }));
 }
 

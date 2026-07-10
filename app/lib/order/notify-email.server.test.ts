@@ -34,7 +34,13 @@ vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
 vi.mock("~/lib/email/send.server", () => ({ sendEmail: (...a: unknown[]) => sendEmail(...a) }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
-import { sendShippingConfirmation, sendRefundNotice, sendCancellationNotice, sendInvoiceEmail } from "./notify-email.server";
+import {
+  sendShippingConfirmation,
+  sendRefundNotice,
+  sendCancellationNotice,
+  sendInvoiceEmail,
+  sendRecoveryEmailMessage,
+} from "./notify-email.server";
 
 const ORDER_ID = "11112222-3333-4444-5555-666677778888";
 
@@ -214,6 +220,57 @@ describe("sendInvoiceEmail", () => {
     delete process.env.PILOT_FROM;
     delete process.env.DIGEST_FROM;
     const res = await sendInvoiceEmail("shop-1", ORDER_ID, opts);
+    expect(res.sent).toBe(false);
+    expect(res.error).toMatch(/not configured/);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("sendRecoveryEmailMessage", () => {
+  const opts = {
+    confirmationToken: "tok-recover123",
+    lines: [{ title: "Cotton Tee - Small", quantity: 2 }],
+    totalCents: 3998,
+  };
+
+  it("emails the buyer the recovery subject, line summary, total, and resume link", async () => {
+    const res = await sendRecoveryEmailMessage("shop-1", ORDER_ID, opts);
+    expect(res.sent).toBe(true);
+    const args = sendEmail.mock.calls[0][0];
+    expect(args.subject).toBe("Your order is waiting");
+    expect(args.text).toContain("Cotton Tee - Small x 2");
+    expect(args.text).toContain("$39.98");
+    expect(args.text).toContain("https://app.example.com/storefront/recover/tok-recover123");
+    expect(args.html).toContain("<li>Cotton Tee - Small x 2</li>");
+    expect(args.html).toContain("https://app.example.com/storefront/recover/tok-recover123");
+    // Notes that prices/availability reflect current state.
+    expect(args.text).toMatch(/prices and availability may have changed/i);
+    // No em dashes anywhere in the copy.
+    expect(args.text).not.toMatch(/[—–]/);
+    expect(args.html).not.toMatch(/[—–]/);
+  });
+
+  it("does not send when the buyer has no email on file", async () => {
+    store.db.buyer_dim[0].email_normalized = "";
+    const res = await sendRecoveryEmailMessage("shop-1", ORDER_ID, opts);
+    expect(res.sent).toBe(false);
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it("swallows a sendEmail rejection into a structured failure (never throws)", async () => {
+    sendEmail.mockRejectedValueOnce(new Error("network down"));
+    await expect(sendRecoveryEmailMessage("shop-1", ORDER_ID, opts)).resolves.toEqual({
+      sent: false,
+      error: "network down",
+    });
+  });
+
+  it("fails visibly (no throw) when the mail transport is unconfigured", async () => {
+    delete process.env.RESEND_API_KEY;
+    delete process.env.ORDER_CONFIRM_FROM;
+    delete process.env.PILOT_FROM;
+    delete process.env.DIGEST_FROM;
+    const res = await sendRecoveryEmailMessage("shop-1", ORDER_ID, opts);
     expect(res.sent).toBe(false);
     expect(res.error).toMatch(/not configured/);
     expect(sendEmail).not.toHaveBeenCalled();

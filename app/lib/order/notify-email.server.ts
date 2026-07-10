@@ -264,6 +264,77 @@ export async function sendInvoiceEmail(
 }
 
 /**
+ * Send the abandoned-checkout resume-link email for an order (Phase 3 Task 4). Never throws — a
+ * delivery failure must not break sendRecoveryEmail (recovery.server.ts), which decides on its
+ * own whether to stamp `recovery_email_sent_at` from the returned OrderEmailResult. Mirrors
+ * sendInvoiceEmail's shape (same loadOrderAndBuyer lookup, same transport config) but points at
+ * a resume link instead of a pay link: a stalled storefront checkout already has an open
+ * PaymentIntent from createCheckout, so nothing new needs to be minted the way an invoice's pay
+ * link lazily mints a hosted Checkout Session.
+ */
+export async function sendRecoveryEmailMessage(
+  shopId: string,
+  orderId: string,
+  opts: {
+    confirmationToken: string;
+    lines: Array<{ title: string; quantity: number }>;
+    totalCents: number;
+  },
+): Promise<OrderEmailResult> {
+  try {
+    if (!shopId || !orderId) {
+      return { sent: false, error: "shopId and orderId are required" };
+    }
+
+    const found = await loadOrderAndBuyer(shopId, orderId);
+    if (!found) {
+      return { sent: false, error: "order not found or no buyer email" };
+    }
+
+    const config = transportConfig();
+    if (!config) {
+      console.warn(
+        `[order-notify] cannot send recovery email for order ${orderId} (shop ${shopId}): email transport not configured`,
+      );
+      return { sent: false, error: "email transport not configured" };
+    }
+
+    const resumeLink = `${publicBaseUrl()}/storefront/recover/${opts.confirmationToken}`;
+    const total = money(opts.totalCents, found.currency);
+    const lineText = opts.lines.map((l) => `${l.title} x ${l.quantity}`).join("\n");
+    const subject = "Your order is waiting";
+    const text = [
+      `You started an order (${found.ref}, ${total}) but did not finish checking out.`,
+      "",
+      lineText,
+      "",
+      "Prices and availability may have changed since you started, so your cart will be re-priced when you return.",
+      "",
+      `Resume your order: ${resumeLink}`,
+    ].join("\n");
+    const lineHtml = opts.lines.map((l) => `<li>${escapeHtml(l.title)} x ${l.quantity}</li>`).join("");
+    const html = [
+      `<p>You started an order (${found.ref}, ${total}) but did not finish checking out.</p>`,
+      `<ul>${lineHtml}</ul>`,
+      `<p>Prices and availability may have changed since you started, so your cart will be re-priced when you return.</p>`,
+      `<p><a href="${resumeLink}">Resume your order</a></p>`,
+    ].join("");
+
+    const delivery = await sendEmail({ apiKey: config.apiKey, from: config.from, to: found.email, subject, text, html });
+    if (!delivery.sent) {
+      console.warn(
+        `[order-notify] recovery-email delivery failed for order ${orderId} (shop ${shopId}): ${delivery.error ?? "unknown"}`,
+      );
+    }
+    return delivery;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[order-notify] error sending recovery email for order ${orderId} (shop ${shopId}):`, message);
+    return { sent: false, error: message };
+  }
+}
+
+/**
  * Send the cancellation-notice email for an order. Never throws — a delivery failure must not
  * break the cancellation flow that triggers it.
  */

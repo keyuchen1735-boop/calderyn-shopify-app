@@ -206,6 +206,18 @@ export async function cancelOrder(
   };
 }
 
+/** Resend the abandoned-checkout recovery email for an order. Native orders only; `reason` is
+ *  populated (and `sent` false) when the order isn't eligible (not_recoverable, no_consent,
+ *  no_buyer_email, delivery_failed) — the caller shows the reason honestly rather than a generic
+ *  failure toast. */
+export async function sendOrderRecoveryEmail(orderId: string): Promise<{ sent: boolean; reason?: string }> {
+  return apiSend<{ sent: boolean; reason?: string }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/recovery-email`,
+    {},
+  );
+}
+
 /** Add a staff note to an order's timeline. Native orders only. */
 export async function addOrderNote(orderId: string, body: string): Promise<void> {
   await apiSend<{ note_id: string }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/notes`, {

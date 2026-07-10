@@ -5,6 +5,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 // so the action exercises the actual signed-cookie round-trip it relies on to read the cart id.
 const resolveStorefrontShop = vi.fn();
 const priceCart = vi.fn();
+const getCartOrigin = vi.fn();
 const createCheckout = vi.fn();
 const paymentsReadiness = vi.fn();
 
@@ -29,6 +30,7 @@ vi.mock("~/lib/storefront/shop.server", () => ({
 }));
 vi.mock("~/lib/order/cart.server", () => ({
   priceCart: (...a: unknown[]) => priceCart(...a),
+  getCartOrigin: (...a: unknown[]) => getCartOrigin(...a),
 }));
 vi.mock("~/lib/order/checkout.server", () => ({
   createCheckout: (...a: unknown[]) => createCheckout(...a),
@@ -93,6 +95,7 @@ beforeEach(() => {
   process.env.SHOPIFY_API_SECRET = SECRET;
   process.env.STRIPE_PUBLISHABLE_KEY = "pk_test_x";
   resolveStorefrontShop.mockResolvedValue("shop-1");
+  getCartOrigin.mockResolvedValue(null);
   paymentsReadiness.mockResolvedValue({ ready: true, route: "destination" });
   priceCart.mockResolvedValue({
     cartId: "cart-1",
@@ -257,6 +260,33 @@ describe("checkout action happy path", () => {
     const setCookie = (res as Response).headers.get("Set-Cookie") ?? "";
     expect(setCookie).not.toContain("cd_cart");
     expect(setCookie).toContain("cd_vid");
+  });
+
+  it("threads recovered_from into attribution when the cart origin is a recovery stamp", async () => {
+    getCartOrigin.mockResolvedValueOnce("recovery:order-abc");
+    const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(200);
+    expect(getCartOrigin).toHaveBeenCalledWith("shop-1", "cart-1");
+    const attribution = createCheckout.mock.calls[0][3];
+    expect(attribution.recovered_from).toBe("order-abc");
+  });
+
+  it("omits recovered_from for an ordinary (non-recovery) cart", async () => {
+    getCartOrigin.mockResolvedValueOnce(null);
+    const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(200);
+    const attribution = createCheckout.mock.calls[0][3];
+    expect(attribution.recovered_from).toBeUndefined();
+  });
+
+  it("swallows a getCartOrigin failure and still originates the checkout without recovered_from", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    getCartOrigin.mockRejectedValueOnce(new Error("db blip"));
+    const res = await action(actionArgs(await postForm(GOOD_FIELDS, { cookie: await cartCookie() })));
+    expect((res as Response).status).toBe(200);
+    const attribution = createCheckout.mock.calls[0][3];
+    expect(attribution.recovered_from).toBeUndefined();
+    spy.mockRestore();
   });
 
   it("captures the marketing opt-in when the box is checked", async () => {
