@@ -884,6 +884,44 @@
   }
   .cd-chat-input { flex: 1; resize: none; min-height: 38px; max-height: 120px; }
 
+  /* Minimized panel: navigating away with the panel open docks it to this
+     pill instead of leaving it floating over the new screen. GSAP owns the
+     transform/opacity dance between docked/peek/open (see AssistantPanel's
+     dockFromOpen/dockFromPeek/toPeek/toOpen); this block only owns the pill's
+     resting position and look. Kept off small screens — the chat panel is
+     already effectively full-screen there (see the width rule above), so
+     there's no edge to dock into. */
+  .cd-chat-dock {
+    position: fixed; top: 50%; right: 16px; margin-top: -22px; z-index: 71;
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 44px; padding: 0 16px 0 14px; border: none; cursor: pointer;
+    border-radius: 999px; background: var(--accent); color: var(--on-accent);
+    box-shadow: var(--shadow-pop);
+    font-family: inherit; font-size: calc(13px * var(--type-scale)); font-weight: 600;
+    letter-spacing: -0.006em; white-space: nowrap;
+  }
+  .cd-chat-dock:hover { filter: brightness(1.06); }
+  .cd-chat-dock:focus-visible {
+    outline: none;
+    box-shadow: var(--shadow-pop), 0 0 0 3.5px color-mix(in oklch, var(--accent) 35%, transparent);
+  }
+
+  /* Peek: a half-open, non-interactive preview of the docked panel shown on
+     hover (see .cd-chat-panel[data-state] below, which disables pointer
+     events on the real content) — this full-cover control is the only thing
+     that responds to a click, opening the panel fully from anywhere on it. */
+  .cd-chat-peek-catch {
+    position: absolute; inset: 0; z-index: 1; pointer-events: auto;
+    background: transparent; border: none; cursor: pointer; padding: 0;
+  }
+  .cd-chat-panel[data-state="docked"],
+  .cd-chat-panel[data-state="peek"] {
+    pointer-events: none;
+  }
+  @media (max-width: 767px) {
+    .cd-chat-dock { display: none; }
+  }
+
   /* assistant markdown (shared .calderyn-md, dashboard skin) */
   .calderyn-md { font-size: calc(13.5px * var(--type-scale)); line-height: 1.55; color: var(--text-1); overflow-wrap: break-word; }
   .calderyn-md > *:first-child { margin-top: 0; }
