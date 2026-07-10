@@ -25,6 +25,7 @@ import { fetchStudio } from "./store-client";
 import { fetchDiscover } from "./discover-client";
 import { fetchSearchOverview } from "./search-client";
 import { fetchAllPendingTransfers } from "./transfers-client";
+import { fetchPoScreen } from "./po-client";
 import { fetchCommerceAnalytics } from "./commerce-analytics-client";
 import {
   analyticsCacheKey,
@@ -55,6 +56,7 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.collections, fetchCollections],
   [SCREEN_CACHE_KEYS.transfers, fetchAllPendingTransfers],
   [SCREEN_CACHE_KEYS.locations, fetchLocations],
+  [SCREEN_CACHE_KEYS.po, fetchPoScreen],
   [SCREEN_CACHE_KEYS.purchaseOrders, () => fetchPurchaseOrders({})],
   [SCREEN_CACHE_KEYS.shipCost, fetchShipCost],
   [SCREEN_CACHE_KEYS.unmatchedShip, fetchUnmatchedShipCharges],
