@@ -22,6 +22,21 @@ export async function action({ request, params }: ActionFunctionArgs) {
     });
   }
 
+  // Reactivation is likewise its own request. No stock guard applies: a
+  // deactivated location holds zero units, so turning it back on just returns
+  // it to the pickers.
+  if (body.active === true) {
+    return dashboardJson(async () => {
+      const { error } = await getSupabase()
+        .from("location_dim")
+        .update({ active: true })
+        .eq("shop_id", session.shopId)
+        .eq("id", String(params.id));
+      if (error) throw error;
+      return { ok: true };
+    });
+  }
+
   const patch: LocationPatch = {};
   if (Number.isFinite(body.priority)) patch.priority = Math.trunc(Number(body.priority));
   if (body.lat === null || Number.isFinite(body.lat)) patch.lat = body.lat === null ? null : Number(body.lat);

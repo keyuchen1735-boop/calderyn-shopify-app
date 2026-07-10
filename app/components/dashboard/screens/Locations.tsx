@@ -22,14 +22,18 @@ export default function Locations({ app }: { app: DashboardCtx }) {
   const [rows, setRows] = useState<client.LocationVM[] | null>(() => seeded);
   const [loading, setLoading] = useState(() => !seeded);
   const [error, setError] = useState<string | null>(null);
+  // Deactivated locations are fetch-only (never cached): only the active list
+  // lives under SCREEN_CACHE_KEYS.locations, as other screens consume it.
+  const [inactive, setInactive] = useState<client.LocationVM[]>([]);
 
   useEffect(() => {
     let alive = true;
     client
-      .fetchLocations()
+      .fetchLocationsWithInactive()
       .then((r) => {
         if (!alive) return;
-        setRows(cacheScreenData(SCREEN_CACHE_KEYS.locations, r));
+        setRows(cacheScreenData(SCREEN_CACHE_KEYS.locations, r.locations));
+        setInactive(r.inactive);
         setError(null);
       })
       .catch((err: unknown) => {
@@ -113,12 +117,31 @@ export default function Locations({ app }: { app: DashboardCtx }) {
           cur.filter((r) => r.id !== l.id),
         );
       });
+      setInactive((cur) => [...cur, l]);
       app.toast("Location deactivated.", "check");
     } catch (err) {
       // A 409 here is the stock guard — the server message tells the merchant
       // to move or zero out stock first.
       app.toast(
         err instanceof DashboardApiError ? err.message : "Couldn't deactivate the location.",
+        "warn",
+        "critical",
+      );
+    }
+  };
+
+  // --- reactivate ---------------------------------------------------------
+  const reactivate = async (l: client.LocationVM) => {
+    try {
+      await client.reactivateLocation(l.id);
+      setInactive((cur) => cur.filter((r) => r.id !== l.id));
+      setRows((cur) =>
+        cacheScreenData(SCREEN_CACHE_KEYS.locations, [...(cur ?? []), l]),
+      );
+      app.toast("Location reactivated.", "check");
+    } catch (err) {
+      app.toast(
+        err instanceof DashboardApiError ? err.message : "Couldn't reactivate the location.",
         "warn",
         "critical",
       );
@@ -316,6 +339,26 @@ export default function Locations({ app }: { app: DashboardCtx }) {
                     />
                   </label>
                 </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {inactive.length > 0 && (
+        <Card>
+          <SectionTitle>Deactivated</SectionTitle>
+          <p className="cd-caption" style={{ marginBottom: 12 }}>
+            These locations no longer fill orders or hold stock. Reactivate one to put it back in
+            every picker.
+          </p>
+          <div className="flex flex-col gap-3">
+            {inactive.map((l) => (
+              <div key={l.id} className="flex items-center justify-between gap-3">
+                <div className="cd-row-title truncate">{l.name}</div>
+                <Btn small onClick={() => reactivate(l)}>
+                  Reactivate
+                </Btn>
               </div>
             ))}
           </div>

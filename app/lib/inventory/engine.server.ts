@@ -14,8 +14,10 @@ const HOLD_TTL_MS = 30 * 60 * 1000; // 30 minutes
 
 export type Allocation = Array<{ locationId: string; qty: number; backorder?: boolean }>;
 
+// Active locations only: a deactivated location must never appear in the
+// allocation order, so a reserve can't land stock movements there.
 async function locationOrder(shopId: string, dest: Dest): Promise<string[]> {
-  const { data, error } = await getSupabase().from("location_dim").select("id, priority, lat, lng").eq("shop_id", shopId);
+  const { data, error } = await getSupabase().from("location_dim").select("id, priority, lat, lng").eq("shop_id", shopId).eq("active", true);
   if (error) throw error;
   const locs: Loc[] = (data ?? []).map((l: Record<string, unknown>) => ({
     id: String(l.id), priority: Number(l.priority ?? 0),
@@ -73,14 +75,17 @@ async function reprojectCheckout(shopId: string, checkoutRef: string): Promise<v
 
 // A new owned shop starts with no location_dim row (locations arrive via import
 // or the demo seed), so a dashboard-created product needs one before its stock
-// can live in the ledger. Returns the shop's primary location — lowest priority,
-// then oldest — creating a default "Primary" one when the shop has none.
+// can live in the ledger. Returns the shop's primary ACTIVE location — lowest
+// priority, then oldest — creating a default "Primary" one when the shop has
+// none (including when every existing location has been deactivated: seeding
+// stock into a deactivated location would strand it invisibly).
 export async function ensurePrimaryLocation(shopId: string): Promise<string> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("location_dim")
     .select("id")
     .eq("shop_id", shopId)
+    .eq("active", true)
     .order("priority", { ascending: true })
     .order("created_at", { ascending: true })
     .limit(1);

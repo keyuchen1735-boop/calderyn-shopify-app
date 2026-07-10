@@ -1755,6 +1755,13 @@ export async function fetchLocations(): Promise<LocationVM[]> {
   const d = await apiGet<{ locations: LocationVM[] }>("/dashboard/api/catalog/locations");
   return d.locations;
 }
+/** Active locations plus the deactivated ones, for the reactivation panel. */
+export async function fetchLocationsWithInactive(): Promise<{ locations: LocationVM[]; inactive: LocationVM[] }> {
+  const d = await apiGet<{ locations: LocationVM[]; inactive?: LocationVM[] }>(
+    "/dashboard/api/catalog/locations?includeInactive=1",
+  );
+  return { locations: d.locations, inactive: d.inactive ?? [] };
+}
 export async function updateLocation(
   id: string,
   patch: {
@@ -1778,4 +1785,8 @@ export async function createLocation(input: { name: string; priority?: number })
  *  (on hand, reserved, or incoming) still sits there. */
 export async function deactivateLocation(id: string): Promise<void> {
   await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, { active: false });
+}
+/** Reactivate a deactivated location so it fills orders again. */
+export async function reactivateLocation(id: string): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, { active: true });
 }

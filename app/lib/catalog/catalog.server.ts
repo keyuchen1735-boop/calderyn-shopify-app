@@ -3,6 +3,7 @@ import { getSupabase } from "../supabase.server";
 import { CalderynError } from "../calderyn.server";
 import { projectProductToSkuDim } from "./project-sku-dim.server";
 import { seedInitialStock } from "../inventory/engine.server";
+import { escapeLike } from "./inventory-list.server";
 import { collectionHandle, productHandleBase } from "./handle";
 import { catalogSortToOrder, type CatalogSort } from "~/components/dashboard/screens/catalog-list-state";
 import type { ProductInput, ProductStatus, ProductSummary, ProductDetail, VariantInput } from "./types";
@@ -42,7 +43,7 @@ export async function listProducts(
     .select("id, title, status, updated_at", { count: "exact" })
     .eq("shop_id", shopId);
   if (opts.status) q = q.eq("status", opts.status);
-  if (opts.search) q = q.ilike("title", `%${opts.search}%`);
+  if (opts.search) q = q.ilike("title", `%${escapeLike(opts.search)}%`);
   // Stable tiebreaker after the sort column so offset paging can't skip/duplicate
   // rows that share a value (seeded/imported in the same write).
   const order = catalogSortToOrder(opts.sort ?? "updated");

@@ -94,6 +94,19 @@ export async function action({ request }: ActionFunctionArgs) {
     const qty = Math.trunc(Number(body.qty) || 0);
     const mode = body.mode === "in_transit" ? "in_transit" : "instant";
     if (!variantId || !from || !to || from === to || qty < 1) return jsonError(422, "invalid_transfer");
+    // Both endpoints must be active: a deactivated location holds no stock to
+    // send and must not silently start accumulating stock again.
+    const { data: activeLocs, error: locErr } = await getSupabase()
+      .from("location_dim")
+      .select("id")
+      .eq("shop_id", session.shopId)
+      .in("id", [from, to])
+      .eq("active", true);
+    if (locErr) throw locErr;
+    const activeIds = new Set((activeLocs ?? []).map((l) => String(l.id)));
+    if (!activeIds.has(from) || !activeIds.has(to)) {
+      return jsonError(422, "location_inactive", "This location is deactivated. Reactivate it first.");
+    }
     return jsonOk(await createTransfer(session.shopId, variantId, from, to, qty, mode));
   } catch (err) {
     if (err instanceof Error && err.message === "insufficient_stock") {

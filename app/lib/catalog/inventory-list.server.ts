@@ -63,13 +63,20 @@ export function mapInventoryRow(raw: InventoryListRpcRow): InventoryRow {
   };
 }
 
+/** Backslash-escape LIKE/ILIKE metacharacters (\, %, _) so a merchant's search
+ *  term matches literally instead of acting as a wildcard. Pure and exported
+ *  for unit tests and for other catalog search sites. */
+export function escapeLike(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 export async function listInventory(
   shopId: string,
   opts: { search?: string; stock?: "low" | "out"; limit?: number; offset?: number } = {},
 ): Promise<{ rows: InventoryRow[]; total: number }> {
   const { data, error } = await getSupabase().rpc("inventory_list", {
     p_shop_id: shopId,
-    p_search: opts.search ?? null,
+    p_search: opts.search == null ? null : escapeLike(opts.search),
     p_stock: opts.stock ?? null,
     p_limit: Math.min(opts.limit ?? 50, 100),
     p_offset: Math.max(0, opts.offset ?? 0),
