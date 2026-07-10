@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
-import { Btn, TableSkeleton } from "../ui";
+import { Btn, Pan, TableSkeleton } from "../ui";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import TransferModal from "./TransferModal";
@@ -94,6 +94,7 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
         <Btn small icon="clock" onClick={toggleHistory}>{history ? "Hide history" : "History"}</Btn>
       </div>
 
+      <Pan min={760}>
       <div className="cd-table-head">
         <span style={{ flex: "1 1 0", minWidth: 120 }}>Location</span>
         <span style={{ width: 92 }}>On hand</span>
@@ -157,6 +158,7 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
           );
         })}
       </div>
+      </Pan>
 
       {pending.length > 0 && (
         <div style={{ marginTop: 10 }}>

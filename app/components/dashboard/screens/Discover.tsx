@@ -4,7 +4,7 @@
 // owned catalog + supplier link and generates a draft store.
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
-import { Card, Btn, Pill, Placeholder, TableSkeleton } from "../ui";
+import { Card, Btn, Pan, Pill, Placeholder, TableSkeleton } from "../ui";
 import { cachedScreenData, cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
   fetchDiscover,
@@ -74,6 +74,7 @@ export default function Discover({ app }: { app: DashboardCtx }) {
         />
       ) : (
         <Card pad={false}>
+          <Pan min={640}>
           <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
             <span>Product</span>
             <span>Virality</span>
@@ -120,6 +121,7 @@ export default function Discover({ app }: { app: DashboardCtx }) {
               </span>
             </div>
           ))}
+          </Pan>
         </Card>
       )}
     </div>

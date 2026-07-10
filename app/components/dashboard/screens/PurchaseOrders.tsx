@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Btn, Card, Pill, Placeholder, TableSkeleton } from "../ui";
+import { Btn, Card, Pan, Pill, Placeholder, TableSkeleton } from "../ui";
 import { money, timeAgo } from "../format";
 import {
   DashboardApiError,
@@ -169,7 +169,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
             </div>
           </>
         ) : (
-          <>
+          <Pan min={560}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
               <span>PO</span>
               <span>Detail</span>
@@ -179,7 +179,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
             {rows.map((r) => (
               <PoRow key={r.id} row={r} />
             ))}
-          </>
+          </Pan>
         )}
       </Card>
 

@@ -837,7 +837,7 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                     label="Daily budget ceiling"
                     sub="A hard cap on how high autopilot can push any one campaign's daily budget."
                   >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                       <Toggle
                         value={g.autopilot_max_daily_budget_cents !== null}
                         disabled={saving}

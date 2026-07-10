@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useRef,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -65,6 +66,21 @@ export function CountNum({
 }
 
 /* ---------- Surfaces ---------- */
+
+/* Phone-width pan container for wide tables: at ≤767px it becomes a horizontal
+   scroll area whose content keeps `min` px of width so columns stay readable;
+   at desktop widths it is inert (overflow stays visible, so row tooltips and
+   entrance animations aren't clipped by a scroll context). */
+export function Pan({ min, children }: { min: number; children: ReactNode }) {
+  return (
+    <div className="cd-pan">
+      <div className="cd-pan-in" style={{ "--pan-min": `${min}px` } as CSSProperties}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function Card({
   children,
   className = "",
