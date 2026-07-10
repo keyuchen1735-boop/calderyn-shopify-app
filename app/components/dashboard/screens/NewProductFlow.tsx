@@ -8,8 +8,8 @@
 // unrecognized edits go to the Claude-backed /dashboard/api/listing-draft.
 // A failed AI call degrades honestly — deterministic fallback for fresh
 // drafts, an error toast for edits. Saving writes the owned catalog through
-// the same saveProduct contract as the editor; the photo uploads right after
-// the first save (media rows need a product id).
+// the same saveProduct contract as the editor; photos upload right after the
+// first save (media rows need a product id).
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -26,6 +26,7 @@ import {
   type ListingPlan,
 } from "~/lib/catalog/listing-prompt";
 import { reduced } from "../hero/hero-motion";
+import { addPhotos, summarizePhotoRejections, type PhotoDraft } from "./new-product-photos";
 import { Card, Btn, SectionTitle, Segmented } from "../ui";
 import { CDIcon } from "../icons";
 
@@ -37,11 +38,7 @@ function mergeCell(cells: Record<string, Cell>, label: string, patch: Partial<Ce
   return { ...cells, [label]: { ...prev, ...patch } };
 }
 
-// Mirrors app/lib/catalog/media.server.ts (server-only module, so the
-// constants can't be imported here). Checked at pick time so a photo that can
-// never upload is rejected before it rides through every preview.
-const PHOTO_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
-const PHOTO_MAX_BYTES = 8 * 1024 * 1024;
+const MAX_PHOTOS = 8; // per-pick cap; type/size rules live in new-product-photos.ts
 
 const PROMPT_MAX = 300; // matches the endpoint's invalid_prompt bound
 
@@ -246,8 +243,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
   const [previewView, setPreviewView] = useState<"page" | "grid">("page");
   const [prompt, setPrompt] = useState("");
   const [drafting, setDrafting] = useState(false);
-  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photos, setPhotos] = useState<PhotoDraft[]>([]);
   const [receipts, setReceipts] = useState<{ id: string; text: string }[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -283,11 +279,17 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
     };
   }, []);
 
-  // Each picked photo gets one object URL, revoked when replaced or on unmount.
+  // Each picked photo gets one object URL, revoked when its tile is removed
+  // or on unmount (the ref keeps the latest list visible to the cleanup).
+  const photosRef = useRef<PhotoDraft[]>(photos);
   useEffect(() => {
-    if (!photoUrl) return;
-    return () => URL.revokeObjectURL(photoUrl);
-  }, [photoUrl]);
+    photosRef.current = photos;
+  }, [photos]);
+  useEffect(() => {
+    return () => {
+      photosRef.current.forEach((p) => URL.revokeObjectURL(p.url));
+    };
+  }, []);
 
   // Choreography: shimmer + pulsing spark while a prompt is working; step and
   // preview panels rise in. revertOnUpdate kills the repeating tweens the
@@ -332,17 +334,18 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
     }
   });
 
-  const onPickPhoto = (f: File) => {
-    if (!PHOTO_TYPES.has(f.type)) {
-      app.toast("Use a PNG, JPEG, WebP, or GIF photo.", "warn");
-      return;
-    }
-    if (f.size > PHOTO_MAX_BYTES) {
-      app.toast("That photo is over 8 MB — pick a smaller one.", "warn");
-      return;
-    }
-    setPhotoUrl(URL.createObjectURL(f));
-    setPhotoFile(f);
+  const onPickPhotos = (list: FileList) => {
+    const { next, rejected } = addPhotos(photos, Array.from(list), MAX_PHOTOS, (f) => URL.createObjectURL(f));
+    setPhotos(next);
+    const summary = summarizePhotoRejections(rejected);
+    if (summary) app.toast(summary, "warn");
+  };
+
+  const removePhoto = (i: number) => {
+    const target = photos[i];
+    if (!target) return;
+    URL.revokeObjectURL(target.url);
+    setPhotos((cur) => cur.filter((p) => p !== target));
   };
 
   const addOption = (name: string, values: string[]) => {
@@ -624,11 +627,19 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
         collectionIds: sel,
       };
       const { id } = await client.saveProduct(draft);
-      if (photoFile) {
-        try {
-          await client.uploadProductImage(id, photoFile);
-        } catch {
-          app.toast("Saved, but the photo upload failed — add it from the product editor.", "warn", "critical");
+      if (photos.length > 0) {
+        // Sequential and in tile order: the first successful upload becomes
+        // the primary image server-side, so order is meaningful.
+        let failed = 0;
+        for (const p of photos) {
+          try {
+            await client.uploadProductImage(id, p.file);
+          } catch {
+            failed += 1;
+          }
+        }
+        if (failed > 0) {
+          app.toast(`Saved, but ${failed} photo(s) didn't upload — add them from the product editor.`, "warn", "critical");
         }
       }
       app.toast(status === "active" ? "Product saved — live in your store." : "Product saved as a draft.", "check");
@@ -657,7 +668,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
   const readiness = [
     { label: "Title", done: Boolean(title.trim()) },
     { label: "Price", done: Number(price) > 0 || Object.values(cells).some((c) => Number(c.price) > 0) },
-    { label: "Photo", done: Boolean(photoUrl) },
+    { label: "Photo", done: photos.length > 0 },
     { label: "Shipping", done: !physical || shippingDone },
   ];
 
@@ -695,6 +706,58 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
       <CDIcon name="sparkle" size={Math.round(size * 0.48)} />
     </span>
   );
+
+  const photoRow =
+    photos.length > 0 ? (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {photos.map((p, i) => (
+          <div
+            key={p.url}
+            style={{ position: "relative", width: 72, height: 72, borderRadius: 10, overflow: "hidden", background: "var(--gray-bg)" }}
+          >
+            <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            {i === 0 && (
+              <span
+                className="cd-badge"
+                style={{
+                  position: "absolute",
+                  left: 4,
+                  bottom: 4,
+                  padding: "1px 6px",
+                  background: "color-mix(in oklch, var(--card) 88%, transparent)",
+                  color: "var(--text-2)",
+                }}
+              >
+                Main
+              </span>
+            )}
+            <button
+              type="button"
+              aria-label={`Remove photo ${i + 1}`}
+              onClick={() => removePhoto(i)}
+              style={{
+                position: "absolute",
+                top: 4,
+                right: 4,
+                width: 20,
+                height: 20,
+                padding: 0,
+                borderRadius: 999,
+                border: 0,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: "color-mix(in oklch, var(--card) 82%, transparent)",
+                color: "var(--text-2)",
+              }}
+            >
+              <CDIcon name="x" size={12} strokeWidth={2.2} />
+            </button>
+          </div>
+        ))}
+      </div>
+    ) : null;
 
   const stepNav = (nextLabel: string) => (
     <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
@@ -734,10 +797,10 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
         ref={fileRef}
         type="file"
         accept="image/png,image/jpeg,image/webp,image/gif"
+        multiple
         hidden
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onPickPhoto(f);
+          if (e.target.files?.length) onPickPhotos(e.target.files);
           e.target.value = "";
         }}
       />
@@ -814,7 +877,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
               aria-label="Prompt"
             />
             <Btn small icon="image" onClick={() => fileRef.current?.click()}>
-              {photoUrl ? "Swap photo" : "Photo"}
+              {photos.length > 0 ? "Add more" : "Photos"}
             </Btn>
             <Btn small kind="primary" icon="sparkle" disabled={drafting} onClick={runPrompt}>
               {drafting ? "Working…" : "Apply"}
@@ -832,6 +895,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
             ))}
           </div>
         )}
+        {step !== "describe" && photoRow}
 
         {/* ---- Step: Describe ---- */}
         {step === "describe" && (
@@ -866,12 +930,13 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                   </div>
                   <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
                     <button type="button" className="cd-link" onClick={() => fileRef.current?.click()}>
-                      {photoUrl ? "Photo added — swap it" : "Add a photo"}
+                      {photos.length > 0 ? "Add more" : "Add photos"}
                     </button>
                     <button type="button" className="cd-link" onClick={() => setStep("basics")}>
                       Start blank instead
                     </button>
                   </div>
+                  {photoRow}
                 </>
               )}
             </div>
@@ -1066,7 +1131,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                     type="button"
                     className="npf-pv-el"
                     onClick={() => fileRef.current?.click()}
-                    aria-label={photoUrl ? "Swap photo" : "Add a photo"}
+                    aria-label={photos.length > 0 ? "Add more photos" : "Add photos"}
                     style={{
                       flex: "1 1 240px",
                       minWidth: 220,
@@ -1085,12 +1150,12 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                       overflow: "hidden",
                     }}
                   >
-                    {photoUrl ? (
-                      <img src={photoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    {photos.length > 0 ? (
+                      <img src={photos[0].url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                     ) : (
                       <>
                         <CDIcon name="image" size={26} />
-                        <span className="cd-caption">Click to add a photo</span>
+                        <span className="cd-caption">Click to add photos</span>
                       </>
                     )}
                   </button>
@@ -1161,8 +1226,8 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                 <div style={{ flex: "1.2 1 0", minWidth: 0, order: 1 }}>
                   <Card pad={false} onClick={() => setPreviewView("page")} className="npf-pv-el">
                     <div style={{ aspectRatio: "1 / 1", background: "var(--gray-bg)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-3)", overflow: "hidden" }}>
-                      {photoUrl ? (
-                        <img src={photoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      {photos.length > 0 ? (
+                        <img src={photos[0].url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                       ) : (
                         <CDIcon name="image" size={24} />
                       )}
