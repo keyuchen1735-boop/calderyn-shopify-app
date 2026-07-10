@@ -479,6 +479,30 @@ export default function AssistantPanel({
   // hand-written function per transition. Driven by the PANEL_TARGET/
   // PILL_TARGET tables above, so docked/peek/open can't drift out of sync
   // with each other the way five independent functions could.
+  // Mount slide-in (closed -> open), contextSafe like every other tween so it
+  // reverts on unmount. See the [state] effect for why this is GSAP, not CSS.
+  const runMountOpenRef = useRef<(() => void) | null>(null);
+  if (runMountOpenRef.current === null) {
+    runMountOpenRef.current = contextSafe(() => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      // x:0 explicitly clears any pixel offset GSAP may have parsed from a
+      // stale computed transform; xPercent drives the slide.
+      if (reduced()) {
+        gsap.set(panel, { x: 0, xPercent: 0, scale: 1, opacity: 1, pointerEvents: "auto" });
+      } else {
+        gsap.fromTo(
+          panel,
+          { x: 0, xPercent: 110, scale: 1, opacity: 1 },
+          { xPercent: 0, pointerEvents: "auto", duration: 0.42, ease: "power3.out", overwrite: "auto" },
+        );
+      }
+      if (peekCatchRef.current) {
+        gsap.set(peekCatchRef.current, { x: 0, xPercent: 0, scale: 1, pointerEvents: "none" });
+      }
+    });
+  }
+
   const runTransitionRef = useRef<
     ((target: "open" | "docked" | "peek", opts?: { pulse?: boolean }) => void) | null
   >(null);
@@ -565,19 +589,12 @@ export default function AssistantPanel({
     if (!run) return;
     if (state === "open") {
       if (prev === "closed") {
-        // The very first open (mount from closed) is played by the existing
-        // CSS drawer-in keyframe on .cd-chat-panel — this just normalizes the
-        // GSAP-owned transform/opacity/pointer-events so a later dock/peek
-        // tween has a correct starting point, without fighting that CSS
-        // animation with a redundant tween of its own.
-        gsap.set(panelRef.current, { xPercent: 0, scale: 1, opacity: 1, pointerEvents: "auto" });
-        // Give the catcher a defined starting transform too (matched to
-        // "open", where it must never intercept anything) so the first
-        // dock/peek tween it ever runs starts from a known box instead of
-        // whatever the browser defaulted an untouched transform to.
-        if (peekCatchRef.current) {
-          gsap.set(peekCatchRef.current, { xPercent: 0, scale: 1, pointerEvents: "none" });
-        }
+        // First open (mount from closed): GSAP plays the drawer slide-in
+        // itself. This MUST NOT be a CSS keyframe — GSAP reading the
+        // computed transform mid-keyframe caches the keyframe's pixel
+        // offset (436px) and persists it inline, parking the panel
+        // permanently off-screen. One transform owner: GSAP.
+        runMountOpenRef.current?.();
       } else {
         run("open");
       }

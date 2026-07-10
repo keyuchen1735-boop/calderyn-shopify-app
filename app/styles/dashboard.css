@@ -797,11 +797,12 @@
     backdrop-filter: blur(24px) saturate(1.5);
     border-radius: var(--radius);
     box-shadow: var(--shadow-pop);
-    /* The panel mounts on open, so a mount animation IS the open animation:
-       it slides in from past the right edge (drawer choreography). */
-    animation: cd-chat-panel-in 0.42s cubic-bezier(0.32, 0.72, 0, 1);
+    /* GSAP owns this panel's transform/opacity for every state, INCLUDING the
+       mount slide-in. A CSS keyframe here races GSAP's first write: GSAP reads
+       the mid-keyframe computed transform (translateX(100% + 16px) = 436px)
+       and persists that pixel offset inline, parking the panel permanently
+       off-screen. One animation owner only. */
   }
-  @keyframes cd-chat-panel-in { from { transform: translateX(calc(100% + 16px)); } }
   .cd-chat-head {
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
     padding: 14px 16px; border-bottom: 0.5px solid var(--hairline-strong);
@@ -838,7 +839,7 @@
   .cd-chat-bubble { display: flex; animation: cd-chat-bubble-in 0.35s cubic-bezier(0.33, 1, 0.68, 1); }
   @keyframes cd-chat-bubble-in { from { opacity: 0; transform: translateY(8px); } }
   @media (prefers-reduced-motion: reduce) {
-    .cd-chat-panel, .cd-chat-bubble { animation: none; }
+    .cd-chat-bubble { animation: none; }
   }
   .cd-chat-bubble[data-role="assistant"] { justify-content: flex-start; }
   .cd-chat-bubble[data-role="user"] { justify-content: flex-end; }
