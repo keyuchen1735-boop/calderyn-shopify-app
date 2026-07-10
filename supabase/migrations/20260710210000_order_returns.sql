@@ -75,10 +75,12 @@ alter table public.order_line add column if not exists unit_cost_cents_snapshot 
 -- Backfill existing order_line rows from the variant's CURRENT cost — the best available estimate
 -- for a sale that predates this column; only touches rows that are still null so a later re-run
 -- (or a row already populated by the live checkout/invoice paths) is never overwritten.
+-- order_line.variant_id is TEXT (it also carries snapshot ids from non-catalog paths);
+-- compare on the uuid cast TO text so a non-uuid variant_id can never throw.
 update public.order_line ol
   set unit_cost_cents_snapshot = v.unit_cost_cents
   from public.variant_dim v
-  where v.id = ol.variant_id
+  where v.id::text = ol.variant_id
     and v.shop_id = ol.shop_id
     and ol.unit_cost_cents_snapshot is null
     and v.unit_cost_cents is not null;
