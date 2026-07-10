@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
+import { updateLocationDetails, type LocationPatch } from "~/lib/catalog/locations.server";
 
 export async function action({ request, params }: ActionFunctionArgs) {
   requireSameOrigin(request);
@@ -11,7 +12,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   let body: Record<string, unknown>;
   try { body = (await request.json()) as Record<string, unknown>; } catch { return jsonError(422, "invalid_json"); }
 
-  const patch: Record<string, unknown> = {};
+  const patch: LocationPatch = {};
   if (Number.isFinite(body.priority)) patch.priority = Math.trunc(Number(body.priority));
   if (body.lat === null || Number.isFinite(body.lat)) patch.lat = body.lat === null ? null : Number(body.lat);
   if (body.lng === null || Number.isFinite(body.lng)) patch.lng = body.lng === null ? null : Number(body.lng);
@@ -24,12 +25,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (Object.keys(patch).length === 0) return jsonError(422, "empty_patch");
 
   return dashboardJson(async () => {
-    const { error } = await getSupabase()
-      .from("location_dim")
-      .update(patch)
-      .eq("shop_id", session.shopId)
-      .eq("id", String(params.id));
-    if (error) throw error;
+    await updateLocationDetails(getSupabase(), session.shopId, String(params.id), patch);
     return { ok: true };
   });
 }

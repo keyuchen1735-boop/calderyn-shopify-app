@@ -21,6 +21,12 @@ import {
   publishStudioStore,
 } from "../../storebuilder/studio.server";
 import type { StudioVibe } from "../../storebuilder/studio-types";
+import { updateLocationDetails, type LocationPatch } from "../../catalog/locations.server";
+import {
+  startExperiment,
+  decideExperiment,
+  type StoreExperimentKind,
+} from "../../experiments/store-experiment.server";
 import type { ActionReceipt, AssistantAction, ValidationResult } from "./registry-types";
 
 function str(v: unknown): string | null {
@@ -310,6 +316,163 @@ export const CATALOG_ACTIONS: AssistantAction[] = [
       return {
         action: "publish_store",
         summary: "Published the store",
+        auditId: null,
+        undoable: false,
+      };
+    },
+  },
+  {
+    name: "set_location_details",
+    description:
+      "Update a fulfillment location's address, priority, or geocoordinates. location_id comes from catalog/location reads. priority is an integer (lower ranks first for allocation); lat/lng are numbers, or null to clear them; street1/street2/city/region/postal_code/country are plain strings. At least one field besides location_id is required.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        location_id: { type: "string" },
+        priority: { type: "number" },
+        lat: { type: "number" },
+        lng: { type: "number" },
+        street1: { type: "string" },
+        street2: { type: "string" },
+        city: { type: "string" },
+        region: { type: "string" },
+        postal_code: { type: "string" },
+        country: { type: "string" },
+      },
+      required: ["location_id"],
+    },
+    tier: "execute",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      const locationId = str(i.location_id);
+      if (!locationId) return { ok: false, message: "location_id is required" };
+
+      const patch: LocationPatch = {};
+      if (i.priority !== undefined && i.priority !== null) {
+        const p = Number(i.priority);
+        if (!Number.isInteger(p)) return { ok: false, message: "priority must be an integer" };
+        patch.priority = p;
+      }
+      if (i.lat !== undefined) {
+        if (i.lat !== null && typeof i.lat !== "number") return { ok: false, message: "lat must be a number or null" };
+        patch.lat = i.lat === null ? null : i.lat;
+      }
+      if (i.lng !== undefined) {
+        if (i.lng !== null && typeof i.lng !== "number") return { ok: false, message: "lng must be a number or null" };
+        patch.lng = i.lng === null ? null : i.lng;
+      }
+      const stringKeys = ["street1", "street2", "city", "region", "postal_code", "country"] as const;
+      for (const key of stringKeys) {
+        if (i[key] !== undefined) {
+          if (typeof i[key] !== "string") return { ok: false, message: `${key} must be a string` };
+          patch[key] = i[key];
+        }
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return { ok: false, message: "at least one field to update is required (besides location_id)" };
+      }
+      return { ok: true, value: { location_id: locationId, patch } };
+    },
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      const locationId = String(i.location_id);
+      const patch = i.patch as LocationPatch;
+      await updateLocationDetails(getSupabase(), ctx.shopId, locationId, patch);
+      return {
+        action: "set_location_details",
+        summary: "Updated the location",
+        auditId: null,
+        undoable: false,
+        detail: { location_id: locationId, patch },
+      };
+    },
+  },
+  {
+    name: "start_experiment",
+    description:
+      "Start a home-page A/B experiment (headline copy or design vibe) against the currently published store. Only one experiment can run at a time; decide_experiment or ship_experiment closes it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["headline", "vibe"] },
+        name: { type: "string" },
+      },
+      required: ["kind"],
+    },
+    tier: "execute",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      if (i.kind !== "headline" && i.kind !== "vibe") {
+        return { ok: false, message: "kind must be headline or vibe" };
+      }
+      if (i.name !== undefined && (typeof i.name !== "string" || i.name.length > 80)) {
+        return { ok: false, message: "name must be a string of at most 80 chars" };
+      }
+      return { ok: true, value: { kind: i.kind, name: str(i.name) ?? undefined } };
+    },
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      const kind = i.kind as StoreExperimentKind;
+      await startExperiment(ctx.shopId, { kind, name: i.name as string | undefined });
+      return {
+        action: "start_experiment",
+        summary: `Started a ${kind} experiment`,
+        auditId: null,
+        undoable: false,
+      };
+    },
+  },
+  {
+    name: "decide_experiment",
+    description:
+      "Close a running home-page experiment by keeping the current published page (keep) or discarding the challenger (stop). To publish the winning variant live, use ship_experiment instead (requires confirmation).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        experiment_id: { type: "string" },
+        decision: { type: "string", enum: ["keep", "stop"] },
+      },
+      required: ["experiment_id", "decision"],
+    },
+    tier: "execute",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      const experimentId = str(i.experiment_id);
+      if (!experimentId) return { ok: false, message: "experiment_id is required" };
+      if (i.decision !== "keep" && i.decision !== "stop") {
+        return { ok: false, message: "decision must be keep or stop (use ship_experiment to publish live)" };
+      }
+      return { ok: true, value: { experiment_id: experimentId, decision: i.decision } };
+    },
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      const decision = i.decision as "keep" | "stop";
+      await decideExperiment(ctx.shopId, String(i.experiment_id), decision);
+      return {
+        action: "decide_experiment",
+        summary: `Closed the experiment (${decision})`,
+        auditId: null,
+        undoable: false,
+      };
+    },
+  },
+  {
+    name: "ship_experiment",
+    description:
+      "Publish the winning variant of a home-page experiment live to the storefront. Requires confirmation.",
+    inputSchema: { type: "object", properties: { experiment_id: { type: "string" } }, required: ["experiment_id"] },
+    tier: "confirm",
+    undoable: false,
+    validate: (i): ValidationResult => {
+      const experimentId = str(i.experiment_id);
+      return experimentId
+        ? { ok: true, value: { experiment_id: experimentId } }
+        : { ok: false, message: "experiment_id is required" };
+    },
+    confirmSummary: async () => "Ship the winning variant — publishes it live to your storefront",
+    run: async (ctx, i): Promise<ActionReceipt> => {
+      await decideExperiment(ctx.shopId, String(i.experiment_id), "ship");
+      return {
+        action: "ship_experiment",
+        summary: "Shipped the experiment — the winning variant is now live",
         auditId: null,
         undoable: false,
       };
