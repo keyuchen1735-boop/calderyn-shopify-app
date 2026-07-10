@@ -76,4 +76,25 @@ describe("buildSystemPrompt", () => {
     expect(instructions).toContain("check that alert's allowed_actions");
     expect(instructions).toContain("never offer an option you cannot execute");
   });
+
+  it("states the true location of Calderyn purchase orders and that they never reach Shopify", () => {
+    const instructions = ASSISTANT_SYSTEM_INSTRUCTIONS.toLowerCase();
+    expect(instructions).toContain("products → purchase orders");
+    expect(instructions).toContain("never sent to shopify");
+  });
+
+  it("carries a general anti-fabrication rule against inventing feature/record locations", () => {
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain(
+      "Never invent where a feature or record lives, and never claim Calderyn data or actions live in Shopify"
+    );
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS.toLowerCase()).toContain(
+      "if you are not certain where something is in calderyn, say so plainly instead of guessing"
+    );
+  });
+
+  it("never tells the model purchase orders live in Shopify", () => {
+    const instructions = ASSISTANT_SYSTEM_INSTRUCTIONS.toLowerCase();
+    expect(instructions).not.toMatch(/shopify admin.*purchase order/);
+    expect(instructions).not.toContain("orders → purchase orders");
+  });
 });

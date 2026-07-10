@@ -22,6 +22,9 @@ export interface ActionReceipt {
   undoable: boolean;
   /** Extra structured fields echoed to the model (e.g. prior_price_cents). */
   detail?: Record<string, unknown>;
+  /** Optional deep link to a viewable artifact the action produced (e.g. a
+   *  generated PDF) so the receipt chip can offer "view it" alongside Undo. */
+  link?: { label: string; href: string };
 }
 
 export interface PendingActionCard {
