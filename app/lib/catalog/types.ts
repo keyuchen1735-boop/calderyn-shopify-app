@@ -30,6 +30,10 @@ export interface VariantInput {
 export interface ProductInput {
   title: string;
   status: ProductStatus;
+  /** URL handle. Present only when the merchant edited it (update path); create
+   *  keeps generating its own. Normalized by validateProductInput (trim/lowercase,
+   *  slug-checked). */
+  handle?: string;
   vendor?: string;
   category?: string;
   description?: string;
@@ -48,6 +52,7 @@ export interface ProductSummary {
 }
 export interface ProductDetail {
   id: string;
+  handle: string;
   title: string;
   status: ProductStatus;
   vendor: string | null;

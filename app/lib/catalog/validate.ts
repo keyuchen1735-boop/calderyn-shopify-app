@@ -11,6 +11,10 @@ const MAX_VARIANTS = 250;
 // retail_price_cents / unit_cost_cents / inventory_on_hand are Postgres int4;
 // values past this ceiling overflow the column and surface as an opaque 500.
 const INT4_MAX = 2147483647;
+// URL handle: lowercase slug segments joined by single hyphens (no leading/
+// trailing/double hyphen), max 80 chars. Matches what productHandle generates.
+const HANDLE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const HANDLE_MAX = 80;
 
 export function validateProductInput(
   raw: unknown,
@@ -20,6 +24,19 @@ export function validateProductInput(
 
   const title = typeof r.title === "string" ? r.title.trim() : "";
   if (!title) return { ok: false, code: "missing_title" };
+
+  // Handle is opt-in: absent/null = keep the stored one (create generates its
+  // own). When present it is a deliberate edit, so a malformed value is a 422 —
+  // never silently dropped like the free-text fields below.
+  let handle: string | undefined;
+  if (r.handle !== undefined && r.handle !== null) {
+    if (typeof r.handle !== "string") return { ok: false, code: "invalid_handle" };
+    handle = r.handle.trim().toLowerCase();
+    if (handle.length > HANDLE_MAX || !HANDLE_RE.test(handle)) {
+      return { ok: false, code: "invalid_handle" };
+    }
+  }
+
   const status = STATUSES.includes(r.status as ProductStatus) ? (r.status as ProductStatus) : null;
   if (!status) return { ok: false, code: "invalid_status" };
   if (!Array.isArray(r.variants) || r.variants.length === 0) return { ok: false, code: "no_variants" };
@@ -95,6 +112,7 @@ export function validateProductInput(
     value: {
       title,
       status,
+      handle,
       vendor: typeof r.vendor === "string" ? r.vendor : undefined,
       category: typeof r.category === "string" ? r.category : undefined,
       description: typeof r.description === "string" ? r.description : undefined,

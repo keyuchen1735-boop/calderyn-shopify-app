@@ -135,7 +135,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
   const sb = getSupabase();
   const { data: p, error } = await sb
     .from("product_dim")
-    .select("id, title, status, vendor, category, description, tags, updated_at")
+    .select("id, handle, title, status, vendor, category, description, tags, updated_at")
     .eq("shop_id", shopId)
     .eq("id", productId)
     .maybeSingle();
@@ -189,6 +189,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
 
   return {
     id: String(p.id),
+    handle: String(p.handle),
     title: String(p.title),
     status: p.status as ProductStatus,
     vendor: p.vendor ?? null,
@@ -408,6 +409,23 @@ export async function createProduct(shopId: string, input: ProductInput): Promis
 // projection). Media is managed separately (Task 5) so it survives an edit.
 export async function updateProduct(shopId: string, productId: string, input: ProductInput): Promise<void> {
   const sb = getSupabase();
+  // Handle edits need the CURRENT handle first: a change must leave a redirect
+  // row behind so the old storefront URL keeps working. Read it before the
+  // parent update (which overwrites it). Absent/unchanged handle = no-op.
+  let priorHandle: string | null = null;
+  if (input.handle) {
+    const { data: cur, error: curErr } = await sb
+      .from("product_dim")
+      .select("handle")
+      .eq("shop_id", shopId)
+      .eq("id", productId)
+      .maybeSingle();
+    if (curErr) throw curErr;
+    if (!cur) notFound();
+    priorHandle = String(cur.handle);
+  }
+  const handleChanged = Boolean(input.handle && priorHandle !== null && input.handle !== priorHandle);
+
   // Authoritative parent update: a Supabase update matching 0 rows returns no
   // error, so without checking the affected rows a caller could target another
   // shop's product id and still have all the child writes below (which are only
@@ -417,10 +435,43 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
     .update({
       title: input.title, status: input.status, vendor: input.vendor ?? null, category: input.category ?? null,
       description: input.description ?? null, tags: input.tags ?? [], updated_at: new Date().toISOString(),
+      ...(handleChanged ? { handle: input.handle } : {}),
     })
     .eq("shop_id", shopId).eq("id", productId).select("id");
-  if (error) throw error;
+  if (error) {
+    // unique(shop_id, handle): another product already owns the requested URL.
+    if (handleChanged && (error as { code?: string }).code === "23505") {
+      throw new CalderynError({
+        code: "handle_conflict",
+        status: 409,
+        message: "That URL is already used by another product.",
+      });
+    }
+    throw error;
+  }
   if (!updated?.length) notFound();
+
+  if (handleChanged && priorHandle && input.handle) {
+    // Old URL keeps working: point it at this product. Upsert — the same old
+    // handle may already redirect somewhere from an earlier rename cycle.
+    const { error: redirErr } = await sb
+      .from("product_handle_redirect")
+      .upsert(
+        { shop_id: shopId, old_handle: priorHandle, product_id: productId },
+        { onConflict: "shop_id,old_handle" },
+      );
+    if (redirErr) throw redirErr;
+    // The NEW handle is live again — a stale redirect row for it would shadow
+    // the real page (and could loop). Reclaim it.
+    const { error: reclaimErr } = await sb
+      .from("product_handle_redirect")
+      .delete()
+      .eq("shop_id", shopId)
+      .eq("old_handle", input.handle);
+    if (reclaimErr) throw reclaimErr;
+    // Redirect rows from OLDER renames that point at this product stay — every
+    // previously published URL keeps resolving.
+  }
 
   // Guard BEFORE any destructive child write: inventory_balance.variant_id (and
   // buyer holds) reference variant_dim ON DELETE CASCADE, so removing a variant

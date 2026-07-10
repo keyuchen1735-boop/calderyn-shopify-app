@@ -24,6 +24,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     return {
       product: {
         id: product.id,
+        handle: product.handle,
         title: product.title,
         status: product.status,
         vendor: product.vendor ?? undefined,
