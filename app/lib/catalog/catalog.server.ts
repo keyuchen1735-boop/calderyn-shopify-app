@@ -4,6 +4,7 @@ import { CalderynError } from "../calderyn.server";
 import { projectProductToSkuDim } from "./project-sku-dim.server";
 import { seedInitialStock } from "../inventory/engine.server";
 import { escapeLike } from "./inventory-list.server";
+import { applySeoOverrideInput } from "./product-seo.server";
 import { collectionHandle, productHandleBase } from "./handle";
 import { catalogSortToOrder, type CatalogSort } from "./catalog-sort";
 import type { ProductInput, ProductStatus, ProductSummary, ProductDetail, VariantInput } from "./types";
@@ -378,27 +379,40 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
 // route surfaces it (no projection runs on a failed write).
 export async function createProduct(shopId: string, input: ProductInput): Promise<{ id: string }> {
   const sb = getSupabase();
-  // Insert the product; retry with a fresh handle on the rare unique(shop_id,
-  // handle) collision (productHandle appends random bytes, so a clash is
-  // unlikely but possible). Throw on any other error or after 3 tries.
+  // Insert the product. An explicitly-supplied (validated) handle is honored as
+  // given — a unique(shop_id, handle) 23505 on it is a real conflict the caller
+  // chose, surfaced as 409 handle_conflict (no retry). A generated handle
+  // retries with fresh random bytes on the rare collision. Throw on any other
+  // error or after 3 tries.
   let productId = "";
   for (let attempt = 0; attempt < 3; attempt++) {
     const { data: prod, error: pErr } = await sb
       .from("product_dim")
       .insert({
-        shop_id: shopId, handle: productHandle(input.title), title: input.title, status: input.status,
+        shop_id: shopId, handle: input.handle ?? productHandle(input.title), title: input.title, status: input.status,
         vendor: input.vendor ?? null, category: input.category ?? null, description: input.description ?? null,
         tags: input.tags ?? [],
       })
       .select("id")
       .single();
     if (!pErr) { productId = String(prod.id); break; }
-    if ((pErr as { code?: string }).code !== "23505" || attempt === 2) throw pErr;
+    const duplicate = (pErr as { code?: string }).code === "23505";
+    if (duplicate && input.handle) {
+      throw new CalderynError({
+        code: "handle_conflict",
+        status: 409,
+        message: "That URL is already used by another product.",
+      });
+    }
+    if (!duplicate || attempt === 2) throw pErr;
   }
 
   const seeds = await writeProductChildren(shopId, productId, input);
   await projectProductToSkuDim(productId);
   await applyStockSeeds(shopId, seeds);
+  // Search-listing override travels with the product input so every caller
+  // (routes, assistant catalog actions) persists it — not just the editor route.
+  if (input.seo) await applySeoOverrideInput(shopId, productId, input.seo);
   return { id: productId };
 }
 
@@ -411,8 +425,8 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
   const sb = getSupabase();
   // Handle edits need the CURRENT handle first: a change must leave a redirect
   // row behind so the old storefront URL keeps working. Read it before the
-  // parent update (which overwrites it). Absent/unchanged handle = no-op.
-  let priorHandle: string | null = null;
+  // parent update (which overwrites it). Absent/unchanged handle = no rename.
+  let rename: { from: string; to: string } | null = null;
   if (input.handle) {
     const { data: cur, error: curErr } = await sb
       .from("product_dim")
@@ -422,62 +436,17 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       .maybeSingle();
     if (curErr) throw curErr;
     if (!cur) notFound();
-    priorHandle = String(cur.handle);
-  }
-  const handleChanged = Boolean(input.handle && priorHandle !== null && input.handle !== priorHandle);
-
-  // Authoritative parent update: a Supabase update matching 0 rows returns no
-  // error, so without checking the affected rows a caller could target another
-  // shop's product id and still have all the child writes below (which are only
-  // product_id-scoped) wipe + rewrite that product. Require a matched row first.
-  const { data: updated, error } = await sb
-    .from("product_dim")
-    .update({
-      title: input.title, status: input.status, vendor: input.vendor ?? null, category: input.category ?? null,
-      description: input.description ?? null, tags: input.tags ?? [], updated_at: new Date().toISOString(),
-      ...(handleChanged ? { handle: input.handle } : {}),
-    })
-    .eq("shop_id", shopId).eq("id", productId).select("id");
-  if (error) {
-    // unique(shop_id, handle): another product already owns the requested URL.
-    if (handleChanged && (error as { code?: string }).code === "23505") {
-      throw new CalderynError({
-        code: "handle_conflict",
-        status: 409,
-        message: "That URL is already used by another product.",
-      });
-    }
-    throw error;
-  }
-  if (!updated?.length) notFound();
-
-  if (handleChanged && priorHandle && input.handle) {
-    // Old URL keeps working: point it at this product. Upsert — the same old
-    // handle may already redirect somewhere from an earlier rename cycle.
-    const { error: redirErr } = await sb
-      .from("product_handle_redirect")
-      .upsert(
-        { shop_id: shopId, old_handle: priorHandle, product_id: productId },
-        { onConflict: "shop_id,old_handle" },
-      );
-    if (redirErr) throw redirErr;
-    // The NEW handle is live again — a stale redirect row for it would shadow
-    // the real page (and could loop). Reclaim it.
-    const { error: reclaimErr } = await sb
-      .from("product_handle_redirect")
-      .delete()
-      .eq("shop_id", shopId)
-      .eq("old_handle", input.handle);
-    if (reclaimErr) throw reclaimErr;
-    // Redirect rows from OLDER renames that point at this product stay — every
-    // previously published URL keeps resolving.
+    const from = String(cur.handle);
+    if (from !== input.handle) rename = { from, to: input.handle };
   }
 
-  // Guard BEFORE any destructive child write: inventory_balance.variant_id (and
-  // buyer holds) reference variant_dim ON DELETE CASCADE, so removing a variant
-  // that still has on-hand or reserved units would silently wipe live stock and
-  // orphan held reservations. Refuse the edit and tell the merchant to clear that
-  // stock first. Runs first so a block leaves options/collections/variants intact.
+  // EVERY guard that can reject the save runs BEFORE any write — otherwise a
+  // save that 409s below would already have renamed the public URL.
+  // Stock guard: inventory_balance.variant_id (and buyer holds) reference
+  // variant_dim ON DELETE CASCADE, so removing a variant that still has on-hand
+  // or reserved units would silently wipe live stock and orphan held
+  // reservations. Refuse the edit and tell the merchant to clear that stock
+  // first (a block leaves the whole product untouched).
   const keepIds = input.variants.map((v) => v.id).filter((id): id is string => Boolean(id));
   const removedSel = sb.from("variant_dim").select("id").eq("shop_id", shopId).eq("product_id", productId);
   const { data: removedRows, error: remErr } = keepIds.length ? await removedSel.notIn("id", keepIds) : await removedSel;
@@ -500,6 +469,77 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
         message: "Clear on-hand and reserved stock before removing a variant.",
       });
     }
+  }
+
+  if (rename) {
+    // Old URL keeps working: point it at this product BEFORE the handle flips.
+    // Ordered for retryability — if the sequence dies here or before the parent
+    // update lands, the live handle merely has a redirect row shadowing it,
+    // which is harmless (the PDP checks the live product first) and self-heals
+    // on a later rename; the reverse order could permanently lose the 301.
+    // Upsert — the same old handle may already redirect from an earlier cycle.
+    const { error: redirErr } = await sb
+      .from("product_handle_redirect")
+      .upsert(
+        { shop_id: shopId, old_handle: rename.from, product_id: productId },
+        { onConflict: "shop_id,old_handle" },
+      );
+    if (redirErr) throw redirErr;
+  }
+
+  // Authoritative parent update: a Supabase update matching 0 rows returns no
+  // error, so without checking the affected rows a caller could target another
+  // shop's product id and still have all the child writes below (which are only
+  // product_id-scoped) wipe + rewrite that product. Require a matched row.
+  // On a rename the update is additionally conditional on the handle we read
+  // (compare-and-set): if another session renamed concurrently, 0 rows match
+  // and we refuse instead of silently overwriting their rename.
+  const parentUpdate = sb
+    .from("product_dim")
+    .update({
+      title: input.title, status: input.status, vendor: input.vendor ?? null, category: input.category ?? null,
+      description: input.description ?? null, tags: input.tags ?? [], updated_at: new Date().toISOString(),
+      ...(rename ? { handle: rename.to } : {}),
+    })
+    .eq("shop_id", shopId).eq("id", productId);
+  const { data: updated, error } = rename
+    ? await parentUpdate.eq("handle", rename.from).select("id")
+    : await parentUpdate.select("id");
+  if (error) {
+    // unique(shop_id, handle): another product already owns the requested URL.
+    if (rename && (error as { code?: string }).code === "23505") {
+      throw new CalderynError({
+        code: "handle_conflict",
+        status: 409,
+        message: "That URL is already used by another product.",
+      });
+    }
+    throw error;
+  }
+  if (!updated?.length) {
+    // Renaming: the product existed moments ago (read above), so an unmatched
+    // compare-and-set means a concurrent rename won — a conflict, not a 404.
+    if (rename) {
+      throw new CalderynError({
+        code: "editing_conflict",
+        status: 409,
+        message: "This product's address was just changed in another session. Reload and try again.",
+      });
+    }
+    notFound();
+  }
+
+  if (rename) {
+    // The NEW handle is live again — a stale redirect row for it would shadow
+    // the real page (and could loop). Reclaim it. Redirect rows from OLDER
+    // renames that point at this product stay — every previously published URL
+    // keeps resolving.
+    const { error: reclaimErr } = await sb
+      .from("product_handle_redirect")
+      .delete()
+      .eq("shop_id", shopId)
+      .eq("old_handle", rename.to);
+    if (reclaimErr) throw reclaimErr;
   }
 
   // Options/values + collections: safe to wipe + rewrite (no external refs).
@@ -579,6 +619,9 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
 
   await projectProductToSkuDim(productId);
   await applyStockSeeds(shopId, seeds);
+  // Search-listing override travels with the product input so every caller
+  // (routes, assistant catalog actions) persists it — not just the editor route.
+  if (input.seo) await applySeoOverrideInput(shopId, productId, input.seo);
 }
 
 export async function setProductStatus(shopId: string, productId: string, status: ProductStatus): Promise<void> {
