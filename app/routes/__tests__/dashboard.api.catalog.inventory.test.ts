@@ -17,21 +17,27 @@ const setReorderPoint = vi.fn().mockResolvedValue(undefined);
 const getVariantBalances = vi.fn().mockResolvedValue([{ locationId: "l1", onHand: 5 }]);
 vi.mock("~/lib/inventory/engine.server", () => ({ adjustStock, markUnavailable, createTransfer, receiveTransfer, setReorderPoint, getVariantBalances }));
 
-// Chainable supabase builder for the transfer loader (lists in-transit transfers).
+// Chainable supabase builder for the transfer loader (lists in-transit
+// transfers) and the active-location gate on mutations.
 function builder(result: { data: unknown; error: unknown }) {
   const b: Record<string, unknown> = {
-    select: () => b, eq: () => b, order: () => b, in: () => b,
+    select: () => b, eq: () => b, order: () => b, in: () => b, limit: () => b,
     then: (resolve: (v: unknown) => unknown) => Promise.resolve(result).then(resolve),
   };
   return b;
 }
 const transfersResult = { data: [{ id: "t1", variant_id: "v1", qty: 2, from_location_id: "a", to_location_id: "b", created_at: "now" }], error: null };
-const locsResult = { data: [{ id: "a", name: "A" }, { id: "b", name: "B" }], error: null };
+// Mutable so a test can shrink the active-location result (the mock ignores
+// filters); beforeEach restores both endpoints as active.
+const locsResult: { data: unknown; error: unknown } = { data: [], error: null };
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({ from: (t: string) => (t === "inventory_transfer" ? builder(transfersResult) : builder(locsResult)) }),
 }));
 
-beforeEach(() => { adjustStock.mockClear(); markUnavailable.mockReset().mockResolvedValue(undefined); createTransfer.mockClear(); getVariantBalances.mockClear(); });
+beforeEach(() => {
+  adjustStock.mockClear(); markUnavailable.mockReset().mockResolvedValue(undefined); createTransfer.mockClear(); getVariantBalances.mockClear();
+  locsResult.data = [{ id: "a", name: "A" }, { id: "b", name: "B" }, { id: "l1", name: "L1" }];
+});
 
 const putReq = (body: unknown) => new Request("https://app.x/x", { method: "PUT", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
 const postReq = (body: unknown) => new Request("https://app.x/x", { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
@@ -59,6 +65,15 @@ describe("inventory variant route", () => {
     expect((await res.json()).error).toBe("insufficient_available");
   });
 
+  it("PUT rejects a mutation at a deactivated location with location_inactive", async () => {
+    locsResult.data = []; // the active-filtered lookup finds no row
+    const { action } = await import("../dashboard.api.catalog.inventory.$variantId");
+    const res = (await action({ request: putReq({ intent: "set_on_hand", locationId: "l1", onHand: 12 }), params: { variantId: "v1" } } as never)) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("location_inactive");
+    expect(adjustStock).not.toHaveBeenCalled();
+  });
+
   it("PUT rejects an unknown intent", async () => {
     const { action } = await import("../dashboard.api.catalog.inventory.$variantId");
     const res = (await action({ request: putReq({ intent: "nope", locationId: "l1" }), params: { variantId: "v1" } } as never)) as Response;
@@ -78,6 +93,15 @@ describe("inventory transfer route", () => {
     expect(receiveTransfer).toHaveBeenCalledWith("shop1", "t9");
   });
 
+  it("POST rejects a transfer touching a deactivated endpoint with location_inactive", async () => {
+    locsResult.data = [{ id: "a", name: "A" }]; // only the source is still active
+    const { action } = await import("../dashboard.api.catalog.inventory.transfer");
+    const res = (await action({ request: postReq({ variantId: "v1", fromLocationId: "a", toLocationId: "b", qty: 2 }) } as never)) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("location_inactive");
+    expect(createTransfer).not.toHaveBeenCalled();
+  });
+
   it("POST rejects a same-location transfer", async () => {
     const { action } = await import("../dashboard.api.catalog.inventory.transfer");
     const res = (await action({ request: postReq({ variantId: "v1", fromLocationId: "a", toLocationId: "a", qty: 2 }) } as never)) as Response;
@@ -91,7 +115,9 @@ describe("inventory transfer route", () => {
     expect((await res.json()).transfers).toEqual([
       // sku/variantTitle come from a variant_dim lookup; the mock has no row for
       // v1, so both resolve null (the DTO's honest missing-label state).
-      { id: "t1", variantId: "v1", qty: 2, fromName: "A", toName: "B", createdAt: "now", sku: null, variantTitle: null },
+      // receivedAt is null for the default in-transit view (only the received
+      // history view carries a timestamp).
+      { id: "t1", variantId: "v1", qty: 2, fromName: "A", toName: "B", createdAt: "now", sku: null, variantTitle: null, receivedAt: null },
     ]);
   });
 });

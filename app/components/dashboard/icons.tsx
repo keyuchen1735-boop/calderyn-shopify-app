@@ -70,6 +70,7 @@ import {
   Sun,
   Tag,
   Target,
+  Trash2,
   TrendingDown,
   TrendingUp,
   TriangleAlert,
@@ -172,6 +173,8 @@ export const CD_ICONS: Record<string, LucideIcon> = {
   printer: Printer,
   arrowDown: ArrowDown,
   mail: Mail,
+  edit: Pencil,
+  trash: Trash2,
 };
 
 export function CDIcon({

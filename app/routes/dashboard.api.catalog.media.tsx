@@ -1,7 +1,15 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
-import { uploadProductMedia, deleteProductMedia, ALLOWED_MEDIA_TYPES, MAX_MEDIA_BYTES } from "~/lib/catalog/media.server";
+import {
+  uploadProductMedia,
+  deleteProductMedia,
+  setPrimaryMedia,
+  setMediaAlt,
+  moveMedia,
+  ALLOWED_MEDIA_TYPES,
+  MAX_MEDIA_BYTES,
+} from "~/lib/catalog/media.server";
 import { signMediaPath } from "~/lib/catalog/sign-media.server";
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -14,6 +22,30 @@ export async function action({ request }: ActionFunctionArgs) {
     const mediaId = typeof body.mediaId === "string" ? body.mediaId : "";
     if (!mediaId) return jsonError(422, "missing_media_id");
     return dashboardJson(async () => { await deleteProductMedia(session.shopId, mediaId); return { ok: true }; });
+  }
+
+  // Media management intents (primary / alt / order) share one JSON PUT so the
+  // client keeps a single media endpoint; the upload stays multipart POST below.
+  if (request.method === "PUT") {
+    let body: Record<string, unknown>;
+    try { body = (await request.json()) as Record<string, unknown>; } catch { return jsonError(422, "invalid_json"); }
+    const mediaId = typeof body.mediaId === "string" ? body.mediaId : "";
+    if (!mediaId) return jsonError(422, "missing_media_id");
+    const intent = typeof body.intent === "string" ? body.intent : "";
+    if (intent === "set_primary") {
+      return dashboardJson(async () => { await setPrimaryMedia(session.shopId, mediaId); return { ok: true }; });
+    }
+    if (intent === "set_alt") {
+      if (body.alt != null && typeof body.alt !== "string") return jsonError(422, "invalid_alt");
+      const alt = typeof body.alt === "string" ? body.alt : null;
+      return dashboardJson(async () => { await setMediaAlt(session.shopId, mediaId, alt); return { ok: true }; });
+    }
+    if (intent === "move") {
+      if (body.dir !== "up" && body.dir !== "down") return jsonError(422, "invalid_dir");
+      const dir = body.dir;
+      return dashboardJson(async () => { await moveMedia(session.shopId, mediaId, dir); return { ok: true }; });
+    }
+    return jsonError(422, "unknown_intent");
   }
 
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");

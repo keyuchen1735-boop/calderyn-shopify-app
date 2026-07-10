@@ -388,35 +388,41 @@ export function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
-/** Run a bulk-action sender over `orderIds` in <=BULK_CHUNK_SIZE slices, SEQUENTIALLY (each slice
+/** Run a bulk-action sender over `ids` in <=BULK_CHUNK_SIZE slices, SEQUENTIALLY (each slice
  *  awaited before the next is sent), concatenating every slice's `results` into one flat array so
- *  callers see the same shape they would from a single request.
+ *  callers see the same shape they would from a single request. Generic over the per-item result
+ *  shape (`toFailure` builds one from an id + message) so the products bulk client shares it —
+ *  both bulk surfaces cap a request at 25 ids server-side.
  *
- *  A single request's per-order failures are already captured inside its `results` (that's
+ *  A single request's per-item failures are already captured inside its `results` (that's
  *  runBulkOrderAction's whole design, server-side) and never throw. But now that one logical bulk
  *  action can span 2-3 HTTP requests, a WHOLE chunk can still reject outright (network blip,
  *  expired session, a 5xx) after one or more earlier chunks already succeeded. Losing those
  *  already-applied results by letting the rejection propagate would both discard real work from
  *  the caller's summary AND skip its post-action refetch, leaving the screen showing stale data
- *  for orders that in fact changed. So a chunk-level rejection is caught here and downgraded to
- *  per-order `ok:false` entries for just that slice — the same "partial failure is normal, never
+ *  for items that in fact changed. So a chunk-level rejection is caught here and downgraded to
+ *  per-item `ok:false` entries for just that slice — the same "partial failure is normal, never
  *  a whole-request throw" contract runBulkOrderAction already guarantees within one request. */
-async function runBulkInChunks(
-  orderIds: string[],
-  send: (slice: string[]) => Promise<{ results: BulkResultVM[] }>,
-): Promise<{ results: BulkResultVM[] }> {
-  const results: BulkResultVM[] = [];
-  for (const slice of chunk(orderIds, BULK_CHUNK_SIZE)) {
+export async function runBulkInChunks<R>(
+  ids: string[],
+  send: (slice: string[]) => Promise<{ results: R[] }>,
+  toFailure: (id: string, message: string) => R,
+): Promise<{ results: R[] }> {
+  const results: R[] = [];
+  for (const slice of chunk(ids, BULK_CHUNK_SIZE)) {
     try {
       const { results: sliceResults } = await send(slice);
       results.push(...sliceResults);
     } catch (err) {
       const message = err instanceof DashboardApiError ? err.message : "Something went wrong.";
-      for (const orderId of slice) results.push({ orderId, ok: false, error: message });
+      for (const id of slice) results.push(toFailure(id, message));
     }
   }
   return { results };
 }
+
+/** How an order lands in the flat results when its whole chunk rejected. */
+const orderFailure = (orderId: string, error: string): BulkResultVM => ({ orderId, ok: false, error });
 
 /** Fulfill every selected order in full (no per-order lines/tracking/carrier — that stays a
  *  single-order-only refinement). Native orders only; imported (shopify:) ids 422 the whole
@@ -434,7 +440,7 @@ export async function bulkFulfillOrders(
       idempotency_key: idempotencyKey,
     });
     return { results: mapBulkResults(data.results) };
-  });
+  }, orderFailure);
 }
 
 /** Archive or unarchive every selected order. Native orders only. */
@@ -448,7 +454,7 @@ export async function bulkArchiveOrders(
       archived,
     });
     return { results: mapBulkResults(data.results) };
-  });
+  }, orderFailure);
 }
 
 /** Add tags to every selected order WITHOUT removing any tag already there (additive, never the
@@ -463,7 +469,7 @@ export async function bulkAddOrderTags(
       add_tags: addTags,
     });
     return { results: mapBulkResults(data.results) };
-  });
+  }, orderFailure);
 }
 
 // --- merchant drafts + send-invoice (Phase 3 Task 2) -------------------------

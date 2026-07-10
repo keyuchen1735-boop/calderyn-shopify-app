@@ -240,6 +240,58 @@ export function Toggle({
   );
 }
 
+/** Toolbar search box with an inline clear button once it has text. Shared by
+ *  the list screens (Catalog, Inventory, Collections detail) so the markup and
+ *  the clear affordance never drift between them. */
+export function ClearableSearchInput({
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+  ariaLabel: string;
+}) {
+  return (
+    <div style={{ position: "relative", flex: "1 1 220px", minWidth: 220 }}>
+      <input
+        className="cd-input"
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ width: "100%", paddingRight: value ? 30 : undefined }}
+      />
+      {value && (
+        <button
+          type="button"
+          aria-label="Clear search"
+          onClick={() => onChange("")}
+          style={{
+            position: "absolute",
+            right: 6,
+            top: "50%",
+            transform: "translateY(-50%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 22,
+            height: 22,
+            background: "none",
+            border: 0,
+            color: "inherit",
+            cursor: "pointer",
+          }}
+        >
+          <CDIcon name="x" size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 type SegOption = string | { value: string; label: ReactNode };
 
 export function Segmented({

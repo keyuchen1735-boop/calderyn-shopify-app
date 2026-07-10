@@ -29,6 +29,39 @@ describe("active variant pricing", () => {
   });
 });
 
+describe("compare-at pricing", () => {
+  it("accepts an absent compare-at (undefined round-trips)", () => {
+    const r = validateProductInput(digital({ retailPriceCents: 2000 }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.variants[0].compareAtPriceCents).toBeUndefined();
+  });
+  it("accepts a compare-at of 0", () => {
+    const r = validateProductInput(digital({ retailPriceCents: 2000, compareAtPriceCents: 0 }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.variants[0].compareAtPriceCents).toBe(0);
+  });
+  it("accepts a positive compare-at", () => {
+    const r = validateProductInput(digital({ retailPriceCents: 2000, compareAtPriceCents: 2500 }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.variants[0].compareAtPriceCents).toBe(2500);
+  });
+  it("rejects a negative compare-at", () => {
+    const r = validateProductInput(digital({ retailPriceCents: 2000, compareAtPriceCents: -1 }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("negative_compare_at");
+  });
+  it("rejects a compare-at beyond int4 max", () => {
+    const r = validateProductInput(digital({ retailPriceCents: 2000, compareAtPriceCents: 2500000000 }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("value_too_large");
+  });
+  it("drops a non-finite compare-at instead of persisting garbage", () => {
+    const r = validateProductInput(digital({ retailPriceCents: 2000, compareAtPriceCents: "sale" }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.variants[0].compareAtPriceCents).toBeUndefined();
+  });
+});
+
 describe("int4 overflow guard", () => {
   it("rejects a retail price beyond int4 max", () => {
     const r = validateProductInput(digital({ retailPriceCents: 2500000000 }));

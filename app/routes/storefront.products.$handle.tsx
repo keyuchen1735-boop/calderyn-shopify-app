@@ -189,7 +189,13 @@ export default function StorefrontProduct() {
         <ul className="cd-pdp__variants">
           {product.variants.map((v) => (
             <li key={v.id}>
-              {v.title} — {formatMoney(v.priceCents, v.currency)}
+              {v.title} —{" "}
+              {v.compareAtPriceCents != null && v.compareAtPriceCents > v.priceCents ? (
+                <>
+                  <s>{formatMoney(v.compareAtPriceCents, v.currency)}</s>{" "}
+                </>
+              ) : null}
+              {formatMoney(v.priceCents, v.currency)}
               {v.available ? "" : " (sold out)"}
             </li>
           ))}

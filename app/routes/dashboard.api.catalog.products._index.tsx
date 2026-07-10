@@ -4,17 +4,20 @@ import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/htt
 import { listProducts, createProduct } from "~/lib/catalog/catalog.server";
 import { signMediaPaths } from "~/lib/catalog/sign-media.server";
 import { validateProductInput } from "~/lib/catalog/validate";
+import { isCatalogSort } from "~/lib/catalog/catalog-sort";
 import type { ProductStatus } from "~/lib/catalog/types";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const url = new URL(request.url);
   const status = url.searchParams.get("status");
+  const sort = url.searchParams.get("sort") ?? "";
   return dashboardJson(async () => {
     const { products, total } = await listProducts(session.shopId, {
       search: url.searchParams.get("search") ?? undefined,
       status: (["draft", "active", "archived"] as ProductStatus[]).includes(status as ProductStatus) ? (status as ProductStatus) : undefined,
       offset: Number(url.searchParams.get("offset") ?? 0) || 0,
+      sort: isCatalogSort(sort) ? sort : undefined,
     });
     // Private bucket -> mint a signed URL for each product's primary image.
     const signed = await signMediaPaths(

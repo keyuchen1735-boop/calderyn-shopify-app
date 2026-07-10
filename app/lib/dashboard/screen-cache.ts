@@ -83,8 +83,13 @@ export const SCREEN_CACHE_KEYS = {
   discover: "discover",
   search: "search",
   transfers: "transfers",
-  inventorySkus: "inventory-skus",
+  // The shop-wide inventory list (balance rollups + restock presence), default
+  // view only (no search, stock "all") — filtered views are live fetches.
+  inventoryList: "inventory-list",
   locations: "locations",
+  // Purchase-order drafts (audit-backed list), default offset-0 load only —
+  // paged-in rows are never written back.
+  purchaseOrders: "purchase-orders",
   shipCost: "settings-ship-cost",
   unmatchedShip: "settings-unmatched-ship",
   learnedRules: "settings-learned-rules",

@@ -3,7 +3,9 @@ import { getSupabase } from "../supabase.server";
 import { CalderynError } from "../calderyn.server";
 import { projectProductToSkuDim } from "./project-sku-dim.server";
 import { seedInitialStock } from "../inventory/engine.server";
+import { escapeLike } from "./inventory-list.server";
 import { collectionHandle, productHandleBase } from "./handle";
+import { catalogSortToOrder, type CatalogSort } from "./catalog-sort";
 import type { ProductInput, ProductStatus, ProductSummary, ProductDetail, VariantInput } from "./types";
 
 type Supa = ReturnType<typeof getSupabase>;
@@ -28,7 +30,7 @@ export interface ProductListItem extends ProductSummary {
 
 export async function listProducts(
   shopId: string,
-  opts: { search?: string; status?: ProductStatus; limit?: number; offset?: number } = {},
+  opts: { search?: string; status?: ProductStatus; limit?: number; offset?: number; sort?: CatalogSort } = {},
 ): Promise<{ products: ProductListItem[]; total: number }> {
   const sb = getSupabase();
   const limit = Math.min(opts.limit ?? 50, 100);
@@ -41,11 +43,12 @@ export async function listProducts(
     .select("id, title, status, updated_at", { count: "exact" })
     .eq("shop_id", shopId);
   if (opts.status) q = q.eq("status", opts.status);
-  if (opts.search) q = q.ilike("title", `%${opts.search}%`);
-  // Stable tiebreaker after updated_at so offset paging can't skip/duplicate rows
-  // that share an updated_at (seeded/imported in the same write).
+  if (opts.search) q = q.ilike("title", `%${escapeLike(opts.search)}%`);
+  // Stable tiebreaker after the sort column so offset paging can't skip/duplicate
+  // rows that share a value (seeded/imported in the same write).
+  const order = catalogSortToOrder(opts.sort ?? "updated");
   const { data: rows, count, error } = await q
-    .order("updated_at", { ascending: false })
+    .order(order.column, { ascending: order.ascending })
     .order("id", { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) throw error;
@@ -141,7 +144,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
 
   const [{ data: options }, { data: variants }, { data: vov }, { data: media }, { data: pc }] = await Promise.all([
     sb.from("product_option").select("id, name, position, product_option_value(id, value, position)").eq("product_id", productId).order("position"),
-    sb.from("variant_dim").select("id, sku, title, retail_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position").eq("product_id", productId).order("position"),
+    sb.from("variant_dim").select("id, sku, title, retail_price_cents, compare_at_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position").eq("product_id", productId).order("position"),
     sb.from("variant_option_value").select("variant_id, option_value_id"),
     // Bucket-backed media only (see getCatalogProducts): a promoted mirror image
     // has an external_url + no storage_path and is served by the storefront reader.
@@ -207,6 +210,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
         sku: (v.sku as string | null) ?? null,
         title: String(v.title),
         retailPriceCents: (v.retail_price_cents as number | null) ?? null,
+        compareAtPriceCents: (v.compare_at_price_cents as number | null) ?? null,
         unitCostCents: (v.unit_cost_cents as number | null) ?? null,
         inventoryTracked: (v.inventory_tracked as boolean | null) ?? null,
         inventoryOnHand: Number(v.inventory_on_hand ?? 0),
@@ -325,7 +329,8 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
       .from("variant_dim")
       .insert({
         shop_id: shopId, product_id: productId, sku: v.sku ?? null, title: v.title ?? "Default",
-        retail_price_cents: v.retailPriceCents ?? null, unit_cost_cents: v.unitCostCents ?? null,
+        retail_price_cents: v.retailPriceCents ?? null, compare_at_price_cents: v.compareAtPriceCents ?? null,
+        unit_cost_cents: v.unitCostCents ?? null,
         inventory_policy: v.inventoryPolicy ?? null, inventory_tracked: trackedForNewVariant(v),
         inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
       })
@@ -465,7 +470,7 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
     // the stored value on update; a brand-new variant defaults to null.
     const fields = {
       sku: v.sku ?? null, title: v.title ?? "Default", retail_price_cents: v.retailPriceCents ?? null,
-      unit_cost_cents: v.unitCostCents ?? null,
+      compare_at_price_cents: v.compareAtPriceCents ?? null, unit_cost_cents: v.unitCostCents ?? null,
       inventory_tracked: v.inventoryTracked ?? null, inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
     };
     let variantId = v.id ?? null;
@@ -533,10 +538,173 @@ export async function setProductStatus(shopId: string, productId: string, status
   await projectProductToSkuDim(productId);
 }
 
-export async function listCollections(shopId: string): Promise<Array<{ id: string; title: string; handle: string }>> {
-  const { data, error } = await getSupabase().from("collection_dim").select("id, title, handle").eq("shop_id", shopId).order("title");
+export async function listCollections(
+  shopId: string,
+): Promise<Array<{ id: string; title: string; handle: string; productCount: number }>> {
+  const sb = getSupabase();
+  const { data, error } = await sb.from("collection_dim").select("id, title, handle").eq("shop_id", shopId).order("title");
   if (error) throw error;
-  return (data ?? []).map((c: Record<string, unknown>) => ({ id: String(c.id), title: String(c.title), handle: String(c.handle) }));
+  const rows = (data ?? []).map((c: Record<string, unknown>) => ({ id: String(c.id), title: String(c.title), handle: String(c.handle) }));
+
+  // Membership counts folded from a paged select over this page's collection
+  // ids — never a per-collection query (N+1 on every Collections paint).
+  // Paged because PostgREST clamps every response at 1000 rows: a single
+  // select would silently truncate past that and undercount.
+  const countById = new Map<string, number>();
+  if (rows.length) {
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data: memberships, error: mErr } = await sb
+        .from("product_collection")
+        .select("collection_id")
+        .in("collection_id", rows.map((r) => r.id))
+        .order("collection_id")
+        .order("product_id")
+        .range(from, from + PAGE - 1);
+      if (mErr) throw mErr;
+      const page = (memberships ?? []) as Array<{ collection_id: string }>;
+      for (const m of page) {
+        const k = String(m.collection_id);
+        countById.set(k, (countById.get(k) ?? 0) + 1);
+      }
+      if (page.length < PAGE) break;
+    }
+  }
+  return rows.map((r) => ({ ...r, productCount: countById.get(r.id) ?? 0 }));
+}
+
+// Shop-scoped existence check shared by every membership/rename/delete path:
+// a foreign or missing collection id is a clean 404, never a cross-tenant write.
+async function requireOwnedCollection(sb: Supa, shopId: string, collectionId: string): Promise<void> {
+  const { data, error } = await sb
+    .from("collection_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("id", collectionId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new CalderynError({ code: "collection_not_found", status: 404, message: "collection not found" });
+}
+
+/** Rename only — the handle stays unchanged so storefront links keep working. */
+export async function updateCollection(shopId: string, collectionId: string, title: string): Promise<void> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("collection_dim")
+    .update({ title: title.trim() })
+    .eq("shop_id", shopId)
+    .eq("id", collectionId)
+    .select("id");
+  if (error) throw error;
+  if (!data?.length) throw new CalderynError({ code: "collection_not_found", status: 404, message: "collection not found" });
+}
+
+/** Delete a collection: memberships first (no FK orphans), then the row itself.
+ *  Products are untouched — they simply leave the collection. */
+export async function deleteCollection(shopId: string, collectionId: string): Promise<void> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  const { error: mErr } = await sb.from("product_collection").delete().eq("collection_id", collectionId);
+  if (mErr) throw mErr;
+  const { error } = await sb.from("collection_dim").delete().eq("shop_id", shopId).eq("id", collectionId);
+  if (error) throw error;
+}
+
+/** Members of a collection, with the storage path of each product's primary
+ *  image so the route can batch-sign thumbnails (mirrors listProducts). */
+export async function listCollectionProducts(
+  shopId: string,
+  collectionId: string,
+): Promise<Array<{ id: string; title: string; status: ProductStatus; primaryImagePath: string | null }>> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  // Paged: PostgREST clamps every response at 1000 rows, so a single select
+  // would silently drop members of a >1000-product collection.
+  const memberIds: string[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data: memberships, error: mErr } = await sb
+      .from("product_collection")
+      .select("product_id")
+      .eq("collection_id", collectionId)
+      .order("product_id")
+      .range(from, from + PAGE - 1);
+    if (mErr) throw mErr;
+    const page = (memberships ?? []) as Array<{ product_id: string }>;
+    for (const m of page) memberIds.push(String(m.product_id));
+    if (page.length < PAGE) break;
+  }
+  if (!memberIds.length) return [];
+
+  const { data: products, error: pErr } = await sb
+    .from("product_dim")
+    .select("id, title, status")
+    .eq("shop_id", shopId)
+    .in("id", memberIds)
+    .order("title");
+  if (pErr) throw pErr;
+  const ids = (products ?? []).map((p: { id: string }) => String(p.id));
+
+  // Bucket-backed primaries only, same rule as listProducts: a promoted mirror
+  // image carries an external_url and no storage_path.
+  const mediaByProduct = new Map<string, string>();
+  if (ids.length) {
+    const { data: media, error: medErr } = await sb
+      .from("product_media")
+      .select("product_id, storage_path")
+      .in("product_id", ids)
+      .eq("is_primary", true)
+      .not("storage_path", "is", null);
+    if (medErr) throw medErr;
+    for (const m of media ?? []) mediaByProduct.set(String(m.product_id), String(m.storage_path));
+  }
+
+  return (products ?? []).map((p: Record<string, unknown>) => ({
+    id: String(p.id),
+    title: String(p.title),
+    status: p.status as ProductStatus,
+    primaryImagePath: mediaByProduct.get(String(p.id)) ?? null,
+  }));
+}
+
+// Both membership writes verify ownership on BOTH sides — collection and
+// product — before touching product_collection, so a guessed foreign id can
+// neither attach to nor detach from another shop's data.
+async function requireOwnedProduct(sb: Supa, shopId: string, productId: string): Promise<void> {
+  const { data, error } = await sb
+    .from("product_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("id", productId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new CalderynError({ code: "product_not_found", status: 404, message: "product not found" });
+}
+
+export async function addProductToCollection(shopId: string, collectionId: string, productId: string): Promise<void> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  await requireOwnedProduct(sb, shopId, productId);
+  // Re-adding an existing member is a clean no-op, not a PK 500.
+  const { error } = await sb
+    .from("product_collection")
+    .upsert(
+      { product_id: productId, collection_id: collectionId },
+      { onConflict: "product_id,collection_id", ignoreDuplicates: true },
+    );
+  if (error) throw error;
+}
+
+export async function removeProductFromCollection(shopId: string, collectionId: string, productId: string): Promise<void> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  await requireOwnedProduct(sb, shopId, productId);
+  const { error } = await sb
+    .from("product_collection")
+    .delete()
+    .eq("collection_id", collectionId)
+    .eq("product_id", productId);
+  if (error) throw error;
 }
 
 export async function createCollection(shopId: string, title: string): Promise<{ id: string }> {

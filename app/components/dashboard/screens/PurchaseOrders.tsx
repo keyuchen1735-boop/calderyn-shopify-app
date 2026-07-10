@@ -1,13 +1,18 @@
-import { Btn, Card, Pill, Placeholder } from "../ui";
-import { timeAgo } from "../format";
+import { useEffect, useState } from "react";
+import { Btn, Card, Pill, Placeholder, TableSkeleton } from "../ui";
+import { money, timeAgo } from "../format";
+import {
+  DashboardApiError,
+  fetchPurchaseOrders,
+  type PurchaseOrderVM,
+} from "~/lib/dashboard/client";
+import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
-import type { AuditVM } from "../view-models";
 
 // Purchase orders are audit rows: create_po_draft snapshots the PO into the
-// action_audit row, so the list is a filtered view over app.audit — no extra
-// fetch. The row carries only what the audit trail knows (target, detail,
-// outcome, timestamps); supplier/ETA/status fields don't exist, so they are
-// not shown.
+// action_audit row's params, so this list is a dedicated paginated read over
+// that trail. The snapshot carries the PO number, lines, and total; supplier /
+// ETA / status fields don't exist, so they are not shown.
 
 const GRID = "1fr 1.6fr 1fr 1.2fr";
 
@@ -21,29 +26,45 @@ function OutcomeBadge({ outcome }: { outcome: string }) {
   return <Pill>{outcome}</Pill>;
 }
 
-function PoRow({ entry }: { entry: AuditVM }) {
-  // The PDF route (dashboard/api/audit/:id/po.pdf) 404s unless the row's
-  // params carry the PO snapshot — a failed draft has none, so no button.
-  const hasPdf = entry.outcome !== "failed";
+/** Error captions come from upstream executors and can run long; keep the row
+ *  scannable by capping at 80 chars. */
+function trimError(message: string): string {
+  const t = message.trim();
+  return t.length > 80 ? `${t.slice(0, 79)}…` : t;
+}
+
+function PoRow({ row }: { row: PurchaseOrderVM }) {
   return (
     <div className="cd-trow" style={{ gridTemplateColumns: GRID }}>
       <div className="cd-row-title tabular-nums truncate">
-        {entry.id.slice(0, 8).toUpperCase()}
+        {row.poNumber ?? row.id.slice(0, 8).toUpperCase()}
       </div>
       <div className="min-w-0">
-        <div className="cd-row-title truncate">{entry.target || "—"}</div>
-        {entry.detail && <div className="cd-caption truncate">{entry.detail}</div>}
+        <div className="cd-row-title truncate">{row.sku ?? "—"}</div>
+        {row.lineCount > 0 && (
+          <div className="cd-caption truncate">
+            {row.lineCount} line{row.lineCount === 1 ? "" : "s"}
+            {row.totalCents != null ? ` · ${money(row.totalCents)}` : ""}
+          </div>
+        )}
+        {row.outcome === "failed" && row.lastError && (
+          <div className="cd-caption truncate" style={{ color: "var(--orange)" }}>
+            {trimError(row.lastError)}
+          </div>
+        )}
       </div>
-      <div className="cd-caption">{timeAgo(entry.created_at)}</div>
+      <div className="cd-caption">{timeAgo(row.createdAt)}</div>
       <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-        <OutcomeBadge outcome={entry.outcome} />
-        {hasPdf && (
+        <OutcomeBadge outcome={row.outcome} />
+        {/* The PDF route 404s unless the row's params carry the PO snapshot —
+            hasPdf is that exact predicate, so the button never dead-ends. */}
+        {row.hasPdf && (
           <Btn
             small
             icon="download"
             onClick={() =>
               window.open(
-                `/dashboard/api/audit/${encodeURIComponent(entry.id)}/po.pdf`,
+                `/dashboard/api/audit/${encodeURIComponent(row.id)}/po.pdf`,
                 "_blank",
                 "noopener",
               )
@@ -57,9 +78,64 @@ function PoRow({ entry }: { entry: AuditVM }) {
   );
 }
 
+type PoPage = { rows: PurchaseOrderVM[]; total: number };
+
 export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
-  const pos = app.audit.filter((e) => e.action_kind === "create_po_draft");
-  const loading = app.loading && app.audit.length === 0;
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount fetch below revalidates and writes back through. Only the default
+  // offset-0 load touches the cache — paged-in rows stay local.
+  const seeded = cachedScreenData<PoPage>(SCREEN_CACHE_KEYS.purchaseOrders);
+  const [rows, setRows] = useState<PurchaseOrderVM[]>(() => seeded?.rows ?? []);
+  const [total, setTotal] = useState(() => seeded?.total ?? 0);
+  const [loading, setLoading] = useState(() => !seeded);
+  const [error, setError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const toast = app.toast;
+
+  useEffect(() => {
+    let alive = true;
+    fetchPurchaseOrders({})
+      .then((r) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.purchaseOrders, r);
+        if (!alive) return;
+        setRows(r.rows);
+        setTotal(r.total);
+      })
+      .catch((err: unknown) => {
+        if (!alive) return;
+        setError(
+          err instanceof DashboardApiError ? err.message : "Couldn't load purchase orders.",
+        );
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const r = await fetchPurchaseOrders({ offset: rows.length });
+      // De-dupe by id: a draft created between pages shifts the window, so a
+      // paged-in row may already be shown (avoids duplicate keys).
+      setRows((cur) => {
+        const seen = new Set(cur.map((p) => p.id));
+        return [...cur, ...r.rows.filter((p) => !seen.has(p.id))];
+      });
+      setTotal(r.total);
+    } catch (err) {
+      toast(
+        err instanceof DashboardApiError ? err.message : "Couldn't load more purchase orders.",
+        "warn",
+        "critical",
+      );
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   return (
     <div className="cd-screen">
@@ -67,17 +143,19 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
         <div>
           <h1 className="cd-h1">Products</h1>
           <p className="cd-sub">Purchase orders</p>
+          <p className="cd-caption" style={{ marginTop: 4, maxWidth: 560 }}>
+            Restock drafts Calderyn created from inventory alerts. Each one snapshots a
+            supplier-ready PO you can download.
+          </p>
         </div>
       </header>
 
       <Card pad={false}>
-        {loading ? (
-          <Placeholder
-            icon="doc"
-            title="Loading purchase orders"
-            sub="Reading your action history for drafted POs."
-          />
-        ) : pos.length === 0 ? (
+        {loading && rows.length === 0 ? (
+          <TableSkeleton />
+        ) : error && rows.length === 0 ? (
+          <Placeholder icon="warn" title="Couldn't load purchase orders" sub={error} />
+        ) : rows.length === 0 ? (
           <>
             <Placeholder
               icon="doc"
@@ -98,12 +176,20 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
               <span>Drafted</span>
               <span>Actions</span>
             </div>
-            {pos.map((e) => (
-              <PoRow key={e.id} entry={e} />
+            {rows.map((r) => (
+              <PoRow key={r.id} row={r} />
             ))}
           </>
         )}
       </Card>
+
+      {!loading && !error && rows.length < total && (
+        <div style={{ display: "flex", justifyContent: "center", marginTop: 12 }}>
+          <Btn disabled={loadingMore} onClick={loadMore}>
+            {loadingMore ? "Loading…" : `Load more (${rows.length} of ${total})`}
+          </Btn>
+        </div>
+      )}
     </div>
   );
 }

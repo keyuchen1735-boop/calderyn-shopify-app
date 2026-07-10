@@ -32,6 +32,7 @@ export function validateProductInput(
       sku: typeof o.sku === "string" ? o.sku : undefined,
       title: typeof o.title === "string" ? o.title : undefined,
       retailPriceCents: Number.isFinite(o.retailPriceCents) ? Number(o.retailPriceCents) : undefined,
+      compareAtPriceCents: Number.isFinite(o.compareAtPriceCents) ? Number(o.compareAtPriceCents) : undefined,
       unitCostCents: Number.isFinite(o.unitCostCents) ? Number(o.unitCostCents) : undefined,
       inventoryPolicy: typeof o.inventoryPolicy === "string" ? o.inventoryPolicy : undefined,
       inventoryTracked: typeof o.inventoryTracked === "boolean" ? o.inventoryTracked : undefined,
@@ -50,6 +51,7 @@ export function validateProductInput(
   const ISO2 = /^[A-Za-z]{2}$/;
   for (const v of variants) {
     if (v.retailPriceCents != null && v.retailPriceCents < 0) return { ok: false, code: "negative_price" };
+    if (v.compareAtPriceCents != null && v.compareAtPriceCents < 0) return { ok: false, code: "negative_compare_at" };
     if (v.unitCostCents != null && v.unitCostCents < 0) return { ok: false, code: "negative_cost" };
     // An ACTIVE variant that carries an explicit price must be sellable above $0.
     // The storefront treats only a NULL price as "unpriced/unavailable", so a 0
@@ -58,6 +60,7 @@ export function validateProductInput(
     // Reject values that would overflow the int4 columns before the INSERT does.
     if (
       (v.retailPriceCents != null && v.retailPriceCents > INT4_MAX) ||
+      (v.compareAtPriceCents != null && v.compareAtPriceCents > INT4_MAX) ||
       (v.unitCostCents != null && v.unitCostCents > INT4_MAX) ||
       (v.inventoryOnHand != null && v.inventoryOnHand > INT4_MAX)
     ) {

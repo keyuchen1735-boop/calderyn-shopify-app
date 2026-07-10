@@ -29,6 +29,9 @@ export interface StoreVariant {
   sku: string | null;
   title: string;
   priceCents: number;
+  /** Struck-through "was" price in cents; render only when > priceCents.
+   *  Optional so fixture/legacy variant literals stay valid. */
+  compareAtPriceCents?: number | null;
   currency: string;
   available: boolean;
 }

@@ -12,6 +12,7 @@ export interface VariantInput {
   sku?: string;
   title?: string;
   retailPriceCents?: number;
+  compareAtPriceCents?: number;
   unitCostCents?: number;
   inventoryPolicy?: string;
   inventoryTracked?: boolean;
@@ -59,6 +60,7 @@ export interface ProductDetail {
     sku: string | null;
     title: string;
     retailPriceCents: number | null;
+    compareAtPriceCents: number | null;
     unitCostCents: number | null;
     inventoryTracked: boolean | null;
     inventoryOnHand: number;

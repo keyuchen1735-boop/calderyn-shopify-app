@@ -1,17 +1,20 @@
-import { useEffect, useState } from "react";
-import { Btn, Card, Pill, Placeholder } from "../ui";
+import { useEffect, useRef, useState } from "react";
+import { Btn, Card, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
 import { timeAgo } from "../format";
 import { DashboardApiError, receiveTransfer } from "~/lib/dashboard/client";
 import {
   fetchAllPendingTransfers,
+  fetchReceivedTransfers,
   type ShopTransferVM,
 } from "~/lib/dashboard/transfers-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
+import TransferModal from "./TransferModal";
 import type { DashboardCtx } from "../context";
 
-// Shop-wide view of in-transit stock moves. The transfer GET only returns
-// state=in_transit rows, so every row here is receivable; receiving lands the
-// units in on_hand at the destination and drops the row from the next load.
+// Shop-wide view of in-transit stock moves plus a 30-day received history.
+// The transfer GET only returns state=in_transit rows for the pending card,
+// so every row there is receivable; receiving lands the units in on_hand at
+// the destination and moves the row to the history card on the next load.
 
 const GRID = "1fr 1.4fr 0.7fr 1.4fr 1.1fr";
 
@@ -42,33 +45,64 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
   const [rows, setRows] = useState<ShopTransferVM[] | null>(() =>
     cachedScreenData<ShopTransferVM[]>(SCREEN_CACHE_KEYS.transfers),
   );
+  const [received, setReceived] = useState<ShopTransferVM[] | null>(null);
+  const [receivedError, setReceivedError] = useState<string | null>(null);
+  // First-load failure with nothing to show — rendered in the card so the API
+  // message isn't lost to a transient toast.
+  const [pendingError, setPendingError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Set when a reload fails but stale rows are still on screen, so the list
+  // stays useful without pretending it's fresh.
+  const [staleWarning, setStaleWarning] = useState(false);
   const [receiving, setReceiving] = useState<string | null>(null);
-  // Bumped after a successful receive so the effect re-pulls the list.
+  const [creating, setCreating] = useState(false);
+  // Bumped after a successful receive/create so the effect re-pulls the lists.
   const [reloadKey, setReloadKey] = useState(0);
   const toast = app.toast;
+
+  // Latest rows, readable inside the async load without re-running the effect.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    fetchAllPendingTransfers()
-      .then((t) => {
-        cacheScreenData(SCREEN_CACHE_KEYS.transfers, t);
-        if (alive) setRows(t);
-      })
-      .catch((err: unknown) => {
+    // Both lists load together but fail independently — one failing must not
+    // blank the other, so each result is handled on its own.
+    void Promise.allSettled([fetchAllPendingTransfers(), fetchReceivedTransfers()]).then(
+      ([pending, hist]) => {
         if (!alive) return;
-        const msg =
-          err instanceof DashboardApiError ? err.message : "Could not load transfers.";
-        toast(msg, "warn", "critical");
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+        if (pending.status === "fulfilled") {
+          cacheScreenData(SCREEN_CACHE_KEYS.transfers, pending.value);
+          setRows(pending.value);
+          setStaleWarning(false);
+          setPendingError(null);
+        } else if (rowsRef.current) {
+          setStaleWarning(true);
+        } else {
+          setPendingError(
+            pending.reason instanceof DashboardApiError
+              ? pending.reason.message
+              : "Could not load transfers.",
+          );
+        }
+        if (hist.status === "fulfilled") {
+          setReceived(hist.value);
+          setReceivedError(null);
+        } else {
+          setReceivedError(
+            hist.reason instanceof DashboardApiError
+              ? hist.reason.message
+              : "Could not load received transfers.",
+          );
+        }
+        setLoading(false);
+      },
+    );
     return () => {
       alive = false;
     };
-  }, [toast, reloadKey]);
+  }, [reloadKey]);
 
   const onReceive = async (transferId: string) => {
     if (receiving) return;
@@ -93,34 +127,48 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
           <h1 className="cd-h1">Products</h1>
           <p className="cd-sub">Stock transfers</p>
         </div>
+        <Btn kind="primary" icon="swap" onClick={() => setCreating(true)}>
+          New transfer
+        </Btn>
       </header>
 
       <Card pad={false}>
+        {staleWarning && rows && (
+          <div
+            className="cd-caption"
+            style={{ padding: "8px 16px", color: "var(--orange)" }}
+          >
+            Couldn&apos;t refresh just now — showing the last loaded list.
+          </div>
+        )}
         {!rows ? (
-          <Placeholder
-            icon="truck"
-            title={loading ? "Loading transfers" : "Transfers unavailable"}
-            sub={
-              loading
-                ? "Reading in-transit stock moves."
-                : "Could not load transfers just now. Refresh to try again."
-            }
-          />
+          loading ? (
+            <TableSkeleton />
+          ) : (
+            <Placeholder
+              icon="warn"
+              title="Couldn't load transfers"
+              sub={pendingError ?? "Could not load transfers just now. Refresh to try again."}
+            />
+          )
         ) : rows.length === 0 ? (
           <>
             <Placeholder
               icon="truck"
               title="No transfers in flight"
-              sub="Start one from Inventory — moves marked in transit land here until received."
+              sub="Moves marked in transit land here until received."
             />
             <div className="flex justify-center" style={{ paddingBottom: 28 }}>
-              <Btn small icon="box" onClick={() => app.navigate("inventory")}>
-                Open inventory
+              <Btn small icon="swap" onClick={() => setCreating(true)}>
+                New transfer
               </Btn>
             </div>
           </>
         ) : (
-          <>
+          // Five columns can't compress into a phone width — the table pans
+          // sideways inside the card instead of crushing every cell.
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 620 }}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
               <span>Transfer</span>
               <span>SKU / variant</span>
@@ -158,9 +206,67 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
                 </div>
               </div>
             ))}
-          </>
+            </div>
+          </div>
         )}
       </Card>
+
+      <div style={{ marginTop: 20 }}>
+        <SectionTitle>Recently received</SectionTitle>
+        <Card pad={false}>
+          {receivedError ? (
+            <Placeholder icon="warn" title="History unavailable" sub={receivedError} />
+          ) : received == null ? (
+            <TableSkeleton rows={3} />
+          ) : received.length === 0 ? (
+            <Placeholder
+              icon="truck"
+              title="Nothing received yet"
+              sub="Transfers you mark received show here for 30 days."
+            />
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <div style={{ minWidth: 620 }}>
+              <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
+                <span>Transfer</span>
+                <span>SKU / variant</span>
+                <span>Qty</span>
+                <span>Route</span>
+                <span>Status</span>
+              </div>
+              {received.map((r) => (
+                <div key={r.id} className="cd-trow" style={{ gridTemplateColumns: GRID }}>
+                  <div className="min-w-0">
+                    <div className="cd-row-title tabular-nums truncate">
+                      {r.id.slice(0, 8).toUpperCase()}
+                    </div>
+                    <div className="cd-caption">{timeAgo(r.createdAt)}</div>
+                  </div>
+                  <VariantCell row={r} />
+                  <div className="cd-row-num tabular-nums">{r.qty}</div>
+                  <div className="cd-caption truncate">
+                    {r.fromName} → {r.toName}
+                  </div>
+                  <div>
+                    <Pill tone="success" icon="check">
+                      {r.receivedAt ? `Received ${timeAgo(r.receivedAt)}` : "Received"}
+                    </Pill>
+                  </div>
+                </div>
+              ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {creating && (
+        <TransferModal
+          app={app}
+          onClose={() => setCreating(false)}
+          onDone={() => setReloadKey((k) => k + 1)}
+        />
+      )}
     </div>
   );
 }

@@ -37,7 +37,7 @@ function seg(nav: NavState): string {
     case "products-transfers":
       return "products/transfers";
     case "collections":
-      return "products/collections";
+      return param ? `products/collections/${encodeURIComponent(param)}` : "products/collections";
     case "locations-settings":
       return "products/locations";
     case "product-editor":
@@ -98,7 +98,14 @@ export function parsePath(pathname: string): NavState | null {
     }
   });
   const [a, b, ...rest] = parts;
-  if (rest.length > 0) return null;
+  if (rest.length > 0) {
+    // The one legal three-segment shape: a collection detail URL. Everything
+    // else past two segments stays unaddressed.
+    if (a === "products" && b === "collections" && rest.length === 1) {
+      return { screen: "collections", param: rest[0], sub: null };
+    }
+    return null;
+  }
 
   switch (a) {
     case "autopilot":
