@@ -121,6 +121,7 @@ const stripeCheckout = vi.hoisted(() => ({ createCommerceCheckoutSession: vi.fn(
 const emailer = vi.hoisted(() => ({ sendInvoiceEmail: vi.fn() }));
 const quote = vi.hoisted(() => ({ quoteCart: vi.fn() }));
 const stripeClient = vi.hoisted(() => ({ expire: vi.fn() }));
+const shopServer = vi.hoisted(() => ({ getShopStorefrontOrigin: vi.fn() }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
 vi.mock("~/lib/commerce/stripe-checkout.server", () => ({
@@ -131,11 +132,22 @@ vi.mock("./notify-email.server", () => ({ sendInvoiceEmail: emailer.sendInvoiceE
 vi.mock("~/lib/payments/stripe-client.server", () => ({
   getStripe: () => ({ checkout: { sessions: { expire: stripeClient.expire } } }),
 }));
+vi.mock("~/lib/storefront/shop.server", () => ({
+  getShopStorefrontOrigin: shopServer.getShopStorefrontOrigin,
+  // cart.server.ts (real, unmocked here) reads DEMO_SHOP_ID off this same module for its own
+  // assertPersistableShop guard — mirror the real sentinel so that guard keeps working.
+  DEMO_SHOP_ID: "demo-shop",
+}));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
-import { sendDraftOrderInvoice, payableInvoiceSession } from "./invoice.server";
+import { sendDraftOrderInvoice, payableInvoiceSession, expireInvoiceSession } from "./invoice.server";
 // eslint-disable-next-line import/first -- follows vi.mock like the import above
 import { PaymentsNotReadyError } from "~/lib/payments/errors";
+// priceCart is a REAL, unmocked module here — the test DB tables it reads/writes are the same
+// store.db.cart/cart_line the rest of this file seeds — spied on (not mocked) so tests can assert
+// it was never called without changing its behavior.
+// eslint-disable-next-line import/first -- follows vi.mock like the import above
+import * as cartServer from "./cart.server";
 
 function seedPaymentReady(shopId: string) {
   store.db.stripe_connected_account.push({
@@ -177,6 +189,7 @@ beforeEach(() => {
   emailer.sendInvoiceEmail.mockResolvedValue({ sent: true, id: "email-1" });
   stripeCheckout.createCommerceCheckoutSession.mockResolvedValue({ sessionId: "cs_1", url: "https://stripe/pay/cs_1" });
   stripeClient.expire.mockResolvedValue({});
+  shopServer.getShopStorefrontOrigin.mockResolvedValue("https://peakandpine.calderyncompany.com");
 });
 
 describe("sendDraftOrderInvoice", () => {
@@ -268,20 +281,60 @@ describe("sendDraftOrderInvoice", () => {
     expect(store.db.orders).toHaveLength(0);
   });
 
-  it("rejects re-invoicing an already-consumed draft (409 draft_already_sent) without writing anything", async () => {
+  it("rejects re-invoicing an already-consumed draft (409 draft_already_sent) via the CAS claim, without pricing or writing anything", async () => {
     // origin is still 'merchant_draft' but state already advanced past 'cart' — this is the
-    // double-click / retried-request shape Fix 1 guards: the draft was already turned into an
-    // invoice once (sendDraftOrderInvoice's own cart update at the bottom of this function).
+    // double-click / retried-request shape Fix I2's atomic claim guards: the CAS update's own
+    // .eq("state", "cart") WHERE clause matches zero rows here (state is already
+    // checkout_pending), so the codepath never gets far enough to price the cart at all.
     store.db.cart.push({ id: "cart-sent", shop_id: "shop-1", state: "checkout_pending", origin: "merchant_draft" });
+    const priceCartSpy = vi.spyOn(cartServer, "priceCart");
 
     await expect(sendDraftOrderInvoice("shop-1", "cart-sent", { email: "b@example.com" })).rejects.toMatchObject({
       status: 409,
       code: "draft_already_sent",
     });
+    expect(priceCartSpy).not.toHaveBeenCalled();
     expect(store.db.buyer_dim).toHaveLength(0);
     expect(store.db.orders).toHaveLength(0);
     expect(store.db.order_line).toHaveLength(0);
     expect(emailer.sendInvoiceEmail).not.toHaveBeenCalled();
+    // The CAS never claimed this cart (it didn't match), so its state is untouched by our call —
+    // no accidental revert of a state we never actually changed.
+    expect(store.db.cart[0].state).toBe("checkout_pending");
+    priceCartSpy.mockRestore();
+  });
+
+  it("a REAL double-send: the second call on the same cart 409s draft_already_sent and never re-prices", async () => {
+    seedDraftCart("shop-1", "cart-double", { quantity: 1, unit_price_cents: 1500 });
+
+    const first = await sendDraftOrderInvoice("shop-1", "cart-double", { email: "b@example.com" });
+    expect(first.orderId).toBeTruthy();
+
+    const priceCartSpy = vi.spyOn(cartServer, "priceCart");
+    await expect(sendDraftOrderInvoice("shop-1", "cart-double", { email: "b@example.com" })).rejects.toMatchObject({
+      status: 409,
+      code: "draft_already_sent",
+    });
+    expect(priceCartSpy).not.toHaveBeenCalled();
+    // Still exactly the one order the FIRST call created.
+    expect(store.db.orders).toHaveLength(1);
+    priceCartSpy.mockRestore();
+  });
+
+  it("reverts the CAS claim back to 'cart' when a downstream step fails before the order is created", async () => {
+    seedDraftCart("shop-1", "cart-revert", { quantity: 1, unit_price_cents: 1500 });
+    quote.quoteCart.mockRejectedValueOnce(new Error("shipping quote blew up"));
+
+    await expect(
+      sendDraftOrderInvoice("shop-1", "cart-revert", {
+        email: "b@example.com",
+        address: { kind: "shipping", line1: "123 Main St", city: "Springfield", region: "IL", postal: "62701", country: "US" },
+      }),
+    ).rejects.toThrow(/shipping quote blew up/);
+
+    expect(store.db.orders).toHaveLength(0);
+    // Reverted so the merchant can retry sending — NOT stranded checkout_pending with no order.
+    expect(store.db.cart.find((c) => c.id === "cart-revert")).toMatchObject({ state: "cart" });
   });
 
   it("rejects an empty draft (422) without writing anything", async () => {
@@ -357,19 +410,35 @@ describe("payableInvoiceSession", () => {
     return row;
   }
 
-  it("mints a fresh hosted session for a checkout_pending invoice and persists its id", async () => {
+  it("mints a fresh hosted session for a checkout_pending invoice, with tenant-origin return URLs, and persists its id", async () => {
     seedInvoiceOrder();
     const result = await payableInvoiceSession("shop-1", "tok-abc");
     expect(result).toEqual({ kind: "pay", url: "https://stripe/pay/cs_1" });
+    expect(shopServer.getShopStorefrontOrigin).toHaveBeenCalledWith("shop-1");
     expect(stripeCheckout.createCommerceCheckoutSession).toHaveBeenCalledWith("shop-1", {
       orderId: "order-1",
       totalCents: 3998,
       currency: "usd",
       confirmationToken: "tok-abc",
+      returnUrls: {
+        success: "https://peakandpine.calderyncompany.com/storefront/checkout/confirmation/tok-abc",
+        cancel: "https://peakandpine.calderyncompany.com/storefront/invoice/tok-abc/pay",
+      },
     });
     // No prior session on this order, so nothing to expire.
     expect(stripeClient.expire).not.toHaveBeenCalled();
     expect(store.db.orders[0]).toMatchObject({ invoice_session_id: "cs_1" });
+  });
+
+  it("fix C1: returns not_ready and mints NO session when the shop has no live storefront origin", async () => {
+    seedInvoiceOrder();
+    shopServer.getShopStorefrontOrigin.mockResolvedValueOnce("");
+
+    const result = await payableInvoiceSession("shop-1", "tok-abc");
+
+    expect(result).toEqual({ kind: "not_ready" });
+    expect(stripeCheckout.createCommerceCheckoutSession).not.toHaveBeenCalled();
+    expect(store.db.orders[0].invoice_session_id).toBeUndefined();
   });
 
   it("expires the PRIOR hosted session before minting + persisting a replacement", async () => {
@@ -458,5 +527,38 @@ describe("payableInvoiceSession", () => {
   it("returns null for a foreign-shop token (shop-scoped)", async () => {
     seedInvoiceOrder();
     expect(await payableInvoiceSession("other-shop", "tok-abc")).toBeNull();
+  });
+});
+
+describe("expireInvoiceSession (fix C2)", () => {
+  it("expires the persisted session and nulls invoice_session_id", async () => {
+    store.db.orders.push({ id: "order-9", shop_id: "shop-1", invoice_session_id: "cs_stale" });
+
+    await expireInvoiceSession("shop-1", "order-9");
+
+    expect(stripeClient.expire).toHaveBeenCalledWith("cs_stale");
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: null });
+  });
+
+  it("is a no-op when the order has no persisted session", async () => {
+    store.db.orders.push({ id: "order-10", shop_id: "shop-1", invoice_session_id: null });
+
+    await expireInvoiceSession("shop-1", "order-10");
+
+    expect(stripeClient.expire).not.toHaveBeenCalled();
+  });
+
+  it("swallows a Stripe expire failure (already completed/expired) and still nulls the column", async () => {
+    store.db.orders.push({ id: "order-11", shop_id: "shop-1", invoice_session_id: "cs_gone" });
+    stripeClient.expire.mockRejectedValueOnce(new Error("No such checkout session"));
+
+    await expireInvoiceSession("shop-1", "order-11");
+
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: null });
+  });
+
+  it("is a no-op for an unknown order", async () => {
+    await expect(expireInvoiceSession("shop-1", "ghost")).resolves.toBeUndefined();
+    expect(stripeClient.expire).not.toHaveBeenCalled();
   });
 });

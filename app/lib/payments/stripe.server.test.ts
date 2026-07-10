@@ -43,9 +43,13 @@ const h = vi.hoisted(() => ({
   // Captures every orders.update(patch) call (financial_status stamps) for assertion.
   ordersUpdate: vi.fn(),
   // Current orders.state the mock returns for the redelivery self-heal read / the charge.refunded
-  // reconciliation read. Default 'paid' so the ordinary duplicate delivery treats the order as
-  // already-advanced and does not re-transition.
+  // reconciliation read / the paid-without-hold fallback's state gate. Default 'paid' so the
+  // ordinary duplicate delivery treats the order as already-advanced and does not re-transition.
   orderState: "paid" as string,
+  // Current orders.total_cents the mock returns alongside orderState (fix C2c's amount-mismatch
+  // sentinel). Default matches succeededEvent's amount_received (2500) so the ordinary case never
+  // logs a spurious mismatch; tests exercising the mismatch override this.
+  orderTotalCents: 2500 as number,
 }));
 
 // Server SDK: default export is the Stripe class; instances expose paymentIntents + webhooks +
@@ -104,7 +108,14 @@ vi.mock("~/lib/supabase.server", () => ({
           };
           return chain;
         },
-        select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { state: h.orderState }, error: null }) }) }) }),
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({ data: { state: h.orderState, total_cents: h.orderTotalCents }, error: null }),
+            }),
+          }),
+        }),
       };
     },
     rpc: h.rpc,
@@ -160,6 +171,7 @@ beforeEach(() => {
   h.applyAccountUpdate.mockResolvedValue(true);
   h.upsert.mockResolvedValue({ error: null });
   h.orderState = "paid";
+  h.orderTotalCents = 2500;
   // clearAllMocks() preserves prior mockResolvedValue overrides, so re-assert the "not found"
   // default every test to avoid bleed-through from a previous test's override.
   h.piLookup.mockResolvedValue({ data: null, error: null });
@@ -723,6 +735,56 @@ describe("processStripeEvent", () => {
 
       expect(h.saleFallbackForOrder).toHaveBeenCalledTimes(1);
       expect(h.saleFallbackForOrder).toHaveBeenCalledWith("shop-1", "order-1");
+    });
+
+    it("fix C2b: does NOT call the stock fallback on a redelivery once the order has since moved to cancelled", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [], error: null }); // nothing held -> would fall back if not gated
+
+      await processStripeEvent("raw-body", "sig"); // first delivery: order still paid, fallback fires
+
+      h.orderState = "cancelled"; // the merchant cancelled the order between deliveries
+      await processStripeEvent("raw-body", "sig"); // redelivery (self-heal branch): must NOT fall back
+
+      expect(h.saleFallbackForOrder).toHaveBeenCalledTimes(1); // only the first delivery's call
+    });
+
+    it("fix C2b: does NOT call the stock fallback while the order is still checkout_pending (stranding window)", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [], error: null });
+      h.orderState = "checkout_pending";
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(h.saleFallbackForOrder).not.toHaveBeenCalled();
+    });
+
+    it("fix C2c: logs a loud AMOUNT MISMATCH when the captured amount differs from the order's total_cents (no throw)", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent); // amount_received: 2500
+      gatedRpc();
+      h.orderTotalCents = 3000; // the order actually totals 3000 cents
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/AMOUNT MISMATCH/));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("order-1"));
+      errorSpy.mockRestore();
+    });
+
+    it("fix C2c: no mismatch log when the captured amount matches the order's total_cents", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.orderTotalCents = 2500; // matches amount_received
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(errorSpy).not.toHaveBeenCalledWith(expect.stringMatching(/AMOUNT MISMATCH/));
+      errorSpy.mockRestore();
     });
 
     it("never fails the webhook when the stock fallback throws — payment already happened, logged loudly instead", async () => {

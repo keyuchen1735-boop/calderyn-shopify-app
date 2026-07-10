@@ -18,6 +18,11 @@ interface ComposerLine {
   title: string;
   unitPriceCents: number;
   quantity: number;
+  // The variant picker (VariantPicker/PickedVariant) carries no currency field today — every
+  // catalog price it surfaces is a bare cents number — so a freshly-added line defaults to "usd"
+  // until a save/resume round trip through the draft cart supplies the shop's real currency
+  // (MerchantDraftLineVM.currency, priced via cart.server.ts's single pricing path).
+  currency: string;
 }
 
 const MIN_QTY = 1;
@@ -80,7 +85,15 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
 
   const resumeDraft = (d: MerchantDraftVM) => {
     setCartId(d.id);
-    setLines(d.lines.map((l) => ({ variantId: l.variantId, title: l.title, unitPriceCents: l.unitPriceCents, quantity: l.quantity })));
+    setLines(
+      d.lines.map((l) => ({
+        variantId: l.variantId,
+        title: l.title,
+        unitPriceCents: l.unitPriceCents,
+        quantity: l.quantity,
+        currency: l.currency,
+      })),
+    );
   };
 
   const removeDraft = async (id: string) => {
@@ -109,7 +122,9 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
           l.variantId === v.variantId ? { ...l, quantity: Math.min(MAX_QTY, l.quantity + 1) } : l,
         );
       }
-      return [...cur, { variantId: v.variantId, title: v.title, unitPriceCents: v.unitPriceCents, quantity: 1 }];
+      // PickedVariant carries no currency (see ComposerLine's comment) — default "usd" until this
+      // line round-trips through a save, which stamps the shop's real priced currency.
+      return [...cur, { variantId: v.variantId, title: v.title, unitPriceCents: v.unitPriceCents, quantity: 1, currency: "usd" }];
     });
   };
 
@@ -124,6 +139,9 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
   };
 
   const subtotalCents = lines.reduce((sum, l) => sum + l.unitPriceCents * l.quantity, 0);
+  // Every line on one order shares one shop currency; the first line's is authoritative once any
+  // exist (defaults to "usd" — see ComposerLine's comment — before the first item is added).
+  const currency = lines[0]?.currency ?? "usd";
   const hasAddress = addressHasAnyValue(address);
   const emailValid = EMAIL_RE.test(email.trim());
 
@@ -138,7 +156,15 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
         lines: lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
       });
       setCartId(draft.id);
-      setLines(draft.lines.map((l) => ({ variantId: l.variantId, title: l.title, unitPriceCents: l.unitPriceCents, quantity: l.quantity })));
+      setLines(
+        draft.lines.map((l) => ({
+          variantId: l.variantId,
+          title: l.title,
+          unitPriceCents: l.unitPriceCents,
+          quantity: l.quantity,
+          currency: l.currency,
+        })),
+      );
       loadDrafts();
       return draft;
     } catch (err) {
@@ -240,7 +266,7 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
                   <div key={l.variantId} className="flex items-center justify-between" style={{ gap: 10 }}>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div className="cd-row-title truncate">{l.title}</div>
-                      <div className="cd-caption">{money(l.unitPriceCents)} each</div>
+                      <div className="cd-caption">{money(l.unitPriceCents, l.currency)} each</div>
                     </div>
                     <input
                       className="cd-input tabular-nums"
@@ -252,7 +278,7 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
                       style={{ width: 72, textAlign: "right", flexShrink: 0 }}
                     />
                     <div className="cd-row-num tabular-nums" style={{ width: 84, textAlign: "right", flexShrink: 0 }}>
-                      {money(l.unitPriceCents * l.quantity)}
+                      {money(l.unitPriceCents * l.quantity, l.currency)}
                     </div>
                     <button
                       type="button"
@@ -266,7 +292,7 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
                 ))}
                 <div className="flex items-center justify-between" style={{ paddingTop: 6, borderTop: "1px solid var(--hairline)" }}>
                   <span className="cd-row-title">Subtotal</span>
-                  <span className="cd-row-num tabular-nums">{money(subtotalCents)}</span>
+                  <span className="cd-row-num tabular-nums">{money(subtotalCents, currency)}</span>
                 </div>
               </div>
             )}
@@ -448,7 +474,7 @@ export default function OrderComposer({ app }: { app: DashboardCtx }) {
             <Card>
               <div className="cd-h2" style={{ marginBottom: 4 }}>Send this invoice?</div>
               <div className="cd-caption" style={{ marginBottom: 12 }}>
-                {lines.length} item{lines.length === 1 ? "" : "s"}, subtotal {money(subtotalCents)}, to {email.trim()}.
+                {lines.length} item{lines.length === 1 ? "" : "s"}, subtotal {money(subtotalCents, currency)}, to {email.trim()}.
                 {hasAddress
                   ? " Shipping and tax will be quoted from the address you entered when this sends."
                   : " No shipping address was entered, so this invoices the subtotal only."}

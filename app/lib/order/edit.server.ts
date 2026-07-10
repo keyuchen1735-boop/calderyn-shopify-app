@@ -57,11 +57,13 @@ import { priceLines } from "./cart.server";
 import { effectiveLineQuantities } from "./line-edits.server";
 import { isOrderState, type OrderState } from "./state";
 import { loadDefaultShippingAddress } from "./detail.server";
+import { remainingRefundableByOrder } from "./list.server";
 import { priorExecutionForKey, insertAuditWithIdempotency } from "../actions/execute.server";
 import { executeRefundAction } from "../actions/refund.server";
 import { restockLine } from "../inventory/engine.server";
 import { quoteCart } from "~/lib/commerce/quote.server";
 import { ShipRestrictedError } from "~/lib/shipping/errors";
+import { expireInvoiceSession } from "./invoice.server";
 
 /** Order states a paid-line reduction may act on. `checkout_pending` has nothing captured to
  *  refund yet (that's executeEditInvoiceLines' territory); `cancelled`/`refunded` are terminal.
@@ -115,12 +117,15 @@ interface OrderMoneyRow {
   /** Needed to prorate tax on a reduction refund (fix: proportional tax). */
   subtotalCents: number;
   taxCents: number;
+  /** Fallback "remaining refundable" when the order carries no capture ledger row yet (fix I1) —
+   *  mirrors remainingRefundableByOrder's own caller-side fallback in list.server.ts/detail.server.ts. */
+  totalCents: number;
 }
 
 async function loadOrderState(sb: SupabaseClient, shopId: string, orderId: string): Promise<OrderMoneyRow | null> {
   const { data, error } = await sb
     .from("orders")
-    .select("state, subtotal_cents, tax_cents")
+    .select("state, subtotal_cents, tax_cents, total_cents")
     .eq("shop_id", shopId)
     .eq("id", orderId)
     .maybeSingle();
@@ -129,7 +134,12 @@ async function loadOrderState(sb: SupabaseClient, shopId: string, orderId: strin
   const row = data as Record<string, unknown>;
   const state = String(row.state);
   if (!isOrderState(state)) return null;
-  return { state, subtotalCents: Number(row.subtotal_cents ?? 0), taxCents: Number(row.tax_cents ?? 0) };
+  return {
+    state,
+    subtotalCents: Number(row.subtotal_cents ?? 0),
+    taxCents: Number(row.tax_cents ?? 0),
+    totalCents: Number(row.total_cents ?? 0),
+  };
 }
 
 async function loadLine(sb: SupabaseClient, shopId: string, orderId: string, orderLineId: string): Promise<LineRow> {
@@ -269,6 +279,24 @@ export async function executeReduceLineAction(
     // zero. Clamp defensively to never refund LESS than the bare unit-price delta.
     const taxShare = order.subtotalCents > 0 ? Math.floor((order.taxCents * deltaSubtotal) / order.subtotalCents) : 0;
     const refundCents = Math.max(deltaSubtotal + taxShare, deltaSubtotal);
+
+    // Fix I1: over-refund pre-check, BEFORE the edit row is inserted (and therefore before the
+    // nested refund executor is ever called). remainingRefundableByOrder sums the SIGNED
+    // transaction_ledger (captured - already-refunded); an order with no capture row yet falls
+    // back to its gross total, same fallback list.server.ts/detail.server.ts use for the read
+    // model. A reduction whose own delta+tax-share refund would exceed what's actually left to
+    // refund is a caller/data-drift bug (e.g. a stale UI computing against an out-of-date
+    // effective quantity) — reject it here with a typed 409 rather than let the nested refund
+    // executor's ledger guard reject it AFTER an edit row already committed.
+    const remainingMap = await remainingRefundableByOrder(shopId, [input.orderId]);
+    const remainingRefundableCents = remainingMap.get(input.orderId) ?? order.totalCents;
+    if (refundCents > remainingRefundableCents) {
+      throw new CalderynError({
+        code: "refund_exceeds_remaining",
+        status: 409,
+        message: `Reducing order line ${input.orderLineId} would refund ${refundCents} cents, but only ${remainingRefundableCents} cents remain refundable on order ${input.orderId}.`,
+      });
+    }
 
     const ins = await sb
       .from("order_line_edit")
@@ -503,6 +531,20 @@ export async function executeEditInvoiceLines(
       status: 409,
       message: `Order ${orderId} is not an unpaid invoice (channel=${String(order.channel)}, state=${String(order.state)}); only a pending invoice's lines can be edited.`,
     });
+  }
+
+  // Fix C2: expire any hosted pay-link session already minted for this invoice BEFORE repricing —
+  // a buyer with the OLD session's link open must not be able to complete payment on the OLD total
+  // while the merchant is mid-edit. Best-effort (same posture as invoice.server.ts's own session
+  // handling): the edit itself is about to reprice regardless, so a Stripe/DB hiccup clearing the
+  // stale session must never block the edit — it's logged loudly instead (rule 12).
+  try {
+    await expireInvoiceSession(shopId, orderId);
+  } catch (err) {
+    console.error(
+      `[edit] order ${orderId}: could not expire the invoice's hosted pay-link session before repricing -- reconcile manually if the buyer reports a stale link`,
+      err,
+    );
   }
 
   const priced = await priceLines(shopId, lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })));

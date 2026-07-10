@@ -30,6 +30,7 @@ import { isSupportedCurrency } from "~/lib/payments/stripe.server";
 import { getStripe } from "~/lib/payments/stripe-client.server";
 import { createCommerceCheckoutSession } from "~/lib/commerce/stripe-checkout.server";
 import { PaymentsNotReadyError } from "~/lib/payments/errors";
+import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 import { sendInvoiceEmail } from "./notify-email.server";
 
 export interface InvoiceBuyerInput {
@@ -75,29 +76,38 @@ export async function sendDraftOrderInvoice(
   }
 
   const sb = getSupabase();
-  const cartRes = await sb
+
+  // ATOMIC CLAIM (fix I2): flip the draft cart cart -> checkout_pending FIRST, gated on the exact
+  // row shape a real, not-yet-sent draft must have (shop_id + id + state='cart' +
+  // origin='merchant_draft'). This is a single CAS UPDATE, not a read-then-write — two concurrent
+  // sends for the same draft (a double-click, or a retried request) can only have ONE winner: the
+  // loser's WHERE clause matches zero rows because the winner already flipped `state`, so it can
+  // never fall through to price + insert a second order off the same cart. The old shape (read the
+  // cart, check origin/state, act, THEN mark it consumed at the very end) left exactly that gap
+  // open — two concurrent callers could both pass the read-time check before either write landed.
+  const claim = await sb
     .from("cart")
-    .select("id, origin, state")
+    .update({ state: "checkout_pending" })
     .eq("shop_id", shopId)
     .eq("id", cartId)
-    .maybeSingle();
-  if (cartRes.error) throw cartRes.error;
-  const cartRow = cartRes.data as Record<string, unknown> | null;
-  if (!cartRow || cartRow.origin !== "merchant_draft") {
-    throw new CalderynError({
-      code: "not_a_draft",
-      status: 404,
-      message: `No merchant draft cart ${cartId} found for this shop.`,
-    });
-  }
-  // Two-field guard mirroring isMerchantDraftCart (merchant-drafts.server.ts): origin alone is
-  // not enough — a draft that already sent (cart.state advanced past 'cart' at the bottom of
-  // this function) must never be invoiced a second time. Without this a double-click / retried
-  // request on the send-invoice button would price + insert a SECOND order and email a SECOND
-  // pay link off the same consumed draft. Kept as its own check (not a reuse of the boolean
-  // helper) so the two failure shapes stay distinguishable: "never was a draft" (404) vs.
-  // "was a draft, already sent" (409).
-  if (cartRow.state !== "cart") {
+    .eq("state", "cart")
+    .eq("origin", "merchant_draft")
+    .select("id");
+  if (claim.error) throw claim.error;
+  if (!claim.data || (Array.isArray(claim.data) && claim.data.length === 0)) {
+    // Zero rows claimed: either this was never a merchant-draft cart at all (404), or it WAS one
+    // but already got sent (409) — a follow-up read (outside the CAS) distinguishes the two so the
+    // caller sees the right error shape, same two codes the old read-first guard produced.
+    const cartRes = await sb.from("cart").select("id, origin").eq("shop_id", shopId).eq("id", cartId).maybeSingle();
+    if (cartRes.error) throw cartRes.error;
+    const cartRow = cartRes.data as Record<string, unknown> | null;
+    if (!cartRow || cartRow.origin !== "merchant_draft") {
+      throw new CalderynError({
+        code: "not_a_draft",
+        status: 404,
+        message: `No merchant draft cart ${cartId} found for this shop.`,
+      });
+    }
     throw new CalderynError({
       code: "draft_already_sent",
       status: 409,
@@ -105,85 +115,111 @@ export async function sendDraftOrderInvoice(
     });
   }
 
-  const priced = await priceCart(shopId, cartId);
-  if (priced.lines.length === 0) {
-    throw new CalderynError({
-      code: "empty_draft",
-      status: 422,
-      message: "This draft has no line items to invoice.",
-    });
+  // Best-effort revert: put the cart back to 'cart' so the merchant can retry, without ever
+  // rethrowing a SECOND error over the one that actually failed (rule 12 — surface the real cause).
+  async function revertClaim(): Promise<void> {
+    try {
+      const revert = await sb.from("cart").update({ state: "cart" }).eq("shop_id", shopId).eq("id", cartId);
+      if (revert.error) throw revert.error;
+    } catch (revertErr) {
+      console.error(
+        `[invoice] could not revert draft cart ${cartId} (shop ${shopId}) back to 'cart' after send failed — the merchant may need to re-save the draft`,
+        revertErr,
+      );
+    }
   }
 
-  // Mirrors createCheckout's address guard: reject a shipping address missing a street BEFORE
-  // calling quoteCart (an empty street produces an opaque carrier error), and before any
-  // buyer/order write.
-  if (buyer.address && !buyer.address.line1) {
-    throw new Error("shipping address line1 is required to quote");
-  }
-  let shippingCents = 0;
-  let taxCents = 0;
-  if (buyer.address) {
-    const quoted = await quoteCart(
-      shopId,
-      priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
-      {
-        street1: buyer.address.line1 ?? "",
-        street2: buyer.address.line2 ?? undefined,
-        city: buyer.address.city ?? "",
-        state: buyer.address.region ?? "",
-        zip: buyer.address.postal ?? "",
-        country: buyer.address.country ?? "US",
-      },
-      { subtotalCentsOverride: priced.subtotalCents },
-    );
-    shippingCents = quoted.shippingCents;
-    taxCents = quoted.taxCents;
-  }
-  const totalCents = priced.subtotalCents + shippingCents + taxCents;
+  let orderId: string;
+  let priced: Awaited<ReturnType<typeof priceCart>>;
+  let totalCents: number;
+  let confirmationToken: string;
+  try {
+    priced = await priceCart(shopId, cartId);
+    if (priced.lines.length === 0) {
+      throw new CalderynError({
+        code: "empty_draft",
+        status: 422,
+        message: "This draft has no line items to invoice.",
+      });
+    }
 
-  // Fail visibly BEFORE any buyer/order write, same as createCheckout's total guard: a non-empty
-  // draft that totals 0 cents (all-free lines) must reject here, not after writing rows a
-  // pay-link can never actually charge.
-  if (totalCents <= 0) {
-    throw new CalderynError({
-      code: "zero_total",
-      status: 422,
-      message: `cannot invoice cart ${cartId}: nothing to charge (total ${totalCents} cents)`,
-    });
-  }
-  if (!isSupportedCurrency(priced.currency)) {
-    throw new Error(`cannot invoice cart ${cartId}: unsupported currency '${priced.currency}'`);
-  }
+    // Mirrors createCheckout's address guard: reject a shipping address missing a street BEFORE
+    // calling quoteCart (an empty street produces an opaque carrier error), and before any
+    // buyer/order write.
+    if (buyer.address && !buyer.address.line1) {
+      throw new Error("shipping address line1 is required to quote");
+    }
+    let shippingCents = 0;
+    let taxCents = 0;
+    if (buyer.address) {
+      const quoted = await quoteCart(
+        shopId,
+        priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
+        {
+          street1: buyer.address.line1 ?? "",
+          street2: buyer.address.line2 ?? undefined,
+          city: buyer.address.city ?? "",
+          state: buyer.address.region ?? "",
+          zip: buyer.address.postal ?? "",
+          country: buyer.address.country ?? "US",
+        },
+        { subtotalCentsOverride: priced.subtotalCents },
+      );
+      shippingCents = quoted.shippingCents;
+      taxCents = quoted.taxCents;
+    }
+    totalCents = priced.subtotalCents + shippingCents + taxCents;
 
-  // No consent capture: the merchant is entering this invoice on the buyer's behalf, not the
-  // buyer accepting ToS/privacy themselves at checkout.
-  const buyerRow = await upsertGuestBuyer(shopId, { email: buyer.email });
-  if (buyer.address) {
-    await addBuyerAddress(shopId, buyerRow.id, buyer.address);
-  }
+    // Fail visibly BEFORE any buyer/order write, same as createCheckout's total guard: a non-empty
+    // draft that totals 0 cents (all-free lines) must reject here, not after writing rows a
+    // pay-link can never actually charge.
+    if (totalCents <= 0) {
+      throw new CalderynError({
+        code: "zero_total",
+        status: 422,
+        message: `cannot invoice cart ${cartId}: nothing to charge (total ${totalCents} cents)`,
+      });
+    }
+    if (!isSupportedCurrency(priced.currency)) {
+      throw new Error(`cannot invoice cart ${cartId}: unsupported currency '${priced.currency}'`);
+    }
 
-  // Same unguessable 256-bit token every order-origination path mints (checkout.server.ts,
-  // commerce/order.server.ts) — the pay-link/confirmation-page auth boundary.
-  const confirmationToken = randomBytes(32).toString("base64url");
-  const orderIns = await sb
-    .from("orders")
-    .insert({
-      shop_id: shopId,
-      buyer_id: buyerRow.id,
-      channel: "invoice",
-      subtotal_cents: priced.subtotalCents,
-      shipping_cents: shippingCents,
-      tax_cents: taxCents,
-      total_cents: totalCents,
-      currency: priced.currency,
-      attribution: { channel: "invoice" },
-      confirmation_token: confirmationToken,
-    })
-    .select("id")
-    .single();
-  if (orderIns.error) throw orderIns.error;
-  if (!orderIns.data) throw new Error("orders insert returned no row");
-  const orderId = String((orderIns.data as Record<string, unknown>).id);
+    // No consent capture: the merchant is entering this invoice on the buyer's behalf, not the
+    // buyer accepting ToS/privacy themselves at checkout.
+    const buyerRow = await upsertGuestBuyer(shopId, { email: buyer.email });
+    if (buyer.address) {
+      await addBuyerAddress(shopId, buyerRow.id, buyer.address);
+    }
+
+    // Same unguessable 256-bit token every order-origination path mints (checkout.server.ts,
+    // commerce/order.server.ts) — the pay-link/confirmation-page auth boundary.
+    confirmationToken = randomBytes(32).toString("base64url");
+    const orderIns = await sb
+      .from("orders")
+      .insert({
+        shop_id: shopId,
+        buyer_id: buyerRow.id,
+        channel: "invoice",
+        subtotal_cents: priced.subtotalCents,
+        shipping_cents: shippingCents,
+        tax_cents: taxCents,
+        total_cents: totalCents,
+        currency: priced.currency,
+        attribution: { channel: "invoice" },
+        confirmation_token: confirmationToken,
+      })
+      .select("id")
+      .single();
+    if (orderIns.error) throw orderIns.error;
+    if (!orderIns.data) throw new Error("orders insert returned no row");
+    orderId = String((orderIns.data as Record<string, unknown>).id);
+  } catch (err) {
+    // Everything above happened AFTER the cart claimed checkout_pending but BEFORE the order
+    // actually exists — revert the claim so the draft is retryable rather than stranded
+    // checkout_pending forever with no order and no way back into the composer.
+    await revertClaim();
+    throw err;
+  }
 
   const lineRows = priced.lines.map((l) => ({
     shop_id: shopId,
@@ -199,14 +235,6 @@ export async function sendDraftOrderInvoice(
   // Deliberately NO reserveStock and NO createPaymentIntent here: the draft becomes a real order
   // the moment the invoice is sent, but nothing is held or charged until the buyer opens the pay
   // link (payableInvoiceSession mints the PaymentIntent lazily via Stripe Checkout).
-  const cartUpd = await sb
-    .from("cart")
-    .update({ state: "checkout_pending" })
-    .eq("shop_id", shopId)
-    .eq("id", cartId);
-  if (cartUpd.error) {
-    console.warn(`[invoice] could not mark draft cart ${cartId} consumed (shop ${shopId}): ${cartUpd.error.message}`);
-  }
 
   const delivery = await sendInvoiceEmail(shopId, orderId, {
     confirmationToken,
@@ -343,6 +371,18 @@ export async function payableInvoiceSession(
 
   const orderId = String(row.id);
 
+  // Fix C1: the hosted session's success/cancel URLs must resolve back to THIS shop's own
+  // storefront — createCommerceCheckoutSession defaults to the PLATFORM app host
+  // (stripe-checkout.server.ts's storefrontBaseUrl()) when no returnUrls are supplied, which is
+  // fine for the go-live payment probe (a dashboard-side caller) but wrong here: a buyer bounced
+  // back to `app.calderyncompany.com/storefront/checkout/confirmation/:token` resolves to the
+  // platform's OWN (demo) shop, not this tenant's, and 500s trying to load someone else's order.
+  // Resolve the tenant's real origin FIRST — a shop with no live storefront (no org_slug yet)
+  // can't mint a session with a working return trip, so it reuses payableInvoiceSession's
+  // existing "not_ready" shape rather than minting a session that can never send the buyer home.
+  const origin = await getShopStorefrontOrigin(shopId);
+  if (!origin) return { kind: "not_ready" };
+
   // Expire the PRIOR hosted session (if any) before minting a replacement — see the module
   // comment for why this only narrows, rather than closes, the double-pay race. Best-effort:
   // Stripe throws when the session is already completed or already expired, and either case
@@ -364,6 +404,10 @@ export async function payableInvoiceSession(
       totalCents: Number(row.total_cents),
       currency: String(row.currency),
       confirmationToken: token,
+      returnUrls: {
+        success: `${origin}/storefront/checkout/confirmation/${token}`,
+        cancel: `${origin}/storefront/invoice/${token}/pay`,
+      },
     });
   } catch (err) {
     // The shop's Stripe readiness can regress AFTER the invoice was originally sent (e.g. the
@@ -381,4 +425,34 @@ export async function payableInvoiceSession(
   if (persist.error) throw persist.error;
 
   return { kind: "pay", url: session.url };
+}
+
+/**
+ * Fix C2: kill an invoice's currently-persisted hosted Checkout Session (if any) and clear
+ * orders.invoice_session_id, so a buyer with the OLD pay link open can never complete a payment
+ * against an order that is about to be voided or wholesale-repriced. Called from the two seams
+ * where the order's money picture moves out from under an already-minted session: cancelling an
+ * invoice-channel order (cancel.server.ts's executeCancelAction) and the START of an unpaid
+ * invoice's line edit (edit.server.ts's executeEditInvoiceLines, before repricing). Shares
+ * payableInvoiceSession's own best-effort posture: Stripe throws when the session is already
+ * completed or already expired, and either case means there is nothing left to do, so that failure
+ * is swallowed rather than blocking the caller's own (already-decided) state change.
+ */
+export async function expireInvoiceSession(shopId: string, orderId: string): Promise<void> {
+  if (!shopId || !orderId) return;
+  const sb = getSupabase();
+  const res = await sb.from("orders").select("invoice_session_id").eq("shop_id", shopId).eq("id", orderId).maybeSingle();
+  if (res.error) throw res.error;
+  const row = res.data as Record<string, unknown> | null;
+  const sessionId = row?.invoice_session_id ? String(row.invoice_session_id) : null;
+  if (!sessionId) return;
+
+  try {
+    await getStripe().checkout.sessions.expire(sessionId);
+  } catch {
+    // Already completed or already expired — nothing to do.
+  }
+
+  const clear = await sb.from("orders").update({ invoice_session_id: null }).eq("shop_id", shopId).eq("id", orderId);
+  if (clear.error) throw clear.error;
 }

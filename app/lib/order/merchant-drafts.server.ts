@@ -114,7 +114,10 @@ export async function listMerchantDrafts(shopId: string): Promise<MerchantDraftV
     .eq("shop_id", shopId)
     .eq("origin", "merchant_draft")
     .eq("state", "cart")
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    // Defensive cap (cheap hardening): each row costs its own priceCart read below, so an
+    // unbounded query here isn't just a big payload — it's O(n) extra DB round trips per request.
+    .limit(50);
   if (error) throw error;
 
   const drafts: MerchantDraftVM[] = [];

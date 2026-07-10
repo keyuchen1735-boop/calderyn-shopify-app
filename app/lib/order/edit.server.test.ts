@@ -144,6 +144,8 @@ const h = vi.hoisted(() => ({
   priceLines: vi.fn(),
   quoteCart: vi.fn(),
   loadDefaultShippingAddress: vi.fn(),
+  remainingRefundableByOrder: vi.fn(),
+  expireInvoiceSession: vi.fn(),
 }));
 
 vi.mock("../calderyn.server", () => ({
@@ -165,6 +167,8 @@ vi.mock("../inventory/engine.server", () => ({ restockLine: h.restockLine }));
 vi.mock("./cart.server", () => ({ priceLines: h.priceLines }));
 vi.mock("~/lib/commerce/quote.server", () => ({ quoteCart: h.quoteCart }));
 vi.mock("./detail.server", () => ({ loadDefaultShippingAddress: h.loadDefaultShippingAddress }));
+vi.mock("./list.server", () => ({ remainingRefundableByOrder: h.remainingRefundableByOrder }));
+vi.mock("./invoice.server", () => ({ expireInvoiceSession: h.expireInvoiceSession }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { executeReduceLineAction, executeEditInvoiceLines } from "./edit.server";
@@ -199,6 +203,15 @@ beforeEach(() => {
     replayed: false,
   });
   h.restockLine.mockResolvedValue(undefined);
+  // Default: "plenty left to refund" for any order, so the over-refund guard (fix I1) never blocks
+  // a test that isn't specifically exercising it. Tests that DO exercise the guard override this
+  // with a capped Map for their own orderId.
+  h.remainingRefundableByOrder.mockImplementation(async (_shopId: string, orderIds: string[]) => {
+    const map = new Map<string, number>();
+    for (const id of orderIds) map.set(id, Number.MAX_SAFE_INTEGER);
+    return map;
+  });
+  h.expireInvoiceSession.mockResolvedValue(undefined);
 });
 
 describe("executeReduceLineAction — preconditions", () => {
@@ -480,6 +493,50 @@ describe("executeReduceLineAction — happy path", () => {
   });
 });
 
+describe("executeReduceLineAction — over-refund guard (fix I1)", () => {
+  it("409s refund_exceeds_remaining BEFORE inserting the edit row when the computed refund exceeds the ledger's remaining refundable amount", async () => {
+    seedOrder("shop-1", "order-1", "paid");
+    seedLine("shop-1", "order-1", "line-1", "v-1", 5, 1000); // reducing 5->3 would refund 2000
+    h.remainingRefundableByOrder.mockResolvedValueOnce(new Map([["order-1", 1000]])); // only 1000 left
+
+    await expect(
+      executeReduceLineAction("shop-1", { orderId: "order-1", orderLineId: "line-1", newQuantity: 3, restock: false, idempotencyKey: "kover1" }),
+    ).rejects.toMatchObject({ code: "refund_exceeds_remaining", status: 409 });
+
+    expect(store.db.order_line_edit).toHaveLength(0);
+    expect(h.executeRefundAction).not.toHaveBeenCalled();
+    expect(h.insertAudit).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the order's gross total_cents when the ledger has no capture row for it yet", async () => {
+    seedOrder("shop-1", "order-1", "paid", { total_cents: 1500 });
+    seedLine("shop-1", "order-1", "line-1", "v-1", 5, 1000); // reducing 5->3 would refund 2000 > 1500 total
+    h.remainingRefundableByOrder.mockResolvedValueOnce(new Map()); // no capture row -> caller falls back
+
+    await expect(
+      executeReduceLineAction("shop-1", { orderId: "order-1", orderLineId: "line-1", newQuantity: 3, restock: false, idempotencyKey: "kover2" }),
+    ).rejects.toMatchObject({ code: "refund_exceeds_remaining", status: 409 });
+    expect(store.db.order_line_edit).toHaveLength(0);
+  });
+
+  it("succeeds when the refund is within what remains (boundary: exactly equal passes)", async () => {
+    seedOrder("shop-1", "order-1", "paid");
+    seedLine("shop-1", "order-1", "line-1", "v-1", 5, 1000); // refund 2000
+    h.remainingRefundableByOrder.mockResolvedValueOnce(new Map([["order-1", 2000]])); // exactly enough
+
+    const res = await executeReduceLineAction("shop-1", {
+      orderId: "order-1",
+      orderLineId: "line-1",
+      newQuantity: 3,
+      restock: false,
+      idempotencyKey: "kover3",
+    });
+
+    expect(res.replayed).toBe(false);
+    expect(store.db.order_line_edit).toHaveLength(1);
+  });
+});
+
 describe("executeReduceLineAction — concurrent-reduction race", () => {
   it("concurrent_edit: a baseline-index conflict (different key, same line, same old_quantity) surfaces a 409, not a resume or a refund", async () => {
     seedOrder("shop-1", "order-1", "paid");
@@ -644,6 +701,31 @@ describe("executeEditInvoiceLines", () => {
     await expect(
       executeEditInvoiceLines("shop-1", "order-3", [{ variantId: "v-1", quantity: 1 }]),
     ).rejects.toMatchObject({ code: "not_editable_invoice", status: 409 });
+  });
+
+  it("fix C2: expires the invoice's hosted pay-link session BEFORE repricing", async () => {
+    baseOrder();
+    seedLine("shop-1", "order-1", "old-line", "v-old", 9, 500);
+
+    await executeEditInvoiceLines("shop-1", "order-1", [{ variantId: "v-1", quantity: 2 }]);
+
+    expect(h.expireInvoiceSession).toHaveBeenCalledWith("shop-1", "order-1");
+    expect(h.expireInvoiceSession.mock.invocationCallOrder[0]).toBeLessThan(h.priceLines.mock.invocationCallOrder[0]);
+  });
+
+  it("fix C2: a session-expiry failure is logged loudly but does not block the edit", async () => {
+    baseOrder();
+    h.expireInvoiceSession.mockRejectedValueOnce(new Error("stripe down"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await executeEditInvoiceLines("shop-1", "order-1", [{ variantId: "v-1", quantity: 2 }]);
+
+    expect(res.totalCents).toBe(3000);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/could not expire the invoice's hosted pay-link session/),
+      expect.any(Error),
+    );
+    errorSpy.mockRestore();
   });
 
   it("replaces lines wholesale and recomputes totals with 0 shipping/tax when the buyer has no address", async () => {

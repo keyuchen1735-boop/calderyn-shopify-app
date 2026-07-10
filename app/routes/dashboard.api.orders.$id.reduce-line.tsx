@@ -42,6 +42,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!idempotencyKey) return jsonError(422, "missing_idempotency_key", "idempotency_key is required.");
 
   const reason = typeof body.reason === "string" ? body.reason : null;
+  if (reason !== null && reason.length > 500) {
+    return jsonError(422, "invalid_reason", "reason must be 500 characters or fewer.");
+  }
 
   return dashboardJson(async () => {
     const result = await executeReduceLineAction(

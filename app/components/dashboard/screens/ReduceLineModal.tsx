@@ -48,6 +48,12 @@ export default function ReduceLineModal({
     orderSubtotalCents: order.subtotalCents,
     orderTaxCents: order.taxCents,
   });
+  // Fix I1: mirror the server's over-refund guard (executeReduceLineAction's
+  // remainingRefundableByOrder check) client-side so the merchant sees why a reduction is blocked
+  // BEFORE submitting, rather than only after a 409 refund_exceeds_remaining round trip. This can't
+  // fully replace the server check (the ledger can change between render and submit), but it stops
+  // the obvious case: a reduction whose own refund would exceed what the order has left.
+  const exceedsRemaining = preview.refundCents > order.remainingRefundableCents;
 
   const setClampedQuantity = (raw: string) => {
     const n = Math.round(Number(raw));
@@ -55,7 +61,7 @@ export default function ReduceLineModal({
   };
 
   const submit = async () => {
-    if (preview.deltaQuantity <= 0 || busy) return;
+    if (preview.deltaQuantity <= 0 || exceedsRemaining || busy) return;
     setBusy(true);
     try {
       const res = await reduceOrderLine(order.id, {
@@ -142,9 +148,11 @@ export default function ReduceLineModal({
               <span className="cd-caption">Restock the reduced units</span>
             </label>
             <div className="cd-caption">
-              {preview.deltaQuantity > 0
-                ? `Refund ${money(preview.refundCents, order.currency)} (includes tax share)`
-                : "Choose a lower quantity to refund the difference."}
+              {exceedsRemaining
+                ? `Only ${money(order.remainingRefundableCents, order.currency)} is still refundable on this order.`
+                : preview.deltaQuantity > 0
+                  ? `Refund ${money(preview.refundCents, order.currency)} (includes tax share)`
+                  : "Choose a lower quantity to refund the difference."}
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <Btn onClick={onClose} disabled={busy}>Cancel</Btn>
@@ -152,7 +160,7 @@ export default function ReduceLineModal({
                 kind="primary"
                 icon="reduce"
                 onClick={submit}
-                disabled={busy || preview.deltaQuantity <= 0}
+                disabled={busy || preview.deltaQuantity <= 0 || exceedsRemaining}
               >
                 {busy
                   ? "Refunding…"

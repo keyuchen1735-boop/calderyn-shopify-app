@@ -44,6 +44,11 @@ const store = vi.hoisted(() => {
       this.sorts.push([col, opts.ascending]);
       return this;
     }
+    limit(_n: number) {
+      // Cap not modeled (test rows never approach it) — present only so the real query chain
+      // (listMerchantDrafts' .limit(50)) doesn't throw "not a function" against this fake.
+      return this;
+    }
     single() {
       this.wantSingle = true;
       return this;

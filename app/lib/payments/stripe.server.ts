@@ -14,6 +14,13 @@ export { getStripe };
 
 const KNOWN_CURRENCIES = new Set(["usd", "eur", "gbp", "cad", "aud"]);
 
+// Order states that mean money has actually been captured against this order (paid, or further
+// along than paid). Shared by handleDuplicateCaptureOrRethrow (is the order ALREADY in one of
+// these before we decide a paid->paid attempt is a duplicate capture) and the paid-without-hold
+// stock fallback gate below (fix C2b — the fallback must never decrement stock for an order that
+// has since moved to cancelled/refunded).
+const PAID_LIKE_STATES: ReadonlySet<string> = new Set(["paid", "fulfilled", "partially_fulfilled", "partially_refunded"]);
+
 /**
  * True when `currency` is a Stripe currency this integration can charge. Exposed so the
  * checkout origination path can reject an unsupported currency BEFORE writing the order —
@@ -151,9 +158,7 @@ async function handleDuplicateCaptureOrRethrow(
   const reread = await getSupabase().from("orders").select("state").eq("shop_id", shopId).eq("id", orderRef).maybeSingle();
   if (reread.error) throw err; // could not confirm the shape — do not mask the original error
   const currentState = reread.data ? String((reread.data as Record<string, unknown>).state) : null;
-  const alreadyPaidLike =
-    currentState !== null &&
-    (["paid", "fulfilled", "partially_fulfilled", "partially_refunded"] as string[]).includes(currentState);
+  const alreadyPaidLike = currentState !== null && PAID_LIKE_STATES.has(currentState);
   if (!alreadyPaidLike) throw err;
 
   const priorPiId = await findOtherSucceededPaymentIntentId(orderRef, piId).catch(() => null);
@@ -457,6 +462,27 @@ export async function processStripeEvent(
         try {
           await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded");
 
+          // AMOUNT-MISMATCH SENTINEL (fix C2c, rule 12): the PaymentIntent's captured amount should
+          // always equal the order's own total_cents — the same total the checkout/invoice path
+          // quoted and asked Stripe to charge. A mismatch (a pricing-path bug, a race with a
+          // concurrent order edit, or a tampered PI) is never silently accepted, but it's also never
+          // worth failing an otherwise-successful payment over: log it LOUDLY for manual
+          // reconciliation and let the order proceed to paid. Best-effort in its own try/catch — a
+          // failure reading total_cents here must not be mistaken for an illegal-transition error by
+          // the catch below, nor block the confirmation email.
+          try {
+            const totalRes = await getSupabase().from("orders").select("total_cents").eq("shop_id", shopId).eq("id", orderRef).maybeSingle();
+            if (totalRes.error) throw totalRes.error;
+            const orderTotalCents = totalRes.data ? Number((totalRes.data as Record<string, unknown>).total_cents ?? 0) : null;
+            if (orderTotalCents !== null && pi.amount_received !== orderTotalCents) {
+              console.error(
+                `[stripe] AMOUNT MISMATCH: PaymentIntent ${pi.id} captured ${pi.amount_received} cents but order ${orderRef} (shop ${shopId}) total_cents is ${orderTotalCents}; reconcile manually`,
+              );
+            }
+          } catch (mismatchErr) {
+            console.error(`[stripe] could not verify captured amount for order ${orderRef} (shop ${shopId})`, mismatchErr);
+          }
+
           // ORDER-CONFIRMATION EMAIL (#2c-2) — first delivery ONLY, so the buyer is emailed
           // at-most-once and only for an order that genuinely reached `paid`. sendOrderConfirmation
           // never throws (a delivery failure is logged + swallowed inside it), so a flaky mailer
@@ -524,17 +550,28 @@ export async function processStripeEvent(
       // fallback RPC's per-(order,variant) idempotency key makes a redelivery a no-op. NEVER
       // thrown past — the payment already happened, so a failure here must never fail the webhook
       // (rule 12: log loudly instead).
+      //
+      // STATE GATE (fix C2b): this whole block runs on EVERY succeeded delivery, including a
+      // redelivery arriving long after the order moved on — a cancellation or a refund can legally
+      // land BETWEEN two deliveries of the same Stripe event. Re-reading the order's CURRENT state
+      // and only proceeding while it's still paid-like closes that gap: a cancelled/refunded order
+      // must never have its stock decremented by a stray redelivery's fallback.
       try {
-        const heldRes = await getSupabase()
-          .from("inventory_reservation")
-          .select("id")
-          .eq("shop_id", shopId)
-          .eq("checkout_ref", orderRef)
-          .in("state", ["held", "committed"])
-          .limit(1);
-        if (heldRes.error) throw heldRes.error;
-        if (!heldRes.data || heldRes.data.length === 0) {
-          await saleFallbackForOrder(shopId, orderRef);
+        const stateRes = await getSupabase().from("orders").select("state").eq("shop_id", shopId).eq("id", orderRef).maybeSingle();
+        if (stateRes.error) throw stateRes.error;
+        const currentState = stateRes.data ? String((stateRes.data as Record<string, unknown>).state) : null;
+        if (currentState && PAID_LIKE_STATES.has(currentState)) {
+          const heldRes = await getSupabase()
+            .from("inventory_reservation")
+            .select("id")
+            .eq("shop_id", shopId)
+            .eq("checkout_ref", orderRef)
+            .in("state", ["held", "committed"])
+            .limit(1);
+          if (heldRes.error) throw heldRes.error;
+          if (!heldRes.data || heldRes.data.length === 0) {
+            await saleFallbackForOrder(shopId, orderRef);
+          }
         }
       } catch (fallbackErr) {
         console.error(

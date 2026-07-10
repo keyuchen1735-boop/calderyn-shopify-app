@@ -139,6 +139,38 @@ describe("POST /dashboard/api/orders/:id/reduce-line", () => {
     expect((await res.json()).error).toBe("invalid_restock");
   });
 
+  it("422s a reason longer than 500 characters", async () => {
+    const { action } = await import("../dashboard.api.orders.$id.reduce-line");
+    const res = (await action({
+      request: req(URL_, "POST", {
+        order_line_id: "line-1",
+        new_quantity: 1,
+        restock: false,
+        idempotency_key: "k4c",
+        reason: "x".repeat(501),
+      }),
+      params: { id: ORDER_ID },
+    } as never)) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("invalid_reason");
+    expect(edit.executeReduceLineAction).not.toHaveBeenCalled();
+  });
+
+  it("accepts a reason at exactly 500 characters", async () => {
+    const { action } = await import("../dashboard.api.orders.$id.reduce-line");
+    const res = (await action({
+      request: req(URL_, "POST", {
+        order_line_id: "line-1",
+        new_quantity: 1,
+        restock: false,
+        idempotency_key: "k4d",
+        reason: "x".repeat(500),
+      }),
+      params: { id: ORDER_ID },
+    } as never)) as Response;
+    expect(res.status).toBe(200);
+  });
+
   it("422s a missing idempotency_key", async () => {
     const { action } = await import("../dashboard.api.orders.$id.reduce-line");
     const res = (await action({
