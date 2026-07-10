@@ -3,18 +3,36 @@ import { Btn, Card, Pill, Placeholder, TableSkeleton, Tooltip } from "../ui";
 import { money, timeAgo } from "../format";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
-  fetchImportedOrders,
+  bulkAddOrderTags,
+  bulkArchiveOrders,
+  bulkFulfillOrders,
+  createOrderView,
+  deleteOrderView,
+  fetchOrderViews,
+  fetchOrdersList,
   fetchOrdersPage,
-  type ImportedOrdersPage,
+  ordersListParamsToQueryString,
+  type BulkResultVM,
   type OrderRow,
+  type OrderViewVM,
+  type OrdersListParams,
   type OrdersPage,
+  type UnifiedOrderRow,
+  type UnifiedOrdersPage,
 } from "~/lib/dashboard/orders-client";
-import type { ImportedOrderRow } from "~/lib/order/imported-list-types";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 import RefundModal from "./RefundModal";
 import OrderDetailScreen from "./OrderDetail";
+import OrdersToolbar from "./OrdersToolbar";
 import { fulfillmentBadge, paymentPillStyle, REFUNDABLE_ORDER_STATES } from "./order-status";
+import {
+  isSystemView,
+  paramsToViewFilters,
+  systemViewParams,
+  viewFiltersToParams,
+  type ListState,
+} from "./orders-list-state";
 
 // Migrated Shopify orders whose money was captured at Shopify: Calderyn can't
 // reverse that charge, so the merchant is told, plainly, to refund it in Shopify.
@@ -41,6 +59,7 @@ type DisplayOrder = {
   // financial_status vocabulary (paid/refunded/partially_refunded/...) — drives the Payment pill
   // for BOTH origins.
   financialStatus: string;
+  cancelledAt: string | null;
   source: "calderyn" | "shopify";
   // The native OrderRow (for the refund modal) when this row is a Calderyn
   // order; null for migrated orders (their money lives at Shopify).
@@ -53,63 +72,72 @@ function displayOrderSourceId(r: DisplayOrder): string {
   return r.source === "shopify" ? `shopify:${r.id}` : r.id;
 }
 
-function mergeOrders(native: OrderRow[] | null, imported: ImportedOrderRow[] | null): DisplayOrder[] {
-  const rows: DisplayOrder[] = [];
-  for (const o of native ?? []) {
-    rows.push({
-      id: o.id,
-      ref: o.ref,
-      createdAt: o.createdAt,
-      customer: o.buyerEmail,
-      totalCents: o.totalCents,
-      currency: o.currency,
-      state: o.state,
-      financialStatus: o.financialStatus,
-      source: "calderyn",
-      refundRow: o,
-    });
-  }
-  for (const o of imported ?? []) {
-    rows.push({
-      id: o.id,
-      ref: o.ref,
-      createdAt: o.processedAt,
-      customer: null,
-      totalCents: o.totalCents,
-      currency: o.currency,
-      state: o.financialStatus,
-      financialStatus: o.financialStatus,
-      source: "shopify",
-      refundRow: null,
-    });
-  }
-  rows.sort((a, b) => {
-    const at = a.createdAt ? Date.parse(a.createdAt) : 0;
-    const bt = b.createdAt ? Date.parse(b.createdAt) : 0;
-    return bt - at;
-  });
-  return rows;
+/** UnifiedOrderRow (the unified list read model) -> the DisplayOrder shape the row renderer and
+ *  the RefundModal already understand, so both survive the switch from the client-side
+ *  native+imported merge to the server's single unified query. */
+function unifiedRowToDisplayOrder(row: UnifiedOrderRow): DisplayOrder {
+  return {
+    id: row.id,
+    ref: row.ref,
+    createdAt: row.occurredAt,
+    customer: row.buyerEmail,
+    totalCents: row.totalCents,
+    currency: row.currency,
+    state: row.state,
+    financialStatus: row.paymentStatus,
+    cancelledAt: row.cancelledAt,
+    source: row.source,
+    refundRow:
+      row.source === "calderyn"
+        ? {
+            id: row.id,
+            ref: row.ref,
+            buyerEmail: row.buyerEmail,
+            itemCount: row.itemCount,
+            totalCents: row.totalCents,
+            remainingRefundableCents: row.remainingRefundableCents,
+            currency: row.currency,
+            attribution: null,
+            state: row.state,
+            financialStatus: row.paymentStatus,
+            createdAt: row.occurredAt,
+          }
+        : null,
+  };
 }
 
-// The visible list is bounded; the merged history can be thousands of orders.
-const ORDERS_VISIBLE = 100;
+/** The system tab's fixed filters, or a saved view's stored filters decoded back to
+ *  OrdersListParams. Unknown/removed saved-view id resolves to no extra filters (same as "all"). */
+function resolveViewFilters(view: string, savedViews: OrderViewVM[]): Partial<OrdersListParams> {
+  if (isSystemView(view)) return systemViewParams(view);
+  const saved = savedViews.find((v) => v.id === view);
+  return saved ? viewFiltersToParams(saved.filters) : {};
+}
 
 function UnifiedOrdersList({
-  native,
-  imported,
-  totalCount,
+  rows,
   loading,
+  isDefaultView,
   onRefund,
   onOpen,
+  selected,
+  onToggleRow,
+  onToggleAll,
+  allSelected,
+  anySelectable,
 }: {
-  native: OrderRow[] | null;
-  imported: ImportedOrderRow[] | null;
-  totalCount: number;
+  rows: DisplayOrder[] | null;
   loading: boolean;
+  isDefaultView: boolean;
   onRefund: (order: OrderRow) => void;
   onOpen: (sourceId: string) => void;
+  selected: Set<string>;
+  onToggleRow: (id: string) => void;
+  onToggleAll: () => void;
+  allSelected: boolean;
+  anySelectable: boolean;
 }) {
-  if (native == null && imported == null) {
+  if (rows == null) {
     return (
       <Card pad={false}>
         {loading ? (
@@ -125,24 +153,36 @@ function UnifiedOrdersList({
     );
   }
 
-  const merged = mergeOrders(native, imported);
-  if (merged.length === 0) {
+  if (rows.length === 0) {
     return (
       <Card pad={false}>
         <Placeholder
           icon="doc"
-          title="No orders yet"
-          sub="Orders from your storefront and from AI shopping assistants land here."
+          title={isDefaultView ? "No orders yet" : "No orders match this view."}
+          sub={
+            isDefaultView
+              ? "Orders from your storefront and from AI shopping assistants land here."
+              : "Try a different search, tab, or clear your filters."
+          }
         />
       </Card>
     );
   }
 
-  const shown = merged.slice(0, ORDERS_VISIBLE);
-  const cols = "1fr 1.2fr 0.9fr 0.9fr 0.9fr 1fr auto";
+  const cols = "auto 1fr 1.2fr 0.9fr 0.9fr 0.9fr 1fr auto";
   return (
     <Card pad={false}>
       <div className="cd-tablehd" style={{ gridTemplateColumns: cols }}>
+        <span>
+          {anySelectable && (
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={onToggleAll}
+              aria-label="Select all orders on this page"
+            />
+          )}
+        </span>
         <span>Order</span>
         <span>Customer</span>
         <span>Total</span>
@@ -151,10 +191,11 @@ function UnifiedOrdersList({
         <span>Fulfillment</span>
         <span />
       </div>
-      {shown.map((r) => {
+      {rows.map((r) => {
         const refundable = r.refundRow && REFUNDABLE_ORDER_STATES.has(r.state) ? r.refundRow : null;
-        const fulfillment = r.source === "calderyn" ? fulfillmentBadge(r.state, null) : null;
+        const fulfillment = r.source === "calderyn" ? fulfillmentBadge(r.state, r.cancelledAt) : null;
         const open = () => onOpen(displayOrderSourceId(r));
+        const selectableId = r.source === "calderyn" ? r.id : null;
         return (
           <div
             key={`${r.source}:${r.id}`}
@@ -170,6 +211,18 @@ function UnifiedOrdersList({
               }
             }}
           >
+            <div onClick={(e) => e.stopPropagation()}>
+              {selectableId ? (
+                <input
+                  type="checkbox"
+                  checked={selected.has(selectableId)}
+                  onChange={() => onToggleRow(selectableId)}
+                  aria-label={`Select order ${r.ref}`}
+                />
+              ) : (
+                <span className="cd-caption">—</span>
+              )}
+            </div>
             <div>
               <div className="cd-row-title tabular-nums">{r.ref}</div>
               {r.source === "shopify" && <div className="cd-caption">Shopify</div>}
@@ -206,12 +259,6 @@ function UnifiedOrdersList({
           </div>
         );
       })}
-      {totalCount > shown.length && (
-        <div className="cd-caption" style={{ padding: "10px 16px", textAlign: "center" }}>
-          Showing the most recent {shown.length.toLocaleString("en-US")} of{" "}
-          {totalCount.toLocaleString("en-US")} orders.
-        </div>
-      )}
     </Card>
   );
 }
@@ -224,12 +271,6 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   );
   const [loading, setLoading] = useState(true);
   const [refundOrder, setRefundOrder] = useState<OrderRow | null>(null);
-  // Migrated Shopify order history, merged into the main list so the Orders
-  // screen shows the whole store as one continuous history.
-  const [imported, setImported] = useState<ImportedOrdersPage | null>(() =>
-    cachedScreenData<ImportedOrdersPage>(SCREEN_CACHE_KEYS.importedOrders),
-  );
-  const [importedLoading, setImportedLoading] = useState(imported === null);
   const toast = app.toast;
 
   const load = useCallback(
@@ -260,26 +301,268 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     };
   }, [load]);
 
-  // Load migrated order history on mount (revalidating any warm-cache seed) so
-  // it merges into the main list. Its own failure is non-critical: the native
-  // orders still render, so this only warns, it never blanks the screen.
+  // --- unified orders list: search/filter/sort/paginate (Phase 2 Task 6) ------------------------
+  const [state, setState] = useState<ListState>({
+    view: "all",
+    search: "",
+    sort: undefined,
+    dir: undefined,
+    offset: 0,
+  });
+  const [searchInput, setSearchInput] = useState("");
+  const [savedViews, setSavedViews] = useState<OrderViewVM[]>([]);
+  const [ordersListPage, setOrdersListPage] = useState<UnifiedOrdersPage | null>(() =>
+    cachedScreenData<UnifiedOrdersPage>(SCREEN_CACHE_KEYS.ordersList),
+  );
+  const [ordersListLoading, setOrdersListLoading] = useState(true);
+
+  // Debounce the search box so each keystroke doesn't fire a request; every effective search
+  // change resets to page 1 (see the offset reset below).
   useEffect(() => {
-    const signal = { alive: true };
-    fetchImportedOrders()
-      .then((p) => {
-        cacheScreenData(SCREEN_CACHE_KEYS.importedOrders, p);
-        if (signal.alive) setImported(p);
+    const t = setTimeout(() => {
+      setState((s) => {
+        const trimmed = searchInput.trim();
+        if (s.search === trimmed) return s;
+        return { ...s, search: trimmed, offset: 0 };
+      });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  useEffect(() => {
+    let alive = true;
+    fetchOrderViews()
+      .then((views) => {
+        if (alive) setSavedViews(views);
       })
       .catch(() => {
-        /* migrated history is additive; native orders own the error UX */
-      })
-      .finally(() => {
-        if (signal.alive) setImportedLoading(false);
+        /* saved views are additive — the toolbar still works off the system tabs */
       });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const effectiveParams = useMemo<OrdersListParams>(() => {
+    const viewFilters = resolveViewFilters(state.view, savedViews);
+    return {
+      ...viewFilters,
+      search: state.search || undefined,
+      sort: state.sort,
+      dir: state.dir,
+      offset: state.offset,
+    };
+  }, [state.view, state.search, state.sort, state.dir, state.offset, savedViews]);
+
+  // Only the bare "all" tab, no search, first page, default sort seeds from + writes through the
+  // screen cache — any other combination is a live fetch (never cached), so a saved filter never
+  // paints stale data from a totally different view.
+  const isDefaultView =
+    state.view === "all" &&
+    !state.search &&
+    state.offset === 0 &&
+    state.sort === undefined &&
+    state.dir === undefined;
+  const isArchivedView = effectiveParams.archived === true;
+  const isPlainSystemTab =
+    isSystemView(state.view) && !state.search && state.sort === undefined && state.dir === undefined;
+  const canSaveView = !isPlainSystemTab;
+
+  const loadOrdersList = useCallback(
+    (params: OrdersListParams, isDefault: boolean, signal?: { alive: boolean }) => {
+      setOrdersListLoading(true);
+      fetchOrdersList(params)
+        .then((p) => {
+          if (isDefault) cacheScreenData(SCREEN_CACHE_KEYS.ordersList, p);
+          if (!signal || signal.alive) setOrdersListPage(p);
+        })
+        .catch((err: unknown) => {
+          if (signal && !signal.alive) return;
+          const msg = err instanceof DashboardApiError ? err.message : "Could not load orders.";
+          toast(msg, "warn", "critical");
+        })
+        .finally(() => {
+          if (!signal || signal.alive) setOrdersListLoading(false);
+        });
+    },
+    [toast],
+  );
+
+  useEffect(() => {
+    const signal = { alive: true };
+    loadOrdersList(effectiveParams, isDefaultView, signal);
     return () => {
       signal.alive = false;
     };
+  }, [effectiveParams, isDefaultView, loadOrdersList]);
+
+  // Latest resolved filters, readable from the (rare-firing) back-from-detail effect below without
+  // making that effect re-run on every keystroke/filter change.
+  const listParamsRef = useRef({ params: effectiveParams, isDefault: isDefaultView });
+  listParamsRef.current = { params: effectiveParams, isDefault: isDefaultView };
+
+  const selectView = useCallback(
+    (next: string) => {
+      if (isSystemView(next)) {
+        setState((s) => ({ ...s, view: next, offset: 0 }));
+        return;
+      }
+      const saved = savedViews.find((v) => v.id === next);
+      const filters = saved ? viewFiltersToParams(saved.filters) : {};
+      setSearchInput(filters.search ?? "");
+      setState((s) => ({
+        ...s,
+        view: next,
+        search: filters.search ?? "",
+        sort: filters.sort,
+        dir: filters.dir,
+        offset: 0,
+      }));
+    },
+    [savedViews],
+  );
+
+  const saveCurrentView = useCallback(
+    async (name: string) => {
+      const filtersToSave = paramsToViewFilters(effectiveParams);
+      try {
+        const view = await createOrderView(name, filtersToSave);
+        setSavedViews((vs) => [...vs, view]);
+        toast(`Saved view "${view.name}".`, "check", "success");
+      } catch (err) {
+        toast(err instanceof DashboardApiError ? err.message : "Couldn't save this view.", "warn", "critical");
+      }
+    },
+    [effectiveParams, toast],
+  );
+
+  const removeView = useCallback(
+    async (id: string) => {
+      try {
+        await deleteOrderView(id);
+        setSavedViews((vs) => vs.filter((v) => v.id !== id));
+        setState((s) => (s.view === id ? { ...s, view: "all", offset: 0 } : s));
+        toast("View deleted.", "check", "success");
+      } catch (err) {
+        toast(err instanceof DashboardApiError ? err.message : "Couldn't delete this view.", "warn", "critical");
+      }
+    },
+    [toast],
+  );
+
+  const exportHref = useMemo(() => {
+    const qs = ordersListParamsToQueryString({ ...effectiveParams, offset: undefined, limit: undefined });
+    return `/dashboard/api/orders/export${qs ? `?${qs}` : ""}`;
+  }, [effectiveParams]);
+
+  const displayRows = useMemo(
+    () => (ordersListPage ? ordersListPage.rows.map(unifiedRowToDisplayOrder) : null),
+    [ordersListPage],
+  );
+
+  const selectableIds = useMemo(
+    () => (displayRows ?? []).filter((r) => r.source === "calderyn").map((r) => r.id),
+    [displayRows],
+  );
+  const refById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of displayRows ?? []) if (r.source === "calderyn") m.set(r.id, r.ref);
+    return m;
+  }, [displayRows]);
+
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    setSelected(new Set());
+  }, [ordersListPage]);
+
+  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+
+  const toggleRow = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }, []);
+
+  const toggleAll = useCallback(() => {
+    setSelected((prev) => {
+      const allOn = selectableIds.length > 0 && selectableIds.every((id) => prev.has(id));
+      return new Set(allOn ? [] : selectableIds);
+    });
+  }, [selectableIds]);
+
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [notifyOnFulfill, setNotifyOnFulfill] = useState(true);
+  const [bulkTagInput, setBulkTagInput] = useState("");
+
+  const summarizeBulk = useCallback(
+    (results: BulkResultVM[], verb: string) => {
+      const ok = results.filter((r) => r.ok);
+      const failed = results.filter((r) => !r.ok);
+      if (failed.length === 0) {
+        toast(`${ok.length} ${verb}.`, "check", "success");
+        return;
+      }
+      toast(`${ok.length} of ${results.length} ${verb}. ${failed.length} failed.`, "warn", "critical");
+      if (failed.length <= 3) {
+        const refs = failed.map((f) => refById.get(f.orderId) ?? f.orderId).join(", ");
+        toast(`Failed: ${refs}`, "warn", "critical");
+      } else {
+        toast("Check the orders.", "warn", "critical");
+      }
+    },
+    [refById, toast],
+  );
+
+  const bulkFulfill = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0 || bulkBusy) return;
+    if (!window.confirm(`Mark ${ids.length} orders fulfilled?`)) return;
+    setBulkBusy(true);
+    try {
+      const { results } = await bulkFulfillOrders(ids, notifyOnFulfill, crypto.randomUUID());
+      summarizeBulk(results, "fulfilled");
+      loadOrdersList(effectiveParams, isDefaultView);
+    } catch (err) {
+      toast(err instanceof DashboardApiError ? err.message : "Couldn't fulfill these orders.", "warn", "critical");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const bulkArchive = async (archived: boolean) => {
+    const ids = Array.from(selected);
+    if (ids.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      const { results } = await bulkArchiveOrders(ids, archived);
+      summarizeBulk(results, archived ? "archived" : "unarchived");
+      loadOrdersList(effectiveParams, isDefaultView);
+    } catch (err) {
+      toast(err instanceof DashboardApiError ? err.message : "Couldn't update these orders.", "warn", "critical");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const bulkAddTag = async () => {
+    const tag = bulkTagInput.trim();
+    const ids = Array.from(selected);
+    if (!tag || ids.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      const { results } = await bulkAddOrderTags(ids, [tag]);
+      summarizeBulk(results, "tagged");
+      setBulkTagInput("");
+      loadOrdersList(effectiveParams, isDefaultView);
+    } catch (err) {
+      toast(err instanceof DashboardApiError ? err.message : "Couldn't tag these orders.", "warn", "critical");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   // Order-detail actions (fulfill/cancel/refund/archive) mutate the native list this screen
   // already holds in memory, so a plain return-to-list doesn't see the change until a refetch.
@@ -295,27 +578,16 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     if (wasViewingOrder.current) {
       wasViewingOrder.current = false;
       load();
+      loadOrdersList(listParamsRef.current.params, listParamsRef.current.isDefault);
     }
-  }, [app.nav.param, load]);
+  }, [app.nav.param, load, loadOrdersList]);
 
   const sub = app.nav.sub ?? "orders";
-
-  // Unified order count = native rows shown + the true migrated total. The
-  // subtab navigation lives in the sidebar rail; this screen renders the view
-  // for the active sub only.
-  const ordersTotal = (page?.orders.length ?? 0) + (imported?.totalCount ?? 0);
-
-  // Merged rows, kept only to seed the detail screen instantly from whatever's already loaded —
-  // recomputed with the list, so it's never stale by the time a row is clicked.
-  const merged = useMemo(
-    () => mergeOrders(page?.orders ?? null, imported?.orders ?? null),
-    [page, imported],
-  );
 
   // Row-click / deep-link: nav.param carries the selected order's sourceId (`shopify:<id>` for
   // migrated orders, a bare id for native ones) — same idiom as Campaigns' selected-campaign branch.
   if (app.nav.param) {
-    const seedRow = merged.find((r) => displayOrderSourceId(r) === app.nav.param) ?? null;
+    const seedRow = (displayRows ?? []).find((r) => displayOrderSourceId(r) === app.nav.param) ?? null;
     return (
       <OrderDetailScreen
         app={app}
@@ -346,14 +618,102 @@ export default function Orders({ app }: { app: DashboardCtx }) {
       </header>
 
       {sub === "orders" ? (
-        <UnifiedOrdersList
-          native={page?.orders ?? null}
-          imported={imported?.orders ?? null}
-          totalCount={ordersTotal}
-          loading={loading && importedLoading}
-          onRefund={setRefundOrder}
-          onOpen={(sourceId) => app.navigate("orders", sourceId)}
-        />
+        <>
+          <OrdersToolbar
+            view={state.view}
+            savedViews={savedViews}
+            onViewChange={selectView}
+            onDeleteView={removeView}
+            searchInput={searchInput}
+            onSearchInputChange={setSearchInput}
+            sort={state.sort}
+            dir={state.dir}
+            onSortChange={(sort) => setState((s) => ({ ...s, sort, offset: 0 }))}
+            onDirChange={(dir) => setState((s) => ({ ...s, dir, offset: 0 }))}
+            canSaveView={canSaveView}
+            onSaveView={saveCurrentView}
+            exportHref={exportHref}
+          />
+
+          {selected.size > 0 && (
+            <Card>
+              <div className="flex items-center gap-3" style={{ flexWrap: "wrap" }}>
+                <span className="cd-row-title">{selected.size} selected</span>
+                <label className="flex items-center gap-2 cd-caption">
+                  <input
+                    type="checkbox"
+                    checked={notifyOnFulfill}
+                    onChange={(e) => setNotifyOnFulfill(e.target.checked)}
+                  />
+                  Notify customers
+                </label>
+                <Btn small icon="truck" disabled={bulkBusy} onClick={bulkFulfill}>
+                  Fulfill
+                </Btn>
+                <Btn small icon="archive" disabled={bulkBusy} onClick={() => bulkArchive(!isArchivedView)}>
+                  {isArchivedView ? "Unarchive" : "Archive"}
+                </Btn>
+                <div className="flex items-center gap-2">
+                  <input
+                    className="cd-input"
+                    placeholder="Add tag"
+                    aria-label="Tag to add"
+                    value={bulkTagInput}
+                    onChange={(e) => setBulkTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") bulkAddTag();
+                    }}
+                    style={{ width: 140 }}
+                  />
+                  <Btn small icon="tag" disabled={bulkBusy || !bulkTagInput.trim()} onClick={bulkAddTag}>
+                    Add tag
+                  </Btn>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          <UnifiedOrdersList
+            rows={displayRows}
+            loading={ordersListLoading}
+            isDefaultView={isDefaultView}
+            onRefund={setRefundOrder}
+            onOpen={(sourceId) => app.navigate("orders", sourceId)}
+            selected={selected}
+            onToggleRow={toggleRow}
+            onToggleAll={toggleAll}
+            allSelected={allSelected}
+            anySelectable={selectableIds.length > 0}
+          />
+
+          {ordersListPage && ordersListPage.totalCount > 0 && (
+            <div className="flex items-center justify-between" style={{ padding: "10px 4px" }}>
+              <span className="cd-caption">
+                Showing {ordersListPage.offset + 1}-
+                {Math.min(ordersListPage.offset + ordersListPage.rows.length, ordersListPage.totalCount)} of{" "}
+                {ordersListPage.totalCount.toLocaleString("en-US")}
+              </span>
+              <div className="flex items-center gap-2">
+                <Btn
+                  small
+                  disabled={ordersListPage.offset === 0}
+                  onClick={() =>
+                    setState((s) => ({ ...s, offset: Math.max(0, s.offset - ordersListPage.limit) }))
+                  }
+                >
+                  Prev
+                </Btn>
+                <Btn
+                  small
+                  disabled={ordersListPage.offset + ordersListPage.rows.length >= ordersListPage.totalCount}
+                  onClick={() => setState((s) => ({ ...s, offset: s.offset + ordersListPage.limit }))}
+                >
+                  Next
+                </Btn>
+              </div>
+            </div>
+          )}
+        </>
       ) : !page ? (
         <Card pad={false}>
           {loading ? (
@@ -476,7 +836,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
           app={app}
           order={refundOrder}
           onClose={() => setRefundOrder(null)}
-          onDone={() => load()}
+          onDone={() => loadOrdersList(effectiveParams, isDefaultView)}
         />
       )}
     </div>

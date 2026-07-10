@@ -211,6 +211,10 @@ export default function OrderDetailScreen({
     saveTags(detail.tags.filter((t) => t !== tag));
   };
 
+  const printDoc = (doc: "packing-slip" | "invoice") => {
+    window.open(`/dashboard/orders/print/${encodeURIComponent(sourceId)}?doc=${doc}`, "_blank");
+  };
+
   const toggleArchived = async () => {
     if (!detail || archiving) return;
     setArchiving(true);
@@ -272,6 +276,16 @@ export default function OrderDetailScreen({
             )}
             <Btn small icon="archive" onClick={toggleArchived} disabled={archiving}>
               {detail.archivedAt ? "Unarchive" : "Archive"}
+            </Btn>
+          </div>
+        )}
+        {detail && (
+          <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
+            <Btn small icon="printer" onClick={() => printDoc("packing-slip")}>
+              Print packing slip
+            </Btn>
+            <Btn small icon="printer" onClick={() => printDoc("invoice")}>
+              Print invoice
             </Btn>
           </div>
         )}

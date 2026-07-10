@@ -197,9 +197,12 @@ function mapUnifiedRow(row: UnifiedOrderRowWire): UnifiedOrderRow {
   };
 }
 
-/** Search/filter/sort/paginate across native + imported orders (Phase 2 list power tools).
- *  Omits any param that's undefined so the querystring stays minimal. */
-export async function fetchOrdersList(params: OrdersListParams): Promise<UnifiedOrdersPage> {
+/** OrdersListParams -> the query string the list/export routes both parse (parseOrdersListParams
+ *  on the server). Shared by fetchOrdersList and the Export CSV link (dashboard.api.orders.export)
+ *  so the two routes are ALWAYS handed an identical filter surface for "the same view" — building
+ *  the export URL any other way risks a silent drift between what's on screen and what's exported.
+ *  Omits any param that's undefined/empty so the querystring stays minimal. */
+export function ordersListParamsToQueryString(params: OrdersListParams): string {
   const qs = new URLSearchParams();
   if (params.search) qs.set("search", params.search);
   if (params.paymentStatus?.length) qs.set("payment_status", params.paymentStatus.join(","));
@@ -213,7 +216,13 @@ export async function fetchOrdersList(params: OrdersListParams): Promise<Unified
   if (params.dir) qs.set("dir", params.dir);
   if (params.offset !== undefined) qs.set("offset", String(params.offset));
   if (params.limit !== undefined) qs.set("limit", String(params.limit));
-  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return qs.toString();
+}
+
+/** Search/filter/sort/paginate across native + imported orders (Phase 2 list power tools). */
+export async function fetchOrdersList(params: OrdersListParams): Promise<UnifiedOrdersPage> {
+  const qsString = ordersListParamsToQueryString(params);
+  const suffix = qsString ? `?${qsString}` : "";
 
   const data = await apiGet<{
     rows: UnifiedOrderRowWire[];
