@@ -38,6 +38,37 @@ describe("commerce tool handlers", () => {
     expect(calls).toEqual([]); // nothing placed — no orphan checkout_pending order
   });
 
+  it("place_order maps OutOfStockError from placeAgenticOrder to a structured OUT_OF_STOCK error", async () => {
+    vi.resetModules();
+    const session = vi.fn();
+    vi.doMock("~/lib/commerce/quote-store.server", () => ({
+      getQuote: async () => ({ quoteId: "q1", totalCents: 2660, currency: "usd", expiresAt: "2999-01-01T00:00:00Z" }),
+      lockQuote: async () => ({ quoteId: "q1", expiresAt: "2999-01-01T00:00:00Z" }),
+    }));
+    vi.doMock("~/lib/commerce/guardrail.server", () => ({ assertWithinCommerceCap: async () => {} }));
+    vi.doMock("~/lib/payments/connect.server", () => ({ paymentsReadiness: async () => ({ ready: true }) }));
+    class OutOfStockError extends Error {
+      constructor(public variantIds: string[]) {
+        super(`out of stock: ${variantIds.join(", ")}`);
+        this.name = "OutOfStockError";
+      }
+    }
+    vi.doMock("~/lib/commerce/order.server", () => ({
+      OutOfStockError,
+      placeAgenticOrder: async () => {
+        throw new OutOfStockError(["v1", "v2"]);
+      },
+    }));
+    vi.doMock("~/lib/commerce/stripe-checkout.server", () => ({ createCommerceCheckoutSession: session }));
+    const { handleCommerceTool } = await import("./commerce-tools.server");
+    const res = await handleCommerceTool("place_order", { quote_id: "q1", email: "b@x.com" }, { shopId: "shop_test", clientId: "c1" });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.content);
+    expect(parsed.code).toBe("OUT_OF_STOCK");
+    expect(parsed.message).not.toMatch(/v1|v2/); // no leaking internal variant ids
+    expect(session).not.toHaveBeenCalled();
+  });
+
   it("place_order rejects an expired/unknown quote before checking the cap or placing", async () => {
     vi.resetModules();
     const calls: string[] = [];

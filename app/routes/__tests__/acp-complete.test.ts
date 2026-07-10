@@ -55,6 +55,45 @@ describe("ACP complete action", () => {
     expect(place).not.toHaveBeenCalled();
   });
 
+  it("maps OutOfStockError from placeAgenticOrder to a 409 OUT_OF_STOCK, releasing the claim first", async () => {
+    vi.resetModules();
+    process.env.ACP_ENABLED = "true";
+    process.env.ACP_SIGNING_SECRET = "whsec_test";
+    const release = vi.fn(async () => {});
+    const charge = vi.fn();
+    vi.doMock("~/lib/commerce/acp/signature.server", () => ({ verifyAcpSignature: () => true }));
+    vi.doMock("~/lib/commerce/acp/session-store.server", () => ({
+      getAcpSession: async () => ({ sessionId: "acp_1", shopId: "shop_test", clientId: "c1", quoteId: "q1", orderId: null, status: "open" }),
+      claimAcpSessionForCompletion: async () => true,
+      releaseAcpSessionClaim: release,
+      completeAcpSession: async () => {},
+    }));
+    vi.doMock("~/lib/commerce/quote-store.server", () => ({ getQuote: async () => ({ quoteId: "q1", totalCents: 2660, currency: "usd" }) }));
+    vi.doMock("~/lib/payments/stripe.server", () => ({ isSupportedCurrency: (c: string) => SUPPORTED.has(c.toLowerCase()) }));
+    vi.doMock("~/lib/commerce/guardrail.server", () => ({ assertWithinCommerceCap: async () => {} }));
+    class OutOfStockError extends Error {
+      constructor(public variantIds: string[]) {
+        super(`out of stock: ${variantIds.join(", ")}`);
+        this.name = "OutOfStockError";
+      }
+    }
+    vi.doMock("~/lib/commerce/order.server", () => ({
+      OutOfStockError,
+      placeAgenticOrder: async () => {
+        throw new OutOfStockError(["v1"]);
+      },
+    }));
+    vi.doMock("~/lib/commerce/acp/charge.server", () => ({ chargeSharedPaymentToken: charge }));
+    const { action } = await import("../acp.checkout_sessions.$id.complete");
+    const req = new Request("https://app/acp/checkout_sessions/acp_1/complete", { method: "POST", body: JSON.stringify({ payment: { shared_payment_token: "spt_1" }, buyer: { email: "b@x.com" } }) });
+    const res = await action({ request: req, params: { id: "acp_1" }, context: {} } as never);
+    const data = await res.json() as Record<string, unknown>;
+    expect(res.status).toBe(409);
+    expect(data.error).toBe("OUT_OF_STOCK");
+    expect(release).toHaveBeenCalledWith("acp_1"); // claim released before mapping the error
+    expect(charge).not.toHaveBeenCalled();
+  });
+
   it("releases the claim when placing fails before any charge (so a transient blip is retryable)", async () => {
     vi.resetModules();
     process.env.ACP_ENABLED = "true";
@@ -71,7 +110,10 @@ describe("ACP complete action", () => {
     vi.doMock("~/lib/commerce/quote-store.server", () => ({ getQuote: async () => ({ quoteId: "q1", totalCents: 2660, currency: "usd" }) }));
     vi.doMock("~/lib/payments/stripe.server", () => ({ isSupportedCurrency: (c: string) => SUPPORTED.has(c.toLowerCase()) }));
     vi.doMock("~/lib/commerce/guardrail.server", () => ({ assertWithinCommerceCap: async () => {} }));
-    vi.doMock("~/lib/commerce/order.server", () => ({ placeAgenticOrder: async () => { throw new Error("transient place failure"); } }));
+    vi.doMock("~/lib/commerce/order.server", () => ({
+      OutOfStockError: class OutOfStockError extends Error {},
+      placeAgenticOrder: async () => { throw new Error("transient place failure"); },
+    }));
     vi.doMock("~/lib/commerce/acp/charge.server", () => ({ chargeSharedPaymentToken: charge }));
     vi.doMock("~/lib/payments/connect.server", () => ({ paymentsReadiness: async () => ({ ready: true, route: "destination" }) }));
     const { action } = await import("../acp.checkout_sessions.$id.complete");

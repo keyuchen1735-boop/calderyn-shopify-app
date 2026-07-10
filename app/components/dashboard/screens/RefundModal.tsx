@@ -22,6 +22,8 @@ export default function RefundModal({
 }) {
   const [full, setFull] = useState(true);
   const [dollars, setDollars] = useState("");
+  const [reason, setReason] = useState("");
+  const [restock, setRestock] = useState(false);
   const [busy, setBusy] = useState(false);
   // One stable key per refund intent (survives re-renders); reused on retry so Stripe dedups.
   const [idempotencyKey] = useState(() => crypto.randomUUID());
@@ -51,11 +53,16 @@ export default function RefundModal({
       const res = await refundOrder(order.id, {
         amountCents: full ? undefined : partialCents,
         idempotencyKey,
+        reason: reason.trim() || undefined,
+        restock: full ? restock : undefined,
       });
       app.toast(
-        `Refunded ${money(res.amountCents, order.currency)} — order is now ${res.orderState.replace("_", " ")}.`,
+        `Refunded ${money(res.amountCents, order.currency)} — order is now ${res.orderState.replace("_", " ")}.${res.restockedLines > 0 ? " Items restocked." : ""}`,
         "check",
       );
+      if (res.restockError) {
+        app.toast("Refund issued, but some items could not be restocked. Check your inventory.", "warn");
+      }
       onDone();
       onClose();
     } catch (err) {
@@ -119,6 +126,23 @@ export default function RefundModal({
                   onChange={(e) => setDollars(e.target.value)}
                   placeholder="0.00"
                 />
+              </label>
+            )}
+            <label className="cd-field">
+              <span>Reason (optional)</span>
+              <input
+                className="cd-input"
+                type="text"
+                maxLength={200}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Damaged in transit"
+              />
+            </label>
+            {full && (
+              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} />
+                <span className="cd-caption">Restock all items at your primary location</span>
               </label>
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>

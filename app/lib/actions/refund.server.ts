@@ -28,6 +28,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CalderynError } from "../calderyn.server";
+import { restockOrderLines } from "../inventory/engine.server";
 import { transitionOrder } from "../order/order.server";
 import { isOrderState, type OrderState } from "../order/state";
 import { createStripeRefund, type StripeRefundInput, type StripeRefundResult } from "../payments/refund.server";
@@ -51,6 +52,8 @@ export interface RefundActionInput {
   triggerReason?: string | null;
   /** Merchant free-text note (persisted to audit params only — NOT sent to Stripe). */
   reason?: string | null;
+  /** Restock all lines at the primary location — honored only when this refund makes the order fully refunded. */
+  restock?: boolean;
 }
 
 export interface RefundActionResult {
@@ -62,6 +65,10 @@ export interface RefundActionResult {
   refundedTotalCents: number;
   /** The order's resulting state (refunded when fully refunded, else partially_refunded). */
   orderState: OrderState;
+  /** Lines restocked via inventory_restock — 0 when not requested, partial, or on a replay. */
+  restockedLines: number;
+  /** Non-null when a restock was requested but some (or all, or a preamble step) failed. */
+  restockError: string | null;
   replayed: boolean;
 }
 
@@ -194,6 +201,8 @@ async function resultFromAudit(
     capturedCents: Number(params.captured_cents ?? 0),
     refundedTotalCents: Number(params.refunded_total_cents ?? post.refunded_cents ?? 0),
     orderState: (isOrderState(state) ? state : "refunded") as OrderState,
+    restockedLines: 0,
+    restockError: null,
     replayed: true,
   };
 }
@@ -374,6 +383,41 @@ export async function executeRefundAction(
     );
   }
 
+  // 8c. Optional restock — FULL refunds only (amount-based partials can't say which
+  // lines came back; per-line restock ships with returns). Best-effort like 8b: the
+  // money already moved, so a restock failure logs loudly and lands in the audit
+  // params rather than failing the refund. restockOrderLines itself never throws for a
+  // per-variant RPC failure (partial-progress contract) — it only throws for a preamble
+  // read failure (order_line/variant_dim/ensurePrimaryLocation), which means nothing was
+  // attempted; that case is caught here and surfaced the same way.
+  let restockedLines = 0;
+  let restockError: string | null = null;
+  if (input.restock === true) {
+    if (resolvedState === "refunded") {
+      try {
+        const r = await restockOrderLines(shopId, input.orderId, "refund");
+        restockedLines = r.restockedLines;
+        params.restocked_lines = restockedLines;
+        if (r.failedVariantIds.length > 0) {
+          restockError = `restock failed for variants: ${r.failedVariantIds.join(", ")}`;
+          params.restock_error = restockError;
+          console.error(
+            `[refund] order ${input.orderId} refund ${refund.refundId}: restock partially failed for variants ${r.failedVariantIds.join(", ")} — reconcile inventory manually`,
+          );
+        }
+      } catch (err) {
+        restockError = err instanceof Error ? err.message : String(err);
+        params.restock_error = restockError;
+        console.error(
+          `[refund] order ${input.orderId} refund ${refund.refundId}: restock failed — reconcile inventory manually`,
+          err,
+        );
+      }
+    } else {
+      params.restock_skipped = "partial_refund";
+    }
+  }
+
   // 9. One append-only action_audit row (+ idempotency marker). issue_refund recovers $0 impact
   // (a refund is money OUT, not clawed-back waste) — recoveredCentsFromStates returns 0 for it.
   // Loud-log before rethrow: after a FULL refund the order is already 'refunded', so a retry is
@@ -413,6 +457,8 @@ export async function executeRefundAction(
     capturedCents,
     refundedTotalCents,
     orderState: resolvedState,
+    restockedLines,
+    restockError,
     replayed: false,
   };
 }

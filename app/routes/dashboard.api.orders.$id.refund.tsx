@@ -37,10 +37,19 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
   const reason = typeof body.reason === "string" ? body.reason : null;
 
+  // restock omitted -> no restock attempt. When present it must be a boolean.
+  let restock: boolean | undefined;
+  if (body.restock !== undefined && body.restock !== null) {
+    if (typeof body.restock !== "boolean") {
+      return jsonError(422, "invalid_restock", "restock must be a boolean.");
+    }
+    restock = body.restock;
+  }
+
   return dashboardJson(async () => {
     const result = await executeRefundAction(
       session.shopId,
-      { orderId: String(params.id), amountCents, idempotencyKey, actor: "merchant:web-dashboard", reason },
+      { orderId: String(params.id), amountCents, idempotencyKey, actor: "merchant:web-dashboard", reason, restock },
       getSupabase(),
     );
     return {
@@ -50,6 +59,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
       order_state: result.orderState,
       refunded_total_cents: result.refundedTotalCents,
       captured_cents: result.capturedCents,
+      restocked_lines: result.restockedLines,
+      restock_error: result.restockError,
     };
   });
 }
