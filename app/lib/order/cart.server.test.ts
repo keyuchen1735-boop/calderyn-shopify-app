@@ -141,7 +141,7 @@ vi.mock("~/lib/storefront/catalog.server", () => ({
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
-import { buildCart, addCartLine, priceCart, priceLines } from "./cart.server";
+import { buildCart, addCartLine, priceCart, priceLines, getCartOrigin } from "./cart.server";
 
 beforeEach(() => {
   store.db.cart.length = 0;
@@ -289,5 +289,22 @@ describe("priceLines", () => {
         { variantId: "v-cap", quantity: 1 },   // EUR
       ]),
     ).rejects.toThrow(/mix currencies/);
+  });
+});
+
+describe("getCartOrigin", () => {
+  it("returns null for a cart with no origin stamped", async () => {
+    const cart = await buildCart("shop-1");
+    expect(await getCartOrigin("shop-1", cart.id)).toBeNull();
+  });
+
+  it("returns the stamped origin (e.g. a recovery: stamp)", async () => {
+    const cart = await buildCart("shop-1");
+    store.db.cart.find((c) => c.id === cart.id)!.origin = "recovery:order-1";
+    expect(await getCartOrigin("shop-1", cart.id)).toBe("recovery:order-1");
+  });
+
+  it("returns null for an unknown cart id", async () => {
+    expect(await getCartOrigin("shop-1", "no-such-cart")).toBeNull();
   });
 });

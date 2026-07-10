@@ -63,6 +63,7 @@ const h = vi.hoisted(() => ({
   releaseReservation: vi.fn(),
   executeRefundAction: vi.fn(),
   sendCancellationNotice: vi.fn(),
+  expireInvoiceSession: vi.fn(),
 }));
 
 // Lightweight CalderynError so the executor's typed refusals carry code/status/message without
@@ -88,12 +89,19 @@ vi.mock("../inventory/engine.server", () => ({
 }));
 vi.mock("../actions/refund.server", () => ({ executeRefundAction: h.executeRefundAction }));
 vi.mock("./notify-email.server", () => ({ sendCancellationNotice: h.sendCancellationNotice }));
+vi.mock("./invoice.server", () => ({ expireInvoiceSession: h.expireInvoiceSession }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { executeCancelAction } from "./cancel.server";
 
-function seedOrder(shopId: string, id: string, state: string, cancelledAt: string | null = null) {
-  store.db.orders.push({ id, shop_id: shopId, state, cancelled_at: cancelledAt });
+function seedOrder(
+  shopId: string,
+  id: string,
+  state: string,
+  cancelledAt: string | null = null,
+  extra: Record<string, unknown> = {},
+) {
+  store.db.orders.push({ id, shop_id: shopId, state, cancelled_at: cancelledAt, ...extra });
 }
 function seedAudit(
   shopId: string,
@@ -127,6 +135,7 @@ beforeEach(() => {
     replayed: false,
   });
   h.sendCancellationNotice.mockResolvedValue({ sent: true, id: "email-1" });
+  h.expireInvoiceSession.mockResolvedValue(undefined);
 });
 
 describe("executeCancelAction", () => {
@@ -371,6 +380,34 @@ describe("executeCancelAction", () => {
     ).rejects.toMatchObject({ code: "order_not_cancellable", status: 409 });
     expect(h.executeRefundAction).not.toHaveBeenCalled();
     expect(h.insertAudit).not.toHaveBeenCalled();
+  });
+
+  it("fix C2: cancelling an invoice-channel order expires its hosted pay-link session", async () => {
+    seedOrder("shop-1", "order-inv1", "checkout_pending", null, { channel: "invoice" });
+
+    await executeCancelAction("shop-1", { orderId: "order-inv1", refund: false, restock: false, idempotencyKey: "kinv1" });
+
+    expect(h.expireInvoiceSession).toHaveBeenCalledWith("shop-1", "order-inv1");
+  });
+
+  it("fix C2: does NOT touch any hosted session for a non-invoice order", async () => {
+    seedOrder("shop-1", "order-1", "checkout_pending");
+
+    await executeCancelAction("shop-1", { orderId: "order-1", refund: false, restock: false, idempotencyKey: "knoninv" });
+
+    expect(h.expireInvoiceSession).not.toHaveBeenCalled();
+  });
+
+  it("fix C2: a session-expiry failure is logged loudly but does not fail an otherwise-successful cancel", async () => {
+    seedOrder("shop-1", "order-inv2", "paid", null, { channel: "invoice" });
+    h.expireInvoiceSession.mockRejectedValueOnce(new Error("stripe down"));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await executeCancelAction("shop-1", { orderId: "order-inv2", refund: false, restock: false, idempotencyKey: "kinv2" });
+
+    expect(res.orderState).toBe("cancelled");
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/could not expire the invoice's hosted pay-link session/), expect.any(Error));
+    errorSpy.mockRestore();
   });
 
   it("replay: returns replayed:true without acting again", async () => {

@@ -185,3 +185,38 @@ New `order_view` table (id, shop_id, name 1-60, filters jsonb, position, created
 ## 7. Rollout
 
 Branch `feat/orders-power-tools` stacked on `feat/orders-detail-ui`; one PR (4/4 of this train) stacked on #403. Migration applied to prod with object verification before the PR opens. Same gate as Phase 1.
+
+---
+
+# Phase 3 — create & edit + recovery (designed 2026-07-10; adversarially verified, 9 revisions folded in)
+
+## 1. Merchant-created orders (invoices)
+
+- **Composer:** "Create order" from the Orders screen: catalog variant picker with search, quantities, customer email, optional shipping address + note. The draft persists as a `cart` row with new nullable column `cart.origin = 'merchant_draft'` (buyer baskets have origin null). `listDraftCarts` explicitly excludes merchant drafts; a Drafts affordance in the composer lists them.
+- **Send invoice** (`sendDraftOrderInvoice`): snapshot-price the lines, quote shipping+tax via `quoteCart` when an address exists, insert an `orders` row (`channel: 'invoice'`, born `checkout_pending`, confirmation token), snapshot `order_line`, mark the cart consumed, email the customer an invoice (new notify-email sender: line summary, total, pay link). **No inventory hold at send** (a 30-minute TTL is meaningless for an invoice).
+- **The pay link never embeds a raw Stripe URL** (hosted sessions hard-expire at 24h). It points at a Calderyn route `/storefront/invoice/:token/pay` which, per click, verifies the order is still payable, lazily expires any stale session and creates a fresh hosted Checkout session, then redirects. Paid invoices flow through the normal webhook into the list/detail/fulfill pipeline.
+- **Stock on payment:** when `payment_intent.succeeded` finds no reservation for the order, a new atomic RPC `inventory_sale_fallback` (FOR UPDATE, relative decrement, ledger entry `sale`, idempotent per order+variant) decrements tracked lines. Policy: on_hand may go negative (backorder-truth, mirroring the reserve RPC's backorder branch) — honest inventory beats hidden oversell; the inventory screen already displays the number.
+- **Reaper exemption (launch-blocking fix):** the abandoned-order reaper must skip `channel = 'invoice'` orders entirely — otherwise it cancels an unpaid invoice at 24h and a later payment is silently stranded (the webhook's recovery path only revives `checkout_pending`). Killing an invoice is a merchant action: **Void invoice** (cancel executor, reason `invoice_void`).
+- `listAbandonedCheckouts` gains a `channel <> 'invoice'` filter (a day-old unpaid invoice is not an abandoned checkout).
+
+## 2. Order editing (scoped)
+
+- **Unpaid invoice orders:** edit lines freely → re-snapshot/re-price, totals updated; the pay-link route always reads the current order so no Stripe artifact needs eager updating; optional re-send invoice email.
+- **Paid orders: reductions only** (reduce quantity / remove line). Preconditions: native, paid/partially_fulfilled/fulfilled, and `newQty >= that line's fulfilled quantity` (never refund shipped units). Effects, in order: append an `order_line_edit` audit row (new table: order_line_id, old_qty, new_qty, reason, refund_cents, created_at — `order_line` snapshots are NEVER mutated), partial refund of the exact price delta via the existing refund executor, per-line restock of the removed units via a new thin wrapper calling `inventory_restock` directly (the executor's whole-order restock flag only fires on full refunds — not used here), timeline event.
+- **Effective quantity** (`quantity − Σ reductions`) becomes the ground truth at three read sites, updated in this phase: the warehouse emit's redelivery re-read (facts keep time-of-sale truth: emitted rows are not retro-rewritten; the netting only guards the redelivery path), the fulfill executor's remaining-math, and the detail read model's line list.
+- **Adding items to a paid order is deferred to Phase 4** (it is exchange machinery: collect additional payment, allocate stock).
+
+## 3. Abandoned-checkout recovery
+
+- **Scope:** storefront-originated `checkout_pending` orders only (`channel = 'storefront'`); invoices are re-sent, never "recovered."
+- **Send paths:** manual button on Abandoned rows; automatic via cron at ~4 hours abandoned (well before the 24h reap), gated on the buyer's recorded marketing consent (`buyer_consent.policy = 'marketing' AND accepted`). `orders.recovery_email_sent_at` (new column) guarantees at-most-once.
+- **Resume link:** keyed by the order's confirmation token → storefront route that rebuilds a FRESH cart from the order's line snapshots via the existing cart primitives (re-priced at the current catalog — `addCartLine` snapshots live prices by design; the email copy says prices reflect current availability), sets the `cd_cart` cookie, redirects to checkout. Works even after the reaper cancels the original order (nothing resurrects the old PI).
+- **Attribution:** the new order's attribution carries `recovered_from: <original order id>`; the timeline shows "Recovered from an abandoned checkout."
+
+## 4. Explicit v1 cuts (Shopify parity, deliberate)
+
+Draft-order discounts, mark-as-paid (bypasses the money ledger), payment terms, adding items to paid orders (Phase 4). Nothing half-implements these today; cutting them is clean.
+
+## 5. Rollout
+
+Branch `feat/orders-create-edit` off main; one PR (5). Migrations applied to prod with object verification. Same gate + browser e2e as Phases 1-2.

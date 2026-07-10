@@ -147,9 +147,17 @@ export async function listDraftCarts(shopId: string): Promise<DraftCartRow[]> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("cart")
-    .select("id, buyer_id, created_at, cart_line(quantity, unit_price_cents, currency)")
+    .select("id, buyer_id, created_at, origin, cart_line(quantity, unit_price_cents, currency)")
     .eq("shop_id", shopId)
     .eq("state", "cart")
+    // Exclude merchant-initiated draft carts (origin='merchant_draft') from the buyer-facing Open
+    // Baskets list — they aren't an abandoned buyer basket. `origin` is nullable (existing carts
+    // predate the column, and every ordinary buyer cart has no origin stamped), and PostgREST's
+    // `.neq("origin", "merchant_draft")` evaluates the SQL `origin <> 'merchant_draft'`, which is
+    // NULL (not TRUE) for a NULL column — so a plain `.neq` would silently drop every null-origin
+    // cart. The `.or()` form below matches null origin explicitly, then excludes only the literal
+    // 'merchant_draft' value.
+    .or("origin.is.null,origin.neq.merchant_draft")
     .order("created_at", { ascending: false })
     .limit(LIST_LIMIT);
   if (error) throw new Error(`cart read failed: ${error.message}`);
@@ -186,10 +194,17 @@ export async function listAbandonedCheckouts(
   const cutoff = new Date(Date.now() - ABANDON_AFTER_MS).toISOString();
   const { data, error } = await getSupabase()
     .from("orders")
-    .select("id, buyer_id, total_cents, currency, created_at")
+    .select("id, buyer_id, total_cents, currency, created_at, recovery_email_sent_at")
     .eq("shop_id", shopId)
     .eq("state", "checkout_pending")
     .lt("created_at", cutoff)
+    // Same test-probe exclusion as listOrders (channel is NOT NULL, default 'storefront' — .neq
+    // legitimately drops none of the real orders).
+    .neq("channel", "test")
+    // Hosted invoice-checkout sessions create no payment_intent row until the buyer completes
+    // payment, so listing them here as "abandoned" past the 1h cutoff would invite a merchant to
+    // treat an in-flight invoice payment as dead — exclude them, mirroring the reaper's exemption.
+    .neq("channel", "invoice")
     .order("created_at", { ascending: false })
     .limit(LIST_LIMIT);
   if (error) throw new Error(`abandoned orders read failed: ${error.message}`);
@@ -205,6 +220,7 @@ export async function listAbandonedCheckouts(
     totalCents: Number(s.total_cents ?? 0),
     currency: String(s.currency ?? "usd"),
     createdAt: String(s.created_at),
+    recoveryEmailSentAt: s.recovery_email_sent_at == null ? null : String(s.recovery_email_sent_at),
   }));
 }
 

@@ -11,6 +11,7 @@ const store = vi.hoisted(() => {
   const db: Record<string, Row[]> = {
     orders: [],
     order_line: [],
+    order_line_edit: [],
     variant_dim: [],
     buyer_dim: [],
     buyer_address: [],
@@ -336,6 +337,57 @@ describe("loadOrderDetail — native branch", () => {
     const detail = await loadOrderDetail("shop-1", "does-not-exist");
     expect(detail).toBeNull();
   });
+
+  it("nets a reduced line's quantity and surfaces an edit timeline event", async () => {
+    store.db.orders.push({
+      id: "order-edit-1",
+      shop_id: "shop-1",
+      buyer_id: null,
+      state: "paid",
+      financial_status: "paid",
+      subtotal_cents: 3000,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 3000,
+      currency: "usd",
+      attribution: null,
+      channel: "storefront",
+      archived_at: null,
+      cancelled_at: null,
+      cancel_reason: null,
+      created_at: "2026-07-01T00:00:00.000Z",
+    });
+    store.db.order_line.push({
+      id: "line-edited",
+      shop_id: "shop-1",
+      order_id: "order-edit-1",
+      variant_id: "v-1",
+      quantity: 5, // snapshot
+      unit_price_cents: 1000,
+      title_snapshot: "Cotton Tee",
+    });
+    store.db.order_line_edit.push({
+      id: "edit-1",
+      shop_id: "shop-1",
+      order_id: "order-edit-1",
+      order_line_id: "line-edited",
+      old_quantity: 5,
+      new_quantity: 2,
+      refund_cents: 3000,
+      created_at: "2026-07-02T00:00:00.000Z",
+    });
+
+    const detail = await loadOrderDetail("shop-1", "order-edit-1");
+    expect(detail).not.toBeNull();
+    if (!detail) return;
+
+    const line = detail.lines.find((l) => l.id === "line-edited");
+    // The list-visible quantity is the EFFECTIVE one (2), with the reduction (3) as additive detail.
+    expect(line).toMatchObject({ quantity: 2, reducedQuantity: 3 });
+
+    const editEvent = detail.timeline.find((e) => e.kind === "edit");
+    expect(editEvent).toMatchObject({ title: "Reduced Cotton Tee to 2", detail: "Refunded $30.00" });
+  });
 });
 
 describe("loadOrderDetail — imported (shopify:) branch", () => {
@@ -379,7 +431,7 @@ describe("loadOrderDetail — imported (shopify:) branch", () => {
     expect(detail.readOnly).toBe(true);
     expect(detail.ref).toBe("#1042");
     expect(detail.lines).toEqual([
-      { id: "impline-1", title: "Blue Mug", sku: "MUG-1", quantity: 2, unitPriceCents: 1400, fulfilledQuantity: 0 },
+      { id: "impline-1", variantId: null, title: "Blue Mug", sku: "MUG-1", quantity: 2, reducedQuantity: 0, unitPriceCents: 1400, fulfilledQuantity: 0 },
     ]);
     expect(detail.fulfillments).toEqual([]);
     expect(detail.tags).toEqual([]);

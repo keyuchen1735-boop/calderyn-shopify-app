@@ -55,6 +55,7 @@ import {
   Rocket,
   RotateCcw,
   LocateFixed,
+  Mail,
   MapPin,
   Scissors,
   Search,
@@ -170,6 +171,7 @@ export const CD_ICONS: Record<string, LucideIcon> = {
   locate: LocateFixed,
   printer: Printer,
   arrowDown: ArrowDown,
+  mail: Mail,
 };
 
 export function CDIcon({

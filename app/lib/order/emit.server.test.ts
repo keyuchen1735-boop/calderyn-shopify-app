@@ -232,6 +232,29 @@ describe("emitPaidOrder", () => {
     expect(store.db.order_line_fact).toHaveLength(0);
   });
 
+  it("pinning: a post-edit redelivery does NOT rewrite the emitted quantity down to the reduced value (orders phase 3, Task 3)", async () => {
+    // A line reduction is recorded as an order_line_edit row; order_line.quantity (the
+    // time-of-sale SNAPSHOT this emit reads) is never mutated. Simulate the scenario a
+    // Stripe redelivery could hit AFTER a merchant reduced this line: the snapshot stays 2,
+    // even though an order_line_edit row now says the EFFECTIVE quantity is 1.
+    seedOrder();
+    store.db.sku_dim.push({ id: "sku-1", shop_id: "shop-1", external_id: "v-tee-s" });
+
+    await emitPaidOrder("shop-1", "ord-1", PAID_AT);
+    expect(store.db.order_line_fact[0].quantity).toBe(2);
+
+    // The reduction lands in a table emit.server.ts never reads — order_line.quantity is untouched.
+    store.db.order_line_edit = [
+      { shop_id: "shop-1", order_id: "ord-1", order_line_id: "ol-1", old_quantity: 2, new_quantity: 1, refund_cents: 1999 },
+    ];
+
+    // A redelivery of the SAME paid event re-emits (idempotent upsert) — must still be 2, not 1.
+    await emitPaidOrder("shop-1", "ord-1", PAID_AT);
+    expect(store.db.order_line_fact).toHaveLength(1);
+    expect(store.db.order_line_fact[0].quantity).toBe(2);
+    expect(store.db.order_line_fact[0].total_cents).toBe(3998);
+  });
+
   it("skips emission (no facts written) when the order is not currently paid — never re-asserts paid", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     seedOrder({}, "refunded"); // a stale succeeded redelivery for an order that has since refunded
