@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Btn, Card } from "../ui";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { transferValidation } from "./transfer-modal-state";
+import { useModalChrome } from "../use-modal-chrome";
 
 // Move stock between two locations. Calls the inventory engine (createTransfer),
 // which decrements the source and adds to the destination atomically. Instant
@@ -47,7 +48,12 @@ export default function TransferModal({
   const [balances, setBalances] = useState<client.VariantBalanceVM[] | null>(null);
   const balancesRequested = useRef(false);
 
-  const dialogRef = useRef<HTMLDivElement | null>(null);
+  // Escape/autofocus/Tab-cycle. Capture phase so an Escape here can't also
+  // close the Inventory drawer underneath (this modal can sit on top of it).
+  const { ref: dialogRef, onKeyDown: onDialogKeyDown } = useModalChrome<HTMLDivElement>({
+    onClose,
+    escape: "capture",
+  });
   const toast = app.toast;
 
   useEffect(() => {
@@ -114,46 +120,6 @@ export default function TransferModal({
         // block the move.
       });
   }, [activeVariantId, from]);
-
-  useEffect(() => {
-    // Capture phase + stopPropagation: this modal can sit on top of the
-    // Inventory drawer, whose own bubble-phase Escape listener would otherwise
-    // fire on the same keypress and close both dialogs at once.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.stopPropagation();
-      onClose();
-    };
-    window.addEventListener("keydown", onKey, { capture: true });
-    return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [onClose]);
-
-  // Focus the first control (picker input or From select) when the dialog opens.
-  useEffect(() => {
-    dialogRef.current?.querySelector<HTMLElement>("button, input, select")?.focus();
-  }, []);
-
-  // Keep Tab cycling inside the dialog while it's open.
-  const onDialogKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Tab") return;
-    const nodes = dialogRef.current?.querySelectorAll<HTMLElement>("button, input, select");
-    if (!nodes) return;
-    const focusable = Array.from(nodes).filter((n) => !n.hasAttribute("disabled"));
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
-    const inside = active instanceof HTMLElement && dialogRef.current?.contains(active);
-    if (e.shiftKey) {
-      if (!inside || active === first) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else if (!inside || active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
 
   const availableAtSource =
     from && balances ? (balances.find((b) => b.locationId === from)?.available ?? 0) : null;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Btn, Card, ClearableSearchInput, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
 import * as client from "~/lib/dashboard/client";
@@ -7,6 +7,7 @@ import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dash
 import { timeAgo } from "../format";
 import InventoryPanel from "./InventoryPanel";
 import type { DashboardCtx } from "../context";
+import { useModalChrome } from "../use-modal-chrome";
 
 // Design table: Product / On hand / Reserved / Available / Status / Autopilot.
 // Backed by the shop-wide inventory_list RPC (per-variant balance rollups), so
@@ -178,43 +179,14 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
     load();
   }, [load]);
 
-  useEffect(() => {
-    if (!openRow) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeDrawer();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [openRow, closeDrawer]);
-
-  // Focus the first control when the drawer opens (same as TransferModal).
-  const drawerRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!openRow) return;
-    drawerRef.current?.querySelector<HTMLElement>("button, input, select")?.focus();
-  }, [openRow]);
-
-  // Keep Tab cycling inside the drawer while it's open (mirrors TransferModal).
-  const onDrawerKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Tab") return;
-    const nodes = drawerRef.current?.querySelectorAll<HTMLElement>("button, input, select");
-    if (!nodes) return;
-    const focusable = Array.from(nodes).filter((n) => !n.hasAttribute("disabled"));
-    if (focusable.length === 0) return;
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
-    const inside = active instanceof HTMLElement && drawerRef.current?.contains(active);
-    if (e.shiftKey) {
-      if (!inside || active === first) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else if (!inside || active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
+  // Escape/autofocus/Tab-cycle, active only while the drawer is open. Bubble
+  // phase (default): TransferModal can open on top of this drawer and its
+  // own capture-phase Escape listener swallows the keypress before it
+  // reaches here, so the two don't both close on the same Escape.
+  const { ref: drawerRef, onKeyDown: onDrawerKeyDown } = useModalChrome<HTMLDivElement>({
+    onClose: closeDrawer,
+    enabled: Boolean(openRow),
+  });
 
   const filtered = Boolean(query) || stock !== "all";
   const shown = rows ?? [];
