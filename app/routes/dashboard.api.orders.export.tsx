@@ -82,7 +82,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
     if (page.rows.length < PAGE_SIZE) break;
     if (offset >= MAX_ROWS) {
-      truncated = true;
+      // Only a genuine overflow is a truncation: the result set must hold MORE rows than we exported.
+      // A set of EXACTLY MAX_ROWS fills the final page (so the short-page break above never fires) yet
+      // drops nothing — page.totalCount (the RPC's full_count) distinguishes the two.
+      truncated = page.totalCount > offset;
       break;
     }
   }
