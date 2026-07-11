@@ -135,18 +135,30 @@ export async function remainingRefundableByOrder(
 ): Promise<Map<string, number>> {
   const remaining = new Map<string, number>();
   if (orderIds.length === 0) return remaining;
-  const { data, error } = await getSupabase()
-    .from("transaction_ledger")
-    .select("order_ref, kind, amount_cents")
-    .eq("shop_id", shopId)
-    .in("order_ref", orderIds)
-    .in("kind", ["capture", "refund"]);
-  if (error) throw new Error(`transaction_ledger read failed: ${error.message}`);
-  for (const l of data ?? []) {
-    const ref = String(l.order_ref ?? "");
-    if (!ref) continue;
-    // capture is positive, refund negative — the running sum IS the remaining refundable amount.
-    remaining.set(ref, (remaining.get(ref) ?? 0) + Number(l.amount_cents ?? 0));
+  const sb = getSupabase();
+  // PostgREST clamps every response at 1000 rows. With up to LIST_LIMIT order ids, a busy store's
+  // capture/refund history can exceed that in a single read and silently drop rows — dropping refund
+  // (negative) rows would over-state what remains refundable and inflate the refund modal's max. Page
+  // by the ledger primary key until a short page, mirroring the order_line sum in listOrders.
+  const LEDGER_PAGE = 1000;
+  for (let from = 0; ; from += LEDGER_PAGE) {
+    const { data, error } = await sb
+      .from("transaction_ledger")
+      .select("order_ref, kind, amount_cents")
+      .eq("shop_id", shopId)
+      .in("order_ref", orderIds)
+      .in("kind", ["capture", "refund"])
+      .order("id", { ascending: true })
+      .range(from, from + LEDGER_PAGE - 1);
+    if (error) throw new Error(`transaction_ledger read failed: ${error.message}`);
+    const batch = data ?? [];
+    for (const l of batch) {
+      const ref = String(l.order_ref ?? "");
+      if (!ref) continue;
+      // capture is positive, refund negative — the running sum IS the remaining refundable amount.
+      remaining.set(ref, (remaining.get(ref) ?? 0) + Number(l.amount_cents ?? 0));
+    }
+    if (batch.length < LEDGER_PAGE) break;
   }
   // Floor at 0 so a rounding/over-refund edge never advertises a negative refundable amount.
   for (const [ref, cents] of remaining) remaining.set(ref, Math.max(0, cents));

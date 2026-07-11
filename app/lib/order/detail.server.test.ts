@@ -36,6 +36,7 @@ const store = vi.hoisted(() => {
     private inFilters: Array<[string, unknown[]]> = [];
     private orderBy: { col: string; ascending: boolean } | null = null;
     private limitN: number | null = null;
+    private rangeBounds: [number, number] | null = null;
     private wantSingle = false;
     private readonly table: string;
 
@@ -59,6 +60,10 @@ const store = vi.hoisted(() => {
     }
     limit(n: number) {
       this.limitN = n;
+      return this;
+    }
+    range(from: number, to: number) {
+      this.rangeBounds = [from, to];
       return this;
     }
     single() {
@@ -102,6 +107,9 @@ const store = vi.hoisted(() => {
         });
       }
       if (this.limitN != null) matched = matched.slice(0, this.limitN);
+      // Inclusive PostgREST-style .range() so list.server's paged ledger read resolves in one page
+      // for these small fixtures.
+      if (this.rangeBounds) matched = matched.slice(this.rangeBounds[0], this.rangeBounds[1] + 1);
       return this.wrap(matched);
     }
   }

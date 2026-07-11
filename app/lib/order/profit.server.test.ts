@@ -20,6 +20,7 @@ const store = vi.hoisted(() => {
     private filters: Array<[string, unknown]> = [];
     private inFilters: Array<[string, unknown[]]> = [];
     private wantSingle = false;
+    private rangeBounds: [number, number] | null = null;
     private readonly table: string;
     constructor(table: string) {
       this.table = table;
@@ -33,6 +34,13 @@ const store = vi.hoisted(() => {
     }
     in(col: string, vals: unknown[]) {
       this.inFilters.push([col, vals]);
+      return this;
+    }
+    order(_col: string, _opts?: unknown) {
+      return this;
+    }
+    range(from: number, to: number) {
+      this.rangeBounds = [from, to];
       return this;
     }
     maybeSingle() {
@@ -49,7 +57,10 @@ const store = vi.hoisted(() => {
     }
     private run(): { data: unknown; error: unknown } {
       const t = db[this.table];
-      const matched = t.filter((r) => this.matches(r));
+      let matched = t.filter((r) => this.matches(r));
+      // Inclusive PostgREST-style .range() so list.server's paged ledger read terminates after one
+      // page for these small fixtures.
+      if (this.rangeBounds) matched = matched.slice(this.rangeBounds[0], this.rangeBounds[1] + 1);
       return { data: this.wantSingle ? (matched[0] ?? null) : matched, error: null };
     }
   }
