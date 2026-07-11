@@ -59,7 +59,7 @@ export interface ProductInput {
   options?: OptionInput[];
   variants: VariantInput[];
   collectionIds?: string[];
-  /** Search-listing override. Present only when the payload carried one;
+  /** Search-listing override for an existing-product update. Present only when the payload carried one;
    *  normalized by validateProductInput (trimmed, clamped). Both fields empty
    *  = remove the stored override (the deterministic draft wins again). */
   seo?: { metaTitle: string; metaDescription: string };

@@ -48,6 +48,5 @@ export async function action({ request }: ActionFunctionArgs) {
   try { body = await request.json(); } catch { return jsonError(422, "invalid_json"); }
   const v = validateProductInput(body);
   if (!v.ok) return jsonError(422, v.code);
-  // createProduct persists v.value.seo itself when present.
   return dashboardJson(() => createProduct(session.shopId, v.value));
 }

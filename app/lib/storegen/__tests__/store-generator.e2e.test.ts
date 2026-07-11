@@ -83,6 +83,12 @@ const { createMock, getCatalogMock, providerMock, db } = vi.hoisted(() => {
         filters[col] = val;
         return builder;
       },
+      order() {
+        return builder;
+      },
+      range() {
+        return builder;
+      },
       maybeSingle() {
         return Promise.resolve({ data: readSingle(), error: null });
       },
