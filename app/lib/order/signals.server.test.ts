@@ -11,6 +11,7 @@ const store = vi.hoisted(() => {
   class Builder {
     private filters: Array<[string, unknown]> = [];
     private inFilters: Array<[string, unknown[]]> = [];
+    private rangeBounds: [number, number] | null = null;
     private readonly table: string;
 
     constructor(table: string) {
@@ -27,6 +28,13 @@ const store = vi.hoisted(() => {
       this.inFilters.push([col, vals]);
       return this;
     }
+    order(_col: string, _opts?: unknown) {
+      return this;
+    }
+    range(from: number, to: number) {
+      this.rangeBounds = [from, to];
+      return this;
+    }
     then(resolve: (v: { data: unknown; error: unknown }) => unknown, reject?: (e: unknown) => unknown) {
       return Promise.resolve(this.run()).then(resolve, reject);
     }
@@ -36,7 +44,10 @@ const store = vi.hoisted(() => {
       return eqOk && inOk;
     }
     private run() {
-      const rows = db[this.table].filter((r) => this.matches(r));
+      let rows = db[this.table].filter((r) => this.matches(r));
+      // Mirror PostgREST's inclusive .range() so the source's page loop terminates after one call
+      // for small fixtures (batch < page size) while still exercising the paged read path.
+      if (this.rangeBounds) rows = rows.slice(this.rangeBounds[0], this.rangeBounds[1] + 1);
       return { data: rows, error: null };
     }
   }

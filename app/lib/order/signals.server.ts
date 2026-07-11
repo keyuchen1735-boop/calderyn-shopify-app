@@ -64,34 +64,53 @@ export async function buyerOrderSignals(shopId: string, buyerId: string | null):
   if (!buyerId) return QUIET_BUYER_SIGNALS;
   const sb = getSupabase();
 
-  const { data: orderRows, error: ordersErr } = await sb
-    .from("orders")
-    .select("id, state, channel")
-    .eq("shop_id", shopId)
-    .eq("buyer_id", buyerId);
-  if (ordersErr) throw new Error(`orders read failed: ${ordersErr.message}`);
+  // PostgREST clamps every response at 1000 rows. A high-volume buyer can exceed that in either
+  // read, silently truncating and skewing both signals (undercounted orders → missed repeat
+  // customer; dropped negative refund rows → understated refund ratio). Page both by primary key
+  // until a short page so every row is counted.
+  const PAGE = 1000;
 
-  const orderIds = ((orderRows ?? []) as OrderRowForSignals[])
+  const orderRows: OrderRowForSignals[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error: ordersErr } = await sb
+      .from("orders")
+      .select("id, state, channel")
+      .eq("shop_id", shopId)
+      .eq("buyer_id", buyerId)
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (ordersErr) throw new Error(`orders read failed: ${ordersErr.message}`);
+    const batch = (data ?? []) as OrderRowForSignals[];
+    orderRows.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+
+  const orderIds = orderRows
     .filter((r) => PURCHASE_STATES.includes(String(r.state)) && String(r.channel ?? "") !== "test")
     .map((r) => String(r.id));
 
   const buyerOrderCount = orderIds.length;
   if (buyerOrderCount === 0) return QUIET_BUYER_SIGNALS;
 
-  const { data: ledgerRows, error: ledgerErr } = await sb
-    .from("transaction_ledger")
-    .select("order_ref, kind, amount_cents")
-    .eq("shop_id", shopId)
-    .in("order_ref", orderIds)
-    .in("kind", ["capture", "refund"]);
-  if (ledgerErr) throw new Error(`transaction_ledger read failed: ${ledgerErr.message}`);
-
   let captureCents = 0;
   let refundCents = 0;
-  for (const l of (ledgerRows ?? []) as LedgerRowForSignals[]) {
-    const amount = Number(l.amount_cents ?? 0);
-    if (l.kind === "capture") captureCents += amount;
-    else if (l.kind === "refund") refundCents += Math.abs(amount);
+  for (let from = 0; ; from += PAGE) {
+    const { data, error: ledgerErr } = await sb
+      .from("transaction_ledger")
+      .select("id, order_ref, kind, amount_cents")
+      .eq("shop_id", shopId)
+      .in("order_ref", orderIds)
+      .in("kind", ["capture", "refund"])
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (ledgerErr) throw new Error(`transaction_ledger read failed: ${ledgerErr.message}`);
+    const batch = (data ?? []) as LedgerRowForSignals[];
+    for (const l of batch) {
+      const amount = Number(l.amount_cents ?? 0);
+      if (l.kind === "capture") captureCents += amount;
+      else if (l.kind === "refund") refundCents += Math.abs(amount);
+    }
+    if (batch.length < PAGE) break;
   }
   const refundRatio = captureCents > 0 ? refundCents / captureCents : 0;
 
