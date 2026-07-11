@@ -32,9 +32,17 @@ const VOCAB_BY_KEY: Partial<Record<(typeof VIEW_FILTER_KEYS)[number], Set<string
   dir: DIRS,
 };
 
+// date_from/date_to aren't enum-bounded but the list route (list-params.server.ts) 422s any value
+// Date.parse can't read. Gate them the same way here so a saved view can never persist a date the
+// route rejects the moment the view is applied — mirroring isParseableDate.
+const DATE_KEYS = new Set<string>(["date_from", "date_to"]);
+
 function isAcceptedValue(key: string, value: unknown): boolean {
   const vocab = VOCAB_BY_KEY[key as (typeof VIEW_FILTER_KEYS)[number]];
   if (vocab) return typeof value === "string" && vocab.has(value);
+  if (DATE_KEYS.has(key)) {
+    return typeof value === "string" && value.length <= 200 && !Number.isNaN(Date.parse(value));
+  }
   if (typeof value === "boolean") return true;
   if (typeof value === "string") return value.length <= 200;
   if (Array.isArray(value)) {
