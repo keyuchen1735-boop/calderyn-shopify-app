@@ -102,7 +102,10 @@ function validateLines(raw: unknown): PoLineInput[] {
     let unitCostCents: number | null = null;
     if (line.unitCostCents != null && line.unitCostCents !== "") {
       const cost = Number(line.unitCostCents);
-      if (!Number.isInteger(cost) || cost < 0) {
+      // Bound at the 4-byte signed int ceiling the `unit_cost_cents int` column holds — a larger
+      // value passes JS validation but fails the insert with a numeric-overflow (22003) that surfaces
+      // as an unmapped 500 instead of a clean 422 here.
+      if (!Number.isInteger(cost) || cost < 0 || cost > 2_147_483_647) {
         invalid("invalid_po", "Unit costs must be zero or more, in cents.");
       }
       unitCostCents = cost;
@@ -792,12 +795,17 @@ export async function promoteAuditDraft(shopId: string, auditId: string): Promis
     if (!sku || !Number.isInteger(quantity) || quantity < 1 || quantity > MAX_LINE_QTY) {
       invalid("invalid_draft", "That draft's lines can't be converted.");
     }
-    const cost = Number(line.unit_cost_cents);
+    // A snapshot cost of null/"" means "unknown" (no open cogs_fact when the draft was built) and
+    // must stay null — never $0. `Number(null)` is 0, so coercing before the null check would print
+    // $0.00 on a supplier-facing PO and count it as a known cost in the totals. Guard first, mirroring
+    // validateLines above.
+    const rawCost = line.unit_cost_cents;
+    const cost = rawCost == null || rawCost === "" ? null : Number(rawCost);
     return {
       sku,
       title: typeof line.title === "string" ? line.title : sku,
       quantity,
-      unit_cost_cents: Number.isInteger(cost) && cost >= 0 ? cost : null,
+      unit_cost_cents: cost != null && Number.isInteger(cost) && cost >= 0 ? cost : null,
     };
   });
 
