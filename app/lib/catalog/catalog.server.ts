@@ -378,6 +378,16 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
 // transaction, so writes are ordered parent->child; a failure throws and the
 // route surfaces it (no projection runs on a failed write).
 export async function createProduct(shopId: string, input: ProductInput): Promise<{ id: string }> {
+  // NewProductFlow has no SEO fields. Reject a crafted create payload before
+  // the first write: applying seo_page after the product graph would create a
+  // partial-success 500 on transient SEO failure and invite a duplicate retry.
+  if (input.seo) {
+    throw new CalderynError({
+      code: "seo_requires_existing_product",
+      status: 422,
+      message: "Save the product before editing its search listing.",
+    });
+  }
   const sb = getSupabase();
   // Insert the product. An explicitly-supplied (validated) handle is honored as
   // given — a unique(shop_id, handle) 23505 on it is a real conflict the caller
@@ -412,7 +422,6 @@ export async function createProduct(shopId: string, input: ProductInput): Promis
   await applyStockSeeds(shopId, seeds);
   // Search-listing override travels with the product input so every caller
   // (routes, assistant catalog actions) persists it — not just the editor route.
-  if (input.seo) await applySeoOverrideInput(shopId, productId, input.seo);
   return { id: productId };
 }
 

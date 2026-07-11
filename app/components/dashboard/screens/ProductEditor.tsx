@@ -4,7 +4,7 @@ import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { buildVariantMatrix } from "~/lib/catalog/variant-matrix";
 import { centsToDollars, dollarsToCents, parseOptionRows } from "~/lib/catalog/product-form";
-import { PRODUCT_HANDLE_RE, PRODUCT_HANDLE_MAX } from "~/lib/catalog/handle";
+import { PRODUCT_HANDLE_MAX, productHandleEditState } from "~/lib/catalog/handle";
 import {
   SEO_TITLE_SOFT_MAX,
   SEO_DESCRIPTION_SOFT_MAX,
@@ -215,12 +215,12 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
       app.toast("Add a product title.", "warn");
       return;
     }
-    // Only a real handle edit is submitted; an emptied field keeps the saved
-    // address (there is always a page address, so blank means "no change").
+    // Blank is a deliberate invalid edit, not an instruction to silently keep
+    // the old address.
     // `handle` is already normalized — the input's onChange sanitizer is the
     // single normalization point.
-    const handleChanged = Boolean(handle) && handle !== savedHandle;
-    if (handleChanged && !PRODUCT_HANDLE_RE.test(handle)) {
+    const handleEdit = productHandleEditState(handle, savedHandle);
+    if (!handleEdit.valid) {
       app.toast("Page address can use only lowercase letters, numbers, and hyphens.", "warn");
       return;
     }
@@ -244,7 +244,7 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
         options: parseOptions(options),
         variants,
         collectionIds: selectedCollections,
-        ...(handleChanged ? { handle } : {}),
+        ...(handleEdit.dirty ? { handle } : {}),
         ...(seoChanged ? { seo: { metaTitle: metaTitle.trim(), metaDescription: metaDescription.trim() } } : {}),
       };
       await client.saveProduct(draft, id ?? undefined);

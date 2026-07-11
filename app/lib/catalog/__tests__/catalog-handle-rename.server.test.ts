@@ -253,10 +253,14 @@ describe("createProduct handle + seo", () => {
     expect(productInserts()).toHaveLength(3); // generated-handle collisions retry
   });
 
-  it("persists input.seo for the new product id", async () => {
+  it("rejects input.seo on create before any write (search listing is edit-only)", async () => {
     const { createProduct } = await import("../catalog.server");
     const seo = { metaTitle: "T", metaDescription: "" };
-    await createProduct("shop1", create(undefined, seo));
-    expect(applySeo).toHaveBeenCalledWith("shop1", "new-row", seo);
+    await expect(createProduct("shop1", create(undefined, seo))).rejects.toMatchObject({
+      code: "seo_requires_existing_product",
+      status: 422,
+    });
+    expect(productInserts()).toHaveLength(0);
+    expect(applySeo).not.toHaveBeenCalled();
   });
 });

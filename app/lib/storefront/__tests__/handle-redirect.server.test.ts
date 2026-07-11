@@ -26,6 +26,12 @@ function builder(table: string) {
       filters[col] = val;
       return b;
     },
+    order() {
+      return b;
+    },
+    range() {
+      return b;
+    },
     maybeSingle() {
       queries.push({ table, columns, filters });
       if (forcedError)
