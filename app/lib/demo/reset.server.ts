@@ -63,6 +63,13 @@ export const SHOWCASE_WIPE_ORDER = [
   "purchase_order_draft",
   "creative_screen_run",
   "campaign_draft",
+  // real purchase orders (demo shops execute PO actions for real) — FK-safe
+  // order: lines → headers → suppliers, and all three BEFORE the catalog
+  // wipes below (purchase_order.destination_location_id RESTRICTs on
+  // location_dim; supplier_dim is referenced by the headers).
+  "purchase_order_line",
+  "purchase_order",
+  "supplier_dim",
   // assistant
   "assistant_messages",
   "assistant_conversations",

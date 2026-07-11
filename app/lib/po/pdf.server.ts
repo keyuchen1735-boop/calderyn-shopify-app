@@ -1,10 +1,32 @@
-// PDF rendering for purchase-order drafts. Re-rendered on demand from the
-// PoDraft snapshot in action_audit.params.po — nothing is stored as a blob.
+// PDF rendering for purchase orders. Re-rendered on demand — nothing is stored
+// as a blob. Two callers share it: the Autopilot draft snapshot in
+// action_audit.params.po (a full PoDraft, which stays assignable to PoPdfData)
+// and the real purchase_order rows, which map into PoPdfData with a supplier
+// name, status label, ETA, and merchant notes instead of alert provenance.
 
 import type { PDFFont } from "pdf-lib";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { fmtMoneyDec } from "~/lib/format";
-import type { PoDraft } from "./draft.server";
+import type { PoLine } from "./draft.server";
+
+/** Renderer input. PoDraft satisfies this shape; real POs fill the optional
+ *  supplier/status/ETA/notes fields and omit the alert provenance. */
+export interface PoPdfData {
+  po_number: string;
+  issued_at: string;
+  shop_domain: string;
+  lines: PoLine[];
+  subtotal_cents: number | null;
+  total_cents: number | null;
+  /** Alert provenance — present only on Autopilot draft snapshots. */
+  alert_id?: string;
+  detector_id?: string;
+  /** Real-PO extras. */
+  supplier_name?: string | null;
+  status_label?: string;
+  expected_at?: string | null;
+  notes?: string | null;
+}
 
 const PAGE_W = 612; // US Letter
 const PAGE_H = 792;
@@ -21,7 +43,7 @@ const money = (cents: number | null) => (cents === null ? "TBD" : fmtMoneyDec(ce
 const sanitize = (s: string) =>
   s.replace(/[^\x20-\x7e -ÿ–—‘’“”•]/g, "?");
 
-export async function renderPoPdf(po: PoDraft): Promise<Uint8Array> {
+export async function renderPoPdf(po: PoPdfData): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle(po.po_number);
   const font = await doc.embedFont(StandardFonts.Helvetica);
@@ -86,10 +108,18 @@ export async function renderPoPdf(po: PoDraft): Promise<Uint8Array> {
   // ---- Header -------------------------------------------------------------
   let y = PAGE_H - MARGIN - 10;
   text("PURCHASE ORDER", MARGIN, y, { size: 20, font: bold });
-  rightText("DRAFT", PAGE_W - MARGIN, y + 2, { size: 12, font: bold, color: MUTED });
+  rightText((po.status_label ?? "DRAFT").toUpperCase(), PAGE_W - MARGIN, y + 2, {
+    size: 12,
+    font: bold,
+    color: MUTED,
+  });
   y -= 22;
   text(po.po_number, MARGIN, y, { size: 11, font: bold });
   rightText(`Date: ${po.issued_at.slice(0, 10)}`, PAGE_W - MARGIN, y, { color: MUTED });
+  if (po.expected_at) {
+    y -= 14;
+    rightText(`Expected: ${po.expected_at}`, PAGE_W - MARGIN, y, { color: MUTED });
+  }
   y -= 14;
   hr(y);
 
@@ -102,11 +132,14 @@ export async function renderPoPdf(po: PoDraft): Promise<Uint8Array> {
   text("SHIP TO", col3, y, { size: 8, font: bold, color: MUTED });
   y -= 14;
   text(po.shop_domain, MARGIN, y);
-  // Supplier and ship-to are intentionally blank — filled in by hand before
-  // sending (send pathway TBD; no supplier data in the schema).
+  // Supplier name prints when known (real POs); the rest stays blank lines,
+  // filled in by hand before sending. Ship-to is always written in by hand.
+  if (po.supplier_name) fitText(po.supplier_name, col2, y, col3 - col2 - 12, { size: 10 });
   for (const row of [0, 1, 2]) {
     const lineY = y - row * 16;
-    text("_______________________", col2, lineY, { color: MUTED });
+    if (!(row === 0 && po.supplier_name)) {
+      text("_______________________", col2, lineY, { color: MUTED });
+    }
     text("_______________________", col3, lineY, { color: MUTED });
   }
   y -= 3 * 16 + 14;
@@ -153,17 +186,23 @@ export async function renderPoPdf(po: PoDraft): Promise<Uint8Array> {
   y -= 36;
   text("NOTES", MARGIN, y, { size: 8, font: bold, color: MUTED });
   y -= 13;
-  text(
-    `Generated from Calderyn alert ${po.alert_id} (${po.detector_id}).`,
-    MARGIN,
-    y,
-    { size: 9, color: MUTED },
-  );
-  y -= 12;
-  text("DRAFT — send pathway TBD; review before sending to a supplier.", MARGIN, y, {
-    size: 9,
-    color: MUTED,
-  });
+  if (po.notes) {
+    fitText(po.notes, MARGIN, y, PAGE_W - 2 * MARGIN, { size: 9, color: MUTED });
+    y -= 12;
+  }
+  if (po.alert_id && po.detector_id) {
+    text(
+      `Generated from Calderyn alert ${po.alert_id} (${po.detector_id}).`,
+      MARGIN,
+      y,
+      { size: 9, color: MUTED },
+    );
+    y -= 12;
+    text("DRAFT — send pathway TBD; review before sending to a supplier.", MARGIN, y, {
+      size: 9,
+      color: MUTED,
+    });
+  }
   text(
     "Payment terms, delivery date, and shipping method to be confirmed with supplier.",
     MARGIN,

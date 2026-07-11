@@ -90,6 +90,9 @@ export const SCREEN_CACHE_KEYS = {
   // Purchase-order drafts (audit-backed list), default offset-0 load only —
   // paged-in rows are never written back.
   purchaseOrders: "purchase-orders",
+  // Real purchase orders: { pos, total, suppliers, promotedAuditIds } —
+  // exactly the PoScreenData shape po-client's fetchPoScreen returns.
+  po: "po",
   shipCost: "settings-ship-cost",
   unmatchedShip: "settings-unmatched-ship",
   learnedRules: "settings-learned-rules",
