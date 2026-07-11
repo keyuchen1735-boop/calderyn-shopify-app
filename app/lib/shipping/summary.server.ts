@@ -66,7 +66,10 @@ function placeholderAddress(country: string): Address {
  * option's carrier transit days with the default origin handling window,
  * matching buildDeliveryWindow's earliest/latest spread.
  */
-export function buildRateCard(originCountry: string): RateCardRow[] {
+export function buildRateCard(
+  originCountry: string,
+  handlingDays: number = DEFAULT_HANDLING_DAYS,
+): RateCardRow[] {
   const req: RateRequest = {
     origin: placeholderAddress(originCountry),
     destination: placeholderAddress(originCountry),
@@ -85,7 +88,7 @@ export function buildRateCard(originCountry: string): RateCardRow[] {
     amountCents: o.amountCents,
     estDays:
       o.estTransitDays != null
-        ? `${o.estTransitDays}–${o.estTransitDays + DEFAULT_HANDLING_DAYS} days`
+        ? `${o.estTransitDays}–${o.estTransitDays + handlingDays} days`
         : "—",
   }));
 }
@@ -292,7 +295,7 @@ export async function loadShippingSummary(shopId: string): Promise<ShippingSumma
     rateCard:
       rateSourceKind === "flat"
         ? buildFlatRateCard(flatRates, originCountry, rules.handlingDays)
-        : buildRateCard(originCountry),
+        : buildRateCard(originCountry, rules.handlingDays),
     quotes30d,
     rules: toRulesView(rules),
     flatRates: flatRates.map((r) => ({
