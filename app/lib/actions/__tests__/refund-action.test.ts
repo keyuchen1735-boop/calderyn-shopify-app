@@ -163,6 +163,22 @@ describe("executeRefundAction — happy paths", () => {
     expect(h.sendRefundNotice).toHaveBeenCalledWith("shop-1", "order-1", { amountCents: 2500 });
   });
 
+  it("channel='test' probe refund does NOT emit a refund_fact (mirrors the emit-side warehouse exclusion)", async () => {
+    const { sb, refundFactUpserts } = makeSb(
+      baseCfg({ order: { data: { state: "paid", currency: "usd", channel: "test" }, error: null } }),
+    );
+    const res = await executeRefundAction(
+      "shop-1",
+      { orderId: "order-1", idempotencyKey: "kt" },
+      sb,
+      { createRefund: h.createRefund },
+    );
+    // The refund still moves money and transitions the order — only the warehouse fact is suppressed.
+    expect(h.createRefund).toHaveBeenCalled();
+    expect(res.orderState).toBe("refunded");
+    expect(refundFactUpserts).toHaveLength(0);
+  });
+
   it("partial refund: paid->partially_refunded when the ledger is not fully refunded", async () => {
     const { sb } = makeSb(
       baseCfg({ rpcResult: { data: { captured_cents: 2500, refunded_cents: 1000, fully_refunded: false }, error: null } }),

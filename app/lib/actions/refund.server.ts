@@ -82,6 +82,7 @@ export interface RefundDeps {
 interface OrderRow {
   state: OrderState;
   currency: string;
+  channel: string | null;
 }
 interface PaymentIntentRow {
   id: string;
@@ -109,7 +110,7 @@ function refundLineGid(refundId: string): string {
 async function loadOrder(sb: SupabaseClient, shopId: string, orderId: string): Promise<OrderRow> {
   const { data, error } = await sb
     .from("orders")
-    .select("state, currency")
+    .select("state, currency, channel")
     .eq("shop_id", shopId)
     .eq("id", orderId)
     .maybeSingle();
@@ -125,7 +126,12 @@ async function loadOrder(sb: SupabaseClient, shopId: string, orderId: string): P
       message: `Order ${orderId} is '${state}'; only a paid, partially-fulfilled, fulfilled, or partially-refunded order can be refunded.`,
     });
   }
-  return { state, currency: String((data as Record<string, unknown>).currency ?? "usd") };
+  const channelRaw = (data as Record<string, unknown>).channel;
+  return {
+    state,
+    currency: String((data as Record<string, unknown>).currency ?? "usd"),
+    channel: channelRaw == null ? null : String(channelRaw),
+  };
 }
 
 async function loadPaymentIntent(
@@ -339,14 +345,20 @@ export async function executeRefundAction(
     reason: input.reason ?? null,
     external_line_id: refundLineGid(refund.refundId),
   };
-  try {
-    await emitNativeRefundFact(sb, shopId, input.orderId, refund.refundId, amountCents);
-  } catch (err) {
-    params.refund_fact_error = err instanceof Error ? err.message : String(err);
-    console.error(
-      `[refund] native refund_fact emit failed for refund ${refund.refundId} (order ${input.orderId}); ledger is authoritative`,
-      err,
-    );
+  // Mirror the emit-side channel='test' warehouse exclusion (emit.server.ts): the go-live probe
+  // is a real order whose order_fact was never emitted, so emitting a refund_fact for its refund
+  // would understate net native revenue (gross was suppressed, refunds would not be). Skip it so
+  // both sides of the probe stay out of the warehouse. Non-test refunds emit exactly as before.
+  if (order.channel !== "test") {
+    try {
+      await emitNativeRefundFact(sb, shopId, input.orderId, refund.refundId, amountCents);
+    } catch (err) {
+      params.refund_fact_error = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[refund] native refund_fact emit failed for refund ${refund.refundId} (order ${input.orderId}); ledger is authoritative`,
+        err,
+      );
+    }
   }
 
   // 8. Transition the owned order — ONLY when the state actually changes. A second partial refund on
