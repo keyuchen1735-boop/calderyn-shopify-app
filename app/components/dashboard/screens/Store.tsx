@@ -810,7 +810,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
   // --- welcome overlay actions --------------------------------------------------
   const onWelcomeBuildPlain = () => void runBuild("", { firstBuild: true });
 
-  const onWelcomeBuildWithVibe = async (vibe: StudioVibe) => {
+  const onWelcomeBuildWithVibe = async (vibe: StudioVibe, brief = "") => {
     try {
       await setStudioVibe(vibe);
     } catch (err) {
@@ -819,7 +819,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
       const msg = err instanceof DashboardApiError ? err.message : "Couldn't set that look. Building anyway.";
       toast(msg, "warn", "critical");
     }
-    void runBuild("", { firstBuild: true });
+    void runBuild(brief, { firstBuild: true });
   };
 
   const onWelcomeAddProduct = async (line: string) => {
@@ -1149,7 +1149,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
             buildPhase={buildPhase}
             productCount={data.productCount}
             onBuildPlain={onWelcomeBuildPlain}
-            onBuildWithVibe={(vibe) => void onWelcomeBuildWithVibe(vibe)}
+            onBuildWithVibe={onWelcomeBuildWithVibe}
             onAddProduct={(line) => void onWelcomeAddProduct(line)}
           />
         )}

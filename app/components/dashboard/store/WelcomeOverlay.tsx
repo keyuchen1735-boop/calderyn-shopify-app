@@ -8,18 +8,14 @@ import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import { reduced } from "../hero/hero-motion";
 import { Btn } from "../ui";
+import { CDIcon } from "../icons";
 import type { ImportRunVM } from "~/lib/dashboard/client";
 import type { StudioVibe } from "~/lib/dashboard/store-client";
+import { recommendStoreTemplates, templateGenerationBrief } from "~/lib/storebuilder/templates";
 import { buildStep, importStepRows, welcomeSubline, type BuildPhase, type WelcomeBranch } from "../screens/store-logic";
 import BuildStepsCard from "./BuildStepsCard";
 
 type Stage = "choice" | "styles" | "add-product";
-
-const VIBE_CARDS: { vibe: StudioVibe; label: string; mini: string }[] = [
-  { vibe: "minimal", label: "Clean & minimal", mini: "minimal" },
-  { vibe: "bold", label: "Bold & dramatic", mini: "bold" },
-  { vibe: "warm", label: "Warm & earthy", mini: "warm" },
-];
 
 export default function WelcomeOverlay({
   authBase,
@@ -37,11 +33,12 @@ export default function WelcomeOverlay({
   buildPhase: BuildPhase | null;
   productCount: number;
   onBuildPlain: () => void;
-  onBuildWithVibe: (vibe: StudioVibe) => void;
+  onBuildWithVibe: (vibe: StudioVibe, brief?: string) => void;
   onAddProduct: (line: string) => void;
 }) {
   const [stage, setStage] = useState<Stage>("choice");
   const [productLine, setProductLine] = useState("");
+  const [templatePrompt, setTemplatePrompt] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const textRef = useRef<SVGTextElement>(null);
@@ -146,9 +143,10 @@ export default function WelcomeOverlay({
   const dashboardLoginHref = authBase ? `${authBase.replace(/\/+$/, "")}/dashboard/login` : "/dashboard/login";
 
   const subline = welcomeSubline({ branch, buildPhase, productCount });
+  const recommendedTemplates = recommendStoreTemplates(templatePrompt);
 
   return (
-    <div className="cd-welcome" ref={rootRef}>
+    <div className="cd-welcome" data-stage={stage} ref={rootRef}>
       <div className="cd-welcome-inner">
         <svg
           className="cd-welcome-script"
@@ -209,32 +207,56 @@ export default function WelcomeOverlay({
 
             {stage === "styles" && (
               <div className="cd-welcome-styles">
-                <div className="cd-welcome-styles-title">Pick a starting look</div>
+                <div className="cd-welcome-styles-title">What should your store feel like?</div>
+                <label className="cd-template-search">
+                  <CDIcon name="search" size={17} strokeWidth={1.8} />
+                  <input
+                    value={templatePrompt}
+                    onChange={(event) => setTemplatePrompt(event.target.value)}
+                    placeholder="Quiet luxury skincare, energetic outdoor gear..."
+                    aria-label="Describe your store's visual direction"
+                    autoFocus
+                  />
+                </label>
                 <div className="cd-welcome-cards">
-                  {VIBE_CARDS.map((c) => (
+                  {recommendedTemplates.map((template, index) => (
                     <button
-                      key={c.vibe}
+                      key={template.id}
                       type="button"
                       className="cd-welcome-card"
                       data-welcome-item=""
-                      onClick={() => onBuildWithVibe(c.vibe)}
+                      onClick={() =>
+                        onBuildWithVibe(template.vibe, templateGenerationBrief(template, templatePrompt))
+                      }
                     >
-                      <span className={`cd-welcome-mini cd-welcome-mini-${c.mini}`}>
-                        <i />
-                        <i />
-                        <i />
-                        {c.vibe === "minimal" && <i />}
+                      <span className="cd-template-preview">
+                        <img src={template.previewSrc} alt="" />
+                        {index === 0 && templatePrompt.trim() && <span>Best match</span>}
                       </span>
-                      {c.label}
+                      <span className="cd-template-meta">
+                        <strong>{template.name}</strong>
+                        <small>{template.descriptor}</small>
+                      </span>
                     </button>
                   ))}
                 </div>
-                <div style={{ marginTop: 14 }}>
+                <div className="cd-template-actions">
                   <button
                     type="button"
                     className="cd-chip"
                     data-welcome-item=""
-                    onClick={() => onBuildWithVibe(VIBE_CARDS[Math.floor(Math.random() * VIBE_CARDS.length)].vibe)}
+                    onClick={() => setStage("choice")}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    className="cd-chip"
+                    data-welcome-item=""
+                    onClick={() => {
+                      const template = recommendedTemplates[Math.floor(Math.random() * recommendedTemplates.length)];
+                      onBuildWithVibe(template.vibe, templateGenerationBrief(template, templatePrompt));
+                    }}
                   >
                     Surprise me
                   </button>
