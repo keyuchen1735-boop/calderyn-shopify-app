@@ -257,6 +257,7 @@ describe("validatePoBody", () => {
     ["fractional qty", { ...good, lines: [{ variantId: V1, qty: 1.5, unitCostCents: null }] }],
     ["qty over cap", { ...good, lines: [{ variantId: V1, qty: 1_000_001, unitCostCents: null }] }],
     ["negative cost", { ...good, lines: [{ variantId: V1, qty: 1, unitCostCents: -5 }] }],
+    ["cost over cap", { ...good, lines: [{ variantId: V1, qty: 1, unitCostCents: 50_000_001 }] }],
     ["bad date", { ...good, expectedAt: "soon" }],
     [
       "duplicate variant",
@@ -831,6 +832,32 @@ describe("promoteAuditDraft", () => {
         unit_cost_cents: 250,
       },
     ]);
+  });
+
+  it("carries a null (TBD) snapshot cost through as null, never a real $0", async () => {
+    enqueue("action_audit", "select", {
+      data: {
+        id: AUDIT,
+        action_kind: "create_po_draft",
+        params: {
+          po: {
+            po_number: "PO-20260708-ALERT002",
+            lines: [{ sku: "SKU-1", title: "Widget", quantity: 40, unit_cost_cents: null }],
+          },
+        },
+      },
+      error: null,
+    });
+    enqueueSkuLookup();
+    enqueueHappyCreate();
+
+    await promoteAuditDraft(SHOP, AUDIT);
+
+    const lineInsert = state.queries.find(
+      (q) => q.table === "purchase_order_line" && q.op === "insert",
+    );
+    const rows = lineInsert?.payload as Array<Record<string, unknown>>;
+    expect(rows[0].unit_cost_cents).toBeNull();
   });
 
   it("422s already_promoted on the audit_id unique constraint", async () => {

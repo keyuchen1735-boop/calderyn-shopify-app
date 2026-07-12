@@ -45,6 +45,12 @@ const PO_STATUSES: ReadonlySet<string> = new Set([
 
 const MAX_LINE_QTY = 1_000_000;
 const MAX_PO_LINES = 100;
+// Unit cost ceiling ($500,000.00 in cents). Bounds the value BEFORE it reaches
+// the `unit_cost_cents int` column: without a ceiling a large cost overflows
+// Postgres int (max 2,147,483,647) and surfaces as a 500 instead of a 422.
+// Chosen so MAX_PO_LINES * MAX_LINE_QTY * MAX_UNIT_COST_CENTS (5e15) stays
+// under Number.MAX_SAFE_INTEGER, keeping the client-side total exact too.
+const MAX_UNIT_COST_CENTS = 50_000_000;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function invalid(code: string, message: string, status = 422): never {
@@ -102,8 +108,8 @@ function validateLines(raw: unknown): PoLineInput[] {
     let unitCostCents: number | null = null;
     if (line.unitCostCents != null && line.unitCostCents !== "") {
       const cost = Number(line.unitCostCents);
-      if (!Number.isInteger(cost) || cost < 0) {
-        invalid("invalid_po", "Unit costs must be zero or more, in cents.");
+      if (!Number.isInteger(cost) || cost < 0 || cost > MAX_UNIT_COST_CENTS) {
+        invalid("invalid_po", "Unit costs must be between 0 and 50,000,000 cents.");
       }
       unitCostCents = cost;
     }
@@ -792,12 +798,19 @@ export async function promoteAuditDraft(shopId: string, auditId: string): Promis
     if (!sku || !Number.isInteger(quantity) || quantity < 1 || quantity > MAX_LINE_QTY) {
       invalid("invalid_draft", "That draft's lines can't be converted.");
     }
-    const cost = Number(line.unit_cost_cents);
+    // null in the snapshot means "cost unknown / TBD" and must stay null — a
+    // bare Number(null) is 0, which would render a real $0.00 total instead of
+    // "TBD". Only a genuine, in-range integer cost is carried through.
+    const rawCost = line.unit_cost_cents;
+    const cost = rawCost == null ? null : Number(rawCost);
     return {
       sku,
       title: typeof line.title === "string" ? line.title : sku,
       quantity,
-      unit_cost_cents: Number.isInteger(cost) && cost >= 0 ? cost : null,
+      unit_cost_cents:
+        cost != null && Number.isInteger(cost) && cost >= 0 && cost <= MAX_UNIT_COST_CENTS
+          ? cost
+          : null,
     };
   });
 
