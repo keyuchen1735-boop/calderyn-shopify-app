@@ -48,7 +48,7 @@ export async function renderPoPdf(po: PoPdfData): Promise<Uint8Array> {
   doc.setTitle(po.po_number);
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
-  const page = doc.addPage([PAGE_W, PAGE_H]);
+  let page = doc.addPage([PAGE_W, PAGE_H]);
 
   const text = (
     str: string,
@@ -96,6 +96,38 @@ export async function renderPoPdf(po: PoPdfData): Promise<Uint8Array> {
       out += "…";
     }
     page.drawText(out, { x, y, size, font: f, color: opts.color ?? INK });
+  };
+  // Greedy word-wrap into lines that fit maxWidth. Collapses runs of
+  // whitespace (so embedded newlines become spaces rather than "?") and
+  // hard-breaks any single token longer than the width so nothing runs off
+  // the edge. Used for merchant notes, which can be long.
+  const wrapText = (str: string, maxWidth: number, size: number, f: PDFFont): string[] => {
+    const clean = sanitize(str.replace(/\s+/g, " ")).trim();
+    if (!clean) return [];
+    const lines: string[] = [];
+    let cur = "";
+    for (const word of clean.split(" ")) {
+      let w = word;
+      while (f.widthOfTextAtSize(w, size) > maxWidth) {
+        let cut = w.length - 1;
+        while (cut > 1 && f.widthOfTextAtSize(w.slice(0, cut), size) > maxWidth) cut -= 1;
+        if (cur) {
+          lines.push(cur);
+          cur = "";
+        }
+        lines.push(w.slice(0, cut));
+        w = w.slice(cut);
+      }
+      const next = cur ? `${cur} ${w}` : w;
+      if (f.widthOfTextAtSize(next, size) > maxWidth) {
+        if (cur) lines.push(cur);
+        cur = w;
+      } else {
+        cur = next;
+      }
+    }
+    if (cur) lines.push(cur);
+    return lines;
   };
   const hr = (y: number) =>
     page.drawLine({
@@ -154,14 +186,24 @@ export async function renderPoPdf(po: PoPdfData): Promise<Uint8Array> {
   const descMaxW = colQtyR - colDesc - 40;
   const colUnitR = MARGIN + 420;
   const colTotalR = PAGE_W - MARGIN;
-  text("SKU", colSku, y, { size: 8, font: bold, color: MUTED });
-  text("DESCRIPTION", colDesc, y, { size: 8, font: bold, color: MUTED });
-  rightText("QTY", colQtyR, y, { size: 8, font: bold, color: MUTED });
-  rightText("UNIT COST", colUnitR, y, { size: 8, font: bold, color: MUTED });
-  rightText("LINE TOTAL", colTotalR, y, { size: 8, font: bold, color: MUTED });
-  y -= 6;
-  hr(y);
+  const drawLineItemsHeader = () => {
+    text("SKU", colSku, y, { size: 8, font: bold, color: MUTED });
+    text("DESCRIPTION", colDesc, y, { size: 8, font: bold, color: MUTED });
+    rightText("QTY", colQtyR, y, { size: 8, font: bold, color: MUTED });
+    rightText("UNIT COST", colUnitR, y, { size: 8, font: bold, color: MUTED });
+    rightText("LINE TOTAL", colTotalR, y, { size: 8, font: bold, color: MUTED });
+    y -= 6;
+    hr(y);
+  };
+  drawLineItemsHeader();
+  // A PO can carry up to 100 lines; flow onto additional pages (re-drawing the
+  // column header on each) instead of running the rows off the bottom edge.
   for (const line of po.lines) {
+    if (y - 16 < MARGIN + 44) {
+      page = doc.addPage([PAGE_W, PAGE_H]);
+      y = PAGE_H - MARGIN;
+      drawLineItemsHeader();
+    }
     y -= 16;
     const lineTotal =
       line.unit_cost_cents === null ? null : line.quantity * line.unit_cost_cents;
@@ -170,6 +212,12 @@ export async function renderPoPdf(po: PoPdfData): Promise<Uint8Array> {
     rightText(String(line.quantity), colQtyR, y);
     rightText(money(line.unit_cost_cents), colUnitR, y);
     rightText(money(lineTotal), colTotalR, y);
+  }
+  // Keep the totals + notes block together: start a fresh page if the last row
+  // left too little room (more when there are notes to wrap below the totals).
+  if (y < MARGIN + (po.notes ? 210 : 96)) {
+    page = doc.addPage([PAGE_W, PAGE_H]);
+    y = PAGE_H - MARGIN;
   }
   y -= 10;
   hr(y);
@@ -187,8 +235,18 @@ export async function renderPoPdf(po: PoPdfData): Promise<Uint8Array> {
   text("NOTES", MARGIN, y, { size: 8, font: bold, color: MUTED });
   y -= 13;
   if (po.notes) {
-    fitText(po.notes, MARGIN, y, PAGE_W - 2 * MARGIN, { size: 9, color: MUTED });
-    y -= 12;
+    const noteLines = wrapText(po.notes, PAGE_W - 2 * MARGIN, 9, font);
+    // Cap to the lines that fit above the footer at MARGIN; ellipsize the last
+    // shown line when the note is longer so it reads as clipped, not complete.
+    const capacity = Math.max(0, Math.floor((y - (MARGIN + 18)) / 12));
+    const shown = noteLines.slice(0, capacity);
+    if (shown.length && noteLines.length > shown.length) {
+      shown[shown.length - 1] = `${shown[shown.length - 1]} …`;
+    }
+    for (const noteLine of shown) {
+      text(noteLine, MARGIN, y, { size: 9, color: MUTED });
+      y -= 12;
+    }
   }
   if (po.alert_id && po.detector_id) {
     text(

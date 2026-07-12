@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import type { PoDraft } from "../draft.server";
-import { renderPoPdf } from "../pdf.server";
+import { renderPoPdf, type PoPdfData } from "../pdf.server";
 
 const PO: PoDraft = {
   po_number: "PO-20260608-0F3B2A1C",
@@ -45,5 +45,38 @@ describe("renderPoPdf", () => {
     const bytes = await renderPoPdf(tbd);
     const doc = await PDFDocument.load(bytes);
     expect(doc.getPageCount()).toBe(1);
+  });
+
+  it("flows a many-line PO onto multiple pages instead of off the page edge", async () => {
+    const many: PoDraft = {
+      ...PO,
+      lines: Array.from({ length: 60 }, (_, i) => ({
+        sku: `SKU-${i}`,
+        title: `Product line number ${i}`,
+        quantity: i + 1,
+        unit_cost_cents: 1000 + i,
+      })),
+      subtotal_cents: 999_999,
+      total_cents: 999_999,
+    };
+    const bytes = await renderPoPdf(many);
+    const doc = await PDFDocument.load(bytes);
+    expect(doc.getPageCount()).toBeGreaterThan(1);
+  });
+
+  it("wraps long notes across lines and renders without throwing", async () => {
+    const withNotes: PoPdfData = {
+      ...PO,
+      notes:
+        "Please deliver to the loading dock at the rear of the building between " +
+        "8am and 11am. Call ahead on arrival. " +
+        "Word\nwith\nembedded\nnewlines and a very-long-unbroken-token-" +
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa " +
+        "and more trailing text ".repeat(20),
+    };
+    const bytes = await renderPoPdf(withNotes);
+    const doc = await PDFDocument.load(bytes);
+    expect(doc.getPageCount()).toBeGreaterThanOrEqual(1);
+    expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe("%PDF-");
   });
 });
