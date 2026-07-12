@@ -10,6 +10,7 @@
 // capture-phase modal swallows Escape before it bubbles down here.
 
 import {
+  useCallback,
   useEffect,
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -32,6 +33,18 @@ export function useModalChrome<T extends HTMLElement>({
   const ref = useRef<T>(null);
   const capture = escape === "capture";
 
+  // The tabbable controls inside the dialog, in DOM order — shared by the
+  // autofocus effect and the Tab trap so both agree on where focus starts and
+  // wraps (a raw querySelector would let autofocus land on a disabled or
+  // tabindex="-1" element that Tab navigation skips).
+  const focusableEls = useCallback((): HTMLElement[] => {
+    const nodes = ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
+    if (!nodes) return [];
+    return Array.from(nodes).filter(
+      (n) => !n.hasAttribute("disabled") && n.getAttribute("tabindex") !== "-1",
+    );
+  }, []);
+
   useEffect(() => {
     if (!enabled) return;
     const onKey = (e: KeyboardEvent) => {
@@ -45,16 +58,12 @@ export function useModalChrome<T extends HTMLElement>({
 
   useEffect(() => {
     if (!enabled) return;
-    ref.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
-  }, [enabled]);
+    focusableEls()[0]?.focus();
+  }, [enabled, focusableEls]);
 
   const onKeyDown = (e: ReactKeyboardEvent<T>) => {
     if (e.key !== "Tab") return;
-    const nodes = ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
-    if (!nodes) return;
-    const focusable = Array.from(nodes).filter(
-      (n) => !n.hasAttribute("disabled") && n.getAttribute("tabindex") !== "-1",
-    );
+    const focusable = focusableEls();
     if (focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
