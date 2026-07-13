@@ -57,7 +57,7 @@ function pathOwner(path: PublicBindingPath): BindingScopeKind {
   return path.slice(0, dot) as BindingScopeKind;
 }
 
-function isPathVisible(path: PublicBindingPath, scope: BindingScope): boolean {
+export function isPathVisible(path: PublicBindingPath, scope: BindingScope): boolean {
   const owner = pathOwner(path);
   if (owner === "store") return scope.id === "root";
   if (owner === "product" && scope.kind === "image") return true;
@@ -109,7 +109,7 @@ export function isBindingKindPathAllowed(kind: CompiledBindingKind, path: Public
   return BINDING_PATHS[kind].has(path);
 }
 
-const REPEAT_PARENT_KIND: Readonly<Record<CompiledRepeatSource, BindingScopeKind>> = {
+export const REPEAT_PARENT_KIND: Readonly<Record<CompiledRepeatSource, BindingScopeKind>> = {
   "collection.products": "collection",
   "featured.products": "store",
   "related.products": "product",

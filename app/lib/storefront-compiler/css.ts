@@ -141,8 +141,47 @@ const NETWORK_FUNCTIONS = new Set([
 ]);
 
 function hasNetworkMarker(value: string): boolean {
-  const lower = value.toLowerCase();
+  const lower = decodeCssEscapes(value).toLowerCase();
   return lower.includes("http:") || lower.includes("https:") || lower.includes("data:") || lower.includes("blob:") || lower.startsWith("//");
+}
+
+function decodeCssEscapes(value: string): string {
+  let decoded = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!;
+    if (character !== "\\") {
+      decoded += character;
+      continue;
+    }
+    const next = value[index + 1];
+    if (next === undefined) break;
+    if (next === "\n" || next === "\f") {
+      index += 1;
+      continue;
+    }
+    if (next === "\r") {
+      index += value[index + 2] === "\n" ? 2 : 1;
+      continue;
+    }
+    let hex = "";
+    let cursor = index + 1;
+    while (cursor < value.length && hex.length < 6 && /[0-9a-f]/i.test(value[cursor]!)) {
+      hex += value[cursor]!;
+      cursor += 1;
+    }
+    if (hex) {
+      const codePoint = Number.parseInt(hex, 16);
+      decoded += codePoint === 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)
+        ? "\uFFFD"
+        : String.fromCodePoint(codePoint);
+      if (/\s/.test(value[cursor] ?? "")) cursor += 1;
+      index = cursor - 1;
+      continue;
+    }
+    decoded += next;
+    index += 1;
+  }
+  return decoded;
 }
 
 function parseDimension(word: string): { value: number; unit: string } | null {
@@ -273,11 +312,11 @@ function assertCheckoutValue(property: string, value: string): void {
   }
 }
 
-function assertSafeValue(property: string, value: string, checkoutDecorative: boolean): void {
+export function assertSafeCssValue(property: string, value: string, checkoutDecorative = false): void {
   const parsed = valueParser(value);
   parsed.walk((node) => {
     if (node.type === "function") {
-      const name = node.value.toLowerCase();
+      const name = decodeCssEscapes(node.value).toLowerCase();
       if (NETWORK_FUNCTIONS.has(name) || name === "expression" || name === "attr") {
         throw new CompilerError("css.network_or_dynamic_value", `${name}() is forbidden in generated CSS`);
       }
@@ -296,6 +335,18 @@ function assertSafeValue(property: string, value: string, checkoutDecorative: bo
   if (checkoutDecorative) {
     assertCheckoutValue(normalizedProperty, value);
   }
+}
+
+export function assertSafeDesignTokenValue(tokenId: string, value: string): void {
+  if (!isSafeIdentifier(tokenId)) throw new CompilerError("design.token", "Design token ID is invalid");
+  const compiled = compileCss(`.token { --${tokenId}: ${value}; }`, { namespace: "token-check" });
+  const root = postcss.parse(compiled.css, { from: undefined });
+  let declarationCount = 0;
+  root.walkDecls((declaration) => {
+    declarationCount += 1;
+    if (declaration.prop !== `--${tokenId}`) throw new CompilerError("design.token", "Design token value escaped its declaration");
+  });
+  if (declarationCount !== 1) throw new CompilerError("design.token", "Design token must compile to exactly one declaration");
 }
 
 function namespaceAnimationValue(value: string, keyframes: ReadonlyMap<string, string>): string {
@@ -370,7 +421,7 @@ export function validateCompiledCss(source: string, options: ValidateCompiledCss
       });
     });
   });
-  root.walkDecls((declaration) => assertSafeValue(declaration.prop, declaration.value, options.checkoutDecorative ?? false));
+  root.walkDecls((declaration) => assertSafeCssValue(declaration.prop, declaration.value, options.checkoutDecorative ?? false));
   return { ruleCount };
 }
 
@@ -409,7 +460,7 @@ export function compileCss(source: string, options: CompileCssOptions): Compiled
     }
   });
   root.walkDecls((declaration) => {
-    assertSafeValue(declaration.prop, declaration.value, options.checkoutDecorative ?? false);
+    assertSafeCssValue(declaration.prop, declaration.value, options.checkoutDecorative ?? false);
     if (declaration.prop.toLowerCase() === "animation" || declaration.prop.toLowerCase() === "animation-name") {
       declaration.value = namespaceAnimationValue(declaration.value, keyframes);
     }

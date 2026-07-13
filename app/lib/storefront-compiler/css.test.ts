@@ -17,6 +17,13 @@ describe("compileCss", () => {
     expect(() => compileCss(source, { namespace: "home" })).toThrow(/network/i);
   });
 
+  it.each([
+    String.raw`.card { background: u\72l("/local.png") }`,
+    String.raw`.card { content: "h\74tps://evil.example/track" }`,
+  ])("rejects CSS-escaped network values after canonical parsing: %s", (source) => {
+    expect(() => compileCss(source, { namespace: "home" })).toThrow(/network/i);
+  });
+
   it("scopes selectors and namespaces IDs and keyframes", () => {
     const result = compileCss(
       `.hero, #feature:hover { animation: reveal 250ms ease; color: var(--accent) } @keyframes reveal { from { opacity: 0 } to { opacity: 1 } }`,

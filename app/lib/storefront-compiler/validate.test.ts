@@ -3,6 +3,8 @@ import { validationLimitsV1, validateCompiledBundle } from "./validate";
 import type { StorefrontBundleV1 } from "../storefront-bundle/types";
 import { compileBundle } from "./compile";
 import { VALID_BUNDLE_SOURCE } from "./__fixtures__/valid-bundle";
+import { compileCss } from "./css";
+import { serializeCompiledTree } from "./html";
 
 describe("validation profile v1", () => {
   it("rejects unknown and malformed deserialized input without throwing", () => {
@@ -90,5 +92,37 @@ describe("validation profile v1", () => {
     expect(report.diagnostics.map((item) => item.code)).toEqual(
       expect.arrayContaining(["interaction.state_limit", "interaction.action_limit", "interaction.unresolved_source"]),
     );
+  });
+
+  it("rejects persisted global CSS that reaches a protected node in any route", () => {
+    const bundle = compileBundle(structuredClone(VALID_BUNDLE_SOURCE)).bundle;
+    bundle.designSystem.globalCss = compileCss(`.product { display: none }`, { namespace: "global" }).css;
+    const report = validateCompiledBundle(bundle);
+    expect(report.diagnostics.map((item) => item.code)).toContain("bundle.global_css");
+  });
+
+  it("rejects forged repeat parents and cross-scope public data refs", () => {
+    const illegalRepeat = compileBundle(structuredClone(VALID_BUNDLE_SOURCE)).bundle;
+    const homeRoot = illegalRepeat.routes.home.tree[0];
+    if (!homeRoot || homeRoot.kind !== "element") throw new Error("fixture home root is missing");
+    homeRoot.repeat = { scopeId: "cd-home-forged", source: "cart.lines", itemKind: "cartLine", keyPath: "cartLine.id" };
+    homeRoot.attributes["data-cd-repeat-id"] = homeRoot.repeat.scopeId;
+    illegalRepeat.routes.home.html = serializeCompiledTree(illegalRepeat.routes.home.tree);
+    expect(validateCompiledBundle(illegalRepeat).diagnostics.map((item) => item.code)).toContain("tree.repeat_scope");
+
+    const crossScope = compileBundle(structuredClone(VALID_BUNDLE_SOURCE)).bundle;
+    const binding = crossScope.routes.collection.bindings[0];
+    if (!binding) throw new Error("fixture collection binding is missing");
+    binding.ref = { kind: "data", scopeId: binding.ref.kind === "data" ? binding.ref.scopeId : "missing", path: "cartLine.title" };
+    expect(validateCompiledBundle(crossScope).diagnostics.map((item) => item.code)).toContain("binding.scope");
+  });
+
+  it("applies compiler-equivalent token and asset validation to persisted bundles", () => {
+    const bundle = compileBundle(structuredClone(VALID_BUNDLE_SOURCE)).bundle;
+    bundle.designSystem.tokens.ink = String.raw`u\72l("https://evil.example/token")`;
+    bundle.assets.entries = [{ key: "hero", contentHash: "a".repeat(16), mediaType: "text/html", byteSize: 1 }];
+    const codes = validateCompiledBundle(bundle).diagnostics.map((item) => item.code);
+    expect(codes).toContain("bundle.tokens");
+    expect(codes).toContain("asset.entry");
   });
 });

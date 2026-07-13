@@ -15,8 +15,16 @@ import {
   type TrustedSlotManifest,
 } from "../storefront-bundle/types";
 import { compileState, assertInteractionCompatibility } from "./interactions";
-import { CompilerError, isBindingKindPathAllowed } from "./bindings";
-import { validateCompiledCss } from "./css";
+import { assertValidAssetEntry, isCompilerIdentifier } from "./assets";
+import {
+  CompilerError,
+  compileRepeat,
+  isBindingKindPathAllowed,
+  isPathVisible,
+  type BindingScope,
+  type BindingScopeKind,
+} from "./bindings";
+import { assertSafeDesignTokenValue, validateCompiledCss } from "./css";
 import { isAllowedCompiledTag, serializeCompiledTree, type ProtectedCssNode } from "./html";
 
 export const validationLimitsV1 = Object.freeze({
@@ -54,15 +62,6 @@ const SLOT_KINDS = new Set<TrustedSlotManifest["kind"]>([
   "variantPicker", "addToCart", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce",
 ]);
 const HOST_SIZES = new Set<TrustedSlotManifest["hostSize"]>(["inline", "block", "panel", "page"]);
-const REPEAT_SHAPES: Readonly<Record<string, { itemKind: CompiledRepeat["itemKind"]; keyPath: string }>> = {
-  "collection.products": { itemKind: "product", keyPath: "product.id" },
-  "featured.products": { itemKind: "product", keyPath: "product.id" },
-  "related.products": { itemKind: "product", keyPath: "product.id" },
-  "search.results": { itemKind: "product", keyPath: "product.id" },
-  "cart.lines": { itemKind: "cartLine", keyPath: "cartLine.id" },
-  "product.images": { itemKind: "image", keyPath: "product.primaryImage" },
-  "product.variants": { itemKind: "variant", keyPath: "variant.id" },
-};
 const COMPILED_ATTRIBUTES = new Set([
   "class", "title", "role", "tabindex", "alt", "width", "height", "loading", "decoding", "open", "href", "for",
   "data-cd-repeat-id", "data-cd-bind-text", "data-cd-bind-money", "data-cd-bind-src", "data-cd-bind-alt",
@@ -115,13 +114,14 @@ interface TreeContext {
   nodes: CompiledNode[];
   ids: Set<string>;
   elements: Map<string, CompiledElementNode>;
-  scopes: Set<string>;
+  scopes: Map<string, BindingScope & { parentId?: string }>;
+  elementScopes: Map<string, string>;
   repeats: CompiledRepeat[];
   protectedNodes: ProtectedCssNode[];
   count: number;
 }
 
-function parseRouteTarget(value: unknown, path: string, add: AddDiagnostic, scopes: ReadonlySet<string>): RouteTarget | null {
+function parseRouteTarget(value: unknown, path: string, add: AddDiagnostic, scopes: ReadonlyMap<string, BindingScope>): RouteTarget | null {
   const input = record(value);
   if (!input || typeof input.routeId !== "string" || !ROUTE_IDS.has(input.routeId)) {
     add("route.target", path, "Route target is malformed");
@@ -157,19 +157,24 @@ function parseRouteTarget(value: unknown, path: string, add: AddDiagnostic, scop
   return { routeId: input.routeId as RouteTarget["routeId"], params };
 }
 
-function parseRepeat(value: unknown, path: string, add: AddDiagnostic): CompiledRepeat | null {
+function parseRepeat(value: unknown, path: string, add: AddDiagnostic, parentScope: BindingScope): CompiledRepeat | null {
   const input = record(value);
-  const shape = typeof input?.source === "string" ? REPEAT_SHAPES[input.source] : undefined;
-  if (!input || !shape || !isIdentifier(input.scopeId) || input.itemKind !== shape.itemKind || input.keyPath !== shape.keyPath) {
+  if (!input || typeof input.source !== "string" || !isCompilerIdentifier(input.scopeId) || typeof input.keyPath !== "string") {
     add("tree.repeat", path, "Compiled repeat is malformed or unsupported");
     return null;
   }
-  return {
-    scopeId: input.scopeId,
-    source: input.source as CompiledRepeat["source"],
-    itemKind: shape.itemKind,
-    keyPath: shape.keyPath as CompiledRepeat["keyPath"],
-  };
+  try {
+    const repeat = compileRepeat(input.source, input.scopeId, parentScope, input.keyPath);
+    if (input.itemKind !== repeat.itemKind) {
+      add("tree.repeat", path, "Compiled repeat item kind does not match its source");
+      return null;
+    }
+    return repeat;
+  } catch (error) {
+    const code = error instanceof CompilerError && error.code === "repeat.scope" ? "tree.repeat_scope" : "tree.repeat";
+    add(code, path, error instanceof Error ? error.message : "Compiled repeat is malformed or unsupported");
+    return null;
+  }
 }
 
 function parseTree(
@@ -178,11 +183,13 @@ function parseTree(
   namespace: string,
   add: AddDiagnostic,
   checkout: boolean,
+  rootScopeKind: BindingScopeKind,
 ): TreeContext {
   const context: TreeContext = {
-    nodes: [], ids: new Set(), elements: new Map(), scopes: new Set(["root"]), repeats: [], protectedNodes: [], count: 0,
+    nodes: [], ids: new Set(), elements: new Map(), scopes: new Map([["root", { id: "root", kind: rootScopeKind }]]),
+    elementScopes: new Map(), repeats: [], protectedNodes: [], count: 0,
   };
-  const parseNodes = (candidate: unknown, nodePath: string, depth: number): CompiledNode[] => {
+  const parseNodes = (candidate: unknown, nodePath: string, depth: number, parentScopeId: string): CompiledNode[] => {
     if (!Array.isArray(candidate)) {
       add("tree.type", nodePath, "Compiled tree must be an array");
       return [];
@@ -237,16 +244,19 @@ function parseTree(
         }
       }
       let compiledRepeat: CompiledRepeat | undefined;
+      let elementScopeId = parentScopeId;
       if (input.repeat !== undefined) {
-        const repeat = parseRepeat(input.repeat, `${currentPath}.repeat`, add);
+        const parentScope = context.scopes.get(parentScopeId)!;
+        const repeat = parseRepeat(input.repeat, `${currentPath}.repeat`, add, parentScope);
         if (repeat) {
           if (context.scopes.has(repeat.scopeId)) add("tree.repeat_scope", `${currentPath}.repeat`, "Duplicate repeat scope");
-          context.scopes.add(repeat.scopeId);
+          context.scopes.set(repeat.scopeId, { id: repeat.scopeId, kind: repeat.itemKind, parentId: parentScopeId });
           context.repeats.push(repeat);
           compiledRepeat = repeat;
+          elementScopeId = repeat.scopeId;
         }
       }
-      const children = parseNodes(input.children, `${currentPath}.children`, depth + 1);
+      const children = parseNodes(input.children, `${currentPath}.children`, depth + 1, elementScopeId);
       const element: CompiledElementNode = {
         kind: "element",
         id: elementId,
@@ -265,11 +275,12 @@ function parseTree(
         } else element.trustedSlotId = input.trustedSlotId;
       }
       context.elements.set(element.id, element);
+      context.elementScopes.set(element.id, elementScopeId);
       nodes.push(element);
     }
     return nodes;
   };
-  context.nodes = parseNodes(value, path, 0);
+  context.nodes = parseNodes(value, path, 0, "root");
 
   const collectProtected = (nodes: readonly CompiledNode[]): boolean => {
     let contains = false;
@@ -304,7 +315,7 @@ function parseTree(
   return context;
 }
 
-function parseDataRef(value: unknown, path: string, add: AddDiagnostic, scopes: ReadonlySet<string>): PublicDataRef | null {
+function parseDataRef(value: unknown, path: string, add: AddDiagnostic, scopes: ReadonlyMap<string, BindingScope>): PublicDataRef | null {
   const input = record(value);
   if (!input || typeof input.kind !== "string") {
     add("binding.ref", path, "Data reference is malformed");
@@ -315,11 +326,16 @@ function parseDataRef(value: unknown, path: string, add: AddDiagnostic, scopes: 
       add("binding.path", `${path}.path`, "Binding path is not public");
       return null;
     }
-    if (typeof input.scopeId !== "string" || !scopes.has(input.scopeId)) {
+    const scope = typeof input.scopeId === "string" ? scopes.get(input.scopeId) : undefined;
+    if (!scope) {
       add("binding.scope", `${path}.scopeId`, "Binding scope is unresolved");
       return null;
     }
-    return { kind: "data", scopeId: input.scopeId, path: input.path };
+    if (!isPathVisible(input.path, scope)) {
+      add("binding.scope", path, `Binding ${input.path} is not visible from scope ${scope.id}`);
+      return null;
+    }
+    return { kind: "data", scopeId: scope.id, path: input.path };
   }
   if (input.kind === "state" && typeof input.stateId === "string") return { kind: "state", stateId: input.stateId };
   if (input.kind === "event" && new Set(["value", "checked", "key", "progress01"]).has(String(input.field))) {
@@ -358,6 +374,8 @@ function parseBindings(value: unknown, path: string, tree: TreeContext, add: Add
     const kind = input.kind as CompiledBindingKind;
     if (!isBindingKindPathAllowed(kind, ref.path)) add("binding.type", currentPath, "Binding kind and public path are incompatible");
     const target = tree.elements.get(input.targetId);
+    const targetScopeId = tree.elementScopes.get(input.targetId);
+    if (targetScopeId && ref.scopeId !== targetScopeId) add("binding.scope", `${currentPath}.ref.scopeId`, "Binding scope does not own its target element");
     if (target?.attributes[`data-cd-bind-${kind}`] !== input.id) add("binding.marker", currentPath, "Binding marker does not match its target");
     bindings.push({ id: input.id, targetId: input.targetId, kind, ref });
   });
@@ -389,7 +407,7 @@ function parseState(value: unknown, path: string, add: AddDiagnostic): Interacti
   return null;
 }
 
-function parseAction(value: unknown, path: string, add: AddDiagnostic, scopes: ReadonlySet<string>): RuntimeActionSpec | null {
+function parseAction(value: unknown, path: string, add: AddDiagnostic, scopes: ReadonlyMap<string, BindingScope>): RuntimeActionSpec | null {
   const input = record(value);
   if (!input || typeof input.type !== "string") {
     add("interaction.action", path, "Action is malformed");
@@ -535,6 +553,9 @@ function parseSlots(value: unknown, path: string, tree: TreeContext, add: AddDia
     const host = tree.elements.get(input.id);
     if (!host || host.trustedSlotId !== input.id) add("slot.unresolved_host", currentPath, "Trusted slot host is unresolved");
     else {
+      const expectedScopeId = tree.elementScopes.get(input.id);
+      const persistedScopeId = typeof input.scopeId === "string" ? input.scopeId : "root";
+      if (expectedScopeId && persistedScopeId !== expectedScopeId) add("slot.scope", currentPath, "Trusted slot scope does not own its host");
       const attributeKeys = Object.keys(host.attributes);
       if (host.children.length > 0 || attributeKeys.length !== 1 || host.attributes["data-cd-trusted-slot-id"] !== input.id) {
         add("slot.host", currentPath, "Trusted slot host contains model-controlled presentation");
@@ -608,18 +629,24 @@ function validateClosedPlans(input: UnknownRecord, path: string, expected: Retur
   if (actualCapabilities !== JSON.stringify(expected.capabilities)) add("capability.plan_mismatch", `${path}.requiredCapabilities`, "Persisted capability plan does not match the derived closed plan");
 }
 
-function validateRoute(value: unknown, namespace: string, path: string, add: AddDiagnostic): void {
+function routeRootScope(namespace: string): BindingScopeKind {
+  if (namespace === "collection" || namespace === "product" || namespace === "search" || namespace === "cart") return namespace;
+  return "store";
+}
+
+function validateRoute(value: unknown, namespace: string, path: string, add: AddDiagnostic): TreeContext {
+  const rootScopeKind = routeRootScope(namespace);
   const input = record(value);
   if (!input) {
     add("route.missing", path, "Compiled route is missing");
-    return;
+    return parseTree([], `${path}.tree`, namespace, add, false, rootScopeKind);
   }
   const html = typeof input.html === "string" ? input.html : "";
   const css = typeof input.css === "string" ? input.css : "";
   if (typeof input.html !== "string") add("route.html", `${path}.html`, "Compiled HTML debug string is missing");
   if (typeof input.css !== "string") add("route.css", `${path}.css`, "Compiled CSS is missing");
   if (bytes(html) + bytes(css) > validationLimitsV1.routeHtmlCssBytes) add("route.byte_limit", path, "Compiled HTML+CSS exceeds 250KB");
-  const tree = parseTree(input.tree, `${path}.tree`, namespace, add, false);
+  const tree = parseTree(input.tree, `${path}.tree`, namespace, add, false, rootScopeKind);
   if (tree.count > validationLimitsV1.maxDomNodesPerRoute) add("route.node_limit", `${path}.tree`, "Route exceeds node count limit");
   if (html !== serializeCompiledTree(tree.nodes)) add("route.html_mismatch", `${path}.html`, "Debug HTML does not match compiled tree");
   const bindings = parseBindings(input.bindings, `${path}.bindings`, tree, add);
@@ -639,6 +666,7 @@ function validateRoute(value: unknown, namespace: string, path: string, add: Add
     add(code, `${path}.css`, error instanceof Error ? error.message : "Compiled CSS is unsafe");
   }
   validateClosedPlans(input, path, deriveContract(namespace, tree, bindings, interactions, slots), add);
+  return tree;
 }
 
 function validateCheckout(value: unknown, add: AddDiagnostic): void {
@@ -651,7 +679,7 @@ function validateCheckout(value: unknown, add: AddDiagnostic): void {
   const html = typeof input.decorativeHtml === "string" ? input.decorativeHtml : "";
   const css = typeof input.decorativeCss === "string" ? input.decorativeCss : "";
   if (bytes(html) + bytes(css) > validationLimitsV1.routeHtmlCssBytes) add("route.byte_limit", path, "Checkout HTML+CSS exceeds 250KB");
-  const tree = parseTree(input.decorativeTree, `${path}.decorativeTree`, "checkout", add, true);
+  const tree = parseTree(input.decorativeTree, `${path}.decorativeTree`, "checkout", add, true, "store");
   if (html !== serializeCompiledTree(tree.nodes)) add("route.html_mismatch", `${path}.decorativeHtml`, "Checkout HTML does not match decorative tree");
   const bindings = parseBindings(input.bindings, `${path}.bindings`, tree, add);
   bindings.forEach((binding, index) => {
@@ -695,10 +723,20 @@ function validateBundleEnvelope(bundle: UnknownRecord, add: AddDiagnostic): void
   if (!design || !isCuratedFontId(design.displayFontId) || !isCuratedFontId(design.bodyFontId) || typeof design.globalCss !== "string" || !record(design.tokens) || !record(design.breakpoints) || typeof design.iconStyle !== "string" || typeof design.motionStyle !== "string") {
     add("bundle.design", "designSystem", "Design system is malformed");
   } else {
-    if (!Object.values(design.tokens as UnknownRecord).every((item) => typeof item === "string")) add("bundle.tokens", "designSystem.tokens", "Design tokens must be strings");
-    if (!Object.values(design.breakpoints as UnknownRecord).every((item) => typeof item === "number" && Number.isFinite(item))) add("bundle.breakpoints", "designSystem.breakpoints", "Breakpoints must be finite numbers");
-    try { validateCompiledCss(design.globalCss, { namespace: "global" }); }
-    catch (error) { add("bundle.global_css", "designSystem.globalCss", error instanceof Error ? error.message : "Global CSS is unsafe"); }
+    for (const [key, value] of Object.entries(design.tokens as UnknownRecord)) {
+      if (!isCompilerIdentifier(key) || typeof value !== "string") {
+        add("bundle.tokens", `designSystem.tokens.${key}`, "Design token keys and values are malformed");
+        continue;
+      }
+      try { assertSafeDesignTokenValue(key, value); }
+      catch (error) { add("bundle.tokens", `designSystem.tokens.${key}`, error instanceof Error ? error.message : "Design token value is unsafe"); }
+    }
+    for (const [key, value] of Object.entries(design.breakpoints as UnknownRecord)) {
+      if (!isCompilerIdentifier(key) || typeof value !== "number" || !Number.isFinite(value) || value < 240 || value > 3840) {
+        add("bundle.breakpoints", `designSystem.breakpoints.${key}`, "Breakpoint must match compiler bounds");
+      }
+    }
+    if (design.iconStyle.length > 120 || design.motionStyle.length > 120) add("bundle.design", "designSystem", "Design descriptions exceed compiler bounds");
   }
   const assets = record(bundle.assets);
   if (!assets || !Array.isArray(assets.entries)) add("asset.schema", "assets", "Asset manifest is malformed");
@@ -706,11 +744,23 @@ function validateBundleEnvelope(bundle: UnknownRecord, add: AddDiagnostic): void
     const keys = new Set<string>();
     assets.entries.forEach((entry, index) => {
       const item = record(entry);
-      if (!item || !isIdentifier(item.key) || typeof item.contentHash !== "string" || typeof item.mediaType !== "string" || !Number.isSafeInteger(item.byteSize) || Number(item.byteSize) <= 0) add("asset.entry", `assets.entries[${index}]`, "Asset entry is malformed");
-      else if (keys.has(item.key)) add("asset.duplicate", `assets.entries[${index}]`, "Asset key is duplicated");
-      else keys.add(item.key);
+      try { assertValidAssetEntry(entry); }
+      catch (error) {
+        add("asset.entry", `assets.entries[${index}]`, error instanceof Error ? error.message : "Asset entry is malformed");
+        return;
+      }
+      if (!item) return;
+      if (keys.has(item.key as string)) add("asset.duplicate", `assets.entries[${index}]`, "Asset key is duplicated");
+      else keys.add(item.key as string);
     });
   }
+}
+
+function validateGlobalCss(value: unknown, protectedNodes: readonly ProtectedCssNode[], add: AddDiagnostic): void {
+  const design = record(value);
+  if (!design || typeof design.globalCss !== "string") return;
+  try { validateCompiledCss(design.globalCss, { namespace: "global", protectedNodes }); }
+  catch (error) { add("bundle.global_css", "designSystem.globalCss", error instanceof Error ? error.message : "Global CSS is unsafe"); }
 }
 
 export function validateCompiledBundle(value: unknown): BundleValidationReport {
@@ -720,13 +770,15 @@ export function validateCompiledBundle(value: unknown): BundleValidationReport {
   if (!bundle) add("bundle.type", "bundle", "Compiled bundle must be an object");
   else {
     validateBundleEnvelope(bundle, add);
-    validateRoute(bundle.shell, "shell", "shell", add);
+    const protectedNodes: ProtectedCssNode[] = [];
+    protectedNodes.push(...validateRoute(bundle.shell, "shell", "shell", add).protectedNodes);
     const routes = record(bundle.routes);
     if (!routes) add("bundle.routes", "routes", "Bundle routes must be an object");
     for (const routeId of ["home", "collection", "product", "search", "cart"] as const) {
-      validateRoute(routes?.[routeId], routeId, `routes.${routeId}`, add);
+      protectedNodes.push(...validateRoute(routes?.[routeId], routeId, `routes.${routeId}`, add).protectedNodes);
     }
     validateCheckout(routes?.checkout, add);
+    validateGlobalCss(bundle.designSystem, protectedNodes, add);
     const serialized = safeJson(value);
     if (!serialized) add("bundle.serialization", "bundle", "Bundle is not serializable");
     else if (bytes(serialized) > validationLimitsV1.bundleExcludingImagesBytes) add("bundle.byte_limit", "bundle", "Bundle exceeds 1.5MB excluding image payloads");

@@ -43,4 +43,16 @@ describe("compileBundle", () => {
     source.routes.product.css = css;
     expect(() => compileBundle(source)).toThrow(/protected/i);
   });
+
+  it("rejects global CSS that can match a protected node in any route", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.designSystem.globalCss = `.product { display: none }`;
+    expect(() => compileBundle(source)).toThrow(/protected/i);
+  });
+
+  it("requires compiler-owned assets to use exact SHA-256 metadata", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.assets.entries = [{ key: "hero", contentHash: "a".repeat(16), mediaType: "image/webp", byteSize: 42 }];
+    expect(() => compileBundle(source)).toThrow(/hash/i);
+  });
 });

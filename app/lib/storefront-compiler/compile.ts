@@ -13,9 +13,10 @@ import {
   type StoreTemplateId,
 } from "../storefront-bundle/types";
 import { CompilerError, type BindingScopeKind } from "./bindings";
+import { assertValidAssetEntry, isCompilerIdentifier } from "./assets";
 import { compileCheckout } from "./checkout";
-import { compileCss } from "./css";
-import { compileHtml } from "./html";
+import { assertSafeDesignTokenValue, compileCss } from "./css";
+import { compileHtml, type ProtectedCssNode } from "./html";
 import { validateCompiledBundle, type BundleValidationReport } from "./validate";
 
 export interface RouteSource {
@@ -54,15 +55,6 @@ export interface StorefrontBundleSourceV1 {
     checkout: CheckoutRouteSource;
   };
   assets: AssetManifest;
-}
-
-function isIdentifier(value: string): boolean {
-  if (value.length === 0 || value.length > 80) return false;
-  for (const character of value) {
-    const code = character.charCodeAt(0);
-    if (!((code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || character === "-" || character === "_")) return false;
-  }
-  return true;
 }
 
 function compareCodeUnits(a: string, b: string): number {
@@ -152,51 +144,50 @@ function compileRoute(source: RouteSource, namespace: string, defaultScope: Bind
   });
   const contract = deriveRouteContract(namespace, rootScope, html);
   return {
-    html: html.html,
-    tree: html.tree,
-    bindings: html.bindings,
-    css: css.css,
-    requiredData: contract.requiredData,
-    requiredCapabilities: contract.requiredCapabilities,
-    interactions: html.interactions,
-    trustedSlots: html.trustedSlots,
+    artifact: {
+      html: html.html,
+      tree: html.tree,
+      bindings: html.bindings,
+      css: css.css,
+      requiredData: contract.requiredData,
+      requiredCapabilities: contract.requiredCapabilities,
+      interactions: html.interactions,
+      trustedSlots: html.trustedSlots,
+    },
+    protectedNodes: html.protectedCssNodes,
+    protectedSourceIds: html.protectedSourceIds,
   };
 }
 
 function compileAssets(assets: AssetManifest): AssetManifest {
   const keys = new Set<string>();
   const entries = assets.entries.map((entry) => {
-    if (!isIdentifier(entry.key)) throw new CompilerError("asset.key", `Invalid asset key ${JSON.stringify(entry.key)}`);
+    assertValidAssetEntry(entry);
     if (keys.has(entry.key)) throw new CompilerError("asset.duplicate", `Duplicate asset key ${entry.key}`);
     keys.add(entry.key);
-    if (!isIdentifier(entry.contentHash) || entry.contentHash.length < 16) {
-      throw new CompilerError("asset.hash", `Invalid content hash for ${entry.key}`);
-    }
-    if (!new Set(["image/avif", "image/webp", "image/png", "image/jpeg", "image/svg+xml", "font/woff2"]).has(entry.mediaType)) {
-      throw new CompilerError("asset.media_type", `Unsupported media type ${entry.mediaType}`);
-    }
-    if (!Number.isSafeInteger(entry.byteSize) || entry.byteSize <= 0) {
-      throw new CompilerError("asset.byte_size", `Invalid byte size for ${entry.key}`);
-    }
-    return { ...entry };
+    return { key: entry.key, contentHash: entry.contentHash, mediaType: entry.mediaType, byteSize: entry.byteSize };
   });
   entries.sort((a, b) => compareCodeUnits(a.key, b.key));
   return { entries };
 }
 
-function compileDesignSystem(source: StorefrontBundleSourceV1["designSystem"]): StorefrontBundleV1["designSystem"] {
+function compileDesignSystem(
+  source: StorefrontBundleSourceV1["designSystem"],
+  protectedNodes: readonly ProtectedCssNode[],
+  protectedSourceIds: readonly string[],
+): StorefrontBundleV1["designSystem"] {
   if (!isCuratedFontId(source.displayFontId) || !isCuratedFontId(source.bodyFontId)) {
     throw new CompilerError("design.font", "Design system fonts must come from the curated self-hosted set");
   }
   const tokens: Record<string, string> = {};
   for (const [key, value] of Object.entries(source.tokens).sort(([a], [b]) => compareCodeUnits(a, b))) {
-    if (!isIdentifier(key)) throw new CompilerError("design.token", `Invalid token ID ${JSON.stringify(key)}`);
-    compileCss(`.token { --${key}: ${value}; }`, { namespace: "token-check" });
+    if (!isCompilerIdentifier(key)) throw new CompilerError("design.token", `Invalid token ID ${JSON.stringify(key)}`);
+    assertSafeDesignTokenValue(key, value);
     tokens[key] = value;
   }
   const breakpoints: Record<string, number> = {};
   for (const [key, value] of Object.entries(source.breakpoints).sort(([a], [b]) => compareCodeUnits(a, b))) {
-    if (!isIdentifier(key) || !Number.isFinite(value) || value < 240 || value > 3840) {
+    if (!isCompilerIdentifier(key) || !Number.isFinite(value) || value < 240 || value > 3840) {
       throw new CompilerError("design.breakpoint", `Invalid breakpoint ${JSON.stringify(key)}`);
     }
     breakpoints[key] = value;
@@ -211,7 +202,7 @@ function compileDesignSystem(source: StorefrontBundleSourceV1["designSystem"]): 
     breakpoints,
     iconStyle: source.iconStyle,
     motionStyle: source.motionStyle,
-    globalCss: compileCss(source.globalCss, { namespace: "global" }).css,
+    globalCss: compileCss(source.globalCss, { namespace: "global", protectedNodes, protectedSourceIds }).css,
   };
 }
 
@@ -243,6 +234,15 @@ export interface CompiledBundleResult {
 }
 
 export function compileBundle(source: StorefrontBundleSourceV1): CompiledBundleResult {
+  const shell = compileRoute(source.shell, "shell", "store");
+  const home = compileRoute(source.routes.home, "home", "store");
+  const collection = compileRoute(source.routes.collection, "collection", "collection");
+  const product = compileRoute(source.routes.product, "product", "product");
+  const search = compileRoute(source.routes.search, "search", "search");
+  const cart = compileRoute(source.routes.cart, "cart", "cart");
+  const routes = [shell, home, collection, product, search, cart];
+  const protectedNodes = routes.flatMap((route) => route.protectedNodes);
+  const protectedSourceIds = routes.flatMap((route) => route.protectedSourceIds);
   const bundle: StorefrontBundleV1 = {
     schemaVersion: STOREFRONT_SCHEMA_VERSION,
     runtimeVersion: STOREFRONT_RUNTIME_VERSION,
@@ -253,14 +253,14 @@ export function compileBundle(source: StorefrontBundleSourceV1): CompiledBundleR
       rationale: source.concept.rationale,
       noveltySignature: [...source.concept.noveltySignature],
     },
-    designSystem: compileDesignSystem(source.designSystem),
-    shell: compileRoute(source.shell, "shell", "store"),
+    designSystem: compileDesignSystem(source.designSystem, protectedNodes, protectedSourceIds),
+    shell: shell.artifact,
     routes: {
-      home: compileRoute(source.routes.home, "home", "store"),
-      collection: compileRoute(source.routes.collection, "collection", "collection"),
-      product: compileRoute(source.routes.product, "product", "product"),
-      search: compileRoute(source.routes.search, "search", "search"),
-      cart: compileRoute(source.routes.cart, "cart", "cart"),
+      home: home.artifact,
+      collection: collection.artifact,
+      product: product.artifact,
+      search: search.artifact,
+      cart: cart.artifact,
       checkout: compileCheckout(source.routes.checkout),
     },
     assets: compileAssets(source.assets),
