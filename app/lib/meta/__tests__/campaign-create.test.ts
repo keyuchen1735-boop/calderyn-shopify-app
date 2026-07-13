@@ -60,6 +60,7 @@ describe("createFirstCampaign", () => {
       objective: "OUTCOME_SALES",
       status: "PAUSED",
       special_ad_categories: "[]",
+      is_adset_budget_sharing_enabled: "false",
     });
 
     const adSetCall = calls.find((c) => c.path === "/act_1/adsets");
@@ -108,6 +109,25 @@ describe("createFirstCampaign", () => {
 
     const deleteCall = calls.find((c) => c.path === "/camp_1" && c.body.status === "DELETED");
     expect(deleteCall).toBeTruthy();
+  });
+
+  it("(b2) Meta rejections surface the step label, code/subcode, and error_user_msg", async () => {
+    const { conn } = wiredClient((path) => {
+      if (path === "/act_1/campaigns")
+        return {
+          error: {
+            message: "Invalid parameter",
+            code: 100,
+            error_subcode: 4834011,
+            error_user_msg: "You must specify True or False in the field is_adset_budget_sharing_enabled",
+          },
+        };
+      return undefined;
+    });
+
+    await expect(createFirstCampaign(conn, BASE_INPUT, NO_RETRY)).rejects.toThrow(
+      "campaign create: Invalid parameter (code 100/4834011) — You must specify True or False in the field is_adset_budget_sharing_enabled",
+    );
   });
 
   it("(d) budget outside 500-20000 throws before any post", async () => {

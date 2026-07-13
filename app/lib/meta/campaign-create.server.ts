@@ -21,12 +21,19 @@ const DEFAULT_RETRY: RetryOptions = { maxAttempts: 4, baseDelayMs: 500 };
 // define their own).
 const META_PERMANENT_CODES = new Set([100, 190, 200, 10, 803, 272]);
 
-function check(r: MetaResponse): MetaResponse {
+function check(r: MetaResponse, step: string): MetaResponse {
   assertNotRateLimited(r);
   if (r.error) {
     const code = r.error.code;
-    const codeStr = code != null ? ` (code ${code})` : "";
-    throw new ActionError("meta", `${r.error.message}${codeStr}`, {
+    // Include subcode + error_user_msg when Meta sends them — they carry the
+    // actually-actionable reason ("Invalid parameter" alone is useless to a
+    // merchant reading the wizard's failure state).
+    const codeStr =
+      code != null
+        ? ` (code ${code}${r.error.error_subcode != null ? `/${r.error.error_subcode}` : ""})`
+        : "";
+    const userMsg = r.error.error_user_msg ? ` — ${r.error.error_user_msg}` : "";
+    throw new ActionError("meta", `${step}: ${r.error.message}${codeStr}${userMsg}`, {
       retriable: !(code != null && META_PERMANENT_CODES.has(code)),
     });
   }
@@ -90,7 +97,12 @@ export async function createFirstCampaign(
           objective: "OUTCOME_SALES",
           status: "PAUSED",
           special_ad_categories: "[]",
+          // Required by Meta (error subcode 4834011) whenever the budget lives
+          // on the ad set instead of the campaign. False = the merchant's
+          // daily budget stays exactly on their ad set, never shared.
+          is_adset_budget_sharing_enabled: "false",
         }),
+        "campaign create",
       ),
     retry,
   );
@@ -116,6 +128,7 @@ export async function createFirstCampaign(
             status: "PAUSED",
             targeting: JSON.stringify({ geo_locations: { countries: [input.countryCode] } }),
           }),
+          "ad set create",
         ),
       retry,
     );
@@ -128,7 +141,10 @@ export async function createFirstCampaign(
   } catch (err) {
     const originalMessage = err instanceof Error ? err.message : String(err);
     try {
-      await withRetry(async () => check(await client.post(`/${campaignId}`, { status: "DELETED" })), retry);
+      await withRetry(
+        async () => check(await client.post(`/${campaignId}`, { status: "DELETED" }), "rollback delete"),
+        retry,
+      );
     } catch (rollbackErr) {
       // Log so the failure is visible in server logs, then surface a typed
       // error carrying both the orphan id and the ORIGINAL reason — never

@@ -3,7 +3,16 @@ import { RateLimitError } from "../ads/backoff";
 export type MetaResponse = {
   data?: unknown;
   success?: boolean;
-  error?: { message: string; code?: number; type?: string; fbtrace_id?: string };
+  error?: {
+    message: string;
+    code?: number;
+    // Meta's actionable detail on create rejections: subcode narrows the exact
+    // rule violated; error_user_msg is the human-readable fix.
+    error_subcode?: number;
+    error_user_msg?: string;
+    type?: string;
+    fbtrace_id?: string;
+  };
   [k: string]: unknown;
 };
 
