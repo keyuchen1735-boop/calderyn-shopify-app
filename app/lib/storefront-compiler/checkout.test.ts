@@ -37,4 +37,15 @@ describe("compileCheckout", () => {
   ])("rejects checkout CSS that could cover or impersonate protected controls: %s", (css) => {
     expect(() => compileCheckout({ html: `<header class="brand">Brand</header>`, css, layout })).toThrow();
   });
+
+  it.each([
+    `.brand { opacity: calc(1 - .5) }`,
+    `.brand { margin-top: -40px }`,
+    `.brand { width: 99999px }`,
+    `.brand { min-height: 200vh }`,
+    `.brand { background: linear-gradient(red, transparent) }`,
+    `.brand { grid-area: "summary / payment" }`,
+  ])("rejects unbounded checkout decoration: %s", (css) => {
+    expect(() => compileCheckout({ html: `<header class="brand">Brand</header>`, css, layout })).toThrow();
+  });
 });

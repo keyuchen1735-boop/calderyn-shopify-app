@@ -29,6 +29,14 @@ describe("typed interactions", () => {
     ).toThrow(/bound/i);
   });
 
+  it.each([
+    `<div data-cd-state-id="open" data-cd-state-type="boolean" data-cd-state-initial="false" data-cd-bind-state="open" data-cd-bind-property="progress01"></div>`,
+    `<div data-cd-state-id="progress" data-cd-state-type="boundedNumber" data-cd-state-initial="0" data-cd-state-min="0" data-cd-state-max="1" data-cd-bind-state="progress" data-cd-bind-property="expanded"></div>`,
+    `<button data-cd-state-id="open" data-cd-state-type="boolean" data-cd-state-initial="false" data-cd-on="click" data-cd-action="state.decrement" data-cd-state="open">Bad</button>`,
+  ])("rejects incompatible state bindings and actions: %s", (source) => {
+    expect(() => compileHtml(source, { namespace: "x" })).toThrow(/state|binding|action/i);
+  });
+
   it("compiles typed source actions and removes the source syntax", () => {
     const result = compileHtml(
       `<button id="open" data-cd-on="click" data-cd-action="surface.toggle" data-cd-target="drawer">Menu</button><aside id="drawer"></aside>`,
@@ -67,8 +75,9 @@ describe("typed interactions", () => {
       { namespace: "product", rootScopeKind: "product" },
     );
     expect(result.trustedSlots).toEqual([
-      expect.objectContaining({ id: "cd-product-buy", kind: "addToCart", hostSize: "block" }),
+      expect.objectContaining({ id: "cd-product-slot-1", kind: "addToCart", hostSize: "block" }),
     ]);
     expect(result.html).not.toContain("data-cd-slot");
+    expect(result.html).not.toContain("id=\"cd-product-buy\"");
   });
 });

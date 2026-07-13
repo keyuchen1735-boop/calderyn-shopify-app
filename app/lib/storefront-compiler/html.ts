@@ -18,7 +18,7 @@ import {
   type BindingScope,
   type BindingScopeKind,
 } from "./bindings";
-import { compileState, compileStateBinding, compileTransition } from "./interactions";
+import { assertInteractionCompatibility, compileState, compileStateBinding, compileTransition } from "./interactions";
 
 export { CompilerError } from "./bindings";
 
@@ -30,10 +30,15 @@ const ALLOWED_TAGS = new Set([
   "sup", "time", "u", "ul",
 ]);
 
+export function isAllowedCompiledTag(value: unknown): value is string {
+  return typeof value === "string" && ALLOWED_TAGS.has(value);
+}
+
 const VOID_TAGS = new Set(["br", "hr", "img", "source"]);
 const STATIC_ATTRIBUTES = new Set([
-  "class", "title", "role", "tabindex", "alt", "width", "height", "loading", "decoding", "open",
+  "class", "title", "role", "tabindex", "alt", "width", "height", "loading", "decoding", "open", "href", "for",
 ]);
+const IDREF_ATTRIBUTES = new Set(["aria-controls", "aria-labelledby", "aria-describedby", "aria-owns", "aria-activedescendant", "for"]);
 const BINDING_ATTRIBUTES = new Map([
   ["data-cd-text", "text"],
   ["data-cd-money", "money"],
@@ -77,12 +82,30 @@ function escapeAttribute(value: string): string {
   return escapeText(value).replaceAll('"', "&quot;");
 }
 
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function splitAsciiWhitespace(value: string): string[] {
+  const tokens: string[] = [];
+  let token = "";
+  for (const character of value) {
+    const whitespace = character === " " || character === "\t" || character === "\n" || character === "\r" || character === "\f";
+    if (whitespace) {
+      if (token) tokens.push(token);
+      token = "";
+    } else token += character;
+  }
+  if (token) tokens.push(token);
+  return tokens;
+}
+
 export function serializeCompiledTree(nodes: readonly CompiledNode[]): string {
   return nodes
     .map((node) => {
       if (node.kind === "text") return escapeText(node.value);
       const attributes = Object.entries({ id: node.id, ...node.attributes })
-        .sort(([a], [b]) => a.localeCompare(b))
+        .sort(([a], [b]) => compareCodeUnits(a, b))
         .map(([name, value]) => ` ${name}="${escapeAttribute(value)}"`)
         .join("");
       if (VOID_TAGS.has(node.tag)) return `<${node.tag}${attributes}>`;
@@ -110,6 +133,7 @@ function assertAllowedAttribute(name: string, value: string): void {
   if (name === "style") {
     throw new CompilerError("html.inline_style", "Inline style attributes are forbidden");
   }
+  if (name === "href" && value.startsWith("#") && isSafeIdentifier(value.slice(1))) return;
   if (name === "href" || name === "src" || name === "srcset" || name === "action" || name === "formaction") {
     throw new CompilerError("html.url_attribute", `Literal URL attribute ${JSON.stringify(name)} is forbidden`);
   }
@@ -153,6 +177,15 @@ export interface CompiledHtmlResult {
   interactions: InteractionManifestV1;
   trustedSlots: TrustedSlotManifest[];
   policyLinks: boolean;
+  protectedCssNodes: ProtectedCssNode[];
+  protectedSourceIds: string[];
+}
+
+export interface ProtectedCssNode {
+  id: string;
+  tag: string;
+  classes: string[];
+  attributes: Record<string, string>;
 }
 
 export function compileHtml(source: string, options: CompileHtmlOptions): CompiledHtmlResult {
@@ -185,6 +218,9 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
   }
 
   const originalIds = new Map<string, string>();
+  const slotNodeIds = new Map<DefaultTreeAdapterTypes.Element, string>();
+  const protectedSourceIds = new Set<string>();
+  let slotIdentityCounter = 0;
   const stateIds = new Map<string, string>();
   const stateSources: Array<ReturnType<typeof attributesOf>> = [];
   walkElements(fragment.childNodes, (node) => {
@@ -196,10 +232,14 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
     }
     for (const attribute of node.attrs) assertAllowedAttribute(attribute.name, attribute.value);
     const id = attributesOf(node).get("id");
+    const slotKind = attributesOf(node).get("data-cd-slot");
+    const slotId = slotKind === undefined ? undefined : `cd-${options.namespace}-slot-${++slotIdentityCounter}`;
+    if (slotId) slotNodeIds.set(node, slotId);
     if (id !== undefined) {
       if (!isSafeIdentifier(id)) throw new CompilerError("html.id", `Invalid local ID ${JSON.stringify(id)}`);
       if (originalIds.has(id)) throw new CompilerError("html.duplicate_id", `Duplicate ID ${JSON.stringify(id)}`);
-      originalIds.set(id, `cd-${options.namespace}-${id}`);
+      originalIds.set(id, slotId ?? `cd-${options.namespace}-${id}`);
+      if (slotId) protectedSourceIds.add(id);
     }
     const attributes = attributesOf(node);
     const stateId = attributes.get("data-cd-state-id");
@@ -254,11 +294,25 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
       if (!isElement(sourceNode)) continue;
       const sourceAttributes = attributesOf(sourceNode);
       const originalId = sourceAttributes.get("id");
-      const id = originalId ? originalIds.get(originalId)! : `cd-${options.namespace}-n${++nodeCounter}`;
+      const id = slotNodeIds.get(sourceNode) ?? (originalId ? originalIds.get(originalId)! : `cd-${options.namespace}-n${++nodeCounter}`);
       const attributes: Record<string, string> = {};
-      for (const [name, value] of [...sourceAttributes.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      for (const [name, value] of [...sourceAttributes.entries()].sort(([a], [b]) => compareCodeUnits(a, b))) {
         if (name === "id" || SOURCE_ATTRIBUTES.has(name)) continue;
-        attributes[name] = value;
+        if (IDREF_ATTRIBUTES.has(name)) {
+          const references = splitAsciiWhitespace(value);
+          if (references.length === 0) throw new CompilerError("html.idref", `${name} requires a local ID`);
+          attributes[name] = references
+            .map((reference) => {
+              const resolved = originalIds.get(reference);
+              if (!resolved) throw new CompilerError("html.idref", `Unresolved ${name} reference ${JSON.stringify(reference)}`);
+              return resolved;
+            })
+            .join(" ");
+        } else if (name === "href") {
+          const resolved = originalIds.get(value.slice(1));
+          if (!resolved) throw new CompilerError("html.idref", `Unresolved fragment ${JSON.stringify(value)}`);
+          attributes.href = `#${resolved}`;
+        } else attributes[name] = value;
       }
 
       let childScope = scope;
@@ -366,6 +420,7 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
           throw new CompilerError("slot.theme", "Trusted slot theme tokens must be local identifiers");
         }
         trustedSlotId = id;
+        for (const name of Object.keys(attributes)) delete attributes[name];
         trustedSlots.push({
           id,
           kind: slotKind as TrustedSlotManifest["kind"],
@@ -391,17 +446,44 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
         id,
         tag: sourceNode.tagName,
         attributes,
-        children: compileNodes(sourceNode.childNodes, childScope),
+        children: trustedSlotId ? [] : compileNodes(sourceNode.childNodes, childScope),
       };
       if (repeat) compiledNode.repeat = repeat;
       if (routeTarget) compiledNode.routeTarget = routeTarget;
       if (trustedSlotId) compiledNode.trustedSlotId = trustedSlotId;
+      if (sourceNode.tagName === "a" && routeTarget === undefined && attributes.href === undefined) {
+        throw new CompilerError("html.inert_control", "Visible anchors require a route target or resolved fragment");
+      }
+      if (sourceNode.tagName === "button" && actionName === undefined) {
+        throw new CompilerError("html.inert_control", "Visible buttons require an allowed action");
+      }
       output.push(compiledNode);
     }
     return output;
   };
 
   const tree = compileNodes(fragment.childNodes, rootScope);
+  const protectedCssNodes: ProtectedCssNode[] = [];
+  const collectProtectedAncestors = (nodes: readonly CompiledNode[]): boolean => {
+    let containsProtected = false;
+    for (const node of nodes) {
+      if (node.kind === "text") continue;
+      const childProtected = collectProtectedAncestors(node.children);
+      const protectedNode = node.trustedSlotId !== undefined || childProtected;
+      if (protectedNode) {
+        protectedCssNodes.push({
+          id: node.id,
+          tag: node.tag,
+          classes: splitAsciiWhitespace(node.attributes.class ?? ""),
+          attributes: { ...node.attributes },
+        });
+        containsProtected = true;
+      }
+    }
+    return containsProtected;
+  };
+  collectProtectedAncestors(tree);
+  assertInteractionCompatibility(interactions);
   return {
     html: serializeCompiledTree(tree),
     tree,
@@ -411,5 +493,7 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
     interactions,
     trustedSlots,
     policyLinks: sawPolicyLinks,
+    protectedCssNodes,
+    protectedSourceIds: [...protectedSourceIds].sort(),
   };
 }

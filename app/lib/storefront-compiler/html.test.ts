@@ -40,4 +40,22 @@ describe("compileHtml", () => {
       /duplicate id/i,
     );
   });
+
+  it("namespaces resolved IDREF attributes and fragment hrefs", () => {
+    const result = compileHtml(
+      `<nav id="menu" aria-labelledby="label"><span id="label">Menu</span><a href="#menu">Skip</a></nav>`,
+      { namespace: "shell" },
+    );
+    expect(result.html).toContain('aria-labelledby="cd-shell-label"');
+    expect(result.html).toContain('href="#cd-shell-menu"');
+  });
+
+  it.each([
+    `<div aria-controls="missing"></div>`,
+    `<a href="#missing">Missing</a>`,
+    `<a>Inert link</a>`,
+    `<button>Inert button</button>`,
+  ])("rejects unresolved IDREFs and inert visible controls: %s", (source) => {
+    expect(() => compileHtml(source, { namespace: "x" })).toThrow();
+  });
 });

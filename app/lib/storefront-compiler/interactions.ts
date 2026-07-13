@@ -148,7 +148,9 @@ export function compileTransition(source: ActionSource): InteractionManifestV1["
     }
   } else if (source.action === "state.set" || source.action === "state.increment" || source.action === "state.decrement") {
     if (!source.stateId) throw new CompilerError("interaction.state", `${source.action} requires a state ID`);
-    action = { type: source.action, stateId: source.stateId, value: eventRef(source.valueField) };
+    action = source.action === "state.set"
+      ? { type: source.action, stateId: source.stateId, value: eventRef(source.valueField) }
+      : { type: source.action, stateId: source.stateId };
   } else if (source.action === "collection.filter") {
     if (!source.facetId) throw new CompilerError("interaction.facet", "collection.filter requires a facet ID");
     action = { type: "collection.filter", facetId: source.facetId, value: eventRef(source.valueField) };
@@ -171,4 +173,75 @@ export function compileTransition(source: ActionSource): InteractionManifestV1["
     sourceId: source.sourceId,
     action,
   };
+}
+
+function stateAcceptsRef(
+  state: InteractionState,
+  ref: PublicDataRef | undefined,
+  states: ReadonlyMap<string, InteractionState>,
+): boolean {
+  if (!ref) return false;
+  if (ref.kind === "state") {
+    const referenced = states.get(ref.stateId);
+    if (!referenced || referenced.type !== state.type) return false;
+    if (state.type === "enum") {
+      return JSON.stringify(referenced.allowedValues ?? []) === JSON.stringify(state.allowedValues ?? []);
+    }
+    return true;
+  }
+  if (state.type === "boolean") {
+    return (ref.kind === "event" && ref.field === "checked") || (ref.kind === "literal" && typeof ref.value === "boolean");
+  }
+  if (state.type === "enum") {
+    return (ref.kind === "event" && ref.field === "value") ||
+      (ref.kind === "literal" && typeof ref.value === "string" && (state.allowedValues ?? []).includes(ref.value));
+  }
+  if (state.type === "boundedNumber" || state.type === "index") {
+    if (ref.kind === "event") return ref.field === "value" || ref.field === "progress01";
+    return ref.kind === "literal" && typeof ref.value === "number" && ref.value >= (state.min ?? 0) && ref.value <= (state.max ?? 0);
+  }
+  return (ref.kind === "event" && ref.field === "value") ||
+    (ref.kind === "literal" && typeof ref.value === "string" && ref.value.length <= 200);
+}
+
+export function assertInteractionCompatibility(manifest: InteractionManifestV1): void {
+  const states = new Map(manifest.state.map((state) => [state.id, state]));
+  for (const binding of manifest.bindings) {
+    const state = states.get(binding.stateId);
+    if (!state) throw new CompilerError("interaction.state", `Unknown state ${binding.stateId}`);
+    const compatible =
+      (binding.property === "hidden" && state.type === "boolean") ||
+      (binding.property === "expanded" && state.type === "boolean") ||
+      (binding.property === "selected" && (state.type === "boolean" || state.type === "enum")) ||
+      (binding.property === "activeIndex" && state.type === "index") ||
+      (binding.property === "textQuery" && state.type === "textQuery") ||
+      (binding.property === "classToken" && state.type === "enum") ||
+      (binding.property === "progress01" && state.type === "boundedNumber" && state.min === 0 && state.max === 1);
+    if (!compatible) {
+      throw new CompilerError("interaction.binding_state", `${binding.property} is incompatible with ${state.type} state`);
+    }
+  }
+  for (const transition of manifest.transitions) {
+    const action = transition.action;
+    if (action.type === "state.set" || action.type === "state.increment" || action.type === "state.decrement") {
+      const state = states.get(action.stateId);
+      if (!state) throw new CompilerError("interaction.state", `Unknown state ${action.stateId}`);
+      if ((action.type === "state.increment" || action.type === "state.decrement") && state.type !== "boundedNumber" && state.type !== "index") {
+        throw new CompilerError("interaction.action_state", `${action.type} requires numeric bounded state`);
+      }
+      if (action.type === "state.set" && !stateAcceptsRef(state, action.value, states)) {
+        throw new CompilerError("interaction.action_value", `state.set value is incompatible with ${state.type} state`);
+      }
+    }
+    if (transition.on === "scrollProgress") {
+      const valid =
+        action.type === "state.set" &&
+        action.value?.kind === "event" &&
+        action.value.field === "progress01" &&
+        states.get(action.stateId)?.type === "boundedNumber" &&
+        states.get(action.stateId)?.min === 0 &&
+        states.get(action.stateId)?.max === 1;
+      if (!valid) throw new CompilerError("interaction.scroll_progress", "scrollProgress requires normalized bounded 0..1 state.set");
+    }
+  }
 }

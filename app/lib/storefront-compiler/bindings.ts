@@ -21,6 +21,10 @@ export class CompilerError extends Error {
   }
 }
 
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 export type BindingScopeKind = "store" | "collection" | "product" | "variant" | "cart" | "cartLine" | "search" | "image";
 
 export interface BindingScope {
@@ -60,7 +64,7 @@ function isPathVisible(path: PublicBindingPath, scope: BindingScope): boolean {
   return owner === scope.kind;
 }
 
-export function compileDataRef(path: string, scope: BindingScope): PublicDataRef {
+export function compileDataRef(path: string, scope: BindingScope): Extract<PublicDataRef, { kind: "data" }> {
   if (!isPublicBindingPath(path)) {
     throw new CompilerError("binding.unsupported", `Unsupported public binding path ${JSON.stringify(path)}`);
   }
@@ -81,23 +85,28 @@ export function compileBinding(
   scope: BindingScope,
 ): CompiledBinding {
   const ref = compileDataRef(path, scope);
-  const allowedPaths: Readonly<Record<CompiledBindingKind, ReadonlySet<PublicBindingPath>>> = {
-    text: new Set([
-      "store.name", "collection.title", "collection.description", "collection.productCount", "product.title",
-      "product.description", "product.availability", "variant.title", "variant.availability", "cart.count",
-      "cartLine.title", "cartLine.quantity", "search.query",
-    ]),
-    money: new Set([
-      "product.price", "product.compareAtPrice", "variant.price", "variant.compareAtPrice", "cart.subtotal",
-      "cart.discounts", "cart.total", "cartLine.unitPrice", "cartLine.total",
-    ]),
-    src: new Set(["store.logo", "collection.image", "product.primaryImage"]),
-    alt: new Set(["store.name", "collection.title", "product.title", "variant.title", "cartLine.title"]),
-  };
-  if (ref.kind !== "data" || !allowedPaths[kind].has(ref.path)) {
+  if (!isBindingKindPathAllowed(kind, ref.path)) {
     throw new CompilerError("binding.type", `${kind} binding does not accept ${JSON.stringify(path)}`);
   }
   return { id, targetId, kind, ref };
+}
+
+const BINDING_PATHS: Readonly<Record<CompiledBindingKind, ReadonlySet<PublicBindingPath>>> = {
+  text: new Set([
+      "store.name", "collection.title", "collection.description", "collection.productCount", "product.title",
+      "product.description", "product.availability", "variant.title", "variant.availability", "cart.count",
+      "cartLine.title", "cartLine.quantity", "search.query",
+  ]),
+  money: new Set([
+      "product.price", "product.compareAtPrice", "variant.price", "variant.compareAtPrice", "cart.subtotal",
+      "cart.discounts", "cart.total", "cartLine.unitPrice", "cartLine.total",
+  ]),
+  src: new Set(["store.logo", "collection.image", "product.primaryImage"]),
+  alt: new Set(["store.name", "collection.title", "product.title", "variant.title", "cartLine.title"]),
+};
+
+export function isBindingKindPathAllowed(kind: CompiledBindingKind, path: PublicBindingPath): boolean {
+  return BINDING_PATHS[kind].has(path);
 }
 
 const REPEAT_PARENT_KIND: Readonly<Record<CompiledRepeatSource, BindingScopeKind>> = {
@@ -159,7 +168,7 @@ export function compileRouteTarget(
   }
   const allowedParams = PARAMS_BY_ROUTE[routeId];
   const params: RouteTarget["params"] = {};
-  for (const [param, value] of Object.entries(rawParams).sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [param, value] of Object.entries(rawParams).sort(([a], [b]) => compareCodeUnits(a, b))) {
     if (!allowedParams?.has(param)) {
       throw new CompilerError("route.param", `Parameter ${JSON.stringify(param)} is not valid for route ${routeId}`);
     }

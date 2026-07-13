@@ -7,6 +7,16 @@ describe("compileCss", () => {
     expect(() => compileCss(source, { namespace: "home" })).toThrow();
   });
 
+  it.each([
+    `.card { background-image: image-set("https://evil.example/a.png" 1x) }`,
+    `.card { background: -webkit-image-set("//evil.example/a.png" 1x) }`,
+    `.card { background: cross-fade("/asset", red, 50%) }`,
+    `.card { background: paint(evil) }`,
+    `.card { content: "https://evil.example/track" }`,
+  ])("rejects network-capable CSS values: %s", (source) => {
+    expect(() => compileCss(source, { namespace: "home" })).toThrow(/network/i);
+  });
+
   it("scopes selectors and namespaces IDs and keyframes", () => {
     const result = compileCss(
       `.hero, #feature:hover { animation: reveal 250ms ease; color: var(--accent) } @keyframes reveal { from { opacity: 0 } to { opacity: 1 } }`,
