@@ -20,4 +20,9 @@ describe("closed runtime-1 value vocabularies", () => {
     expect(isPublicBindingPath("product.shop_id")).toBe(false);
     expect(isPublicBindingPath("cart.lines[0].constructor")).toBe(false);
   });
+
+  it("keeps release-pinned tagline copy out of live public bindings", () => {
+    expect(PUBLIC_BINDING_PATHS).not.toContain("store.tagline");
+    expect(isPublicBindingPath("store.tagline")).toBe(false);
+  });
 });

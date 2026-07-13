@@ -46,11 +46,34 @@ describe("versioned storefront recipe registry", () => {
         "search",
         "shell",
       ]);
+      for (const blueprint of Object.values(activeVersion?.routeBlueprints ?? {})) {
+        expect(blueprint.sourceRef).toMatch(/^app\//);
+        expect(blueprint.compositionFamily.length).toBeGreaterThan(0);
+        expect(blueprint.heroTreatment.length).toBeGreaterThan(0);
+        expect(blueprint.scrollModel.length).toBeGreaterThan(0);
+        expect(blueprint.displayFontId.length).toBeGreaterThan(0);
+        expect(blueprint.bodyFontId.length).toBeGreaterThan(0);
+        expect(blueprint.iconRules.length).toBeGreaterThan(0);
+        expect(blueprint.cardTopology.length).toBeGreaterThan(0);
+        expect(blueprint.protectedSlotPlacement.length).toBeGreaterThan(0);
+        expect(blueprint.signatureInteractions.length).toBeGreaterThan(0);
+        expect(blueprint.forbiddenGenericStructures.length).toBeGreaterThan(0);
+        expect(Object.isFrozen(blueprint)).toBe(true);
+        expect(Object.isFrozen(blueprint.iconRules)).toBe(true);
+        expect(Object.isFrozen(blueprint.protectedSlotPlacement)).toBe(true);
+        expect(Object.isFrozen(blueprint.signatureInteractions)).toBe(true);
+        expect(Object.isFrozen(blueprint.forbiddenGenericStructures)).toBe(true);
+      }
       expect(Object.isFrozen(recipe)).toBe(true);
       expect(Object.isFrozen(recipe.versions)).toBe(true);
       expect(Object.isFrozen(activeVersion)).toBe(true);
       expect(Object.isFrozen(activeVersion?.routeBlueprints)).toBe(true);
     }
+    const semanticSignatures = STORE_TEMPLATE_REGISTRY.templates.map((recipe) => {
+      const shell = recipe.versions.find((version) => version.templateVersion === recipe.activeVersion)!.routeBlueprints.shell;
+      return [shell.compositionFamily, shell.heroTreatment, shell.scrollModel, shell.cardTopology].join("|");
+    });
+    expect(new Set(semanticSignatures).size).toBe(STORE_TEMPLATE_REGISTRY.templates.length);
     expect(getStoreTemplate("atelier-nine").name).toBe("Atelier Grid");
   });
 
@@ -88,7 +111,10 @@ describe("versioned storefront recipe registry", () => {
           versions: [
             {
               ...base.versions[0],
-              routeBlueprints: { ...base.versions[0].routeBlueprints, shell: "" },
+              routeBlueprints: {
+                ...base.versions[0].routeBlueprints,
+                shell: { ...base.versions[0].routeBlueprints.shell, sourceRef: "" },
+              },
             },
           ],
         },
@@ -102,5 +128,46 @@ describe("versioned storefront recipe registry", () => {
         },
       ]),
     ).toThrow(/artifact reference/i);
+  });
+
+  it("rejects empty, duplicate, or non-distinct semantic blueprint metadata", () => {
+    const base = STORE_TEMPLATE_REGISTRY.templates[0];
+    const second = STORE_TEMPLATE_REGISTRY.templates[1];
+    const active = base.versions[0];
+    expect(() =>
+      createStoreTemplateRegistry([
+        {
+          ...base,
+          versions: [
+            {
+              ...active,
+              routeBlueprints: {
+                ...active.routeBlueprints,
+                home: { ...active.routeBlueprints.home, signatureInteractions: [] },
+              },
+            },
+          ],
+        },
+      ]),
+    ).toThrow(/signature interactions/i);
+    expect(() =>
+      createStoreTemplateRegistry([
+        {
+          ...base,
+          versions: [
+            {
+              ...active,
+              routeBlueprints: {
+                ...active.routeBlueprints,
+                home: { ...active.routeBlueprints.home, iconRules: ["line icons", "line icons"] },
+              },
+            },
+          ],
+        },
+      ]),
+    ).toThrow(/duplicate icon rules/i);
+    expect(() => createStoreTemplateRegistry([base, { ...second, versions: base.versions }])).toThrow(
+      /duplicate semantic signature/i,
+    );
   });
 });

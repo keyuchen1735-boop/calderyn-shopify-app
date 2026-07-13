@@ -70,6 +70,94 @@ export type StoreDesignResolution =
 export type StorefrontRouteId = "home" | "collection" | "product" | "search" | "cart" | "checkout";
 export type StorefrontRecipeBlueprintId = "shell" | StorefrontRouteId;
 
+export const RECIPE_COMPOSITION_FAMILIES = [
+  "workshop-configurator",
+  "cooperative-directory",
+  "clinical-editorial",
+  "field-guide",
+  "protocol-ledger",
+  "spatial-scenes",
+  "split-performance",
+  "diagnostic-terminal",
+  "editorial-almanac",
+  "signal-patch-bay",
+  "asymmetric-magazine",
+] as const;
+export type RecipeCompositionFamily = (typeof RECIPE_COMPOSITION_FAMILIES)[number];
+
+export const RECIPE_HERO_TREATMENTS = [
+  "configurator-workbench",
+  "impact-ledger-intro",
+  "ingredient-routine-hero",
+  "pet-profile-hero",
+  "time-of-day-protocol",
+  "room-mode-scene",
+  "training-recovery-split",
+  "grade-diagnostic-hero",
+  "ritual-time-hero",
+  "rig-signal-chain",
+  "editorial-grid-hero",
+] as const;
+export type RecipeHeroTreatment = (typeof RECIPE_HERO_TREATMENTS)[number];
+
+export const RECIPE_SCROLL_MODELS = [
+  "guided-steps",
+  "indexed-ledger",
+  "soft-reveal",
+  "chaptered-guide",
+  "routine-timeline",
+  "spatial-snap",
+  "sticky-workout",
+  "deck-snap",
+  "almanac-chapters",
+  "modular-patching",
+  "restrained-editorial",
+] as const;
+export type RecipeScrollModel = (typeof RECIPE_SCROLL_MODELS)[number];
+
+export const RECIPE_CARD_TOPOLOGIES = [
+  "material-specimen-grid",
+  "provenance-records",
+  "ingredient-dossiers",
+  "field-notes",
+  "protocol-stacks",
+  "scene-panels",
+  "comparison-rails",
+  "diagnostic-cards",
+  "ritual-entries",
+  "signal-modules",
+  "magazine-grid",
+] as const;
+export type RecipeCardTopology = (typeof RECIPE_CARD_TOPOLOGIES)[number];
+
+export type ProtectedStorefrontSlot =
+  | "variantPicker"
+  | "addToCart"
+  | "cartLineControls"
+  | "cartSummary"
+  | "cartDrawer"
+  | "quickViewCommerce"
+  | "checkoutRoot";
+
+export interface RecipeProtectedSlotPlacement {
+  slot: ProtectedStorefrontSlot;
+  region: string;
+}
+
+export interface StoreTemplateRouteBlueprint {
+  sourceRef: string;
+  compositionFamily: RecipeCompositionFamily;
+  heroTreatment: RecipeHeroTreatment;
+  scrollModel: RecipeScrollModel;
+  displayFontId: CuratedFontId;
+  bodyFontId: CuratedFontId;
+  iconRules: readonly string[];
+  cardTopology: RecipeCardTopology;
+  protectedSlotPlacement: readonly RecipeProtectedSlotPlacement[];
+  signatureInteractions: readonly string[];
+  forbiddenGenericStructures: readonly string[];
+}
+
 export interface StoreTemplateVersionRecord {
   templateVersion: number;
   baselineArtifact: string;
@@ -77,7 +165,7 @@ export interface StoreTemplateVersionRecord {
     desktop: string;
     mobile: string;
   }>;
-  routeBlueprints: Readonly<Record<StorefrontRecipeBlueprintId, string>>;
+  routeBlueprints: Readonly<Record<StorefrontRecipeBlueprintId, StoreTemplateRouteBlueprint>>;
 }
 
 export interface RecipeOverrideSurface {
@@ -133,7 +221,6 @@ export function isCuratedFontId(value: unknown): value is CuratedFontId {
 export const PUBLIC_BINDING_PATHS = [
   "store.name",
   "store.logo",
-  "store.tagline",
   "store.policyLinks",
   "store.socialLinks",
   "collection.id",

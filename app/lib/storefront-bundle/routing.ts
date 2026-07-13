@@ -161,14 +161,11 @@ function isNegativeNameSpan(promptTokens: string[], span: Span): boolean {
   const last = preceding[preceding.length - 1];
   if (last === "not" || last === "avoid" || last === "without") return true;
   const governor = preceding[preceding.length - 2];
-  const governedVerbs = new Set([
-    "use", "using", "apply", "applying", "pick", "picking", "choose", "choosing", "select", "selecting", "try", "trying",
-  ]);
-  if (governedVerbs.has(last) && (governor === "not" || governor === "avoid" || governor === "without")) {
+  if (last && (governor === "not" || governor === "avoid" || governor === "without")) {
     return true;
   }
   const priorGovernor = preceding[preceding.length - 3];
-  if ((last === "a" || last === "the") && governedVerbs.has(governor) && (priorGovernor === "not" || priorGovernor === "avoid" || priorGovernor === "without")) return true;
+  if ((last === "a" || last === "the") && governor && (priorGovernor === "not" || priorGovernor === "avoid" || priorGovernor === "without")) return true;
   return false;
 }
 
@@ -178,21 +175,24 @@ interface ExplicitNameHit {
 }
 
 function explicitRecipeNames(prompt: string, registry: VersionedStoreTemplateRegistry): ExplicitNameHit[] {
-  const promptTokens = tokens(prompt);
-  const candidates = registry.templates.flatMap((template) =>
-    [template.name, ...template.aliases].flatMap((phrase) =>
-      findPhraseSpans(promptTokens, phrase).map((span) => ({ ...span, templateId: template.id })),
-    ),
-  );
-  candidates.sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start || a.templateId.localeCompare(b.templateId));
-  const consumed = new Set<number>();
   const hits: ExplicitNameHit[] = [];
-  for (const candidate of candidates) {
-    let overlaps = false;
-    for (let index = candidate.start; index < candidate.end; index += 1) if (consumed.has(index)) overlaps = true;
-    if (overlaps) continue;
-    for (let index = candidate.start; index < candidate.end; index += 1) consumed.add(index);
-    if (!isNegativeNameSpan(promptTokens, candidate)) hits.push({ templateId: candidate.templateId, phrase: candidate.phrase });
+  const clauses = grammarText(prompt).split(/[;.!?\n]+/u).filter(Boolean);
+  for (const clause of clauses) {
+    const clauseTokens = tokens(clause);
+    const candidates = registry.templates.flatMap((template) =>
+      [template.name, ...template.aliases].flatMap((phrase) =>
+        findPhraseSpans(clauseTokens, phrase).map((span) => ({ ...span, templateId: template.id })),
+      ),
+    );
+    candidates.sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start || a.templateId.localeCompare(b.templateId));
+    const consumed = new Set<number>();
+    for (const candidate of candidates) {
+      let overlaps = false;
+      for (let index = candidate.start; index < candidate.end; index += 1) if (consumed.has(index)) overlaps = true;
+      if (overlaps) continue;
+      for (let index = candidate.start; index < candidate.end; index += 1) consumed.add(index);
+      if (!isNegativeNameSpan(clauseTokens, candidate)) hits.push({ templateId: candidate.templateId, phrase: candidate.phrase });
+    }
   }
   return hits.filter((hit, index) => hits.findIndex((candidate) => candidate.templateId === hit.templateId) === index);
 }

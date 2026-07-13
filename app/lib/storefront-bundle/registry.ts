@@ -1,15 +1,36 @@
 import type {
+  CuratedFontId,
+  RecipeCardTopology,
+  RecipeCompositionFamily,
+  RecipeHeroTreatment,
+  RecipeProtectedSlotPlacement,
+  RecipeScrollModel,
   StoreTemplateId,
+  StoreTemplateRouteBlueprint,
   StoreTemplateVersionRecord,
   StorefrontRecipeBlueprintId,
   StorefrontRouteId,
   VersionedStoreTemplate,
   VersionedStoreTemplateRegistry,
 } from "./types";
+import {
+  RECIPE_CARD_TOPOLOGIES,
+  RECIPE_COMPOSITION_FAMILIES,
+  RECIPE_HERO_TREATMENTS,
+  RECIPE_SCROLL_MODELS,
+  isCuratedFontId,
+} from "./types";
 
 const ALL_ROUTES: readonly StorefrontRouteId[] = ["home", "collection", "product", "search", "cart", "checkout"];
 const ALL_BLUEPRINTS: readonly StorefrontRecipeBlueprintId[] = ["shell", ...ALL_ROUTES];
 const GENERIC_COMMERCE_TERMS = new Set(["shop", "product", "collection", "sale", "new", "premium", "gift"]);
+const COMPOSITION_FAMILIES: ReadonlySet<string> = new Set(RECIPE_COMPOSITION_FAMILIES);
+const HERO_TREATMENTS: ReadonlySet<string> = new Set(RECIPE_HERO_TREATMENTS);
+const SCROLL_MODELS: ReadonlySet<string> = new Set(RECIPE_SCROLL_MODELS);
+const CARD_TOPOLOGIES: ReadonlySet<string> = new Set(RECIPE_CARD_TOPOLOGIES);
+const PROTECTED_SLOTS = new Set([
+  "variantPicker", "addToCart", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce", "checkoutRoot",
+]);
 
 const DEFAULT_OVERRIDE_SURFACE = {
   designTokens: ["color", "typography", "spacing", "radius", "motion"],
@@ -18,13 +39,179 @@ const DEFAULT_OVERRIDE_SURFACE = {
   reorderableRegions: ["featuredCollection", "editorialStory", "socialProof", "newsletter"],
 } as const;
 
+interface RecipeSemanticSignature {
+  compositionFamily: RecipeCompositionFamily;
+  heroTreatment: RecipeHeroTreatment;
+  scrollModel: RecipeScrollModel;
+  displayFontId: CuratedFontId;
+  bodyFontId: CuratedFontId;
+  iconRules: readonly string[];
+  cardTopology: RecipeCardTopology;
+  signatureInteractions: readonly string[];
+  forbiddenGenericStructures: readonly string[];
+}
+
+const RECIPE_SEMANTIC_SIGNATURES: Readonly<Record<StoreTemplateId, RecipeSemanticSignature>> = {
+  "custom-bench": {
+    compositionFamily: "workshop-configurator",
+    heroTreatment: "configurator-workbench",
+    scrollModel: "guided-steps",
+    displayFontId: "space-grotesk",
+    bodyFontId: "ibm-plex-mono",
+    iconRules: ["square workshop glyphs", "dimension-line indicators"],
+    cardTopology: "material-specimen-grid",
+    signatureInteractions: ["stepwise customization", "material swatch preview"],
+    forbiddenGenericStructures: ["centered lifestyle hero", "undifferentiated product card grid"],
+  },
+  "commons-index": {
+    compositionFamily: "cooperative-directory",
+    heroTreatment: "impact-ledger-intro",
+    scrollModel: "indexed-ledger",
+    displayFontId: "fraunces",
+    bodyFontId: "atkinson-hyperlegible",
+    iconRules: ["civic index marks", "material provenance stamps"],
+    cardTopology: "provenance-records",
+    signatureInteractions: ["impact ledger expansion", "refill loop tracing"],
+    forbiddenGenericStructures: ["floating gradient hero", "generic sustainability badges"],
+  },
+  "soft-chemistry": {
+    compositionFamily: "clinical-editorial",
+    heroTreatment: "ingredient-routine-hero",
+    scrollModel: "soft-reveal",
+    displayFontId: "source-serif-4",
+    bodyFontId: "inter",
+    iconRules: ["fine ingredient diagrams", "quiet clinical symbols"],
+    cardTopology: "ingredient-dossiers",
+    signatureInteractions: ["routine builder", "skin concern filtering"],
+    forbiddenGenericStructures: ["beauty collage hero", "rounded pastel card wall"],
+  },
+  "companion-field-guide": {
+    compositionFamily: "field-guide",
+    heroTreatment: "pet-profile-hero",
+    scrollModel: "chaptered-guide",
+    displayFontId: "roboto-slab",
+    bodyFontId: "atkinson-hyperlegible",
+    iconRules: ["species field marks", "dosage fact symbols"],
+    cardTopology: "field-notes",
+    signatureInteractions: ["pet profile switching", "life stage filtering"],
+    forbiddenGenericStructures: ["mascot-first hero", "generic pet tile grid"],
+  },
+  "daily-protocol": {
+    compositionFamily: "protocol-ledger",
+    heroTreatment: "time-of-day-protocol",
+    scrollModel: "routine-timeline",
+    displayFontId: "inter",
+    bodyFontId: "ibm-plex-mono",
+    iconRules: ["time block markers", "dosage data glyphs"],
+    cardTopology: "protocol-stacks",
+    signatureInteractions: ["protocol stack assembly", "time of day switching"],
+    forbiddenGenericStructures: ["wellness stock-photo hero", "generic benefit icon row"],
+  },
+  "room-modes": {
+    compositionFamily: "spatial-scenes",
+    heroTreatment: "room-mode-scene",
+    scrollModel: "spatial-snap",
+    displayFontId: "space-grotesk",
+    bodyFontId: "ibm-plex-mono",
+    iconRules: ["architectural plan symbols", "device protocol marks"],
+    cardTopology: "scene-panels",
+    signatureInteractions: ["room mode switching", "spatial scene transitions"],
+    forbiddenGenericStructures: ["centered smart-home hero", "feature checklist cards"],
+  },
+  "rep-rest": {
+    compositionFamily: "split-performance",
+    heroTreatment: "training-recovery-split",
+    scrollModel: "sticky-workout",
+    displayFontId: "archivo-narrow",
+    bodyFontId: "inter",
+    iconRules: ["training interval marks", "recovery status glyphs"],
+    cardTopology: "comparison-rails",
+    signatureInteractions: ["training recovery toggle", "sticky workout chapters"],
+    forbiddenGenericStructures: ["athlete stock-photo hero", "uniform equipment grid"],
+  },
+  "diagnostic-deck": {
+    compositionFamily: "diagnostic-terminal",
+    heroTreatment: "grade-diagnostic-hero",
+    scrollModel: "deck-snap",
+    displayFontId: "archivo-narrow",
+    bodyFontId: "ibm-plex-mono",
+    iconRules: ["terminal condition marks", "warranty status glyphs"],
+    cardTopology: "diagnostic-cards",
+    signatureInteractions: ["grade evidence reveal", "spec deck comparison"],
+    forbiddenGenericStructures: ["floating device hero", "marketplace listing grid"],
+  },
+  "ritual-almanac": {
+    compositionFamily: "editorial-almanac",
+    heroTreatment: "ritual-time-hero",
+    scrollModel: "almanac-chapters",
+    displayFontId: "fraunces",
+    bodyFontId: "inter",
+    iconRules: ["time ritual marks", "flavor note symbols"],
+    cardTopology: "ritual-entries",
+    signatureInteractions: ["ritual time browsing", "subscription cadence selection"],
+    forbiddenGenericStructures: ["beverage splash hero", "generic flavor card grid"],
+  },
+  "broadcast-patch-bay": {
+    compositionFamily: "signal-patch-bay",
+    heroTreatment: "rig-signal-chain",
+    scrollModel: "modular-patching",
+    displayFontId: "space-grotesk",
+    bodyFontId: "ibm-plex-mono",
+    iconRules: ["signal path glyphs", "compatibility port marks"],
+    cardTopology: "signal-modules",
+    signatureInteractions: ["signal chain assembly", "rig mode switching"],
+    forbiddenGenericStructures: ["neon gaming collage", "generic gear carousel"],
+  },
+  "atelier-nine": {
+    compositionFamily: "asymmetric-magazine",
+    heroTreatment: "editorial-grid-hero",
+    scrollModel: "restrained-editorial",
+    displayFontId: "archivo-narrow",
+    bodyFontId: "source-serif-4",
+    iconRules: ["thin editorial arrows", "restrained utility marks"],
+    cardTopology: "magazine-grid",
+    signatureInteractions: ["asymmetric editorial reveal", "restrained image focus"],
+    forbiddenGenericStructures: ["centered luxury hero", "rounded product card grid"],
+  },
+};
+
+function protectedSlotsFor(blueprint: StorefrontRecipeBlueprintId): RecipeProtectedSlotPlacement[] {
+  switch (blueprint) {
+    case "shell": return [{ slot: "cartDrawer", region: "shell.utility" }];
+    case "home": return [{ slot: "quickViewCommerce", region: "home.featured" }];
+    case "collection": return [{ slot: "quickViewCommerce", region: "collection.results" }];
+    case "product": return [
+      { slot: "variantPicker", region: "product.purchase" },
+      { slot: "addToCart", region: "product.purchase" },
+    ];
+    case "search": return [{ slot: "quickViewCommerce", region: "search.results" }];
+    case "cart": return [
+      { slot: "cartLineControls", region: "cart.lines" },
+      { slot: "cartSummary", region: "cart.summary" },
+    ];
+    case "checkout": return [{ slot: "checkoutRoot", region: "checkout.platform" }];
+  }
+}
+
 function recipe(
   value: Omit<VersionedStoreTemplate, "activeVersion" | "versions" | "routeCapabilities" | "overrideSurface" | "previewSrc">,
 ): VersionedStoreTemplate {
   const blueprintRoot = `app/lib/storefront-recipes/${value.id}/bundle.ts`;
-  const routeBlueprints = Object.fromEntries(
-    ALL_BLUEPRINTS.map((blueprint) => [blueprint, `${blueprintRoot}#${blueprint}`]),
-  ) as Record<StorefrontRecipeBlueprintId, string>;
+  const signature = RECIPE_SEMANTIC_SIGNATURES[value.id];
+  const blueprint = (blueprintId: StorefrontRecipeBlueprintId): StoreTemplateRouteBlueprint => ({
+    sourceRef: `${blueprintRoot}#${blueprintId}`,
+    ...signature,
+    protectedSlotPlacement: protectedSlotsFor(blueprintId),
+  });
+  const routeBlueprints = {
+    shell: blueprint("shell"),
+    home: blueprint("home"),
+    collection: blueprint("collection"),
+    product: blueprint("product"),
+    search: blueprint("search"),
+    cart: blueprint("cart"),
+    checkout: blueprint("checkout"),
+  } satisfies Record<StorefrontRecipeBlueprintId, StoreTemplateRouteBlueprint>;
   const version: StoreTemplateVersionRecord = {
     templateVersion: 1,
     baselineArtifact:
@@ -190,14 +377,68 @@ function isSafeArtifactReference(value: string): boolean {
   return /^(?:app|docs|public)\/[A-Za-z0-9._/#-]+$/.test(value) && !value.includes("..") && !value.includes("//");
 }
 
+function validateUniqueStrings(values: readonly string[], label: string, templateId: StoreTemplateId): void {
+  if (!values.length) throw new Error(`Missing ${label}: ${templateId}`);
+  const normalized = values.map(normalizedKey);
+  if (normalized.some((value) => !value)) throw new Error(`Missing ${label}: ${templateId}`);
+  if (new Set(normalized).size !== normalized.length) throw new Error(`Duplicate ${label}: ${templateId}`);
+}
+
+function validateBlueprint(
+  blueprint: StoreTemplateRouteBlueprint,
+  blueprintId: StorefrontRecipeBlueprintId,
+  templateId: StoreTemplateId,
+): void {
+  if (!blueprint || !isSafeArtifactReference(blueprint.sourceRef)) {
+    throw new Error(`Invalid route blueprint source reference: ${templateId}/${blueprintId}`);
+  }
+  if (!COMPOSITION_FAMILIES.has(blueprint.compositionFamily)) throw new Error(`Invalid composition family: ${templateId}/${blueprintId}`);
+  if (!HERO_TREATMENTS.has(blueprint.heroTreatment)) throw new Error(`Invalid hero treatment: ${templateId}/${blueprintId}`);
+  if (!SCROLL_MODELS.has(blueprint.scrollModel)) throw new Error(`Invalid scroll model: ${templateId}/${blueprintId}`);
+  if (!CARD_TOPOLOGIES.has(blueprint.cardTopology)) throw new Error(`Invalid card topology: ${templateId}/${blueprintId}`);
+  if (!isCuratedFontId(blueprint.displayFontId) || !isCuratedFontId(blueprint.bodyFontId)) {
+    throw new Error(`Invalid curated font: ${templateId}/${blueprintId}`);
+  }
+  validateUniqueStrings(blueprint.iconRules, "icon rules", templateId);
+  validateUniqueStrings(blueprint.signatureInteractions, "signature interactions", templateId);
+  validateUniqueStrings(blueprint.forbiddenGenericStructures, "forbidden generic structures", templateId);
+  if (!blueprint.protectedSlotPlacement.length) throw new Error(`Missing protected slot placement: ${templateId}/${blueprintId}`);
+  const placementKeys = blueprint.protectedSlotPlacement.map((placement) => `${placement.slot}\u0000${placement.region}`);
+  if (
+    blueprint.protectedSlotPlacement.some(
+      (placement) => !PROTECTED_SLOTS.has(placement.slot) || !/^[a-z][a-z0-9.-]*$/.test(placement.region),
+    ) ||
+    new Set(placementKeys).size !== placementKeys.length
+  ) {
+    throw new Error(`Invalid protected slot placement: ${templateId}/${blueprintId}`);
+  }
+}
+
 function freezeTemplate(template: VersionedStoreTemplate): VersionedStoreTemplate {
-  const versions = template.versions.map((version) =>
-    Object.freeze({
+  const versions = template.versions.map((version) => {
+    const routeBlueprints = Object.fromEntries(
+      ALL_BLUEPRINTS.map((blueprintId) => {
+        const blueprint = version.routeBlueprints[blueprintId];
+        return [
+          blueprintId,
+          Object.freeze({
+            ...blueprint,
+            iconRules: Object.freeze([...blueprint.iconRules]),
+            protectedSlotPlacement: Object.freeze(
+              blueprint.protectedSlotPlacement.map((placement) => Object.freeze({ ...placement })),
+            ),
+            signatureInteractions: Object.freeze([...blueprint.signatureInteractions]),
+            forbiddenGenericStructures: Object.freeze([...blueprint.forbiddenGenericStructures]),
+          }),
+        ];
+      }),
+    ) as Record<StorefrontRecipeBlueprintId, StoreTemplateRouteBlueprint>;
+    return Object.freeze({
       ...version,
       screenshots: Object.freeze({ ...version.screenshots }),
-      routeBlueprints: Object.freeze({ ...version.routeBlueprints }),
-    }),
-  );
+      routeBlueprints: Object.freeze(routeBlueprints),
+    });
+  });
   return Object.freeze({
     ...template,
     aliases: Object.freeze([...template.aliases]),
@@ -221,6 +462,7 @@ export function createStoreTemplateRegistry(
 ): VersionedStoreTemplateRegistry {
   const ids = new Set<StoreTemplateId>();
   const namesAndAliases = new Set<string>();
+  const semanticSignatures = new Set<string>();
   const validatedTemplates: VersionedStoreTemplate[] = [];
   for (const template of templates) {
     if (ids.has(template.id)) throw new Error(`Duplicate template ID: ${template.id}`);
@@ -239,14 +481,26 @@ export function createStoreTemplateRegistry(
       const blueprintKeys = Object.keys(version.routeBlueprints);
       if (
         blueprintKeys.length !== ALL_BLUEPRINTS.length ||
-        ALL_BLUEPRINTS.some(
-          (blueprint) => !isSafeArtifactReference(version.routeBlueprints[blueprint]),
-        )
+        ALL_BLUEPRINTS.some((blueprint) => !version.routeBlueprints[blueprint])
       ) {
         throw new Error(`Incomplete route blueprint metadata: ${template.id}`);
       }
+      for (const blueprintId of ALL_BLUEPRINTS) validateBlueprint(version.routeBlueprints[blueprintId], blueprintId, template.id);
     }
     if (!versionNumbers.has(template.activeVersion)) throw new Error(`Active version is not registered: ${template.id}`);
+    const activeBlueprint = template.versions.find((version) => version.templateVersion === template.activeVersion)!.routeBlueprints.shell;
+    const semanticSignature = JSON.stringify([
+      activeBlueprint.compositionFamily,
+      activeBlueprint.heroTreatment,
+      activeBlueprint.scrollModel,
+      activeBlueprint.cardTopology,
+      activeBlueprint.displayFontId,
+      activeBlueprint.bodyFontId,
+      [...activeBlueprint.iconRules].sort(),
+      [...activeBlueprint.signatureInteractions].sort(),
+    ]);
+    if (semanticSignatures.has(semanticSignature)) throw new Error(`Duplicate semantic signature: ${template.id}`);
+    semanticSignatures.add(semanticSignature);
     if (ALL_ROUTES.some((route) => !template.routeCapabilities.includes(route)) || template.routeCapabilities.length !== ALL_ROUTES.length) {
       throw new Error(`Incomplete route capabilities: ${template.id}`);
     }

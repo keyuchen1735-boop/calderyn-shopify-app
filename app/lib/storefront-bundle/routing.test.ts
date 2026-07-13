@@ -110,6 +110,37 @@ describe("deterministic store design resolver", () => {
         STORE_TEMPLATE_REGISTRY,
       ),
     ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
+    expect(
+      resolveStoreDesign(
+        { prompt: "Do not feature Atelier; use Soft Chemistry", mode: "auto" },
+        evidence(),
+        STORE_TEMPLATE_REGISTRY,
+      ),
+    ).toMatchObject({ kind: "recipe", templateId: "soft-chemistry", selectionKind: "explicit_name" });
+    expect(
+      resolveStoreDesign(
+        { prompt: "Do not recommend Atelier; use Soft Chemistry", mode: "auto" },
+        evidence(),
+        STORE_TEMPLATE_REGISTRY,
+      ),
+    ).toMatchObject({ kind: "recipe", templateId: "soft-chemistry", selectionKind: "explicit_name" });
+  });
+
+  it("does not let distant or prior-clause negation govern a positive recipe name", () => {
+    expect(
+      resolveStoreDesign(
+        { prompt: "Do not revise the catalog notes. Feature Atelier", mode: "auto" },
+        evidence(),
+        STORE_TEMPLATE_REGISTRY,
+      ),
+    ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
+    expect(
+      resolveStoreDesign(
+        { prompt: "I do not like the launch notes that recommend Atelier", mode: "auto" },
+        evidence(),
+        STORE_TEMPLATE_REGISTRY,
+      ),
+    ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
   });
 
   it("scores longest non-overlapping phrases once and excludes their prompt terms", () => {
