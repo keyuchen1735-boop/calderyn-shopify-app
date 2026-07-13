@@ -115,8 +115,10 @@ function frameFeatureCollection(
   };
 }
 
-function fitBoundsForRoutes(
-  map: MapRef,
+type RouteBoundsMap = Pick<MapRef, "fitBounds" | "getContainer">;
+
+export function fitBoundsForRoutes(
+  map: RouteBoundsMap,
   routes: readonly RouteArc[],
   maxZoom: 3.25 | 2.4,
 ): void {
@@ -140,13 +142,20 @@ function fitBoundsForRoutes(
   ];
   const longitudes = points.map((point) => point.longitude);
   const latitudes = points.map((point) => point.latitude);
+  const containerWidth = map.getContainer().clientWidth;
+  const viewportWidth =
+    containerWidth || (typeof window === "undefined" ? 768 : window.innerWidth);
+  const padding =
+    viewportWidth <= 767
+      ? { top: 32, right: 24, bottom: 176, left: 24 }
+      : { top: 42, right: 42, bottom: 210, left: 42 };
 
   map.fitBounds(
     [
       [Math.min(...longitudes), Math.min(...latitudes)],
       [Math.max(...longitudes), Math.max(...latitudes)],
     ],
-    { padding: 42, maxZoom, duration: 0 },
+    { padding, maxZoom, duration: 0 },
   );
 }
 
@@ -418,6 +427,10 @@ function orderLabel(orderCount: number): string {
   return `${orderCount} ${orderCount === 1 ? "order" : "orders"}`;
 }
 
+function placeLabel(place: { city: string; region: string; country: string }) {
+  return [place.city, place.region, place.country].filter(Boolean).join(", ");
+}
+
 function UnmappedOrders({ count }: { count: number }) {
   if (count === 0) return null;
   return (
@@ -480,6 +493,12 @@ function ResolvedShippingRouteMap({
     },
     [viewportPolicy.maxZoom],
   );
+  const fitAllRoutes = useCallback(() => {
+    setHighlightedRouteId(null);
+    const map = mapRef.current;
+    if (!map) return;
+    fitBoundsForRoutes(map, routeArcs, viewportPolicy.maxZoom);
+  }, [routeArcs, viewportPolicy.maxZoom]);
 
   return (
     <div
@@ -522,7 +541,7 @@ function ResolvedShippingRouteMap({
               />
             </MarkerContent>
             <MarkerTooltip>
-              <strong>Ship-from {origin.city}</strong>
+              <strong>Ship-from {placeLabel(origin)}</strong>
             </MarkerTooltip>
           </MapMarker>
           {routes.destinations.map((destination) => (
@@ -534,7 +553,7 @@ function ResolvedShippingRouteMap({
               onMouseEnter={() => setHighlightedRouteId(destination.id)}
               onMouseLeave={() => setHighlightedRouteId(null)}
             >
-              <MarkerContent>
+              <MarkerContent className="cd-shipping-route-marker-hit">
                 <span
                   aria-hidden="true"
                   style={{
@@ -552,13 +571,22 @@ function ResolvedShippingRouteMap({
                 />
               </MarkerContent>
               <MarkerTooltip>
-                <strong>{destination.city}</strong> ·{" "}
+                <strong>{placeLabel(destination)}</strong> ·{" "}
                 {orderLabel(destination.orderCount)}
               </MarkerTooltip>
             </MapMarker>
           ))}
         </Map>
       </div>
+
+      <button
+        className="cd-shipping-route-reset"
+        type="button"
+        aria-label="Fit map to all shipping routes"
+        onClick={fitAllRoutes}
+      >
+        Fit all routes
+      </button>
 
       <ul
         className="cd-shipping-route-destinations"
@@ -569,6 +597,7 @@ function ResolvedShippingRouteMap({
             <button
               className="cd-shipping-route-destination-button"
               type="button"
+              aria-label={`${placeLabel(destination)}, ${orderLabel(destination.orderCount)}`}
               aria-pressed={highlightedRouteId === destination.id}
               onFocus={() => setHighlightedRouteId(destination.id)}
               onBlur={() => setHighlightedRouteId(null)}
@@ -577,7 +606,7 @@ function ResolvedShippingRouteMap({
               onClick={() => focusDestination(destination)}
             >
               <span className="cd-shipping-route-destination-city">
-                {destination.city}
+                {placeLabel(destination)}
               </span>
               <span className="cd-shipping-route-destination-orders">
                 {orderLabel(destination.orderCount)}

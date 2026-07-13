@@ -52,6 +52,7 @@
 }
 
 .cd-shipping-tab:focus-visible,
+.cd-shipping-route-reset:focus-visible,
 .cd-shipping-route-destination-button:focus-visible,
 .cd-shipping-map-credit a:focus-visible {
   outline: 2px solid var(--accent);
@@ -304,6 +305,40 @@
   backdrop-filter: blur(16px) saturate(1.2);
 }
 
+.cd-shipping-route-reset {
+  position: absolute;
+  z-index: 4;
+  top: 16px;
+  left: 16px;
+  min-height: 44px;
+  padding: 0 13px;
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--card-solid) 93%, transparent);
+  box-shadow: var(--shadow-card);
+  color: var(--text-1);
+  cursor: pointer;
+  font: inherit;
+  font-size: calc(12px * var(--type-scale));
+  font-weight: 600;
+  backdrop-filter: blur(16px) saturate(1.2);
+}
+
+.cd-shipping-route-reset:hover {
+  background: var(--gray-bg);
+}
+
+.cd-shipping-route-reset:active {
+  transform: scale(0.975);
+}
+
+.cd-shipping-route-marker-hit {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+}
+
 .cd-shipping-route-destination + .cd-shipping-route-destination {
   border-top: 0.5px solid var(--hairline);
 }
@@ -314,6 +349,7 @@
   justify-content: space-between;
   gap: 12px;
   width: 100%;
+  min-height: 44px;
   padding: 8px 9px;
   border: 0;
   border-radius: 8px;
@@ -587,6 +623,11 @@
     max-height: 124px;
   }
 
+  .cd-shipping-route-reset {
+    top: 10px;
+    left: 10px;
+  }
+
   .cd-shipping-route-frame > .cd-shipping-route-unmapped {
     left: 10px;
     bottom: 150px;
@@ -651,11 +692,13 @@
 
 @media (prefers-reduced-motion: reduce) {
   .cd-shipping-tab,
+  .cd-shipping-route-reset,
   .cd-shipping-route-destination-button {
     transition: none;
   }
 
   .cd-shipping-tab:active,
+  .cd-shipping-route-reset:active,
   .cd-shipping-route-destination-button:active {
     transform: none;
   }
