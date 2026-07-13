@@ -47,10 +47,21 @@ export function cachedDraftAuditIds(): string[] {
 }
 
 /** The screen's offset-0 payload. `auditIds` is the visible Autopilot drafts
- *  (bounded ≤50); the server reports which of those were already promoted. */
-export async function fetchPoScreen(auditIds: string[] = []): Promise<PoScreenData> {
+ *  (bounded ≤50); the server reports which of those were already promoted.
+ *  `status` narrows the PO list to one lifecycle state — only the UNfiltered
+ *  payload may be written to the screen cache. */
+export async function fetchPoScreen(
+  auditIds: string[] = [],
+  status?: PoStatusVM,
+): Promise<PoScreenData> {
   const ids = auditIds.slice(0, 50);
-  const qs = ids.length ? `?auditIds=${encodeURIComponent(ids.join(","))}` : "";
+  const params = new URLSearchParams();
+  if (ids.length) params.set("auditIds", ids.join(","));
+  if (status) params.set("status", status);
+  // toString(), not .size — URLSearchParams.size is missing on older Safari,
+  // where an undefined check would silently drop every query param.
+  const search = params.toString();
+  const qs = search ? `?${search}` : "";
   const [list, suppliers] = await Promise.all([
     apiGet<{ pos: PoListItemVM[]; total: number; promotedAuditIds: string[] }>(
       `/dashboard/api/po${qs}`,
@@ -67,9 +78,14 @@ export async function fetchPoScreen(auditIds: string[] = []): Promise<PoScreenDa
 
 /** One further page of the PO list (the screen's Load more). Only the default
  *  offset-0 payload is ever cached; paged-in rows stay screen-local. */
-export async function fetchPoPage(offset: number): Promise<{ pos: PoListItemVM[]; total: number }> {
+export async function fetchPoPage(
+  offset: number,
+  status?: PoStatusVM,
+): Promise<{ pos: PoListItemVM[]; total: number }> {
+  const params = new URLSearchParams({ offset: String(offset) });
+  if (status) params.set("status", status);
   const d = await apiGet<{ pos: PoListItemVM[]; total: number }>(
-    `/dashboard/api/po?offset=${encodeURIComponent(String(offset))}`,
+    `/dashboard/api/po?${params.toString()}`,
   );
   return { pos: d.pos, total: d.total };
 }

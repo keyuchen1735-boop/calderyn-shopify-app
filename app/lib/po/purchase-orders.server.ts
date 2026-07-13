@@ -45,15 +45,21 @@ const PO_STATUSES: ReadonlySet<string> = new Set([
 
 const MAX_LINE_QTY = 1_000_000;
 const MAX_PO_LINES = 100;
+const MAX_INT4 = 2_147_483_647;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function invalid(code: string, message: string, status = 422): never {
   throw new CalderynError({ code, status, message });
 }
 
+/** Narrow an untrusted query-param value to a PoStatus, or null (= no filter).
+ *  Unknown values fall back to null so a stale link never 4xxs the list. */
+export function parsePoStatus(value: unknown): PoStatus | null {
+  return typeof value === "string" && PO_STATUSES.has(value) ? (value as PoStatus) : null;
+}
+
 function asPoStatus(value: unknown): PoStatus {
-  const s = String(value);
-  return PO_STATUSES.has(s) ? (s as PoStatus) : "draft";
+  return parsePoStatus(String(value)) ?? "draft";
 }
 
 /** `PO-YYYYMMDD-XXXXXXXX` — same shape as the Autopilot draft numbers. */
@@ -102,8 +108,8 @@ function validateLines(raw: unknown): PoLineInput[] {
     let unitCostCents: number | null = null;
     if (line.unitCostCents != null && line.unitCostCents !== "") {
       const cost = Number(line.unitCostCents);
-      if (!Number.isInteger(cost) || cost < 0) {
-        invalid("invalid_po", "Unit costs must be zero or more, in cents.");
+      if (!Number.isInteger(cost) || cost < 0 || cost > MAX_INT4) {
+        invalid("invalid_po", "Unit costs must be whole cents from 0 to 2,147,483,647.");
       }
       unitCostCents = cost;
     }
@@ -113,7 +119,20 @@ function validateLines(raw: unknown): PoLineInput[] {
 
 function validateExpectedAt(raw: unknown): string | null {
   if (raw == null || raw === "") return null;
-  if (typeof raw !== "string" || !DATE_RE.test(raw) || !Number.isFinite(Date.parse(`${raw}T00:00:00Z`))) {
+  if (typeof raw !== "string" || !DATE_RE.test(raw)) {
+    invalid("invalid_po", "The expected date must be a valid date.");
+  }
+  const [year, month, day] = raw.split("-").map(Number);
+  // setUTCFullYear (not Date.UTC) so years 1-99 aren't remapped to 19xx; the
+  // round-trip check below rejects rolled-over impossible dates (Feb 30 etc).
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  if (
+    year < 1 ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
     invalid("invalid_po", "The expected date must be a valid date.");
   }
   return raw;
@@ -363,7 +382,7 @@ interface PoListRpcRow {
  *  totals never depend on PostgREST's 1000-row response clamp. */
 export async function listPurchaseOrders(
   shopId: string,
-  opts: { limit?: number; offset?: number } = {},
+  opts: { limit?: number; offset?: number; status?: PoStatus } = {},
 ): Promise<{ pos: PoListItemDto[]; total: number }> {
   const limit = Math.min(opts.limit ?? 50, 100);
   const offset = Math.max(0, opts.offset ?? 0);
@@ -371,6 +390,7 @@ export async function listPurchaseOrders(
     p_shop_id: shopId,
     p_limit: limit,
     p_offset: offset,
+    p_status: opts.status ?? null,
   });
   if (error) throw error;
   const rows = (data ?? []) as unknown as PoListRpcRow[];
@@ -378,10 +398,12 @@ export async function listPurchaseOrders(
     if (offset === 0) return { pos: [], total: 0 };
     // Paged past the end (the list shrank between pages) — count for an
     // honest total, since the window count needs at least one row.
-    const { count, error: countErr } = await getSupabase()
+    let countQuery = getSupabase()
       .from("purchase_order")
       .select("id", { count: "exact", head: true })
       .eq("shop_id", shopId);
+    if (opts.status) countQuery = countQuery.eq("status", opts.status);
+    const { count, error: countErr } = await countQuery;
     if (countErr) throw countErr;
     return { pos: [], total: count ?? 0 };
   }
@@ -494,39 +516,13 @@ function uniqueConstraintName(error: { code?: string; message?: string }): strin
   return m?.[1] ?? "";
 }
 
-async function insertLines(
-  shopId: string,
-  poId: string,
-  lines: PoLineInput[],
-  labels: Map<string, VariantLabel>,
-): Promise<PoLineDto[]> {
-  const { data, error } = await getSupabase()
-    .from("purchase_order_line")
-    .insert(
-      lines.map((line) => ({
-        shop_id: shopId,
-        po_id: poId,
-        variant_id: line.variantId,
-        sku: labels.get(line.variantId)?.sku ?? null,
-        variant_title: labels.get(line.variantId)?.title ?? null,
-        qty_ordered: line.qty,
-        unit_cost_cents: line.unitCostCents,
-      })),
-    )
-    .select(LINE_COLUMNS);
-  if (error) throw error;
-  return ((data ?? []) as unknown as RawLineRow[]).map((l) =>
-    mapLine(l, l.variant_id == null ? undefined : labels.get(String(l.variant_id))),
-  );
-}
-
 export async function createPurchaseOrder(
   shopId: string,
   input: CreatePoInput,
   opts: { source?: "manual" | "autopilot"; auditId?: string; poNumber?: string } = {},
 ): Promise<PoDetailDto> {
   // The three preflights are independent reads — run them together.
-  const [location, labels, vendor] = await Promise.all([
+  const [, labels, vendor] = await Promise.all([
     getActiveLocation(shopId, input.destinationLocationId),
     resolveShopVariants(shopId, input.lines.map((l) => l.variantId)),
     resolveVendorAndEta(shopId, input.supplierId),
@@ -538,24 +534,27 @@ export async function createPurchaseOrder(
     expectedAt = defaultEta(vendor.leadTimeDays);
   }
 
-  const insertPo = async (poNumber: string) =>
-    getSupabase()
-      .from("purchase_order")
-      .insert({
-        shop_id: shopId,
-        po_number: poNumber,
-        supplier_id: input.supplierId,
-        vendor_name: vendor.vendorName,
-        destination_location_id: input.destinationLocationId,
-        expected_at: expectedAt,
-        notes: input.notes,
-        source: opts.source ?? "manual",
-        audit_id: opts.auditId ?? null,
-      })
-      .select("*")
-      .single();
+  const create = (poNumber: string) =>
+    getSupabase().rpc("po_create", {
+      p_shop_id: shopId,
+      p_po_number: poNumber,
+      p_supplier_id: input.supplierId,
+      p_vendor_name: vendor.vendorName,
+      p_destination_location_id: input.destinationLocationId,
+      p_expected_at: expectedAt,
+      p_notes: input.notes,
+      p_source: opts.source ?? "manual",
+      p_audit_id: opts.auditId ?? null,
+      p_lines: input.lines.map((line) => ({
+        variant_id: line.variantId,
+        sku: labels.get(line.variantId)?.sku ?? null,
+        variant_title: labels.get(line.variantId)?.title ?? null,
+        qty_ordered: line.qty,
+        unit_cost_cents: line.unitCostCents,
+      })),
+    });
 
-  let created = await insertPo(opts.poNumber ?? generatePoNumber());
+  let created = await create(opts.poNumber ?? generatePoNumber());
   let constraint = created.error ? uniqueConstraintName(created.error) : null;
   if (constraint === AUDIT_UNIQUE_CONSTRAINT) {
     invalid("already_promoted", "That draft was already converted to a purchase order.");
@@ -564,32 +563,16 @@ export async function createPurchaseOrder(
     // po_number collision (e.g. a promoted draft number a manual PO already
     // took) — retry once with a freshly generated number. The retry can still
     // lose an audit_id race, which must surface as already_promoted, not 500.
-    created = await insertPo(generatePoNumber());
+    created = await create(generatePoNumber());
     constraint = created.error ? uniqueConstraintName(created.error) : null;
     if (constraint === AUDIT_UNIQUE_CONSTRAINT) {
       invalid("already_promoted", "That draft was already converted to a purchase order.");
     }
   }
-  if (created.error) throw created.error;
-  const header = created.data as unknown as RawPoRow;
-  const poId = String(header.id);
-
-  let lines: PoLineDto[];
-  try {
-    lines = await insertLines(shopId, poId, input.lines, labels);
-  } catch (err) {
-    // Lines are inserted after the header (no cross-statement transaction over
-    // PostgREST); remove the orphaned header so a failed create leaves nothing.
-    const { error: cleanupErr } = await getSupabase()
-      .from("purchase_order")
-      .delete()
-      .eq("shop_id", shopId)
-      .eq("id", poId);
-    if (cleanupErr) console.error("[po] failed to clean up orphaned PO header", cleanupErr);
-    throw err;
-  }
-  // Both inserts returned their rows — the DTO composes without a refetch.
-  return toDetail(header, location.name, lines);
+  if (created.error) throwMappedRpcError(created.error);
+  const poId = typeof created.data === "string" ? created.data : "";
+  if (!isUuid(poId)) throw new Error("po_create returned an invalid purchase-order id");
+  return getPurchaseOrder(shopId, poId);
 }
 
 export async function updateDraftPurchaseOrder(
@@ -644,6 +627,9 @@ export const PO_RPC_ERRORS: Record<string, { status: number; message: string }> 
   po_not_found: { status: 404, message: "That purchase order no longer exists." },
   po_not_draft: { status: 422, message: "This purchase order is no longer a draft." },
   po_empty: { status: 422, message: "Add at least one line first." },
+  invalid_po: { status: 422, message: "That purchase order isn't valid." },
+  supplier_not_found: { status: 422, message: "That supplier no longer exists." },
+  variant_not_found: { status: 422, message: "One of those lines refers to a missing product." },
   location_inactive: {
     status: 422,
     message: "The destination location is deactivated. Reactivate it first.",
@@ -792,12 +778,19 @@ export async function promoteAuditDraft(shopId: string, auditId: string): Promis
     if (!sku || !Number.isInteger(quantity) || quantity < 1 || quantity > MAX_LINE_QTY) {
       invalid("invalid_draft", "That draft's lines can't be converted.");
     }
-    const cost = Number(line.unit_cost_cents);
+    // Snapshots are immutable, so a bad stored cost must NEVER brick the
+    // conversion: anything that isn't a valid int4 cost (floats, "", garbage,
+    // overflow that would 500 as a raw cast error) converts as unknown (TBD).
+    let cost: number | null = null;
+    if (line.unit_cost_cents != null && line.unit_cost_cents !== "") {
+      const n = Number(line.unit_cost_cents);
+      if (Number.isInteger(n) && n >= 0 && n <= MAX_INT4) cost = n;
+    }
     return {
       sku,
       title: typeof line.title === "string" ? line.title : sku,
       quantity,
-      unit_cost_cents: Number.isInteger(cost) && cost >= 0 ? cost : null,
+      unit_cost_cents: cost,
     };
   });
 

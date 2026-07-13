@@ -257,7 +257,12 @@ describe("validatePoBody", () => {
     ["fractional qty", { ...good, lines: [{ variantId: V1, qty: 1.5, unitCostCents: null }] }],
     ["qty over cap", { ...good, lines: [{ variantId: V1, qty: 1_000_001, unitCostCents: null }] }],
     ["negative cost", { ...good, lines: [{ variantId: V1, qty: 1, unitCostCents: -5 }] }],
+    [
+      "cost past int4 (would overflow the column)",
+      { ...good, lines: [{ variantId: V1, qty: 1, unitCostCents: 2_147_483_648 }] },
+    ],
     ["bad date", { ...good, expectedAt: "soon" }],
+    ["impossible calendar date", { ...good, expectedAt: "2026-02-30" }],
     [
       "duplicate variant",
       {
@@ -336,11 +341,8 @@ describe("createPurchaseOrder", () => {
 
   it("snapshots the vendor name + line labels and defaults the ETA from the lead time", async () => {
     enqueuePreflights({ leadTime: 7 });
-    enqueue("purchase_order", "insert", {
-      data: poRow({ supplier_id: SUP, vendor_name: "Acme Textiles" }),
-      error: null,
-    });
-    enqueue("purchase_order_line", "insert", { data: [lineRow()], error: null });
+    state.rpc.mockResolvedValueOnce({ data: PO_ID, error: null });
+    enqueueDetail({ supplier_id: SUP, vendor_name: "Acme Textiles" });
 
     const detail = await createPurchaseOrder(SHOP, input);
     expect(detail.id).toBe(PO_ID);
@@ -348,25 +350,19 @@ describe("createPurchaseOrder", () => {
     expect(detail.destinationName).toBe("Main");
     expect(detail.lines[0].sku).toBe("SKU-1");
 
-    const headerInsert = state.queries.find(
-      (q) => q.table === "purchase_order" && q.op === "insert",
-    );
-    const payload = headerInsert?.payload as Record<string, unknown>;
-    expect(payload.vendor_name).toBe("Acme Textiles");
-    expect(payload.supplier_id).toBe(SUP);
-    expect(payload.source).toBe("manual");
-    expect(String(payload.po_number)).toMatch(/^PO-\d{8}-[0-9A-F]{8}$/);
-    expect(payload.expected_at).toBe(defaultEta(7));
+    const [fn, payload] = state.rpc.mock.calls[0] as [string, Record<string, unknown>];
+    expect(fn).toBe("po_create");
+    expect(payload.p_shop_id).toBe(SHOP);
+    expect(payload.p_vendor_name).toBe("Acme Textiles");
+    expect(payload.p_supplier_id).toBe(SUP);
+    expect(payload.p_source).toBe("manual");
+    expect(String(payload.p_po_number)).toMatch(/^PO-\d{8}-[0-9A-F]{8}$/);
+    expect(payload.p_expected_at).toBe(defaultEta(7));
 
-    // Line rows carry the sku/title snapshots so history survives a variant
-    // deletion (the FK is ON DELETE SET NULL).
-    const lineInsert = state.queries.find(
-      (q) => q.table === "purchase_order_line" && q.op === "insert",
-    );
-    expect(lineInsert?.payload).toEqual([
+    // Lines travel inside the po_create payload with the sku/title snapshots
+    // so history survives a variant deletion (the FK is ON DELETE SET NULL).
+    expect(payload.p_lines).toEqual([
       {
-        shop_id: SHOP,
-        po_id: PO_ID,
         variant_id: V1,
         sku: "SKU-1",
         variant_title: "Widget",
@@ -378,14 +374,12 @@ describe("createPurchaseOrder", () => {
 
   it("keeps an explicit ETA over the lead-time default", async () => {
     enqueuePreflights({ leadTime: 7 });
-    enqueue("purchase_order", "insert", { data: poRow(), error: null });
-    enqueue("purchase_order_line", "insert", { data: [lineRow()], error: null });
+    state.rpc.mockResolvedValueOnce({ data: PO_ID, error: null });
+    enqueueDetail();
 
     await createPurchaseOrder(SHOP, { ...input, expectedAt: "2026-09-01" });
-    const headerInsert = state.queries.find(
-      (q) => q.table === "purchase_order" && q.op === "insert",
-    );
-    expect((headerInsert?.payload as Record<string, unknown>).expected_at).toBe("2026-09-01");
+    const payload = state.rpc.mock.calls[0][1] as Record<string, unknown>;
+    expect(payload.p_expected_at).toBe("2026-09-01");
   });
 
   it("422s location_inactive on a deactivated destination", async () => {
@@ -398,8 +392,8 @@ describe("createPurchaseOrder", () => {
 
   it("treats a NULL active flag as active (legacy locations)", async () => {
     enqueuePreflights({ active: null });
-    enqueue("purchase_order", "insert", { data: poRow(), error: null });
-    enqueue("purchase_order_line", "insert", { data: [lineRow()], error: null });
+    state.rpc.mockResolvedValueOnce({ data: PO_ID, error: null });
+    enqueueDetail();
     const detail = await createPurchaseOrder(SHOP, input);
     expect(detail.id).toBe(PO_ID);
   });
@@ -417,16 +411,24 @@ describe("createPurchaseOrder", () => {
     });
   });
 
-  it("cleans up the orphaned header when the line insert fails", async () => {
+  it("maps a po_create errcode to its named 4xx and never writes tables directly", async () => {
     enqueuePreflights();
-    enqueue("purchase_order", "insert", { data: poRow(), error: null });
-    enqueue("purchase_order_line", "insert", { data: null, error: { message: "boom" } });
-    enqueue("purchase_order", "delete", { data: null, error: null });
+    state.rpc.mockResolvedValueOnce({ data: null, error: { message: "variant_not_found" } });
+    await expect(createPurchaseOrder(SHOP, input)).rejects.toMatchObject({
+      code: "variant_not_found",
+      status: 422,
+    });
+    // The create is one atomic RPC — no header insert, no line insert, and no
+    // orphan-cleanup delete ever hit the tables.
+    expect(state.queries.every((q) => q.op === "select")).toBe(true);
+  });
 
-    await expect(createPurchaseOrder(SHOP, input)).rejects.toMatchObject({ message: "boom" });
-    expect(
-      state.queries.some((q) => q.table === "purchase_order" && q.op === "delete"),
-    ).toBe(true);
+  it("errors when po_create returns something that isn't a PO id", async () => {
+    enqueuePreflights();
+    state.rpc.mockResolvedValueOnce({ data: "not-a-uuid", error: null });
+    await expect(createPurchaseOrder(SHOP, input)).rejects.toMatchObject({
+      message: "po_create returned an invalid purchase-order id",
+    });
   });
 });
 
@@ -524,6 +526,7 @@ describe("listPurchaseOrders", () => {
       p_shop_id: SHOP,
       p_limit: 50,
       p_offset: 50,
+      p_status: null,
     });
     expect(total).toBe(73);
     expect(pos[0]).toMatchObject({
@@ -571,6 +574,23 @@ describe("listPurchaseOrders", () => {
     const { pos, total } = await listPurchaseOrders(SHOP, { offset: 100 });
     expect(pos).toEqual([]);
     expect(total).toBe(42);
+  });
+
+  it("passes the status filter to po_list AND the past-the-end count", async () => {
+    state.rpc.mockResolvedValueOnce({ data: [], error: null });
+    enqueue("purchase_order", "select", { data: null, error: null, count: 7 });
+    const { total } = await listPurchaseOrders(SHOP, { offset: 100, status: "draft" });
+    expect(state.rpc).toHaveBeenCalledWith("po_list", {
+      p_shop_id: SHOP,
+      p_limit: 50,
+      p_offset: 100,
+      p_status: "draft",
+    });
+    expect(total).toBe(7);
+    // The honest-total fallback must count within the same status, or a
+    // filtered view paged past its end reports the unfiltered total.
+    const countQuery = state.queries.find((q) => q.table === "purchase_order");
+    expect(countQuery?.filters).toContainEqual(["status", "draft"]);
   });
 });
 
@@ -743,21 +763,20 @@ describe("promoteAuditDraft", () => {
     enqueue("variant_dim", "select", { data: [{ id: V1, sku: "SKU-1" }], error: null });
   }
 
-  /** Everything createPurchaseOrder reads/writes on the happy path. */
-  function enqueueHappyCreate(): void {
+  /** The preflight reads createPurchaseOrder does before calling po_create. */
+  function enqueueCreatePreflights(): void {
     enqueue("location_dim", "select", { data: { id: LOC, name: "Main", active: true }, error: null });
     enqueue("variant_dim", "select", {
       data: [{ id: V1, sku: "SKU-1", title: "Widget" }],
       error: null,
     });
-    enqueue("purchase_order", "insert", {
-      data: poRow({ source: "autopilot", audit_id: AUDIT }),
-      error: null,
-    });
-    enqueue("purchase_order_line", "insert", {
-      data: [lineRow({ qty_ordered: 40 })],
-      error: null,
-    });
+  }
+
+  /** Everything createPurchaseOrder reads/writes on the happy path. */
+  function enqueueHappyCreate(): void {
+    enqueueCreatePreflights();
+    state.rpc.mockResolvedValueOnce({ data: PO_ID, error: null });
+    enqueueDetail({ source: "autopilot", audit_id: AUDIT });
   }
 
   it("404s draft_not_found when the audit row is missing or not a PO draft", async () => {
@@ -785,6 +804,35 @@ describe("promoteAuditDraft", () => {
     });
   });
 
+  it("coerces unusable snapshot costs to null (TBD) so a bad cost never bricks the draft", async () => {
+    // Snapshots are immutable — floats, "", and int4-overflow values must
+    // convert with the cost blanked, not 422 forever (or 500 on the SQL cast).
+    enqueue("action_audit", "select", {
+      data: {
+        id: AUDIT,
+        action_kind: "create_po_draft",
+        params: {
+          po: {
+            po_number: "PO-20260708-ALERT001",
+            lines: [
+              { sku: "SKU-1", title: "Widget", quantity: 1, unit_cost_cents: 2_147_483_648 },
+            ],
+          },
+        },
+      },
+      error: null,
+    });
+    enqueueSkuLookup();
+    enqueueCreatePreflights();
+    state.rpc.mockResolvedValueOnce({ data: PO_ID, error: null });
+    enqueueDetail({ source: "autopilot", audit_id: AUDIT });
+
+    const detail = await promoteAuditDraft(SHOP, AUDIT);
+    expect(detail.id).toBe(PO_ID);
+    const payload = state.rpc.mock.calls[0][1] as Record<string, unknown>;
+    expect((payload.p_lines as Array<Record<string, unknown>>)[0].unit_cost_cents).toBeNull();
+  });
+
   it("422s sku_ambiguous when a SKU maps to more than one variant", async () => {
     enqueueAudit();
     enqueue("variant_dim", "select", {
@@ -808,22 +856,14 @@ describe("promoteAuditDraft", () => {
     expect(detail.id).toBe(PO_ID);
     expect(ensurePrimaryLocation).toHaveBeenCalledWith(SHOP);
 
-    const headerInsert = state.queries.find(
-      (q) => q.table === "purchase_order" && q.op === "insert",
-    );
-    const payload = headerInsert?.payload as Record<string, unknown>;
-    expect(payload.source).toBe("autopilot");
-    expect(payload.audit_id).toBe(AUDIT);
-    expect(payload.po_number).toBe("PO-20260708-ALERT001");
-    expect(payload.destination_location_id).toBe(LOC);
-
-    const lineInsert = state.queries.find(
-      (q) => q.table === "purchase_order_line" && q.op === "insert",
-    );
-    expect(lineInsert?.payload).toEqual([
+    const [fn, payload] = state.rpc.mock.calls[0] as [string, Record<string, unknown>];
+    expect(fn).toBe("po_create");
+    expect(payload.p_source).toBe("autopilot");
+    expect(payload.p_audit_id).toBe(AUDIT);
+    expect(payload.p_po_number).toBe("PO-20260708-ALERT001");
+    expect(payload.p_destination_location_id).toBe(LOC);
+    expect(payload.p_lines).toEqual([
       {
-        shop_id: SHOP,
-        po_id: PO_ID,
         variant_id: V1,
         sku: "SKU-1",
         variant_title: "Widget",
@@ -836,9 +876,8 @@ describe("promoteAuditDraft", () => {
   it("422s already_promoted on the audit_id unique constraint", async () => {
     enqueueAudit();
     enqueueSkuLookup();
-    enqueue("location_dim", "select", { data: { id: LOC, name: "Main", active: true }, error: null });
-    enqueue("variant_dim", "select", { data: [{ id: V1, sku: "SKU-1", title: "Widget" }], error: null });
-    enqueue("purchase_order", "insert", {
+    enqueueCreatePreflights();
+    state.rpc.mockResolvedValueOnce({
       data: null,
       error: { code: "23505", message: 'duplicate key value violates unique constraint "purchase_order_audit_id_key"' },
     });
@@ -851,39 +890,32 @@ describe("promoteAuditDraft", () => {
   it("retries with a fresh number when the draft po_number is already taken", async () => {
     enqueueAudit();
     enqueueSkuLookup();
-    enqueue("location_dim", "select", { data: { id: LOC, name: "Main", active: true }, error: null });
-    enqueue("variant_dim", "select", { data: [{ id: V1, sku: "SKU-1", title: "Widget" }], error: null });
-    enqueue("purchase_order", "insert", {
+    enqueueCreatePreflights();
+    state.rpc.mockResolvedValueOnce({
       data: null,
       error: { code: "23505", message: 'duplicate key value violates unique constraint "purchase_order_shop_id_po_number_key"' },
     });
-    enqueue("purchase_order", "insert", {
-      data: poRow({ source: "autopilot", audit_id: AUDIT }),
-      error: null,
-    });
-    enqueue("purchase_order_line", "insert", { data: [lineRow({ qty_ordered: 40 })], error: null });
+    state.rpc.mockResolvedValueOnce({ data: PO_ID, error: null });
+    enqueueDetail({ source: "autopilot", audit_id: AUDIT });
 
     const detail = await promoteAuditDraft(SHOP, AUDIT);
     expect(detail.id).toBe(PO_ID);
-    const inserts = state.queries.filter(
-      (q) => q.table === "purchase_order" && q.op === "insert",
-    );
-    expect(inserts).toHaveLength(2);
-    const retried = inserts[1].payload as Record<string, unknown>;
-    expect(retried.po_number).not.toBe("PO-20260708-ALERT001");
-    expect(String(retried.po_number)).toMatch(/^PO-\d{8}-[0-9A-F]{8}$/);
+    const creates = state.rpc.mock.calls.filter(([fn]) => fn === "po_create");
+    expect(creates).toHaveLength(2);
+    const retried = creates[1][1] as Record<string, unknown>;
+    expect(retried.p_po_number).not.toBe("PO-20260708-ALERT001");
+    expect(String(retried.p_po_number)).toMatch(/^PO-\d{8}-[0-9A-F]{8}$/);
   });
 
-  it("422s already_promoted when the RETRY insert loses the audit_id race", async () => {
+  it("422s already_promoted when the RETRY create loses the audit_id race", async () => {
     enqueueAudit();
     enqueueSkuLookup();
-    enqueue("location_dim", "select", { data: { id: LOC, name: "Main", active: true }, error: null });
-    enqueue("variant_dim", "select", { data: [{ id: V1, sku: "SKU-1", title: "Widget" }], error: null });
-    enqueue("purchase_order", "insert", {
+    enqueueCreatePreflights();
+    state.rpc.mockResolvedValueOnce({
       data: null,
       error: { code: "23505", message: 'duplicate key value violates unique constraint "purchase_order_shop_id_po_number_key"' },
     });
-    enqueue("purchase_order", "insert", {
+    state.rpc.mockResolvedValueOnce({
       data: null,
       error: { code: "23505", message: 'duplicate key value violates unique constraint "purchase_order_audit_id_key"' },
     });
@@ -896,22 +928,18 @@ describe("promoteAuditDraft", () => {
   it("matches the constraint NAME, not any mention of audit in the message", async () => {
     enqueueAudit();
     enqueueSkuLookup();
-    enqueue("location_dim", "select", { data: { id: LOC, name: "Main", active: true }, error: null });
-    enqueue("variant_dim", "select", { data: [{ id: V1, sku: "SKU-1", title: "Widget" }], error: null });
+    enqueueCreatePreflights();
     // A po_number collision whose details happen to mention "audit" must NOT
     // masquerade as already_promoted — it retries and succeeds.
-    enqueue("purchase_order", "insert", {
+    state.rpc.mockResolvedValueOnce({
       data: null,
       error: {
         code: "23505",
         message: 'duplicate key value violates unique constraint "purchase_order_shop_id_po_number_key" (source audit trail)',
       },
     });
-    enqueue("purchase_order", "insert", {
-      data: poRow({ source: "autopilot", audit_id: AUDIT }),
-      error: null,
-    });
-    enqueue("purchase_order_line", "insert", { data: [lineRow({ qty_ordered: 40 })], error: null });
+    state.rpc.mockResolvedValueOnce({ data: PO_ID, error: null });
+    enqueueDetail({ source: "autopilot", audit_id: AUDIT });
     const detail = await promoteAuditDraft(SHOP, AUDIT);
     expect(detail.id).toBe(PO_ID);
   });
