@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
+
+import { describe, expect, it, vi } from "vitest";
+import type { WorldCitiesJsonModule } from "world-cities-json";
 import {
   normalizePlace,
   resolveCityCentroid,
@@ -40,6 +43,8 @@ const rows: WorldCityRow[] = [
     population: "1762949",
   },
 ];
+
+const require = createRequire(import.meta.url);
 
 describe("city centroid resolution", () => {
   it("normalizes accents, punctuation, and whitespace", () => {
@@ -94,23 +99,35 @@ describe("city centroid resolution", () => {
     expect(Number.isFinite(resolved?.longitude)).toBe(true);
   });
 
-  it("reuses one normalized package index across default lookups", async () => {
+  it("reuses package rows without scanning the dataset again", async () => {
+    vi.resetModules();
     const cityCentroids = await import("../city-centroids.server");
-    const getDefaultCityIndex = (
-      cityCentroids as typeof cityCentroids & {
-        getDefaultCityIndex?: () => object;
-      }
-    ).getDefaultCityIndex;
-
-    expect(getDefaultCityIndex).toBeTypeOf("function");
-    const index = getDefaultCityIndex?.();
+    const dataset = require("world-cities-json") as WorldCitiesJsonModule;
+    const originalCities = dataset.cities;
 
     expect(
-      resolveCityCentroid({ city: "Toronto", region: "Ontario", country: "CA" }),
+      cityCentroids.resolveCityCentroid({
+        city: "Toronto",
+        region: "Ontario",
+        country: "CA",
+      }),
     ).toMatchObject({ city: "Toronto", region: "Ontario", country: "CA" });
-    expect(
-      resolveCityCentroid({ city: "Montréal", region: "Quebec", country: "Canada" }),
-    ).toMatchObject({ city: "Montréal", region: "Quebec", country: "CA" });
-    expect(getDefaultCityIndex?.()).toBe(index);
+
+    dataset.cities = new Proxy(originalCities, {
+      get() {
+        throw new Error("world-cities-json rows were scanned again");
+      },
+    });
+    try {
+      expect(
+        cityCentroids.resolveCityCentroid({
+          city: "Montréal",
+          region: "Quebec",
+          country: "Canada",
+        }),
+      ).toMatchObject({ city: "Montréal", region: "Quebec", country: "CA" });
+    } finally {
+      dataset.cities = originalCities;
+    }
   });
 });

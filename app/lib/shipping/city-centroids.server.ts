@@ -42,7 +42,7 @@ interface IndexedWorldCityRow {
   population: number;
 }
 
-export type CityCentroidIndex = ReadonlyMap<
+type CityCentroidIndex = ReadonlyMap<
   string,
   readonly IndexedWorldCityRow[]
 >;
@@ -89,7 +89,7 @@ function buildCityIndex(rows: readonly WorldCityRow[]): CityCentroidIndex {
   return index;
 }
 
-export function getDefaultCityIndex(): CityCentroidIndex {
+function getDefaultCityIndex(): CityCentroidIndex {
   defaultCityIndex ??= buildCityIndex(loadWorldCityRows());
   return defaultCityIndex;
 }
