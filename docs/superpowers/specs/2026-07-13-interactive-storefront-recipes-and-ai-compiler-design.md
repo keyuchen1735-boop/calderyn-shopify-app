@@ -384,6 +384,8 @@ export interface StorefrontBundleV1 {
 
 export interface RouteArtifact {
   html: string;
+  tree: CompiledNode[];
+  bindings: CompiledBinding[];
   css: string;
   requiredData: DataRequirement[];
   requiredCapabilities: RuntimeCapability[];
@@ -393,6 +395,8 @@ export interface RouteArtifact {
 
 export interface CheckoutRouteArtifact {
   decorativeHtml: string;
+  decorativeTree: CompiledNode[];
+  bindings: CompiledBinding[];
   decorativeCss: string;
   layout: CheckoutLayoutManifest;
   requiredData: Array<{ kind: "storeIdentity" | "policyLinks" }>;
@@ -459,6 +463,8 @@ export type RuntimeActionSpec =
   | { type: "scroll.to"; targetId: string }
   | { type: "navigate"; target: RouteTarget };
 ```
+
+`tree`/`decorativeTree` and the closed `bindings` plan are the authoritative runtime representation. The HTML strings are deterministic compiler output retained only for diagnostics, hashing, and cache inspection; public and preview renderers never reparse them or pass them to `dangerouslySetInnerHTML`.
 
 Every installed recipe and custom release persists or content-addresses the exact compiled artifact. An in-code registry entry alone is not an immutable release. The installed recipe release pins its template ID/version, artifact hash, compiled routes, assets, and merchant-selected configuration, so a later deploy cannot change an existing published store. Custom bundles persist the same compiled artifact shape.
 

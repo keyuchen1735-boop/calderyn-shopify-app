@@ -334,8 +334,54 @@ export interface AssetManifest {
   entries: AssetManifestEntry[];
 }
 
+export type CompiledBindingKind = "text" | "money" | "src" | "alt";
+
+export interface CompiledBinding {
+  id: string;
+  targetId: string;
+  kind: CompiledBindingKind;
+  ref: PublicDataRef;
+}
+
+export type CompiledRepeatSource =
+  | "collection.products"
+  | "featured.products"
+  | "related.products"
+  | "search.results"
+  | "cart.lines"
+  | "product.images"
+  | "product.variants";
+
+export interface CompiledRepeat {
+  scopeId: string;
+  source: CompiledRepeatSource;
+  itemKind: "product" | "cartLine" | "image" | "variant";
+  keyPath: PublicBindingPath;
+}
+
+export type CompiledNode = CompiledTextNode | CompiledElementNode;
+
+export interface CompiledTextNode {
+  kind: "text";
+  value: string;
+}
+
+export interface CompiledElementNode {
+  kind: "element";
+  id: string;
+  tag: string;
+  attributes: Record<string, string>;
+  children: CompiledNode[];
+  repeat?: CompiledRepeat;
+  routeTarget?: RouteTarget;
+  trustedSlotId?: string;
+}
+
 export interface RouteArtifact {
+  /** Deterministic debug/cache representation. Runtime renderers consume tree, never this string. */
   html: string;
+  tree: CompiledNode[];
+  bindings: CompiledBinding[];
   css: string;
   requiredData: DataRequirement[];
   requiredCapabilities: RuntimeCapability[];
@@ -344,7 +390,10 @@ export interface RouteArtifact {
 }
 
 export interface CheckoutRouteArtifact {
+  /** Deterministic debug/cache representation. Runtime renderers consume decorativeTree. */
   decorativeHtml: string;
+  decorativeTree: CompiledNode[];
+  bindings: CompiledBinding[];
   decorativeCss: string;
   layout: CheckoutLayoutManifest;
   requiredData: Array<{ kind: "storeIdentity" | "policyLinks" }>;

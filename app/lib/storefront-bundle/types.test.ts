@@ -4,6 +4,7 @@ import {
   PUBLIC_BINDING_PATHS,
   isCuratedFontId,
   isPublicBindingPath,
+  type RouteArtifact,
 } from "./types";
 
 describe("closed runtime-1 value vocabularies", () => {
@@ -24,5 +25,30 @@ describe("closed runtime-1 value vocabularies", () => {
   it("keeps release-pinned tagline copy out of live public bindings", () => {
     expect(PUBLIC_BINDING_PATHS).not.toContain("store.tagline");
     expect(isPublicBindingPath("store.tagline")).toBe(false);
+  });
+});
+
+describe("compiled route representation", () => {
+  it("makes the serializable tree and closed binding plan first-class", () => {
+    const route = {
+      html: '<h1 id="cd-home-heading"></h1>',
+      tree: [{ kind: "element", id: "cd-home-heading", tag: "h1", attributes: {}, children: [] }],
+      bindings: [
+        {
+          id: "binding-1",
+          targetId: "cd-home-heading",
+          kind: "text",
+          ref: { kind: "data", scopeId: "root", path: "store.name" },
+        },
+      ],
+      css: "",
+      requiredData: [{ kind: "storeIdentity" }],
+      requiredCapabilities: [],
+      interactions: { version: 1, state: [], bindings: [], transitions: [] },
+      trustedSlots: [],
+    } satisfies RouteArtifact;
+
+    expect(route.tree[0]?.kind).toBe("element");
+    expect(route.bindings[0]?.ref.path).toBe("store.name");
   });
 });
