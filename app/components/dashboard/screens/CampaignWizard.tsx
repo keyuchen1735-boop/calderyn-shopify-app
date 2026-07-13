@@ -91,8 +91,11 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
 function initWizardState(prefill: { name?: string; platform?: CampaignDraftPlatform } | null): WizardState {
   const platform = prefill?.platform ?? "meta";
   return {
-    // A draft already picked a platform — jump straight to product pick.
-    step: prefill?.platform ? "product" : "platform",
+    // A Google/TikTok draft already picked a platform — jump straight to the
+    // product pick. A Meta draft still starts on the platform step (preselected)
+    // so the connect button / readiness checks are never skipped: resuming a
+    // draft is exactly when the account may still be unconnected.
+    step: prefill?.platform && prefill.platform !== "meta" ? "product" : "platform",
     platform,
     preflight: null,
     productId: null,
@@ -773,10 +776,15 @@ export function CampaignWizard({
   app,
   prefill,
   onExit,
+  embedded = false,
 }: {
   app: DashboardCtx;
   prefill: { name?: string; platform?: CampaignDraftPlatform } | null;
   onExit: () => void;
+  /** True when the wizard lives inside an existing card (the Campaigns
+   *  empty state) — skips the full-page cd-screen chrome so padding and
+   *  max-width come from the host container, not doubled up. */
+  embedded?: boolean;
 }) {
   const [state, dispatch] = useReducer(wizardReducer, prefill, initWizardState);
   const idx = STEP_ORDER.indexOf(state.step);
@@ -790,13 +798,20 @@ export function CampaignWizard({
     dispatch({ type: "step", step: STEP_ORDER[idx + 1] });
   };
 
-  return (
-    <div className="cd-screen" data-screen-label="New campaign">
+  const body = (
+    <>
       <WizardHeader step={state.step} canBack={idx > 0} onBack={goBack} onExit={onExit} />
       {state.step === "platform" && <PlatformStep state={state} dispatch={dispatch} app={app} onNext={goNext} />}
       {state.step === "product" && <ProductStep state={state} dispatch={dispatch} onNext={goNext} />}
       {state.step === "creative" && <CreativeStep state={state} dispatch={dispatch} onNext={goNext} />}
       {state.step === "review" && <ReviewStep state={state} app={app} prefill={prefill} onExit={onExit} />}
+    </>
+  );
+
+  if (embedded) return <div>{body}</div>;
+  return (
+    <div className="cd-screen" data-screen-label="New campaign">
+      {body}
     </div>
   );
 }

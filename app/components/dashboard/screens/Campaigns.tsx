@@ -1213,6 +1213,7 @@ function CampaignList({
               <CampaignWizard
                 app={app}
                 prefill={null}
+                embedded
                 onExit={() => {
                   refreshDrafts();
                   setSkippedEmpty(true);
