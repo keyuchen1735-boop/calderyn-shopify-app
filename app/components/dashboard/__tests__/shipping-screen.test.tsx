@@ -159,6 +159,15 @@ describe("ShippingView", () => {
     }
   });
 
+  it("keeps Rates & delivery concise with clearly labeled boxed fields", () => {
+    const html = markup("rates");
+
+    expect(html).not.toContain("cd-caption");
+    expect(html).toContain("Free shipping over ($)");
+    expect(html).toContain('placeholder="0.00"');
+    expect(html).toContain("cd-shipping-rates");
+  });
+
   it("preserves origin, Carrier service, coverage, and Review products under Setup", () => {
     const html = markup("setup");
 

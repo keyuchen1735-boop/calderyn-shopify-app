@@ -460,9 +460,31 @@
   padding: 19px 22px 15px;
 }
 
-.cd-shipping-rate-head .cd-caption {
-  max-width: 720px;
-  margin: 5px 0 0;
+.cd-shipping-rates .cd-field {
+  gap: 7px;
+}
+
+.cd-shipping-rates .cd-field > span {
+  color: var(--text-1);
+  font-size: calc(13.5px * var(--type-scale));
+  font-weight: 600;
+}
+
+.cd-shipping-rates .cd-input {
+  width: 100%;
+  border: 1px solid var(--hairline-strong);
+  background: var(--card-solid);
+}
+
+.cd-shipping-rates .cd-input::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+
+.cd-shipping-rate-value {
+  color: var(--text-1);
+  font-size: calc(13.5px * var(--type-scale));
+  font-weight: 550;
 }
 
 .cd-shipping-rate-table {
