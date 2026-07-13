@@ -145,6 +145,18 @@ describe("sampleRouteArc", () => {
       }
     },
   );
+
+  it("keeps a stationary antimeridian route contiguous despite rounding noise", () => {
+    const segments = sampleRouteArc([-180, 12], [-180, -7], 7);
+
+    for (const segment of segments) {
+      for (let index = 1; index < segment.length; index += 1) {
+        expect(
+          Math.abs(segment[index][0] - segment[index - 1][0]),
+        ).toBeLessThanOrEqual(180);
+      }
+    }
+  });
 });
 
 describe("planeFrame", () => {

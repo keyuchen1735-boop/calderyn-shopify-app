@@ -39,6 +39,7 @@ export interface PlaneAnimationState {
 
 const DEFAULT_ARC_SAMPLES = 64;
 const BEARING_SAMPLE_STEP = 1 / 1_024;
+const ANTIMERIDIAN_EPSILON = Number.EPSILON * 180 * 8;
 
 export function routeViewportPolicy(
   points: readonly RoutePoint[],
@@ -146,21 +147,25 @@ function splitAtAntimeridian(
   points: readonly [number, number][],
 ): RouteSegment[] {
   const first = points[0];
-  const segments: RouteSegment[] = [[[normalizeLongitude(first[0]), first[1]]]];
+  const segments: RouteSegment[] = [
+    [[normalizeLongitude(snapToAntimeridian(first[0])), first[1]]],
+  ];
 
   for (let index = 1; index < points.length; index += 1) {
     const previous = points[index - 1];
     const current = points[index];
-    const boundary = crossedAntimeridian(previous[0], current[0]);
+    const previousLongitude = snapToAntimeridian(previous[0]);
+    const currentLongitude = snapToAntimeridian(current[0]);
+    const boundary = crossedAntimeridian(previousLongitude, currentLongitude);
     const activeSegment = segments[segments.length - 1];
 
     if (boundary === undefined) {
-      activeSegment.push([normalizeLongitude(current[0]), current[1]]);
+      activeSegment.push([normalizeLongitude(currentLongitude), current[1]]);
       continue;
     }
 
     const crossingProgress =
-      (boundary - previous[0]) / (current[0] - previous[0]);
+      (boundary - previousLongitude) / (currentLongitude - previousLongitude);
     const crossingLatitude =
       previous[1] + crossingProgress * (current[1] - previous[1]);
     const wrappedBoundary = boundary > 0 ? -180 : 180;
@@ -168,7 +173,7 @@ function splitAtAntimeridian(
     activeSegment.push([boundary, crossingLatitude]);
     segments.push([
       [wrappedBoundary, crossingLatitude],
-      [normalizeLongitude(current[0]), current[1]],
+      [normalizeLongitude(currentLongitude), current[1]],
     ]);
   }
 
@@ -192,8 +197,17 @@ function unwrapLongitude(fromLongitude: number, toLongitude: number): number {
 }
 
 function normalizeLongitude(longitude: number): number {
-  if (longitude >= -180 && longitude <= 180) return longitude;
-  return ((((longitude + 180) % 360) + 360) % 360) - 180;
+  const snappedLongitude = snapToAntimeridian(longitude);
+  if (snappedLongitude >= -180 && snappedLongitude <= 180) {
+    return snappedLongitude;
+  }
+  return ((((snappedLongitude + 180) % 360) + 360) % 360) - 180;
+}
+
+function snapToAntimeridian(longitude: number): number {
+  if (Math.abs(longitude - 180) <= ANTIMERIDIAN_EPSILON) return 180;
+  if (Math.abs(longitude + 180) <= ANTIMERIDIAN_EPSILON) return -180;
+  return longitude;
 }
 
 function bearingBetween(from: [number, number], to: [number, number]): number {
