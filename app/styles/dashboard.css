@@ -1706,7 +1706,6 @@
 .cd-gauge-num i { font-size: calc(27px * var(--type-scale)); font-weight: 600; font-style: normal; color: var(--text-2); letter-spacing: -0.01em; }
 .cd-gauge-sm .cd-gauge-c b { font-size: calc(30px * var(--type-scale)); letter-spacing: -0.03em; }
 .cd-gauge-sm .cd-gauge-num i { font-size: calc(14px * var(--type-scale)); }
-.cd-calib-eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: var(--live); }
 .cd-calib-split { display: grid; grid-template-columns: 224px minmax(0, 1fr); align-items: stretch; }
 .cd-calib-left { padding: 22px 20px; border-right: 0.5px solid var(--hairline-strong); }
 /* The rail rides along while a long queue scrolls; top offset clears the

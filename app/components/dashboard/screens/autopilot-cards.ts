@@ -31,21 +31,23 @@ export function reasonLines(
   };
 }
 
-/** One plain-English sentence for a queue row: what Calderyn wants to do to
- *  which subject. Unknown kinds fall back to "<feature label>: <subject>" at
- *  the call site (this returns null so the caller keeps that decision). */
+/** One short verb-first line for a queue row. The group header carries the
+ *  context (Restock, Stop wasted spend) and the expandable why carries the
+ *  explanation, so the row itself stays terse. Unknown kinds fall back to
+ *  "<feature label>: <subject>" at the call site (this returns null so the
+ *  caller keeps that decision). */
 const SAY_TEMPLATES: Record<string, (subject: string) => string> = {
-  create_po_draft: (s) => `Reorder ${s} before it runs out`,
+  create_po_draft: (s) => `Reorder ${s}`,
   pause_campaign: (s) => `Pause ads for ${s}`,
   resume_campaign: (s) => `Resume ads for ${s}`,
   increase_campaign_budget: (s) => `Add budget to ${s}`,
   reduce_campaign_budget: (s) => `Trim budget on ${s}`,
-  exclude_geo: (s) => `Stop ads where ${s} is out of stock`,
-  reallocate_inventory: (s) => `Move ${s} stock where it sells`,
-  reallocate_budget: (s) => `Shift budget toward ${s}`,
-  reallocate_spend_sku: (s) => `Shift ad spend toward ${s}`,
-  adjust_price: (s) => `Adjust the price of ${s}`,
-  raise_free_ship_threshold: (s) => `Raise the free-shipping bar on ${s}`,
+  exclude_geo: (s) => `Stop ads for ${s}`,
+  reallocate_inventory: (s) => `Move ${s} stock`,
+  reallocate_budget: (s) => `Shift budget to ${s}`,
+  reallocate_spend_sku: (s) => `Shift spend to ${s}`,
+  adjust_price: (s) => `Reprice ${s}`,
+  raise_free_ship_threshold: (s) => `Raise free-ship minimum on ${s}`,
   snooze: (s) => `Snooze ${s}`,
 };
 

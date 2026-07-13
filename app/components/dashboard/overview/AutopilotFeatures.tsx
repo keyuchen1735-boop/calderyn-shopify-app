@@ -83,14 +83,12 @@ function FeatureGroupCell({ group, app }: { group: FeatureGroupVM; app: Dashboar
         {group.onCount > 0 && <span className="cd-fx-oncount tabular-nums">{group.onCount} on</span>}
       </div>
 
-      {unlocked.length > 0 ? (
+      {unlocked.length > 0 && (
         <div className="cd-fx-chips">
           {unlocked.map((r) => (
             <FeatureChip key={`${r.detectorId}:${r.actionKind}`} row={r} app={app} />
           ))}
         </div>
-      ) : (
-        <div className="cd-fx-none">Nothing unlocked here yet.</div>
       )}
 
       {locked.length > 0 && (
@@ -99,10 +97,11 @@ function FeatureGroupCell({ group, app }: { group: FeatureGroupVM; app: Dashboar
             type="button"
             className="cd-fx-more"
             aria-expanded={showLocked}
+            title={LOCKED_FEATURE_TOOLTIP}
             onClick={() => setShowLocked((s) => !s)}
           >
             <CDIcon name="lock" size={12} strokeWidth={2} />
-            {locked.length} more unlock{locked.length === 1 ? "s" : ""} as calibration grows
+            {locked.length} locked
             <CDIcon name="chevronDown" size={13} className="cd-fx-more-chev" data-open={showLocked ? "1" : "0"} />
           </button>
           {showLocked && (
@@ -158,15 +157,15 @@ export default function AutopilotFeatures({ groups, app }: { groups: FeatureGrou
           <h2 className="cd-h2" style={{ margin: 0 }}>
             Autopilot features
           </h2>
-          <div className="cd-caption" style={{ marginTop: 2 }}>
-            Each switch is one move Calderyn can make on its own.
-            {totalRows > 0 && (
-              <span className="tabular-nums">
-                {" "}
-                {unlockedRows} of {totalRows} unlocked.
-              </span>
-            )}
-          </div>
+          {totalRows > 0 && (
+            <div
+              className="cd-caption tabular-nums"
+              style={{ marginTop: 2 }}
+              title="Each switch is one move Calderyn can make on its own."
+            >
+              {unlockedRows} of {totalRows} unlocked
+            </div>
+          )}
         </div>
         <span
           ref={badgeRef}
