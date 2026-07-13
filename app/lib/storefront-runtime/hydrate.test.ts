@@ -104,7 +104,7 @@ describe("declarative storefront hydration", () => {
   });
 
   it("rejects a cart-line mutation outside the trusted host authority", () => {
-    document.body.innerHTML = `<main id="root"><div id="cd-cart-slot-1" data-cd-trusted-slot="cartLineControls" data-cd-authority-key="cartLine:line-1"></div></main>`;
+    document.body.innerHTML = `<main id="root"><div data-cd-instance="i-cart-line-1"><div id="cd-cart-slot-1-i-cart-line-1" data-cd-instance="i-cart-line-1" data-cd-trusted-slot="cartLineControls" data-cd-slot-scope="cd-cart-scope-1" data-cd-authority-key="cartLine:line-1"></div></div></main>`;
     const root = document.getElementById("root") as HTMLElement;
     const dispatch = vi.fn();
     const mount = vi.fn(({ bridge }) => {
@@ -114,12 +114,28 @@ describe("declarative storefront hydration", () => {
       root,
       artifact: artifact({
         requiredCapabilities: ["commerce"], interactions: { version: 1, state: [], bindings: [], transitions: [] },
-        trustedSlots: [{ id: "cd-cart-slot-1", kind: "cartLineControls", scopeId: "root", hostSize: "block", themeTokenIds: [] }],
+        trustedSlots: [{ id: "cd-cart-slot-1", kind: "cartLineControls", scopeId: "cd-cart-scope-1", hostSize: "block", themeTokenIds: [] }],
       }),
       adapters: { commerce: { mount, dispatch } },
     });
     expect(runtime.hydrated).toBe(true);
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("fails runtime validation for root-scoped cart-line controls", () => {
+    document.body.innerHTML = `<main id="root"><div id="cd-cart-slot-1" data-cd-trusted-slot="cartLineControls" data-cd-slot-scope="root" data-cd-authority-key="cartLine:line-1"></div></main>`;
+    const mount = vi.fn();
+    const runtime = hydrateStorefront({
+      root: document.getElementById("root") as HTMLElement,
+      artifact: artifact({
+        requiredCapabilities: ["commerce"], interactions: { version: 1, state: [], bindings: [], transitions: [] },
+        trustedSlots: [{ id: "cd-cart-slot-1", kind: "cartLineControls", scopeId: "root", hostSize: "block", themeTokenIds: [] }],
+      }),
+      adapters: { commerce: { mount, dispatch: vi.fn() } },
+    });
+    expect(runtime.hydrated).toBe(false);
+    expect(runtime.error?.message).toMatch(/cartLine.*scope/i);
+    expect(mount).not.toHaveBeenCalled();
   });
 
   it("is idempotent, tears down cleanly, and can hydrate again", () => {
@@ -151,6 +167,59 @@ describe("declarative storefront hydration", () => {
     expect(runtime.hydrated).toBe(false);
     expect(root.innerHTML).toBe(before);
     expect(document.querySelector("[data-cd-overlay-portal]")).toBeNull();
+  });
+
+  it("never exposes partial commerce UI when a closed-shadow mount throws", () => {
+    document.body.innerHTML = `<main id="root"><div id="cd-product-slot-1" data-cd-trusted-slot="addToCart" data-cd-authority-key="product:p1"></div></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const host = document.getElementById("cd-product-slot-1") as HTMLElement;
+    const nativeAttach = host.attachShadow.bind(host);
+    let actualShadow: ShadowRoot | undefined;
+    vi.spyOn(host, "attachShadow").mockImplementation((init) => {
+      actualShadow = nativeAttach(init);
+      return actualShadow;
+    });
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({
+        requiredCapabilities: ["commerce"], interactions: { version: 1, state: [], bindings: [], transitions: [] },
+        trustedSlots: [{ id: "cd-product-slot-1", kind: "addToCart", scopeId: "root", hostSize: "block", themeTokenIds: [] }],
+      }),
+      adapters: { commerce: {
+        mount: ({ shadowRoot }) => {
+          shadowRoot.innerHTML = `<button data-partial-commerce>Buy</button>`;
+          throw new Error("mount failed after mutation");
+        },
+        dispatch: vi.fn(),
+      } },
+    });
+    expect(runtime.hydrated).toBe(false);
+    expect(actualShadow).toBeDefined();
+    expect(actualShadow?.querySelector("[data-partial-commerce]")).toBeNull();
+    expect(actualShadow?.querySelector("[data-cd-commerce-unavailable]")).not.toBeNull();
+    expect(host.shadowRoot).toBeNull();
+  });
+
+  it("exhausts hydration rollback and reports restoration errors", () => {
+    const root = rootMarkup();
+    root.insertAdjacentHTML("beforeend", `<div id="cd-product-slot-1" data-cd-trusted-slot="addToCart" data-cd-authority-key="product:p1"></div>`);
+    const drawer = document.getElementById("cd-home-drawer") as HTMLElement;
+    const nativeRemoveAttribute = drawer.removeAttribute.bind(drawer);
+    vi.spyOn(drawer, "removeAttribute")
+      .mockImplementationOnce(() => { throw new Error("attribute restore failed"); })
+      .mockImplementation((name) => nativeRemoveAttribute(name));
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({
+        requiredCapabilities: ["localState", "commerce"],
+        trustedSlots: [{ id: "cd-product-slot-1", kind: "addToCart", scopeId: "root", hostSize: "block", themeTokenIds: [] }],
+      }),
+      adapters: { commerce: { mount: () => { throw new Error("mount failed"); }, dispatch: vi.fn() } },
+    });
+    expect(runtime.hydrated).toBe(false);
+    expect(runtime.error?.message).toMatch(/rollback|restor/i);
+    expect(document.querySelector("[data-cd-overlay-portal]")).toBeNull();
+    expect(document.getElementById("cd-home-progress")?.getAttribute("style")).toBeNull();
   });
 
   it("runs every cleanup and restores SSR state when one cleanup throws", () => {
@@ -198,14 +267,14 @@ describe("declarative storefront hydration", () => {
 
   it("keeps repeated state, bindings, and scroll targets inside the current compiler instance", () => {
     document.body.innerHTML = `<main id="root">
-      <div data-cd-instance="one"><button id="cd-home-toggle-one" data-cd-instance="one">One</button><aside id="cd-home-drawer-one" data-cd-instance="one"></aside><div id="cd-home-scroll-one" data-cd-instance="one"></div></div>
-      <div data-cd-instance="two"><button id="cd-home-toggle-two" data-cd-instance="two">Two</button><aside id="cd-home-drawer-two" data-cd-instance="two"></aside><div id="cd-home-scroll-two" data-cd-instance="two"></div></div>
+      <div data-cd-instance="i-parent-a-child-same"><button id="cd-home-toggle-i-parent-a-child-same" data-cd-instance="i-parent-a-child-same">One</button><aside id="cd-home-drawer-i-parent-a-child-same" data-cd-instance="i-parent-a-child-same"></aside><div id="cd-home-scroll-i-parent-a-child-same" data-cd-instance="i-parent-a-child-same"></div></div>
+      <div data-cd-instance="i-parent-b-child-same"><button id="cd-home-toggle-i-parent-b-child-same" data-cd-instance="i-parent-b-child-same">Two</button><aside id="cd-home-drawer-i-parent-b-child-same" data-cd-instance="i-parent-b-child-same"></aside><div id="cd-home-scroll-i-parent-b-child-same" data-cd-instance="i-parent-b-child-same"></div></div>
     </main>`;
     const root = document.getElementById("root") as HTMLElement;
     const scrollOne = vi.fn();
     const scrollTwo = vi.fn();
-    Object.defineProperty(document.getElementById("cd-home-scroll-one"), "scrollIntoView", { value: scrollOne });
-    Object.defineProperty(document.getElementById("cd-home-scroll-two"), "scrollIntoView", { value: scrollTwo });
+    Object.defineProperty(document.getElementById("cd-home-scroll-i-parent-a-child-same"), "scrollIntoView", { value: scrollOne });
+    Object.defineProperty(document.getElementById("cd-home-scroll-i-parent-b-child-same"), "scrollIntoView", { value: scrollTwo });
     const runtime = hydrateStorefront({
       root,
       artifact: artifact({
@@ -221,9 +290,9 @@ describe("declarative storefront hydration", () => {
       }),
     });
     expect(runtime.hydrated).toBe(true);
-    document.getElementById("cd-home-toggle-two")?.click();
-    expect((document.getElementById("cd-home-drawer-one") as HTMLElement).hidden).toBe(false);
-    expect((document.getElementById("cd-home-drawer-two") as HTMLElement).hidden).toBe(true);
+    document.getElementById("cd-home-toggle-i-parent-b-child-same")?.click();
+    expect((document.getElementById("cd-home-drawer-i-parent-a-child-same") as HTMLElement).hidden).toBe(false);
+    expect((document.getElementById("cd-home-drawer-i-parent-b-child-same") as HTMLElement).hidden).toBe(true);
     expect(scrollOne).not.toHaveBeenCalled();
     expect(scrollTwo).toHaveBeenCalledOnce();
   });

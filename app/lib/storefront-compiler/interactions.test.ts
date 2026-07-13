@@ -80,4 +80,19 @@ describe("typed interactions", () => {
     expect(result.html).not.toContain("data-cd-slot");
     expect(result.html).not.toContain("id=\"cd-product-buy\"");
   });
+
+  it("requires cart-line controls to be inside the exact cart-line repeat scope", () => {
+    expect(() => compileHtml(
+      `<div data-cd-slot="cartLineControls"></div>`,
+      { namespace: "cart", rootScopeKind: "cart" },
+    )).toThrow(/cart.?line|repeat|scope/i);
+
+    const result = compileHtml(
+      `<main data-cd-repeat="cart.lines"><div data-cd-key="cartLine.id" data-cd-slot="cartLineControls"></div></main>`,
+      { namespace: "cart", rootScopeKind: "cart" },
+    );
+    expect(result.trustedSlots).toEqual([
+      expect.objectContaining({ kind: "cartLineControls", scopeId: "cd-cart-scope-1" }),
+    ]);
+  });
 });

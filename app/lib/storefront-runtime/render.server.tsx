@@ -1,4 +1,5 @@
 import { Fragment, createElement, type ReactElement, type ReactNode } from "react";
+import { createHash } from "node:crypto";
 import type {
   CheckoutRouteArtifact,
   CompiledBinding,
@@ -36,6 +37,8 @@ interface RenderContext {
   bindings: Map<string, CompiledBinding[]>;
   slots: Map<string, TrustedSlotManifest>;
   scopes: Map<string, ScopeValue>;
+  currentScopeId: string;
+  instancePath: readonly string[];
   instanceSuffix?: string;
 }
 
@@ -146,24 +149,23 @@ function itemKey(value: ScopeValue, index: number): string {
   return String(index);
 }
 
-function safeInstanceSuffix(value: string): string {
-  let output = "";
-  for (const character of value) {
-    output += /[A-Za-z0-9_-]/.test(character) ? character : "-";
-    if (output.length >= 64) break;
-  }
-  return output || "item";
+function instanceSuffix(path: readonly string[]): string {
+  const encoded = JSON.stringify(path.map((part) => [part.length, part]));
+  return `i-${createHash("sha256").update(encoded).digest("base64url").slice(0, 22)}`;
 }
 
 function authorityKeyForSlot(slot: TrustedSlotManifest, context: RenderContext): string {
   const scope = slot.scopeId && slot.scopeId !== "root" ? context.scopes.get(slot.scopeId) : undefined;
+  if (slot.kind === "cartLineControls") {
+    if (slot.scopeId === context.currentScopeId && scope && "quantity" in scope && typeof scope.id === "string") {
+      return `cartLine:${scope.id}`;
+    }
+    throw new Error(`Trusted slot ${slot.id} requires an exact cartLine repeat scope`);
+  }
   if (scope && "handle" in scope && typeof scope.id === "string") return `product:${scope.id}`;
   if (scope && "quantity" in scope && typeof scope.id === "string") return `cartLine:${scope.id}`;
   if (scope && "available" in scope && !("handle" in scope) && typeof scope.id === "string") {
     return `variant:${scope.id}`;
-  }
-  if (slot.kind === "cartLineControls" && context.data.cart?.lines[0]) {
-    return `cartLine:${context.data.cart.lines[0].id}`;
   }
   if ((slot.kind === "cartSummary" || slot.kind === "cartDrawer") && context.data.cart) {
     return `cart:${context.data.cart.id}`;
@@ -230,12 +232,15 @@ function renderNode(node: CompiledNode, context: RenderContext, key: string): Re
   if (node.kind !== "element" || !node.repeat) return renderOne(node, context, key);
   return repeatValues(node, context.data).map((value, index) => {
     const rawKey = itemKey(value, index);
+    const path = [...context.instancePath, node.repeat!.scopeId, rawKey];
     const scopes = new Map(context.scopes);
     scopes.set(node.repeat!.scopeId, value);
     return renderOne(node, {
       ...context,
       scopes,
-      instanceSuffix: safeInstanceSuffix(rawKey),
+      currentScopeId: node.repeat!.scopeId,
+      instancePath: path,
+      instanceSuffix: instanceSuffix(path),
     }, `${key}-${rawKey}`);
   });
 }
@@ -256,6 +261,8 @@ function contextFor(
     bindings,
     slots: new Map(trustedSlots.map((slot) => [slot.id, slot])),
     scopes: new Map([["root", data]]),
+    currentScopeId: "root",
+    instancePath: [],
   };
 }
 

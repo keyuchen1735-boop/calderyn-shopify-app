@@ -7,6 +7,7 @@ export interface TrustedSlotHostProps {
 }
 
 export function TrustedSlotHost({ slot, instanceId, authorityKey }: TrustedSlotHostProps) {
+  const instance = instanceId === slot.id ? undefined : instanceId.slice(slot.id.length + 1);
   return (
     <div
       id={instanceId}
@@ -16,6 +17,7 @@ export function TrustedSlotHost({ slot, instanceId, authorityKey }: TrustedSlotH
       data-cd-host-size={slot.hostSize}
       data-cd-theme-tokens={slot.themeTokenIds.join(" ")}
       data-cd-shadow-mode="closed"
+      data-cd-instance={instance}
     />
   );
 }

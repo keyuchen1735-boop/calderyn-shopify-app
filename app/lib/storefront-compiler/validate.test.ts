@@ -31,6 +31,17 @@ function flattenElements(nodes: readonly CompiledNode[]): CompiledElementNode[] 
 }
 
 describe("validation profile v1", () => {
+  it("rejects persisted cart-line controls whose exact repeat scope was removed", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.cart.html = `<main data-cd-repeat="cart.lines"><div data-cd-key="cartLine.id" data-cd-slot="cartLineControls"></div></main>`;
+    const bundle = compileBundle(source).bundle;
+    const slot = bundle.routes.cart.trustedSlots[0];
+    if (!slot) throw new Error("fixture cart-line slot is missing");
+    expect(slot.scopeId).toBe("cd-cart-scope-1");
+    slot.scopeId = undefined;
+    expect(validateCompiledBundle(bundle).diagnostics.map((item) => item.code)).toContain("slot.scope");
+  });
+
   it("rejects unknown and malformed deserialized input without throwing", () => {
     expect(validateCompiledBundle(null).ok).toBe(false);
     expect(validateCompiledBundle({}).ok).toBe(false);

@@ -51,10 +51,9 @@ describe("platform-owned commerce hosts", () => {
       },
     });
     const html = renderToStaticMarkup(result.element);
-    expect(html.match(/id="cd-home-slot-1-[^"]+"/g)).toEqual([
-      'id="cd-home-slot-1-product-one"',
-      'id="cd-home-slot-1-product-two"',
-    ]);
+    const hostIds = html.match(/id="cd-home-slot-1-i-[A-Za-z0-9_-]+"/g) ?? [];
+    expect(hostIds).toHaveLength(2);
+    expect(new Set(hostIds).size).toBe(2);
     expect(html).toContain('data-cd-authority-key="product:product-one"');
     expect(html).toContain('data-cd-authority-key="product:product-two"');
   });

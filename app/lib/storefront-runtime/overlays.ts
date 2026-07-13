@@ -11,6 +11,8 @@ export interface OverlayManager {
 interface OpenSurface {
   element: HTMLElement;
   presentation: HTMLElement;
+  commerceLayer: HTMLElement | null;
+  commerce: Array<{ host: HTMLElement; placeholder: Comment; originalPointerEvents: string }>;
   placeholder: Comment;
   opener: HTMLElement | null;
   originalHidden: boolean;
@@ -63,6 +65,14 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
   let background: BackgroundState[] | null = null;
   let originalBodyOverflow = "";
 
+  const attempt = (errors: unknown[], action: () => void): void => {
+    try {
+      action();
+    } catch (error) {
+      errors.push(error);
+    }
+  };
+
   const acquireBackground = (): void => {
     if (background) return;
     originalBodyOverflow = document.body.style.overflow;
@@ -81,16 +91,20 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
     portal.hidden = false;
   };
 
-  const releaseBackground = (): void => {
-    if (!background) return;
+  const releaseBackground = (): unknown[] => {
+    const errors: unknown[] = [];
+    if (!background) return errors;
     for (const state of background) {
-      if (state.inert) state.element.setAttribute("inert", "");
-      else state.element.removeAttribute("inert");
-      restoreAttribute(state.element, "aria-hidden", state.ariaHidden);
+      attempt(errors, () => {
+        if (state.inert) state.element.setAttribute("inert", "");
+        else state.element.removeAttribute("inert");
+      });
+      attempt(errors, () => restoreAttribute(state.element, "aria-hidden", state.ariaHidden));
     }
     background = null;
-    document.body.style.overflow = originalBodyOverflow;
-    portal.hidden = true;
+    attempt(errors, () => { document.body.style.overflow = originalBodyOverflow; });
+    attempt(errors, () => { portal.hidden = true; });
+    return errors;
   };
 
   const localElement = (targetId: string, opener: HTMLElement | null): HTMLElement => {
@@ -114,29 +128,64 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
     return stack.find((candidate) => candidate === targetId) ?? targetId;
   };
 
-  const restore = (concreteId: string, restoreFocus: boolean, teardown: boolean): void => {
+  const syncStackOwnership = (errors: unknown[] = []): unknown[] => {
+    const topId = stack.at(-1);
+    for (const [id, surface] of openSurfaces) {
+      const active = id === topId;
+      attempt(errors, () => {
+        if (active) surface.presentation.removeAttribute("inert");
+        else surface.presentation.setAttribute("inert", "");
+      });
+      attempt(errors, () => restoreAttribute(surface.presentation, "aria-hidden", active ? null : "true"));
+      if (surface.commerceLayer) {
+        attempt(errors, () => {
+          if (active) surface.commerceLayer!.removeAttribute("inert");
+          else surface.commerceLayer!.setAttribute("inert", "");
+        });
+        attempt(errors, () => restoreAttribute(surface.commerceLayer!, "aria-hidden", active ? null : "true"));
+      }
+      attempt(errors, () => {
+        if (active) surface.element.setAttribute("aria-modal", "true");
+        else surface.element.removeAttribute("aria-modal");
+      });
+    }
+    return errors;
+  };
+
+  const restore = (concreteId: string, restoreFocus: boolean): void => {
     const surface = openSurfaces.get(concreteId);
     if (!surface) return;
+    const errors: unknown[] = [];
     const wasTop = stack.at(-1) === concreteId;
-    surface.element.hidden = teardown ? surface.originalHidden : true;
-    restoreAttribute(surface.element, "role", surface.originalRole);
-    restoreAttribute(surface.element, "tabindex", surface.originalTabIndex);
-    restoreAttribute(surface.element, "aria-modal", surface.originalAriaModal);
-    surface.placeholder.replaceWith(surface.element);
-    surface.presentation.remove();
+    attempt(errors, () => { surface.element.hidden = surface.originalHidden; });
+    attempt(errors, () => restoreAttribute(surface.element, "role", surface.originalRole));
+    attempt(errors, () => restoreAttribute(surface.element, "tabindex", surface.originalTabIndex));
+    attempt(errors, () => restoreAttribute(surface.element, "aria-modal", surface.originalAriaModal));
+    attempt(errors, () => surface.placeholder.replaceWith(surface.element));
+    for (const projection of surface.commerce) {
+      attempt(errors, () => projection.placeholder.replaceWith(projection.host));
+      attempt(errors, () => { projection.host.style.pointerEvents = projection.originalPointerEvents; });
+    }
+    if (surface.commerceLayer) attempt(errors, () => surface.commerceLayer!.remove());
+    attempt(errors, () => surface.presentation.remove());
     openSurfaces.delete(concreteId);
     const index = stack.lastIndexOf(concreteId);
     if (index >= 0) stack.splice(index, 1);
 
+    syncStackOwnership(errors);
     const nextTop = openSurfaces.get(stack.at(-1) ?? "");
-    if (!nextTop) releaseBackground();
-    if (!restoreFocus || !wasTop) return;
-    if (nextTop) {
-      if (surface.opener?.isConnected && nextTop.element.contains(surface.opener)) surface.opener.focus();
-      else focusSurface(nextTop.element);
-    } else if (surface.opener?.isConnected && !surface.opener.hidden) {
-      surface.opener.focus();
+    if (!nextTop) errors.push(...releaseBackground());
+    if (restoreFocus && wasTop) {
+      if (nextTop) {
+        attempt(errors, () => {
+          if (surface.opener?.isConnected && nextTop.element.contains(surface.opener)) surface.opener.focus();
+          else focusSurface(nextTop.element);
+        });
+      } else if (surface.opener?.isConnected && !surface.opener.hidden) {
+        attempt(errors, () => surface.opener!.focus());
+      }
     }
+    if (errors.length > 0) throw new AggregateError(errors, `Failed to restore overlay ${concreteId}`);
   };
 
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -144,7 +193,7 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
     if (!top) return;
     if (event.key === "Escape") {
       event.preventDefault();
-      restore(top.element.id, true, false);
+      restore(top.element.id, true);
       return;
     }
     if (event.key !== "Tab") return;
@@ -167,7 +216,9 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
 
   const onFocusIn = (event: FocusEvent): void => {
     const top = openSurfaces.get(stack.at(-1) ?? "");
-    if (top && event.target instanceof Node && !top.element.contains(event.target)) focusSurface(top.element);
+    if (top && event.target instanceof Node && !top.element.contains(event.target) && !top.commerceLayer?.contains(event.target)) {
+      focusSurface(top.element);
+    }
   };
   document.addEventListener("keydown", onKeyDown);
   document.addEventListener("focusin", onFocusIn);
@@ -186,12 +237,32 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
       const bundleNamespace = targetId.split("-")[1];
       if (bundleNamespace) presentation.setAttribute("data-cd-bundle", bundleNamespace);
       presentation.style.pointerEvents = "auto";
+      presentation.style.position = "relative";
+      presentation.style.zIndex = "1";
       presentation.style.setProperty("--cd-overlay-surface", "Canvas");
       presentation.style.setProperty("--cd-overlay-foreground", "CanvasText");
       presentation.append(element);
       portal.append(presentation);
+      const commerce = [...element.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")].map((host) => {
+        const hostPlaceholder = document.createComment(`cd-overlay-commerce:${host.id}`);
+        host.replaceWith(hostPlaceholder);
+        return { host, placeholder: hostPlaceholder, originalPointerEvents: host.style.pointerEvents };
+      });
+      let commerceLayer: HTMLElement | null = null;
+      if (commerce.length > 0) {
+        commerceLayer = document.createElement("div");
+        commerceLayer.setAttribute("data-cd-overlay-commerce", concreteId);
+        Object.assign(commerceLayer.style, {
+          position: "absolute", inset: "0", zIndex: "2", pointerEvents: "none", isolation: "isolate",
+        });
+        for (const projection of commerce) {
+          projection.host.style.pointerEvents = "auto";
+          commerceLayer.append(projection.host);
+        }
+        portal.append(commerceLayer);
+      }
       openSurfaces.set(concreteId, {
-        element, presentation, placeholder, opener,
+        element, presentation, commerceLayer, commerce, placeholder, opener,
         originalHidden: element.hidden,
         originalRole: element.getAttribute("role"),
         originalTabIndex: element.getAttribute("tabindex"),
@@ -200,16 +271,16 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
       stack.push(concreteId);
       element.hidden = false;
       element.setAttribute("role", "dialog");
-      element.setAttribute("aria-modal", "true");
       if (!element.hasAttribute("tabindex")) element.setAttribute("tabindex", "-1");
+      syncStackOwnership();
       focusSurface(element);
     },
     close(targetId, opener) {
-      restore(openId(targetId, opener), true, false);
+      restore(openId(targetId, opener), true);
     },
     toggle(targetId, opener) {
       const concreteId = openId(targetId, opener);
-      if (openSurfaces.has(concreteId)) restore(concreteId, true, false);
+      if (openSurfaces.has(concreteId)) restore(concreteId, true);
       else this.open(targetId, opener);
     },
     isOpen(targetId) {
@@ -219,11 +290,13 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
       });
     },
     teardown() {
-      for (const concreteId of [...stack].reverse()) restore(concreteId, false, true);
-      releaseBackground();
-      document.removeEventListener("keydown", onKeyDown);
-      document.removeEventListener("focusin", onFocusIn);
-      portal.remove();
+      const errors: unknown[] = [];
+      for (const concreteId of [...stack].reverse()) attempt(errors, () => restore(concreteId, false));
+      errors.push(...releaseBackground());
+      attempt(errors, () => document.removeEventListener("keydown", onKeyDown));
+      attempt(errors, () => document.removeEventListener("focusin", onFocusIn));
+      attempt(errors, () => portal.remove());
+      if (errors.length > 0) throw new AggregateError(errors, "Failed to teardown overlay manager");
     },
   };
 }

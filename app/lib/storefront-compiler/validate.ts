@@ -580,6 +580,10 @@ function parseSlots(value: unknown, path: string, tree: TreeContext, add: AddDia
       return;
     }
     if (input.scopeId !== undefined && (typeof input.scopeId !== "string" || !tree.scopes.has(input.scopeId))) add("slot.scope", currentPath, "Trusted slot scope is unresolved");
+    if (input.kind === "cartLineControls" &&
+      (typeof input.scopeId !== "string" || tree.scopes.get(input.scopeId)?.kind !== "cartLine")) {
+      add("slot.scope", currentPath, "cartLineControls requires an exact cartLine repeat scope");
+    }
     const host = tree.elements.get(input.id);
     if (!host || host.trustedSlotId !== input.id) add("slot.unresolved_host", currentPath, "Trusted slot host is unresolved");
     else {

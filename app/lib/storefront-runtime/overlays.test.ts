@@ -78,8 +78,20 @@ describe("platform overlay portal", () => {
     const manager = createOverlayManager(root);
     manager.open("cd-home-a", rootOpener);
     manager.open("cd-home-b", aOpener);
+    const presentations = document.querySelectorAll<HTMLElement>("[data-cd-overlay-presentation]");
+    const aPresentation = [...presentations].find((item) => item.contains(document.getElementById("cd-home-a")))!;
+    const bPresentation = [...presentations].find((item) => item.contains(document.getElementById("cd-home-b")))!;
+    expect(aPresentation.hasAttribute("inert")).toBe(true);
+    expect(aPresentation.getAttribute("aria-hidden")).toBe("true");
+    expect(document.getElementById("cd-home-a")?.getAttribute("aria-modal")).not.toBe("true");
+    expect(bPresentation.hasAttribute("inert")).toBe(false);
+    expect(bPresentation.hasAttribute("aria-hidden")).toBe(false);
+    expect(document.getElementById("cd-home-b")?.getAttribute("aria-modal")).toBe("true");
     manager.close("cd-home-b", aOpener);
     expect(document.activeElement).toBe(aOpener);
+    expect(aPresentation.hasAttribute("inert")).toBe(false);
+    expect(aPresentation.hasAttribute("aria-hidden")).toBe(false);
+    expect(document.getElementById("cd-home-a")?.getAttribute("aria-modal")).toBe("true");
     expect(root.hasAttribute("inert")).toBe(true);
     manager.close("cd-home-a", rootOpener);
     expect(document.activeElement).toBe(rootOpener);
@@ -91,6 +103,60 @@ describe("platform overlay portal", () => {
     expect(document.activeElement?.id).toBe("b-focus");
     expect(root.hasAttribute("inert")).toBe(true);
     manager.teardown();
+  });
+
+  it("restores the source surface's original visibility and ARIA state on close", () => {
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a" role="region" tabindex="2" aria-modal="false">Visible</section></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const surface = document.getElementById("cd-home-a") as HTMLElement;
+    const manager = createOverlayManager(root);
+    manager.open(surface.id, null);
+    manager.close(surface.id, null);
+    expect(surface.hidden).toBe(false);
+    expect(surface.getAttribute("role")).toBe("region");
+    expect(surface.getAttribute("tabindex")).toBe("2");
+    expect(surface.getAttribute("aria-modal")).toBe("false");
+    manager.teardown();
+  });
+
+  it("projects trusted commerce into an isolated overlay-owned layer and restores it", () => {
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="cover"></div><div id="slot" data-cd-trusted-slot="addToCart"></div></section></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const surface = document.getElementById("cd-home-a") as HTMLElement;
+    const slot = document.getElementById("slot") as HTMLElement;
+    const manager = createOverlayManager(root);
+    manager.open(surface.id, null);
+    const presentation = document.querySelector<HTMLElement>("[data-cd-overlay-presentation]")!;
+    const commerceLayer = document.querySelector<HTMLElement>("[data-cd-overlay-commerce]")!;
+    expect(commerceLayer).not.toBeNull();
+    expect(commerceLayer.contains(slot)).toBe(true);
+    expect(presentation.contains(slot)).toBe(false);
+    expect(Number(commerceLayer.style.zIndex)).toBeGreaterThan(Number(presentation.style.zIndex || 0));
+    expect(commerceLayer.style.pointerEvents).toBe("none");
+    expect(slot.style.pointerEvents).toBe("auto");
+    manager.close(surface.id, null);
+    expect(surface.contains(slot)).toBe(true);
+    expect(document.querySelector("[data-cd-overlay-commerce]")).toBeNull();
+    manager.teardown();
+  });
+
+  it("exhaustively tears down overlays and background ownership when one restoration throws", () => {
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a"></section><section id="cd-home-b"></section></main><footer id="outside"></footer>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const outside = document.getElementById("outside") as HTMLElement;
+    const manager = createOverlayManager(root);
+    manager.open("cd-home-a", null);
+    manager.open("cd-home-b", null);
+    const presentation = document.querySelector<HTMLElement>("[data-cd-overlay-presentation]")!;
+    const nativeRemove = presentation.remove.bind(presentation);
+    presentation.remove = () => { nativeRemove(); throw new Error("presentation restore failed"); };
+    expect(() => manager.teardown()).toThrow(AggregateError);
+    expect(document.querySelector("[data-cd-overlay-portal]")).toBeNull();
+    expect(root.hasAttribute("inert")).toBe(false);
+    expect(root.hasAttribute("aria-hidden")).toBe(false);
+    expect(outside.hasAttribute("inert")).toBe(false);
+    expect(document.getElementById("cd-home-a")?.parentElement).toBe(root);
+    expect(document.getElementById("cd-home-b")?.parentElement).toBe(root);
   });
 
   it("uses one portal and removes it and its listeners during teardown", () => {
@@ -112,15 +178,15 @@ describe("platform overlay portal", () => {
   it("resolves the compiler-issued target in the opener's repeated scope", () => {
     document.body.innerHTML = `
       <main id="root">
-        <div><button id="cd-home-open-one" data-cd-instance="one">Open</button><section id="cd-home-drawer-one" data-cd-instance="one"></section></div>
-        <div><button id="cd-home-open-two" data-cd-instance="two">Open</button><section id="cd-home-drawer-two" data-cd-instance="two"></section></div>
+        <div><button id="cd-home-open-i-parent-a-child-same" data-cd-instance="i-parent-a-child-same">Open</button><section id="cd-home-drawer-i-parent-a-child-same" data-cd-instance="i-parent-a-child-same"></section></div>
+        <div><button id="cd-home-open-i-parent-b-child-same" data-cd-instance="i-parent-b-child-same">Open</button><section id="cd-home-drawer-i-parent-b-child-same" data-cd-instance="i-parent-b-child-same"></section></div>
       </main>`;
     const root = document.getElementById("root") as HTMLElement;
-    const opener = document.getElementById("cd-home-open-two") as HTMLButtonElement;
+    const opener = document.getElementById("cd-home-open-i-parent-b-child-same") as HTMLButtonElement;
     const manager = createOverlayManager(root);
     manager.open("cd-home-drawer", opener);
-    expect(document.getElementById("cd-home-drawer-two")?.parentElement?.hasAttribute("data-cd-overlay-presentation")).toBe(true);
-    expect(document.getElementById("cd-home-drawer-one")?.parentElement?.hasAttribute("data-cd-overlay-presentation")).toBe(false);
+    expect(document.getElementById("cd-home-drawer-i-parent-b-child-same")?.parentElement?.hasAttribute("data-cd-overlay-presentation")).toBe(true);
+    expect(document.getElementById("cd-home-drawer-i-parent-a-child-same")?.parentElement?.hasAttribute("data-cd-overlay-presentation")).toBe(false);
     manager.teardown();
   });
 });

@@ -404,6 +404,9 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
         if (!TRUSTED_SLOT_KINDS.has(slotKind as TrustedSlotManifest["kind"])) {
           throw new CompilerError("slot.kind", `Unsupported trusted slot ${JSON.stringify(slotKind)}`);
         }
+        if (slotKind === "cartLineControls" && childScope.kind !== "cartLine") {
+          throw new CompilerError("slot.scope", "cartLineControls must be inside a cart.lines repeat scope");
+        }
         if (sourceNode.tagName !== "div" && sourceNode.tagName !== "section" && sourceNode.tagName !== "aside" && sourceNode.tagName !== "span") {
           throw new CompilerError("slot.host", "Trusted commerce slots require a neutral presentation host");
         }

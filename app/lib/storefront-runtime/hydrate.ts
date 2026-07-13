@@ -154,10 +154,17 @@ function validateArtifact(
   const slotIds = new Set<string>();
   for (const slot of artifact.trustedSlots) {
     if (!isCompilerIssuedId(slot.id) || slotIds.has(slot.id)) throw new RuntimeManifestError("Trusted slot ID is invalid");
+    if (slot.kind === "cartLineControls" && (!slot.scopeId || slot.scopeId === "root" || !isCompilerIssuedId(slot.scopeId))) {
+      throw new RuntimeManifestError("cartLineControls requires an exact compiler-issued cartLine repeat scope");
+    }
     slotIds.add(slot.id);
     const hosts = localElements(root, slot.id);
     if (hosts.length === 0 || hosts.some((host) => host.dataset.cdTrustedSlot !== slot.kind)) {
       throw new RuntimeManifestError("Trusted slot host is unresolved or mismatched");
+    }
+    if (slot.kind === "cartLineControls" && hosts.some((host) =>
+      host.dataset.cdSlotScope !== slot.scopeId || !host.closest<HTMLElement>("[data-cd-instance]"))) {
+      throw new RuntimeManifestError("cartLineControls host is outside its exact repeated cartLine instance");
     }
   }
   return state;
@@ -180,14 +187,24 @@ class DomMutationJournal {
   }
 
   restore(): void {
+    const errors: unknown[] = [];
     for (const [element, snapshot] of this.snapshots) {
-      for (const attribute of [...element.attributes]) element.removeAttribute(attribute.name);
-      for (const [name, value] of snapshot.attributes) element.setAttribute(name, value);
-      if (snapshot.value !== undefined && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
-        element.value = snapshot.value;
+      for (const attribute of [...element.attributes]) {
+        try { element.removeAttribute(attribute.name); } catch (error) { errors.push(error); }
+      }
+      for (const [name, value] of snapshot.attributes) {
+        try { element.setAttribute(name, value); } catch (error) { errors.push(error); }
+      }
+      try {
+        if (snapshot.value !== undefined && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+          element.value = snapshot.value;
+        }
+      } catch (error) {
+        errors.push(error);
       }
     }
     this.snapshots.clear();
+    if (errors.length > 0) throw new AggregateError(errors, "Failed to restore storefront DOM mutations");
   }
 }
 
@@ -275,6 +292,7 @@ function mountCommerce(
   adapters: RuntimeAdapters,
 ): Array<() => void> {
   const cleanups: Array<() => void> = [];
+  const committed: Array<{ host: HTMLElement; shadowRoot: ShadowRoot }> = [];
   if (slots.length === 0) return cleanups;
   const commerce = adapters.commerce;
   if (!commerce) throw new RuntimeManifestError("Commerce capability requires a trusted adapter");
@@ -283,25 +301,66 @@ function mountCommerce(
       const authorityKey = host.dataset.cdAuthorityKey;
       if (!authorityKey || authorityKey.length > 240) throw new RuntimeManifestError("Trusted commerce authority is missing");
       if (host.shadowRoot) throw new RuntimeManifestError("Trusted commerce host uses an untrusted open root");
+      const reset = (): HTMLStyleElement => {
+        const style = host.ownerDocument.createElement("style");
+        style.textContent = ":host{box-sizing:border-box;contain:content}*,*::before,*::after{box-sizing:border-box}";
+        return style;
+      };
+      const markUnavailable = (targetHost: HTMLElement, targetRoot: ShadowRoot): void => {
+        const unavailable = targetHost.ownerDocument.createElement("span");
+        unavailable.setAttribute("data-cd-commerce-unavailable", "");
+        unavailable.setAttribute("role", "status");
+        unavailable.textContent = "Commerce unavailable";
+        targetRoot.replaceChildren(reset(), unavailable);
+      };
+      const provisionalHost = host.ownerDocument.createElement("div");
+      const provisionalRoot = provisionalHost.attachShadow({ mode: "closed" });
+      provisionalRoot.append(reset());
+      let cleanup: void | (() => void);
+      try {
+        cleanup = commerce.mount({
+          shadowRoot: provisionalRoot,
+          host: provisionalHost,
+          slot,
+          authorityKey,
+          bridge(intent) {
+            if (!validCommerceIntent(intent) || !commerceIntentAllowed(slot, intent) ||
+              !commerceIntentMatchesAuthority(authorityKey, intent)) {
+              throw new RuntimeManifestError("Trusted commerce bridge rejected intent authority");
+            }
+            commerce.dispatch({ authorityKey, slotKind: slot.kind, intent });
+          },
+        });
+      } catch (error) {
+        const rollbackErrors: unknown[] = [];
+        try {
+          const shadowRoot = closedCommerceRoots.get(host) ?? host.attachShadow({ mode: "closed" });
+          closedCommerceRoots.set(host, shadowRoot);
+          markUnavailable(host, shadowRoot);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+        rollbackErrors.push(...runCleanups(cleanups));
+        for (const mounted of committed) {
+          try { markUnavailable(mounted.host, mounted.shadowRoot); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+        }
+        if (rollbackErrors.length > 0) {
+          throw new AggregateError([error, ...rollbackErrors], "Commerce mount and rollback failed");
+        }
+        throw error;
+      }
       const shadowRoot = closedCommerceRoots.get(host) ?? host.attachShadow({ mode: "closed" });
       closedCommerceRoots.set(host, shadowRoot);
-      const reset = host.ownerDocument.createElement("style");
-      reset.textContent = ":host{box-sizing:border-box;contain:content}*,*::before,*::after{box-sizing:border-box}";
-      shadowRoot.replaceChildren(reset);
-      const cleanup = commerce.mount({
-        shadowRoot,
-        host,
-        slot,
-        authorityKey,
-        bridge(intent) {
-          if (!validCommerceIntent(intent) || !commerceIntentAllowed(slot, intent) ||
-            !commerceIntentMatchesAuthority(authorityKey, intent)) {
-            throw new RuntimeManifestError("Trusted commerce bridge rejected intent authority");
-          }
-          commerce.dispatch({ authorityKey, slotKind: slot.kind, intent });
-        },
+      shadowRoot.replaceChildren(...provisionalRoot.childNodes);
+      committed.push({ host, shadowRoot });
+      cleanups.push(() => {
+        const errors: unknown[] = [];
+        if (cleanup) {
+          try { cleanup(); } catch (error) { errors.push(error); }
+        }
+        try { shadowRoot.replaceChildren(reset()); } catch (error) { errors.push(error); }
+        if (errors.length > 0) throw new AggregateError(errors, `Failed to cleanup commerce host ${host.id}`);
       });
-      if (cleanup) cleanups.push(cleanup);
     }
   }
   return cleanups;
@@ -408,13 +467,27 @@ export function hydrateStorefront(options: HydrateStorefrontOptions): Storefront
       }
     }
   } catch (error) {
-    runCleanups(removers);
+    const rollbackErrors = runCleanups(removers);
     try {
       overlays.teardown();
-    } finally {
-      journal.restore();
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
     }
-    return failedHandle(error instanceof RuntimeManifestError ? error : new RuntimeManifestError("Storefront hydration failed"));
+    try {
+      journal.restore();
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    const message = error instanceof RuntimeManifestError ? error.message : "Storefront hydration failed";
+    const failure = new RuntimeManifestError(rollbackErrors.length > 0
+      ? `${message}; rollback reported ${rollbackErrors.length} restoration error(s)`
+      : message);
+    if (rollbackErrors.length > 0) {
+      Object.defineProperty(failure, "cause", {
+        value: new AggregateError([error, ...rollbackErrors], "Storefront hydration and rollback failed"),
+      });
+    }
+    return failedHandle(failure);
   }
 
   const handle: StorefrontRuntimeHandle = {

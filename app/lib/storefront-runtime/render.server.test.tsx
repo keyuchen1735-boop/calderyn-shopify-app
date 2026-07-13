@@ -69,6 +69,62 @@ function artifact(overrides: Partial<RouteArtifact> = {}): RouteArtifact {
 }
 
 describe("compiled-node server renderer", () => {
+  it("composes deterministic collision-resistant instance IDs across nested repeats", () => {
+    const repeatedArtifact = artifact({
+      tree: [{
+        kind: "element", id: "cd-home-outer", tag: "div", attributes: {},
+        repeat: { scopeId: "cd-home-scope-outer", source: "featured.products", itemKind: "product", keyPath: "product.id" },
+        children: [{
+          kind: "element", id: "cd-home-inner", tag: "section", attributes: {},
+          repeat: { scopeId: "cd-home-scope-inner", source: "featured.products", itemKind: "product", keyPath: "product.id" },
+          children: [{ kind: "element", id: "cd-home-leaf", tag: "span", attributes: {}, children: [] }],
+        }],
+      }],
+    });
+    const repeatedData = {
+      ...data,
+      featuredProducts: [
+        { ...publicProduct, id: "parent-a", handle: "parent-a" },
+        { ...publicProduct, id: "parent-b", handle: "parent-b" },
+      ],
+    };
+    const render = () => renderToStaticMarkup(createElement(() => renderStorefrontRoute({
+      routeId: "home", artifact: repeatedArtifact, data: repeatedData, nonce: "route-nonce",
+    }).element));
+    const first = render();
+    const second = render();
+    const leafIds = [...first.matchAll(/id="(cd-home-leaf-[^"]+)"/g)].map((match) => match[1]);
+    expect(leafIds).toHaveLength(4);
+    expect(new Set(leafIds).size).toBe(4);
+    expect(first).toBe(second);
+  });
+
+  it("does not collide repeat IDs that only differ after a long shared prefix", () => {
+    const prefix = "x".repeat(80);
+    const repeatedArtifact = artifact({
+      tree: [{
+        kind: "element", id: "cd-home-item", tag: "div", attributes: {}, children: [],
+        repeat: { scopeId: "cd-home-scope-items", source: "featured.products", itemKind: "product", keyPath: "product.id" },
+      }],
+    });
+    const result = renderStorefrontRoute({
+      routeId: "home",
+      artifact: repeatedArtifact,
+      data: {
+        ...data,
+        featuredProducts: [
+          { ...publicProduct, id: `${prefix}-a`, handle: "a" },
+          { ...publicProduct, id: `${prefix}-b`, handle: "b" },
+        ],
+      },
+      nonce: "route-nonce",
+    });
+    const html = renderToStaticMarkup(createElement(() => result.element));
+    const ids = [...html.matchAll(/id="(cd-home-item-[^"]+)"/g)].map((match) => match[1]);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
   it("renders authoritative CompiledNode trees with React-escaped text and attributes", () => {
     const result = renderStorefrontRoute({ routeId: "home", artifact: artifact({ css: ".title{color:red}" }), data, nonce: "route-nonce" });
     const html = renderToStaticMarkup(createElement(() => result.element));
@@ -107,6 +163,29 @@ describe("compiled-node server renderer", () => {
     expect(html).toContain('data-cd-shadow-mode="closed"');
     expect(html).toContain('data-cd-authority-key="product:product-1"');
     expect(html).not.toContain("hide me");
+  });
+
+  it("refuses cart-line controls without the exact repeated cart-line scope", () => {
+    const cartData: PublicPresentationData = {
+      ...data,
+      cart: {
+        id: "cart-1", count: 1,
+        lines: [{
+          id: "line-1", title: "Line", quantity: 1,
+          unitPrice: { cents: 1200, currency: "USD" }, total: { cents: 1200, currency: "USD" },
+        }],
+        subtotal: { cents: 1200, currency: "USD" }, discounts: { cents: 0, currency: "USD" },
+        total: { cents: 1200, currency: "USD" },
+      },
+    };
+    const invalid = artifact({
+      tree: [{
+        kind: "element", id: "cd-cart-slot-1", tag: "div", attributes: {}, children: [], trustedSlotId: "cd-cart-slot-1",
+      }],
+      trustedSlots: [{ id: "cd-cart-slot-1", kind: "cartLineControls", hostSize: "block", themeTokenIds: [] }],
+    });
+    expect(() => renderStorefrontRoute({ routeId: "cart", artifact: invalid, data: cartData, nonce: "route-nonce" }))
+      .toThrow(/cartLine|authority/i);
   });
 
   it("renders checkout decoration and platform checkout controls as sibling roots", () => {
