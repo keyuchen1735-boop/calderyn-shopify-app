@@ -28,7 +28,8 @@ import {
 import { reduced } from "../hero/hero-motion";
 import { addPhotos, summarizePhotoRejections, type PhotoDraft } from "./new-product-photos";
 import { variantSummary } from "./new-product-copy";
-import { Card, Btn, SectionTitle, Segmented } from "../ui";
+import { organizeSummary } from "./product-editor-summaries";
+import { Card, Btn, Reveal, SectionTitle, Segmented } from "../ui";
 import { CDIcon } from "../icons";
 
 type OptRow = { name: string; values: string };
@@ -684,6 +685,8 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
   const sizeValues = sizeOpt ? sizeOpt.values.split(",").map((s) => s.trim()).filter(Boolean) : [];
   const priceText = Number(price) > 0 ? `$${Number(price).toFixed(2)}` : "$0.00";
   const stepIdx = STEP_ORDER.findIndex((s) => s.id === step);
+  const visibleReceipts = receipts.slice(-4);
+  const organizeMeta = organizeSummary(vendor, tags, sel);
   // The tenant's real storefront listing URL — real org_slug + /storefront path,
   // so the previewed link resolves to the live store (not a re-derived slug).
   const listingUrl = storefrontListingUrl(app.orgSlug, app.storeLabel, title);
@@ -874,22 +877,12 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
         {/* Prompt bar (the describe step's hero IS the composer) */}
         {step !== "describe" && (
           <div
-            style={{
-              position: "relative",
-              overflow: "hidden",
-              display: "flex",
-              gap: 8,
-              alignItems: "center",
-              padding: "8px 10px",
-              borderRadius: 12,
-              border: "1px solid var(--hairline-strong)",
-              background: "var(--card)",
-            }}
+            className="cd-npf-prompt"
           >
             {sparkBadge(28)}
             <input
               className="cd-input"
-              style={{ flex: "1 1 180px", minWidth: 0, border: 0, background: "transparent", padding: "6px 4px" }}
+              style={{ minWidth: 0, border: 0, background: "transparent", padding: "6px 4px" }}
               placeholder='Tell it what to change — "make it have a bunch of sizes"'
               maxLength={PROMPT_MAX}
               value={prompt}
@@ -909,15 +902,35 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
             {drafting && shimmerBar}
           </div>
         )}
-        {step !== "describe" && receipts.length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: -6 }}>
-            {receipts.slice(-4).map((r) => (
+        {step !== "describe" && visibleReceipts.length === 1 && (
+          <div className="cd-npf-receipts">
+            {visibleReceipts.map((r) => (
               <span key={r.id} className="cd-badge" style={{ background: "var(--green-bg)", color: "var(--green)" }}>
                 <CDIcon name="check" size={12} strokeWidth={2} />
                 {r.text}
               </span>
             ))}
           </div>
+        )}
+        {step !== "describe" && visibleReceipts.length > 1 && (
+          <Reveal
+            className="cd-reveal--receipt"
+            label={
+              <>
+                <CDIcon name="check" size={12} strokeWidth={2} />
+                {visibleReceipts.length} changes
+              </>
+            }
+          >
+            <div className="cd-npf-receipts">
+              {visibleReceipts.map((r) => (
+                <span key={r.id} className="cd-badge" style={{ background: "var(--green-bg)", color: "var(--green)" }}>
+                  <CDIcon name="check" size={12} strokeWidth={2} />
+                  {r.text}
+                </span>
+              ))}
+            </div>
+          </Reveal>
         )}
         {step !== "describe" && photoRow}
 
@@ -1069,7 +1082,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                   </div>
                   {physical ? (
                     <div className="grid grid-cols-2 gap-2">
-                      <Field label="Weight (grams)">
+                      <Field label="Weight (g)">
                         <input className="cd-input tabular-nums" type="number" min="0" inputMode="numeric" value={weight} onChange={(e) => setWeight(e.target.value)} />
                       </Field>
                       <Field label="Box size (L × W × H, mm)">
@@ -1097,11 +1110,11 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                 </div>
               </div>
 
-              <div style={{ height: 1, background: "var(--hairline)" }} />
-
-              <div>
-                <SectionTitle>Organize</SectionTitle>
-                <p className="cd-caption">Optional — helps group products later. Fine to skip.</p>
+              <Reveal
+                className="cd-reveal--inline"
+                label="Organize (optional)"
+                summary={organizeMeta.text === "Nothing yet" ? undefined : organizeMeta.text}
+              >
                 <div className="flex flex-col gap-3">
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Vendor">
@@ -1120,7 +1133,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                     />
                   </Field>
                 </div>
-              </div>
+              </Reveal>
 
               {stepNav("Preview it")}
             </div>

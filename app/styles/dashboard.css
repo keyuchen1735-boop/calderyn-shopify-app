@@ -2742,6 +2742,13 @@
 }
 
 /* New-product flow: collapsed variant grid + shipping question */
+.cd-npf-prompt {
+  position: relative; overflow: hidden; display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--hairline-strong); border-radius: 12px;
+  background: var(--card);
+}
+.cd-npf-prompt > .cd-input { flex: 1 1 180px; }
+.cd-npf-receipts { display: flex; flex-wrap: wrap; gap: 6px; }
 .cd-npf-combo-summary {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   width: 100%; padding: 10px 12px; border: 1px dashed var(--hairline-strong);
@@ -2752,3 +2759,9 @@
 .cd-npf-combo-edit { color: var(--accent); font-size: 0.85em; }
 .cd-npf-shipq { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .cd-npf-shipq-btns { display: flex; gap: 6px; }
+
+@media (max-width: 560px) {
+  .cd-npf-prompt { flex-wrap: wrap; }
+  .cd-npf-prompt > .cd-input { flex: 1 1 calc(100% - 44px); }
+  .cd-npf-prompt > .cd-btn:nth-of-type(1) { margin-left: auto; }
+}
