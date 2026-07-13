@@ -182,6 +182,15 @@ describe("planeFrame", () => {
     });
     expect(Number.isFinite(frames[0].bearing)).toBe(true);
   });
+
+  it("offsets the northeast-facing plane artwork to follow the route", () => {
+    const [frame] = planeFrame(
+      [{ id: "north", from: [0, 0], to: [0, 10], orderCount: 1 }],
+      7_500,
+    );
+
+    expect(frame.bearing).toBeCloseTo(315, 5);
+  });
 });
 
 describe("shouldAnimatePlanes", () => {
