@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Btn, Card, Pan, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
+import { Btn, Card, Pan, Pill, Placeholder, SectionTitle, Segmented, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
 import { money, shortDateYear, timeAgo } from "../format";
 import { useModalChrome } from "../use-modal-chrome";
@@ -38,12 +38,29 @@ import type { DashboardCtx } from "../context";
 const GRID = "1.2fr 1fr 1fr 0.9fr 1.1fr 1.1fr";
 const DRAFT_GRID = "1fr 1.6fr 1fr 1.6fr";
 
+/** One label per status — the pills and the filter control must agree. */
+const STATUS_LABELS: Record<PoStatusVM, string> = {
+  draft: "Draft",
+  ordered: "Ordered",
+  partial: "Partly received",
+  received: "Received",
+  cancelled: "Cancelled",
+};
+
+const FILTER_OPTIONS = [
+  { value: "all", label: "All" },
+  ...(Object.keys(STATUS_LABELS) as PoStatusVM[]).map((value) => ({
+    value,
+    label: STATUS_LABELS[value],
+  })),
+];
+
 function StatusPill({ status }: { status: PoStatusVM }) {
-  if (status === "ordered") return <Pill tone="accent" icon="truck">Ordered</Pill>;
-  if (status === "partial") return <Pill tone="warn" icon="truck">Partly received</Pill>;
-  if (status === "received") return <Pill tone="success" icon="check">Received</Pill>;
-  if (status === "cancelled") return <Pill icon="x">Cancelled</Pill>;
-  return <Pill icon="doc">Draft</Pill>;
+  if (status === "ordered") return <Pill tone="accent" icon="truck">{STATUS_LABELS.ordered}</Pill>;
+  if (status === "partial") return <Pill tone="warn" icon="truck">{STATUS_LABELS.partial}</Pill>;
+  if (status === "received") return <Pill tone="success" icon="check">{STATUS_LABELS.received}</Pill>;
+  if (status === "cancelled") return <Pill icon="x">{STATUS_LABELS.cancelled}</Pill>;
+  return <Pill icon="doc">{STATUS_LABELS.draft}</Pill>;
 }
 
 // ---- legacy Autopilot drafts (audit-backed) --------------------------------------
@@ -224,6 +241,15 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<PoDetailVM | null>(null);
   const [suppliersOpen, setSuppliersOpen] = useState(false);
+  // "all" = no filter; anything else narrows the server-side list (the filter
+  // is a po_list predicate, so paging + totals stay honest within a status).
+  // loadedFilter tracks which filter the rows in `pos` belong to, so the UI
+  // never renders one filter's rows under another filter's selected segment.
+  const [statusFilter, setStatusFilter] = useState<PoStatusVM | "all">("all");
+  const [loadedFilter, setLoadedFilter] = useState<PoStatusVM | "all">("all");
+  const loadedFilterRef = useRef(loadedFilter);
+  const statusFilterRef = useRef(statusFilter);
+  statusFilterRef.current = statusFilter;
 
   // Drawer state (one object — see DrawerState). poId is set on row click;
   // the detail loads after.
@@ -256,9 +282,14 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
         );
       }
       try {
-        const main = await fetchPoScreen(auditIds);
+        const status = statusFilter === "all" ? undefined : statusFilter;
+        const main = await fetchPoScreen(auditIds, status);
         if (!alive) return;
-        cacheScreenData(SCREEN_CACHE_KEYS.po, main);
+        // Only the unfiltered offset-0 payload is the cache contract's shape —
+        // a filtered list must never seed the next visit.
+        if (!status) cacheScreenData(SCREEN_CACHE_KEYS.po, main);
+        loadedFilterRef.current = statusFilter;
+        setLoadedFilter(statusFilter);
         setPos(main.pos);
         setTotal(main.total);
         setSuppliers(main.suppliers);
@@ -270,9 +301,15 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
         setLoadError(null);
       } catch (err) {
         if (!alive) return;
-        if (posRef.current) {
+        if (posRef.current && loadedFilterRef.current === statusFilter) {
           setStaleWarning(true);
         } else {
+          // Either nothing is loaded yet, or the rows on screen belong to a
+          // DIFFERENT filter — showing them under this segment would misread
+          // as matches, so drop to the error state instead.
+          setPos(null);
+          loadedFilterRef.current = statusFilter;
+          setLoadedFilter(statusFilter);
           setLoadError(
             err instanceof DashboardApiError ? err.message : "Couldn't load purchase orders.",
           );
@@ -284,46 +321,74 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
     return () => {
       alive = false;
     };
-  }, [reloadKey]);
+  }, [reloadKey, statusFilter]);
 
-  /** Full refetch — only for mutations that ADD rows (create, convert). Drawer
+  /** Full refetch — only for mutations that ADD rows (create, convert). New
+   *  rows land as drafts, so jump back to the unfiltered view first or the
+   *  just-created PO would be invisible under an active filter. Drawer
    *  actions patch the affected row in place instead (patchPo). */
-  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
+  const reload = useCallback(() => {
+    setStatusFilter("all");
+    setReloadKey((k) => k + 1);
+  }, []);
 
   /** Write a mutated PO back into the list + screen cache from the returned
    *  detail — every list field is on the detail, so no refetch and no
    *  collapse of paged-in rows. */
-  const patchPo = useCallback((updated: PoDetailVM) => {
-    const item: PoListItemVM = {
-      id: updated.id,
-      poNumber: updated.poNumber,
-      supplierName: updated.supplierName,
-      destinationName: updated.destinationName,
-      status: updated.status,
-      expectedAt: updated.expectedAt,
-      source: updated.source,
-      lineCount: updated.lineCount,
-      unitsOrdered: updated.unitsOrdered,
-      unitsReceived: updated.unitsReceived,
-      totalCents: updated.totalCents,
-      createdAt: updated.createdAt,
-      updatedAt: updated.updatedAt,
-    };
-    setPos((cur) => (cur ? cur.map((p) => (p.id === item.id ? item : p)) : cur));
-    const cached = cachedScreenData<PoScreenData>(SCREEN_CACHE_KEYS.po);
-    if (cached?.pos.some((p) => p.id === item.id)) {
-      cacheScreenData(SCREEN_CACHE_KEYS.po, {
-        ...cached,
-        pos: cached.pos.map((p) => (p.id === item.id ? item : p)),
+  const patchPo = useCallback(
+    (updated: PoDetailVM) => {
+      const item: PoListItemVM = {
+        id: updated.id,
+        poNumber: updated.poNumber,
+        supplierName: updated.supplierName,
+        destinationName: updated.destinationName,
+        status: updated.status,
+        expectedAt: updated.expectedAt,
+        source: updated.source,
+        lineCount: updated.lineCount,
+        unitsOrdered: updated.unitsOrdered,
+        unitsReceived: updated.unitsReceived,
+        totalCents: updated.totalCents,
+        createdAt: updated.createdAt,
+        updatedAt: updated.updatedAt,
+      };
+      // A status-changing action (mark ordered, cancel) moves the row out of a
+      // narrowed view — drop it and keep the "x of total" label honest. The
+      // rows on screen belong to loadedFilter (not the possibly-mid-switch
+      // statusFilter), so that is the predicate to judge against.
+      const filter = loadedFilterRef.current;
+      const drops =
+        filter !== "all" &&
+        item.status !== filter &&
+        (posRef.current?.some((p) => p.id === item.id) ?? false);
+      setPos((cur) => {
+        if (!cur) return cur;
+        const next = cur.map((p) => (p.id === item.id ? item : p));
+        return drops ? next.filter((p) => p.id !== item.id) : next;
       });
-    }
-  }, []);
+      if (drops) setTotal((t) => Math.max(0, t - 1));
+      // The cache always holds the unfiltered payload, so the row is updated
+      // there regardless of the active filter.
+      const cached = cachedScreenData<PoScreenData>(SCREEN_CACHE_KEYS.po);
+      if (cached?.pos.some((p) => p.id === item.id)) {
+        cacheScreenData(SCREEN_CACHE_KEYS.po, {
+          ...cached,
+          pos: cached.pos.map((p) => (p.id === item.id ? item : p)),
+        });
+      }
+    },
+    [],
+  );
 
   const loadMore = async () => {
     if (!pos) return;
     setLoadingMore(true);
     try {
-      const page = await fetchPoPage(pos.length);
+      const page = await fetchPoPage(pos.length, statusFilter === "all" ? undefined : statusFilter);
+      // The filter changed while this page was in flight — its rows belong to
+      // the previous filter's universe, so appending them would corrupt the
+      // narrowed list (and its total).
+      if (statusFilterRef.current !== statusFilter) return;
       setPos((cur) => {
         const current = cur ?? [];
         const seen = new Set(current.map((p) => p.id));
@@ -514,6 +579,9 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
 
   const visibleDrafts = (drafts ?? []).filter((d) => !promotedIds.has(d.id));
   const shown = pos ?? [];
+  // The rows in state belong to a different filter than the selected segment
+  // (a switch is in flight) — show the skeleton rather than mislabeled rows.
+  const filterPending = pos != null && loadedFilter !== statusFilter;
   const detail = drawer.detail;
 
   const canEdit = detail?.status === "draft";
@@ -540,6 +608,16 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
       </header>
 
       <Card pad={false}>
+        {pos && (shown.length > 0 || statusFilter !== "all") && (
+          <div style={{ padding: "12px 16px 4px" }}>
+            <Segmented
+              small
+              value={statusFilter}
+              onChange={(next) => setStatusFilter(next as PoStatusVM | "all")}
+              options={FILTER_OPTIONS}
+            />
+          </div>
+        )}
         {staleWarning && pos && (
           <div className="cd-caption" style={{ padding: "8px 16px", color: "var(--orange)" }}>
             Couldn&apos;t refresh just now — showing the last loaded list.
@@ -555,19 +633,29 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
               sub={loadError ?? "Could not load purchase orders just now. Refresh to try again."}
             />
           )
+        ) : filterPending ? (
+          <TableSkeleton />
         ) : shown.length === 0 ? (
-          <>
+          statusFilter !== "all" ? (
             <Placeholder
               icon="doc"
-              title="No purchase orders yet"
-              sub="Draft one to order stock from a supplier — or convert an Autopilot restock draft below."
+              title="No purchase orders in this status"
+              sub="Switch back to All to see every purchase order."
             />
-            <div className="flex justify-center" style={{ paddingBottom: 28 }}>
-              <Btn small icon="plus" onClick={() => setCreating(true)}>
-                New purchase order
-              </Btn>
-            </div>
-          </>
+          ) : (
+            <>
+              <Placeholder
+                icon="doc"
+                title="No purchase orders yet"
+                sub="Draft one to order stock from a supplier — or convert an Autopilot restock draft below."
+              />
+              <div className="flex justify-center" style={{ paddingBottom: 28 }}>
+                <Btn small icon="plus" onClick={() => setCreating(true)}>
+                  New purchase order
+                </Btn>
+              </div>
+            </>
+          )
         ) : (
           <Pan min={760}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
@@ -626,7 +714,7 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
         )}
       </Card>
 
-      {!loadError && pos && pos.length < total && (
+      {!loadError && pos && !filterPending && pos.length < total && (
         <div style={{ display: "flex", justifyContent: "center", marginTop: 12 }}>
           <Btn disabled={loadingMore} onClick={() => { void loadMore(); }}>
             {loadingMore ? "Loading…" : `Load more (${pos.length} of ${total})`}

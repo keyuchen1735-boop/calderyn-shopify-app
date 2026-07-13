@@ -1,5 +1,6 @@
 // /dashboard/api/po — the real purchase-order collection.
-// GET  ?offset=&auditIds=a,b,c → { pos, total, promotedAuditIds } — auditIds is
+// GET  ?offset=&status=&auditIds=a,b,c → { pos, total, promotedAuditIds } —
+//      status (optional) narrows the list to one lifecycle state; auditIds is
 //      the screen's VISIBLE Autopilot drafts (bounded ≤50); the response says
 //      which of them were already converted so the screen can hide them.
 //      Pagination requests (offset > 0) skip the promoted lookup entirely.
@@ -19,6 +20,7 @@ import {
   createPurchaseOrder,
   listPromotedAuditIds,
   listPurchaseOrders,
+  parsePoStatus,
   promoteAuditDraft,
   validatePoBody,
 } from "~/lib/po/purchase-orders.server";
@@ -27,13 +29,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const url = new URL(request.url);
   const offset = Math.max(0, Math.trunc(Number(url.searchParams.get("offset"))) || 0);
+  const status = parsePoStatus(url.searchParams.get("status"));
   const auditIds = (url.searchParams.get("auditIds") ?? "")
     .split(",")
     .filter((id) => isUuid(id))
     .slice(0, 50);
   return dashboardJson(async () => {
     const [page, promotedAuditIds] = await Promise.all([
-      listPurchaseOrders(session.shopId, { offset }),
+      listPurchaseOrders(session.shopId, { offset, status: status ?? undefined }),
       offset === 0 ? listPromotedAuditIds(session.shopId, auditIds) : Promise.resolve([]),
     ]);
     return { pos: page.pos, total: page.total, promotedAuditIds };
