@@ -3095,6 +3095,8 @@
     transform: perspective(430px) rotateX(13deg) rotateY(-17deg) rotateZ(-2deg);
   }
   .cd-payout-skeleton { animation: none; }
+}
+
 /* ============ Campaign storybook ============ */
 .cd-campaign-platform-mark {
   display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
