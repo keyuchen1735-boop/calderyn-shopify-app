@@ -35,22 +35,19 @@ const FLAT_GRID = "1.2fr 1fr 0.9fr 0.9fr 0.9fr auto";
 
 const SOURCE_COPY: Record<
   RateSourceKindView,
-  { pill: string; tone: "success" | "neutral" | "warn"; sub: string }
+  { pill: string; tone: "success" | "neutral" | "warn" }
 > = {
   carrier: {
     pill: "Live carrier rates",
     tone: "success",
-    sub: "Buyers pay live carrier prices from your connected carrier. The table below is the backup card used if the carrier is unreachable.",
   },
   flat: {
     pill: "Your flat rates",
     tone: "success",
-    sub: "Buyers pay the flat rates you set below. Connect a carrier in Settings → Connections to switch to live rates.",
   },
   default: {
     pill: "Default rates",
     tone: "warn",
-    sub: "You haven't set shipping rates yet, so buyers pay these sensible defaults. Add your own flat rates below, or connect a carrier for live prices.",
   },
 };
 
@@ -327,7 +324,7 @@ function ShippingRates({
   const rateSourceKind = summary.rateSourceKind ?? "default";
 
   return (
-    <div className="cd-shipping-setup">
+    <div className="cd-shipping-setup cd-shipping-rates">
       <RulesCard key={JSON.stringify(rules)} rules={rules} api={api} />
 
       <Card className="cd-shipping-rate-card" pad={false}>
@@ -338,17 +335,9 @@ function ShippingRates({
               {SOURCE_COPY[rateSourceKind].pill}
             </Pill>
           </div>
-          <p className="cd-caption">
-            {SOURCE_COPY[rateSourceKind].sub} Shown for a sample 500 g package;
-            rates step up by package weight.
-          </p>
         </div>
         {summary.rateCard.length === 0 ? (
-          <Placeholder
-            icon="truck"
-            title="No rate card"
-            sub="The quote engine returned no rates."
-          />
+          <Placeholder icon="truck" title="No rate card" />
         ) : (
           <div className="cd-shipping-rate-table">
             <div
@@ -368,15 +357,13 @@ function ShippingRates({
               >
                 <div className="cd-shipping-rate-service">
                   <div className="cd-row-title">{rate.carrier}</div>
-                  <div className="cd-caption">{rate.service}</div>
+                  <div className="cd-shipping-rate-value">{rate.service}</div>
                 </div>
                 <div className="cd-row-num tabular-nums">
                   {rate.amountCents === 0 ? "Free" : money(rate.amountCents)}
                 </div>
-                <div className="cd-caption" title="Scorecard coming soon">
-                  —
-                </div>
-                <div className="cd-caption">{rate.estDays}</div>
+                <div className="cd-shipping-rate-value">Coming soon</div>
+                <div className="cd-shipping-rate-value">{rate.estDays}</div>
               </div>
             ))}
           </div>
@@ -462,9 +449,6 @@ function RulesCard({ rules, api }: { rules: ShipRulesDtoView; api: SaveApi }) {
   return (
     <Card>
       <h2 className="cd-h2">Rates &amp; rules</h2>
-      <p className="cd-caption" style={{ marginTop: 4 }}>
-        Applied to every shipping quote, whichever rate source is active.
-      </p>
       <form onSubmit={onSubmit}>
         <div
           className="cd-grid"
@@ -492,6 +476,7 @@ function RulesCard({ rules, api }: { rules: ShipRulesDtoView; api: SaveApi }) {
               type="number"
               min={0}
               step="0.01"
+              placeholder="0.00"
               value={handlingFee}
               onChange={(e) => setHandlingFee(e.target.value)}
             />
@@ -503,6 +488,7 @@ function RulesCard({ rules, api }: { rules: ShipRulesDtoView; api: SaveApi }) {
               min={-100}
               max={1000}
               step="0.1"
+              placeholder="0"
               value={markup}
               onChange={(e) => setMarkup(e.target.value)}
             />
@@ -514,17 +500,12 @@ function RulesCard({ rules, api }: { rules: ShipRulesDtoView; api: SaveApi }) {
               min={0}
               max={60}
               step={1}
+              placeholder="1"
               value={handlingDays}
               onChange={(e) => setHandlingDays(e.target.value)}
             />
           </Field>
         </div>
-        <p className="cd-caption" style={{ marginTop: 8 }}>
-          Leave &ldquo;Free shipping over&rdquo; empty to turn free shipping
-          off. &ldquo;Ships within&rdquo; sets the handling time buyers see in
-          delivery estimates; an item&rsquo;s own handling time is used when
-          it&rsquo;s longer.
-        </p>
         <div
           className="flex items-center justify-between gap-3 flex-wrap"
           style={{
@@ -533,14 +514,7 @@ function RulesCard({ rules, api }: { rules: ShipRulesDtoView; api: SaveApi }) {
             borderTop: "1px solid var(--cd-border, rgba(0,0,0,0.08))",
           }}
         >
-          <div style={{ minWidth: 0 }}>
-            <div className="cd-row-title">Local pickup</div>
-            <p className="cd-caption" style={{ marginTop: 2 }}>
-              Offer a free &ldquo;Pick up&rdquo; option at checkout, collected
-              at your ship-from address. Ready after your &ldquo;Ships
-              within&rdquo; window.
-            </p>
-          </div>
+          <div className="cd-row-title">Local pickup</div>
           <Toggle
             value={pickup}
             onChange={setPickup}
@@ -908,11 +882,6 @@ function FlatRatesCard({
             <Pill tone="success">Active at checkout</Pill>
           ) : null}
         </div>
-        <p className="cd-caption" style={{ marginTop: 4 }}>
-          {kind === "carrier"
-            ? "Used only if you disconnect your carrier — live carrier rates are active now."
-            : "What buyers pay at checkout. Rows with the same name form weight tiers (the tightest fitting tier prices the order)."}
-        </p>
       </div>
       {rates.length > 0 ? (
         <Pan min={620}>
@@ -934,14 +903,14 @@ function FlatRatesCard({
               style={{ gridTemplateColumns: FLAT_GRID }}
             >
               <div className="cd-row-title">{r.label}</div>
-              <div className="cd-caption">{zoneLabel[r.zone]}</div>
+              <div className="cd-shipping-rate-value">{zoneLabel[r.zone]}</div>
               <div className="cd-row-num tabular-nums">
                 {r.maxWeightOz == null ? "Any" : ozToLb(r.maxWeightOz)}
               </div>
               <div className="cd-row-num tabular-nums">
                 {r.amountCents === 0 ? "Free" : money(r.amountCents)}
               </div>
-              <div className="cd-caption">
+              <div className="cd-shipping-rate-value">
                 {r.estTransitDays == null ? "—" : `${r.estTransitDays} days`}
               </div>
               <div className="flex gap-2 justify-end">
@@ -1008,6 +977,7 @@ function FlatRatesCard({
                 type="number"
                 min={0}
                 step="0.01"
+                placeholder="0.00"
                 value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
                 required
@@ -1020,6 +990,7 @@ function FlatRatesCard({
                 min={0}
                 max={90}
                 step={1}
+                placeholder="3"
                 value={form.estDays}
                 onChange={(e) => setForm({ ...form, estDays: e.target.value })}
               />
