@@ -12,13 +12,21 @@ export interface OverlayManager {
 interface OpenSurface {
   element: HTMLElement;
   presentation: HTMLElement;
-  commerce: Array<{ host: HTMLElement; wrapper: HTMLElement; originalHostStyle: string | null }>;
+  commerceLayer: HTMLElement | null;
+  commerce: CommerceProjection[];
   placeholder: Comment;
   opener: HTMLElement | null;
   originalHidden: boolean;
   originalRole: string | null;
   originalTabIndex: string | null;
   originalAriaModal: string | null;
+}
+
+interface CommerceProjection {
+  host: HTMLElement;
+  placeholder: HTMLElement;
+  originalHostStyle: string | null;
+  stopSync(): void;
 }
 
 interface BackgroundState {
@@ -32,15 +40,17 @@ const FOCUSABLE = [
   "textarea:not([disabled])", "[tabindex]:not([tabindex=\"-1\"])",
 ].join(",");
 
-function focusableElements(surface: HTMLElement): HTMLElement[] {
+function focusableElements(surface: HTMLElement, commerce: readonly CommerceProjection[] = []): HTMLElement[] {
   const focusable: HTMLElement[] = [];
+  const projectedHosts = new Map(commerce.map((projection) => [projection.placeholder, projection.host]));
   const visit = (parent: ParentNode): void => {
     for (const child of parent.children) {
       if (!(child instanceof HTMLElement)) continue;
-      if (child.matches(FOCUSABLE) && !child.hidden) focusable.push(child);
-      const trustedRoot = trustedCommerceRoot(child);
+      const current = projectedHosts.get(child) ?? child;
+      if (current.matches(FOCUSABLE) && !current.hidden) focusable.push(current);
+      const trustedRoot = trustedCommerceRoot(current);
       if (trustedRoot) visit(trustedRoot);
-      visit(child);
+      visit(current);
     }
   };
   visit(surface);
@@ -60,6 +70,42 @@ function deepActiveElement(document: Document): Element | null {
 function restoreAttribute(element: HTMLElement, name: string, value: string | null): void {
   if (value === null) element.removeAttribute(name);
   else element.setAttribute(name, value);
+}
+
+const INHERITED_PRESENTATION_PROPERTIES = [
+  "color", "font-family", "font-size", "font-style", "font-weight", "font-stretch",
+  "line-height", "letter-spacing", "text-align", "text-transform", "direction", "writing-mode",
+] as const;
+
+function safeCustomPropertyValue(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return !normalized.includes("url(") && !normalized.includes("expression(") && !normalized.includes("@import");
+}
+
+function copyPresentationContext(host: HTMLElement, computed: CSSStyleDeclaration): void {
+  const ancestors: HTMLElement[] = [];
+  for (let ancestor = host.parentElement; ancestor; ancestor = ancestor.parentElement) ancestors.unshift(ancestor);
+  for (const property of INHERITED_PRESENTATION_PROPERTIES) {
+    const value = computed.getPropertyValue(property) || [...ancestors].reverse()
+      .map((ancestor) => ancestor.style.getPropertyValue(property))
+      .find(Boolean) || "";
+    if (value) host.style.setProperty(property, value);
+  }
+  for (const source of [...ancestors.map((ancestor) => ancestor.style), computed]) {
+    for (let index = 0; index < source.length; index += 1) {
+      const property = source.item(index);
+      if (!property.startsWith("--")) continue;
+      const value = source.getPropertyValue(property);
+      if (safeCustomPropertyValue(value)) host.style.setProperty(property, value.trim());
+    }
+  }
+}
+
+function setProjectedRect(host: HTMLElement, rect: DOMRect): void {
+  host.style.setProperty("left", `${rect.left}px`, "important");
+  host.style.setProperty("top", `${rect.top}px`, "important");
+  host.style.setProperty("width", `${rect.width}px`, "important");
+  host.style.setProperty("height", `${rect.height}px`, "important");
 }
 
 export function createOverlayManager(root: HTMLElement): OverlayManager {
@@ -139,8 +185,8 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
     return element;
   };
 
-  const focusSurface = (surface: HTMLElement): void => {
-    (focusableElements(surface)[0] ?? surface).focus();
+  const focusSurface = (surface: HTMLElement, commerce: readonly CommerceProjection[] = []): void => {
+    (focusableElements(surface, commerce)[0] ?? surface).focus();
   };
 
   const openId = (targetId: string, opener: HTMLElement | null): string => {
@@ -158,6 +204,13 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
         else surface.presentation.setAttribute("inert", "");
       });
       attempt(errors, () => restoreAttribute(surface.presentation, "aria-hidden", active ? null : "true"));
+      if (surface.commerceLayer) {
+        attempt(errors, () => {
+          if (active) surface.commerceLayer!.removeAttribute("inert");
+          else surface.commerceLayer!.setAttribute("inert", "");
+        });
+        attempt(errors, () => restoreAttribute(surface.commerceLayer!, "aria-hidden", active ? null : "true"));
+      }
       attempt(errors, () => {
         if (active) surface.element.setAttribute("aria-modal", "true");
         else surface.element.removeAttribute("aria-modal");
@@ -176,10 +229,12 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
     attempt(errors, () => restoreAttribute(surface.element, "tabindex", surface.originalTabIndex));
     attempt(errors, () => restoreAttribute(surface.element, "aria-modal", surface.originalAriaModal));
     attempt(errors, () => surface.placeholder.replaceWith(surface.element));
-    for (const protection of surface.commerce) {
-      attempt(errors, () => protection.wrapper.replaceWith(protection.host));
-      attempt(errors, () => restoreAttribute(protection.host, "style", protection.originalHostStyle));
+    for (const projection of surface.commerce) {
+      attempt(errors, projection.stopSync);
+      attempt(errors, () => projection.placeholder.replaceWith(projection.host));
+      attempt(errors, () => restoreAttribute(projection.host, "style", projection.originalHostStyle));
     }
+    if (surface.commerceLayer) attempt(errors, () => surface.commerceLayer!.remove());
     attempt(errors, () => surface.presentation.remove());
     openSurfaces.delete(concreteId);
     const index = stack.lastIndexOf(concreteId);
@@ -192,7 +247,7 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
       if (nextTop) {
         attempt(errors, () => {
           if (surface.opener?.isConnected && nextTop.element.contains(surface.opener)) surface.opener.focus();
-          else focusSurface(nextTop.element);
+          else focusSurface(nextTop.element, nextTop.commerce);
         });
       } else if (surface.opener?.isConnected && !surface.opener.hidden) {
         attempt(errors, () => surface.opener!.focus());
@@ -210,7 +265,7 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
       return;
     }
     if (event.key !== "Tab") return;
-    const focusable = focusableElements(top.element);
+    const focusable = focusableElements(top.element, top.commerce);
     if (focusable.length === 0) {
       event.preventDefault();
       top.element.focus();
@@ -228,8 +283,9 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
   const onFocusIn = (event: FocusEvent): void => {
     const top = openSurfaces.get(stack.at(-1) ?? "");
     if (top && event.target instanceof Node && !top.element.contains(event.target) &&
-      !focusableElements(top.element).includes(deepActiveElement(document) as HTMLElement)) {
-      focusSurface(top.element);
+      !top.commerceLayer?.contains(event.target) &&
+      !focusableElements(top.element, top.commerce).includes(deepActiveElement(document) as HTMLElement)) {
+      focusSurface(top.element, top.commerce);
     }
   };
   document.addEventListener("keydown", onKeyDown);
@@ -256,25 +312,68 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
       presentation.style.setProperty("--cd-overlay-foreground", "CanvasText");
       presentation.append(element);
       portal.append(presentation);
-      const commerce = [...element.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")].map((host) => {
+      const commerceHosts = [...element.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")];
+      const commerceLayer = commerceHosts.length > 0 ? document.createElement("div") : null;
+      if (commerceLayer) {
+        commerceLayer.setAttribute("data-cd-overlay-commerce-layer", concreteId);
+        commerceLayer.setAttribute("role", "presentation");
+        Object.assign(commerceLayer.style, {
+          position: "absolute", inset: "0", zIndex: "2", pointerEvents: "none", isolation: "isolate",
+        });
+        portal.append(commerceLayer);
+      }
+      const commerce = commerceHosts.map((host): CommerceProjection => {
         const originalHostStyle = host.getAttribute("style");
-        const wrapper = document.createElement("div");
-        wrapper.setAttribute("data-cd-overlay-commerce", concreteId);
-        wrapper.style.setProperty("display", "contents", "important");
-        wrapper.style.setProperty("pointer-events", "none", "important");
-        wrapper.style.setProperty("isolation", "isolate", "important");
-        host.replaceWith(wrapper);
-        wrapper.append(host);
-        host.style.setProperty("isolation", "isolate", "important");
-        if (host.ownerDocument.defaultView?.getComputedStyle(host).position === "static") {
-          host.style.setProperty("position", "relative", "important");
+        const view = host.ownerDocument.defaultView;
+        const computed = view?.getComputedStyle(host);
+        const initialRect = host.getBoundingClientRect();
+        const flowPlaceholder = document.createElement("div");
+        flowPlaceholder.setAttribute("data-cd-overlay-commerce-placeholder", host.id);
+        flowPlaceholder.setAttribute("aria-hidden", "true");
+        flowPlaceholder.style.display = computed?.display || "block";
+        flowPlaceholder.style.boxSizing = computed?.boxSizing || "border-box";
+        flowPlaceholder.style.width = `${initialRect.width}px`;
+        flowPlaceholder.style.height = `${initialRect.height}px`;
+        flowPlaceholder.style.marginTop = computed?.marginTop || "0px";
+        flowPlaceholder.style.marginRight = computed?.marginRight || "0px";
+        flowPlaceholder.style.marginBottom = computed?.marginBottom || "0px";
+        flowPlaceholder.style.marginLeft = computed?.marginLeft || "0px";
+        flowPlaceholder.style.visibility = "hidden";
+        flowPlaceholder.style.pointerEvents = "none";
+        if (computed) {
+          flowPlaceholder.style.flex = computed.flex;
+          flowPlaceholder.style.alignSelf = computed.alignSelf;
+          flowPlaceholder.style.order = computed.order;
+          flowPlaceholder.style.gridArea = computed.gridArea;
+          copyPresentationContext(host, computed);
         }
-        host.style.setProperty("z-index", "2147483647", "important");
+        host.replaceWith(flowPlaceholder);
+        commerceLayer!.append(host);
+        host.style.setProperty("position", "absolute", "important");
+        host.style.setProperty("margin", "0", "important");
+        host.style.setProperty("box-sizing", "border-box", "important");
+        host.style.setProperty("z-index", "1", "important");
         host.style.setProperty("pointer-events", "auto", "important");
-        return { host, wrapper, originalHostStyle };
+        setProjectedRect(host, initialRect);
+        const sync = (): void => setProjectedRect(host, flowPlaceholder.getBoundingClientRect());
+        view?.addEventListener("scroll", sync, true);
+        view?.addEventListener("resize", sync);
+        const Observer = view?.ResizeObserver;
+        const observer = Observer ? new Observer(sync) : null;
+        observer?.observe(flowPlaceholder);
+        return {
+          host,
+          placeholder: flowPlaceholder,
+          originalHostStyle,
+          stopSync() {
+            view?.removeEventListener("scroll", sync, true);
+            view?.removeEventListener("resize", sync);
+            observer?.disconnect();
+          },
+        };
       });
       openSurfaces.set(concreteId, {
-        element, presentation, commerce, placeholder, opener,
+        element, presentation, commerceLayer, commerce, placeholder, opener,
         originalHidden: element.hidden,
         originalRole: element.getAttribute("role"),
         originalTabIndex: element.getAttribute("tabindex"),
@@ -285,7 +384,7 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
       element.setAttribute("role", "dialog");
       if (!element.hasAttribute("tabindex")) element.setAttribute("tabindex", "-1");
       syncStackOwnership();
-      focusSurface(element);
+      focusSurface(element, commerce);
     },
     close(targetId, opener) {
       restore(openId(targetId, opener), true);

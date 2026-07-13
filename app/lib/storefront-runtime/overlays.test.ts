@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createOverlayManager } from "./overlays";
 
 afterEach(() => {
   document.body.innerHTML = "";
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
+
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left, y: top, left, top, width, height, right: left + width, bottom: top + height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
 
 describe("platform overlay portal", () => {
   it("traps focus, makes the background inert, closes on Escape, and restores focus", () => {
@@ -119,35 +128,94 @@ describe("platform overlay portal", () => {
     manager.teardown();
   });
 
-  it("protects trusted commerce in place without changing its layout parent or order", () => {
-    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="row"><span id="before"></span><div id="slot" data-cd-trusted-slot="addToCart"></div><div id="cover" style="opacity: 0.5;"></div></div></section></main>`;
+  it("projects commerce above generated stacking contexts with a measured flow placeholder", () => {
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="row"><span id="before"></span><div id="slot" data-cd-trusted-slot="addToCart" style="display: block; margin: 3px 4px 5px 6px;"></div><div id="cover" style="opacity: 0.5; transform: translateZ(0); z-index: 2147483647;"></div></div></section></main>`;
     const root = document.getElementById("root") as HTMLElement;
     const surface = document.getElementById("cd-home-a") as HTMLElement;
     const slot = document.getElementById("slot") as HTMLElement;
     const row = document.getElementById("row") as HTMLElement;
     const before = document.getElementById("before") as HTMLElement;
     const cover = document.getElementById("cover") as HTMLElement;
+    const originalSlotStyle = slot.getAttribute("style");
+    vi.spyOn(slot, "getBoundingClientRect").mockReturnValue(rect(12, 34, 120, 40));
     const manager = createOverlayManager(root);
     manager.open(surface.id, null);
+    const portal = document.querySelector<HTMLElement>("[data-cd-overlay-portal]")!;
     const presentation = document.querySelector<HTMLElement>("[data-cd-overlay-presentation]")!;
-    const commerceWrapper = slot.parentElement as HTMLElement;
-    expect(commerceWrapper.hasAttribute("data-cd-overlay-commerce")).toBe(true);
-    expect(commerceWrapper.parentElement).toBe(row);
-    expect(commerceWrapper.previousElementSibling).toBe(before);
-    expect(commerceWrapper.nextElementSibling).toBe(cover);
-    expect(presentation.contains(slot)).toBe(true);
-    expect(commerceWrapper.style.display).toBe("contents");
-    expect(Number(slot.style.zIndex)).toBeGreaterThan(Number(cover.style.zIndex));
-    expect(slot.style.isolation).toBe("isolate");
-    expect(cover.getAttribute("style")).toBe("opacity: 0.5;");
+    const layer = portal.querySelector<HTMLElement>("[data-cd-overlay-commerce-layer]")!;
+    const placeholder = row.querySelector<HTMLElement>("[data-cd-overlay-commerce-placeholder]")!;
+    expect(layer).not.toBeNull();
+    expect(layer.parentElement).toBe(portal);
+    expect(Number(layer.style.zIndex)).toBeGreaterThan(Number(presentation.style.zIndex));
+    expect(layer.contains(slot)).toBe(true);
+    expect(presentation.contains(slot)).toBe(false);
+    expect(placeholder.previousElementSibling).toBe(before);
+    expect(placeholder.nextElementSibling).toBe(cover);
+    expect(placeholder.style.display).toBe("block");
+    expect(placeholder.style.width).toBe("120px");
+    expect(placeholder.style.height).toBe("40px");
+    expect(placeholder.style.margin).toBe("3px 4px 5px 6px");
+    expect(slot.style.position).toBe("absolute");
+    expect(slot.style.left).toBe("12px");
+    expect(slot.style.top).toBe("34px");
+    expect(cover.getAttribute("style")).toBe("opacity: 0.5; transform: translateZ(0); z-index: 2147483647;");
     expect(slot.style.pointerEvents).toBe("auto");
     manager.close(surface.id, null);
     expect(slot.parentElement).toBe(row);
     expect(slot.previousElementSibling).toBe(before);
     expect(slot.nextElementSibling).toBe(cover);
-    expect(document.querySelector("[data-cd-overlay-commerce]")).toBeNull();
-    expect(cover.getAttribute("style")).toBe("opacity: 0.5;");
+    expect(slot.getAttribute("style")).toBe(originalSlotStyle);
+    expect(document.querySelector("[data-cd-overlay-commerce-layer]")).toBeNull();
+    expect(document.querySelector("[data-cd-overlay-commerce-placeholder]")).toBeNull();
     manager.teardown();
+  });
+
+  it("syncs projected geometry on scroll, resize, and placeholder resize", () => {
+    let resizeCallback: ResizeObserverCallback | undefined;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resizeCallback = callback; }
+      observe = observe;
+      disconnect = disconnect;
+    });
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="slot" data-cd-trusted-slot="addToCart"></div></section></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const slot = document.getElementById("slot") as HTMLElement;
+    vi.spyOn(slot, "getBoundingClientRect").mockReturnValue(rect(1, 2, 30, 40));
+    const manager = createOverlayManager(root);
+    manager.open("cd-home-a", null);
+    const placeholder = document.querySelector<HTMLElement>("[data-cd-overlay-commerce-placeholder]")!;
+    expect(placeholder).not.toBeNull();
+    const placeholderRect = vi.spyOn(placeholder, "getBoundingClientRect");
+    placeholderRect.mockReturnValue(rect(11, 22, 130, 140));
+    window.dispatchEvent(new Event("scroll"));
+    expect(slot.style.left).toBe("11px");
+    expect(slot.style.top).toBe("22px");
+    expect(slot.style.width).toBe("130px");
+    expect(slot.style.height).toBe("140px");
+    placeholderRect.mockReturnValue(rect(21, 32, 230, 240));
+    window.dispatchEvent(new Event("resize"));
+    expect(slot.style.left).toBe("21px");
+    resizeCallback?.([], {} as ResizeObserver);
+    expect(observe).toHaveBeenCalledWith(placeholder);
+    expect(slot.style.top).toBe("32px");
+    manager.teardown();
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it("copies safe inherited presentation tokens onto the projected host", () => {
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div style="--commerce-accent: rebeccapurple; color: rgb(1, 2, 3); font-family: serif;"><div id="slot" data-cd-trusted-slot="addToCart"></div></div></section></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const slot = document.getElementById("slot") as HTMLElement;
+    vi.spyOn(slot, "getBoundingClientRect").mockReturnValue(rect(0, 0, 100, 20));
+    const manager = createOverlayManager(root);
+    manager.open("cd-home-a", null);
+    expect(slot.style.getPropertyValue("--commerce-accent")).toBe("rebeccapurple");
+    expect(slot.style.color).toBe("rgb(1, 2, 3)");
+    expect(slot.style.fontFamily).toBe("serif");
+    manager.teardown();
+    expect(slot.getAttribute("style")).toBeNull();
   });
 
   it("leaves unrelated static and absolute overlay geometry untouched while open", () => {
