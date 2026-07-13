@@ -808,6 +808,9 @@ function ReviewStep({
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  /** Error code of the last failed create (drives code-specific affordances
+   *  like the run_needs_review "Start over" link). */
+  const [createErrorCode, setCreateErrorCode] = useState<string | null>(null);
   const [created, setCreated] = useState<{ campaignDimId: string } | null>(null);
   const [turningOn, setTurningOn] = useState(false);
   const monthlyCents = state.budgetCents * 30;
@@ -822,6 +825,7 @@ function ReviewStep({
     if (creating || created || !metaReady || !state.creative || !state.productId) return;
     setCreating(true);
     setCreateError(null);
+    setCreateErrorCode(null);
     try {
       const result = await createFirstCampaignRun({
         runId: state.runId,
@@ -847,9 +851,12 @@ function ReviewStep({
       } else {
         // Honest server message — the SAME runId is reused on the next click
         // (state.runId is stable), so a retry resumes this run instead of
-        // creating a second campaign on Meta.
+        // creating a second campaign on Meta. run_needs_review keeps the dead
+        // runId but additionally renders a "Start over" link (below) that
+        // mints a fresh one, so the merchant isn't stranded.
         const message = err instanceof DashboardApiError ? err.message : "Couldn't create the campaign — try again.";
         setCreateError(message);
+        setCreateErrorCode(err instanceof DashboardApiError ? err.code : null);
       }
     } finally {
       setCreating(false);
@@ -957,7 +964,26 @@ function ReviewStep({
                 {creating ? "Creating…" : "Create on Meta"}
               </Btn>
             </div>
-            {createError ? (
+            {createError && createErrorCode === "run_needs_review" ? (
+              // Retrying the SAME runId would just 409 again — offer a fresh
+              // start instead of the generic "try again" suffix. Safe: the new
+              // runId creates a new run; the old attempt's campaign (if any)
+              // is paused and spending nothing.
+              <span className="cd-caption" style={{ color: "var(--red)" }}>
+                {createError}{" "}
+                <button
+                  type="button"
+                  className="cd-link"
+                  onClick={() => {
+                    dispatch({ type: "newRunId" });
+                    setCreateError(null);
+                    setCreateErrorCode(null);
+                  }}
+                >
+                  Start over
+                </button>
+              </span>
+            ) : createError ? (
               <span className="cd-caption" style={{ color: "var(--red)" }}>
                 {createError} — try again, or save as a draft instead.
               </span>

@@ -22,6 +22,9 @@ const MAX_BUDGET_CENTS = 20000;
 const MAX_HEADLINE_LEN = 40;
 const MAX_PRIMARY_TEXT_LEN = 500;
 
+const RUN_IN_PROGRESS_MESSAGE =
+  "Still working on the last attempt — give it a moment and try again.";
+
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
@@ -178,7 +181,9 @@ export async function action({ request }: ActionFunctionArgs) {
         .insert({ id: parsed.runId, shop_id: shopId, status: "creating", input: inputRecord });
       if (insErr) {
         // A concurrent request for the SAME runId lost the race to insert first.
-        if ((insErr as { code?: string }).code === "23505") throw jsonError(409, "run_in_progress");
+        if ((insErr as { code?: string }).code === "23505") {
+          throw jsonError(409, "run_in_progress", RUN_IN_PROGRESS_MESSAGE);
+        }
         throw insErr;
       }
     } else if (transition === "replay") {
@@ -197,7 +202,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       return { run_id: parsed.runId, campaign_dim_id: campaignDimId, status: "created" as const };
     } else if (transition === "reject_in_progress") {
-      throw jsonError(409, "run_in_progress");
+      throw jsonError(409, "run_in_progress", RUN_IN_PROGRESS_MESSAGE);
     } else if (transition === "needs_review") {
       // A dead attempt already recorded a Meta campaign id (or the row is
       // unclassifiable). Creating again could double-create — refuse, honestly.
@@ -218,17 +223,25 @@ export async function action({ request }: ActionFunctionArgs) {
           "This run id was already used with different campaign details — start over to create a new campaign.",
         );
       }
-      // 2. Compare-and-set on the status we just read: a concurrent retry
-      //    racing us here flips the row first and we lose (empty update).
+      // 2. Compare-and-set on the (status, updated_at) we just read: a
+      //    concurrent retry racing us flips the row first and we lose (empty
+      //    update). Status alone can't fence the stale-'creating' source —
+      //    the winner sets status right back to 'creating', so a second retry
+      //    would still match on status; the winner's updated_at bump is what
+      //    makes this a real fencing token for BOTH reopen sources
+      //    (failed/rolled_back AND stale-creating).
       const { data: reopened, error: updErr } = await sb
         .from("campaign_wizard_runs")
         .update({ status: "creating", error: null, updated_at: new Date().toISOString() })
         .eq("id", parsed.runId)
         .eq("shop_id", shopId)
         .eq("status", String(existing.status))
+        .eq("updated_at", String(existing.updated_at))
         .select("id");
       if (updErr) throw updErr;
-      if (!reopened || reopened.length === 0) throw jsonError(409, "run_in_progress");
+      if (!reopened || reopened.length === 0) {
+        throw jsonError(409, "run_in_progress", RUN_IN_PROGRESS_MESSAGE);
+      }
     }
 
     const conn = await metaWriteClientForShopId(shopId);
@@ -260,8 +273,10 @@ export async function action({ request }: ActionFunctionArgs) {
     // dies mid-build, the stale 'creating' row still carries the id, and
     // decideRunTransition routes the retry to needs_review instead of creating
     // a second campaign. If this write itself fails, createFirstCampaign aborts
-    // before the ad set and rollback-deletes the campaign — never an object our
-    // bookkeeping didn't record.
+    // before the ad set and rollback-deletes the campaign. A residual window
+    // remains: the process dying in the milliseconds between Meta accepting the
+    // campaign POST and this write committing leaves an unrecorded (paused,
+    // non-spending) campaign — unavoidable without Meta-side idempotency keys.
     const bookkeepCampaignId = async (campaignId: string): Promise<void> => {
       const { error } = await sb
         .from("campaign_wizard_runs")
