@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createRequire } from "node:module";
 
+import type { WorldCitiesJsonModule } from "world-cities-json";
 import type { WorldCityRow } from "../city-centroids.server";
 import type { DestinationOrderRow } from "../destination-aggregation";
 
@@ -8,6 +10,8 @@ interface QueryCall {
   select?: string;
   eq: Array<[string, unknown]>;
   gte: Array<[string, unknown]>;
+  order: Array<[string, { ascending: boolean }]>;
+  range?: [number, number];
 }
 
 const supabase = vi.hoisted(() => {
@@ -15,9 +19,16 @@ const supabase = vi.hoisted(() => {
   const rowsByTable: Record<string, unknown> = {};
 
   function from(table: string) {
-    const call: QueryCall = { table, eq: [], gte: [] };
+    const call: QueryCall = { table, eq: [], gte: [], order: [] };
     calls.push(call);
-    const response = () => ({ data: rowsByTable[table] ?? null, error: null });
+    const response = () => {
+      const tableRows = rowsByTable[table] ?? null;
+      if (!Array.isArray(tableRows)) return { data: tableRows, error: null };
+      if (call.range) {
+        return { data: tableRows.slice(call.range[0], call.range[1] + 1), error: null };
+      }
+      return { data: tableRows.slice(0, 1000), error: null };
+    };
     const query = {
       select(columns: string) {
         call.select = columns;
@@ -30,6 +41,14 @@ const supabase = vi.hoisted(() => {
       gte(column: string, value: unknown) {
         call.gte.push([column, value]);
         return query;
+      },
+      order(column: string, options: { ascending: boolean }) {
+        call.order.push([column, options]);
+        return query;
+      },
+      range(from: number, to: number) {
+        call.range = [from, to];
+        return Promise.resolve(response());
       },
       maybeSingle() {
         return Promise.resolve(response());
@@ -48,6 +67,30 @@ const supabase = vi.hoisted(() => {
 });
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: supabase.getSupabase }));
+
+const require = createRequire(import.meta.url);
+const packageCities = (require("world-cities-json") as WorldCitiesJsonModule).cities;
+
+function distinctPackageCities(count: number): WorldCityRow[] {
+  const selected: WorldCityRow[] = [];
+  const seen = new Set<string>();
+  for (const row of packageCities) {
+    const key = `${row.city}\u001f${row.admin_name}\u001f${row.iso2}`.toLowerCase();
+    if (
+      seen.has(key) ||
+      !row.city ||
+      !row.iso2 ||
+      !Number.isFinite(Number(row.lat)) ||
+      !Number.isFinite(Number(row.lng))
+    ) {
+      continue;
+    }
+    seen.add(key);
+    selected.push(row);
+    if (selected.length === count) return selected;
+  }
+  throw new Error(`world-cities-json has fewer than ${count} distinct resolvable cities`);
+}
 
 const cityRows: WorldCityRow[] = [
   {
@@ -198,6 +241,32 @@ describe("buildShippingRoutes", () => {
     ).toBe(true);
   });
 
+  it("flags an international destination even when it falls beyond the top 60", async () => {
+    const { buildShippingRoutes } = await import("../routes.server");
+    const canadianCities: WorldCityRow[] = Array.from({ length: 60 }, (_, index) => ({
+      city: `Canadian City ${index}`,
+      city_ascii: `Canadian City ${index}`,
+      lat: String(40 + index / 100),
+      lng: String(-100 + index / 100),
+      country: "Canada",
+      iso2: "CA",
+      iso3: "CAN",
+      admin_name: "Ontario",
+    }));
+    const rows: DestinationOrderRow[] = canadianCities.flatMap((city) => [
+      { customer_city: city.city, customer_region: city.admin_name, customer_country: city.iso2 },
+      { customer_city: city.city, customer_region: city.admin_name, customer_country: city.iso2 },
+    ]);
+    rows.push({ customer_city: "London", customer_region: "London", customer_country: "GB" });
+
+    const result = buildShippingRoutes(origin, rows, [...cityRows, ...canadianCities]);
+
+    expect(result.destinations).toHaveLength(60);
+    expect(result.destinations.every((destination) => destination.country === "CA")).toBe(true);
+    expect(result.mappedOrderCount).toBe(121);
+    expect(result.hasInternationalDestinations).toBe(true);
+  });
+
   it("returns a null origin and no routes when the origin cannot be resolved", async () => {
     const { buildShippingRoutes } = await import("../routes.server");
 
@@ -213,25 +282,66 @@ describe("buildShippingRoutes", () => {
 });
 
 describe("loadShippingRoutes30d", () => {
-  it("reads only privacy-safe 30-day order fields scoped to the requested shop", async () => {
-    supabase.rowsByTable.shop_origin = null;
-    supabase.rowsByTable.order_fact = [];
+  it("pages every order while preserving top-60 counts and the privacy-safe shop window", async () => {
+    const cities = distinctPackageCities(61);
+    const [originCity, ...destinationCities] = cities;
+    supabase.rowsByTable.shop_origin = {
+      city: originCity.city,
+      state: originCity.admin_name,
+      country: originCity.iso2,
+    };
+    supabase.rowsByTable.order_fact = [
+      ...Array.from({ length: 941 }, () => ({
+        customer_city: originCity.city,
+        customer_region: originCity.admin_name,
+        customer_country: originCity.iso2,
+      })),
+      ...destinationCities.map((city) => ({
+        customer_city: city.city,
+        customer_region: city.admin_name,
+        customer_country: city.iso2,
+      })),
+    ];
     const { loadShippingRoutes30d } = await import("../routes.server");
 
-    await loadShippingRoutes30d("shop-123", new Date("2026-07-13T12:00:00.000Z"));
+    const result = await loadShippingRoutes30d(
+      "shop-123",
+      new Date("2026-07-13T12:00:00.000Z"),
+    );
 
-    expect(supabase.calls).toEqual([
+    expect(result.mappedOrderCount).toBe(1001);
+    expect(result.destinations).toHaveLength(60);
+
+    const [originCall, ...orderCalls] = supabase.calls;
+    expect(originCall).toEqual({
+      table: "shop_origin",
+      select: "city, state, country",
+      eq: [["shop_id", "shop-123"]],
+      gte: [],
+      order: [],
+    });
+    expect(orderCalls).toEqual([
       {
-        table: "shop_origin",
-        select: "city, state, country",
+        table: "order_fact",
+        select: "customer_city, customer_region, customer_country",
         eq: [["shop_id", "shop-123"]],
-        gte: [],
+        gte: [["created_at_source", "2026-06-13T12:00:00.000Z"]],
+        order: [
+          ["created_at_source", { ascending: true }],
+          ["id", { ascending: true }],
+        ],
+        range: [0, 999],
       },
       {
         table: "order_fact",
         select: "customer_city, customer_region, customer_country",
         eq: [["shop_id", "shop-123"]],
         gte: [["created_at_source", "2026-06-13T12:00:00.000Z"]],
+        order: [
+          ["created_at_source", { ascending: true }],
+          ["id", { ascending: true }],
+        ],
+        range: [1000, 1999],
       },
     ]);
   });

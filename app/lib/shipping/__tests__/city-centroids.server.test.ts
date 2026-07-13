@@ -81,4 +81,16 @@ describe("city centroid resolution", () => {
       ),
     ).toBeNull();
   });
+
+  it("resolves a known city from the installed world-cities-json package", () => {
+    const resolved = resolveCityCentroid({
+      city: "Toronto",
+      region: "Ontario",
+      country: "CA",
+    });
+
+    expect(resolved).toMatchObject({ city: "Toronto", country: "CA" });
+    expect(Number.isFinite(resolved?.latitude)).toBe(true);
+    expect(Number.isFinite(resolved?.longitude)).toBe(true);
+  });
 });
