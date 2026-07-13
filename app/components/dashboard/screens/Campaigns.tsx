@@ -565,14 +565,19 @@ function CampaignDetail({
   }, [c.id]);
 
   // Spend + ROAS history for the chart card, below. Null while loading (the
-  // card falls back to the existing empty state until it resolves).
+  // card falls back to the existing empty state until it resolves). As with
+  // creativesLoadError above, a fetch failure must not masquerade as "no
+  // history yet" — that copy tells the merchant to wait for data that may
+  // already exist (rule 12, fail visibly).
   const [series, setSeries] = useState<DailyRoasRow[] | null>(null);
+  const [seriesLoadError, setSeriesLoadError] = useState(false);
   useEffect(() => {
     let live = true;
     setSeries(null);
+    setSeriesLoadError(false);
     fetchCampaignSeries(c.id)
       .then((s) => { if (live) setSeries(s); })
-      .catch(() => { if (live) setSeries([]); });
+      .catch(() => { if (live) setSeriesLoadError(true); });
     return () => { live = false; };
   }, [c.id]);
 
@@ -776,10 +781,19 @@ function CampaignDetail({
       <div className="cd-anh-wrap">
         <div className="cd-anh">
           <CDIcon name="arrowUpRight" size={15} />
-          Spend vs revenue · {series ? `${series.length} days` : "loading"}
+          Spend vs revenue ·{" "}
+          {seriesLoadError
+            ? "unavailable"
+            : series
+              ? `${series.length} ${series.length === 1 ? "day" : "days"}`
+              : "loading"}
         </div>
       </div>
-      {!series || series.length < 2 ? (
+      {seriesLoadError ? (
+        <div className="cd-nc-empty" style={{ minHeight: 120 }}>
+          Couldn't load history — refresh to retry
+        </div>
+      ) : !series || series.length < 2 ? (
         <div className="cd-nc-empty" style={{ minHeight: 120 }}>
           No history yet — data appears after the first day of spend
         </div>
