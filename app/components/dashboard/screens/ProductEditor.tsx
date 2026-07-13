@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -88,6 +88,9 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [collectionsError, setCollectionsError] = useState(false);
+  const [, setBalancesByVariant] = useState<
+    Record<string, readonly client.VariantBalanceVM[]>
+  >({});
 
   useEffect(() => {
     setCollectionsError(false);
@@ -97,6 +100,7 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
   useEffect(() => {
     if (!id) return;
     let alive = true;
+    setBalancesByVariant({});
     setLoading(true);
     setLoadError(null);
     client
@@ -130,6 +134,13 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
       alive = false;
     };
   }, [id]);
+
+  const onBalancesChange = useCallback(
+    (variantId: string, balances: readonly client.VariantBalanceVM[]) => {
+      setBalancesByVariant((current) => ({ ...current, [variantId]: balances }));
+    },
+    [],
+  );
 
   // Regenerate the variant grid whenever options change, preserving entered data.
   const regen = (next: Opt[]) => {
@@ -719,7 +730,11 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
                   .map((v) => (
                     <div key={v.id}>
                       <div className="cd-row-title" style={{ marginBottom: 6 }}>{variantLabel(v)}</div>
-                      <InventoryPanel app={app} variantId={v.id as string} />
+                      <InventoryPanel
+                        app={app}
+                        variantId={v.id as string}
+                        onBalancesChange={onBalancesChange}
+                      />
                     </div>
                   ))}
               </div>
