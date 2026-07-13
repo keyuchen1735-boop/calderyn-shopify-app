@@ -138,6 +138,17 @@ export function PayoutPanel({
               <Btn kind="primary" onClick={onCta} disabled={busy}>
                 {vm?.cta === "setup" ? "Set up payouts" : "Resume onboarding"}
               </Btn>
+              {vm?.phase === "onboarding" && (
+                <button
+                  type="button"
+                  className="cd-payout-refresh cd-payout-refresh--setup"
+                  onClick={onRefresh}
+                  disabled={busy}
+                >
+                  <span aria-hidden="true">↻</span>
+                  {busy ? "Refreshing…" : "Refresh status"}
+                </button>
+              )}
             </div>
           )}
         </div>

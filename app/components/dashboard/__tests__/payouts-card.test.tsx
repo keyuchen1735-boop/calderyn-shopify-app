@@ -113,6 +113,7 @@ describe("PayoutPanel", () => {
     expect(html).toContain('data-phase="onboarding"');
     expect(html).toContain("Finish payout setup");
     expect(html).toContain("Resume onboarding");
+    expect(html).toContain("Refresh status");
     expect(html).not.toContain("Open Stripe");
   });
 

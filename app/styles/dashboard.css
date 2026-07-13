@@ -2920,6 +2920,7 @@
 .cd-payout-refresh:active { transform: scale(0.97); }
 .cd-payout-refresh:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cd-payout-refresh:disabled { opacity: 0.4; pointer-events: none; }
+.cd-payout-refresh--setup { margin-top: 8px; }
 .cd-payout-state-copy {
   display: flex;
   flex-direction: column;
