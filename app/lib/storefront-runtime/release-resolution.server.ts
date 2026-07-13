@@ -1,5 +1,6 @@
 import type { StorefrontBundleV1 } from "~/lib/storefront-bundle/types";
 import { getSupabase } from "~/lib/supabase.server";
+import { isStorefrontBundleReadEnabled } from "./csp.server";
 
 export interface StorefrontVersionRecord {
   id: string;
@@ -16,9 +17,23 @@ export interface StorefrontVersionRecord {
   createdAt: string;
 }
 
+export type StorefrontReleaseHistoryOperation =
+  | "capture_legacy"
+  | "install_draft"
+  | "edit_draft"
+  | "publish"
+  | "rollback";
+
+export interface StorefrontReleaseHistoryEntry {
+  operation: StorefrontReleaseHistoryOperation;
+  fromVersion: StorefrontVersionRecord | null;
+  toVersion: StorefrontVersionRecord;
+  occurredAt: string;
+}
+
 export interface StorefrontReleaseReader {
   readPublished(shopId: string): Promise<StorefrontVersionRecord | null>;
-  readRetainedHistory(shopId: string): Promise<StorefrontVersionRecord[]>;
+  readReleaseHistory(shopId: string): Promise<StorefrontReleaseHistoryEntry[]>;
 }
 
 type DatabaseVersionRow = {
@@ -34,10 +49,19 @@ type DatabaseVersionRow = {
   created_at: unknown;
 };
 
+type DatabaseHistoryRow = {
+  from_version_id: unknown;
+  to_version_id: unknown;
+  operation: unknown;
+  created_at: unknown;
+};
+
 const VERSION_COLUMNS = [
   "id", "shop_id", "source_kind", "status", "schema_version", "runtime_version",
   "validation_profile_version", "artifact_hash", "bundle_json", "created_at",
 ].join(", ");
+const HISTORY_PAGE_SIZE = 100;
+const VERSION_CHUNK_SIZE = 200;
 
 function mapVersion(row: DatabaseVersionRow): StorefrontVersionRecord {
   return {
@@ -52,6 +76,40 @@ function mapVersion(row: DatabaseVersionRow): StorefrontVersionRecord {
     artifact: row.bundle_json as StorefrontVersionRecord["artifact"],
     createdAt: String(row.created_at),
   };
+}
+
+async function readPublishedHistoryRows(shopId: string): Promise<DatabaseHistoryRow[]> {
+  const rows: DatabaseHistoryRow[] = [];
+  for (let offset = 0; ; offset += HISTORY_PAGE_SIZE) {
+    const result = await getSupabase()
+      .from("storefront_release_history")
+      .select("from_version_id, to_version_id, operation, created_at")
+      .eq("shop_id", shopId)
+      .in("operation", ["publish", "rollback"])
+      .order("created_at", { ascending: false })
+      .range(offset, offset + HISTORY_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    const page = (result.data ?? []) as unknown as DatabaseHistoryRow[];
+    rows.push(...page);
+    if (page.length < HISTORY_PAGE_SIZE) return rows;
+  }
+}
+
+async function readHistoryVersions(shopId: string, ids: readonly string[]): Promise<Map<string, StorefrontVersionRecord>> {
+  const versions = new Map<string, StorefrontVersionRecord>();
+  for (let offset = 0; offset < ids.length; offset += VERSION_CHUNK_SIZE) {
+    const result = await getSupabase()
+      .from("storefront_bundle_version")
+      .select(VERSION_COLUMNS)
+      .eq("shop_id", shopId)
+      .in("id", ids.slice(offset, offset + VERSION_CHUNK_SIZE));
+    if (result.error) throw result.error;
+    for (const row of result.data ?? []) {
+      const version = mapVersion(row as unknown as DatabaseVersionRow);
+      versions.set(version.id, version);
+    }
+  }
+  return versions;
 }
 
 export const storefrontReleaseReader: StorefrontReleaseReader = {
@@ -75,30 +133,27 @@ export const storefrontReleaseReader: StorefrontReleaseReader = {
     return version.data ? mapVersion(version.data as unknown as DatabaseVersionRow) : null;
   },
 
-  async readRetainedHistory(shopId) {
-    const client = getSupabase();
-    const history = await client
-      .from("storefront_release_history")
-      .select("to_version_id, created_at")
-      .eq("shop_id", shopId)
-      .order("created_at", { ascending: false })
-      .limit(50);
-    if (history.error) throw history.error;
-    const orderedIds = [...new Set((history.data ?? []).map((row) => String(row.to_version_id)))];
-    if (orderedIds.length === 0) return [];
-    const versions = await client
-      .from("storefront_bundle_version")
-      .select(VERSION_COLUMNS)
-      .eq("shop_id", shopId)
-      .in("id", orderedIds);
-    if (versions.error) throw versions.error;
-    const byId = new Map((versions.data ?? []).map((row) => {
-      const mapped = mapVersion(row as unknown as DatabaseVersionRow);
-      return [mapped.id, mapped];
-    }));
-    return orderedIds.flatMap((id) => {
-      const version = byId.get(id);
-      return version ? [version] : [];
+  async readReleaseHistory(shopId) {
+    const rows = await readPublishedHistoryRows(shopId);
+    const ids = [...new Set(rows.flatMap((row) => [row.to_version_id, row.from_version_id]
+      .filter((value): value is string => typeof value === "string")))];
+    const versions = await readHistoryVersions(shopId, ids);
+    return rows.map((row): StorefrontReleaseHistoryEntry => {
+      const toVersion = versions.get(String(row.to_version_id));
+      if (!toVersion) {
+        throw new StorefrontReleaseResolutionError(
+          "invalid_storefront_release_history",
+          "Published storefront history references a missing release.",
+          500,
+        );
+      }
+      const fromVersionId = typeof row.from_version_id === "string" ? row.from_version_id : null;
+      return {
+        operation: row.operation as "publish" | "rollback",
+        fromVersion: fromVersionId ? versions.get(fromVersionId) ?? null : null,
+        toVersion,
+        occurredAt: String(row.created_at),
+      };
     });
   },
 };
@@ -114,13 +169,38 @@ function supported(version: StorefrontVersionRecord): boolean {
     version.artifact.sourceKind === version.sourceKind;
 }
 
-function newestCompatible(
-  versions: readonly StorefrontVersionRecord[],
-  runtime1Enabled: boolean,
+function retainedPublishedVersions(history: readonly StorefrontReleaseHistoryEntry[]): StorefrontVersionRecord[] {
+  const versions: StorefrontVersionRecord[] = [];
+  const seen = new Set<string>();
+  for (const entry of history) {
+    if (entry.operation !== "publish" && entry.operation !== "rollback") continue;
+    for (const version of [entry.toVersion, entry.fromVersion]) {
+      if (version && !seen.has(version.id)) {
+        seen.add(version.id);
+        versions.push(version);
+      }
+    }
+  }
+  return versions;
+}
+
+function firstCompatible(
+  history: readonly StorefrontReleaseHistoryEntry[],
+  bundleReadEnabled: boolean,
 ): StorefrontVersionRecord | null {
-  return [...versions]
-    .filter((version) => supported(version) && (runtime1Enabled || version.runtimeVersion === 0))
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+  return retainedPublishedVersions(history).find((version) =>
+    supported(version) && (bundleReadEnabled || version.runtimeVersion === 0)) ?? null;
+}
+
+export class StorefrontReleaseResolutionError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "StorefrontReleaseResolutionError";
+  }
 }
 
 export type ResolvedStorefrontRelease =
@@ -137,17 +217,23 @@ function resolvedVersion(version: StorefrontVersionRecord, fallbackFromVersionId
 
 export async function resolveStorefrontRelease(input: {
   shopId: string;
-  runtime1Enabled?: boolean;
+  bundleReadEnabled?: boolean;
   reader?: StorefrontReleaseReader;
 }): Promise<ResolvedStorefrontRelease> {
   const reader = input.reader ?? storefrontReleaseReader;
-  const runtime1Enabled = input.runtime1Enabled ?? /^(?:1|true)$/i.test(process.env.STOREFRONT_RUNTIME_1_READ ?? "");
+  const bundleReadEnabled = input.bundleReadEnabled ?? isStorefrontBundleReadEnabled();
   const published = await reader.readPublished(input.shopId);
   if (!published) return { kind: "runtime0-live" };
-  if (supported(published) && (runtime1Enabled || published.runtimeVersion === 0)) {
+  if (supported(published) && (bundleReadEnabled || published.runtimeVersion === 0)) {
     return resolvedVersion(published);
   }
-  const fallback = newestCompatible(await reader.readRetainedHistory(input.shopId), runtime1Enabled);
-  if (!fallback) return { kind: "runtime0-live" };
+  const fallback = firstCompatible(await reader.readReleaseHistory(input.shopId), bundleReadEnabled);
+  if (!fallback) {
+    throw new StorefrontReleaseResolutionError(
+      "no_compatible_storefront_release",
+      "No compatible immutable storefront release is available.",
+      503,
+    );
+  }
   return resolvedVersion(fallback, published.id);
 }

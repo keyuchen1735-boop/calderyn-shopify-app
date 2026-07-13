@@ -21,6 +21,7 @@ const routingCatalog: StorefrontCatalog = {
   listProducts: (shopId, opts) => pick(shopId).listProducts(shopId, opts),
   getProduct: (shopId, handle) => pick(shopId).getProduct(shopId, handle),
   listCollections: (shopId) => pick(shopId).listCollections(shopId),
+  getCollection: (shopId, handle) => pick(shopId).getCollection?.(shopId, handle) ?? Promise.resolve(null),
 };
 
 export function getCatalog(): StorefrontCatalog {

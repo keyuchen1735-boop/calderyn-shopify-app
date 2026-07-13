@@ -269,6 +269,33 @@ export const ownedCatalog: StorefrontCatalog = {
     return product ?? null;
   },
 
+  async getCollection(shopId, handle) {
+    const client = getSupabase();
+    const collectionResult = await client
+      .from("collection_dim")
+      .select("id, handle, title, description")
+      .eq("shop_id", shopId)
+      .eq("handle", handle)
+      .maybeSingle();
+    if (collectionResult.error) throw collectionResult.error;
+    if (!collectionResult.data) return null;
+    const collection = collectionResult.data as Row;
+    const countResult = await client
+      .from("product_collection")
+      .select("product_dim!inner(id)", { count: "exact", head: true })
+      .eq("collection_id", String(collection.id))
+      .eq("product_dim.shop_id", shopId)
+      .eq("product_dim.status", "active");
+    if (countResult.error) throw countResult.error;
+    return {
+      id: String(collection.id),
+      handle: String(collection.handle),
+      title: String(collection.title),
+      description: (collection.description as string | null) ?? "",
+      productCount: countResult.count ?? 0,
+    };
+  },
+
   async listCollections(shopId) {
     const { data, error } = await getSupabase()
       .from("collection_dim")

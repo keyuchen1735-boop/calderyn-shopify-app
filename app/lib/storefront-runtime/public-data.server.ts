@@ -197,8 +197,8 @@ export async function resolvePublicData(
   if (hasRequirement(input, "currentCollection")) {
     if (input.route.kind !== "collection") throw new PublicDataPlanError("currentCollection requires a collection route");
     const collectionHandle = input.route.handle;
-    const collections = await catalog.listCollections(input.shopId);
-    const collection = collections.find((entry) => entry.handle === collectionHandle) ?? null;
+    if (!catalog.getCollection) throw new PublicDataPlanError("Catalog does not support bounded collection lookup");
+    const collection = await catalog.getCollection(input.shopId, collectionHandle);
     if (!collection) {
       data.notFound = { kind: "collection", handle: collectionHandle };
     } else {
@@ -211,7 +211,7 @@ export async function resolvePublicData(
         title: collection.title,
         description: collection.description ?? "",
         image: products[0]?.primaryImage ?? null,
-        productCount: products.length,
+        productCount: collection.productCount ?? products.length,
         products,
       };
     }

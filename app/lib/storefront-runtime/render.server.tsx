@@ -155,6 +155,23 @@ function safeInstanceSuffix(value: string): string {
   return output || "item";
 }
 
+function authorityKeyForSlot(slot: TrustedSlotManifest, context: RenderContext): string {
+  const scope = slot.scopeId && slot.scopeId !== "root" ? context.scopes.get(slot.scopeId) : undefined;
+  if (scope && "handle" in scope && typeof scope.id === "string") return `product:${scope.id}`;
+  if (scope && "quantity" in scope && typeof scope.id === "string") return `cartLine:${scope.id}`;
+  if (scope && "available" in scope && !("handle" in scope) && typeof scope.id === "string") {
+    return `variant:${scope.id}`;
+  }
+  if (slot.kind === "cartLineControls" && context.data.cart?.lines[0]) {
+    return `cartLine:${context.data.cart.lines[0].id}`;
+  }
+  if ((slot.kind === "cartSummary" || slot.kind === "cartDrawer") && context.data.cart) {
+    return `cart:${context.data.cart.id}`;
+  }
+  if (context.data.product) return `product:${context.data.product.id}`;
+  throw new Error(`Trusted slot ${slot.id} has no public commerce authority`);
+}
+
 function targetHref(target: RouteTarget, context: RenderContext): string {
   let path = PATHS[target.routeId];
   const params = Object.fromEntries(
@@ -181,7 +198,15 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
   if (node.trustedSlotId) {
     const slot = context.slots.get(node.trustedSlotId);
     if (!slot) throw new Error(`Missing trusted slot manifest ${node.trustedSlotId}`);
-    return <TrustedSlotHost key={key} slot={slot} />;
+    const instanceId = context.instanceSuffix ? `${slot.id}-${context.instanceSuffix}` : slot.id;
+    return (
+      <TrustedSlotHost
+        key={key}
+        slot={slot}
+        instanceId={instanceId}
+        authorityKey={authorityKeyForSlot(slot, context)}
+      />
+    );
   }
 
   const props: Record<string, unknown> = { key };

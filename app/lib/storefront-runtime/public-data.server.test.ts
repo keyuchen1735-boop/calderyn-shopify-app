@@ -33,6 +33,9 @@ function catalog(products = [product("one"), product("two")]): StorefrontCatalog
       return selected.slice(0, opts?.limit);
     }),
     getProduct: vi.fn(async (_shopId, handle) => products.find((entry) => entry.handle === handle) ?? null),
+    getCollection: vi.fn(async (_shopId, handle) => handle === "featured"
+      ? { id: "collection-featured", handle, title: "Featured", description: "All featured", productCount: products.length }
+      : null),
     listCollections: vi.fn(async () => [{ handle: "featured", title: "Featured" }]),
   };
 }
@@ -93,6 +96,19 @@ describe("runtime-1 public data plans", () => {
     expect(data.relatedProducts).toEqual([]);
   });
 
+  it("uses a direct collection lookup and keeps the total separate from the 24-product slice", async () => {
+    const fake = catalog(Array.from({ length: 40 }, (_, index) => product(String(index))));
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "currentCollection" }],
+      route: { kind: "collection", handle: "featured" },
+    }, { catalog: fake, settingsLoader });
+    expect(fake.getCollection).toHaveBeenCalledWith(SHOP, "featured");
+    expect(fake.listCollections).not.toHaveBeenCalled();
+    expect(data.collection?.products).toHaveLength(24);
+    expect(data.collection?.productCount).toBe(40);
+  });
+
   it("resolves live identity/media on every request but excludes release-owned design fields", async () => {
     const listProducts = vi.fn()
       .mockResolvedValueOnce([product("one", "https://signed.example/first")])
@@ -100,6 +116,7 @@ describe("runtime-1 public data plans", () => {
     const fake: StorefrontCatalog = {
       listProducts,
       getProduct: vi.fn(async () => null),
+      getCollection: vi.fn(async () => null),
       listCollections: vi.fn(async () => []),
     };
     const input = {

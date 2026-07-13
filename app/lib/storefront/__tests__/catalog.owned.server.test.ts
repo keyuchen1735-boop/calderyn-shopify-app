@@ -12,6 +12,7 @@ const eqCalls: Record<string, Array<[string, unknown]>> = {};
 let tableRows: Record<string, unknown[]> = {};
 // Canned single-row result per table (for maybeSingle()).
 let tableSingle: Record<string, unknown> = {};
+let tableCount: Record<string, number> = {};
 
 function builder(table: string) {
   const b: Record<string, unknown> = {};
@@ -27,7 +28,9 @@ function builder(table: string) {
     limit: chain,
     range: chain,
     maybeSingle: () => Promise.resolve({ data: tableSingle[table] ?? null, error: null }),
-    then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: tableRows[table] ?? [], error: null }).then(resolve),
+    then: (resolve: (v: unknown) => unknown) => Promise.resolve({
+      data: tableRows[table] ?? [], error: null, count: tableCount[table] ?? null,
+    }).then(resolve),
   });
   return b;
 }
@@ -41,6 +44,7 @@ beforeEach(() => {
   for (const k of Object.keys(eqCalls)) delete eqCalls[k];
   tableRows = {};
   tableSingle = {};
+  tableCount = {};
 });
 
 describe("ownedCatalog.listProducts", () => {
@@ -191,5 +195,24 @@ describe("ownedCatalog.listCollections", () => {
     const out = await ownedCatalog.listCollections("shop-1");
     expect(out).toEqual([{ handle: "apparel", title: "Apparel" }]);
     expect(eqCalls.collection_dim).toContainEqual(["shop_id", "shop-1"]);
+  });
+});
+
+describe("ownedCatalog.getCollection", () => {
+  it("performs one shop-scoped handle lookup and returns an accurate active-product count", async () => {
+    tableSingle = {
+      collection_dim: { id: "c1", handle: "apparel", title: "Apparel", description: "Wear it" },
+    };
+    tableCount = { product_collection: 37 };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const collection = await ownedCatalog.getCollection!("shop-1", "apparel");
+    expect(collection).toEqual({
+      id: "c1", handle: "apparel", title: "Apparel", description: "Wear it", productCount: 37,
+    });
+    expect(eqCalls.collection_dim).toContainEqual(["shop_id", "shop-1"]);
+    expect(eqCalls.collection_dim).toContainEqual(["handle", "apparel"]);
+    expect(eqCalls.product_collection).toContainEqual(["collection_id", "c1"]);
+    expect(eqCalls.product_collection).toContainEqual(["product_dim.shop_id", "shop-1"]);
+    expect(eqCalls.product_collection).toContainEqual(["product_dim.status", "active"]);
   });
 });

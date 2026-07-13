@@ -11,6 +11,26 @@ import {
 } from "./render.server";
 
 const emptyInteractions = { version: 1 as const, state: [], bindings: [], transitions: [] };
+const publicProduct: NonNullable<PublicPresentationData["product"]> = {
+  id: "product-1",
+  handle: "product-one",
+  title: "Product one",
+  description: "",
+  primaryImage: null,
+  images: [],
+  options: [],
+  variants: [{
+    id: "variant-1",
+    title: "Default",
+    price: { cents: 1200, currency: "USD" },
+    compareAtPrice: null,
+    availability: "In stock",
+    available: true,
+  }],
+  price: { cents: 1200, currency: "USD" },
+  compareAtPrice: null,
+  availability: "In stock",
+};
 const data: PublicPresentationData = {
   store: { name: `</h1><script>alert("x")</script>`, logo: null },
   policyLinks: [],
@@ -76,10 +96,16 @@ describe("compiled-node server renderer", () => {
 
   it("replaces compiler-authorized slot nodes with platform-owned closed-shadow hosts", () => {
     const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
-    const result = renderStorefrontRoute({ routeId: "product", artifact: bundle.routes.product, data, nonce: "route-nonce" });
+    const result = renderStorefrontRoute({
+      routeId: "product",
+      artifact: bundle.routes.product,
+      data: { ...data, product: publicProduct },
+      nonce: "route-nonce",
+    });
     const html = renderToStaticMarkup(createElement(() => result.element));
     expect(html).toContain('data-cd-trusted-slot="addToCart"');
     expect(html).toContain('data-cd-shadow-mode="closed"');
+    expect(html).toContain('data-cd-authority-key="product:product-1"');
     expect(html).not.toContain("hide me");
   });
 

@@ -10,8 +10,8 @@ import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
 import {
   buildStorefrontCsp,
-  isRuntime1StorefrontReadEnabled,
-  isStorefrontDocumentPath,
+  resolveStorefrontCspSurface,
+  stripStorefrontRendererHeader,
 } from "./lib/storefront-runtime/csp.server";
 
 export const streamTimeout = 5000;
@@ -89,10 +89,17 @@ export function applySecurityHeaders(headers: Headers, pathname?: string, storef
     headers.set("Cache-Control", "no-store");
   }
 
-  if (pathname !== undefined && storefrontNonce && isStorefrontDocumentPath(pathname)) {
+  const storefrontSurface = pathname === undefined ? null : resolveStorefrontCspSurface(headers, pathname);
+  stripStorefrontRendererHeader(headers);
+  if (storefrontSurface && storefrontNonce) {
     headers.set(
       "Content-Security-Policy",
-      buildStorefrontCsp({ nonce: storefrontNonce, checkout: pathname.startsWith("/storefront/checkout") }),
+      buildStorefrontCsp({
+        nonce: storefrontNonce,
+        surface: storefrontSurface,
+        supabaseUrl: process.env.SUPABASE_URL,
+        ownedMediaOrigin: process.env.STOREFRONT_OWNED_MEDIA_ORIGIN,
+      }),
     );
   }
 
@@ -150,7 +157,7 @@ export default async function handleRequest(
   remixContext: EntryContext,
 ) {
   const pathname = new URL(request.url).pathname;
-  const storefrontNonce = isRuntime1StorefrontReadEnabled() && isStorefrontDocumentPath(pathname)
+  const storefrontNonce = resolveStorefrontCspSurface(responseHeaders, pathname)
     ? randomBytes(18).toString("base64url")
     : undefined;
   addDocumentResponseHeaders(request, responseHeaders);

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { applySecurityHeaders } from "../../entry.server";
+import { markStorefrontBundleRendered } from "../../lib/storefront-runtime/csp.server";
 
 // entry.server pulls in ./shopify.server, which calls shopifyApp() at module
 // load — that throws without SHOPIFY_APP_URL (and inits Prisma session storage),
@@ -76,6 +77,7 @@ describe("applySecurityHeaders", () => {
 
   it("installs the storefront-specific nonce CSP without affecting dashboard policy", () => {
     const storefront = new Headers();
+    markStorefrontBundleRendered(storefront);
     applySecurityHeaders(storefront, "/storefront/products/shoe", "request-nonce");
     expect(storefront.get("Content-Security-Policy") ?? "").toContain("script-src 'self' 'nonce-request-nonce'");
     expect(storefront.get("Content-Security-Policy") ?? "").toContain("connect-src 'self'");
@@ -83,6 +85,18 @@ describe("applySecurityHeaders", () => {
     const dashboard = new Headers();
     applySecurityHeaders(dashboard, "/dashboard", "request-nonce");
     expect(dashboard.get("Content-Security-Policy") ?? "").not.toContain("script-src");
+  });
+
+  it("keeps legacy browse compatible while giving checkout and account cards Stripe CSP", () => {
+    const legacyBrowse = new Headers();
+    applySecurityHeaders(legacyBrowse, "/storefront/products/shoe", "request-nonce");
+    expect(legacyBrowse.get("Content-Security-Policy") ?? "").not.toContain("script-src");
+
+    for (const path of ["/storefront/checkout", "/storefront/account/cards"]) {
+      const headers = new Headers();
+      applySecurityHeaders(headers, path, "request-nonce");
+      expect(headers.get("Content-Security-Policy") ?? "").toContain("https://js.stripe.com");
+    }
   });
 
   it("allows same-origin framing on the studio draft-preview path (not DENY)", () => {
