@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement as h, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -31,6 +32,11 @@ vi.mock("~/components/ui/mapcn-map", () => ({
     h("div", null, children),
   useMap: () => ({ map: null }),
 }));
+
+const shippingCss = readFileSync(
+  new URL("../../../styles/shipping.css", import.meta.url),
+  "utf8",
+);
 
 const resolvedRoutes: ShippingRoutes30d = {
   origin: {
@@ -110,8 +116,15 @@ describe("ShippingRouteMapFrame", () => {
   });
 
   it("discloses orders that could not be mapped", () => {
-    expect(markup({ ...resolvedRoutes, unmappedOrderCount: 3 })).toContain(
-      "3 orders could not be placed on the map",
+    const html = markup({ ...resolvedRoutes, unmappedOrderCount: 3 });
+
+    expect(html).toContain("3 orders could not be placed on the map");
+    expect(html).toContain('class="cd-shipping-route-unmapped"');
+    expect(shippingCss).toMatch(
+      /\.cd-shipping-route-frame\s*\{[^}]*height:\s*var\(--cd-shipping-map-height\)/s,
+    );
+    expect(shippingCss).toMatch(
+      /\.cd-shipping-route-frame\s*>\s*\.cd-shipping-route-unmapped\s*\{[^}]*position:\s*absolute/s,
     );
   });
 

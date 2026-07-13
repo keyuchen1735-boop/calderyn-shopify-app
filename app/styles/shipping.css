@@ -109,7 +109,7 @@
 
 .cd-shipping-map-stage {
   position: relative;
-  min-height: var(--cd-shipping-map-height);
+  height: var(--cd-shipping-map-height);
   overflow: hidden;
   border: 0.5px solid var(--hairline-strong);
   border-radius: 18px;
@@ -120,7 +120,7 @@
 
 .cd-shipping-route-frame {
   position: relative;
-  min-height: var(--cd-shipping-map-height);
+  height: var(--cd-shipping-map-height);
 }
 
 .cd-shipping-route-map,
@@ -351,6 +351,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+.cd-shipping-route-unmapped {
+  margin: 10px 0 0;
+  color: var(--text-2);
+  font-size: calc(11.5px * var(--type-scale));
+  line-height: 1.4;
+}
+
+.cd-shipping-route-frame > .cd-shipping-route-unmapped {
+  position: absolute;
+  z-index: 5;
+  left: 20px;
+  bottom: 190px;
+  max-width: min(300px, calc(100% - 40px));
+  margin: 0;
+  padding: 7px 10px;
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: 9px;
+  background: color-mix(in oklch, var(--card-solid) 92%, transparent);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(14px) saturate(1.15);
+}
+
 .cd-shipping-route-frame > .cd-emptyhint,
 .cd-shipping-route-frame > div:not(.cd-shipping-route-map),
 .cd-shipping-map-stage > .cd-emptyhint,
@@ -563,6 +585,12 @@
     right: 10px;
     width: min(205px, calc(100% - 20px));
     max-height: 124px;
+  }
+
+  .cd-shipping-route-frame > .cd-shipping-route-unmapped {
+    left: 10px;
+    bottom: 150px;
+    max-width: calc(100% - 20px);
   }
 
   .cd-shipping-metric-dock {

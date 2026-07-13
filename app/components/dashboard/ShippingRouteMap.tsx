@@ -421,10 +421,7 @@ function orderLabel(orderCount: number): string {
 function UnmappedOrders({ count }: { count: number }) {
   if (count === 0) return null;
   return (
-    <p
-      role="status"
-      style={{ margin: "10px 0 0", color: "var(--cd-muted, #748094)" }}
-    >
+    <p className="cd-shipping-route-unmapped" role="status">
       {count} {count === 1 ? "order could" : "orders could"} not be placed on
       the map
     </p>
