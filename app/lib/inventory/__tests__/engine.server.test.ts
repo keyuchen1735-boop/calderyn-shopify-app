@@ -7,7 +7,8 @@ vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     rpc,
     from: (t: string) => {
-      if (t === "location_dim") return { select: () => ({ eq: () => Promise.resolve({ data: balanceRows.map((b) => ({ id: b.location_id, priority: b.priority, lat: b.lat, lng: b.lng })), error: null }) }) };
+      // locationOrder filters shop_id AND active, so select chains two .eq calls.
+      if (t === "location_dim") return { select: () => ({ eq: () => ({ eq: () => Promise.resolve({ data: balanceRows.map((b) => ({ id: b.location_id, priority: b.priority, lat: b.lat, lng: b.lng })), error: null }) }) }) };
       return { upsert: vi.fn().mockResolvedValue({ error: null }) };
     },
   }),

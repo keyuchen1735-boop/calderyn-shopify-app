@@ -126,22 +126,46 @@ interface RawHtmlProps { html: string }
 // the persistence boundary (saveDraft → sanitizeStoreHtml); this block renders it verbatim and must
 // NEVER be handed un-sanitized html. validateProps stays a cheap string/length coerce so no
 // sanitizer is pulled into the client bundle.
+// data-cd-media product-photo markers inside sanitized store HTML. The stored markup
+// carries NO image URLs (owned-storage URLs are signed and expire within the hour);
+// each render wires the product's CURRENT first photo in, and an img whose product
+// lost its photo (or was deleted) disappears instead of rendering a broken frame.
+const MEDIA_IMG_RE = /<img\b([^>]*?)data-cd-media="([^"]+)"([^>]*?)\/?>/gi;
+
+function attrEscape(v: string): string {
+  return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+/** Substitute every data-cd-media img with the referenced product's live photo. Exported
+ *  for tests; pure. Any src/srcset the markup somehow carries is discarded — the catalog
+ *  is the only image source a generated page can load from. */
+export function resolveMediaMarkers(html: string, productsById: Record<string, StoreProduct> | undefined): string {
+  if (!html.includes("data-cd-media")) return html;
+  return html.replace(MEDIA_IMG_RE, (_m, pre: string, id: string, post: string) => {
+    const url = productsById?.[id]?.images?.[0]?.url;
+    if (!url) return "";
+    const attrs = `${pre} ${post}`.replace(/\s*(?:src|srcset)="[^"]*"/gi, "").replace(/\s{2,}/g, " ").trim();
+    return `<img src="${attrEscape(url)}" ${attrs}>`;
+  });
+}
+
 // Mounts the sanitized markup, then hydrates its data-fx-shader / data-fx-motion
 // effect channels client-side (the effect is a no-op on the server and skips when
 // html is empty). Re-keyed on props.html so a regenerated home tears down the old
 // effects before hydrating the new markup.
-function RawHtmlBlock({ props }: { props: RawHtmlProps; ctx: RenderContext }) {
+function RawHtmlBlock({ props, ctx }: { props: RawHtmlProps; ctx: RenderContext }) {
   const ref = useRef<HTMLDivElement>(null);
+  const html = resolveMediaMarkers(props.html, ctx.data?.productsById);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     return hydrateStoreFx(el);
-  }, [props.html]);
-  if (!props.html) return null;
+  }, [html]);
+  if (!html) return null;
   return createElement("div", {
     ref,
     className: "cd-block cd-block--rawhtml",
-    dangerouslySetInnerHTML: { __html: props.html },
+    dangerouslySetInnerHTML: { __html: html },
   });
 }
 const rawHtml: BlockMeta<RawHtmlProps> = {
@@ -149,7 +173,14 @@ const rawHtml: BlockMeta<RawHtmlProps> = {
   defaultProps: { html: "" },
   defaultLayout: { x: 0, y: 0, w: 12, h: 12 },
   validateProps: (raw) => ({ html: str(asRecord(raw).html).slice(0, 100000) }),
-  catalogRefs: () => ({ productIds: [], collectionHandles: [] }),
+  // data-cd-media product references drive data resolution (the loader fetches these
+  // products so RawHtmlBlock can wire fresh photo URLs at render). An id that stopped
+  // existing is reported by validation but never strips the block — the render-time
+  // substitution simply drops that img.
+  catalogRefs: (props) => ({
+    productIds: [...props.html.matchAll(/data-cd-media="([^"]+)"/g)].map((m) => m[1]),
+    collectionHandles: [],
+  }),
   Component: RawHtmlBlock,
 };
 

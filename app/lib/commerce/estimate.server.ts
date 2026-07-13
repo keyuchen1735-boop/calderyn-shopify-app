@@ -7,9 +7,10 @@ import { getShippingEngine } from "~/lib/shipping/engine.server";
 import { priceLines } from "~/lib/order/cart.server";
 import type { QuoteLine } from "./types";
 import { getShopOrigin } from "./origin.server";
-import { getRateSource } from "./rate-source.server";
-import { buildParcel, restrictedVariants } from "~/lib/shipping/parcel.server";
+import { RateSourceNotConfiguredError, resolveRateSource } from "./rate-source.server";
+import { cartShipInfo } from "~/lib/shipping/parcel.server";
 import { ShipRestrictedError } from "~/lib/shipping/errors";
+import { loadShipRules, toMerchantShipRules } from "~/lib/shipping/rules.server";
 
 export interface CoarseDestination {
   zip: string;
@@ -58,32 +59,35 @@ export async function estimateShipping(
   const priced = await priceLines(shopId, lines);
 
   // Fail fast: don't promise a delivery date for an item we can't ship to the destination
-  // country. Same restriction rule as quoteCart so the pre-checkout estimate never contradicts
-  // what checkout will do.
-  const blocked = await restrictedVariants(priced.lines.map((l) => l.variantId), dest.country);
-  if (blocked.length) throw new ShipRestrictedError(dest.country, blocked);
+  // country. Same restriction rule (and same merchant rules) as quoteCart so the
+  // pre-checkout estimate never contradicts what checkout will do. Independent shop reads
+  // run alongside the batched ship-data read.
+  const [shipInfo, rulesDto, origin, resolvedSource] = await Promise.all([
+    cartShipInfo(priced.lines.map((l) => l.variantId), dest.country),
+    loadShipRules(shopId),
+    getShopOrigin(shopId),
+    resolveRateSource(shopId),
+  ]);
+  if (shipInfo.blocked.length) throw new ShipRestrictedError(dest.country, shipInfo.blocked);
+  const rules = toMerchantShipRules(rulesDto, shipInfo.maxHandlingDays);
 
-  const origin = await getShopOrigin(shopId);
-  // getRateSource is async (throws RATE_SOURCE_NOT_CONFIGURED when no carrier connected).
-  const rateSource = await getRateSource(shopId);
+  // Checkout always quotes (a zero-setup shop sells at the default bands), but a PROMISE
+  // is different: never advertise a delivery date/price on the PDP that came from the
+  // built-in bands the merchant never saw. The delivery-promise route maps this to a
+  // 422 and the widget hides (rule 12: no invented dates).
+  if (resolvedSource.kind === "default") throw new RateSourceNotConfiguredError(shopId);
+  const rateSource = resolvedSource.source;
 
   // Coarse destination: zip + country (+ state if known). Street/city blank — EasyPost rates
   // primarily on zip+country; the engine flags lowConfidence which we surface as isEstimate.
-  const cart = await Promise.all(
-    priced.lines.map(async (l) => {
-      const base = { variantId: l.variantId, quantity: l.quantity };
-      try {
-        const p = await buildParcel(l.variantId);
-        return { ...base, weightOz: p.weightOz, lengthIn: p.lengthIn, widthIn: p.widthIn, heightIn: p.heightIn };
-      } catch (err) {
-        // Missing variant_shipping row is expected before the migration is applied; log anything else.
-        if (!(err instanceof Error && err.message.startsWith("no shipping data"))) {
-          console.error("[estimateShipping] buildParcel failed, using low-confidence fallback:", err);
-        }
-        return base; // no variant_shipping row (e.g. pre-migration) -> engine low-confidence fallback
-      }
-    }),
-  );
+  // A variant without ship data quotes as a bare line -> engine low-confidence fallback.
+  const cart = priced.lines.map((l) => {
+    const parcel = shipInfo.parcelByVariant.get(l.variantId);
+    const base = { variantId: l.variantId, quantity: l.quantity };
+    return parcel
+      ? { ...base, weightOz: parcel.weightOz, lengthIn: parcel.lengthIn, widthIn: parcel.widthIn, heightIn: parcel.heightIn }
+      : base;
+  });
 
   const req: ShippingQuoteRequest = {
     cart,
@@ -93,7 +97,7 @@ export async function estimateShipping(
     currency: priced.currency,
     options: { selection: "all" },
   };
-  const quote = await getShippingEngine()(req, rateSource);
+  const quote = await getShippingEngine()(req, rateSource, rules);
   if (!quote.options.length) throw new Error("no shipping options for the coarse destination");
 
   const byPrice = [...quote.options].sort((a, b) => a.amountCents - b.amountCents);

@@ -5,7 +5,9 @@
 // its reads to that shopId (the contract-level defense against cross-tenant leakage
 // on this public, unauthenticated surface; there is no Postgres RLS).
 export interface StorefrontCatalog {
-  listProducts(shopId: string, opts?: { collection?: string }): Promise<StoreProduct[]>;
+  /** opts.ids restricts to explicit product ids (curated grids) — implementations must
+   *  scope the id read to the shop and skip the full-catalog fetch. */
+  listProducts(shopId: string, opts?: { collection?: string; ids?: string[] }): Promise<StoreProduct[]>;
   getProduct(shopId: string, handle: string): Promise<StoreProduct | null>;
   listCollections(shopId: string): Promise<StoreCollection[]>;
 }
@@ -27,6 +29,9 @@ export interface StoreVariant {
   sku: string | null;
   title: string;
   priceCents: number;
+  /** Struck-through "was" price in cents; render only when > priceCents.
+   *  Optional so fixture/legacy variant literals stay valid. */
+  compareAtPriceCents?: number | null;
   currency: string;
   available: boolean;
 }

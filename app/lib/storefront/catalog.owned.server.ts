@@ -45,6 +45,7 @@ function toVariant(v: Row, ledgerSellable?: number): StoreVariant {
     sku: (v.sku as string | null) ?? null,
     title: String(v.title ?? "Default"),
     priceCents: priced ? Number(v.retail_price_cents) : 0,
+    compareAtPriceCents: v.compare_at_price_cents == null ? null : Number(v.compare_at_price_cents),
     currency: (v.currency as string | null) ?? DEFAULT_CURRENCY,
     // A tracked variant is available iff it has sellable stock (on_hand minus
     // reserved, summed across locations); an untracked variant is always
@@ -108,7 +109,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     await Promise.all([
       sb
         .from("variant_dim")
-        .select("id, product_id, sku, title, retail_price_cents, currency, inventory_tracked, inventory_on_hand, position")
+        .select("id, product_id, sku, title, retail_price_cents, compare_at_price_cents, currency, inventory_tracked, inventory_on_hand, position")
         .eq("shop_id", shopId)
         .in("product_id", ids)
         .order("position"),
@@ -213,6 +214,11 @@ export const ownedCatalog: StorefrontCatalog = {
         .eq("collection_id", coll.id);
       if (lErr) throw lErr;
       restrictToIds = (links ?? []).map((r: Row) => String(r.product_id)).slice(0, MAX_STOREFRONT_PRODUCTS);
+      if (!restrictToIds.length) return [];
+    } else if (opts?.ids) {
+      // Explicit-id grids: fetch and assemble ONLY the referenced products — never the
+      // whole catalog (assemble signs every image URL, so a full fetch is hot-path poison).
+      restrictToIds = opts.ids.slice(0, MAX_STOREFRONT_PRODUCTS);
       if (!restrictToIds.length) return [];
     }
 

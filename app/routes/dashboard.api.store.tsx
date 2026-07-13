@@ -7,8 +7,11 @@ import {
   saveStudioAccent,
   saveStudioVibe,
   publishStudioStore,
+  moveStudioSection,
+  removeStudioSection,
+  regenerateStudioSection,
 } from "~/lib/storebuilder/studio.server";
-import { decideExperiment, startExperiment } from "~/lib/experiments/store-experiment.server";
+import { decideExperiment, startExperiment, type StoreExperimentKind } from "~/lib/experiments/store-experiment.server";
 import { generateStore, type GenerateResult } from "~/lib/storegen/generate.server";
 import { classifyAttachmentIntent, type AttachmentImage, type AttachmentIntent } from "~/lib/storegen/attachment-intent.server";
 import { assertCanGenerate, assertGeneratePrechecks, assertDesignerQuota } from "~/lib/storegen/guard.server";
@@ -18,6 +21,7 @@ import { CalderynError } from "~/lib/calderyn.server";
 import { isUuid } from "~/lib/ids";
 import {
   STUDIO_IMAGE_MEDIA_TYPES,
+  STUDIO_EXPERIMENT_KINDS,
   type StudioDesignModel,
   type StudioVibe,
   type StudioGenerateReceipt,
@@ -36,7 +40,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const HERO_TEXT_MAX = 300;
 const STUDIO_VIBES: readonly string[] = ["minimal", "bold", "warm"];
-const EXPERIMENT_KINDS: readonly string[] = ["headline", "vibe"];
+const EXPERIMENT_KINDS: readonly string[] = STUDIO_EXPERIMENT_KINDS;
 const EXPERIMENT_DECISIONS: readonly string[] = ["ship", "keep", "stop"];
 const EXPERIMENT_NAME_MAX = 80;
 
@@ -357,6 +361,40 @@ export async function action({ request }: ActionFunctionArgs) {
       });
     }
 
+    case "section-move": {
+      const id = typeof b.id === "string" ? b.id : "";
+      const direction = b.direction === "up" || b.direction === "down" ? b.direction : null;
+      if (!id || !direction) return jsonError(422, "invalid_section", "Section move needs an id and a direction.");
+      return dashboardJson(async () => ({ sections: await moveStudioSection(session.shopId, id, direction) }));
+    }
+
+    case "section-remove": {
+      const id = typeof b.id === "string" ? b.id : "";
+      if (!id) return jsonError(422, "invalid_section", "Section remove needs an id.");
+      return dashboardJson(async () => ({ sections: await removeStudioSection(session.shopId, id) }));
+    }
+
+    case "section-regenerate": {
+      const id = typeof b.id === "string" ? b.id : "";
+      if (!id) return jsonError(422, "invalid_section", "Section regenerate needs an id.");
+      if (b.instruction !== undefined && typeof b.instruction !== "string") {
+        return jsonError(422, "invalid_instruction");
+      }
+      const instruction = typeof b.instruction === "string" && b.instruction.trim() ? b.instruction.trim() : undefined;
+      if (instruction && instruction.length > 500) {
+        return jsonError(422, "invalid_instruction", "Keep the instruction under 500 characters.");
+      }
+      // A real design-model call: bound it like other paid entry points. The shared
+      // storegen burst limit is deliberately not consumed (a section redo must not lock
+      // the merchant out of a full rebuild); a dedicated hourly cap bounds the spend.
+      if (!(await rateLimit(`sectionregen:${session.shopId}`, 20, 3_600_000))) {
+        return jsonError(429, "rate_limited", "Too many section redos. Please wait a little while.");
+      }
+      return dashboardJson(async () => ({
+        sections: await regenerateStudioSection(session.shopId, id, instruction),
+      }));
+    }
+
     case "experiment-start": {
       // Starting a test writes a row and reads the catalog; cap per shop to
       // bound abuse the same way generate does.
@@ -365,7 +403,7 @@ export async function action({ request }: ActionFunctionArgs) {
       }
       const kind = typeof b.kind === "string" ? b.kind : "";
       if (!EXPERIMENT_KINDS.includes(kind)) {
-        return jsonError(422, "invalid_kind", "Experiment kind must be headline or vibe.");
+        return jsonError(422, "invalid_kind", "Experiment kind must be headline, vibe, pdp_copy or ai_page.");
       }
       if (b.name !== undefined && typeof b.name !== "string") {
         return jsonError(422, "invalid_name");
@@ -374,12 +412,23 @@ export async function action({ request }: ActionFunctionArgs) {
       if (name && name.length > EXPERIMENT_NAME_MAX) {
         return jsonError(422, "invalid_name", "Keep the test name under 80 characters.");
       }
-      return dashboardJson(async () => ({
-        experiment: await startExperiment(session.shopId, {
-          kind: kind as "headline" | "vibe",
-          name,
-        }),
-      }));
+      return dashboardJson(async () => {
+        // The AI challenger runs a real design-model generation, so it shares the generate
+        // entry points' guards: the burst limit up front (a scripted client must not fire
+        // unlimited challenger generations), and the daily designer quota LAST — consumed via
+        // the hook only once startExperiment's own refusals (running test, nothing published)
+        // have passed, so a refused start never burns a slot (quota-last, guard.server.ts).
+        if (kind === "ai_page") await assertGeneratePrechecks(session.shopId, undefined);
+        return {
+          experiment: await startExperiment(session.shopId, {
+            kind: kind as StoreExperimentKind,
+            name,
+            ...(kind === "ai_page"
+              ? { onBeforeAiCall: () => assertDesignerQuota(session.shopId, { trusted: quotaTrusted(session) }) }
+              : {}),
+          }),
+        };
+      });
     }
 
     case "experiment-decide": {

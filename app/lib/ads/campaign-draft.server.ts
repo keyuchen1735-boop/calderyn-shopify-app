@@ -44,3 +44,18 @@ export async function createCampaignDraft(
   if (error) throw error;
   return toRow(data as DraftDbRow);
 }
+
+/** Delete one draft, scoped to the shop. Returns false when no row matched
+ *  (already deleted, or belongs to another shop) so the route can 404 honestly
+ *  instead of reporting success for a no-op. */
+export async function deleteCampaignDraft(shopId: string, id: string): Promise<boolean> {
+  const { data, error } = await getSupabase()
+    .from("campaign_draft")
+    .delete()
+    .eq("shop_id", shopId)
+    .eq("id", id)
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  return data != null;
+}

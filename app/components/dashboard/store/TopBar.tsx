@@ -21,7 +21,17 @@ function rate(conversions: number, sessions: number): string {
   return `${((conversions / Math.max(1, sessions)) * 100).toFixed(1)}% · ${sessions.toLocaleString()}`;
 }
 
-function ExperimentPopover({
+// Whole dollars with a pinned locale (matches the money helper's posture: an
+// environment-default locale can differ between server and browser renders).
+function dollars(cents: number): string {
+  return `$${Math.round(cents / 100).toLocaleString("en-US")}`;
+}
+
+function armDetail(revenueCents: number, cartAdds: number, checkoutStarts: number): string {
+  return `${dollars(revenueCents)} in sales · ${cartAdds} carts / ${checkoutStarts} checkouts`;
+}
+
+export function ExperimentPopover({
   experiment,
   onDecide,
   deciding,
@@ -31,10 +41,17 @@ function ExperimentPopover({
   deciding: boolean;
 }) {
   const report = experiment.report;
-  const aRate = report ? report.aConversions / Math.max(1, report.aSessions) : 0;
-  const bRate = report ? report.bConversions / Math.max(1, report.bSessions) : 0;
+  // Same rate formula as the server's ship guard (sessions > 0 ? conv/sessions : 0) so the
+  // button and the 422 can't disagree at the edges.
+  const aRate = report && report.aSessions > 0 ? report.aConversions / report.aSessions : 0;
+  const bRate = report && report.bSessions > 0 ? report.bConversions / report.bSessions : 0;
   const maxRate = Math.max(aRate, bRate, 0.001);
-  const canDecideNow = report?.confidence != null && report.confidence >= 95;
+  // The z-test is two-sided: 95%+ confidence means the arms differ, not that B WON. Only a
+  // confident WIN offers Ship — a confident loss offers "Keep" as the primary action instead
+  // (the server refuses ship on a proven loser regardless).
+  const significant = report?.confidence != null && report.confidence >= 95;
+  const canShipNow = significant && bRate > aRate;
+  const provenLoss = significant && bRate <= aRate;
   return (
     <div className="cd-exp-pop" role="dialog" aria-label={`${experiment.name} test`}>
       <div className="cd-exp-name">Testing your {experiment.name}</div>
@@ -49,12 +66,18 @@ function ExperimentPopover({
               </span>
               <span className="cd-exp-num">{rate(report.aConversions, report.aSessions)}</span>
             </div>
+            <div className="cd-exp-sub">
+              {armDetail(report.aRevenueCents, report.funnel.aCartAdds, report.funnel.aCheckoutStarts)}
+            </div>
             <div className="cd-exp-bar-row" data-lead={bRate > aRate ? "1" : "0"}>
               <b>B</b>
               <span className="cd-exp-bar">
                 <i style={{ width: `${Math.round((bRate / maxRate) * 100)}%` }} />
               </span>
               <span className="cd-exp-num">{rate(report.bConversions, report.bSessions)}</span>
+            </div>
+            <div className="cd-exp-sub">
+              {armDetail(report.bRevenueCents, report.funnel.bCartAdds, report.funnel.bCheckoutStarts)}
             </div>
           </div>
           <div className="cd-exp-meta">
@@ -66,13 +89,22 @@ function ExperimentPopover({
         </>
       )}
       <div className="cd-exp-actions">
-        {canDecideNow ? (
+        {canShipNow ? (
           <>
             <Btn kind="primary" small onClick={() => onDecide("ship")} disabled={deciding}>
               Ship
             </Btn>
             <Btn small onClick={() => onDecide("keep")} disabled={deciding}>
               Keep
+            </Btn>
+          </>
+        ) : provenLoss ? (
+          <>
+            <Btn kind="primary" small onClick={() => onDecide("keep")} disabled={deciding}>
+              Keep current page
+            </Btn>
+            <Btn small onClick={() => onDecide("stop")} disabled={deciding}>
+              Stop
             </Btn>
           </>
         ) : (

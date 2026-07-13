@@ -13,8 +13,10 @@ export const DEFAULT_HANDLING_DAYS = 1;
 
 const DAY_MS = 86_400_000;
 
-/** ISO calendar date (YYYY-MM-DD) of `date` shifted by `days` (UTC, simple v1 calendar). */
-function isoDatePlus(date: Date, days: number): string {
+/** ISO calendar date (YYYY-MM-DD) of `date` shifted by `days` (UTC, simple v1 calendar).
+ *  Exported as THE calendar-date math for shipping promises (delivery windows, pickup
+ *  ready dates) so a future calendar upgrade lands everywhere at once. */
+export function isoDatePlus(date: Date, days: number): string {
   return new Date(date.getTime() + days * DAY_MS).toISOString().slice(0, 10);
 }
 

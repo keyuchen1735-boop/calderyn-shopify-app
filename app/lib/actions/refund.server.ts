@@ -28,14 +28,17 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { CalderynError } from "../calderyn.server";
+import { restockOrderLines } from "../inventory/engine.server";
 import { transitionOrder } from "../order/order.server";
 import { isOrderState, type OrderState } from "../order/state";
 import { createStripeRefund, type StripeRefundInput, type StripeRefundResult } from "../payments/refund.server";
+import { sendRefundNotice } from "../order/notify-email.server";
 import { priorExecutionForKey, insertAuditWithIdempotency } from "./execute.server";
 
 /** Owned-order states a refund may act on. checkout_pending/cancelled/cart are not refundable. */
 const REFUNDABLE_STATES: ReadonlySet<OrderState> = new Set<OrderState>([
   "paid",
+  "partially_fulfilled",
   "fulfilled",
   "partially_refunded",
 ]);
@@ -51,6 +54,8 @@ export interface RefundActionInput {
   triggerReason?: string | null;
   /** Merchant free-text note (persisted to audit params only — NOT sent to Stripe). */
   reason?: string | null;
+  /** Restock all lines at the primary location — honored only when this refund makes the order fully refunded. */
+  restock?: boolean;
 }
 
 export interface RefundActionResult {
@@ -62,6 +67,10 @@ export interface RefundActionResult {
   refundedTotalCents: number;
   /** The order's resulting state (refunded when fully refunded, else partially_refunded). */
   orderState: OrderState;
+  /** Lines restocked via inventory_restock — 0 when not requested, partial, or on a replay. */
+  restockedLines: number;
+  /** Non-null when a restock was requested but some (or all, or a preamble step) failed. */
+  restockError: string | null;
   replayed: boolean;
 }
 
@@ -73,6 +82,7 @@ export interface RefundDeps {
 interface OrderRow {
   state: OrderState;
   currency: string;
+  channel: string | null;
 }
 interface PaymentIntentRow {
   id: string;
@@ -100,7 +110,7 @@ function refundLineGid(refundId: string): string {
 async function loadOrder(sb: SupabaseClient, shopId: string, orderId: string): Promise<OrderRow> {
   const { data, error } = await sb
     .from("orders")
-    .select("state, currency")
+    .select("state, currency, channel")
     .eq("shop_id", shopId)
     .eq("id", orderId)
     .maybeSingle();
@@ -113,10 +123,15 @@ async function loadOrder(sb: SupabaseClient, shopId: string, orderId: string): P
     throw new CalderynError({
       code: "order_not_refundable",
       status: 409,
-      message: `Order ${orderId} is '${state}'; only a paid, fulfilled, or partially-refunded order can be refunded.`,
+      message: `Order ${orderId} is '${state}'; only a paid, partially-fulfilled, fulfilled, or partially-refunded order can be refunded.`,
     });
   }
-  return { state, currency: String((data as Record<string, unknown>).currency ?? "usd") };
+  const channelRaw = (data as Record<string, unknown>).channel;
+  return {
+    state,
+    currency: String((data as Record<string, unknown>).currency ?? "usd"),
+    channel: channelRaw == null ? null : String(channelRaw),
+  };
 }
 
 async function loadPaymentIntent(
@@ -194,6 +209,8 @@ async function resultFromAudit(
     capturedCents: Number(params.captured_cents ?? 0),
     refundedTotalCents: Number(params.refunded_total_cents ?? post.refunded_cents ?? 0),
     orderState: (isOrderState(state) ? state : "refunded") as OrderState,
+    restockedLines: 0,
+    restockError: null,
     replayed: true,
   };
 }
@@ -328,14 +345,20 @@ export async function executeRefundAction(
     reason: input.reason ?? null,
     external_line_id: refundLineGid(refund.refundId),
   };
-  try {
-    await emitNativeRefundFact(sb, shopId, input.orderId, refund.refundId, amountCents);
-  } catch (err) {
-    params.refund_fact_error = err instanceof Error ? err.message : String(err);
-    console.error(
-      `[refund] native refund_fact emit failed for refund ${refund.refundId} (order ${input.orderId}); ledger is authoritative`,
-      err,
-    );
+  // Mirror the emit-side channel='test' warehouse exclusion (emit.server.ts): the go-live probe
+  // is a real order whose order_fact was never emitted, so emitting a refund_fact for its refund
+  // would understate net native revenue (gross was suppressed, refunds would not be). Skip it so
+  // both sides of the probe stay out of the warehouse. Non-test refunds emit exactly as before.
+  if (order.channel !== "test") {
+    try {
+      await emitNativeRefundFact(sb, shopId, input.orderId, refund.refundId, amountCents);
+    } catch (err) {
+      params.refund_fact_error = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[refund] native refund_fact emit failed for refund ${refund.refundId} (order ${input.orderId}); ledger is authoritative`,
+        err,
+      );
+    }
   }
 
   // 8. Transition the owned order — ONLY when the state actually changes. A second partial refund on
@@ -374,6 +397,41 @@ export async function executeRefundAction(
     );
   }
 
+  // 8c. Optional restock — FULL refunds only (amount-based partials can't say which
+  // lines came back; per-line restock ships with returns). Best-effort like 8b: the
+  // money already moved, so a restock failure logs loudly and lands in the audit
+  // params rather than failing the refund. restockOrderLines itself never throws for a
+  // per-variant RPC failure (partial-progress contract) — it only throws for a preamble
+  // read failure (order_line/variant_dim/ensurePrimaryLocation), which means nothing was
+  // attempted; that case is caught here and surfaced the same way.
+  let restockedLines = 0;
+  let restockError: string | null = null;
+  if (input.restock === true) {
+    if (resolvedState === "refunded") {
+      try {
+        const r = await restockOrderLines(shopId, input.orderId, "refund");
+        restockedLines = r.restockedLines;
+        params.restocked_lines = restockedLines;
+        if (r.failedVariantIds.length > 0) {
+          restockError = `restock failed for variants: ${r.failedVariantIds.join(", ")}`;
+          params.restock_error = restockError;
+          console.error(
+            `[refund] order ${input.orderId} refund ${refund.refundId}: restock partially failed for variants ${r.failedVariantIds.join(", ")} — reconcile inventory manually`,
+          );
+        }
+      } catch (err) {
+        restockError = err instanceof Error ? err.message : String(err);
+        params.restock_error = restockError;
+        console.error(
+          `[refund] order ${input.orderId} refund ${refund.refundId}: restock failed — reconcile inventory manually`,
+          err,
+        );
+      }
+    } else {
+      params.restock_skipped = "partial_refund";
+    }
+  }
+
   // 9. One append-only action_audit row (+ idempotency marker). issue_refund recovers $0 impact
   // (a refund is money OUT, not clawed-back waste) — recoveredCentsFromStates returns 0 for it.
   // Loud-log before rethrow: after a FULL refund the order is already 'refunded', so a retry is
@@ -405,6 +463,11 @@ export async function executeRefundAction(
     throw err;
   }
 
+  // 10. Best-effort buyer notification — fires only on this fresh success path (a replay returns
+  // early from resultFromAudit in step 1), so the notice is at-most-once. sendRefundNotice never
+  // throws; its result is intentionally not awaited into the return value below.
+  await sendRefundNotice(shopId, input.orderId, { amountCents });
+
   return {
     auditId: audit.id,
     outcome: "succeeded",
@@ -413,6 +476,8 @@ export async function executeRefundAction(
     capturedCents,
     refundedTotalCents,
     orderState: resolvedState,
+    restockedLines,
+    restockError,
     replayed: false,
   };
 }

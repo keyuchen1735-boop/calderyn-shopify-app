@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { spliceCatalogBlocks } from "./hybrid";
+import { spliceCatalogBlocks, splitTopLevelSections } from "./hybrid";
 import { sanitizeStoreHtml } from "~/lib/storebuilder/sanitize-html.server";
 import type { ValidIds } from "~/lib/storebuilder/validate";
 
@@ -132,5 +132,44 @@ describe("spliceCatalogBlocks", () => {
       expect(b.layout.w).toBe(12);
       expect(b.id).toBeTruthy();
     }
+  });
+});
+
+describe("splitTopLevelSections", () => {
+  it("splits top-level sections and keeps nested sections inside their parent", () => {
+    const html = '<section id="a">A<section id="a1">inner</section></section><section id="b">B</section>';
+    const chunks = splitTopLevelSections(html);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]).toContain('id="a1"');
+    expect(chunks[1]).toContain('id="b"');
+  });
+
+  it("keeps non-section content as its own chunk in document order", () => {
+    const chunks = splitTopLevelSections('<h1>lead</h1><section>mid</section><p>tail</p>');
+    expect(chunks).toEqual(["<h1>lead</h1>", "<section>mid</section>", "<p>tail</p>"]);
+  });
+
+  it("returns the whole fragment when no sections exist", () => {
+    expect(splitTopLevelSections("<h1>only</h1>")).toEqual(["<h1>only</h1>"]);
+  });
+});
+
+describe("spliceCatalogBlocks - per-section blocks", () => {
+  it("emits one rawHtml block per top-level section, each carrying the wrapper and scoped style", () => {
+    const html = '<div class="ai-store"><style>.ai-store .x{color:#111}</style><section id="hero">H</section><section id="values">V</section></div>';
+    const blocks = spliceCatalogBlocks(html, { productIds: new Set(), collectionHandles: new Set() });
+    expect(blocks).toHaveLength(2);
+    for (const b of blocks) {
+      expect(b.type).toBe("rawHtml");
+      expect(b.props.html).toContain('<div class="ai-store"><style>');
+    }
+    expect(blocks[0].props.html).toContain('id="hero"');
+    expect(blocks[1].props.html).toContain('id="values"');
+  });
+
+  it("sections AND catalog markers compose: section, grid, section", () => {
+    const html = '<div class="ai-store"><style>.ai-store{}</style><section id="hero">H</section><div data-cd-products="all" data-cd-heading="Picks"></div><section id="closer">C</section></div>';
+    const blocks = spliceCatalogBlocks(html, { productIds: new Set(), collectionHandles: new Set() });
+    expect(blocks.map((b) => b.type)).toEqual(["rawHtml", "productGrid", "rawHtml"]);
   });
 });

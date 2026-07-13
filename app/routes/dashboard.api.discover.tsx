@@ -3,6 +3,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { listDiscoverFeed, pickProduct } from "~/lib/sourcing/discover.server";
+import { quotaTrusted } from "~/lib/ai-quota.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   await requireDashboardSession(request); // auth gate; the feed is global reference data
@@ -21,5 +22,5 @@ export async function action({ request }: ActionFunctionArgs) {
     return jsonError(422, "bad_request", "pick requires sourceProductId");
   }
 
-  return dashboardJson(async () => pickProduct(session.shopId, body.sourceProductId!));
+  return dashboardJson(async () => pickProduct(session.shopId, body.sourceProductId!, { trusted: quotaTrusted(session) }));
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Card, Btn, Placeholder, Segmented, TableSkeleton } from "../ui";
+import { Card, Btn, Pan, Placeholder, Segmented, TableSkeleton } from "../ui";
 import { money, timeAgo } from "../format";
 import { CDIcon } from "../icons";
 import { DashboardApiError, putGuardrails } from "~/lib/dashboard/client";
@@ -236,14 +236,7 @@ function DetailView({
         />
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0,1fr) 300px",
-          gap: 18,
-          alignItems: "start",
-        }}
-      >
+      <div className="cd-cust-detail">
         <div style={{ display: "flex", flexDirection: "column", gap: 18, minWidth: 0 }}>
           <Card pad={false}>
             <CardHead>
@@ -256,7 +249,7 @@ function DetailView({
                 sub="Orders this customer places on your storefront land here."
               />
             ) : (
-              <>
+              <Pan min={520}>
                 <div className="cd-tablehd" style={{ gridTemplateColumns: ORDER_COLS }}>
                   <span>Order</span>
                   <span>Date</span>
@@ -277,7 +270,7 @@ function DetailView({
                     </div>
                   </div>
                 ))}
-              </>
+              </Pan>
             )}
           </Card>
 
@@ -574,6 +567,7 @@ export default function Customers({ app }: { app: DashboardCtx }) {
                 onChange={(e) => setSegQuery(e.target.value)}
               />
             </div>
+            <Pan min={440}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: SEG_COLS }}>
               <span>Name</span>
               <span style={{ textAlign: "right" }}>% of customers</span>
@@ -599,6 +593,7 @@ export default function Customers({ app }: { app: DashboardCtx }) {
                 </div>
               ))
             )}
+            </Pan>
           </Card>
       ) : sub === "weather" ? (
         <WeatherSegments
@@ -655,7 +650,7 @@ export default function Customers({ app }: { app: DashboardCtx }) {
                 sub="Shoppers who sign up or check out on your storefront land here."
               />
             ) : (
-              <>
+              <Pan min={640}>
                 <div className="cd-tablehd" style={{ gridTemplateColumns: DIR_COLS }}>
                   <span>Customer</span>
                   <span>Location</span>
@@ -701,7 +696,7 @@ export default function Customers({ app }: { app: DashboardCtx }) {
                     </div>
                   ))
                 )}
-              </>
+              </Pan>
             )}
           </Card>
         </>

@@ -1,9 +1,10 @@
-// GET  /dashboard/api/campaign-drafts — the session shop's drafts, newest first.
-// POST /dashboard/api/campaign-drafts — create one draft { name, platform }.
+// GET    /dashboard/api/campaign-drafts — the session shop's drafts, newest first.
+// POST   /dashboard/api/campaign-drafts — create one draft { name, platform }.
+// DELETE /dashboard/api/campaign-drafts?id=<uuid> — remove one draft (shop-scoped).
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
-import { listCampaignDrafts, createCampaignDraft } from "~/lib/ads/campaign-draft.server";
+import { listCampaignDrafts, createCampaignDraft, deleteCampaignDraft } from "~/lib/ads/campaign-draft.server";
 import { validateCampaignDraftInput } from "~/lib/ads/campaign-draft-types";
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -16,6 +17,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);
   const session = await requireDashboardSession(request);
+
+  if (request.method === "DELETE") {
+    const id = new URL(request.url).searchParams.get("id");
+    if (!id) return jsonError(422, "missing_id");
+    return dashboardJson(async () => {
+      const removed = await deleteCampaignDraft(session.shopId, id);
+      if (!removed) throw jsonError(404, "not_found");
+      return { ok: true };
+    });
+  }
+
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
   let body: unknown;
   try { body = await request.json(); } catch { return jsonError(422, "invalid_json"); }

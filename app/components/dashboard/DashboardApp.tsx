@@ -11,6 +11,8 @@ import { bootDashboardData } from "~/lib/dashboard/boot";
 import { warmScreenCaches } from "~/lib/dashboard/prefetch";
 import { presentActionOutcome } from "~/lib/action-outcome";
 import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
+import { diffNewlyDone } from "~/lib/dashboard/journey-watcher";
+import { JOURNEY_STEPS, journeyToastText, journeyView, type MilestoneKey } from "~/lib/dashboard/journey-model";
 
 import { CDIcon } from "./icons";
 import { ToastHost, Toggle } from "./ui";
@@ -41,8 +43,10 @@ import type {
 
 import AssistantPanel from "./AssistantPanel";
 import BugReportButton from "./BugReportButton";
+import ContactButton from "./ContactButton";
 import { parsePath, pathFor, DASHBOARD_BASE } from "./routes";
 import ScreenDashboard from "./screens/Dashboard";
+import type { JourneyProgress } from "./screens/HomeJourney";
 import ScreenAlerts from "./screens/Alerts";
 import ScreenCampaigns from "./screens/Campaigns";
 import ScreenAnalytics from "./screens/Analytics";
@@ -481,15 +485,61 @@ export default function DashboardApp({
 
   // ----- toasts -----
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const toast = useCallback((text: string, icon?: string, tone?: string) => {
-    const id = Math.random().toString(36).slice(2);
-    setToasts((ts) => [...ts, { id, text, icon, tone }]);
-    setTimeout(() => setToasts((ts) => ts.filter((x) => x.id !== id)), 3400);
-  }, []);
+  const toast = useCallback(
+    (text: string, icon?: string, tone?: string, action?: Toast["action"]) => {
+      const id = Math.random().toString(36).slice(2);
+      setToasts((ts) => [...ts, { id, text, icon, tone, action }]);
+      // Action-bearing toasts ("Go" buttons) get longer on-screen time — 3.4s isn't
+      // enough to notice, read, and click a button. Plain toasts stay at 3.4s.
+      const lifespan = action ? 7000 : 3400;
+      setTimeout(() => setToasts((ts) => ts.filter((x) => x.id !== id)), lifespan);
+    },
+    [],
+  );
 
   const pushFeed = useCallback((ev: Omit<FeedEvent, "id">) => {
     setFeed((f) => [{ id: nextFeedId(), ts: ev.ts ?? Date.now(), ...ev }, ...f].slice(0, 30));
   }, []);
+
+  // Journey completion toasts: fire anywhere in the app, not just on Home.
+  // On every screen change, re-poll setup progress (throttled to one fetch
+  // per 5s) and diff against the last-seen done-keys. The FIRST payload after
+  // mount is the baseline (diffNewlyDone(null, ...) => []) so completions
+  // from a prior session never toast; only transitions observed live do.
+  // Short-circuits once the journey is retired (first_order landed) so it
+  // stops polling forever after setup is done.
+  const journeySeen = useRef<Set<string> | null>(null);
+  const journeyLastFetch = useRef(0);
+  useEffect(() => {
+    const cached = cachedScreenData<JourneyProgress>(SCREEN_CACHE_KEYS.setupProgress);
+    if (cached?.completed?.first_order) return;
+    const now = Date.now();
+    if (now - journeyLastFetch.current < 5000) return;
+    journeyLastFetch.current = now;
+    client
+      .apiGet<JourneyProgress>("/dashboard/api/setup-progress")
+      .then((p) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.setupProgress, p);
+        const keys = Object.keys(p.completed);
+        const fresh = diffNewlyDone(journeySeen.current, keys);
+        journeySeen.current = new Set(keys);
+        if (!fresh.length) return;
+        const view = journeyView({
+          completed: p.completed,
+          liveCardDismissed: p.liveCardDismissed,
+          recapDismissed: p.recapDismissed,
+        });
+        for (const key of fresh) {
+          const nextDef = JOURNEY_STEPS.find((s) => s.key === view.next);
+          const action =
+            view.next && nextDef?.screen && !nextDef.screen.startsWith("__")
+              ? { label: "Go", run: () => navigate(nextDef.screen as ScreenId) }
+              : undefined;
+          toast(journeyToastText(key as MilestoneKey, view.next), "check", undefined, action);
+        }
+      })
+      .catch(() => {});
+  }, [nav.screen, navigate, toast]);
 
   // One-shot post-OAuth connect notice: provider callbacks land the browser on
   // /dashboard?<provider>=connected|error (see oauth-state.server.ts). Open
@@ -1437,10 +1487,7 @@ export default function DashboardApp({
             onClick={() => setAssistantSignal((n) => n + 1)}
           >
             <CDIcon name="assist" size={18} strokeWidth={1.8} />
-            <span>
-              Ask Calderyn
-              <span className="cd-ask-sub">Operator for every screen</span>
-            </span>
+            <span>Ask Calderyn</span>
           </button>
           {NAV_GROUPS.map((group) => (
             <div key={group.label} style={{ display: "contents" }}>
@@ -1502,6 +1549,7 @@ export default function DashboardApp({
 
       <AssistantPanel app={app} openSignal={assistantSignal} prompt={assistantPrompt} />
       <BugReportButton app={app} openSignal={bugSignal} />
+      <ContactButton app={app} />
 
       {/* Mobile bottom tab bar — hidden above the phone breakpoint via CSS. */}
       <nav className="cd-tabbar" aria-label="Primary">
@@ -1608,6 +1656,18 @@ export default function DashboardApp({
               >
                 <CDIcon name="bug" size={18} strokeWidth={1.8} />
                 <span>Report a bug</span>
+              </button>
+              <button
+                type="button"
+                className="cd-more-item"
+                data-danger="1"
+                onClick={() => {
+                  setMoreOpen(false);
+                  void signOut();
+                }}
+              >
+                <CDIcon name="logout" size={18} strokeWidth={1.8} />
+                <span>Sign out</span>
               </button>
             </div>
             <div className="cd-more-foot">

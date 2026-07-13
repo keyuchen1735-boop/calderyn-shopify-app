@@ -1,25 +1,44 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { CalderynClient, CalderynError } from "../calderyn.server";
-import { ACTION_LABELS, DETECTOR_TO_ACTIONS } from "../labels";
-import type { ActionKind } from "../types";
+import type { Alert } from "../types";
+import { DETECTOR_TO_ACTIONS } from "../labels";
 import type { DraftedAction } from "./types";
 import { COMMERCE_TOOLS, COMMERCE_TOOL_NAMES, handleCommerceTool, type CommerceCtx } from "./commerce-tools.server";
+import { ASSISTANT_ACTIONS, generatedWriteTools } from "./actions/registry.server";
+import { runRegistryAction } from "./actions/execute.server";
+import type { ActionCtx, ActionReceipt, PendingActionCard } from "./actions/registry-types";
+import { listOrdersUnified } from "../order/unified-list.server";
+import { loadOrderDetail } from "../order/detail.server";
+import { FULFILLMENT_STATUSES, SOURCES } from "../order/list-vocab";
+import type { OrdersListParams, UnifiedOrderRow } from "../order/unified-list-types";
+import { fulfillmentBadge, isStuckUnfulfilled } from "~/components/dashboard/screens/order-status";
+import { formatMoney } from "~/lib/storefront/money";
 
 const COMMERCE_NAME_SET = new Set<string>(COMMERCE_TOOL_NAMES);
+const REGISTRY_NAME_SET = new Set<string>(ASSISTANT_ACTIONS.map((a) => a.name));
+const ORDER_TOOL_NAMES = new Set<string>(["search_orders", "get_order"]);
 
 export interface ToolDispatchResult {
   content: string; // JSON string handed back to the model as tool_result content
   isError?: boolean;
   draftedAction?: DraftedAction;
+  receipt?: ActionReceipt;
+  pending?: PendingActionCard;
 }
 
 const LIMIT_CAP = 200;
 
-export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
+/**
+ * Read tools + flag_alert, shared by the in-app assistant and external buyer
+ * clients. Also what turn.server.ts advertises to callers that don't set
+ * allowActions (e.g. the legacy embedded surface) — the model never sees a
+ * write tool name it can't actually dispatch.
+ */
+export const READ_TOOLS: Anthropic.Tool[] = [
   {
     name: "list_alerts",
     description:
-      "List the shop's alerts (issues Calderyn detected), highest priority first. Use to find or filter alerts before explaining them. Returns shaped Alert objects; money fields are in cents.",
+      "List the shop's alerts (issues Calderyn detected), highest priority first. Use to find or filter alerts before explaining them. Returns shaped Alert objects; money fields are in cents. Each alert carries allowed_actions — the action kinds runnable against THAT alert.",
     input_schema: {
       type: "object",
       properties: {
@@ -33,7 +52,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
     name: "get_alert",
     description:
-      "Fetch one alert by id with its full evidence and narrative. Use when the merchant asks about a specific alert or before proposing an action on it.",
+      "Fetch one alert by id with its full evidence and narrative. Use when the merchant asks about a specific alert or before proposing an action on it. The returned alert carries allowed_actions — the action kinds runnable against THAT alert.",
     input_schema: {
       type: "object",
       properties: { id: { type: "string" } },
@@ -82,52 +101,112 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
     name: "flag_alert",
     description:
-      "Flag (acknowledge) an alert, moving it out of the open queue immediately. This EXECUTES right away — call it only when the merchant explicitly asks to flag, acknowledge, or mark an alert as handled. It never touches campaigns, budgets, or inventory; for those use propose_action.",
+      "Flag (acknowledge) an alert, moving it out of the open queue immediately. This EXECUTES right away — call it only when the merchant explicitly asks to flag, acknowledge, or mark an alert as handled. It never touches campaigns, budgets, or inventory; use the dedicated action tools for those.",
     input_schema: {
       type: "object",
       properties: { alert_id: { type: "string" } },
       required: ["alert_id"],
     },
   },
+];
+
+/**
+ * Order search/detail (Phase 4 Task 5) — deliberately NOT part of READ_TOOLS. READ_TOOLS is
+ * shared with EXTERNAL_TOOLS (external connected buyer clients on the calderyn-mcp seam, see
+ * commerce-tools.server.ts) and the legacy embedded surface's no-allowActions call; either of
+ * those handing a random buyer/shopper's AI client a tool that lists or reads ANY order in the
+ * shop — even with the customer email masked — would leak other buyers' purchase history and
+ * order totals. These two tools are merchant-assistant-only: the dispatcher below refuses them
+ * without an actionCtx, the same gate registry (write) actions use, and dashboard.api.assistant.tsx
+ * is the only caller that ever sets allowActions (and therefore actionCtx) today.
+ */
+export const ORDER_TOOLS: Anthropic.Tool[] = [
   {
-    name: "propose_action",
+    name: "search_orders",
     description:
-      "Propose an action for the merchant to confirm. Only valid for an EXISTING alert and an action_kind allowed for that alert's detector. On success the merchant sees a confirm button in the chat (or a 'Review & confirm' link for actions that need extra inputs); you never execute the action yourself.",
+      "Search this shop's orders (native + imported). Use this FIRST to find the right order_id, then call get_order for full detail — never guess an order_id. Returns compact rows with a masked customer email; total_count reports how many matched beyond what's shown (e.g. 'showing 10 of 88').",
     input_schema: {
       type: "object",
       properties: {
-        alert_id: { type: "string" },
-        action_kind: {
-          type: "string",
-          enum: [
-            "pause_campaign",
-            "reduce_campaign_budget",
-            "reallocate_budget",
-            "exclude_geo",
-            "reallocate_inventory",
-            "create_po_draft",
-            "issue_refund",
-            "snooze_alert",
-          ],
-        },
+        search: { type: "string", description: "Free-text match (order ref, customer, etc.)" },
+        payment_status: { type: "string", description: "e.g. paid, refunded, partially_refunded" },
+        fulfillment_status: { type: "string", enum: [...FULFILLMENT_STATUSES] },
+        source: { type: "string", enum: [...SOURCES] },
+        limit: { type: "number", description: "Max rows (<=20, default 10)" },
       },
-      required: ["alert_id", "action_kind"],
+    },
+  },
+  {
+    name: "get_order",
+    description:
+      "Fetch one order's full detail by id — pass the id exactly as returned by search_orders (imported orders carry a `shopify:`-prefixed id). Returns totals, line items, the 5 most recent timeline events, buyer-history signals, and any returns. Customer email is masked.",
+    input_schema: {
+      type: "object",
+      properties: { order_id: { type: "string" } },
+      required: ["order_id"],
     },
   },
 ];
 
 /**
- * Full toolset advertised to external connected buyer clients (the calderyn-mcp server).
- * The in-app merchant assistant uses ASSISTANT_TOOLS only.
+ * The in-app merchant assistant's full toolset: reads + flag_alert + order search/detail + every
+ * registered store action (registry.server.ts). Confirm-tier actions are flagged in their
+ * description; the tool loop still calls them the same way.
  */
-export const EXTERNAL_TOOLS: Anthropic.Tool[] = [...ASSISTANT_TOOLS, ...COMMERCE_TOOLS];
+export const ASSISTANT_TOOLS: Anthropic.Tool[] = [...READ_TOOLS, ...ORDER_TOOLS, ...generatedWriteTools()];
+
+/**
+ * Toolset advertised to external connected buyer clients (the calderyn-mcp server).
+ * Registry write actions are merchant-assistant-only — external callers never get
+ * an actionCtx, so the dispatcher would refuse them anyway (ACTIONS_UNAVAILABLE);
+ * they are kept off this list so the model never even sees them offered.
+ */
+export const EXTERNAL_TOOLS: Anthropic.Tool[] = [...READ_TOOLS, ...COMMERCE_TOOLS];
 
 function ok(obj: unknown): ToolDispatchResult {
   return { content: JSON.stringify(obj) };
 }
 
+/**
+ * Enriches an alert with the action kinds actually runnable against it, so the
+ * model never offers an action it can't execute (e.g. create_po_draft on a
+ * campaign-spend alert). Unknown detectors fall back to snooze-only, matching
+ * recommendedAction()'s fallback in labels.ts.
+ */
+function withAllowedActions<T extends Pick<Alert, "detector_id">>(
+  alert: T,
+): T & { allowed_actions: string[] } {
+  return {
+    ...alert,
+    allowed_actions: DETECTOR_TO_ACTIONS[alert.detector_id] ?? ["snooze_alert"],
+  };
+}
+
 function toolError(code: string, message: string): ToolDispatchResult {
   return { content: JSON.stringify({ code, message }), isError: true };
+}
+
+const ORDER_SEARCH_DEFAULT_LIMIT = 10;
+const ORDER_SEARCH_LIMIT_CAP = 20;
+const ORDER_TIMELINE_CAP = 5;
+const ORDER_LINES_CAP = 20;
+
+/** "m***@domain.com" — first character, a fixed mask, then the full domain, so the model can
+ *  recognize repeat customers across a search without ever seeing a usable email address. A
+ *  missing/empty email returns null; an unparseable one (no '@') falls back to first-char+mask
+ *  rather than guessing a domain. */
+function maskEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  const at = email.indexOf("@");
+  if (at <= 0) return `${email.charAt(0)}***`;
+  return `${email.charAt(0)}***${email.slice(at)}`;
+}
+
+/** `orders/<sourceId>` form for a unified-list row — `shopify:`-prefixed for a migrated order,
+ *  mirroring Orders.tsx's private displayOrderSourceId (duplicated rather than exported, the same
+ *  reasoning the order read models already use for their own small private helpers). */
+function orderSourceId(row: UnifiedOrderRow): string {
+  return row.source === "shopify" ? `shopify:${row.id}` : row.id;
 }
 
 export interface ToolDispatcherDeps {
@@ -140,12 +219,20 @@ export interface ToolDispatcherDeps {
   /** Shop + OAuth client context required by commerce tool handlers. When present, commerce
    *  tools are available to this caller (frictionless — no scope string required). */
   commerceCtx?: CommerceCtx;
+  /** Shop + conversation identity required to run registry actions. Only the
+   *  in-app merchant assistant (turn.server.ts) sets this, and only when the
+   *  caller opted into allowActions; external/MCP callers and the legacy
+   *  embedded surface never do, so registry tool names come back
+   *  ACTIONS_UNAVAILABLE. idempotencyKey is minted per tool_use inside the
+   *  dispatcher, not supplied by callers. */
+  actionCtx?: Omit<ActionCtx, "idempotencyKey">;
 }
 
 export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherDeps = {}) {
   return async function dispatch(
     name: string,
     input: Record<string, unknown>,
+    toolUseId: string,
   ): Promise<ToolDispatchResult> {
     try {
       if (COMMERCE_NAME_SET.has(name)) {
@@ -153,6 +240,95 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
           return toolError("COMMERCE_UNAVAILABLE", `${name} is only available to a connected commerce client`);
         }
         return await handleCommerceTool(name, input, deps.commerceCtx);
+      }
+      if (REGISTRY_NAME_SET.has(name)) {
+        if (!deps.actionCtx) {
+          return toolError("ACTIONS_UNAVAILABLE", `${name} is only available to the signed-in merchant assistant`);
+        }
+        const out = await runRegistryAction(name, input, {
+          ...deps.actionCtx,
+          idempotencyKey: `assistant:${deps.actionCtx.conversationId}:${toolUseId}`,
+        });
+        return { content: out.content, isError: out.isError, receipt: out.receipt, pending: out.pending };
+      }
+      if (ORDER_TOOL_NAMES.has(name)) {
+        if (!deps.actionCtx) {
+          return toolError("ORDERS_UNAVAILABLE", `${name} is only available to the signed-in merchant assistant`);
+        }
+        const shopId = deps.actionCtx.shopId;
+        if (name === "search_orders") {
+          const rawLimit = Number(input.limit ?? ORDER_SEARCH_DEFAULT_LIMIT);
+          const limit = Math.min(
+            Math.max(Number.isFinite(rawLimit) ? Math.trunc(rawLimit) : ORDER_SEARCH_DEFAULT_LIMIT, 1),
+            ORDER_SEARCH_LIMIT_CAP,
+          );
+          const params: OrdersListParams = { limit };
+          if (typeof input.search === "string" && input.search.trim()) params.search = input.search.trim();
+          if (typeof input.payment_status === "string" && input.payment_status.trim()) {
+            params.paymentStatus = [input.payment_status.trim()];
+          }
+          if (typeof input.fulfillment_status === "string" && FULFILLMENT_STATUSES.has(input.fulfillment_status)) {
+            params.fulfillmentStatus = input.fulfillment_status as OrdersListParams["fulfillmentStatus"];
+          }
+          if (typeof input.source === "string" && SOURCES.has(input.source)) {
+            params.source = input.source as OrdersListParams["source"];
+          }
+          const page = await listOrdersUnified(shopId, params);
+          const now = Date.now();
+          const orders = page.rows.map((row) => ({
+            ref: row.ref,
+            id: orderSourceId(row),
+            source: row.source,
+            customer: maskEmail(row.buyerEmail),
+            total: formatMoney(row.totalCents, row.currency),
+            payment_status: row.paymentStatus,
+            fulfillment_status:
+              row.source === "calderyn" ? (fulfillmentBadge(row.state, row.cancelledAt)?.label ?? null) : null,
+            date: row.occurredAt,
+            stuck: row.source === "calderyn" ? isStuckUnfulfilled(row.state, row.occurredAt, now) : false,
+          }));
+          return ok({ orders, total_count: page.totalCount });
+        }
+        // get_order
+        const orderId = typeof input.order_id === "string" ? input.order_id.trim() : "";
+        if (!orderId) return toolError("INVALID_INPUT", "order_id is required");
+        const detail = await loadOrderDetail(shopId, orderId);
+        if (!detail) return toolError("ORDER_NOT_FOUND", `Order ${orderId} not found`);
+        const lines = detail.lines.slice(0, ORDER_LINES_CAP).map((l) => ({
+          title: l.title,
+          quantity: l.quantity + l.reducedQuantity,
+          effective_quantity: l.quantity,
+          fulfilled: l.fulfilledQuantity,
+        }));
+        const latestTimeline = detail.timeline
+          .slice(0, ORDER_TIMELINE_CAP)
+          .map((e) => ({ title: e.title, at: e.at }));
+        const returns = detail.returns.map((r) => ({
+          status: r.status,
+          refund_cents: r.lines.reduce((sum, line) => sum + line.refundCents, 0),
+        }));
+        return ok({
+          order: {
+            ref: detail.ref,
+            source: detail.source,
+            state: detail.state,
+            payment_status: detail.financialStatus,
+            created: detail.createdAt,
+            totals: {
+              subtotal: formatMoney(detail.subtotalCents, detail.currency),
+              shipping: formatMoney(detail.shippingCents, detail.currency),
+              tax: formatMoney(detail.taxCents, detail.currency),
+              total: formatMoney(detail.totalCents, detail.currency),
+              refunded: formatMoney(detail.refundedCents, detail.currency),
+            },
+            customer: maskEmail(detail.buyer?.email),
+            lines,
+            latest_timeline: latestTimeline,
+            signals: detail.signals,
+            returns,
+            tags: detail.tags,
+          },
+        });
       }
       switch (name) {
         case "list_alerts": {
@@ -162,10 +338,10 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
             detector: input.detector_id as string | undefined,
           });
           const limit = Math.min(Number(input.limit ?? 50), LIMIT_CAP);
-          return ok({ alerts: alerts.slice(0, limit) });
+          return ok({ alerts: alerts.slice(0, limit).map(withAllowedActions) });
         }
         case "get_alert":
-          return ok({ alert: await client.alerts.get(String(input.id)) });
+          return ok({ alert: withAllowedActions(await client.alerts.get(String(input.id))) });
         case "list_audit": {
           const entries = await client.audit.list();
           const limit = Math.min(Number(input.limit ?? 50), LIMIT_CAP);
@@ -206,8 +382,6 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
             flagged: { id: alert.id, title: alert.title, status: "acknowledged" },
           });
         }
-        case "propose_action":
-          return await proposeAction(client, input);
         default:
           return toolError("UNKNOWN_TOOL", `Unknown tool: ${name}`);
       }
@@ -215,31 +389,5 @@ export function makeToolDispatcher(client: CalderynClient, deps: ToolDispatcherD
       const e = err as CalderynError;
       return toolError(e.code ?? "ERROR", e.message ?? String(err));
     }
-  };
-}
-
-async function proposeAction(
-  client: CalderynClient,
-  input: Record<string, unknown>,
-): Promise<ToolDispatchResult> {
-  const alertId = String(input.alert_id ?? "");
-  const actionKind = String(input.action_kind ?? "") as ActionKind;
-  const alert = await client.alerts.get(alertId); // throws CalderynError -> caught by caller
-  const allowed = DETECTOR_TO_ACTIONS[alert.detector_id] ?? ["snooze_alert"];
-  if (!allowed.includes(actionKind)) {
-    return toolError(
-      "ACTION_NOT_ALLOWED",
-      `${actionKind} is not valid for ${alert.detector_id}. Allowed: ${allowed.join(", ")}`,
-    );
-  }
-  const drafted: DraftedAction = {
-    alertId: alert.id,
-    actionKind,
-    label: ACTION_LABELS[actionKind],
-    dollarImpact: alert.dollar_impact,
-  };
-  return {
-    content: JSON.stringify({ ok: true, proposed: { ...drafted, alertTitle: alert.title } }),
-    draftedAction: drafted,
   };
 }

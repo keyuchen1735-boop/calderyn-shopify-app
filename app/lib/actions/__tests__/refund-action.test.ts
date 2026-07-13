@@ -6,6 +6,8 @@ const h = vi.hoisted(() => ({
   insertAudit: vi.fn(),
   transitionOrder: vi.fn(),
   createRefund: vi.fn(),
+  restockOrderLines: vi.fn(),
+  sendRefundNotice: vi.fn(),
 }));
 
 // Lightweight CalderynError so the executor's typed refusals carry code/status/message without
@@ -27,6 +29,8 @@ vi.mock("../execute.server", () => ({
   insertAuditWithIdempotency: h.insertAudit,
 }));
 vi.mock("../../order/order.server", () => ({ transitionOrder: h.transitionOrder }));
+vi.mock("../../inventory/engine.server", () => ({ restockOrderLines: h.restockOrderLines }));
+vi.mock("../../order/notify-email.server", () => ({ sendRefundNotice: h.sendRefundNotice }));
 
 // eslint-disable-next-line import/first -- must follow vi.mock so the fakes register before load
 import { executeRefundAction } from "../refund.server";
@@ -95,6 +99,8 @@ beforeEach(() => {
   h.insertAudit.mockResolvedValue({ id: "audit-1", outcome: "succeeded" });
   h.transitionOrder.mockResolvedValue({ id: "t-1" });
   h.createRefund.mockResolvedValue({ refundId: "re_1", status: "succeeded", chargeId: "ch_1" });
+  h.restockOrderLines.mockResolvedValue({ restockedLines: 2, failedVariantIds: [] });
+  h.sendRefundNotice.mockResolvedValue({ sent: true, id: "email-1" });
 });
 
 function baseCfg(overrides: SbCfg = {}): SbCfg {
@@ -151,6 +157,26 @@ describe("executeRefundAction — happy paths", () => {
     expect(audit.post_state).toMatchObject({ state: "refunded" });
     expect(res.orderState).toBe("refunded");
     expect(res.refundId).toBe("re_1");
+    // Best-effort buyer notification fires once on the fresh success path, after the audit insert,
+    // with the actual executed refund magnitude (not the pre-refund `remaining` projection).
+    expect(h.sendRefundNotice).toHaveBeenCalledTimes(1);
+    expect(h.sendRefundNotice).toHaveBeenCalledWith("shop-1", "order-1", { amountCents: 2500 });
+  });
+
+  it("channel='test' probe refund does NOT emit a refund_fact (mirrors the emit-side warehouse exclusion)", async () => {
+    const { sb, refundFactUpserts } = makeSb(
+      baseCfg({ order: { data: { state: "paid", currency: "usd", channel: "test" }, error: null } }),
+    );
+    const res = await executeRefundAction(
+      "shop-1",
+      { orderId: "order-1", idempotencyKey: "kt" },
+      sb,
+      { createRefund: h.createRefund },
+    );
+    // The refund still moves money and transitions the order — only the warehouse fact is suppressed.
+    expect(h.createRefund).toHaveBeenCalled();
+    expect(res.orderState).toBe("refunded");
+    expect(refundFactUpserts).toHaveLength(0);
   });
 
   it("partial refund: paid->partially_refunded when the ledger is not fully refunded", async () => {
@@ -238,7 +264,7 @@ describe("executeRefundAction — guards (fail before moving money)", () => {
     const { sb } = makeSb(baseCfg({ order: { data: { state: "checkout_pending", currency: "usd" }, error: null } }));
     await expect(
       executeRefundAction("shop-1", { orderId: "order-1", idempotencyKey: "k7" }, sb, { createRefund: h.createRefund }),
-    ).rejects.toThrow(/only a paid, fulfilled, or partially-refunded order/);
+    ).rejects.toThrow(/only a paid, partially-fulfilled, fulfilled, or partially-refunded order/);
     expect(h.createRefund).not.toHaveBeenCalled();
   });
 
@@ -255,7 +281,7 @@ describe("executeRefundAction — guards (fail before moving money)", () => {
     // refunded is not a refundable state -> refused before the remaining math.
     await expect(
       executeRefundAction("shop-1", { orderId: "order-1", idempotencyKey: "k8" }, sb, { createRefund: h.createRefund }),
-    ).rejects.toThrow(/only a paid, fulfilled, or partially-refunded order/);
+    ).rejects.toThrow(/only a paid, partially-fulfilled, fulfilled, or partially-refunded order/);
   });
 });
 
@@ -295,6 +321,8 @@ describe("executeRefundAction — idempotency + failure surfacing", () => {
     expect(res.replayed).toBe(true);
     expect(res.refundId).toBe("re_prev");
     expect(h.createRefund).not.toHaveBeenCalled();
+    // At-most-once: a replay must NOT re-send the refund-notice email.
+    expect(h.sendRefundNotice).not.toHaveBeenCalled();
   });
 
   it("surfaces a Stripe failure and writes no ledger/audit row", async () => {
@@ -315,5 +343,132 @@ describe("executeRefundAction — idempotency + failure surfacing", () => {
     // The refund DID happen on Stripe.
     expect(h.createRefund).toHaveBeenCalled();
     expect(h.insertAudit).not.toHaveBeenCalled();
+  });
+});
+
+describe("executeRefundAction — restock (full refunds only)", () => {
+  it("full refund + restock:true restocks once via restockOrderLines(shopId, orderId, 'refund')", async () => {
+    const { sb } = makeSb(baseCfg());
+    const res = await executeRefundAction(
+      "shop-1",
+      { orderId: "order-1", idempotencyKey: "k11", restock: true },
+      sb,
+      { createRefund: h.createRefund },
+    );
+    expect(h.restockOrderLines).toHaveBeenCalledTimes(1);
+    expect(h.restockOrderLines).toHaveBeenCalledWith("shop-1", "order-1", "refund");
+    expect(res.restockedLines).toBe(2);
+    expect(res.restockError).toBeNull();
+    const audit = h.insertAudit.mock.calls[0][2];
+    expect(audit.params.restocked_lines).toBe(2);
+  });
+
+  it("a partial restock failure (some variants restocked, some not) surfaces restockError and params.restock_error while the refund still succeeds", async () => {
+    h.restockOrderLines.mockResolvedValue({ restockedLines: 1, failedVariantIds: ["v-bad"] });
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { sb } = makeSb(baseCfg());
+      const res = await executeRefundAction(
+        "shop-1",
+        { orderId: "order-1", idempotencyKey: "k15", restock: true },
+        sb,
+        { createRefund: h.createRefund },
+      );
+      expect(res.outcome).toBe("succeeded");
+      expect(res.restockedLines).toBe(1);
+      expect(res.restockError).toBe("restock failed for variants: v-bad");
+      const audit = h.insertAudit.mock.calls[0][2];
+      expect(audit.params.restocked_lines).toBe(1);
+      expect(audit.params.restock_error).toBe("restock failed for variants: v-bad");
+      expect(consoleErr).toHaveBeenCalled();
+    } finally {
+      consoleErr.mockRestore();
+    }
+  });
+
+  it("full refund + restock:false (or omitted) never calls restockOrderLines and returns 0", async () => {
+    const { sb } = makeSb(baseCfg());
+    const res = await executeRefundAction(
+      "shop-1",
+      { orderId: "order-1", idempotencyKey: "k12" },
+      sb,
+      { createRefund: h.createRefund },
+    );
+    expect(h.restockOrderLines).not.toHaveBeenCalled();
+    expect(res.restockedLines).toBe(0);
+  });
+
+  it("partial refund + restock:true does NOT restock; result carries restockedLines:0 and audit params record restock_skipped", async () => {
+    const { sb } = makeSb(
+      baseCfg({ rpcResult: { data: { captured_cents: 2500, refunded_cents: 1000, fully_refunded: false }, error: null } }),
+    );
+    const res = await executeRefundAction(
+      "shop-1",
+      { orderId: "order-1", amountCents: 1000, idempotencyKey: "k13", restock: true },
+      sb,
+      { createRefund: h.createRefund },
+    );
+    expect(h.restockOrderLines).not.toHaveBeenCalled();
+    expect(res.restockedLines).toBe(0);
+    const audit = h.insertAudit.mock.calls[0][2];
+    expect(audit.params.restock_skipped).toBe("partial_refund");
+  });
+
+  it("a replayed refund (idempotent hit) returns restockedLines:0 without calling restockOrderLines", async () => {
+    h.prior.mockResolvedValue({ id: "audit-9", outcome: "succeeded" });
+    const { sb } = makeSb({ order: { data: { state: "refunded", currency: "usd" }, error: null } });
+    (sb as unknown as { from: (t: string) => unknown }).from = (table: string) => {
+      if (table === "action_audit") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                maybeSingle: () =>
+                  Promise.resolve({
+                    data: {
+                      id: "audit-9",
+                      params: { stripe_refund_id: "re_prev", amount_cents: 2500, captured_cents: 2500, refunded_total_cents: 2500 },
+                      post_state: { state: "refunded" },
+                    },
+                    error: null,
+                  }),
+              }),
+            }),
+          }),
+        };
+      }
+      return { select: () => ({ eq: () => ({}) }) };
+    };
+    const res = await executeRefundAction(
+      "shop-1",
+      { orderId: "order-1", idempotencyKey: "dup2", restock: true },
+      sb,
+      { createRefund: h.createRefund },
+    );
+    expect(res.replayed).toBe(true);
+    expect(res.restockedLines).toBe(0);
+    expect(h.restockOrderLines).not.toHaveBeenCalled();
+  });
+
+  it("a restock failure does NOT fail the refund; params.restock_error is recorded and the failure is logged loudly", async () => {
+    h.restockOrderLines.mockRejectedValue(new Error("inventory_restock: deadlock"));
+    const consoleErr = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { sb } = makeSb(baseCfg());
+      const res = await executeRefundAction(
+        "shop-1",
+        { orderId: "order-1", idempotencyKey: "k14", restock: true },
+        sb,
+        { createRefund: h.createRefund },
+      );
+      expect(res.outcome).toBe("succeeded");
+      expect(res.restockedLines).toBe(0);
+      expect(res.restockError).toMatch(/deadlock/);
+      const audit = h.insertAudit.mock.calls[0][2];
+      expect(audit.params.restock_error).toMatch(/deadlock/);
+      expect(consoleErr).toHaveBeenCalled();
+    } finally {
+      consoleErr.mockRestore();
+    }
   });
 });

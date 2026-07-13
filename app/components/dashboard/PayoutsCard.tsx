@@ -9,6 +9,7 @@ import {
   DashboardApiError,
   type BillingStatus,
 } from "~/lib/dashboard/client";
+import { cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { payoutsCardState } from "./view-models";
 import type { DashboardCtx } from "./context";
 
@@ -137,6 +138,17 @@ export function PayoutPanel({
               <Btn kind="primary" onClick={onCta} disabled={busy}>
                 {vm?.cta === "setup" ? "Set up payouts" : "Resume onboarding"}
               </Btn>
+              {vm?.phase === "onboarding" && (
+                <button
+                  type="button"
+                  className="cd-payout-refresh cd-payout-refresh--setup"
+                  onClick={onRefresh}
+                  disabled={busy}
+                >
+                  <span aria-hidden="true">↻</span>
+                  {busy ? "Refreshing…" : "Refresh status"}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -146,7 +158,17 @@ export function PayoutPanel({
 }
 
 /** Payouts (Stripe Connect, #11): onboarding CTA, status pill, live balance, fee line. */
-export function PayoutsCard({ app }: { app: DashboardCtx }) {
+export function PayoutsCard({
+  app,
+  onBillingUpdate,
+}: {
+  app: DashboardCtx;
+  /** Called with the fresh DTO whenever this card lands its own billing read
+   *  (refresh only) — lets an embedding screen with its own billing state
+   *  (e.g. Payments' "Stripe isn't connected yet" banner) stay in sync with
+   *  this card instead of going stale until the screen's own next mount. */
+  onBillingUpdate?: (billing: BillingStatus) => void;
+}) {
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -207,7 +229,18 @@ export function PayoutsCard({ app }: { app: DashboardCtx }) {
     if (busy) return;
     setBusy(true);
     try {
-      setBilling(await refreshPayoutStatus());
+      const fresh = await refreshPayoutStatus();
+      setBilling(fresh);
+      // Dashboard/Payments/Settings each seed their own billing state from
+      // this session-cache key — write the pulled DTO through so a later
+      // mount doesn't show stale onboarding status until its own
+      // revalidation completes.
+      cacheScreenData(SCREEN_CACHE_KEYS.billing, fresh);
+      // The embedding screen (Payments) keeps its own billing state driving
+      // the "not connected" banner and payout caption on this same page —
+      // without this, that banner would stay stale after a successful
+      // refresh right above the now-updated card.
+      onBillingUpdate?.(fresh);
       app.toast("Payout status refreshed", "check");
     } catch (err) {
       const message = err instanceof DashboardApiError ? err.message : "Couldn't refresh payout status.";

@@ -31,17 +31,51 @@ function headingOf(markerTag: string): string {
   return m ? decodeEntities(m[1]).slice(0, HEADING_MAX) : "";
 }
 
-/** Split a sanitized ai-store home fragment on catalog markers into renderable blocks.
- *  Unrecognized structure degrades to the whole fragment as one rawHtml block — a
- *  splice must never be able to break an otherwise valid page. */
+/**
+ * Split an HTML fragment at TOP-LEVEL <section> boundaries (depth-counted, so nested
+ * sections stay inside their parent). Content outside sections stays as its own chunk in
+ * document order. Sectioning is what makes an AI home editable piece by piece in the
+ * studio; a fragment with no top-level sections comes back whole.
+ */
+export function splitTopLevelSections(html: string): string[] {
+  const tag = /<section\b[^>]*>|<\/section>/gi;
+  const chunks: string[] = [];
+  let depth = 0;
+  let cursor = 0;
+  let sectionStart = -1;
+  let m: RegExpExecArray | null;
+  while ((m = tag.exec(html)) !== null) {
+    if (m[0][1] !== "/") {
+      if (depth === 0) {
+        const before = html.slice(cursor, m.index);
+        if (before.trim()) chunks.push(before);
+        sectionStart = m.index;
+      }
+      depth += 1;
+    } else {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0 && sectionStart !== -1) {
+        chunks.push(html.slice(sectionStart, m.index + m[0].length));
+        cursor = m.index + m[0].length;
+        sectionStart = -1;
+      }
+    }
+  }
+  // Unbalanced trailing section (never closed) or trailing non-section content.
+  const tail = html.slice(sectionStart !== -1 ? sectionStart : cursor);
+  if (tail.trim()) chunks.push(tail);
+  return chunks.length > 0 ? chunks : [html];
+}
+
+/** Split a sanitized ai-store home fragment on catalog markers AND top-level sections
+ *  into renderable blocks — one block per section, so the studio can move, remove or
+ *  regenerate each independently. Unrecognized structure degrades to the whole fragment
+ *  as one rawHtml block — a splice must never be able to break an otherwise valid page. */
 export function spliceCatalogBlocks(html: string, valid: ValidIds): Block[] {
   const single = (h: string): Block[] => [
     { id: "home-html", type: "rawHtml", props: { html: h }, layout: { x: 0, y: 0, w: 12, h: 12 } },
   ];
   if (!html.startsWith(WRAP_OPEN) || !html.endsWith("</div>")) return single(html);
-  MARKER_RE.lastIndex = 0;
-  if (!MARKER_RE.test(html)) return single(html);
-  MARKER_RE.lastIndex = 0;
 
   // Peel the wrapper and its scoped <style> so every re-wrapped segment can carry
   // both — a segment without them would fall outside the .ai-store CSS scope.
@@ -59,12 +93,16 @@ export function spliceCatalogBlocks(html: string, valid: ValidIds): Block[] {
   let y = 0;
   const pushRaw = (segment: string) => {
     if (!segment.trim()) return;
-    blocks.push({
-      id: `home-html-${y}`,
-      type: "rawHtml",
-      props: { html: `${WRAP_OPEN}${style}${segment}</div>` },
-      layout: { x: 0, y: y++, w: 12, h: 8 },
-    });
+    // One block PER top-level section so each is independently editable.
+    for (const chunk of splitTopLevelSections(segment)) {
+      if (!chunk.trim()) continue;
+      blocks.push({
+        id: `home-html-${y}`,
+        type: "rawHtml",
+        props: { html: `${WRAP_OPEN}${style}${chunk}</div>` },
+        layout: { x: 0, y: y++, w: 12, h: 8 },
+      });
+    }
   };
 
   let catalogCount = 0;

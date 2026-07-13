@@ -73,6 +73,8 @@ describe("catalog client", () => {
     fetchMock.mockResolvedValue(ok({ id: "c1" }));
     const { createCollection } = await import("../client");
     const c = await createCollection("Summer Drop!");
-    expect(c).toEqual({ id: "c1", title: "Summer Drop!", handle: "summer-drop" });
+    // productCount starts at 0 for a just-created collection; the next list
+    // refresh replaces the whole VM with server truth.
+    expect(c).toEqual({ id: "c1", title: "Summer Drop!", handle: "summer-drop", productCount: 0 });
   });
 });

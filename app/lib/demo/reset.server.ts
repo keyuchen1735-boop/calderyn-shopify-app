@@ -63,6 +63,13 @@ export const SHOWCASE_WIPE_ORDER = [
   "purchase_order_draft",
   "creative_screen_run",
   "campaign_draft",
+  // real purchase orders (demo shops execute PO actions for real) — FK-safe
+  // order: lines → headers → suppliers, and all three BEFORE the catalog
+  // wipes below (purchase_order.destination_location_id RESTRICTs on
+  // location_dim; supplier_dim is referenced by the headers).
+  "purchase_order_line",
+  "purchase_order",
+  "supplier_dim",
   // assistant
   "assistant_messages",
   "assistant_conversations",
@@ -93,6 +100,10 @@ export const SHOWCASE_WIPE_ORDER = [
   "store_generation_proposal",
   "store_generation",
   "page_document",
+  // search-listing overrides: seo_page keys onto product ids only by value (no
+  // FK), and the seeder re-mints deterministic ids — a leftover override would
+  // silently reattach to the reseeded product.
+  "seo_page",
   // imported history (sku_id FKs are ON DELETE SET NULL onto sku_dim — left
   // behind they'd survive a reset with NULLed links; children first)
   "imported_order_line",
@@ -107,6 +118,9 @@ export const SHOWCASE_WIPE_ORDER = [
   "collection_dim",
   "variant_shipping",
   "variant_dim",
+  // cascades from product_dim, but named like every other shop_id table so the
+  // wipe stays explicit (and covers rows whose product was already deleted).
+  "product_handle_redirect",
   "product_dim",
   // cutover history
   "cutover_transition",

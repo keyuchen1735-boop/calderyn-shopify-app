@@ -1,7 +1,7 @@
 // app/lib/storegen/generate.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
-import { generateStore } from "./generate.server";
+import { generateStore, extractStoreHtml, parseJudgeVerdict, extractSectionHtml, regenerateHomeSection } from "./generate.server";
 
 const { createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock } = vi.hoisted(() => ({
   createMock: vi.fn(), getCatalogMock: vi.fn(), saveDraftMock: vi.fn(),
@@ -12,6 +12,8 @@ vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ saveDraft: saveDraftMock }));
 vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: async (shopId: string) => ({ shopId, storeName: "", logoUrl: null, palette: { primary: "#0f766e", background: "#ffffff", text: "#111827" }, voiceTagline: null, vibe: "minimal" }), saveStoreSettings: saveSettingsMock, hasStoreSettings: hasSettingsMock, DEFAULT_PALETTE: { primary: "#0f766e", background: "#fff", text: "#111" } }));
 vi.mock("./audit.server", () => ({ recordGeneration: recGenMock, recordProposal: recPropMock }));
+// Renamed-handle lookups feed the link set; no DB behind this suite.
+vi.mock("~/lib/storefront/handle-redirect.server", () => ({ listRedirectOldHandles: async () => [] }));
 
 const realShop = "11111111-1111-1111-1111-111111111111";
 const product = (id: string): StoreProduct => ({ id, handle: `h-${id}`, title: `P${id}`, description: "", images: [], variants: [{ id: `v-${id}`, sku: null, title: "D", priceCents: 1000, currency: "USD", available: true }], collections: ["summer"] });
@@ -20,12 +22,15 @@ const catalog = (): StorefrontCatalog => ({
   getProduct: async (_s, h) => product(h.replace("h-", "")),
   listCollections: async () => [{ handle: "summer", title: "Summer" }],
 });
-const reply = (text: string) => ({ content: [{ type: "text", text }], usage: { input_tokens: 10, output_tokens: 20 } });
+const reply = (text: string, stopReason?: string) => ({ content: [{ type: "text", text }], usage: { input_tokens: 10, output_tokens: 20 }, ...(stopReason ? { stop_reason: stopReason } : {}) });
 
 beforeEach(() => {
   for (const m of [createMock, getCatalogMock, saveDraftMock, saveSettingsMock, hasSettingsMock, recGenMock, recPropMock]) m.mockReset();
   getCatalogMock.mockReturnValue(catalog());
   hasSettingsMock.mockResolvedValue(false);
+  // Single-candidate mode keeps the queued-reply sequences of the legacy tests deterministic;
+  // the multi-candidate judge pipeline has its own describe block below.
+  process.env.STOREGEN_HOME_CANDIDATES = "1";
 });
 
 describe("generateStore", () => {
@@ -182,7 +187,7 @@ describe("generateStore", () => {
     await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand", designModel: "opus" });
     const models = createMock.mock.calls.map((c) => (c[0] as { model: string }).model);
     expect(models.filter((m) => m === "claude-opus-4-8")).toHaveLength(1); // the design call
-    expect(models.filter((m) => m === "claude-haiku-4-5")).toHaveLength(3); // brand + block plans stay cheap
+    expect(models.filter((m) => m === "claude-sonnet-5")).toHaveLength(3); // brand + block plans on the storegen default
   });
 
   it("falls back to the designed hollow store when the home HTML call returns no markup (junk/refusal)", async () => {
@@ -368,17 +373,202 @@ describe("generateStore", () => {
     let inflight = 0;
     let release!: () => void;
     const allStarted = new Promise<void>((r) => { release = r; });
-    createMock.mockImplementation(async () => {
+    createMock.mockImplementation(async (req: unknown) => {
       calls += 1;
       // Call #1 is the Stage 1 brand call — resolve it immediately so Stage 2 can begin.
       if (calls === 1) return reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}');
       inflight += 1;
       if (inflight === 3) release();
       await allStarted; // deadlocks (→ timeout) if the three calls are serialized
-      return reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}');
+      // Answer each page's actual contract (HTML for home, JSON for the plans) so no
+      // corrective retry fires — a retry would add a 4th call and skew the inflight count.
+      const isHome = String((req as { system?: unknown }).system ?? "").includes("art director");
+      return isHome
+        ? reply('<div class="ai-store"><style>.ai-store .hero{color:#111}</style><h1>Hi</h1></div>')
+        : reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}');
     });
     await generateStore({ shopId: realShop, mode: "catalog" });
     expect(inflight).toBe(3);
     expect(saveDraftMock).toHaveBeenCalledTimes(3);
   }, 3000);
+});
+
+describe("extractStoreHtml", () => {
+  const PAGE = '<div class="ai-store"><style>.ai-store{}</style><h1>Hi</h1></div>';
+
+  it("passes clean raw HTML through", () => {
+    expect(extractStoreHtml(PAGE)).toBe(PAGE);
+  });
+
+  it("strips a prose preamble and an embedded code fence", () => {
+    const fenced = ["Here is your page:", "```html", PAGE, "```"].join("\n");
+    expect(extractStoreHtml(fenced)).toBe(PAGE);
+  });
+
+  it("rejects a refusal that merely mentions a tag", () => {
+    expect(extractStoreHtml("I can't render <script> content for this request.")).toBe("");
+  });
+
+  it("rejects prose and JSON with no container", () => {
+    expect(extractStoreHtml("I cannot help with that.")).toBe("");
+    expect(extractStoreHtml('{"blocks":[]}')).toBe("");
+  });
+});
+
+describe("generateStore — premium-output hardening", () => {
+  it("never writes logoUrl — a regenerate must not wipe the merchant's uploaded logo", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":"Go"}'))
+      .mockResolvedValue(reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}'));
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    expect(saveSettingsMock.mock.calls[0][1]).not.toHaveProperty("logoUrl");
+  });
+
+  it("treats a max_tokens-truncated home reply as a miss: one retry, then the designed fallback — never half a page", async () => {
+    const half = '<div class="ai-store"><style>.ai-store{}</style><section>cut off';
+    createMock.mockImplementation(async (req: unknown) => {
+      const isHome = String((req as { system?: unknown }).system ?? "").includes("art director");
+      if (isHome) return reply(half, "max_tokens");
+      if (createMock.mock.calls.length === 1) return reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}');
+      return reply('{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}');
+    });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    expect(homeDraft.blocks.map((b: { type: string }) => b.type)).not.toContain("rawHtml");
+    // Exactly one corrective retry for the home call: brand + home + retry + 2 block plans.
+    const homeCalls = createMock.mock.calls.filter((c) => String((c[0] as { system?: unknown }).system ?? "").includes("art director"));
+    expect(homeCalls).toHaveLength(2);
+  });
+
+  it("retries a junk block-plan reply once and uses the corrected plan instead of the canned fallback", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand
+      .mockResolvedValueOnce(reply('<div class="ai-store"><style>.ai-store{}</style><h1>Hi</h1></div>')) // home
+      .mockResolvedValueOnce(reply("garbage not json")) // collection (junk -> retry)
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"productGallery","props":{},"layout":{}}]}')) // pdp
+      .mockResolvedValueOnce(reply('{"blocks":[{"type":"hero","props":{"headline":"Retried heading"},"layout":{}},{"type":"collectionGrid","props":{},"layout":{}}]}')); // collection retry
+    await generateStore({ shopId: realShop, mode: "catalog" });
+    const collectionDraft = saveDraftMock.mock.calls.find((c) => c[1] === "collection")![2];
+    const hero = collectionDraft.blocks.find((b: { type: string }) => b.type === "hero");
+    expect(hero?.props.headline).toBe("Retried heading");
+  });
+
+  it("reports failed when the model answered but every page still fell back (junk all the way down)", async () => {
+    createMock
+      .mockResolvedValueOnce(reply('{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}')) // brand ok
+      .mockResolvedValue(reply("garbage not json")); // every page + retry -> fallback
+    const result = await generateStore({ shopId: realShop, mode: "brief", brief: "anything" });
+    expect(result.status).toBe("failed");
+  });
+});
+
+describe("generateStore - multi-candidate judge pipeline", () => {
+  const BRAND = '{"storeName":"Acme","palette":{"primary":"#000","background":"#fff","text":"#111"},"voiceTagline":""}';
+  const PAGE_A = '<div class="ai-store"><style>.ai-store{}</style><h1>ANGLE-A</h1></div>';
+  const PAGE_B = '<div class="ai-store"><style>.ai-store{}</style><h1>ANGLE-B</h1></div>';
+  const PAGE_R = '<div class="ai-store"><style>.ai-store{}</style><h1>REVISED</h1></div>';
+  const PLAN = '{"blocks":[{"type":"hero","props":{"headline":"Hi"},"layout":{}}]}';
+
+  function routeMock(opts: { judge: string; revision?: string }) {
+    createMock.mockImplementation(async (req: unknown) => {
+      const system = String((req as { system?: unknown }).system ?? "");
+      const user = JSON.stringify((req as { messages?: unknown }).messages ?? "");
+      if (system.includes("design director")) return reply(opts.judge);
+      if (system.includes("art director")) {
+        if (user.includes("CURRENT PAGE")) return reply(opts.revision ?? PAGE_R);
+        return reply(user.includes("RESTRAINED") || user.includes("different compositional angle") ? PAGE_B : PAGE_A);
+      }
+      if (system.includes("name and brand")) return reply(BRAND);
+      return reply(PLAN);
+    });
+  }
+
+  beforeEach(() => {
+    process.env.STOREGEN_HOME_CANDIDATES = "2";
+  });
+
+  it("generates two candidates, ships the judge's winner, and skips revision on a strong score", async () => {
+    routeMock({ judge: '{"winner":2,"score":9,"critique":""}' });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const htmlBlock = homeDraft.blocks.find((b: { type: string }) => b.type === "rawHtml");
+    expect(htmlBlock.props.html).toContain("ANGLE-B");
+    expect(htmlBlock.props.html).not.toContain("REVISED");
+    const proposal = recPropMock.mock.calls[0][2] as Record<string, { judge?: { winner: number } }>;
+    expect(proposal.home.judge).toMatchObject({ winner: 2, score: 9 });
+  });
+
+  it("revises a weak winner once with the judge's critique", async () => {
+    routeMock({ judge: '{"winner":1,"score":5,"critique":"Hero copy reads generic; sections repeat the same shape."}' });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const htmlBlock = homeDraft.blocks.find((b: { type: string }) => b.type === "rawHtml");
+    expect(htmlBlock.props.html).toContain("REVISED");
+    const proposal = recPropMock.mock.calls[0][2] as Record<string, { revised?: boolean }>;
+    expect(proposal.home.revised).toBe(true);
+  });
+
+  it("keeps the winner when the revision comes back unusable", async () => {
+    routeMock({ judge: '{"winner":1,"score":4,"critique":"Weak hierarchy."}', revision: "I cannot revise that." });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const htmlBlock = homeDraft.blocks.find((b: { type: string }) => b.type === "rawHtml");
+    expect(htmlBlock.props.html).toContain("ANGLE-A");
+  });
+
+  it("falls back to the first valid candidate when the judge returns junk", async () => {
+    routeMock({ judge: "not json at all" });
+    await generateStore({ shopId: realShop, mode: "brief", brief: "a gym brand" });
+    const homeDraft = saveDraftMock.mock.calls.find((c) => c[1] === "home")![2];
+    const htmlBlock = homeDraft.blocks.find((b: { type: string }) => b.type === "rawHtml");
+    expect(htmlBlock.props.html).toContain("ANGLE-A");
+  });
+});
+
+describe("parseJudgeVerdict", () => {
+  it("parses a clean verdict and clamps the score", () => {
+    expect(parseJudgeVerdict('{"winner":2,"score":14,"critique":"x"}')).toEqual({ winner: 2, score: 10, critique: "x" });
+  });
+  it("tolerates a fenced verdict", () => {
+    const NL = String.fromCharCode(10);
+    const fenced = ["```json", '{"winner":1,"score":7,"critique":""}', "```"].join(NL);
+    expect(parseJudgeVerdict(fenced)).toEqual({ winner: 1, score: 7, critique: "" });
+  });
+  it("rejects junk, bad winners and missing scores", () => {
+    expect(parseJudgeVerdict("prose")).toBeNull();
+    expect(parseJudgeVerdict('{"winner":3,"score":5}')).toBeNull();
+    expect(parseJudgeVerdict('{"winner":1}')).toBeNull();
+  });
+});
+
+describe("extractSectionHtml", () => {
+  it("takes the balanced section and trims prose around it", () => {
+    const out = extractSectionHtml('Here you go: <section class="hero"><h1>Hi</h1></section> Anything else?');
+    expect(out).toBe('<section class="hero"><h1>Hi</h1></section>');
+  });
+  it("keeps nested sections inside the balanced extent", () => {
+    const html = '<section id="a">x<section id="b">y</section>z</section>';
+    expect(extractSectionHtml(html)).toBe(html);
+  });
+  it("rejects replies with no section or an unterminated section", () => {
+    expect(extractSectionHtml("I cannot do that.")).toBe("");
+    expect(extractSectionHtml('<section class="hero">cut off')).toBe("");
+  });
+});
+
+describe("regenerateHomeSection", () => {
+  it("returns the sanitized replacement section", async () => {
+    createMock.mockResolvedValue(reply('<section class="hero"><h1>New hero</h1></section>'));
+    const out = await regenerateHomeSection(realShop, '<section class="hero"><h1>Old</h1></section>', "make it punchier");
+    expect(out).toContain("New hero");
+    expect(out).toMatch(/^<section/);
+  });
+  it("returns null on junk output and on API failure — never a silent no-op", async () => {
+    createMock.mockResolvedValue(reply("Sorry, no."));
+    expect(await regenerateHomeSection(realShop, "<section>Old</section>")).toBeNull();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    createMock.mockRejectedValue(new Error("down"));
+    expect(await regenerateHomeSection(realShop, "<section>Old</section>")).toBeNull();
+    spy.mockRestore();
+  });
 });

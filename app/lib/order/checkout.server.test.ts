@@ -17,9 +17,12 @@ const store = vi.hoisted(() => {
     orders: [],
     order_line: [],
     payment_intent: [],
-    // Empty = no connected payout account -> createPaymentIntent takes the
-    // platform-charge path (the #11 routing decision is tested in connect.server.test.ts).
+    // Seeded fully-enabled in beforeEach: the charge path FAILS CLOSED without a
+    // payment-ready connected account (the routing decision itself is tested in
+    // connect.server.test.ts); the not-ready gate test empties it.
     stripe_connected_account: [],
+    // Read by the demo-shop exemption (isShowcaseShop) when the shop is not payment-ready.
+    shops: [],
     // Drives the oversell-protection read: only variants with inventory_tracked=true are reserved.
     variant_dim: [],
   };
@@ -144,10 +147,40 @@ vi.mock("~/lib/order/order.server", () => ({ transitionOrder: order.transitionOr
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { createCheckout, OutOfStockError } from "./checkout.server";
+// eslint-disable-next-line import/first -- follows vi.mock like the import above
+import { PaymentsNotReadyError } from "~/lib/payments/connect.server";
 
-/** Seed a variant_dim row so the oversell read can classify a line as tracked/untracked. */
-function seedVariant(shopId: string, variantId: string, inventoryTracked: boolean | null) {
-  store.db.variant_dim.push({ id: variantId, shop_id: shopId, inventory_tracked: inventoryTracked });
+/** Fully-enabled connected account: the default posture — the shop CAN take payments. */
+function seedPaymentReady(shopId: string) {
+  store.db.stripe_connected_account.push({
+    shop_id: shopId,
+    stripe_account_id: "acct_test",
+    account_type: "express",
+    charges_enabled: true,
+    payouts_enabled: true,
+    details_submitted: true,
+    application_fee_bps: 0,
+    application_fee_flat_cents: 0,
+    country: "US",
+    default_currency: "usd",
+    onboarded_at: "2026-07-01T00:00:00.000Z",
+  });
+}
+
+/** Seed a variant_dim row so the oversell read can classify a line as tracked/untracked, and
+ *  (Phase 4 Task 1) the cost-snapshot read can resolve unit_cost_cents. */
+function seedVariant(
+  shopId: string,
+  variantId: string,
+  inventoryTracked: boolean | null,
+  unitCostCents?: number | null,
+) {
+  store.db.variant_dim.push({
+    id: variantId,
+    shop_id: shopId,
+    inventory_tracked: inventoryTracked,
+    unit_cost_cents: unitCostCents ?? null,
+  });
 }
 
 function seedCartLine(shopId: string, cartId: string, line: Partial<Record<string, unknown>>) {
@@ -171,6 +204,7 @@ beforeEach(() => {
   for (const k of Object.keys(store.db)) store.db[k].length = 0;
   vi.clearAllMocks();
   process.env.STRIPE_SECRET_KEY = "sk_test_x";
+  seedPaymentReady("shop-1");
   stripe.piCreate.mockResolvedValue({
     id: "pi_1",
     client_secret: "pi_1_secret_abc",
@@ -229,6 +263,37 @@ describe("createCheckout", () => {
     // The source cart is consumed (cart -> checkout_pending) so open-basket
     // surfaces stop listing it; the order is the record from here on.
     expect(store.db.cart[0]).toMatchObject({ id: "cart-1", state: "checkout_pending" });
+  });
+
+  it("stamps unit_cost_cents_snapshot from variant_dim onto the order_line row (Phase 4 Task 1)", async () => {
+    seedCartLine("shop-1", "cart-cost", { variant_id: "v-tee-s", quantity: 2, unit_price_cents: 1999 });
+    seedVariant("shop-1", "v-tee-s", true, 750);
+
+    const out = await createCheckout("shop-1", "cart-cost", { email: "cost@example.com" });
+
+    expect(store.db.order_line).toHaveLength(1);
+    expect(store.db.order_line[0]).toMatchObject({
+      order_id: out.orderId,
+      variant_id: "v-tee-s",
+      unit_cost_cents_snapshot: 750,
+    });
+  });
+
+  it("snapshots a null unit_cost_cents_snapshot for a variant with no cost recorded (never fabricates 0)", async () => {
+    seedCartLine("shop-1", "cart-nocost", { variant_id: "v-tee-s" });
+    seedVariant("shop-1", "v-tee-s", false, null);
+
+    await createCheckout("shop-1", "cart-nocost", { email: "nocost@example.com" });
+
+    expect(store.db.order_line[0].unit_cost_cents_snapshot).toBeNull();
+  });
+
+  it("snapshots a null unit_cost_cents_snapshot when the variant has no variant_dim row at all", async () => {
+    seedCartLine("shop-1", "cart-novariant", { variant_id: "v-ghost" });
+
+    await createCheckout("shop-1", "cart-novariant", { email: "novariant@example.com" });
+
+    expect(store.db.order_line[0].unit_cost_cents_snapshot).toBeNull();
   });
 
   it("persists the attribution snapshot verbatim on the order (empty default)", async () => {
@@ -384,5 +449,98 @@ describe("createCheckout", () => {
 
     expect(engine.reserveStock).not.toHaveBeenCalled();
     expect(stripe.piCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails CLOSED (PaymentsNotReadyError) BEFORE any write when the shop has no payment-ready Stripe account", async () => {
+    // Real shop (not demo), no fully-enabled connected account: charging would settle the
+    // buyer's money into the PLATFORM account, so the gate must refuse before priceCart or
+    // any buyer/order/hold write — no orphan rows, no Stripe call.
+    store.db.stripe_connected_account.length = 0;
+    seedCartLine("shop-1", "cart-noready", {});
+
+    await expect(createCheckout("shop-1", "cart-noready", { email: "b@example.com" })).rejects.toBeInstanceOf(
+      PaymentsNotReadyError,
+    );
+    expect(store.db.buyer_dim).toHaveLength(0);
+    expect(store.db.orders).toHaveLength(0);
+    expect(store.db.order_line).toHaveLength(0);
+    expect(engine.reserveStock).not.toHaveBeenCalled();
+    expect(stripe.piCreate).not.toHaveBeenCalled();
+  });
+
+  it("releases holds + cancels the order when the merchant is de-onboarded between the gate and the PI (race)", async () => {
+    // The gate passed (account looked enabled) but Stripe rejects the destination at PI
+    // create — stale flags. Fail closed like a stockout: free holds, cancel the just-born
+    // order, rethrow. No PaymentIntent exists, so nothing can be charged.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    seedCartLine("shop-1", "cart-race", { variant_id: "v-tracked", quantity: 1, unit_price_cents: 1000 });
+    seedVariant("shop-1", "v-tracked", true);
+    stripe.piCreate.mockRejectedValueOnce(
+      Object.assign(new Error("No such destination: 'acct_test'"), {
+        type: "StripeInvalidRequestError",
+        code: "account_invalid",
+        param: "transfer_data[destination]",
+      }),
+    );
+
+    await expect(createCheckout("shop-1", "cart-race", { email: "b@example.com" })).rejects.toBeInstanceOf(
+      PaymentsNotReadyError,
+    );
+
+    expect(engine.releaseReservation).toHaveBeenCalledWith("shop-1", store.db.orders[0].id);
+    expect(order.transitionOrder).toHaveBeenCalledWith(
+      "shop-1",
+      store.db.orders[0].id,
+      "cancelled",
+      "checkout:payments_not_ready",
+    );
+    expect(store.db.payment_intent).toHaveLength(0);
+    // The buyer keeps their basket: the cart is only flagged consumed AFTER a PI exists.
+    expect(store.db.cart.find((c) => c.id === "cart-race")?.state).toBe("cart");
+    warn.mockRestore();
+  });
+
+  it("releases holds + cancels the order on ANY PI-create failure (e.g. Stripe 5xx), leaving the cart open", async () => {
+    // No PaymentIntent exists when the create rejects, so unwinding is always safe —
+    // otherwise held stock blocks other buyers until the reaper and the order orphans.
+    seedCartLine("shop-1", "cart-5xx", { variant_id: "v-tracked", quantity: 1, unit_price_cents: 1000 });
+    seedVariant("shop-1", "v-tracked", true);
+    stripe.piCreate.mockRejectedValueOnce(Object.assign(new Error("stripe unavailable"), { type: "StripeAPIError" }));
+
+    await expect(createCheckout("shop-1", "cart-5xx", { email: "b@example.com" })).rejects.toThrow(
+      /stripe unavailable/,
+    );
+
+    expect(engine.releaseReservation).toHaveBeenCalledWith("shop-1", store.db.orders[0].id);
+    expect(order.transitionOrder).toHaveBeenCalledWith(
+      "shop-1",
+      store.db.orders[0].id,
+      "cancelled",
+      "checkout:payment_intent_failed",
+    );
+    expect(store.db.cart.find((c) => c.id === "cart-5xx")?.state).toBe("cart");
+  });
+
+  it("never replaces the original PI-create error with a cleanup failure (buyer still gets the honest status)", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    seedCartLine("shop-1", "cart-cleanupfail", { variant_id: "v-tracked", quantity: 1, unit_price_cents: 1000 });
+    seedVariant("shop-1", "v-tracked", true);
+    stripe.piCreate.mockRejectedValueOnce(
+      Object.assign(new Error("No such destination"), {
+        type: "StripeInvalidRequestError",
+        code: "account_invalid",
+        param: "transfer_data[destination]",
+      }),
+    );
+    engine.releaseReservation.mockRejectedValueOnce(new Error("postgrest blip"));
+
+    // Cleanup failed, but the ORIGINAL PaymentsNotReadyError still surfaces (route maps it to 503).
+    await expect(createCheckout("shop-1", "cart-cleanupfail", { email: "b@example.com" })).rejects.toBeInstanceOf(
+      PaymentsNotReadyError,
+    );
+    expect(spy).toHaveBeenCalledWith(expect.stringMatching(/failed to unwind/), expect.anything());
+    spy.mockRestore();
+    warn.mockRestore();
   });
 });

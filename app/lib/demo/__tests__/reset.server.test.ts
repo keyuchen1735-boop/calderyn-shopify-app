@@ -87,10 +87,15 @@ describe("SHOWCASE_WIPE_ORDER", () => {
       ["variant_dim", "product_dim"],
       ["import_map", "variant_dim"],
       ["store_generation_proposal", "store_generation"],
+      ["product_handle_redirect", "product_dim"],
     ];
     for (const [child, parent] of before) {
       expect(idx(child), `${child} must be wiped before ${parent}`).toBeLessThan(idx(parent));
     }
+  });
+
+  it("wipes the search-listing overrides — seed ids are deterministic, so a leftover would reattach", () => {
+    expect(SHOWCASE_WIPE_ORDER).toContain("seo_page");
   });
 
   it("only lists tables that carry a shop_id column (no-shop_id children cascade)", () => {

@@ -5,14 +5,14 @@ import { startTestTransaction, TEST_CHARGE_CENTS , refundTestOrders } from "../t
 
 const hoisted = vi.hoisted(() => ({
   getOrgMode: vi.fn(),
-  getConnectedAccount: vi.fn(),
+  paymentsReadiness: vi.fn(),
   createCommerceCheckoutSession: vi.fn(),
   upsertGuestBuyer: vi.fn(),
   insertReturn: vi.fn(),
 }));
 
 vi.mock("~/lib/cutover/org-mode.server", () => ({ getOrgMode: hoisted.getOrgMode }));
-vi.mock("~/lib/payments/connect.server", () => ({ getConnectedAccount: hoisted.getConnectedAccount }));
+vi.mock("~/lib/payments/connect.server", () => ({ paymentsReadiness: hoisted.paymentsReadiness }));
 vi.mock("~/lib/buyer/identity.server", () => ({ upsertGuestBuyer: hoisted.upsertGuestBuyer }));
 vi.mock("~/lib/commerce/stripe-checkout.server", () => ({
   createCommerceCheckoutSession: hoisted.createCommerceCheckoutSession,
@@ -28,7 +28,7 @@ describe("startTestTransaction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hoisted.getOrgMode.mockResolvedValue("dual_run");
-    hoisted.getConnectedAccount.mockResolvedValue({ id: "acct_1" });
+    hoisted.paymentsReadiness.mockResolvedValue({ ready: true, route: "destination" });
     hoisted.upsertGuestBuyer.mockResolvedValue({ id: "buyer-1" });
     hoisted.insertReturn.mockResolvedValue({
       data: { id: "order-123", confirmation_token: "tok-abc" },
@@ -41,16 +41,21 @@ describe("startTestTransaction", () => {
     const res = await startTestTransaction("shop-1", "https://calderyncompany.com");
     expect(res.url).toBe("https://stripe/pay");
     expect(TEST_CHARGE_CENTS).toBe(50);
-    expect(hoisted.createCommerceCheckoutSession).toHaveBeenCalledWith("shop-1", {
-      orderId: "order-123",
-      totalCents: 50,
-      currency: "usd",
-      confirmationToken: "tok-abc",
-      returnUrls: {
-        success: "https://calderyncompany.com/dashboard/settings/golive?test_tx=success",
-        cancel: "https://calderyncompany.com/dashboard/settings/golive?test_tx=cancelled",
+    expect(hoisted.createCommerceCheckoutSession).toHaveBeenCalledWith(
+      "shop-1",
+      {
+        orderId: "order-123",
+        totalCents: 50,
+        currency: "usd",
+        confirmationToken: "tok-abc",
+        returnUrls: {
+          success: "https://calderyncompany.com/dashboard/settings/golive?test_tx=success",
+          cancel: "https://calderyncompany.com/dashboard/settings/golive?test_tx=cancelled",
+        },
       },
-    });
+      // The gate's readiness decision is reused by the session create (one read per probe).
+      { ready: true, route: "destination" },
+    );
   });
 
   it("rejects when the return origin is missing — a probe must never fall back to another host", async () => {
@@ -63,9 +68,10 @@ describe("startTestTransaction", () => {
     await expect(startTestTransaction("shop-1", "https://x.example")).rejects.toThrow(/dual_run/);
   });
 
-  it("rejects with a clear message when Stripe is not connected", async () => {
-    hoisted.getConnectedAccount.mockResolvedValue(null);
-    await expect(startTestTransaction("shop-1", "https://x.example")).rejects.toThrow(/Connect Stripe/i);
+  it("rejects with a clear message when Stripe is not fully enabled (probe runs the real charge path)", async () => {
+    hoisted.paymentsReadiness.mockResolvedValue({ ready: false, reason: "onboarding_incomplete" });
+    await expect(startTestTransaction("shop-1", "https://x.example")).rejects.toThrow(/connecting Stripe/i);
+    expect(hoisted.createCommerceCheckoutSession).not.toHaveBeenCalled();
   });
 });
 

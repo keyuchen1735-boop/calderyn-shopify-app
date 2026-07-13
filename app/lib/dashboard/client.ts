@@ -7,7 +7,10 @@
 // This module is client-only: it uses fetch, crypto.randomUUID(), and
 // location.origin. It MUST NOT import any *.server.ts module.
 
+import { runBulkInChunks } from "./orders-client";
 import type { LiveAnalyticsSnapshot } from "./live-analytics-types";
+import type { CatalogSort } from "~/lib/catalog/catalog-sort";
+import type { SeoListingVM } from "~/lib/catalog/types";
 import type { ListingDraftCurrent, ListingPlan } from "~/lib/catalog/listing-prompt";
 import type {
   Alert,
@@ -19,9 +22,7 @@ import type {
   Integration,
   LearnedRule,
   RejectReason,
-  SKU,
   SkuAffinityItem,
-  SkuHistoryPoint,
   TopAdRow,
 } from "~/lib/types";
 import type {
@@ -34,7 +35,6 @@ import type {
   LearnedRuleVM,
   OverviewVM,
   QueueProposalVM,
-  SkuVM,
   TopAd,
 } from "~/components/dashboard/view-models";
 import type { LiveEnginePageData } from "~/lib/calibration/live-engine-types";
@@ -46,7 +46,6 @@ import { hasActionDeepLink } from "~/lib/action-deeplinks";
 import { isValidRegion, type RegionCode } from "~/lib/ads/actions";
 import { gradeFromRow } from "~/lib/campaign-grade";
 import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
-import { projectedStockoutDate } from "~/lib/inventory-demand";
 import { auditLegibility } from "~/lib/audit-legibility";
 import { stateDiff } from "~/lib/audit-state-diff";
 import type { CreativeScreenRun, ScoreCard, CreativeInput, Variant } from "~/lib/screener/types";
@@ -54,6 +53,7 @@ import type {
   ChatMessage as AssistantMessage,
   ConversationSummary as AssistantConversation,
 } from "~/lib/assistant/types";
+import type { ActionReceipt } from "~/lib/assistant/actions/registry-types";
 
 // --- error type ------------------------------------------------------------
 
@@ -356,86 +356,6 @@ export function adaptAudit(e: AuditEntry): AuditVM {
   };
 }
 
-export function adaptSku(s: SKU): SkuVM {
-  // Older payloads may carry an empty code; fall back to the title so the row
-  // still labels itself. TODO(api): category on SKU.
-  const skuCode = s.sku || s.title;
-  const category = (s as { category?: string }).category ?? "";
-
-  const total = Object.values(s.locations ?? {}).reduce((sum, n) => sum + n, 0);
-  const maxShare = total > 0 ? Math.max(0, ...Object.values(s.locations ?? {})) / total : 0;
-
-  let status: string;
-  if (s.on_hand === 0) status = "stockout";
-  else if (s.days_of_cover < 10) status = "risk";
-  else if (s.days_of_cover < 21) status = "reorder";
-  // "Wrong location concentration" only matters when the SKU is actually selling
-  // — concentrated stock at ~0 velocity is not at risk, it's just sitting (P2-13).
-  else if (total > 0 && maxShare > 0.6 && s.velocity > 0) status = "misplaced";
-  else status = "healthy";
-
-  return {
-    id: s.id,
-    title: s.title,
-    sku: skuCode,
-    category,
-    on_hand: s.on_hand,
-    days_of_cover: s.days_of_cover,
-    velocity: s.velocity,
-    projected_stockout: projectedStockoutDate(s.days_of_cover, s.velocity),
-    revenue_30d_cents: s.revenue_30d_cents,
-    vendor: s.vendor,
-    product_type: s.product_type,
-    tags: s.tags,
-    collections: s.collections,
-    returns: s.returns,
-    locations: s.locations,
-    status,
-    sources: s.sources ?? [],
-    demand: s.demand ?? null,
-    suggested_transfer: s.suggested_transfer ?? null,
-    locations_detail: s.locations_detail ?? [],
-    ship_cost_source: s.ship_cost_source ?? null,
-    ship_cost_confidence: s.ship_cost_confidence ?? null,
-    ship_pnl_cents: s.ship_pnl_cents ?? null,
-    do_not_reorder: s.do_not_reorder ?? false,
-  };
-}
-
-/** Numeric SkuVM metrics the inventory screen can rank by. */
-export type SkuSortKey = "on_hand" | "revenue_30d_cents";
-
-/**
- * Sort SKUs by a numeric metric, highest first. Stable (equal values keep the
- * input order) and non-mutating; a missing metric coerces to 0 so unsynced rows
- * sink to the bottom.
- */
-export function sortSkus(skus: SkuVM[], key: SkuSortKey): SkuVM[] {
-  return [...skus].sort((a, b) => Number(b[key] ?? 0) - Number(a[key] ?? 0));
-}
-
-/**
- * Default inventory ordering: most-stocked SKUs first — the load order merchants
- * see before choosing a sort.
- */
-export function sortSkusByOnHandDesc(skus: SkuVM[]): SkuVM[] {
-  return sortSkus(skus, "on_hand");
-}
-
-/**
- * "Needs attention" ranking by urgency (P2-13): soonest to run out first
- * (days_of_cover ASC), then higher 30-day revenue first as a tiebreaker so a
- * real best-seller outranks a zero-revenue sample at the same days-of-cover —
- * instead of the stock-DESC load order that buried the real at-risk SKUs.
- */
-export function sortSkusByUrgency(skus: SkuVM[]): SkuVM[] {
-  return [...skus].sort(
-    (a, b) =>
-      a.days_of_cover - b.days_of_cover ||
-      Number(b.revenue_30d_cents ?? 0) - Number(a.revenue_30d_cents ?? 0),
-  );
-}
-
 const INTEGRATION_ORDER = [
   "shopify",
   "meta_ads",
@@ -551,18 +471,95 @@ export async function fetchCampaignDirection(id: string): Promise<CampaignDirect
   return apiGet<CampaignDirectionDTO>(`/dashboard/api/campaigns/${encodeURIComponent(id)}/direction`);
 }
 
-export async function fetchSkus(): Promise<SkuVM[]> {
-  const data = await apiGet<{ skus: SKU[] }>("/dashboard/api/skus");
-  return sortSkusByOnHandDesc(data.skus.map(adaptSku));
+// Mirror of FirstRunPreflight in ~/lib/meta/first-run.server.ts - a browser-safe
+// copy (.server modules can't be imported into client bundles). Keep these
+// fields in sync by hand when the server type changes.
+export interface FirstRunPreflight {
+  metaConnected: boolean;
+  adsScope: boolean;
+  pageOk: boolean;
+  fundingOk: boolean | null; // null = Meta didn't tell us; UI shows a "check billing" link, never blocks
 }
 
-/** Per-SKU daily on-hand trend (90-day window) for the stock-trend sparkline.
- * Sparse, oldest-first; empty when the SKU has no in-window changes. */
-export async function fetchSkuHistory(id: string): Promise<SkuHistoryPoint[]> {
-  const data = await apiGet<{ history: SkuHistoryPoint[] }>(
-    `/dashboard/api/skus/${encodeURIComponent(id)}/history`,
+/** Meta preflight for the first-campaign wizard (connected/scope/page/funding). */
+export async function fetchFirstRunPreflight(): Promise<FirstRunPreflight> {
+  return apiGet<FirstRunPreflight>("/dashboard/api/campaigns/first-run");
+}
+
+/** One AI-generated ad-copy variant for the first-campaign wizard's step 3. */
+export interface FirstRunCreativeVariant {
+  headline: string;
+  primaryText: string;
+  cta: string;
+  rationale: string;
+}
+
+/**
+ * Generate up to 3 ad-copy variants from a chosen catalog product. `available:
+ * false` means the generator is unconfigured (no API key / quota) - the wizard
+ * should fall back to manual copy editing rather than treat it as an error.
+ * destinationUrl/imageUrl are always returned (even when unavailable) — the
+ * server-resolved product page link and signed image the wizard's Meta-create
+ * step needs, which the browser can't derive on its own.
+ */
+export async function generateFirstRunCreatives(
+  productId: string,
+): Promise<{
+  available: boolean;
+  variants: FirstRunCreativeVariant[];
+  destinationUrl: string;
+  imageUrl: string | null;
+}> {
+  return apiSend<{
+    available: boolean;
+    variants: FirstRunCreativeVariant[];
+    destinationUrl: string;
+    imageUrl: string | null;
+  }>("POST", "/dashboard/api/campaigns/first-run/creatives", { productId });
+}
+
+/** The wizard's Meta-create input: the runId is client-minted (crypto.randomUUID())
+ *  and held stable across retries of the SAME run — that's what makes a retry
+ *  idempotent server-side instead of creating a second campaign on Meta. */
+export interface FirstRunCreateInput {
+  runId: string;
+  productId: string;
+  budgetCents: number;
+  creative: {
+    headline: string;
+    primaryText: string;
+    cta: string;
+    imageUrl: string | null;
+    destinationUrl: string;
+  };
+}
+
+/** Create the merchant's first campaign on Meta (paused): campaign -> ad set ->
+ *  creative + ad, audited, mirrored into ad_campaign_dim. A 502 "meta_create_failed"
+ *  surfaces as a DashboardApiError with the real platform/validation message —
+ *  retry with the SAME runId to resume the same run instead of starting a new one. */
+export async function createFirstCampaignRun(
+  input: FirstRunCreateInput,
+): Promise<{ runId: string; campaignDimId: string }> {
+  const data = await apiSend<{ run_id: string; campaign_dim_id: string; status: string }>(
+    "POST",
+    "/dashboard/api/campaigns/first-run",
+    {
+      runId: input.runId,
+      productId: input.productId,
+      budgetCents: input.budgetCents,
+      creative: input.creative,
+    },
   );
-  return data.history;
+  return { runId: data.run_id, campaignDimId: data.campaign_dim_id };
+}
+
+/** Per-campaign daily spend+revenue series for the detail chart (default 90d window). */
+export async function fetchCampaignSeries(id: string, days = 90): Promise<DailyRoasRow[]> {
+  const data = await apiGet<{ series: DailyRoasRow[] }>(
+    `/dashboard/api/campaigns/${encodeURIComponent(id)}/series?days=${days}`,
+  );
+  return data.series;
 }
 
 /** Top "frequently bought with" SKUs for one SKU (trailing 90 days). */
@@ -1038,6 +1035,37 @@ export async function sendAssistantMessage(
   };
 }
 
+/** Confirm a Tier-2 pending action by id — the server re-resolves the action
+ *  and its parameters from the pending row, so this call carries no payload
+ *  the client could tamper with. Errors (expired/already-used/not-found)
+ *  surface as a DashboardApiError with code "pending_unavailable". The
+ *  `message` is the persisted follow-up turn the server appends to the thread
+ *  (best-effort — null when that bookkeeping step failed even though the
+ *  action itself already ran), so the caller can show real history instead of
+ *  fabricating a local line. */
+export async function confirmAssistantAction(
+  pendingId: string,
+): Promise<{ receipt: ActionReceipt; message: AssistantMessage | null }> {
+  const data = await apiSend<{ receipt: ActionReceipt; message: AssistantMessage | null }>(
+    "POST",
+    "/dashboard/api/assistant/confirm",
+    { pending_id: pendingId, decision: "confirm" },
+  );
+  return { receipt: data.receipt, message: data.message ?? null };
+}
+
+/** Dismiss a Tier-2 pending action by id without running it. Returns the
+ *  server's `dismissed` flag: `false` means the pending row was NOT actually
+ *  pending (already executed/dismissed elsewhere, or expired) — the caller
+ *  must not report this as a plain "no changes made" dismissal. */
+export async function dismissAssistantAction(pendingId: string): Promise<boolean> {
+  const data = await apiSend<{ dismissed: boolean }>("POST", "/dashboard/api/assistant/confirm", {
+    pending_id: pendingId,
+    decision: "dismiss",
+  });
+  return data.dismissed;
+}
+
 // --- calibration -------------------------------------------------------------
 
 export async function fetchCalibration(): Promise<{
@@ -1237,6 +1265,7 @@ export interface VariantDraft {
   sku?: string;
   title?: string;
   retailPriceCents?: number;
+  compareAtPriceCents?: number;
   unitCostCents?: number;
   inventoryTracked?: boolean;
   inventoryOnHand?: number;
@@ -1256,6 +1285,9 @@ export interface VariantDraft {
 export interface ProductDraft {
   title: string;
   status: "draft" | "active" | "archived";
+  /** URL handle — include only when the merchant edited it (the server keeps
+   *  the stored one otherwise and generates one on create). */
+  handle?: string;
   vendor?: string;
   category?: string;
   description?: string;
@@ -1263,27 +1295,46 @@ export interface ProductDraft {
   options?: Array<{ name: string; values: string[] }>;
   variants: VariantDraft[];
   collectionIds?: string[];
+  /** Search-listing override; both fields empty clears the stored override. */
+  seo?: { metaTitle?: string; metaDescription?: string };
 }
+
+export type { SeoListingVM } from "~/lib/catalog/types";
 
 export interface ProductDetailVM extends ProductDraft {
   id: string;
-  media: Array<{ id: string; url: string; isPrimary: boolean }>;
+  handle: string;
+  media: Array<{ id: string; url: string; isPrimary: boolean; alt: string | null; position: number }>;
   updatedAt: string;
+  /** Null when the search-listing reads failed server-side — the editor shows
+   *  the card as temporarily unavailable and must not submit `seo`. */
+  seoListing: SeoListingVM | null;
 }
 
 export interface CollectionVM {
   id: string;
   title: string;
   handle: string;
+  /** Number of products in the collection (server-folded membership count). */
+  productCount: number;
+}
+
+/** One collection member row for the detail view — thumbnail pre-signed. */
+export interface CollectionProductVM {
+  id: string;
+  title: string;
+  status: "draft" | "active" | "archived";
+  imageUrl: string | null;
 }
 
 export async function fetchProducts(
-  opts: { search?: string; status?: string; offset?: number } = {},
+  opts: { search?: string; status?: string; offset?: number; sort?: CatalogSort } = {},
 ): Promise<{ products: ProductSummaryVM[]; total: number }> {
   const qs = new URLSearchParams();
   if (opts.search) qs.set("search", opts.search);
   if (opts.status) qs.set("status", opts.status);
   if (opts.offset) qs.set("offset", String(opts.offset));
+  if (opts.sort && opts.sort !== "updated") qs.set("sort", opts.sort);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiGet<{ products: ProductSummaryVM[]; total: number }>(
     `/dashboard/api/catalog/products${suffix}`,
@@ -1312,6 +1363,73 @@ export async function archiveProduct(id: string): Promise<void> {
   await apiSend("DELETE", `/dashboard/api/catalog/products/${encodeURIComponent(id)}`);
 }
 
+// --- bulk catalog actions ------------------------------------------------------
+
+/** One product's outcome from a bulk catalog action: ok, or ok:false + a plain-language
+ *  error — never thrown per-product, since partial failure across a bulk selection is
+ *  normal, expected output. */
+export interface BulkProductResultVM {
+  productId: string;
+  ok: boolean;
+  error?: string;
+}
+
+interface BulkProductResultWire {
+  product_id: string;
+  ok: boolean;
+  error?: string;
+}
+
+function mapBulkProductResults(rows: BulkProductResultWire[]): BulkProductResultVM[] {
+  return rows.map((r) => ({ productId: r.product_id, ok: r.ok, error: r.error }));
+}
+
+// The catalog page size is 50 (listProducts' default limit), so "select all on this page" can
+// hand these functions up to 50 ids — but the server-side bulk routes cap a single request at
+// MAX_BULK_PRODUCTS = 25 (app/lib/catalog/bulk.server.ts) and 422 the WHOLE request over that.
+// runBulkInChunks (shared with the orders bulk client, same 25-id server cap) slices the
+// selection, sends the slices sequentially, and downgrades a whole-slice rejection to
+// per-product failures so already-applied results are never discarded.
+
+/** How a product lands in the flat results when its whole chunk rejected. */
+const productFailure = (productId: string, error: string): BulkProductResultVM => ({
+  productId,
+  ok: false,
+  error,
+});
+
+/** Set every selected product's status. No idempotency key — a status write is naturally
+ *  idempotent, so a retried request converges on the same state. */
+export async function bulkSetProductStatus(
+  productIds: string[],
+  status: "active" | "draft" | "archived",
+): Promise<{ results: BulkProductResultVM[] }> {
+  return runBulkInChunks(productIds, async (slice) => {
+    const data = await apiSend<{ results: BulkProductResultWire[] }>(
+      "POST",
+      "/dashboard/api/catalog/products/bulk/status",
+      { product_ids: slice, status },
+    );
+    return { results: mapBulkProductResults(data.results) };
+  }, productFailure);
+}
+
+/** Add every selected product to a collection. Membership writes are naturally idempotent
+ *  (the server upsert ignores duplicates), so no idempotency key here either. */
+export async function bulkAddProductsToCollection(
+  productIds: string[],
+  collectionId: string,
+): Promise<{ results: BulkProductResultVM[] }> {
+  return runBulkInChunks(productIds, async (slice) => {
+    const data = await apiSend<{ results: BulkProductResultWire[] }>(
+      "POST",
+      "/dashboard/api/catalog/products/bulk/collection",
+      { product_ids: slice, collection_id: collectionId },
+    );
+    return { results: mapBulkProductResults(data.results) };
+  }, productFailure);
+}
+
 export async function fetchCollections(): Promise<CollectionVM[]> {
   const data = await apiGet<{ collections: CollectionVM[] }>("/dashboard/api/catalog/collections");
   return data.collections;
@@ -1320,8 +1438,35 @@ export async function fetchCollections(): Promise<CollectionVM[]> {
 export async function createCollection(title: string): Promise<CollectionVM> {
   const data = await apiSend<{ id: string }>("POST", "/dashboard/api/catalog/collections", { title });
   // Optimistic handle via the SAME shared helper the server uses, so the row
-  // labels itself with the authoritative slug immediately (no drift).
-  return { id: data.id, title, handle: collectionHandle(title) };
+  // labels itself with the authoritative slug immediately (no drift). A brand
+  // new collection has no members yet, so the count is authoritatively zero.
+  return { id: data.id, title, handle: collectionHandle(title), productCount: 0 };
+}
+
+/** Rename a collection. The handle is deliberately left unchanged server-side
+ *  so existing storefront links keep resolving. */
+export async function renameCollection(id: string, title: string): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}`, { title });
+}
+
+/** Delete a collection (memberships included). Products are untouched. */
+export async function deleteCollection(id: string): Promise<void> {
+  await apiSend("DELETE", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}`);
+}
+
+export async function fetchCollectionProducts(id: string): Promise<CollectionProductVM[]> {
+  const data = await apiGet<{ products: CollectionProductVM[] }>(
+    `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`,
+  );
+  return data.products;
+}
+
+export async function addToCollection(id: string, productId: string): Promise<void> {
+  await apiSend("POST", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`, { productId });
+}
+
+export async function removeFromCollection(id: string, productId: string): Promise<void> {
+  await apiSend("DELETE", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`, { productId });
 }
 
 /** Upload one product image. Multipart, so this uses a raw fetch (apiSend forces
@@ -1344,6 +1489,21 @@ export async function uploadProductImage(productId: string, file: File): Promise
 
 export async function deleteProductImage(mediaId: string): Promise<void> {
   await apiSend("DELETE", "/dashboard/api/catalog/media", { mediaId });
+}
+
+/** Make this image the product's main (storefront lead) image. */
+export async function setPrimaryProductImage(mediaId: string): Promise<void> {
+  await apiSend("PUT", "/dashboard/api/catalog/media", { mediaId, intent: "set_primary" });
+}
+
+/** Set an image's alt text; empty clears it. */
+export async function setProductImageAlt(mediaId: string, alt: string | null): Promise<void> {
+  await apiSend("PUT", "/dashboard/api/catalog/media", { mediaId, intent: "set_alt", alt });
+}
+
+/** Move an image one step in the gallery order; past-the-edge moves no-op. */
+export async function moveProductImage(mediaId: string, dir: "up" | "down"): Promise<void> {
+  await apiSend("PUT", "/dashboard/api/catalog/media", { mediaId, intent: "move", dir });
 }
 
 // --- AI listing drafts (new-product flow) ------------------------------------
@@ -1455,6 +1615,58 @@ export async function fetchInventoryHistory(variantId: string): Promise<LedgerEn
   );
   return d.history;
 }
+/** One shop-wide inventory list row: per-variant balance rollups across
+ *  locations, plus the latest recent restock-draft audit entry when one
+ *  targets this variant's sku (null otherwise). */
+export interface InventoryRowVM {
+  variantId: string;
+  productId: string;
+  sku: string | null;
+  variantTitle: string | null;
+  productTitle: string;
+  onHand: number;
+  reserved: number;
+  incoming: number;
+  available: number;
+  low: boolean;
+  locationCount: number;
+  singleLocationId: string | null;
+  restock: { auditId: string; createdAt: string; outcome: string } | null;
+}
+export async function fetchInventoryList(
+  opts: { search?: string; stock?: "low" | "out"; offset?: number } = {},
+): Promise<{ rows: InventoryRowVM[]; total: number }> {
+  const params = new URLSearchParams();
+  if (opts.search) params.set("search", opts.search);
+  if (opts.stock) params.set("stock", opts.stock);
+  if (opts.offset) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  return apiGet<{ rows: InventoryRowVM[]; total: number }>(
+    `/dashboard/api/catalog/inventory${qs ? `?${qs}` : ""}`,
+  );
+}
+/** One purchase-order draft row: a create_po_draft audit entry with its PO
+ *  snapshot summarized. `hasPdf` mirrors the PDF route's 404 predicate, so the
+ *  download button only renders when the download can actually succeed. */
+export interface PurchaseOrderVM {
+  id: string;
+  poNumber: string | null;
+  sku: string | null;
+  lineCount: number;
+  totalCents: number | null;
+  outcome: string;
+  createdAt: string;
+  lastError: string | null;
+  hasPdf: boolean;
+}
+export async function fetchPurchaseOrders(
+  opts: { offset?: number } = {},
+): Promise<{ rows: PurchaseOrderVM[]; total: number }> {
+  const qs = opts.offset ? `?offset=${encodeURIComponent(String(opts.offset))}` : "";
+  return apiGet<{ rows: PurchaseOrderVM[]; total: number }>(
+    `/dashboard/api/catalog/purchase-orders${qs}`,
+  );
+}
 // ----- Import from Shopify (#13.promote) -----
 export interface ImportRunVM {
   id: string;
@@ -1542,6 +1754,13 @@ export async function fetchLocations(): Promise<LocationVM[]> {
   const d = await apiGet<{ locations: LocationVM[] }>("/dashboard/api/catalog/locations");
   return d.locations;
 }
+/** Active locations plus the deactivated ones, for the reactivation panel. */
+export async function fetchLocationsWithInactive(): Promise<{ locations: LocationVM[]; inactive: LocationVM[] }> {
+  const d = await apiGet<{ locations: LocationVM[]; inactive?: LocationVM[] }>(
+    "/dashboard/api/catalog/locations?includeInactive=1",
+  );
+  return { locations: d.locations, inactive: d.inactive ?? [] };
+}
 export async function updateLocation(
   id: string,
   patch: {
@@ -1557,4 +1776,16 @@ export async function updateLocation(
   },
 ): Promise<void> {
   await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, patch);
+}
+export async function createLocation(input: { name: string; priority?: number }): Promise<{ id: string }> {
+  return apiSend<{ id: string }>("POST", "/dashboard/api/catalog/locations", input);
+}
+/** Deactivate a location. Rejects with a 409 DashboardApiError while any stock
+ *  (on hand, reserved, or incoming) still sits there. */
+export async function deactivateLocation(id: string): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, { active: false });
+}
+/** Reactivate a deactivated location so it fills orders again. */
+export async function reactivateLocation(id: string): Promise<void> {
+  await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, { active: true });
 }

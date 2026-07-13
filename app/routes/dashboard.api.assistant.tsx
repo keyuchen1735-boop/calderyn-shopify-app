@@ -9,7 +9,7 @@ import { dashboardJson, jsonError, jsonOk, rateLimit, requireSameOrigin } from "
 import { acknowledgeAlert } from "~/lib/alerts.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { listConversations, getMessages } from "~/lib/assistant/conversations.server";
-import { validateAssistantInput } from "~/lib/assistant/request.server";
+import { pickActiveConversation, validateAssistantInput } from "~/lib/assistant/request.server";
 import { AssistantTurnError, runConversationTurn } from "~/lib/assistant/turn.server";
 import { checkAiQuota, quotaTrusted } from "~/lib/ai-quota.server";
 
@@ -19,7 +19,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const url = new URL(request.url);
     const requested = url.searchParams.get("conversation_id");
     const conversations = await listConversations(session.shopId);
-    const conversationId = requested ?? conversations[0]?.id ?? null;
+    const conversationId = pickActiveConversation(conversations, requested, new Date());
     const messages = conversationId
       ? await getMessages(session.shopId, conversationId)
       : [];
@@ -59,6 +59,7 @@ export async function action({ request }: ActionFunctionArgs) {
         shopDomain: session.shopId,
         message: parsed.value.message,
         conversationId: parsed.value.conversationId,
+        allowActions: true,
         deps: {
           flagAlert: (alertId) => acknowledgeAlert(getSupabase(), session.shopId, alertId),
         },

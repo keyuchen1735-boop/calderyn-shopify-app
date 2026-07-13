@@ -7,6 +7,14 @@ import { randomBytes } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
 import { upsertGuestBuyer, addBuyerAddress, recordCheckoutConsent, type BuyerAddressInput } from "~/lib/buyer/identity.server";
 import { getQuote } from "./quote-store.server";
+import { reserveStock, releaseReservation } from "~/lib/inventory/engine.server";
+import { transitionOrder } from "~/lib/order/order.server";
+// Same class createCheckout throws on a checkout-time stockout (checkout.server.ts) — imported
+// rather than redefined so both origination paths (human checkout, agentic ACP/MCP) surface one
+// error type callers can catch with a single `instanceof` check.
+import { OutOfStockError } from "~/lib/order/checkout.server";
+
+export { OutOfStockError };
 
 export class QuoteExpiredError extends Error {
   code = "QUOTE_EXPIRED";
@@ -64,6 +72,34 @@ export async function placeAgenticOrder(
   }));
   const lineIns = await sb.from("order_line").insert(lineRows);
   if (lineIns.error) throw lineIns.error;
+
+  // Oversell protection (same contract as createCheckout): reserve TRACKED lines
+  // keyed on the order id before handing the order to the payment surface. The
+  // webhook commits by this key on payment; the reaper releases abandoned holds.
+  const trackedRes = await sb
+    .from("variant_dim")
+    .select("id, inventory_tracked")
+    .eq("shop_id", shopId)
+    .in("id", quote.lines.map((l) => l.variantId));
+  if (trackedRes.error) throw trackedRes.error;
+  const tracked = new Set(
+    ((trackedRes.data ?? []) as Record<string, unknown>[])
+      .filter((r) => r.inventory_tracked === true)
+      .map((r) => String(r.id)),
+  );
+  if (tracked.size > 0) {
+    const soldOut: string[] = [];
+    for (const line of quote.lines) {
+      if (!tracked.has(line.variantId)) continue;
+      const res = await reserveStock(shopId, line.variantId, line.quantity, orderId, null);
+      if (!res.ok) soldOut.push(line.variantId);
+    }
+    if (soldOut.length > 0) {
+      await releaseReservation(shopId, orderId);
+      await transitionOrder(shopId, orderId, "cancelled", "agentic:out_of_stock");
+      throw new OutOfStockError(soldOut);
+    }
+  }
 
   return { orderId, confirmationToken, totalCents: quote.totalCents, currency: quote.currency };
 }

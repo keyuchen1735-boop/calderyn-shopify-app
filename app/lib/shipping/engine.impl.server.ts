@@ -111,12 +111,27 @@ export function createQuoteEngine(deps: Partial<EngineDeps> = {}): QuoteShipping
     // The rate source never throws — it degrades to the static fallback internally.
     const result = await rateSource.getRates(rateReq);
 
+    // Enforce serviceFilter HERE, source-agnostically: only the EasyPost adapter
+    // filters client-side; merchant flat rates and the default bands return every
+    // option. Without this, a buyer-chosen non-cheapest service on those sources
+    // could never be priced as itself (the caller's chosen-service check would
+    // reject every quote). An empty post-filter set degrades to fallback below.
+    const serviceFilter = req.options?.serviceFilter;
+    let carrierOptions =
+      serviceFilter && serviceFilter.length > 0
+        ? result.options.filter((o) => serviceFilter.includes(o.serviceCode))
+        : result.options;
+
     // Restriction suppression (v1, minimal): drop non-serviceable rates. A 0/negative
-    // carrier amount can't be a real serviceable option and must not be presented as if
-    // it were free (free-ship is a merchant RULE, not a broken rate). MerchantShipRules
+    // CARRIER amount can't be a real serviceable option and must not be presented as if
+    // it were free (free-ship is a merchant RULE, not a broken rate). A merchant-authored
+    // $0 flat rate (provider "merchant") IS real config — "Free shipping" rows are valid
+    // and must not be suppressed into the paid fallback bands. MerchantShipRules
     // carries no service/zone restriction list yet, so this is the only restriction
     // signal in v1; richer zone/service matchers are a #6.3 v2 upgrade.
-    let carrierOptions = result.options.filter((o) => o.amountCents > 0);
+    carrierOptions = carrierOptions.filter(
+      (o) => o.amountCents > 0 || (o.amountCents === 0 && result.provider === "merchant"),
+    );
     let fallbackUsed = result.fallbackUsed;
 
     // No serviceable carrier rate (empty, or all suppressed) → degrade to the static
@@ -126,12 +141,16 @@ export function createQuoteEngine(deps: Partial<EngineDeps> = {}): QuoteShipping
       fallbackUsed = true;
     }
 
+    // Merchant handling window (per-quote, from ship_rules / variant handling_days)
+    // overrides the engine default. Part of canonicalRules, so it is already in the
+    // cache key — two quotes differing only in handling days never share an entry.
+    const effectiveHandlingDays = rules?.handlingDays ?? handlingDays;
     const priced: ShippingQuoteOption[] = carrierOptions.map((o: NormalizedRateOption) =>
       applyMerchantRules(
         o,
         rules,
         req.cartSubtotalCents,
-        buildDeliveryWindow(o, handlingDays, nowDate),
+        buildDeliveryWindow(o, effectiveHandlingDays, nowDate),
       ),
     );
     const options = selectOptions(priced, req.options?.selection ?? "all");

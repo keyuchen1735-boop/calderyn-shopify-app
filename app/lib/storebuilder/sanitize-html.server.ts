@@ -32,8 +32,11 @@ export function sanitizeStoreHtml(html: unknown, opts?: { links?: StorefrontLink
     allowedAttributes: {
       "*": ["class", "id", "style", "role", "aria-label", "aria-hidden", "aria-labelledby", "title", "data-*"],
       a: ["href", "target", "rel"],
-      img: ["src", "alt", "width", "height", "loading", "decoding", "srcset", "sizes"],
-      source: ["src", "srcset", "sizes", "type", "media"],
+      // NO src/srcset: generated pages carry real photography ONLY via data-cd-media
+      // product references (resolved to fresh signed URLs at render), so a model can never
+      // hotlink an external image (tracking pixel, mixed content, dead link after a year).
+      img: ["alt", "width", "height", "loading", "decoding"],
+      source: ["type", "media"],
       button: ["type"],
       time: ["datetime"],
       label: ["for"],
@@ -58,7 +61,6 @@ export function sanitizeStoreHtml(html: unknown, opts?: { links?: StorefrontLink
     // Script vectors: script/iframe/object/embed/form/input are NOT in allowedTags, so they are
     // dropped; on* handlers are stripped by default; only these URL schemes survive on links.
     allowedSchemes: ["http", "https", "mailto", "tel"],
-    allowedSchemesByTag: { img: ["http", "https", "data"] },
     allowProtocolRelative: false,
     // We intentionally keep <style> (never <script>) so the design can use real CSS; acknowledge
     // sanitize-html's vulnerable-tag flag rather than hand-rolling a CSS parser.

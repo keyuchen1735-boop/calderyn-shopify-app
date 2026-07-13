@@ -3,7 +3,10 @@ import { getSupabase } from "../supabase.server";
 import { CalderynError } from "../calderyn.server";
 import { projectProductToSkuDim } from "./project-sku-dim.server";
 import { seedInitialStock } from "../inventory/engine.server";
+import { escapeLike } from "./inventory-list.server";
+import { applySeoOverrideInput } from "./product-seo.server";
 import { collectionHandle, productHandleBase } from "./handle";
+import { catalogSortToOrder, type CatalogSort } from "./catalog-sort";
 import type { ProductInput, ProductStatus, ProductSummary, ProductDetail, VariantInput } from "./types";
 
 type Supa = ReturnType<typeof getSupabase>;
@@ -28,7 +31,7 @@ export interface ProductListItem extends ProductSummary {
 
 export async function listProducts(
   shopId: string,
-  opts: { search?: string; status?: ProductStatus; limit?: number; offset?: number } = {},
+  opts: { search?: string; status?: ProductStatus; limit?: number; offset?: number; sort?: CatalogSort } = {},
 ): Promise<{ products: ProductListItem[]; total: number }> {
   const sb = getSupabase();
   const limit = Math.min(opts.limit ?? 50, 100);
@@ -41,11 +44,12 @@ export async function listProducts(
     .select("id, title, status, updated_at", { count: "exact" })
     .eq("shop_id", shopId);
   if (opts.status) q = q.eq("status", opts.status);
-  if (opts.search) q = q.ilike("title", `%${opts.search}%`);
-  // Stable tiebreaker after updated_at so offset paging can't skip/duplicate rows
-  // that share an updated_at (seeded/imported in the same write).
+  if (opts.search) q = q.ilike("title", `%${escapeLike(opts.search)}%`);
+  // Stable tiebreaker after the sort column so offset paging can't skip/duplicate
+  // rows that share a value (seeded/imported in the same write).
+  const order = catalogSortToOrder(opts.sort ?? "updated");
   const { data: rows, count, error } = await q
-    .order("updated_at", { ascending: false })
+    .order(order.column, { ascending: order.ascending })
     .order("id", { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) throw error;
@@ -132,7 +136,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
   const sb = getSupabase();
   const { data: p, error } = await sb
     .from("product_dim")
-    .select("id, title, status, vendor, category, description, tags, updated_at")
+    .select("id, handle, title, status, vendor, category, description, tags, updated_at")
     .eq("shop_id", shopId)
     .eq("id", productId)
     .maybeSingle();
@@ -141,7 +145,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
 
   const [{ data: options }, { data: variants }, { data: vov }, { data: media }, { data: pc }] = await Promise.all([
     sb.from("product_option").select("id, name, position, product_option_value(id, value, position)").eq("product_id", productId).order("position"),
-    sb.from("variant_dim").select("id, sku, title, retail_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position").eq("product_id", productId).order("position"),
+    sb.from("variant_dim").select("id, sku, title, retail_price_cents, compare_at_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position").eq("product_id", productId).order("position"),
     sb.from("variant_option_value").select("variant_id, option_value_id"),
     // Bucket-backed media only (see getCatalogProducts): a promoted mirror image
     // has an external_url + no storage_path and is served by the storefront reader.
@@ -186,6 +190,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
 
   return {
     id: String(p.id),
+    handle: String(p.handle),
     title: String(p.title),
     status: p.status as ProductStatus,
     vendor: p.vendor ?? null,
@@ -207,6 +212,7 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
         sku: (v.sku as string | null) ?? null,
         title: String(v.title),
         retailPriceCents: (v.retail_price_cents as number | null) ?? null,
+        compareAtPriceCents: (v.compare_at_price_cents as number | null) ?? null,
         unitCostCents: (v.unit_cost_cents as number | null) ?? null,
         inventoryTracked: (v.inventory_tracked as boolean | null) ?? null,
         inventoryOnHand: Number(v.inventory_on_hand ?? 0),
@@ -325,7 +331,8 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
       .from("variant_dim")
       .insert({
         shop_id: shopId, product_id: productId, sku: v.sku ?? null, title: v.title ?? "Default",
-        retail_price_cents: v.retailPriceCents ?? null, unit_cost_cents: v.unitCostCents ?? null,
+        retail_price_cents: v.retailPriceCents ?? null, compare_at_price_cents: v.compareAtPriceCents ?? null,
+        unit_cost_cents: v.unitCostCents ?? null,
         inventory_policy: v.inventoryPolicy ?? null, inventory_tracked: trackedForNewVariant(v),
         inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
       })
@@ -371,28 +378,50 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
 // transaction, so writes are ordered parent->child; a failure throws and the
 // route surfaces it (no projection runs on a failed write).
 export async function createProduct(shopId: string, input: ProductInput): Promise<{ id: string }> {
+  // NewProductFlow has no SEO fields. Reject a crafted create payload before
+  // the first write: applying seo_page after the product graph would create a
+  // partial-success 500 on transient SEO failure and invite a duplicate retry.
+  if (input.seo) {
+    throw new CalderynError({
+      code: "seo_requires_existing_product",
+      status: 422,
+      message: "Save the product before editing its search listing.",
+    });
+  }
   const sb = getSupabase();
-  // Insert the product; retry with a fresh handle on the rare unique(shop_id,
-  // handle) collision (productHandle appends random bytes, so a clash is
-  // unlikely but possible). Throw on any other error or after 3 tries.
+  // Insert the product. An explicitly-supplied (validated) handle is honored as
+  // given — a unique(shop_id, handle) 23505 on it is a real conflict the caller
+  // chose, surfaced as 409 handle_conflict (no retry). A generated handle
+  // retries with fresh random bytes on the rare collision. Throw on any other
+  // error or after 3 tries.
   let productId = "";
   for (let attempt = 0; attempt < 3; attempt++) {
     const { data: prod, error: pErr } = await sb
       .from("product_dim")
       .insert({
-        shop_id: shopId, handle: productHandle(input.title), title: input.title, status: input.status,
+        shop_id: shopId, handle: input.handle ?? productHandle(input.title), title: input.title, status: input.status,
         vendor: input.vendor ?? null, category: input.category ?? null, description: input.description ?? null,
         tags: input.tags ?? [],
       })
       .select("id")
       .single();
     if (!pErr) { productId = String(prod.id); break; }
-    if ((pErr as { code?: string }).code !== "23505" || attempt === 2) throw pErr;
+    const duplicate = (pErr as { code?: string }).code === "23505";
+    if (duplicate && input.handle) {
+      throw new CalderynError({
+        code: "handle_conflict",
+        status: 409,
+        message: "That URL is already used by another product.",
+      });
+    }
+    if (!duplicate || attempt === 2) throw pErr;
   }
 
   const seeds = await writeProductChildren(shopId, productId, input);
   await projectProductToSkuDim(productId);
   await applyStockSeeds(shopId, seeds);
+  // Search-listing override travels with the product input so every caller
+  // (routes, assistant catalog actions) persists it — not just the editor route.
   return { id: productId };
 }
 
@@ -403,25 +432,30 @@ export async function createProduct(shopId: string, input: ProductInput): Promis
 // projection). Media is managed separately (Task 5) so it survives an edit.
 export async function updateProduct(shopId: string, productId: string, input: ProductInput): Promise<void> {
   const sb = getSupabase();
-  // Authoritative parent update: a Supabase update matching 0 rows returns no
-  // error, so without checking the affected rows a caller could target another
-  // shop's product id and still have all the child writes below (which are only
-  // product_id-scoped) wipe + rewrite that product. Require a matched row first.
-  const { data: updated, error } = await sb
-    .from("product_dim")
-    .update({
-      title: input.title, status: input.status, vendor: input.vendor ?? null, category: input.category ?? null,
-      description: input.description ?? null, tags: input.tags ?? [], updated_at: new Date().toISOString(),
-    })
-    .eq("shop_id", shopId).eq("id", productId).select("id");
-  if (error) throw error;
-  if (!updated?.length) notFound();
+  // Handle edits need the CURRENT handle first: a change must leave a redirect
+  // row behind so the old storefront URL keeps working. Read it before the
+  // parent update (which overwrites it). Absent/unchanged handle = no rename.
+  let rename: { from: string; to: string } | null = null;
+  if (input.handle) {
+    const { data: cur, error: curErr } = await sb
+      .from("product_dim")
+      .select("handle")
+      .eq("shop_id", shopId)
+      .eq("id", productId)
+      .maybeSingle();
+    if (curErr) throw curErr;
+    if (!cur) notFound();
+    const from = String(cur.handle);
+    if (from !== input.handle) rename = { from, to: input.handle };
+  }
 
-  // Guard BEFORE any destructive child write: inventory_balance.variant_id (and
-  // buyer holds) reference variant_dim ON DELETE CASCADE, so removing a variant
-  // that still has on-hand or reserved units would silently wipe live stock and
-  // orphan held reservations. Refuse the edit and tell the merchant to clear that
-  // stock first. Runs first so a block leaves options/collections/variants intact.
+  // EVERY guard that can reject the save runs BEFORE any write — otherwise a
+  // save that 409s below would already have renamed the public URL.
+  // Stock guard: inventory_balance.variant_id (and buyer holds) reference
+  // variant_dim ON DELETE CASCADE, so removing a variant that still has on-hand
+  // or reserved units would silently wipe live stock and orphan held
+  // reservations. Refuse the edit and tell the merchant to clear that stock
+  // first (a block leaves the whole product untouched).
   const keepIds = input.variants.map((v) => v.id).filter((id): id is string => Boolean(id));
   const removedSel = sb.from("variant_dim").select("id").eq("shop_id", shopId).eq("product_id", productId);
   const { data: removedRows, error: remErr } = keepIds.length ? await removedSel.notIn("id", keepIds) : await removedSel;
@@ -446,6 +480,77 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
     }
   }
 
+  if (rename) {
+    // Old URL keeps working: point it at this product BEFORE the handle flips.
+    // Ordered for retryability — if the sequence dies here or before the parent
+    // update lands, the live handle merely has a redirect row shadowing it,
+    // which is harmless (the PDP checks the live product first) and self-heals
+    // on a later rename; the reverse order could permanently lose the 301.
+    // Upsert — the same old handle may already redirect from an earlier cycle.
+    const { error: redirErr } = await sb
+      .from("product_handle_redirect")
+      .upsert(
+        { shop_id: shopId, old_handle: rename.from, product_id: productId },
+        { onConflict: "shop_id,old_handle" },
+      );
+    if (redirErr) throw redirErr;
+  }
+
+  // Authoritative parent update: a Supabase update matching 0 rows returns no
+  // error, so without checking the affected rows a caller could target another
+  // shop's product id and still have all the child writes below (which are only
+  // product_id-scoped) wipe + rewrite that product. Require a matched row.
+  // On a rename the update is additionally conditional on the handle we read
+  // (compare-and-set): if another session renamed concurrently, 0 rows match
+  // and we refuse instead of silently overwriting their rename.
+  const parentUpdate = sb
+    .from("product_dim")
+    .update({
+      title: input.title, status: input.status, vendor: input.vendor ?? null, category: input.category ?? null,
+      description: input.description ?? null, tags: input.tags ?? [], updated_at: new Date().toISOString(),
+      ...(rename ? { handle: rename.to } : {}),
+    })
+    .eq("shop_id", shopId).eq("id", productId);
+  const { data: updated, error } = rename
+    ? await parentUpdate.eq("handle", rename.from).select("id")
+    : await parentUpdate.select("id");
+  if (error) {
+    // unique(shop_id, handle): another product already owns the requested URL.
+    if (rename && (error as { code?: string }).code === "23505") {
+      throw new CalderynError({
+        code: "handle_conflict",
+        status: 409,
+        message: "That URL is already used by another product.",
+      });
+    }
+    throw error;
+  }
+  if (!updated?.length) {
+    // Renaming: the product existed moments ago (read above), so an unmatched
+    // compare-and-set means a concurrent rename won — a conflict, not a 404.
+    if (rename) {
+      throw new CalderynError({
+        code: "editing_conflict",
+        status: 409,
+        message: "This product's address was just changed in another session. Reload and try again.",
+      });
+    }
+    notFound();
+  }
+
+  if (rename) {
+    // The NEW handle is live again — a stale redirect row for it would shadow
+    // the real page (and could loop). Reclaim it. Redirect rows from OLDER
+    // renames that point at this product stay — every previously published URL
+    // keeps resolving.
+    const { error: reclaimErr } = await sb
+      .from("product_handle_redirect")
+      .delete()
+      .eq("shop_id", shopId)
+      .eq("old_handle", rename.to);
+    if (reclaimErr) throw reclaimErr;
+  }
+
   // Options/values + collections: safe to wipe + rewrite (no external refs).
   await sb.from("product_option").delete().eq("product_id", productId); // cascades option_values
   await sb.from("product_collection").delete().eq("product_id", productId);
@@ -465,7 +570,7 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
     // the stored value on update; a brand-new variant defaults to null.
     const fields = {
       sku: v.sku ?? null, title: v.title ?? "Default", retail_price_cents: v.retailPriceCents ?? null,
-      unit_cost_cents: v.unitCostCents ?? null,
+      compare_at_price_cents: v.compareAtPriceCents ?? null, unit_cost_cents: v.unitCostCents ?? null,
       inventory_tracked: v.inventoryTracked ?? null, inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
     };
     let variantId = v.id ?? null;
@@ -523,6 +628,9 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
 
   await projectProductToSkuDim(productId);
   await applyStockSeeds(shopId, seeds);
+  // Search-listing override travels with the product input so every caller
+  // (routes, assistant catalog actions) persists it — not just the editor route.
+  if (input.seo) await applySeoOverrideInput(shopId, productId, input.seo);
 }
 
 export async function setProductStatus(shopId: string, productId: string, status: ProductStatus): Promise<void> {
@@ -533,10 +641,173 @@ export async function setProductStatus(shopId: string, productId: string, status
   await projectProductToSkuDim(productId);
 }
 
-export async function listCollections(shopId: string): Promise<Array<{ id: string; title: string; handle: string }>> {
-  const { data, error } = await getSupabase().from("collection_dim").select("id, title, handle").eq("shop_id", shopId).order("title");
+export async function listCollections(
+  shopId: string,
+): Promise<Array<{ id: string; title: string; handle: string; productCount: number }>> {
+  const sb = getSupabase();
+  const { data, error } = await sb.from("collection_dim").select("id, title, handle").eq("shop_id", shopId).order("title");
   if (error) throw error;
-  return (data ?? []).map((c: Record<string, unknown>) => ({ id: String(c.id), title: String(c.title), handle: String(c.handle) }));
+  const rows = (data ?? []).map((c: Record<string, unknown>) => ({ id: String(c.id), title: String(c.title), handle: String(c.handle) }));
+
+  // Membership counts folded from a paged select over this page's collection
+  // ids — never a per-collection query (N+1 on every Collections paint).
+  // Paged because PostgREST clamps every response at 1000 rows: a single
+  // select would silently truncate past that and undercount.
+  const countById = new Map<string, number>();
+  if (rows.length) {
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data: memberships, error: mErr } = await sb
+        .from("product_collection")
+        .select("collection_id")
+        .in("collection_id", rows.map((r) => r.id))
+        .order("collection_id")
+        .order("product_id")
+        .range(from, from + PAGE - 1);
+      if (mErr) throw mErr;
+      const page = (memberships ?? []) as Array<{ collection_id: string }>;
+      for (const m of page) {
+        const k = String(m.collection_id);
+        countById.set(k, (countById.get(k) ?? 0) + 1);
+      }
+      if (page.length < PAGE) break;
+    }
+  }
+  return rows.map((r) => ({ ...r, productCount: countById.get(r.id) ?? 0 }));
+}
+
+// Shop-scoped existence check shared by every membership/rename/delete path:
+// a foreign or missing collection id is a clean 404, never a cross-tenant write.
+async function requireOwnedCollection(sb: Supa, shopId: string, collectionId: string): Promise<void> {
+  const { data, error } = await sb
+    .from("collection_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("id", collectionId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new CalderynError({ code: "collection_not_found", status: 404, message: "collection not found" });
+}
+
+/** Rename only — the handle stays unchanged so storefront links keep working. */
+export async function updateCollection(shopId: string, collectionId: string, title: string): Promise<void> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("collection_dim")
+    .update({ title: title.trim() })
+    .eq("shop_id", shopId)
+    .eq("id", collectionId)
+    .select("id");
+  if (error) throw error;
+  if (!data?.length) throw new CalderynError({ code: "collection_not_found", status: 404, message: "collection not found" });
+}
+
+/** Delete a collection: memberships first (no FK orphans), then the row itself.
+ *  Products are untouched — they simply leave the collection. */
+export async function deleteCollection(shopId: string, collectionId: string): Promise<void> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  const { error: mErr } = await sb.from("product_collection").delete().eq("collection_id", collectionId);
+  if (mErr) throw mErr;
+  const { error } = await sb.from("collection_dim").delete().eq("shop_id", shopId).eq("id", collectionId);
+  if (error) throw error;
+}
+
+/** Members of a collection, with the storage path of each product's primary
+ *  image so the route can batch-sign thumbnails (mirrors listProducts). */
+export async function listCollectionProducts(
+  shopId: string,
+  collectionId: string,
+): Promise<Array<{ id: string; title: string; status: ProductStatus; primaryImagePath: string | null }>> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  // Paged: PostgREST clamps every response at 1000 rows, so a single select
+  // would silently drop members of a >1000-product collection.
+  const memberIds: string[] = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data: memberships, error: mErr } = await sb
+      .from("product_collection")
+      .select("product_id")
+      .eq("collection_id", collectionId)
+      .order("product_id")
+      .range(from, from + PAGE - 1);
+    if (mErr) throw mErr;
+    const page = (memberships ?? []) as Array<{ product_id: string }>;
+    for (const m of page) memberIds.push(String(m.product_id));
+    if (page.length < PAGE) break;
+  }
+  if (!memberIds.length) return [];
+
+  const { data: products, error: pErr } = await sb
+    .from("product_dim")
+    .select("id, title, status")
+    .eq("shop_id", shopId)
+    .in("id", memberIds)
+    .order("title");
+  if (pErr) throw pErr;
+  const ids = (products ?? []).map((p: { id: string }) => String(p.id));
+
+  // Bucket-backed primaries only, same rule as listProducts: a promoted mirror
+  // image carries an external_url and no storage_path.
+  const mediaByProduct = new Map<string, string>();
+  if (ids.length) {
+    const { data: media, error: medErr } = await sb
+      .from("product_media")
+      .select("product_id, storage_path")
+      .in("product_id", ids)
+      .eq("is_primary", true)
+      .not("storage_path", "is", null);
+    if (medErr) throw medErr;
+    for (const m of media ?? []) mediaByProduct.set(String(m.product_id), String(m.storage_path));
+  }
+
+  return (products ?? []).map((p: Record<string, unknown>) => ({
+    id: String(p.id),
+    title: String(p.title),
+    status: p.status as ProductStatus,
+    primaryImagePath: mediaByProduct.get(String(p.id)) ?? null,
+  }));
+}
+
+// Both membership writes verify ownership on BOTH sides — collection and
+// product — before touching product_collection, so a guessed foreign id can
+// neither attach to nor detach from another shop's data.
+async function requireOwnedProduct(sb: Supa, shopId: string, productId: string): Promise<void> {
+  const { data, error } = await sb
+    .from("product_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("id", productId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new CalderynError({ code: "product_not_found", status: 404, message: "product not found" });
+}
+
+export async function addProductToCollection(shopId: string, collectionId: string, productId: string): Promise<void> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  await requireOwnedProduct(sb, shopId, productId);
+  // Re-adding an existing member is a clean no-op, not a PK 500.
+  const { error } = await sb
+    .from("product_collection")
+    .upsert(
+      { product_id: productId, collection_id: collectionId },
+      { onConflict: "product_id,collection_id", ignoreDuplicates: true },
+    );
+  if (error) throw error;
+}
+
+export async function removeProductFromCollection(shopId: string, collectionId: string, productId: string): Promise<void> {
+  const sb = getSupabase();
+  await requireOwnedCollection(sb, shopId, collectionId);
+  await requireOwnedProduct(sb, shopId, productId);
+  const { error } = await sb
+    .from("product_collection")
+    .delete()
+    .eq("collection_id", collectionId)
+    .eq("product_id", productId);
+  if (error) throw error;
 }
 
 export async function createCollection(shopId: string, title: string): Promise<{ id: string }> {

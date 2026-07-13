@@ -10,6 +10,7 @@ import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.serve
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { priceCart, removeCartLine, clearCart } from "~/lib/order/cart.server";
+import { loadShipRules } from "~/lib/shipping/rules.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
@@ -27,21 +28,38 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   // The demo shell is browse-only (no shop row, uuid-keyed cart tables can't
   // hold its sentinel id) — always an empty cart, never a DB read.
-  if (shopId === DEMO_SHOP_ID) return json({ cart: null, error: null });
+  if (shopId === DEMO_SHOP_ID) return json({ cart: null, freeShipThresholdCents: null, error: null });
   const track = await trackStorefrontEvent(request, shopId, "page_view");
   const cartId = await readCartId(request);
   // No cookie yet -> empty cart, no DB read.
-  if (!cartId) return json({ cart: null, error: null }, { headers: track });
+  if (!cartId) return json({ cart: null, freeShipThresholdCents: null, error: null }, { headers: track });
   // priceCart scopes by (shopId, cartId); a stale/foreign id simply yields 0 lines. A cart whose
   // lines somehow mix currencies would otherwise throw here and make the page un-viewable (the only
   // route from which a buyer could remove the offending line), so degrade to a null cart + notice
   // instead of a 500 — the empty-cart control below is still reachable to recover.
+  // Free-shipping nudge: when the merchant set a threshold (ship_rules), tell the
+  // buyer how close they are — the single strongest basket-size lever. Best-effort
+  // and started BEFORE pricing so the independent reads overlap: a rules read hiccup
+  // renders the cart without the banner, never a 500.
+  const freeShipP = loadShipRules(shopId).then(
+    (rules) => rules.freeShipThresholdCents,
+    (err) => {
+      console.error(`[cart] ship_rules read failed for shop ${shopId} (no free-ship banner):`, err);
+      return null;
+    },
+  );
   try {
     const cart = await priceCart(shopId, cartId);
-    return json({ cart, cartId, error: null }, { headers: track });
+    return json(
+      { cart, cartId, freeShipThresholdCents: await freeShipP, error: null },
+      { headers: track },
+    );
   } catch (err) {
     console.error(`[cart] could not price cart ${cartId} for shop ${shopId}:`, err);
-    return json({ cart: null, cartId, error: "unpriceable" as const }, { headers: track });
+    return json(
+      { cart: null, cartId, freeShipThresholdCents: null, error: "unpriceable" as const },
+      { headers: track },
+    );
   }
 }
 
@@ -80,7 +98,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
 
 export default function StorefrontCart() {
-  const { cart, error } = useLoaderData<typeof loader>();
+  const { cart, freeShipThresholdCents, error } = useLoaderData<typeof loader>();
 
   if (!cart || cart.lines.length === 0) {
     return (
@@ -130,6 +148,18 @@ export default function StorefrontCart() {
           </li>
         ))}
       </ul>
+      {freeShipThresholdCents != null ? (
+        cart.subtotalCents >= freeShipThresholdCents ? (
+          <p className="cd-cart__freeship cd-cart__freeship--unlocked">
+            You&apos;ve unlocked free shipping.
+          </p>
+        ) : (
+          <p className="cd-cart__freeship">
+            Add {money(freeShipThresholdCents - cart.subtotalCents, cart.currency)} more for free
+            shipping.
+          </p>
+        )
+      ) : null}
       <div className="cd-cart__summary">
         <span className="cd-cart__subtotal-label">Subtotal</span>
         <span className="cd-cart__subtotal-value">{money(cart.subtotalCents, cart.currency)}</span>

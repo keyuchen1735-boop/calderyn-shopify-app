@@ -28,11 +28,12 @@ describe("root index loader (host-aware homepage)", () => {
     expect(res.headers.get("Location")).toBe("/storefront");
   });
 
-  it("keeps the install page on platform hosts", async () => {
+  it("redirects platform hosts' root to the dashboard", async () => {
     resolveTenantShopId.mockResolvedValue(null);
-    const { out, thrown } = await run("https://app.calderyncompany.com/");
-    expect(thrown).toBeNull();
-    expect(out).toBeNull();
+    const { thrown } = await run("https://app.calderyncompany.com/");
+    const res = thrown as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/dashboard");
   });
 
   it("keeps the embedded ?shop= entry redirect ahead of tenant routing", async () => {
@@ -45,12 +46,13 @@ describe("root index loader (host-aware homepage)", () => {
     expect(resolveTenantShopId).not.toHaveBeenCalled();
   });
 
-  it("fails open to the install page when the tenant lookup errors", async () => {
+  it("fails open to the dashboard redirect when the tenant lookup errors", async () => {
     resolveTenantShopId.mockImplementation(async () => {
       throw new Error("db down");
     });
-    const { out, thrown } = await run("https://acme.calderyncompany.com/");
-    expect(thrown).toBeNull();
-    expect(out).toBeNull();
+    const { thrown } = await run("https://acme.calderyncompany.com/");
+    const res = thrown as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/dashboard");
   });
 });

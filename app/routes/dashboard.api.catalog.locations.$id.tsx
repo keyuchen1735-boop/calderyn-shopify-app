@@ -2,6 +2,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
+import { deactivateLocation, updateLocationDetails, type LocationPatch } from "~/lib/catalog/locations.server";
 
 export async function action({ request, params }: ActionFunctionArgs) {
   requireSameOrigin(request);
@@ -11,7 +12,32 @@ export async function action({ request, params }: ActionFunctionArgs) {
   let body: Record<string, unknown>;
   try { body = (await request.json()) as Record<string, unknown>; } catch { return jsonError(422, "invalid_json"); }
 
-  const patch: Record<string, unknown> = {};
+  // Deactivation is its own request: any other patch keys sent alongside
+  // `active: false` are ignored. The stock guard inside deactivateLocation
+  // surfaces as a 409 through dashboardJson's CalderynError mapping.
+  if (body.active === false) {
+    return dashboardJson(async () => {
+      await deactivateLocation(session.shopId, String(params.id));
+      return { ok: true };
+    });
+  }
+
+  // Reactivation is likewise its own request. No stock guard applies: a
+  // deactivated location holds zero units, so turning it back on just returns
+  // it to the pickers.
+  if (body.active === true) {
+    return dashboardJson(async () => {
+      const { error } = await getSupabase()
+        .from("location_dim")
+        .update({ active: true })
+        .eq("shop_id", session.shopId)
+        .eq("id", String(params.id));
+      if (error) throw error;
+      return { ok: true };
+    });
+  }
+
+  const patch: LocationPatch = {};
   if (Number.isFinite(body.priority)) patch.priority = Math.trunc(Number(body.priority));
   if (body.lat === null || Number.isFinite(body.lat)) patch.lat = body.lat === null ? null : Number(body.lat);
   if (body.lng === null || Number.isFinite(body.lng)) patch.lng = body.lng === null ? null : Number(body.lng);
@@ -24,12 +50,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (Object.keys(patch).length === 0) return jsonError(422, "empty_patch");
 
   return dashboardJson(async () => {
-    const { error } = await getSupabase()
-      .from("location_dim")
-      .update(patch)
-      .eq("shop_id", session.shopId)
-      .eq("id", String(params.id));
-    if (error) throw error;
+    await updateLocationDetails(getSupabase(), session.shopId, String(params.id), patch);
     return { ok: true };
   });
 }

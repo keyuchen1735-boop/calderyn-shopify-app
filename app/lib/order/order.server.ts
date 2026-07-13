@@ -4,7 +4,9 @@
 // and payments/stripe.server.ts. The migration's current_shop_id() RLS policies guard the
 // PostgREST path; this is the application (service-role) path.
 
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
+import { CalderynError } from "../calderyn.server";
 import { assertLegalTransition, type OrderState } from "./state";
 
 export interface OrderTransition {
@@ -123,6 +125,35 @@ export async function reserveInventory(
     `[order] inventory reservation NOT enforced (stub) for shop ${shopId}, ${lines.length} line(s); oversell is possible until #4 inventory-ledger ships`,
   );
   return result;
+}
+
+/**
+ * Shop-scoped archive/unarchive of a native order (Task 10 + bulk Task 3): sets or clears
+ * orders.archived_at. Shared by the single-order and bulk archive routes so the update query is
+ * written exactly once. `.select("id")` on the update returns the affected rows, so an empty
+ * result IS the shop-scoped not-found case — no separate SELECT needed first (same technique
+ * transitionOrder above already uses to detect a 0-row outcome).
+ */
+export async function setOrderArchived(
+  shopId: string,
+  orderId: string,
+  archived: boolean,
+  sb: SupabaseClient = getSupabase(),
+): Promise<boolean> {
+  if (!shopId) throw new Error("shopId is required");
+  if (!orderId) throw new Error("orderId is required");
+
+  const updRes = await sb
+    .from("orders")
+    .update({ archived_at: archived ? new Date().toISOString() : null })
+    .eq("shop_id", shopId)
+    .eq("id", orderId)
+    .select("id");
+  if (updRes.error) throw updRes.error;
+  if (!updRes.data || (updRes.data as unknown[]).length === 0) {
+    throw new CalderynError({ code: "order_not_found", status: 404, message: `Order ${orderId} not found.` });
+  }
+  return archived;
 }
 
 function mapTransition(row: Record<string, unknown>): OrderTransition {

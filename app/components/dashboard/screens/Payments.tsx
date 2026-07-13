@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Btn, Card, Placeholder, SectionTitle } from "../ui";
+import { Btn, Card, Pan, Placeholder, SectionTitle } from "../ui";
 import { money, timeAgo } from "../format";
 import { PayoutsCard } from "../PayoutsCard";
 import { DashboardApiError, fetchBilling, type BillingStatus } from "~/lib/dashboard/client";
@@ -171,7 +171,13 @@ export default function Payments({ app }: { app: DashboardCtx }) {
             </Card>
           </div>
 
-          <PayoutsCard app={app} />
+          <PayoutsCard
+            app={app}
+            onBillingUpdate={(b) => {
+              setBilling(b);
+              setBillingFailed(false);
+            }}
+          />
 
           <section>
             <SectionTitle>Recent transactions</SectionTitle>
@@ -183,7 +189,7 @@ export default function Payments({ app }: { app: DashboardCtx }) {
                   sub="They appear here as Stripe events land."
                 />
               ) : (
-                <>
+                <Pan min={560}>
                   <div className="cd-tablehd" style={{ gridTemplateColumns: TXN_GRID }}>
                     <span>Kind</span>
                     <span style={{ textAlign: "right" }}>Amount</span>
@@ -204,7 +210,7 @@ export default function Payments({ app }: { app: DashboardCtx }) {
                       <div className="cd-caption">{timeAgo(t.occurredAt)}</div>
                     </div>
                   ))}
-                </>
+                </Pan>
               )}
             </Card>
           </section>

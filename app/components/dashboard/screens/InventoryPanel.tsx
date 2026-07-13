@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
-import { Btn } from "../ui";
+import { Btn, Pan, TableSkeleton } from "../ui";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import TransferModal from "./TransferModal";
@@ -11,7 +11,15 @@ import TransferModal from "./TransferModal";
 // edited inline; "Move stock" opens the transfer modal; a per-row "Damaged"
 // control marks units unavailable; in-transit transfers are received from the
 // "In transit" list; "History" shows recent ledger entries.
-export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; variantId: string }) {
+export default function InventoryPanel({
+  app,
+  variantId,
+  onBalancesChange,
+}: {
+  app: DashboardCtx;
+  variantId: string;
+  onBalancesChange?: (variantId: string, balances: readonly client.VariantBalanceVM[]) => void;
+}) {
   const [rows, setRows] = useState<client.VariantBalanceVM[]>([]);
   const [pending, setPending] = useState<client.PendingTransferVM[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,11 +33,24 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
   // empty state (which would make a fully-stocked variant look empty, inviting a double-count).
   const reload = () =>
     Promise.all([
-      client.fetchVariantInventory(variantId).then(setRows),
+      client.fetchVariantInventory(variantId).then((nextRows) => {
+        setRows(nextRows);
+        onBalancesChange?.(variantId, nextRows);
+      }),
       client.fetchPendingTransfers(variantId).then(setPending),
     ])
       .then(() => setLoadError(false))
-      .catch(() => setLoadError(true));
+      .catch(() => {
+        // A failed REFRESH after a write must not blank a panel that already has
+        // numbers on screen (the write itself succeeded — only the re-read broke).
+        // Keep the stale rows, say so, and reserve loadError for the case where
+        // there is nothing to show at all.
+        if (rows.length > 0) {
+          app.toast("Saved, but the numbers may be stale — reopen to refresh.", "warn");
+        } else {
+          setLoadError(true);
+        }
+      });
   useEffect(() => {
     setLoading(true);
     reload().finally(() => setLoading(false));
@@ -63,14 +84,17 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
     catch (err) { app.toast(err instanceof DashboardApiError ? err.message : "Couldn't receive the transfer.", "warn", "critical"); }
   };
 
-  if (loading) return <div className="cd-caption">Loading stock…</div>;
+  if (loading) return <TableSkeleton rows={2} />;
   if (!rows.length) {
     // Distinguish a genuinely empty variant from a failed load: showing "no stock" for a stocked
     // variant that merely failed to load would mislead the merchant into re-adding stock.
     return loadError ? (
       <div className="cd-caption">Couldn&apos;t load stock. Please try again.</div>
     ) : (
-      <div className="cd-caption">No stock locations yet.</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span className="cd-caption">No stock locations yet.</span>
+        <Btn small onClick={() => app.navigate("locations-settings")}>Open locations</Btn>
+      </div>
     );
   }
 
@@ -81,6 +105,7 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
         <Btn small icon="clock" onClick={toggleHistory}>{history ? "Hide history" : "History"}</Btn>
       </div>
 
+      <Pan min={760}>
       <div className="cd-table-head">
         <span style={{ flex: "1 1 0", minWidth: 120 }}>Location</span>
         <span style={{ width: 92 }}>On hand</span>
@@ -144,6 +169,7 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
           );
         })}
       </div>
+      </Pan>
 
       {pending.length > 0 && (
         <div style={{ marginTop: 10 }}>
@@ -165,12 +191,14 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
           {history.length === 0 ? (
             <div className="cd-caption">No history yet.</div>
           ) : (
-            history.slice(0, 12).map((h) => (
-              <div key={h.id} className="cd-caption" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-                <span>{h.entry_type}{h.reason ? ` · ${h.reason}` : ""}</span>
-                <span className="tabular-nums">{h.qty > 0 ? `+${h.qty}` : h.qty}</span>
-              </div>
-            ))
+            <div style={{ maxHeight: 240, overflowY: "auto" }}>
+              {history.map((h) => (
+                <div key={h.id} className="cd-caption" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <span>{h.entry_type}{h.reason ? ` · ${h.reason}` : ""}</span>
+                  <span className="tabular-nums">{h.qty > 0 ? `+${h.qty}` : h.qty}</span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}

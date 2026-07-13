@@ -6,6 +6,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DetectorId } from "~/lib/types";
+import { formatPoNumber } from "./format";
 
 export interface PoLine {
   sku: string;
@@ -91,12 +92,11 @@ export function derivePoQuantity(evidence: Record<string, unknown>): number | nu
 }
 
 export function buildPoDraft(input: BuildPoDraftInput): PoDraft {
-  const ymd = input.now.toISOString().slice(0, 10).replaceAll("-", "");
   const ref = input.alertId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8).toUpperCase();
   const total =
     input.unitCostCents === null ? null : input.quantity * input.unitCostCents;
   return {
-    po_number: `PO-${ymd}-${ref}`,
+    po_number: formatPoNumber(ref, input.now),
     issued_at: input.now.toISOString(),
     shop_domain: input.shopDomain,
     alert_id: input.alertId,

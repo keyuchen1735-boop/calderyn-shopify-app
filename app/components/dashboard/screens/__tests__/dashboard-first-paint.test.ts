@@ -5,7 +5,8 @@
 // already be the right page:
 //   established store → metrics strip + deck skeleton + pending gauge — never
 //     a void, never a fake "All clear", never a lit "0%" calibration readout;
-//   fresh store → the setup guide, immediately.
+//   fresh store → the welcome layout immediately; the guided journey card
+//     renders only once its cached or fetched payload lands.
 import { describe, expect, it } from "vitest";
 import { createElement as h } from "react";
 import { renderToString } from "react-dom/server";
@@ -70,9 +71,8 @@ describe("Home first paint (pre-fetch SSR)", () => {
     expect(html).not.toContain("<b>0</b>");
   });
 
-  it("a fresh store paints the setup guide immediately", () => {
+  it("a fresh store paints its layout immediately (guide card pops in once the journey fetch lands)", () => {
     const html = renderToString(h(Dashboard, { app: makeCtx({ hasCatalog: false, loading: true }) }));
-    expect(html).toContain("Set up your store");
     expect(html).toContain("Welcome.");
     expect(html).not.toContain("Sales · today");
   });
@@ -97,11 +97,9 @@ describe("Home first paint (pre-fetch SSR)", () => {
     expect(html).toContain("<b>—</b>");
   });
 
-  it("an established store's prompt bar is a real text input that submits to the assistant", () => {
+  it("an established store has no prompt bar — the assistant lives in the sidebar", () => {
     const html = renderToString(h(Dashboard, { app: makeCtx({ hasCatalog: true, loading: true }) }));
-    expect(html).toContain("cd-promptbar-in");
-    expect(html).toContain('placeholder="Tell Calderyn what to do…"');
-    expect(html).toContain("cd-promptbar-send");
+    expect(html).not.toContain("cd-promptbar");
   });
 
   it("a fresh store's prompt bar stays a button into the product flow (typed text has nowhere to go)", () => {

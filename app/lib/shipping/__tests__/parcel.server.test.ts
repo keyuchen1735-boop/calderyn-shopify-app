@@ -55,30 +55,45 @@ describe("buildParcel", () => {
   });
 });
 
-describe("restrictedVariants", () => {
+describe("cartShipInfo", () => {
   it("returns the variants whose restricted_countries includes the destination", async () => {
     rows = [
       { variant_id: "a", restricted_countries: ["CA", "MX"] },
       { variant_id: "b", restricted_countries: [] },
     ];
-    const { restrictedVariants } = await import("../parcel.server");
-    expect(await restrictedVariants(["a", "b"], "CA")).toEqual(["a"]);
+    const { cartShipInfo } = await import("../parcel.server");
+    expect((await cartShipInfo(["a", "b"], "CA")).blocked).toEqual(["a"]);
   });
 
   it("is case-insensitive on the destination country", async () => {
     rows = [{ variant_id: "a", restricted_countries: ["CA"] }];
-    const { restrictedVariants } = await import("../parcel.server");
-    expect(await restrictedVariants(["a"], "ca")).toEqual(["a"]);
+    const { cartShipInfo } = await import("../parcel.server");
+    expect((await cartShipInfo(["a"], "ca")).blocked).toEqual(["a"]);
   });
 
   it("treats a variant with no shipping row as unrestricted (permissive, matches buildParcel)", async () => {
     rows = []; // variant absent from variant_shipping (e.g. pre-migration)
-    const { restrictedVariants } = await import("../parcel.server");
-    expect(await restrictedVariants(["missing"], "CA")).toEqual([]);
+    const { cartShipInfo } = await import("../parcel.server");
+    const info = await cartShipInfo(["missing"], "CA");
+    expect(info.blocked).toEqual([]);
+    expect(info.parcelByVariant.has("missing")).toBe(false); // no parcel → low-confidence path
   });
 
   it("returns empty for empty input", async () => {
-    const { restrictedVariants } = await import("../parcel.server");
-    expect(await restrictedVariants([], "CA")).toEqual([]);
+    const { cartShipInfo } = await import("../parcel.server");
+    expect((await cartShipInfo([], "CA")).blocked).toEqual([]);
+  });
+
+  it("carries the slowest handling window and converted parcels in the same read", async () => {
+    rows = [
+      { variant_id: "a", restricted_countries: [], handling_days: 2, weight_grams: 340, length_mm: 127, width_mm: 127, height_mm: 102 },
+      { variant_id: "b", restricted_countries: [], handling_days: 5, weight_grams: 100 },
+    ];
+    const { cartShipInfo } = await import("../parcel.server");
+    const info = await cartShipInfo(["a", "b"], "US");
+    expect(info.maxHandlingDays).toBe(5);
+    expect(info.parcelByVariant.get("a")?.weightOz).toBeCloseTo(11.99, 1);
+    expect(info.parcelByVariant.get("a")?.lengthIn).toBeCloseTo(5, 2);
+    expect(info.parcelByVariant.get("b")?.weightOz).toBeCloseTo(3.53, 2);
   });
 });

@@ -6,6 +6,7 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { getSupabase } from "~/lib/supabase.server";
+import { hasPoSnapshot } from "~/lib/catalog/po-list.server";
 import { renderPoPdf } from "~/lib/po/pdf.server";
 import type { PoDraft } from "~/lib/po/draft.server";
 
@@ -20,10 +21,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     .maybeSingle();
   if (error) throw error;
 
-  const po = (data?.params as { po?: PoDraft } | null)?.po;
-  if (!data || data.action_kind !== "create_po_draft" || !po) {
+  // hasPoSnapshot is the SAME predicate the PO list's download button uses
+  // (mapPoRow.hasPdf) — the button renders exactly when this route succeeds.
+  if (!data || data.action_kind !== "create_po_draft" || !hasPoSnapshot(data.params)) {
     throw new Response("Not found", { status: 404 });
   }
+  const po = (data.params as { po: PoDraft }).po;
 
   const bytes = await renderPoPdf(po);
   // pdf-lib types its output as Uint8Array<ArrayBufferLike>, not a valid BodyInit;

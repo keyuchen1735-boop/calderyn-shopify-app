@@ -70,7 +70,9 @@ export function prefetchScreenData<T>(key: string, fetcher: () => Promise<T>): P
 export const SCREEN_CACHE_KEYS = {
   liveAnalytics: "live-analytics",
   orders: "orders",
-  importedOrders: "imported-orders",
+  // The unified orders-list read model (Phase 2 Task 6), default view only (all, no search, page
+  // 1, default sort) — any other filter/search/sort/page combination is a live fetch, never cached.
+  ordersList: "orders-list",
   customers: "customers",
   collections: "collections",
   shipping: "shipping",
@@ -81,11 +83,20 @@ export const SCREEN_CACHE_KEYS = {
   discover: "discover",
   search: "search",
   transfers: "transfers",
-  inventorySkus: "inventory-skus",
+  // The shop-wide inventory list (balance rollups + restock presence), default
+  // view only (no search, stock "all") — filtered views are live fetches.
+  inventoryList: "inventory-list",
   locations: "locations",
+  // Purchase-order drafts (audit-backed list), default offset-0 load only —
+  // paged-in rows are never written back.
+  purchaseOrders: "purchase-orders",
+  // Real purchase orders: { pos, total, suppliers, promotedAuditIds } —
+  // exactly the PoScreenData shape po-client's fetchPoScreen returns.
+  po: "po",
   shipCost: "settings-ship-cost",
   unmatchedShip: "settings-unmatched-ship",
   learnedRules: "settings-learned-rules",
+  setupProgress: "setup-progress",
 } as const;
 
 export function catalogCacheKey(search: string, status: string | undefined): string {

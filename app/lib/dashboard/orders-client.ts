@@ -1,6 +1,6 @@
 // Client fetchers for the owned-orders dashboard surface. Kept in its own
 // module (not client.ts) so parallel surface work never collides on one file.
-import { apiGet, apiSend } from "./client";
+import { apiGet, apiSend, DashboardApiError } from "./client";
 import type {
   OrderRow,
   DraftCartRow,
@@ -9,9 +9,17 @@ import type {
   OrdersPage,
 } from "~/lib/order/list-types";
 import type { ImportedOrdersPage } from "~/lib/order/imported-list-types";
+import type { OrderDetail, OrderDetailLine } from "~/lib/order/detail-types";
+import type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage } from "~/lib/order/unified-list-types";
+import type { OrderReturn, OrderReturnLine, OrderReturnStatus } from "~/lib/order/returns-types";
+import type { OrderProfit } from "~/lib/order/profit-types";
 
 export type { OrderRow, DraftCartRow, AbandonedCheckoutRow, ShipChargeRow, OrdersPage };
 export type { ImportedOrdersPage };
+export type { OrderDetail, OrderDetailLine };
+export type { OrdersListParams, UnifiedOrderRow, UnifiedOrdersPage };
+export type { OrderReturn, OrderReturnLine, OrderReturnStatus };
+export type { OrderProfit };
 
 export async function fetchOrdersPage(): Promise<OrdersPage> {
   return apiGet<OrdersPage>("/dashboard/api/orders");
@@ -29,6 +37,8 @@ export interface RefundResult {
   orderState: string;
   refundedTotalCents: number;
   capturedCents: number;
+  restockedLines: number;
+  restockError: string | null;
 }
 
 /**
@@ -38,7 +48,7 @@ export interface RefundResult {
  */
 export async function refundOrder(
   orderId: string,
-  args: { amountCents?: number; idempotencyKey: string; reason?: string },
+  args: { amountCents?: number; idempotencyKey: string; reason?: string; restock?: boolean },
 ): Promise<RefundResult> {
   const data = await apiSend<{
     audit_id: string;
@@ -47,10 +57,13 @@ export async function refundOrder(
     order_state: string;
     refunded_total_cents: number;
     captured_cents: number;
+    restocked_lines: number;
+    restock_error: string | null;
   }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/refund`, {
     amount_cents: args.amountCents,
     idempotency_key: args.idempotencyKey,
     reason: args.reason,
+    restock: args.restock,
   });
   return {
     auditId: data.audit_id,
@@ -59,5 +72,806 @@ export async function refundOrder(
     orderState: data.order_state,
     refundedTotalCents: data.refunded_total_cents,
     capturedCents: data.captured_cents,
+    restockedLines: data.restocked_lines,
+    restockError: data.restock_error,
   };
+}
+
+export interface ReduceLineResult {
+  auditId: string;
+  orderState: string;
+  refundedCents: number;
+  restocked: boolean;
+  restockError: string | null;
+}
+
+/**
+ * Reduce a paid order's line to a lower quantity, refunding the delta (and optionally
+ * restocking it). Native orders only. idempotencyKey dedups the reduction AND is handed to the
+ * nested refund executor, so a retried submit can never double-refund.
+ */
+export async function reduceOrderLine(
+  orderId: string,
+  args: { orderLineId: string; newQuantity: number; restock: boolean; reason?: string; idempotencyKey: string },
+): Promise<ReduceLineResult> {
+  const data = await apiSend<{
+    audit_id: string;
+    order_state: string;
+    refunded_cents: number;
+    restocked: boolean;
+    restock_error: string | null;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/reduce-line`, {
+    order_line_id: args.orderLineId,
+    new_quantity: args.newQuantity,
+    restock: args.restock,
+    reason: args.reason,
+    idempotency_key: args.idempotencyKey,
+  });
+  return {
+    auditId: data.audit_id,
+    orderState: data.order_state,
+    refundedCents: data.refunded_cents,
+    restocked: data.restocked,
+    restockError: data.restock_error,
+  };
+}
+
+export interface EditInvoiceLinesResult {
+  orderId: string;
+  subtotalCents: number;
+  shippingCents: number;
+  taxCents: number;
+  totalCents: number;
+  currency: string;
+}
+
+/** Replace every line on an UNPAID invoice order (channel='invoice', state='checkout_pending'
+ *  only — 409s otherwise) and recompute totals. */
+export async function editInvoiceLines(
+  orderId: string,
+  lines: Array<{ variantId: string; quantity: number }>,
+): Promise<EditInvoiceLinesResult> {
+  const data = await apiSend<{
+    order_id: string;
+    subtotal_cents: number;
+    shipping_cents: number;
+    tax_cents: number;
+    total_cents: number;
+    currency: string;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/edit-lines`, {
+    lines: lines.map((l) => ({ variant_id: l.variantId, quantity: l.quantity })),
+  });
+  return {
+    orderId: data.order_id,
+    subtotalCents: data.subtotal_cents,
+    shippingCents: data.shipping_cents,
+    taxCents: data.tax_cents,
+    totalCents: data.total_cents,
+    currency: data.currency,
+  };
+}
+
+/** Fetch a single order's detail view (native or imported read-only). */
+export async function fetchOrderDetail(sourceId: string): Promise<OrderDetail> {
+  const data = await apiGet<{ order: OrderDetail }>(
+    `/dashboard/api/orders/${encodeURIComponent(sourceId)}`,
+  );
+  return data.order;
+}
+
+/** Fulfill (ship) an order or some of its lines. Native orders only. */
+export async function fulfillOrder(
+  orderId: string,
+  args: {
+    lines?: { orderLineId: string; quantity: number }[];
+    trackingNumber?: string;
+    carrier?: string;
+    notify: boolean;
+    idempotencyKey: string;
+  },
+): Promise<{ orderState: string; fulfilledUnits: number; notified: boolean }> {
+  const data = await apiSend<{
+    order_state: string;
+    fulfilled_units: number;
+    notified: boolean;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/fulfill`, {
+    lines: args.lines?.map((line) => ({ order_line_id: line.orderLineId, quantity: line.quantity })),
+    tracking_number: args.trackingNumber,
+    carrier: args.carrier,
+    notify: args.notify,
+    idempotency_key: args.idempotencyKey,
+  });
+  return {
+    orderState: data.order_state,
+    fulfilledUnits: data.fulfilled_units,
+    notified: data.notified,
+  };
+}
+
+export interface LabelRateView {
+  id: string;
+  carrier: string;
+  service: string;
+  amountCents: number;
+  estDeliveryDays: number | null;
+}
+
+/** Create an EasyPost shipment for the units being shipped and list its buyable rates. */
+export async function quoteLabelRates(
+  orderId: string,
+  lines?: { orderLineId: string; quantity: number }[],
+): Promise<{ shipmentId: string; rates: LabelRateView[] }> {
+  const data = await apiSend<{
+    shipment_id: string;
+    rates: Array<{ id: string; carrier: string; service: string; amount_cents: number; est_delivery_days: number | null }>;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/label`, {
+    intent: "quote",
+    lines: lines?.map((line) => ({ order_line_id: line.orderLineId, quantity: line.quantity })),
+  });
+  return {
+    shipmentId: data.shipment_id,
+    rates: data.rates.map((r) => ({
+      id: r.id,
+      carrier: r.carrier,
+      service: r.service,
+      amountCents: r.amount_cents,
+      estDeliveryDays: r.est_delivery_days,
+    })),
+  };
+}
+
+/** Buy the selected label rate and fulfill in one step. MONEY: spends the merchant's
+ *  EasyPost balance; the server is fail-closed and idempotent on the shipment id. */
+export async function buyLabel(
+  orderId: string,
+  args: {
+    shipmentId: string;
+    rateId: string;
+    lines?: { orderLineId: string; quantity: number }[];
+    notify: boolean;
+    idempotencyKey: string;
+  },
+): Promise<{
+  orderState: string;
+  fulfilledUnits: number;
+  notified: boolean;
+  replayed: boolean;
+  labelUrl: string | null;
+  labelCostCents: number | null;
+  trackingNumber: string | null;
+}> {
+  const data = await apiSend<{
+    order_state: string;
+    fulfilled_units: number;
+    notified: boolean;
+    replayed: boolean;
+    label_url: string | null;
+    label_cost_cents: number | null;
+    tracking_number: string | null;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/label`, {
+    intent: "buy",
+    shipment_id: args.shipmentId,
+    rate_id: args.rateId,
+    lines: args.lines?.map((line) => ({ order_line_id: line.orderLineId, quantity: line.quantity })),
+    notify: args.notify,
+    idempotency_key: args.idempotencyKey,
+  });
+  return {
+    orderState: data.order_state,
+    fulfilledUnits: data.fulfilled_units,
+    notified: data.notified,
+    replayed: data.replayed,
+    labelUrl: data.label_url,
+    labelCostCents: data.label_cost_cents,
+    trackingNumber: data.tracking_number,
+  };
+}
+
+/** Cancel (abandon) an order before or during fulfillment. Native orders only. */
+export async function cancelOrder(
+  orderId: string,
+  args: { reason?: string; refund: boolean; restock: boolean; idempotencyKey: string },
+): Promise<{ orderState: string; refunded: boolean; restockedLines: number }> {
+  const data = await apiSend<{
+    order_state: string;
+    refunded: boolean;
+    restocked_lines: number;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/cancel`, {
+    reason: args.reason,
+    refund: args.refund,
+    restock: args.restock,
+    idempotency_key: args.idempotencyKey,
+  });
+  return {
+    orderState: data.order_state,
+    refunded: data.refunded,
+    restockedLines: data.restocked_lines,
+  };
+}
+
+/** Resend the abandoned-checkout recovery email for an order. Native orders only; `reason` is
+ *  populated (and `sent` false) when the order isn't eligible (not_recoverable, no_consent,
+ *  no_buyer_email, delivery_failed) — the caller shows the reason honestly rather than a generic
+ *  failure toast. */
+export async function sendOrderRecoveryEmail(orderId: string): Promise<{ sent: boolean; reason?: string }> {
+  return apiSend<{ sent: boolean; reason?: string }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/recovery-email`,
+    {},
+  );
+}
+
+/** Add a staff note to an order's timeline. Native orders only. */
+export async function addOrderNote(orderId: string, body: string): Promise<void> {
+  await apiSend<{ note_id: string }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/notes`, {
+    body,
+  });
+}
+
+/** Replace all tags on an order (full replace, not append). Native orders only. */
+export async function setOrderTags(orderId: string, tags: string[]): Promise<string[]> {
+  const data = await apiSend<{ tags: string[] }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/tags`,
+    { tags },
+  );
+  return data.tags;
+}
+
+/** Archive or unarchive an order. Native orders only. */
+export async function setOrderArchived(orderId: string, archived: boolean): Promise<boolean> {
+  const data = await apiSend<{ archived: boolean }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/archive`,
+    { archived },
+  );
+  return data.archived;
+}
+
+// --- unified list + saved views (Phase 2 Task 2) ----------------------------
+
+interface UnifiedOrderRowWire {
+  source: "calderyn" | "shopify";
+  id: string;
+  ref: string;
+  buyer_email: string | null;
+  total_cents: number;
+  currency: string;
+  payment_status: string;
+  state: string;
+  cancelled_at: string | null;
+  archived_at: string | null;
+  occurred_at: string;
+  item_count: number;
+  tags: string[];
+  remaining_refundable_cents: number;
+}
+
+function mapUnifiedRow(row: UnifiedOrderRowWire): UnifiedOrderRow {
+  return {
+    source: row.source,
+    id: row.id,
+    ref: row.ref,
+    buyerEmail: row.buyer_email,
+    totalCents: row.total_cents,
+    currency: row.currency,
+    paymentStatus: row.payment_status,
+    state: row.state,
+    cancelledAt: row.cancelled_at,
+    archivedAt: row.archived_at,
+    occurredAt: row.occurred_at,
+    itemCount: row.item_count,
+    tags: row.tags,
+    remainingRefundableCents: row.remaining_refundable_cents,
+  };
+}
+
+/** OrdersListParams -> the query string the list/export routes both parse (parseOrdersListParams
+ *  on the server). Shared by fetchOrdersList and the Export CSV link (dashboard.api.orders.export)
+ *  so the two routes are ALWAYS handed an identical filter surface for "the same view" — building
+ *  the export URL any other way risks a silent drift between what's on screen and what's exported.
+ *  Omits any param that's undefined/empty so the querystring stays minimal. */
+export function ordersListParamsToQueryString(params: OrdersListParams): string {
+  const qs = new URLSearchParams();
+  if (params.search) qs.set("search", params.search);
+  if (params.paymentStatus?.length) qs.set("payment_status", params.paymentStatus.join(","));
+  if (params.fulfillmentStatus) qs.set("fulfillment_status", params.fulfillmentStatus);
+  if (params.source) qs.set("source", params.source);
+  if (params.dateFrom) qs.set("date_from", params.dateFrom);
+  if (params.dateTo) qs.set("date_to", params.dateTo);
+  if (params.tag) qs.set("tag", params.tag);
+  if (params.archived !== undefined) qs.set("archived", params.archived ? "true" : "false");
+  if (params.sort) qs.set("sort", params.sort);
+  if (params.dir) qs.set("dir", params.dir);
+  if (params.offset !== undefined) qs.set("offset", String(params.offset));
+  if (params.limit !== undefined) qs.set("limit", String(params.limit));
+  return qs.toString();
+}
+
+/** Search/filter/sort/paginate across native + imported orders (Phase 2 list power tools). */
+export async function fetchOrdersList(params: OrdersListParams): Promise<UnifiedOrdersPage> {
+  const qsString = ordersListParamsToQueryString(params);
+  const suffix = qsString ? `?${qsString}` : "";
+
+  const data = await apiGet<{
+    rows: UnifiedOrderRowWire[];
+    total_count: number;
+    offset: number;
+    limit: number;
+  }>(`/dashboard/api/orders/list${suffix}`);
+  return {
+    rows: data.rows.map(mapUnifiedRow),
+    totalCount: data.total_count,
+    offset: data.offset,
+    limit: data.limit,
+  };
+}
+
+/** A merchant-saved orders-list filter preset. */
+export interface OrderViewVM {
+  id: string;
+  name: string;
+  filters: Record<string, unknown>;
+  position: number;
+}
+
+/** List the shop's saved order-list views, in display order. */
+export async function fetchOrderViews(): Promise<OrderViewVM[]> {
+  const data = await apiGet<{ views: OrderViewVM[] }>("/dashboard/api/orders/views");
+  return data.views;
+}
+
+/** Save the current toolbar filters as a named view. 409s (DashboardApiError) on a duplicate
+ *  name; 422s past the per-shop saved-view cap. */
+export async function createOrderView(name: string, filters: Record<string, unknown>): Promise<OrderViewVM> {
+  const data = await apiSend<{ view: OrderViewVM }>("POST", "/dashboard/api/orders/views", { name, filters });
+  return data.view;
+}
+
+/** Delete a saved view by id. */
+export async function deleteOrderView(id: string): Promise<void> {
+  await apiSend<{ deleted: true }>("DELETE", `/dashboard/api/orders/views?id=${encodeURIComponent(id)}`);
+}
+
+// --- bulk order actions (Phase 2 Task 3) -------------------------------------
+
+/** One order's outcome from a bulk action: ok + a small per-action result, or ok:false + a
+ *  plain-language error — never thrown per-order, since partial failure across a bulk
+ *  selection is normal, expected output. */
+export interface BulkResultVM {
+  orderId: string;
+  ok: boolean;
+  error?: string;
+}
+
+interface BulkResultWire {
+  order_id: string;
+  ok: boolean;
+  error?: string;
+}
+
+function mapBulkResults(rows: BulkResultWire[]): BulkResultVM[] {
+  return rows.map((r) => ({ orderId: r.order_id, ok: r.ok, error: r.error }));
+}
+
+// The orders list's page size is 50 (fetchOrdersList's default limit), so "select all on this
+// page" can hand these functions up to 50 ids — but the server-side bulk routes cap a single
+// request at MAX_BULK_ORDERS = 25 (app/lib/order/bulk.server.ts) and 422 the WHOLE request over
+// that, taking the entire selection down with it. Chunk into slices of at most this size and send
+// them one at a time (never Promise.all) so a full-page bulk action never doubles the server's
+// intended concurrent load.
+const BULK_CHUNK_SIZE = 25;
+
+/** Split `items` into consecutive slices of at most `size` elements each. */
+export function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+/** Run a bulk-action sender over `ids` in <=BULK_CHUNK_SIZE slices, SEQUENTIALLY (each slice
+ *  awaited before the next is sent), concatenating every slice's `results` into one flat array so
+ *  callers see the same shape they would from a single request. Generic over the per-item result
+ *  shape (`toFailure` builds one from an id + message) so the products bulk client shares it —
+ *  both bulk surfaces cap a request at 25 ids server-side.
+ *
+ *  A single request's per-item failures are already captured inside its `results` (that's
+ *  runBulkOrderAction's whole design, server-side) and never throw. But now that one logical bulk
+ *  action can span 2-3 HTTP requests, a WHOLE chunk can still reject outright (network blip,
+ *  expired session, a 5xx) after one or more earlier chunks already succeeded. Losing those
+ *  already-applied results by letting the rejection propagate would both discard real work from
+ *  the caller's summary AND skip its post-action refetch, leaving the screen showing stale data
+ *  for items that in fact changed. So a chunk-level rejection is caught here and downgraded to
+ *  per-item `ok:false` entries for just that slice — the same "partial failure is normal, never
+ *  a whole-request throw" contract runBulkOrderAction already guarantees within one request. */
+export async function runBulkInChunks<R>(
+  ids: string[],
+  send: (slice: string[]) => Promise<{ results: R[] }>,
+  toFailure: (id: string, message: string) => R,
+): Promise<{ results: R[] }> {
+  const results: R[] = [];
+  for (const slice of chunk(ids, BULK_CHUNK_SIZE)) {
+    try {
+      const { results: sliceResults } = await send(slice);
+      results.push(...sliceResults);
+    } catch (err) {
+      const message = err instanceof DashboardApiError ? err.message : "Something went wrong.";
+      for (const id of slice) results.push(toFailure(id, message));
+    }
+  }
+  return { results };
+}
+
+/** How an order lands in the flat results when its whole chunk rejected. */
+const orderFailure = (orderId: string, error: string): BulkResultVM => ({ orderId, ok: false, error });
+
+/** Fulfill every selected order in full (no per-order lines/tracking/carrier — that stays a
+ *  single-order-only refinement). Native orders only; imported (shopify:) ids 422 the whole
+ *  request. `idempotencyKey` is the outer key — the server derives one per order internally, so
+ *  reusing it across chunked requests below is safe (each order still gets its own derived key). */
+export async function bulkFulfillOrders(
+  orderIds: string[],
+  notify: boolean,
+  idempotencyKey: string,
+): Promise<{ results: BulkResultVM[] }> {
+  return runBulkInChunks(orderIds, async (slice) => {
+    const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/fulfill", {
+      order_ids: slice,
+      notify,
+      idempotency_key: idempotencyKey,
+    });
+    return { results: mapBulkResults(data.results) };
+  }, orderFailure);
+}
+
+/** Archive or unarchive every selected order. Native orders only. */
+export async function bulkArchiveOrders(
+  orderIds: string[],
+  archived: boolean,
+): Promise<{ results: BulkResultVM[] }> {
+  return runBulkInChunks(orderIds, async (slice) => {
+    const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/archive", {
+      order_ids: slice,
+      archived,
+    });
+    return { results: mapBulkResults(data.results) };
+  }, orderFailure);
+}
+
+/** Add tags to every selected order WITHOUT removing any tag already there (additive, never the
+ *  full-replace path setOrderTags uses). Native orders only. */
+export async function bulkAddOrderTags(
+  orderIds: string[],
+  addTags: string[],
+): Promise<{ results: BulkResultVM[] }> {
+  return runBulkInChunks(orderIds, async (slice) => {
+    const data = await apiSend<{ results: BulkResultWire[] }>("POST", "/dashboard/api/orders/bulk/tags", {
+      order_ids: slice,
+      add_tags: addTags,
+    });
+    return { results: mapBulkResults(data.results) };
+  }, orderFailure);
+}
+
+// --- merchant drafts + send-invoice (Phase 3 Task 2) -------------------------
+
+export interface DraftLineVM {
+  id: string;
+  variantId: string;
+  title: string;
+  quantity: number;
+  unitPriceCents: number;
+  currency: string;
+}
+
+export interface MerchantDraftVM {
+  id: string;
+  lines: DraftLineVM[];
+  subtotalCents: number;
+  currency: string;
+  createdAt: string;
+}
+
+interface DraftLineWire {
+  id: string;
+  variant_id: string;
+  title: string;
+  quantity: number;
+  unit_price_cents: number;
+  currency: string;
+}
+
+interface MerchantDraftWire {
+  id: string;
+  lines: DraftLineWire[];
+  subtotal_cents: number;
+  currency: string;
+  created_at: string;
+}
+
+function mapDraft(d: MerchantDraftWire): MerchantDraftVM {
+  return {
+    id: d.id,
+    lines: d.lines.map((l) => ({
+      id: l.id,
+      variantId: l.variant_id,
+      title: l.title,
+      quantity: l.quantity,
+      unitPriceCents: l.unit_price_cents,
+      currency: l.currency,
+    })),
+    subtotalCents: d.subtotal_cents,
+    currency: d.currency,
+    createdAt: d.created_at,
+  };
+}
+
+/** List every open merchant-draft cart for the session's shop. */
+export async function fetchMerchantDrafts(): Promise<MerchantDraftVM[]> {
+  const data = await apiGet<{ drafts: MerchantDraftWire[] }>("/dashboard/api/orders/drafts");
+  return data.drafts.map(mapDraft);
+}
+
+/** Create a new merchant draft (omit cartId) or replace an existing one's lines (cartId given).
+ *  1-50 lines, qty 1-999 each; an unknown/unavailable variant 422s (DashboardApiError). */
+export async function saveMerchantDraft(input: {
+  cartId?: string;
+  lines: Array<{ variantId: string; quantity: number }>;
+}): Promise<MerchantDraftVM> {
+  const data = await apiSend<{ draft: MerchantDraftWire }>("POST", "/dashboard/api/orders/drafts", {
+    cart_id: input.cartId,
+    lines: input.lines.map((l) => ({ variant_id: l.variantId, quantity: l.quantity })),
+  });
+  return mapDraft(data.draft);
+}
+
+/** Delete a merchant-draft cart outright. 404s (DashboardApiError) on an unknown/foreign/non-draft id. */
+export async function deleteMerchantDraft(cartId: string): Promise<void> {
+  await apiSend<{ deleted: true }>("DELETE", `/dashboard/api/orders/drafts?id=${encodeURIComponent(cartId)}`);
+}
+
+/** Buyer address captured for a sent invoice (mirrors BuyerAddressInput, browser-safe copy). */
+export interface InvoiceAddressInput {
+  kind?: "shipping" | "billing";
+  name?: string;
+  line1: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postal?: string;
+  country?: string;
+  phone?: string;
+}
+
+export interface SendInvoiceResult {
+  orderId: string;
+  confirmationToken: string;
+  totalCents: number;
+  currency: string;
+  emailSent: boolean;
+}
+
+/** Turn a merchant-draft cart into a real invoice and email the buyer a pay link. 409s
+ *  (DashboardApiError, code "payments_not_ready") if the shop can't take payments yet.
+ *  `exchangeForReturnId` (Phase 4 Task 2) threads a replacement-order's source return into the new
+ *  order's attribution — the return's refund and this invoice's charge stay separate transactions. */
+export async function sendDraftInvoice(input: {
+  cartId: string;
+  email: string;
+  address?: InvoiceAddressInput;
+  note?: string;
+  exchangeForReturnId?: string;
+}): Promise<SendInvoiceResult> {
+  const data = await apiSend<{
+    order_id: string;
+    confirmation_token: string;
+    total_cents: number;
+    currency: string;
+    email_sent: boolean;
+  }>("POST", "/dashboard/api/orders/drafts/send", {
+    cart_id: input.cartId,
+    email: input.email,
+    address: input.address,
+    note: input.note,
+    exchange_for_return_id: input.exchangeForReturnId,
+  });
+  return {
+    orderId: data.order_id,
+    confirmationToken: data.confirmation_token,
+    totalCents: data.total_cents,
+    currency: data.currency,
+    emailSent: data.email_sent,
+  };
+}
+
+/** Re-send the pay-link email for an unpaid invoice order (Phase 3 Task 5). The pay link itself
+ *  is stable across a resend; `sent: false` with a `reason` means the shop's email transport or
+ *  storefront origin isn't set up yet, not that the invoice itself is invalid. */
+export async function resendInvoiceEmail(orderId: string): Promise<{ sent: boolean; reason?: string }> {
+  return apiSend<{ sent: boolean; reason?: string }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/resend-invoice`,
+    {},
+  );
+}
+
+// --- merchant returns (Phase 4 Task 2) ---------------------------------------
+
+interface OrderReturnLineWire {
+  id: string;
+  order_line_id: string;
+  quantity: number;
+  restock: boolean;
+  refund_cents: number;
+}
+
+interface OrderReturnWire {
+  id: string;
+  order_id: string;
+  status: OrderReturnStatus;
+  reason: string | null;
+  created_at: string;
+  received_at: string | null;
+  lines: OrderReturnLineWire[];
+}
+
+function mapReturnLine(l: OrderReturnLineWire): OrderReturnLine {
+  return { id: l.id, orderLineId: l.order_line_id, quantity: l.quantity, restock: l.restock, refundCents: l.refund_cents };
+}
+
+function mapReturn(r: OrderReturnWire): OrderReturn {
+  return {
+    id: r.id,
+    orderId: r.order_id,
+    status: r.status,
+    reason: r.reason,
+    createdAt: r.created_at,
+    receivedAt: r.received_at,
+    lines: r.lines.map(mapReturnLine),
+  };
+}
+
+/** Every return recorded against an order, newest first. Native orders only — an imported
+ *  (Shopify-paid) order always resolves to an empty list, the returns spine never touched it. */
+export async function fetchOrderReturns(orderId: string): Promise<OrderReturn[]> {
+  const data = await apiGet<{ returns: OrderReturnWire[] }>(
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/returns`,
+  );
+  return data.returns.map(mapReturn);
+}
+
+export interface CreateReturnLineInput {
+  orderLineId: string;
+  quantity: number;
+  restock: boolean;
+  /** Omit to take the server-computed default (unit price x quantity + a proportional tax share).
+   *  A supplied value may not exceed that default — 422 refund_exceeds_default otherwise. */
+  refundCents?: number;
+}
+
+export interface CreateOrderReturnResult {
+  returnId: string;
+  status: "open";
+  lines: OrderReturnLine[];
+}
+
+/** Open a new return against a native order. 409s (DashboardApiError, code "return_already_open")
+ *  when the order already has one open — only one return may be in flight at a time. */
+export async function createOrderReturn(
+  orderId: string,
+  args: { lines: CreateReturnLineInput[]; reason?: string },
+): Promise<CreateOrderReturnResult> {
+  const data = await apiSend<{ return_id: string; status: "open"; lines: OrderReturnLineWire[] }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/returns`,
+    {
+      lines: args.lines.map((l) => ({
+        order_line_id: l.orderLineId,
+        quantity: l.quantity,
+        restock: l.restock,
+        refund_cents: l.refundCents,
+      })),
+      reason: args.reason,
+    },
+  );
+  return { returnId: data.return_id, status: data.status, lines: data.lines.map(mapReturnLine) };
+}
+
+export interface ReceiveOrderReturnResult {
+  auditId: string;
+  returnId: string;
+  orderId: string;
+  status: "closed";
+  refundedCents: number;
+  restockedLines: number;
+  restockErrors: string[] | null;
+  replayed: boolean;
+}
+
+/** Mark an open return received: restocks its requested lines (best-effort, tracked variants
+ *  only) and refunds its total. Native orders only. `idempotencyKey` dedups the whole operation
+ *  across a retried submit — reuse the SAME key on retry, never mint a fresh one per click. */
+export async function receiveOrderReturn(
+  orderId: string,
+  args: { returnId: string; idempotencyKey: string },
+): Promise<ReceiveOrderReturnResult> {
+  const data = await apiSend<{
+    audit_id: string;
+    return_id: string;
+    order_id: string;
+    status: "closed";
+    refunded_cents: number;
+    restocked_lines: number;
+    restock_errors: string[] | null;
+    replayed: boolean;
+  }>("POST", `/dashboard/api/orders/${encodeURIComponent(orderId)}/returns/receive`, {
+    return_id: args.returnId,
+    idempotency_key: args.idempotencyKey,
+  });
+  return {
+    auditId: data.audit_id,
+    returnId: data.return_id,
+    orderId: data.order_id,
+    status: data.status,
+    refundedCents: data.refunded_cents,
+    restockedLines: data.restocked_lines,
+    restockErrors: data.restock_errors,
+    replayed: data.replayed,
+  };
+}
+
+/** Cancel an open return with no refund/restock effect. Native orders only. */
+export async function cancelOrderReturn(
+  orderId: string,
+  returnId: string,
+): Promise<{ returnId: string; status: "cancelled" }> {
+  const data = await apiSend<{ return_id: string; status: "cancelled" }>(
+    "POST",
+    `/dashboard/api/orders/${encodeURIComponent(orderId)}/returns/cancel`,
+    { return_id: returnId },
+  );
+  return { returnId: data.return_id, status: data.status };
+}
+
+// --- profit read model (Phase 4 Task 3) --------------------------------------
+
+interface OrderProfitWire {
+  source: "calderyn" | "shopify";
+  revenue_cents: number;
+  cogs_cents: number;
+  costs_missing: number;
+  carrier_cost_cents: number | null;
+  fee_estimate_cents: number;
+  profit_cents: number | null;
+  margin_pct: number | null;
+  estimated: boolean;
+  attribution_label: string | null;
+  not_captured?: boolean;
+}
+
+function mapProfit(p: OrderProfitWire): OrderProfit {
+  return {
+    source: p.source,
+    revenueCents: p.revenue_cents,
+    cogsCents: p.cogs_cents,
+    costsMissing: p.costs_missing,
+    carrierCostCents: p.carrier_cost_cents,
+    feeEstimateCents: p.fee_estimate_cents,
+    profitCents: p.profit_cents,
+    marginPct: p.margin_pct,
+    estimated: p.estimated,
+    attributionLabel: p.attribution_label,
+    notCaptured: p.not_captured,
+  };
+}
+
+/** Per-order profit read model: revenue/COGS/carrier cost/estimated fees/margin for one order,
+ *  native or imported. A plain snapshot at fetch time — no live recompute on the client. */
+export async function fetchOrderProfit(sourceId: string): Promise<OrderProfit> {
+  const data = await apiGet<{ profit: OrderProfitWire }>(
+    `/dashboard/api/orders/${encodeURIComponent(sourceId)}/profit`,
+  );
+  return mapProfit(data.profit);
 }

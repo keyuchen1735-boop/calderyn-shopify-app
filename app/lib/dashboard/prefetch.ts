@@ -8,15 +8,16 @@ import {
   apiGet,
   fetchBilling,
   fetchCollections,
+  fetchInventoryList,
   fetchLearnedRules,
   fetchLiveAnalytics,
   fetchLocations,
   fetchProducts,
+  fetchPurchaseOrders,
   fetchShipCost,
-  fetchSkus,
   fetchUnmatchedShipCharges,
 } from "./client";
-import { fetchImportedOrders, fetchOrdersPage } from "./orders-client";
+import { fetchOrdersList, fetchOrdersPage } from "./orders-client";
 import { fetchCustomersPage } from "./customers-client";
 import { fetchShippingSummary } from "./shipping-client";
 import { fetchPaymentsPage } from "./payments-client";
@@ -24,6 +25,7 @@ import { fetchStudio } from "./store-client";
 import { fetchDiscover } from "./discover-client";
 import { fetchSearchOverview } from "./search-client";
 import { fetchAllPendingTransfers } from "./transfers-client";
+import { cachedDraftAuditIds, fetchPoScreen } from "./po-client";
 import { fetchCommerceAnalytics } from "./commerce-analytics-client";
 import {
   analyticsCacheKey,
@@ -37,7 +39,12 @@ import {
 // they usually self-warm on mount, so by the time the chain reaches them the
 // cache is hot and they cost nothing.
 const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
+  // Home renders the setup-journey card on first paint, so it warms first.
+  [SCREEN_CACHE_KEYS.setupProgress, () => apiGet("/dashboard/api/setup-progress")],
   [SCREEN_CACHE_KEYS.orders, fetchOrdersPage],
+  // Unified orders list (Phase 2 Task 6), default view only — the screen's own mount fetch reads
+  // this exact key/params, so the seed always matches what it would have fetched itself.
+  [SCREEN_CACHE_KEYS.ordersList, () => fetchOrdersList({})],
   [analyticsCacheKey(30), () => fetchCommerceAnalytics(30)],
   [SCREEN_CACHE_KEYS.customers, fetchCustomersPage],
   [SCREEN_CACHE_KEYS.shipping, fetchShippingSummary],
@@ -47,16 +54,17 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.discover, fetchDiscover],
   [SCREEN_CACHE_KEYS.search, fetchSearchOverview],
   [SCREEN_CACHE_KEYS.agentic, () => apiGet("/dashboard/api/agentic")],
-  [SCREEN_CACHE_KEYS.inventorySkus, fetchSkus],
+  [SCREEN_CACHE_KEYS.inventoryList, () => fetchInventoryList({})],
   [SCREEN_CACHE_KEYS.collections, fetchCollections],
   [SCREEN_CACHE_KEYS.transfers, fetchAllPendingTransfers],
   [SCREEN_CACHE_KEYS.locations, fetchLocations],
+  // Drafts warm before the PO screen: fetchPoScreen sends the cached drafts'
+  // audit ids so the promoted-draft filter warms with real data (best effort).
+  [SCREEN_CACHE_KEYS.purchaseOrders, () => fetchPurchaseOrders({})],
+  [SCREEN_CACHE_KEYS.po, () => fetchPoScreen(cachedDraftAuditIds())],
   [SCREEN_CACHE_KEYS.shipCost, fetchShipCost],
   [SCREEN_CACHE_KEYS.unmatchedShip, fetchUnmatchedShipCharges],
   [SCREEN_CACHE_KEYS.learnedRules, fetchLearnedRules],
-  // Historical import history: warmed late (only imported shops have rows, and
-  // most sessions never open the subtab), but seeded so the first open paints.
-  [SCREEN_CACHE_KEYS.importedOrders, fetchImportedOrders],
   [SCREEN_CACHE_KEYS.liveAnalytics, fetchLiveAnalytics],
   [catalogCacheKey("", undefined), () => fetchProducts()],
 ];

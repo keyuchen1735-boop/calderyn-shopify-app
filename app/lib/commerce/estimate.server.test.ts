@@ -13,11 +13,32 @@ function mockDeps(engineResult: unknown) {
     }),
   }));
   vi.doMock("./origin.server", () => ({ getShopOrigin: async () => ORIGIN }));
-  vi.doMock("./rate-source.server", () => ({ getRateSource: async () => ({}) }));
-  vi.doMock("~/lib/shipping/parcel.server", () => ({
-    buildParcel: async () => ({ weightOz: 8, lengthIn: 6, widthIn: 4, heightIn: 2 }),
-    restrictedVariants: async () => [],
+  vi.doMock("./rate-source.server", () => ({
+    getRateSource: async () => ({}),
+    resolveRateSource: async () => ({ source: {}, kind: "carrier" }),
+    RateSourceNotConfiguredError: class RateSourceNotConfiguredError extends Error {
+      code = "RATE_SOURCE_NOT_CONFIGURED" as const;
+    },
   }));
+  vi.doMock("~/lib/shipping/parcel.server", () => ({
+    cartShipInfo: async () => ({
+      blocked: [],
+      maxHandlingDays: 0,
+      parcelByVariant: new Map([["V1", { weightOz: 8, lengthIn: 6, widthIn: 4, heightIn: 2 }]]),
+    }),
+  }));
+  vi.doMock("~/lib/shipping/rules.server", async (importOriginal) => {
+    const actual = (await importOriginal()) as Record<string, unknown>;
+    return {
+      ...actual,
+      loadShipRules: async () => ({
+        markupPct: 0,
+        handlingCents: 0,
+        freeShipThresholdCents: null,
+        handlingDays: 1,
+      }),
+    };
+  });
   vi.doMock("~/lib/shipping/engine.server", () => ({
     getShippingEngine: () => async () => engineResult,
   }));

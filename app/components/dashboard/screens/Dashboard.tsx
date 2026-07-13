@@ -2,20 +2,18 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { Btn, Card, SkelBar, TickGauge } from "../ui";
+import { homeGaugeView } from "./home-gauge";
 import { hasEngineSignals } from "../first-run";
 import { reduced } from "../hero/hero-motion";
 import { CDIcon } from "../icons";
 import { money } from "../format";
 import { CalderynHexMark } from "~/components/CalderynHexMark";
 import * as client from "~/lib/dashboard/client";
-import { fetchCommerceAnalytics } from "~/lib/dashboard/commerce-analytics-client";
-import type { CommerceAnalytics } from "~/lib/dashboard/commerce-analytics-client";
+import { HomeJourney, type JourneyProgress } from "./HomeJourney";
 import {
-  analyticsCacheKey,
   cacheScreenData,
   cachedScreenData,
   catalogCacheKey,
-  prefetchScreenData,
   SCREEN_CACHE_KEYS,
 } from "~/lib/dashboard/screen-cache";
 import { canOneClickAlert, oneClickKind } from "~/lib/dashboard/one-click";
@@ -24,7 +22,7 @@ import { recoveredWithin } from "~/lib/recovered";
 import { sparklinePath } from "~/lib/sparkline";
 import { useLiveAnalytics } from "../use-live-analytics";
 import type { DashboardCtx } from "../context";
-import type { BillingStatus, ProductSummaryVM } from "~/lib/dashboard/client";
+import type { ProductSummaryVM } from "~/lib/dashboard/client";
 import type { QueueProposalVM } from "../view-models";
 
 // How many queue items get their own deck card per session; the reversible
@@ -42,9 +40,9 @@ function LiveMark({ on }: { on: boolean }) {
   );
 }
 
-/** Tiny sparkline over a daily series; shares the extension's path geometry
- *  (app/lib/sparkline.ts) so both surfaces draw the same shape. Renders an
- *  empty box until data lands so the strip never reflows. */
+/** Tiny sparkline over today's hourly series; shares the extension's path
+ *  geometry (app/lib/sparkline.ts) so both surfaces draw the same shape.
+ *  Renders an empty box until data lands so the strip never reflows. */
 const Spark = memo(function Spark({ points }: { points: number[] }) {
   const d = sparklinePath(points, 100, 18);
   return (
@@ -56,7 +54,7 @@ const Spark = memo(function Spark({ points }: { points: number[] }) {
 
 // Home — the calm landing screen. Greeting with the agent's one-liner, a
 // compact today strip, the decision deck (one ask at a time), the autopilot
-// card, and a prompt bar into the assistant. New stores get the setup guide.
+// card. New stores get the setup guide and a bar into the first-product flow.
 export default function Dashboard({ app }: { app: DashboardCtx }) {
   // Time-of-day greeting resolves the local hour POST-MOUNT only (SSR renders
   // "Welcome back") to avoid a UTC-vs-local hydration mismatch.
@@ -76,31 +74,19 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   // realtime order ping). Cells render em dashes until numbers arrive.
   const { snapshot: live } = useLiveAnalytics(true);
 
-  // 30-day daily series for the metric sparklines — same request/key as the
-  // Analytics screen's default range. Rides prefetchScreenData so it dedups
-  // against the idle warm-up and skips entirely when the cache is already
-  // warm; session-stale is fine for a trend line (it's an enhancement).
-  const [commerce, setCommerce] = useState<CommerceAnalytics | null>(() =>
-    cachedScreenData<CommerceAnalytics>(analyticsCacheKey(30)),
-  );
-  useEffect(() => {
-    let alive = true;
-    void prefetchScreenData(analyticsCacheKey(30), () => fetchCommerceAnalytics(30)).then(() => {
-      if (alive) setCommerce(cachedScreenData<CommerceAnalytics>(analyticsCacheKey(30)));
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
+  // Sparkline series = TODAY, hour by hour, from the same snapshot as the
+  // numbers above them — a $0 day draws a flat line instead of the old 14-day
+  // history whose spikes contradicted the zeros. Optional-chained because a
+  // session-cached snapshot may predate the hourly field.
   const series = useMemo(() => {
-    const days = commerce?.daily.slice(-14) ?? [];
+    const h = live?.hourly;
     return {
-      gross: days.map((d) => d.grossCents),
-      orders: days.map((d) => d.orders),
-      conversion: days.map((d) => d.conversionPct ?? 0),
-      sessions: days.map((d) => d.sessions),
+      gross: h?.sales_cents ?? [],
+      orders: h?.orders ?? [],
+      conversion: h?.conversion_pct ?? [],
+      sessions: h?.sessions ?? [],
     };
-  }, [commerce]);
+  }, [live]);
 
   // catalogTotal is the first-run signal: 0 = brand-new store, null = not yet
   // fetched. Until the fetch lands, the loader's `hasCatalog` hint decides the
@@ -129,54 +115,127 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     };
   }, []);
   const freshStore = catalogTotal !== null ? catalogTotal === 0 : !app.hasCatalog;
-  const hasProduct = !freshStore;
 
-  // Payouts state powers the setup checklist's "Connect payouts" step and keeps
-  // the whole guide open until money can actually move — a store with products
-  // but no live Stripe isn't set up yet. Seeded from the shared billing cache
-  // (the same key Payments/Settings write) so a return visit knows instantly;
-  // the mount fetch revalidates. Until billing is known we never force the guide
-  // open on an established store, so a fully set-up shop can't flash the guide.
-  const seededBilling = cachedScreenData<BillingStatus>(SCREEN_CACHE_KEYS.billing);
-  const [billing, setBilling] = useState<BillingStatus | null>(() => seededBilling ?? null);
+  // Guided journey card (3-phase, replaces the old static setup checklist).
+  // Seeded from the session cache so a return visit paints instantly; the
+  // mount fetch revalidates and writes back through (Payments.tsx pattern).
+  // Renders nothing until the first payload lands — the metrics/deck already
+  // fill Home, so the card just pops in once its data is known.
+  const [journey, setJourney] = useState<JourneyProgress | null>(() =>
+    cachedScreenData<JourneyProgress>(SCREEN_CACHE_KEYS.setupProgress),
+  );
   useEffect(() => {
     let alive = true;
     client
-      .fetchBilling()
-      .then((b) => {
-        cacheScreenData(SCREEN_CACHE_KEYS.billing, b);
-        if (alive) setBilling(b);
+      .apiGet<JourneyProgress>("/dashboard/api/setup-progress")
+      .then((p) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.setupProgress, p);
+        if (alive) setJourney(p);
       })
       .catch(() => {
-        // An unreadable billing state stays "not yet known" — never a reason to
-        // pop the setup guide onto an established store.
+        // Keep whatever the cache decided — an unreadable journey read must
+        // never block Home.
       });
     return () => {
       alive = false;
     };
   }, []);
-  const payoutsActive =
-    billing != null &&
-    billing.connected &&
-    billing.chargesEnabled &&
-    billing.payoutsEnabled &&
-    billing.detailsSubmitted;
-  const payoutsKnown = billing != null;
+  // Mirrors the mount fetch's alive guard: a slow refresh response must not
+  // set state after the screen unmounts.
+  const journeyAlive = useRef(true);
+  useEffect(() => {
+    journeyAlive.current = true;
+    return () => {
+      journeyAlive.current = false;
+    };
+  }, []);
+  const refreshJourney = useCallback(() => {
+    client
+      .apiGet<JourneyProgress>("/dashboard/api/setup-progress")
+      .then((p) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.setupProgress, p);
+        if (journeyAlive.current) setJourney(p);
+      })
+      .catch(() => {});
+  }, []);
+  const dismissJourney = useCallback(
+    (key: "dismiss_live_card" | "dismiss_recap") => {
+      client
+        .apiSend("POST", "/dashboard/api/setup-progress", { intent: key })
+        .then(() => refreshJourney())
+        .catch(() => {});
+    },
+    [refreshJourney],
+  );
+  const startTestOrder = useCallback(() => {
+    client
+      .apiSend<{ url: string }>("POST", "/dashboard/api/journey-test-order", { intent: "start" })
+      .then(({ url }) => {
+        window.location.href = url;
+      })
+      .catch((err: unknown) => {
+        const msg =
+          err instanceof client.DashboardApiError ? err.message : "Could not start the test order.";
+        app.toast(msg, "warn", "critical");
+      });
+  }, [app]);
 
-  // The setup checklist tracks the three milestones that gate selling: account
-  // (done at signup), a first product, and live payouts. It stays until all
-  // three are met — the old gate hid the whole card the instant a product
-  // existed, stranding a merchant who hadn't connected payouts yet. A brand-new
-  // store shows it on first paint via the catalog hint (freshStore); a store
-  // that already has products only reopens it once we KNOW payouts aren't live.
-  const setupSteps = 3;
-  const setupDone = 1 + (hasProduct ? 1 : 0) + (payoutsActive ? 1 : 0);
-  const setupComplete = hasProduct && payoutsActive;
-  const showSetup = !setupComplete && (freshStore || (payoutsKnown && !payoutsActive));
-
-  // ---- prompt bar (the front door to Ask Calderyn) ----
-  const [ask, setAsk] = useState("");
-  const askRef = useRef<HTMLInputElement | null>(null);
+  // Task-10 return leg: the test-order checkout redirects back here with
+  // ?test_order=success|cancelled. Strip the param immediately (it must never
+  // survive a refresh or share link) and, on success, confirm the milestone
+  // server-side before re-pulling the journey payload so the card reflects it.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const testOrder = params.get("test_order");
+    if (!testOrder) return;
+    params.delete("test_order");
+    const rest = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      window.location.pathname + (rest ? `?${rest}` : "") + window.location.hash,
+    );
+    if (testOrder === "success") {
+      // Stripe's success redirect can land here BEFORE the checkout webhook has
+      // marked the probe order paid, so the very first confirm can come back
+      // confirmed:false even though the charge went through. Retry with backoff
+      // instead of giving up silently — a "refunded automatically" promise that
+      // quietly doesn't refund is a money-path bug. journeyAlive guards every
+      // step so an unmount (nav away) cancels the remaining retries.
+      const RETRY_DELAYS_MS = [2000, 4000, 8000, 16000, 30000];
+      const confirmTestOrder = (attempt: number) => {
+        client
+          .apiSend<{ confirmed: boolean }>("POST", "/dashboard/api/journey-test-order", {
+            intent: "confirm",
+          })
+          .then((r) => {
+            if (!journeyAlive.current) return;
+            if (r.confirmed) {
+              refreshJourney();
+              return;
+            }
+            if (attempt === 0) {
+              app.toast("Confirming your test order…");
+            }
+            if (attempt < RETRY_DELAYS_MS.length) {
+              window.setTimeout(() => {
+                if (journeyAlive.current) confirmTestOrder(attempt + 1);
+              }, RETRY_DELAYS_MS[attempt]);
+            }
+            // Retries exhausted with no confirmed:true: leave it there. The confirm
+            // endpoint is idempotent and the milestone self-heals on the next
+            // setup-progress recompute once the webhook lands, so a manual "Run
+            // test" click or a support escalation can still recover the refund —
+            // this is the one edge case that doesn't resolve itself immediately.
+          })
+          .catch(() => {});
+      };
+      confirmTestOrder(0);
+    }
+    // Runs once on mount — the return-trip param is only ever present on the
+    // page load right after checkout redirects back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- decision deck ----
   // The queue is triaged, not listed: the biggest asks get one card at a time,
@@ -342,6 +401,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   // (app.booted): keyed on !loading alone, an in-flight or partially failed
   // boot would flash "standing by" at every established store.
   const dormant = app.booted && (freshStore || !hasEngineSignals(app));
+  const gauge = homeGaugeView(app.booted, dormant, pct);
   const graduated = !dormant && pct !== null && pct >= 100;
   const engineOn = Boolean(engine?.autopilotEnabled) && !dormant;
   const trace = engine?.trace.slice(0, 2) ?? [];
@@ -471,9 +531,10 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         </Card>
       )}
 
-      {freshStore ? (
+      {freshStore && (
         // Fresh store: the bar routes to the prompt-first product flow — no
-        // free text here, the editor owns the description.
+        // free text here, the editor owns the description. Established stores
+        // reach the assistant from the sidebar's Ask Calderyn instead.
         <button
           type="button"
           className="cd-promptbar"
@@ -483,141 +544,15 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           <span className="cd-promptbar-ph">Describe your first product…</span>
           <CDIcon name="arrowRight" size={15} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
         </button>
-      ) : (
-        // The page bar is only an entry point — the conversation lives in the
-        // assistant panel, so Home never floods. Submitting hands the text off
-        // and the panel opens with it as the first turn.
-        <form
-          className="cd-promptbar cd-promptbar-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const text = ask.trim();
-            // With text: the panel opens and sends it as the next turn.
-            // Empty: still open the panel (the bar's old click behavior — the
-            // thread stays reachable from here without typing).
-            app.openAssistant(text || undefined);
-            setAsk("");
-          }}
-          onClick={() => askRef.current?.focus()}
-        >
-          <LiveMark on={false} />
-          <input
-            ref={askRef}
-            className="cd-promptbar-in"
-            type="text"
-            placeholder="Tell Calderyn what to do…"
-            aria-label="Ask Calderyn"
-            value={ask}
-            onChange={(e) => setAsk(e.target.value)}
-          />
-          <button type="submit" className="cd-promptbar-send" aria-label="Send to Calderyn">
-            <CDIcon name="arrowRight" size={15} strokeWidth={1.9} />
-          </button>
-        </form>
       )}
 
-      {showSetup && (
-        <Card className="cd-su-card" pad={false}>
-          <div className="cd-su-head">
-            <span className="cd-su-title">Set up your store</span>
-            <div className="cd-su-meter" aria-hidden="true">
-              <i className="on" />
-              <i className={hasProduct ? "on" : undefined} />
-              <i className={payoutsActive ? "on" : undefined} />
-            </div>
-            <span className="cd-caption tabular-nums">{`${setupDone} of ${setupSteps}`}</span>
-          </div>
-          <div className="cd-su-row cd-su-done">
-            <span className="cd-su-ic cd-su-ic-done">
-              <CDIcon name="check" size={17} strokeWidth={2.2} />
-            </span>
-            <div className="cd-su-body">
-              <div className="cd-su-t">Create your account</div>
-            </div>
-          </div>
-          {hasProduct ? (
-            <div className="cd-su-row cd-su-done">
-              <span className="cd-su-ic cd-su-ic-done">
-                <CDIcon name="check" size={17} strokeWidth={2.2} />
-              </span>
-              <div className="cd-su-body">
-                <div className="cd-su-t">Add your first product</div>
-              </div>
-            </div>
-          ) : (
-            <div className="cd-su-row">
-              <span className="cd-su-ic cd-su-ic-live">
-                <CDIcon name="sparkle" size={17} strokeWidth={1.8} />
-              </span>
-              <div className="cd-su-body">
-                <div className="cd-su-t">Describe your first product</div>
-                <div className="cd-su-s">One sentence. Calderyn drafts the listing, price and page.</div>
-              </div>
-              <Btn kind="primary" small onClick={() => app.navigate("product-editor", "new")}>
-                Create
-              </Btn>
-            </div>
-          )}
-          <div className="cd-su-row">
-            <span className="cd-su-ic cd-su-ic-shopify">
-              {/* Shopify brand mark — labels the real import integration. */}
-              <svg width="17" height="19" viewBox="-0.1 308.7 150.4 170.7" aria-hidden="true">
-                <path
-                  fill="#95BF47"
-                  d="M131.5 341.9c-.1-.9-.9-1.3-1.5-1.3s-13.7-1-13.7-1-9.1-9.1-10.2-10c-1-1-2.9-.7-3.7-.5-.1 0-2 .6-5.1 1.6-3.1-8.9-8.4-17-17.9-17h-.9c-2.6-3.4-6-5-8.8-5-22 0-32.6 27.5-35.9 41.5-8.6 2.7-14.7 4.5-15.4 4.8-4.8 1.5-4.9 1.6-5.5 6.1-.5 3.4-13 100.1-13 100.1l97.3 18.2L150 468c.1-.2-18.4-125.2-18.5-126.1zm-39.6-9.8c-2.4.7-5.3 1.6-8.2 2.6v-1.8c0-5.4-.7-9.8-2-13.3 5 .6 8.1 6.1 10.2 12.5zm-16.3-11.4c1.3 3.4 2.2 8.2 2.2 14.8v1c-5.4 1.7-11.1 3.4-17 5.3 3.3-12.6 9.6-18.8 14.8-21.1zm-6.4-6.2c1 0 2 .4 2.8 1-7.1 3.3-14.6 11.6-17.7 28.4-4.7 1.5-9.2 2.8-13.5 4.2 3.6-12.8 12.6-33.6 28.4-33.6z"
-                />
-                <path
-                  fill="#5E8E3E"
-                  d="M130 340.4c-.6 0-13.7-1-13.7-1s-9.1-9.1-10.2-10c-.4-.4-.9-.6-1.3-.6l-7.3 150.6 52.8-11.4s-18.5-125.2-18.6-126.1c-.4-.9-1.1-1.3-1.7-1.5z"
-                />
-                <path
-                  fill="#FFF"
-                  d="M79.4 369.6L73 388.9s-5.8-3.1-12.7-3.1c-10.3 0-10.8 6.5-10.8 8.1 0 8.8 23 12.2 23 32.9 0 16.3-10.3 26.8-24.2 26.8-16.8 0-25.2-10.4-25.2-10.4l4.5-14.8s8.8 7.6 16.2 7.6c4.9 0 6.9-3.8 6.9-6.6 0-11.5-18.8-12-18.8-31 0-15.9 11.4-31.3 34.5-31.3 8.6-.1 13 2.5 13 2.5z"
-                />
-              </svg>
-            </span>
-            <div className="cd-su-body">
-              <div className="cd-su-t">Import from Shopify</div>
-              <div className="cd-su-s">Products, orders, 12 months of history.</div>
-            </div>
-            <Btn small onClick={() => app.navigate("import-shopify")}>
-              Import
-            </Btn>
-          </div>
-          {payoutsActive ? (
-            <div className="cd-su-row cd-su-done">
-              <span className="cd-su-ic cd-su-ic-done">
-                <CDIcon name="check" size={17} strokeWidth={2.2} />
-              </span>
-              <div className="cd-su-body">
-                <div className="cd-su-t">Connect payouts</div>
-              </div>
-            </div>
-          ) : (
-            <div className="cd-su-row">
-              <span className="cd-su-3dcard" aria-hidden="true" />
-              <div className="cd-su-body">
-                <div className="cd-su-t">Connect payouts</div>
-                <div className="cd-su-s">Stripe, about two minutes.</div>
-              </div>
-              <Btn small onClick={() => app.navigate("payments")}>
-                Connect
-              </Btn>
-            </div>
-          )}
-          <div className="cd-su-row">
-            <span className="cd-su-ic cd-su-ic-muted">
-              <CDIcon name="store" size={17} strokeWidth={1.8} />
-            </span>
-            <div className="cd-su-body">
-              <div className="cd-su-t">Build your storefront</div>
-              <div className="cd-su-s">Describe your brand; publish when there's something to sell.</div>
-            </div>
-            <Btn small onClick={() => app.navigate("storefront")}>
-              Open
-            </Btn>
-          </div>
-        </Card>
+      {journey && (
+        <HomeJourney
+          app={app}
+          data={journey}
+          onDismiss={dismissJourney}
+          onStartTestOrder={startTestOrder}
+        />
       )}
 
       {!freshStore && (
@@ -722,12 +657,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
               row exists — "standing by" and a lit gauge contradict each other.
               While the boot hasn't answered yet, the readout is a dash: a lit
               "0%" before data reads as a real (alarming) score. */}
-          <TickGauge
-            pct={dormant ? 0 : (pct ?? 0)}
-            size={108}
-            sweepFrom0
-            pending={!app.booted && pct === null}
-          />
+          <TickGauge pct={gauge.pct} size={108} sweepFrom0 pending={gauge.pending} />
           <div className="cd-hm-engine-body">
             <div className="cd-hm-engine-head">
               <LiveMark on={engineOn} />

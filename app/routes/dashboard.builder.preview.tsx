@@ -2,19 +2,25 @@
 // Read-only preview of the generated DRAFT store across home/collection/PDP (no editor yet).
 // Uses the same renderBlocks as the live storefront; templates preview against a sample record.
 // Also hosts the imagery-candidate list + enhance action (generate → own → override).
-import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs, ActionFunctionArgs, LinksFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, Form } from "@remix-run/react";
+import storefrontCss from "~/styles/storefront.css?url";
 import { requireVerifiedSession } from "~/lib/dashboard/session.server";
 import { requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { loadDraftDoc } from "~/lib/storebuilder/page-document.server";
 import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
+import { PdpBlockColumns } from "~/lib/storebuilder/pdp-layout";
 import type { BlockDocument, RenderData, RenderContext } from "~/lib/storebuilder/types";
 import { findImprovableListings } from "~/lib/storegen/imagery/detector";
 import { enhanceListing, applyAssetOverrides } from "~/lib/storegen/imagery/asset.server";
 import type { ImprovableListing } from "~/lib/storegen/imagery/detector";
+
+// The panes render with the real storefront renderer, so they need the real storefront
+// stylesheet — otherwise the PDP column layout below has no grid to compose into.
+export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireVerifiedSession(request);
@@ -23,7 +29,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const products = await applyAssetOverrides(shopId, await catalog.listProducts(shopId));
   const collections = await catalog.listCollections(shopId);
   const candidates = findImprovableListings(products);
-  const enhanceError = new URL(request.url).searchParams.get("enhanceError") === "1";
+  const url = new URL(request.url);
+  const enhanceError = url.searchParams.get("enhanceError") === "1";
+  const generateFailed = url.searchParams.get("status") === "failed";
   const sample: RenderContext["record"] = { product: products[0], collection: collections[0] };
 
   async function previewFor(page: "home" | "collection" | "pdp") {
@@ -39,6 +47,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     pdp: await previewFor("pdp"),
     candidates,
     enhanceError,
+    generateFailed,
   });
 }
 
@@ -60,14 +69,19 @@ export async function action({ request }: ActionFunctionArgs) {
 type Pane = { doc: BlockDocument; data: RenderData; record?: RenderContext["record"] } | null;
 
 export default function BuilderPreview() {
-  const { home, collection, pdp, candidates, enhanceError } = useLoaderData<typeof loader>() as {
-    home: Pane; collection: Pane; pdp: Pane; candidates: ImprovableListing[]; enhanceError: boolean;
+  const { home, collection, pdp, candidates, enhanceError, generateFailed } = useLoaderData<typeof loader>() as {
+    home: Pane; collection: Pane; pdp: Pane; candidates: ImprovableListing[]; enhanceError: boolean; generateFailed: boolean;
   };
   const panes: [string, Pane][] = [["Home", home], ["Collection", collection], ["PDP", pdp]];
   const any = panes.some(([, p]) => p);
   return (
     <div className="cd-builder-preview">
       <h1>Generated store (draft)</h1>
+      {generateFailed ? (
+        <p className="cd-builder-preview__error">
+          We couldn&apos;t reach the design engine, so this draft is a starter layout — not your generated design. Try again in a moment.
+        </p>
+      ) : null}
       {enhanceError ? (
         <p className="cd-builder-preview__error">Image generation failed for that listing — check Higgsfield configuration.</p>
       ) : null}
@@ -76,7 +90,15 @@ export default function BuilderPreview() {
         pane ? (
           <section key={label} className="cd-builder-preview__pane">
             <h2>{label}</h2>
-            <div className="cd-store__home">{renderBlocks(pane.doc, { data: pane.data, record: pane.record })}</div>
+            {label === "PDP" ? (
+              // Same column composition as the live PDP (shared PdpBlockColumns), so the draft
+              // reads like the page that will publish — not a flat stack of the same blocks.
+              <article className="cd-pdp cd-pdp--blocks">
+                <PdpBlockColumns doc={pane.doc} data={pane.data} record={pane.record} />
+              </article>
+            ) : (
+              <div className="cd-store__home">{renderBlocks(pane.doc, { data: pane.data, record: pane.record })}</div>
+            )}
           </section>
         ) : null,
       )}

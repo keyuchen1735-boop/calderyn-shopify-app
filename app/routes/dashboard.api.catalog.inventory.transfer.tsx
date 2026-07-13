@@ -5,20 +5,34 @@ import { createTransfer, receiveTransfer } from "~/lib/inventory/engine.server";
 import { getSupabase } from "~/lib/supabase.server";
 
 // GET ?variantId= → the shop's in-transit transfers (optionally for one variant),
-// so the merchant can receive them. Location ids on inventory_transfer aren't FK'd,
-// so names are resolved with a second shop-scoped lookup; variant labels (sku/title,
-// for the shop-wide Transfers list) are resolved the same way and are null when the
-// variant row is gone or unlabeled.
+// so the merchant can receive them. ?state=received&days=N (1..90, default 30)
+// returns the recently received history instead. Location ids on
+// inventory_transfer aren't FK'd, so names are resolved with a second
+// shop-scoped lookup; variant labels (sku/title, for the shop-wide Transfers
+// list) are resolved the same way and are null when the variant row is gone or
+// unlabeled.
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
-  const variantId = new URL(request.url).searchParams.get("variantId");
+  const url = new URL(request.url);
+  const variantId = url.searchParams.get("variantId");
+  const state = url.searchParams.get("state") ?? "in_transit";
+  if (state !== "in_transit" && state !== "received") return jsonError(422, "invalid_state");
   return dashboardJson(async () => {
     let q = getSupabase()
       .from("inventory_transfer")
-      .select("id, variant_id, qty, from_location_id, to_location_id, created_at")
-      .eq("shop_id", session.shopId)
-      .eq("state", "in_transit")
-      .order("created_at", { ascending: false });
+      .select("id, variant_id, qty, from_location_id, to_location_id, created_at, received_at")
+      .eq("shop_id", session.shopId);
+    if (state === "received") {
+      const days = Math.min(90, Math.max(1, Math.trunc(Number(url.searchParams.get("days"))) || 30));
+      const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+      q = q
+        .eq("state", "received")
+        .gte("received_at", cutoff)
+        .order("received_at", { ascending: false })
+        .limit(100);
+    } else {
+      q = q.eq("state", "in_transit").order("created_at", { ascending: false });
+    }
     if (variantId) q = q.eq("variant_id", variantId);
     const { data, error } = await q;
     if (error) throw error;
@@ -52,6 +66,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         fromName: names.get(String(t.from_location_id)) ?? "Location",
         toName: names.get(String(t.to_location_id)) ?? "Location",
         createdAt: String(t.created_at),
+        receivedAt: t.received_at == null ? null : String(t.received_at),
         sku: variants.get(String(t.variant_id))?.sku ?? null,
         variantTitle: variants.get(String(t.variant_id))?.title ?? null,
       })),
@@ -79,6 +94,19 @@ export async function action({ request }: ActionFunctionArgs) {
     const qty = Math.trunc(Number(body.qty) || 0);
     const mode = body.mode === "in_transit" ? "in_transit" : "instant";
     if (!variantId || !from || !to || from === to || qty < 1) return jsonError(422, "invalid_transfer");
+    // Both endpoints must be active: a deactivated location holds no stock to
+    // send and must not silently start accumulating stock again.
+    const { data: activeLocs, error: locErr } = await getSupabase()
+      .from("location_dim")
+      .select("id")
+      .eq("shop_id", session.shopId)
+      .in("id", [from, to])
+      .eq("active", true);
+    if (locErr) throw locErr;
+    const activeIds = new Set((activeLocs ?? []).map((l) => String(l.id)));
+    if (!activeIds.has(from) || !activeIds.has(to)) {
+      return jsonError(422, "location_inactive", "This location is deactivated. Reactivate it first.");
+    }
     return jsonOk(await createTransfer(session.shopId, variantId, from, to, qty, mode));
   } catch (err) {
     if (err instanceof Error && err.message === "insufficient_stock") {

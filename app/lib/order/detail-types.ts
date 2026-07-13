@@ -1,0 +1,103 @@
+// DTO shapes for the unified order-detail read model (Task 9). Plain types
+// only, safe to import from the browser — no imports from .server files.
+// One shape serves both native (`orders`) and imported (`imported_order`)
+// orders so the detail route/screen (Tasks 10-12) never branches on source.
+
+import type { OrderReturn } from "./returns-types";
+
+export interface OrderDetailLine {
+  id: string;
+  /** Owned variant_dim id, for the Edit-items variant picker to keep an existing line's identity
+   *  when the merchant only changes its quantity. Null for an imported (Shopify-paid) line — those
+   *  key off sku_dim, not an owned variant, and are read-only besides. */
+  variantId: string | null;
+  title: string;
+  sku: string | null;
+  /** Effective quantity today (snapshot minus any reductions) — what the line actually totals. */
+  quantity: number;
+  /** Units reduced off this line via order_line_edit; 0 for an unedited line. Additive detail
+   *  alongside `quantity`, not a replacement for it. */
+  reducedQuantity: number;
+  unitPriceCents: number;
+  fulfilledQuantity: number;
+}
+
+export interface OrderDetailFulfillment {
+  id: string;
+  createdAt: string;
+  trackingNumber: string | null;
+  carrier: string | null;
+  notifiedAt: string | null;
+  units: number;
+  /** Purchased shipping label, when this fulfillment was created by a label buy. */
+  labelUrl: string | null;
+  labelCostCents: number | null;
+}
+
+export interface OrderTimelineEvent {
+  kind: "transition" | "note" | "refund" | "fulfillment" | "edit" | "return";
+  at: string;
+  title: string;
+  detail: string | null;
+  author: string | null;
+}
+
+/**
+ * Order + buyer-history signals (Phase 4 Task 4), read-time only. `stuckDays` is non-null exactly
+ * when `stuckUnfulfilled` is true. For an imported (Shopify-paid) order, `stuckUnfulfilled` is
+ * always false (no native fulfillment lifecycle is tracked for it) — the buyer signals still
+ * populate when the order's buyer_id is linked to a buyer_dim row, else the whole buyer-history
+ * trio reads all-quiet (see signals.server.ts's QUIET_BUYER_SIGNALS).
+ */
+export interface OrderSignals {
+  stuckUnfulfilled: boolean;
+  stuckDays: number | null;
+  repeatCustomer: boolean;
+  buyerOrderCount: number;
+  refundRisk: boolean;
+}
+
+export interface OrderDetail {
+  source: "calderyn" | "shopify";
+  id: string;
+  ref: string;
+  createdAt: string;
+  state: string;
+  financialStatus: string;
+  archivedAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  channel: string | null;
+  attribution: string | null;
+  currency: string;
+  subtotalCents: number;
+  shippingCents: number;
+  taxCents: number;
+  discountCents: number;
+  totalCents: number;
+  refundedCents: number;
+  remainingRefundableCents: number;
+  buyer: { id: string; email: string } | null;
+  shippingAddress: {
+    name: string | null;
+    line1: string;
+    line2: string | null;
+    city: string | null;
+    region: string | null;
+    postal: string | null;
+    country: string;
+  } | null;
+  lines: OrderDetailLine[];
+  fulfillments: OrderDetailFulfillment[];
+  tags: string[];
+  timeline: OrderTimelineEvent[];
+  /** Returns recorded against this order (Phase 4 Task 1). Always [] for an imported (Shopify-paid)
+   *  order — the returns spine only exists for native orders. */
+  returns: OrderReturn[];
+  /** true for imported (Shopify-paid) orders — no write actions on this surface. */
+  readOnly: boolean;
+  signals: OrderSignals;
+  /** True when the fulfill flow can offer "Buy shipping label": native fulfillable order
+   *  with a shipping address, not a store-pickup order, and an EasyPost credential on file. */
+  canBuyLabel: boolean;
+}

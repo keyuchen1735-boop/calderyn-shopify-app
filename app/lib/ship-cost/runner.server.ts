@@ -122,6 +122,7 @@ export async function runShipCostResolution(
         "id, customer_country, grams_sum, item_count, fulfillment_count, ship_cost_manual_cents, ship_cost_cents, ship_cost_source, ship_cost_confidence",
       )
       .eq("shop_id", shopId)
+      .order("id", { ascending: true })
       .range(from, to),
   );
   if (orderRows.length === 0) return;
@@ -289,6 +290,7 @@ export async function rollShipCostIntoSkuPnl(
       .select("id, created_at_source, ship_cost_cents")
       .eq("shop_id", shopId)
       .not("ship_cost_cents", "is", null)
+      .order("id", { ascending: true })
       .range(from, to),
   );
   if (orderFacts.length === 0) return;
@@ -299,6 +301,7 @@ export async function rollShipCostIntoSkuPnl(
       .from("order_line_fact")
       .select("id, order_id, sku_id, grams, quantity")
       .eq("shop_id", shopId)
+      .order("id", { ascending: true })
       .range(from, to),
   );
 
@@ -339,6 +342,7 @@ export async function rollShipCostIntoSkuPnl(
         "id, sku_id, day, revenue_cents, cogs_cents, ad_spend_attrib_cents, return_cents, ship_cost_cents, contribution_margin_cents",
       )
       .eq("shop_id", shopId)
+      .order("id", { ascending: true })
       .range(from, to),
   );
 

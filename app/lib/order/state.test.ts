@@ -47,6 +47,29 @@ describe("isLegalTransition", () => {
   });
 });
 
+describe("order state machine — fulfillment + cancel edges", () => {
+  it("knows partially_fulfilled", () => {
+    expect(ORDER_STATES).toContain("partially_fulfilled");
+  });
+  it.each([
+    ["paid", "partially_fulfilled", true],
+    ["paid", "fulfilled", true],
+    ["paid", "cancelled", true],
+    ["partially_fulfilled", "fulfilled", true],
+    ["partially_fulfilled", "cancelled", true],
+    ["partially_fulfilled", "partially_refunded", true],
+    ["fulfilled", "cancelled", false],
+    ["partially_fulfilled", "paid", false],
+    ["partially_fulfilled", "partially_fulfilled", false],
+    ["cancelled", "paid", false],
+  ] as const)("%s -> %s legal=%s", (from, to, legal) => {
+    expect(isLegalTransition(from, to)).toBe(legal);
+  });
+  it("throws visibly on an illegal edge", () => {
+    expect(() => assertLegalTransition("fulfilled", "cancelled")).toThrow(/illegal order transition/);
+  });
+});
+
 describe("assertLegalTransition", () => {
   it("returns void for a legal transition", () => {
     expect(() => assertLegalTransition("paid", "fulfilled")).not.toThrow();

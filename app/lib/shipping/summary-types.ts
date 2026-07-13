@@ -4,6 +4,8 @@
 /** Merchant ship-from address (shop_origin), or null when never configured. */
 export interface ShipOriginDto {
   street1: string;
+  /** Optional second address line; older cached summaries may not include it. */
+  street2?: string;
   city: string;
   state: string;
   zip: string;
@@ -72,6 +74,32 @@ export interface ShippingRoutes30d {
   hasInternationalDestinations: boolean;
 }
 
+/** Merchant rate rules (ship_rules), engine-neutral units: cents + whole days. */
+export interface ShipRulesDtoView {
+  markupPct: number;
+  handlingCents: number;
+  freeShipThresholdCents: number | null;
+  handlingDays: number;
+  /** Offer a free local-pickup option at checkout (fulfilled from the ship-from origin). */
+  pickupEnabled: boolean;
+  /** Optional buyer-facing pickup instructions shown under the checkout option. */
+  pickupNote: string | null;
+}
+
+/** One merchant flat rate row (ship_flat_rate), browser-safe. */
+export interface FlatRateRowView {
+  id: string;
+  label: string;
+  zone: "domestic" | "international" | "all";
+  maxWeightOz: number | null;
+  amountCents: number;
+  estTransitDays: number | null;
+  position: number;
+}
+
+/** Which rate source prices checkout right now. */
+export type RateSourceKindView = "carrier" | "flat" | "default";
+
 export interface ShippingSummary {
   origin: ShipOriginDto | null;
   carrierService: CarrierServiceDto | null;
@@ -79,4 +107,10 @@ export interface ShippingSummary {
   rateCard: RateCardRow[];
   quotes30d: Quotes30dSummary;
   routes30d: ShippingRoutes30d;
+  /** Optional only for compatibility with summaries cached before settings shipped. */
+  rules?: ShipRulesDtoView;
+  /** Optional only for compatibility with summaries cached before settings shipped. */
+  flatRates?: FlatRateRowView[];
+  /** Optional only for compatibility with summaries cached before settings shipped. */
+  rateSourceKind?: RateSourceKindView;
 }

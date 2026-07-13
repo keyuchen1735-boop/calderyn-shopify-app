@@ -26,6 +26,7 @@ function seg(nav: NavState): string {
       // Merchant SEO/AIO surface, nested under Store as "Preferences".
       return "store/preferences";
     case "orders":
+      if (param) return `orders/${encodeURIComponent(param)}`;
       return sub && sub !== "orders" ? `orders/${sub}` : "orders";
     case "catalog":
       return "products";
@@ -36,7 +37,7 @@ function seg(nav: NavState): string {
     case "products-transfers":
       return "products/transfers";
     case "collections":
-      return "products/collections";
+      return param ? `products/collections/${encodeURIComponent(param)}` : "products/collections";
     case "locations-settings":
       return "products/locations";
     case "product-editor":
@@ -97,7 +98,14 @@ export function parsePath(pathname: string): NavState | null {
     }
   });
   const [a, b, ...rest] = parts;
-  if (rest.length > 0) return null;
+  if (rest.length > 0) {
+    // The one legal three-segment shape: a collection detail URL. Everything
+    // else past two segments stays unaddressed.
+    if (a === "products" && b === "collections" && rest.length === 1) {
+      return { screen: "collections", param: rest[0], sub: null };
+    }
+    return null;
+  }
 
   switch (a) {
     case "autopilot":
@@ -109,7 +117,8 @@ export function parsePath(pathname: string): NavState | null {
       return is(ANALYTICS_SUBTABS, b) ? { screen: "analytics", param: null, sub: b } : null;
     case "orders":
       if (!b) return { screen: "orders", param: null, sub: "orders" };
-      return is(ORDERS_SUBTABS, b) ? { screen: "orders", param: null, sub: b } : null;
+      if (is(ORDERS_SUBTABS, b)) return { screen: "orders", param: null, sub: b };
+      return { screen: "orders", param: b, sub: null };
     case "products":
       if (!b) return { screen: "catalog", param: null, sub: null };
       if (b === "inventory") return { screen: "inventory", param: null, sub: null };

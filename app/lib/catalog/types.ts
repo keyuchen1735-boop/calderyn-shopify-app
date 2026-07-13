@@ -3,6 +3,24 @@
 // routes, and the editor UI (Plan B2).
 export type ProductStatus = "draft" | "active" | "archived";
 
+// Search-listing limits, shared by the server validator (hard clamps) and the
+// editor's counters/maxLength (soft advisory lengths) so they can't drift.
+export const SEO_TITLE_SOFT_MAX = 60;
+export const SEO_DESCRIPTION_SOFT_MAX = 160;
+export const SEO_TITLE_MAX = 70;
+export const SEO_DESCRIPTION_MAX = 200;
+
+/** What the Search-listing card needs: the stored override (null fields = no
+ *  override) plus the deterministic defaults the storefront serves without one. */
+export interface SeoListingVM {
+  metaTitle: string | null;
+  metaDescription: string | null;
+  defaultTitle: string;
+  defaultDescription: string;
+  /** Absolute prefix the handle is appended to (".../storefront/products/"). */
+  urlPrefix: string;
+}
+
 export interface OptionInput {
   name: string;
   values: string[];
@@ -12,6 +30,7 @@ export interface VariantInput {
   sku?: string;
   title?: string;
   retailPriceCents?: number;
+  compareAtPriceCents?: number;
   unitCostCents?: number;
   inventoryPolicy?: string;
   inventoryTracked?: boolean;
@@ -29,6 +48,10 @@ export interface VariantInput {
 export interface ProductInput {
   title: string;
   status: ProductStatus;
+  /** URL handle. Present only when the merchant edited it (update path); create
+   *  keeps generating its own. Normalized by validateProductInput (trim/lowercase,
+   *  slug-checked). */
+  handle?: string;
   vendor?: string;
   category?: string;
   description?: string;
@@ -36,6 +59,10 @@ export interface ProductInput {
   options?: OptionInput[];
   variants: VariantInput[];
   collectionIds?: string[];
+  /** Search-listing override for an existing-product update. Present only when the payload carried one;
+   *  normalized by validateProductInput (trimmed, clamped). Both fields empty
+   *  = remove the stored override (the deterministic draft wins again). */
+  seo?: { metaTitle: string; metaDescription: string };
 }
 export interface ProductSummary {
   id: string;
@@ -47,6 +74,7 @@ export interface ProductSummary {
 }
 export interface ProductDetail {
   id: string;
+  handle: string;
   title: string;
   status: ProductStatus;
   vendor: string | null;
@@ -59,6 +87,7 @@ export interface ProductDetail {
     sku: string | null;
     title: string;
     retailPriceCents: number | null;
+    compareAtPriceCents: number | null;
     unitCostCents: number | null;
     inventoryTracked: boolean | null;
     inventoryOnHand: number;

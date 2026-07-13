@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, catalogCacheKey } from "~/lib/dashboard/screen-cache";
-import { Card, Btn, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
+import { Card, Btn, ClearableSearchInput, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
+import { CDIcon } from "../icons";
 import { money } from "../format";
+import { CATALOG_SORTS, isCatalogSort, type CatalogSort } from "~/lib/catalog/catalog-sort";
 
 type StatusFilter = "All" | "active" | "draft" | "archived";
 
@@ -21,8 +23,8 @@ const STATUS_OPTIONS = [
   { value: "archived", label: "Archived" },
 ];
 
-// Design table: Product / Price / Status / Ship data.
-const GRID = "2fr 1fr 1fr 1fr";
+// Design table: checkbox / thumbnail / Product / Price / Status / Ship data.
+const GRID = "auto 36px 2fr 1fr 1fr 1fr";
 
 /** Ship-data cell copy — "Validated · <weight>kg" only when the product truly
  * passes the activation shipping check; the weight is the heaviest recorded
@@ -45,6 +47,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   const [total, setTotal] = useState(() => seeded?.total ?? 0);
   const [status, setStatus] = useState<StatusFilter>("All");
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<CatalogSort>("updated");
   const [loading, setLoading] = useState(() => !seeded);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -52,7 +55,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   // Debounce the search box so each keystroke doesn't fire a request.
   const [query, setQuery] = useState("");
   useEffect(() => {
-    const t = setTimeout(() => setQuery(search.trim()), 250);
+    const t = setTimeout(() => setQuery(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
 
@@ -61,47 +64,58 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   // Latest filter identity, read after an async load to detect a filter change
   // that happened while the request was in flight (a closure-captured copy can't,
   // since it would equal itself). Updated every render.
-  const filterToken = JSON.stringify([query, statusParam ?? ""]);
+  const filterToken = JSON.stringify([query, statusParam ?? "", sort]);
   const filterRef = useRef(filterToken);
   filterRef.current = filterToken;
 
+  // Shared by the filter-change effect below and the post-bulk-action refresh,
+  // so both paths run the exact same fetch + cache rules.
+  const load = useCallback(
+    (signal?: { alive: boolean }) => {
+      // Only the default sort seeds/writes the cache — a non-default sort is
+      // live-fetch-only so it never poisons the seeded default view.
+      const key = catalogCacheKey(query, statusParam);
+      const cached = sort === "updated" ? cachedScreenData<CatalogPage>(key) : undefined;
+      if (cached) {
+        // Last-known rows for this filter paint immediately — no skeleton, no
+        // "Loading…" caption; the fetch below silently revalidates them.
+        setProducts(cached.products);
+        setTotal(cached.total);
+      }
+      setLoading(!cached);
+      setError(null);
+      client
+        .fetchProducts({ search: query || undefined, status: statusParam, sort })
+        .then((r) => {
+          if (sort === "updated") cacheScreenData(key, { products: r.products, total: r.total });
+          if (signal && !signal.alive) return;
+          setProducts(r.products);
+          setTotal(r.total);
+        })
+        .catch((err: unknown) => {
+          if (signal && !signal.alive) return;
+          setError(err instanceof DashboardApiError ? err.message : "Couldn't load products.");
+        })
+        .finally(() => {
+          if (!signal || signal.alive) setLoading(false);
+        });
+    },
+    [query, statusParam, sort],
+  );
+
   useEffect(() => {
-    let alive = true;
-    const key = catalogCacheKey(query, statusParam);
-    const cached = cachedScreenData<CatalogPage>(key);
-    if (cached) {
-      // Last-known rows for this filter paint immediately — no skeleton, no
-      // "Loading…" caption; the fetch below silently revalidates them.
-      setProducts(cached.products);
-      setTotal(cached.total);
-    }
-    setLoading(!cached);
-    setError(null);
-    client
-      .fetchProducts({ search: query || undefined, status: statusParam })
-      .then((r) => {
-        cacheScreenData(key, { products: r.products, total: r.total });
-        if (!alive) return;
-        setProducts(r.products);
-        setTotal(r.total);
-      })
-      .catch((err: unknown) => {
-        if (!alive) return;
-        setError(err instanceof DashboardApiError ? err.message : "Couldn't load products.");
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+    const signal = { alive: true };
+    load(signal);
     return () => {
-      alive = false;
+      signal.alive = false;
     };
-  }, [query, statusParam]);
+  }, [load]);
 
   const loadMore = async () => {
     const token = filterRef.current;
     setLoadingMore(true);
     try {
-      const r = await client.fetchProducts({ search: query || undefined, status: statusParam, offset: products.length });
+      const r = await client.fetchProducts({ search: query || undefined, status: statusParam, sort, offset: products.length });
       // The merchant changed the filter mid-flight: discard this page so stale
       // rows from the old filter don't append to the new list.
       if (filterRef.current !== token) return;
@@ -120,6 +134,133 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   };
 
   const filtered = Boolean(query) || status !== "All";
+
+  // --- bulk selection ---------------------------------------------------------
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Key the reset on the id COMPOSITION, not the array identity: a background
+  // revalidation of the seeded cache lands a new array of the same rows, and
+  // clearing on it would wipe an in-progress selection mid-click. A real
+  // page/filter change still changes the ids and clears.
+  const idsKey = useMemo(() => products.map((p) => p.id).join("|"), [products]);
+  useEffect(() => {
+    setSelected(new Set());
+  }, [idsKey]);
+
+  const allSelected = products.length > 0 && products.every((p) => selected.has(p.id));
+
+  const toggleRow = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    setSelected((prev) => {
+      const allOn = products.length > 0 && products.every((p) => prev.has(p.id));
+      return new Set(allOn ? [] : products.map((p) => p.id));
+    });
+  }, [products]);
+
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [collections, setCollections] = useState<client.CollectionVM[] | null>(null);
+  const [collectionId, setCollectionId] = useState("");
+
+  // Collections load lazily on the FIRST selection — the bulk bar's picker is the
+  // only consumer, so an idle Catalog visit never pays for the extra request. A
+  // failed fetch resets the flag so the next selection change retries.
+  const collectionsRequested = useRef(false);
+  useEffect(() => {
+    if (selected.size === 0 || collectionsRequested.current) return;
+    collectionsRequested.current = true;
+    client
+      .fetchCollections()
+      .then(setCollections)
+      .catch((err: unknown) => {
+        collectionsRequested.current = false;
+        app.toast(
+          err instanceof DashboardApiError ? err.message : "Couldn't load collections.",
+          "warn",
+          "critical",
+        );
+      });
+  }, [selected, app]);
+
+  const titleById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of products) m.set(p.id, p.title);
+    return m;
+  }, [products]);
+
+  const summarizeBulk = useCallback(
+    (results: client.BulkProductResultVM[], verb: string) => {
+      const ok = results.filter((r) => r.ok);
+      const failed = results.filter((r) => !r.ok);
+      if (failed.length === 0) {
+        app.toast(`${ok.length} ${verb}.`, "check", "success");
+        return;
+      }
+      app.toast(`${ok.length} of ${results.length} ${verb}. ${failed.length} failed.`, "warn", "critical");
+      if (failed.length <= 3) {
+        const titles = failed.map((f) => titleById.get(f.productId) ?? f.productId).join(", ");
+        app.toast(`Failed: ${titles}`, "warn", "critical");
+      } else {
+        app.toast("Check the products.", "warn", "critical");
+      }
+    },
+    [titleById, app],
+  );
+
+  const bulkStatus = async (
+    nextStatus: "active" | "draft" | "archived",
+    verb: string,
+    confirmMessage?: string,
+  ) => {
+    const ids = Array.from(selected);
+    if (ids.length === 0 || bulkBusy) return;
+    if (confirmMessage && !window.confirm(confirmMessage)) return;
+    setBulkBusy(true);
+    try {
+      const { results } = await client.bulkSetProductStatus(ids, nextStatus);
+      summarizeBulk(results, verb);
+      setSelected(new Set());
+      load();
+    } catch (err) {
+      app.toast(
+        err instanceof DashboardApiError ? err.message : "Couldn't update these products.",
+        "warn",
+        "critical",
+      );
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const bulkAddToCollection = async () => {
+    const ids = Array.from(selected);
+    if (!collectionId || ids.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    try {
+      const { results } = await client.bulkAddProductsToCollection(ids, collectionId);
+      summarizeBulk(results, "added to collection");
+      setSelected(new Set());
+      load();
+    } catch (err) {
+      app.toast(
+        err instanceof DashboardApiError ? err.message : "Couldn't add these products.",
+        "warn",
+        "critical",
+      );
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  // The archived tab flips the archive button into a way back out; everywhere
+  // else it archives (with a confirm — it removes products from the storefront).
+  const isArchivedView = status === "archived";
 
   return (
     <div className="cd-screen">
@@ -140,16 +281,83 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
       </header>
 
       <div className="flex items-center gap-2.5" style={{ marginBottom: 10, flexWrap: "wrap" }}>
-        <input
-          className="cd-input"
-          placeholder="Search products"
-          aria-label="Search products"
+        <ClearableSearchInput
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ width: "auto", minWidth: 220, flex: "1 1 220px" }}
+          onChange={setSearch}
+          placeholder="Search products"
+          ariaLabel="Search products"
         />
         <Segmented small value={status} onChange={(v) => setStatus(v as StatusFilter)} options={STATUS_OPTIONS} />
+        <select
+          className="cd-input"
+          value={sort}
+          onChange={(e) => {
+            if (isCatalogSort(e.target.value)) setSort(e.target.value);
+          }}
+          aria-label="Sort products"
+          style={{ width: "auto" }}
+        >
+          {CATALOG_SORTS.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
       </div>
+
+      {selected.size > 0 && (
+        <Card>
+          <div className="flex items-center gap-3" style={{ flexWrap: "wrap" }}>
+            <span className="cd-row-title">{selected.size} selected</span>
+            <Btn small icon="check" disabled={bulkBusy} onClick={() => bulkStatus("active", "set to active")}>
+              Set active
+            </Btn>
+            <Btn small disabled={bulkBusy} onClick={() => bulkStatus("draft", "set to draft")}>
+              Set draft
+            </Btn>
+            {isArchivedView ? (
+              <Btn small icon="archive" disabled={bulkBusy} onClick={() => bulkStatus("draft", "unarchived to draft")}>
+                Unarchive to draft
+              </Btn>
+            ) : (
+              <Btn
+                small
+                icon="archive"
+                disabled={bulkBusy}
+                onClick={() => bulkStatus("archived", "archived", `Archive ${selected.size} products?`)}
+              >
+                Archive
+              </Btn>
+            )}
+            <div className="flex items-center gap-2">
+              <select
+                className="cd-input"
+                aria-label="Collection to add to"
+                value={collectionId}
+                onChange={(e) => setCollectionId(e.target.value)}
+                disabled={bulkBusy || !collections || collections.length === 0}
+                style={{ width: 190 }}
+              >
+                <option value="">
+                  {collections === null
+                    ? "Loading collections…"
+                    : collections.length === 0
+                      ? "No collections yet"
+                      : "Add to collection…"}
+                </option>
+                {(collections ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.title}
+                  </option>
+                ))}
+              </select>
+              <Btn small icon="tag" disabled={bulkBusy || !collectionId} onClick={bulkAddToCollection}>
+                Add
+              </Btn>
+            </div>
+          </div>
+        </Card>
+      )}
 
       <Card pad={false}>
         {loading ? (
@@ -165,19 +373,43 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
             onAction={filtered ? undefined : () => app.navigate("product-editor", "new")}
           />
         ) : (
-          <>
+          // Six columns can't compress into a phone width — the table pans
+          // sideways inside the card instead of crushing every cell.
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 680 }}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
+              <span>
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  aria-label="Select all products on this page"
+                />
+              </span>
+              <span aria-hidden="true" />
               <span>Product</span>
               <span>Price</span>
               <span>Status</span>
               <span>Ship data</span>
             </div>
             {products.map((p) => (
-              <button
+              // A div-with-button-semantics rather than a real <button>: each row
+              // nests an interactive checkbox, which is invalid inside <button>.
+              <div
                 key={p.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 className="cd-trow"
                 onClick={() => app.navigate("product-editor", p.id)}
+                onKeyDown={(e) => {
+                  // Only when the row itself is focused — a Space keyup on the
+                  // nested checkbox bubbles here and must not open the editor.
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    app.navigate("product-editor", p.id);
+                  }
+                }}
                 style={{
                   gridTemplateColumns: GRID,
                   width: "100%",
@@ -189,7 +421,45 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
                   cursor: "pointer",
                 }}
               >
-                <div className="cd-row-title truncate">{p.title}</div>
+                <div onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(p.id)}
+                    onChange={() => toggleRow(p.id)}
+                    aria-label={`Select ${p.title}`}
+                  />
+                </div>
+                <div
+                  style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: 7,
+                    overflow: "hidden",
+                    background: "var(--gray-bg)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {p.imageUrl ? (
+                    <img
+                      src={p.imageUrl}
+                      alt=""
+                      loading="lazy"
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  ) : (
+                    <CDIcon name="bag" size={15} />
+                  )}
+                </div>
+                <div>
+                  <div className="cd-row-title truncate">{p.title}</div>
+                  {p.variantCount > 1 && (
+                    <div className="cd-caption">
+                      {p.variantCount} variant{p.variantCount === 1 ? "" : "s"}
+                    </div>
+                  )}
+                </div>
                 <div className="cd-row-num tabular-nums">
                   {p.priceCents != null ? money(p.priceCents) : "—"}
                 </div>
@@ -202,9 +472,10 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
                 >
                   {shipLabel(p)}
                 </div>
-              </button>
+              </div>
             ))}
-          </>
+            </div>
+          </div>
         )}
       </Card>
 

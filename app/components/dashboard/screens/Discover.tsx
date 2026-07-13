@@ -4,7 +4,7 @@
 // owned catalog + supplier link and generates a draft store.
 import { useEffect, useState } from "react";
 import type { DashboardCtx } from "../context";
-import { Card, Btn, Pill, Placeholder, TableSkeleton } from "../ui";
+import { Card, Btn, Pan, Pill, Placeholder, TableSkeleton } from "../ui";
 import { cachedScreenData, cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
   fetchDiscover,
@@ -44,9 +44,17 @@ export default function Discover({ app }: { app: DashboardCtx }) {
   async function pick(sourceProductId: string) {
     setPicking(sourceProductId);
     try {
-      await pickDiscoverProduct(sourceProductId);
-      app.toast("Product added — building your store…", "sparkle");
-      app.navigate("storefront"); // land on the Store builder with the fresh draft
+      const result = await pickDiscoverProduct(sourceProductId);
+      // The auto-build can be refused (running experiment, burst limit, daily AI quota) while
+      // the pick itself succeeded — say so honestly instead of announcing a build that never runs.
+      if (result.storeRunId) {
+        app.toast("Product added — building your store…", "sparkle");
+      } else if (result.storeBuildSkipped === "experiment_running") {
+        app.toast("Product added. Store rebuild skipped — decide your running experiment first.");
+      } else {
+        app.toast("Product added. Store rebuild skipped for now — rebuild it from the Store screen.");
+      }
+      app.navigate("storefront"); // land on the Store builder
     } catch {
       app.toast("Could not add that product");
     } finally {
@@ -66,6 +74,7 @@ export default function Discover({ app }: { app: DashboardCtx }) {
         />
       ) : (
         <Card pad={false}>
+          <Pan min={640}>
           <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
             <span>Product</span>
             <span>Virality</span>
@@ -112,6 +121,7 @@ export default function Discover({ app }: { app: DashboardCtx }) {
               </span>
             </div>
           ))}
+          </Pan>
         </Card>
       )}
     </div>

@@ -1,8 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
+// Shape of the payment_intent row the charge.refunded / charge.dispute.created lookup returns.
+interface PiLookupRow {
+  id: string;
+  shop_id: string;
+  order_ref: string | null;
+  currency: string;
+}
+
 // Hoisted mock handles shared by the Stripe SDK + Supabase mocks below.
 const h = vi.hoisted(() => ({
   piCreate: vi.fn(),
+  piRetrieve: vi.fn(),
+  refundsList: vi.fn(),
   constructEvent: vi.fn(),
   insert: vi.fn(),
   upsert: vi.fn(),
@@ -10,34 +20,104 @@ const h = vi.hoisted(() => ({
   transitionOrder: vi.fn(),
   emitPaidOrder: vi.fn(),
   commitReservation: vi.fn(),
+  saleFallbackForOrder: vi.fn(),
+  // inventory_reservation lookup (paid-without-hold fallback gate) by checkout_ref. Default: a row
+  // is found (as a normal checkout would have — held then committed), so the fallback is NOT
+  // triggered by default; tests that need the no-hold path override this to an empty array.
+  reservationLookup: vi.fn(async (): Promise<{ data: Array<{ id: string }> | null; error: null }> => ({
+    data: [{ id: "resv-1" }],
+    error: null,
+  })),
   routedCreate: vi.fn(),
   applyAccountUpdate: vi.fn(),
-  // Current orders.state the mock returns for the redelivery self-heal read. Default 'paid' so the
+  // payment_intent row lookup by stripe_pi_id (charge.refunded / charge.dispute.created). Default:
+  // not found ("charge not originated by Calderyn") — tests that need a match override it.
+  piLookup: vi.fn(async (): Promise<{ data: PiLookupRow | null; error: null }> => ({ data: null, error: null })),
+  // payment_intent rows for an order_ref (findOtherSucceededPaymentIntentId, the duplicate-capture
+  // CRITICAL log's best-effort "other PI id" lookup). Default: none — tests that need the CRITICAL
+  // log to name a prior PI override this.
+  piListLookup: vi.fn(async (): Promise<{ data: Array<{ stripe_pi_id: string; status: string }>; error: null }> => ({
+    data: [],
+    error: null,
+  })),
+  // Captures every orders.update(patch) call (financial_status stamps) for assertion.
+  ordersUpdate: vi.fn(),
+  // Current orders.state the mock returns for the redelivery self-heal read / the charge.refunded
+  // reconciliation read / the paid-without-hold fallback's state gate. Default 'paid' so the
   // ordinary duplicate delivery treats the order as already-advanced and does not re-transition.
   orderState: "paid" as string,
+  // Current orders.total_cents the mock returns alongside orderState (fix C2c's amount-mismatch
+  // sentinel). Default matches succeededEvent's amount_received (2500) so the ordinary case never
+  // logs a spurious mismatch; tests exercising the mismatch override this.
+  orderTotalCents: 2500 as number,
 }));
 
-// Server SDK: default export is the Stripe class; instances expose paymentIntents + webhooks.
+// Server SDK: default export is the Stripe class; instances expose paymentIntents + webhooks +
+// refunds (charge.refunded pulls the charge's authoritative refund list here).
 vi.mock("stripe", () => ({
   default: class {
-    paymentIntents = { create: h.piCreate };
+    paymentIntents = { create: h.piCreate, retrieve: h.piRetrieve };
+    refunds = { list: h.refundsList };
     webhooks = { constructEvent: h.constructEvent };
   },
 }));
 
-// Service-role Supabase client. `from(...).insert` routes to h.insert (payment_intent persist);
-// `from("orders").update(...).eq(shop).eq(id).eq(state)` is the financial_status='paid' stamp — a
-// chainable no-op resolving { error: null } (three .eq() calls: shop_id, id, and the state guard).
+// Service-role Supabase client, routed by table name.
+// "payment_intent": insert/upsert (existing PI persist/reconcile paths) + a select().eq().maybeSingle()
+// lookup by stripe_pi_id for charge.refunded / charge.dispute.created, resolved by h.piLookup.
+// "orders" (default): select().eq().eq().maybeSingle() for the state read (redelivery self-heal +
+// charge.refunded reconciliation), and a chainable update() (any number of .eq()/.in() calls then
+// awaited) for the financial_status stamps — captured via h.ordersUpdate.
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
-    from: () => ({
-      insert: h.insert,
-      upsert: h.upsert,
-      update: () => ({ eq: () => ({ eq: () => ({ eq: () => Promise.resolve({ error: null }) }) }) }),
-      // orders.state read for the redelivery self-heal (recoverStrandedPaidOrder): returns the
-      // configurable h.orderState so a test can simulate a still-stranded checkout_pending order.
-      select: () => ({ eq: () => ({ eq: () => ({ maybeSingle: () => Promise.resolve({ data: { state: h.orderState }, error: null }) }) }) }),
-    }),
+    from: (table: string) => {
+      if (table === "payment_intent") {
+        return {
+          insert: h.insert,
+          upsert: h.upsert,
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => h.piLookup(),
+              // findOtherSucceededPaymentIntentId awaits select().eq() directly (no maybeSingle) —
+              // a plain array read, backed by h.piListLookup.
+              then: (resolve: (r: { data: unknown; error: null }) => void) => h.piListLookup().then(resolve),
+            }),
+          }),
+        };
+      }
+      if (table === "inventory_reservation") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                in: () => ({ limit: () => h.reservationLookup() }),
+              }),
+            }),
+          }),
+        };
+      }
+      return {
+        insert: h.insert,
+        upsert: h.upsert,
+        update: (patch: Record<string, unknown>) => {
+          h.ordersUpdate(patch);
+          const chain: { eq: () => typeof chain; in: () => typeof chain; then: (resolve: (r: { error: null }) => void) => void } = {
+            eq: () => chain,
+            in: () => chain,
+            then: (resolve) => resolve({ error: null }),
+          };
+          return chain;
+        },
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({ data: { state: h.orderState, total_cents: h.orderTotalCents }, error: null }),
+            }),
+          }),
+        }),
+      };
+    },
     rpc: h.rpc,
   }),
 }));
@@ -49,7 +129,10 @@ vi.mock("~/lib/order/order.server", () => ({ transitionOrder: h.transitionOrder 
 vi.mock("~/lib/order/emit.server", () => ({ emitPaidOrder: h.emitPaidOrder }));
 // commitReservation turns the checkout's held reservations into on_hand decrements on payment
 // success; the engine RPCs are unit-tested in the inventory suite — here we assert the WIRING.
-vi.mock("~/lib/inventory/engine.server", () => ({ commitReservation: h.commitReservation }));
+vi.mock("~/lib/inventory/engine.server", () => ({
+  commitReservation: h.commitReservation,
+  saleFallbackForOrder: h.saleFallbackForOrder,
+}));
 
 // Routing + fallback + decline semantics are unit-tested against
 // createRoutedPaymentIntent in connect.server.test.ts; here we assert the WIRING —
@@ -83,9 +166,16 @@ beforeEach(() => {
   });
   h.emitPaidOrder.mockResolvedValue({ externalId: "gid://calderyn/Order/order-1", sourceVersion: 1, lineCount: 1, clickRefCount: 0, skipped: false });
   h.commitReservation.mockResolvedValue(undefined);
+  h.saleFallbackForOrder.mockResolvedValue({ decremented: 0 });
+  h.reservationLookup.mockResolvedValue({ data: [{ id: "resv-1" }], error: null });
   h.applyAccountUpdate.mockResolvedValue(true);
   h.upsert.mockResolvedValue({ error: null });
   h.orderState = "paid";
+  h.orderTotalCents = 2500;
+  // clearAllMocks() preserves prior mockResolvedValue overrides, so re-assert the "not found"
+  // default every test to avoid bleed-through from a previous test's override.
+  h.piLookup.mockResolvedValue({ data: null, error: null });
+  h.piListLookup.mockResolvedValue({ data: [], error: null });
 });
 
 describe("createPaymentIntent", () => {
@@ -140,12 +230,16 @@ describe("createPaymentIntent", () => {
 
     await createPaymentIntent("shop-1", 10000, "usd", "order-2");
 
-    expect(h.routedCreate).toHaveBeenCalledWith("shop-1", {
-      amount: 10000,
-      currency: "usd",
-      automatic_payment_methods: { enabled: true },
-      metadata: { shop_id: "shop-1", order_ref: "order-2" },
-    });
+    expect(h.routedCreate).toHaveBeenCalledWith(
+      "shop-1",
+      {
+        amount: 10000,
+        currency: "usd",
+        automatic_payment_methods: { enabled: true },
+        metadata: { shop_id: "shop-1", order_ref: "order-2" },
+      },
+      { readiness: undefined },
+    );
     expect(h.insert).toHaveBeenCalledWith(
       expect.objectContaining({ stripe_account_id: "acct_1", application_fee_cents: 280 }),
     );
@@ -329,6 +423,8 @@ describe("processStripeEvent", () => {
 
     it("provisions the payment_intent row from the session and does no money work", async () => {
       h.constructEvent.mockReturnValue(sessionEvent);
+      // Platform-charged session (demo shop): the PI carries no transfer_data.
+      h.piRetrieve.mockResolvedValue({ id: "pi_hosted_1", transfer_data: null, application_fee_amount: null });
 
       const res = await processStripeEvent("raw-body", "sig");
 
@@ -341,6 +437,8 @@ describe("processStripeEvent", () => {
           order_ref: "order-9",
           amount_cents: 50,
           currency: "usd",
+          stripe_account_id: null,
+          application_fee_cents: null,
         },
         { onConflict: "stripe_pi_id" },
       );
@@ -348,6 +446,36 @@ describe("processStripeEvent", () => {
       expect(h.rpc).not.toHaveBeenCalled();
       expect(h.transitionOrder).not.toHaveBeenCalled();
       expect(h.emitPaidOrder).not.toHaveBeenCalled();
+    });
+
+    it("stamps the routing columns for a destination-routed session so refunds reverse the transfer", async () => {
+      // Hosted-session charges route to the merchant like every other site; the refund
+      // path decides reverse_transfer off this row's stripe_account_id — a null stamp on
+      // a routed charge would make the platform pay the buyer while the merchant keeps
+      // the transferred funds.
+      h.constructEvent.mockReturnValue(sessionEvent);
+      h.piRetrieve.mockResolvedValue({
+        id: "pi_hosted_1",
+        transfer_data: { destination: "acct_1" },
+        application_fee_amount: 42,
+      });
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.piRetrieve).toHaveBeenCalledWith("pi_hosted_1");
+      expect(h.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ stripe_account_id: "acct_1", application_fee_cents: 42 }),
+        { onConflict: "stripe_pi_id" },
+      );
+    });
+
+    it("500s (Stripe redelivers) when the PI read fails, rather than reconciling a routed charge as platform", async () => {
+      h.constructEvent.mockReturnValue(sessionEvent);
+      h.piRetrieve.mockRejectedValue(new Error("stripe down"));
+
+      await expect(processStripeEvent("raw-body", "sig")).rejects.toThrow(/stripe down/);
+      expect(h.upsert).not.toHaveBeenCalled();
     });
 
     it("ACKs (200) and writes nothing when the session lacks shop_id or a payment_intent", async () => {
@@ -432,15 +560,78 @@ describe("processStripeEvent", () => {
       expect(h.emitPaidOrder).toHaveBeenCalledTimes(2); // emit re-ran -> order_fact lands on the retry
     });
 
-    it("does not force-pay an order that is not checkout_pending — the state machine rejection propagates and nothing is emitted", async () => {
+    it("treats a genuinely-new PI succeeding against an already-paid order as a duplicate capture: CRITICAL log, 200, no throw", async () => {
+      // Two live pay sessions each mint their own PaymentIntent; the buyer completes both. This
+      // event is a genuinely NEW Stripe event (gatedRpc treats it as first delivery), but the
+      // order already reached 'paid' through the OTHER PaymentIntent, so transitionOrder's
+      // paid->paid attempt is illegal. Fix 2c: surface it loudly instead of failing the delivery.
       h.constructEvent.mockReturnValue(succeededEvent);
       gatedRpc();
       h.transitionOrder.mockRejectedValueOnce(
         new Error("illegal order transition paid -> paid; allowed from paid: fulfilled, refunded"),
       );
+      h.orderState = "paid"; // re-read confirms the order is already paid-like
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/CRITICAL duplicate capture/));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("order-1"));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("pi_1"));
+      // The already-paid-order steps below still run as state-guarded no-ops — money/inventory
+      // bookkeeping stays correct even though the transition itself was refused.
+      expect(h.emitPaidOrder).toHaveBeenCalledTimes(1);
+      expect(h.commitReservation).toHaveBeenCalledTimes(1);
+      errorSpy.mockRestore();
+    });
+
+    it("names the PRIOR PaymentIntent id in the CRITICAL log when one can be found", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent); // this event's PI is pi_1
+      gatedRpc();
+      h.transitionOrder.mockRejectedValueOnce(
+        new Error("illegal order transition paid -> paid; allowed from paid: fulfilled, refunded"),
+      );
+      h.orderState = "paid";
+      h.piListLookup.mockResolvedValue({
+        data: [
+          { stripe_pi_id: "pi_1", status: "succeeded" },
+          { stripe_pi_id: "pi_0_prior", status: "succeeded" },
+        ],
+        error: null,
+      });
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("pi_0_prior"));
+      errorSpy.mockRestore();
+    });
+
+    it("rethrows an illegal transition that is NOT the duplicate-capture shape (order isn't paid-like)", async () => {
+      // Some OTHER illegal transition (e.g. the order was concurrently cancelled) must not be
+      // silently swallowed just because the error message matches "illegal order transition".
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.transitionOrder.mockRejectedValueOnce(
+        new Error("illegal order transition cancelled -> paid; allowed from cancelled: (none — terminal state)"),
+      );
+      h.orderState = "cancelled";
 
       await expect(processStripeEvent("raw-body", "sig")).rejects.toThrow(/illegal order transition/);
       expect(h.emitPaidOrder).not.toHaveBeenCalled();
+    });
+
+    it("normal first payment is unaffected: no console.error, clean transition", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(errorSpy).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
     });
 
     it("does not transition on a payment_failed event (no capture, no paid state)", async () => {
@@ -514,6 +705,106 @@ describe("processStripeEvent", () => {
       expect(h.transitionOrder).toHaveBeenCalledTimes(1); // never re-transitioned
     });
 
+    it("falls back to a direct stock decrement when NO reservation was ever held for the order", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [], error: null }); // nothing held
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(h.saleFallbackForOrder).toHaveBeenCalledTimes(1);
+      expect(h.saleFallbackForOrder).toHaveBeenCalledWith("shop-1", "order-1");
+    });
+
+    it("does NOT fall back when a reservation was held for the order (the ordinary commit path)", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [{ id: "resv-1" }], error: null });
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(h.saleFallbackForOrder).not.toHaveBeenCalled();
+    });
+
+    it("falls back when a reservation was released (30-min hold TTL expired before payment)", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [], error: null }); // no held/committed rows
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(h.saleFallbackForOrder).toHaveBeenCalledTimes(1);
+      expect(h.saleFallbackForOrder).toHaveBeenCalledWith("shop-1", "order-1");
+    });
+
+    it("fix C2b: does NOT call the stock fallback on a redelivery once the order has since moved to cancelled", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [], error: null }); // nothing held -> would fall back if not gated
+
+      await processStripeEvent("raw-body", "sig"); // first delivery: order still paid, fallback fires
+
+      h.orderState = "cancelled"; // the merchant cancelled the order between deliveries
+      await processStripeEvent("raw-body", "sig"); // redelivery (self-heal branch): must NOT fall back
+
+      expect(h.saleFallbackForOrder).toHaveBeenCalledTimes(1); // only the first delivery's call
+    });
+
+    it("fix C2b: does NOT call the stock fallback while the order is still checkout_pending (stranding window)", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [], error: null });
+      h.orderState = "checkout_pending";
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(h.saleFallbackForOrder).not.toHaveBeenCalled();
+    });
+
+    it("fix C2c: logs a loud AMOUNT MISMATCH when the captured amount differs from the order's total_cents (no throw)", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent); // amount_received: 2500
+      gatedRpc();
+      h.orderTotalCents = 3000; // the order actually totals 3000 cents
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/AMOUNT MISMATCH/));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("order-1"));
+      errorSpy.mockRestore();
+    });
+
+    it("fix C2c: no mismatch log when the captured amount matches the order's total_cents", async () => {
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.orderTotalCents = 2500; // matches amount_received
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      await processStripeEvent("raw-body", "sig");
+
+      expect(errorSpy).not.toHaveBeenCalledWith(expect.stringMatching(/AMOUNT MISMATCH/));
+      errorSpy.mockRestore();
+    });
+
+    it("never fails the webhook when the stock fallback throws — payment already happened, logged loudly instead", async () => {
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      h.constructEvent.mockReturnValue(succeededEvent);
+      gatedRpc();
+      h.reservationLookup.mockResolvedValue({ data: [], error: null });
+      h.saleFallbackForOrder.mockRejectedValueOnce(new Error("inventory_sale_fallback: deadlock"));
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.saleFallbackForOrder).toHaveBeenCalledTimes(1);
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/paid-without-hold stock fallback failed/),
+        expect.any(Error),
+      );
+      errSpy.mockRestore();
+    });
+
     it("skips the transition (with a warning) when a succeeded PI carries no order_ref", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       h.constructEvent.mockReturnValue({
@@ -529,6 +820,268 @@ describe("processStripeEvent", () => {
       expect(h.emitPaidOrder).not.toHaveBeenCalled();
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/no order_ref/));
       warn.mockRestore();
+    });
+  });
+
+  describe("charge.refunded (Stripe-dashboard-originated refunds)", () => {
+    function chargeRefundedEvent(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "evt_refund",
+        type: "charge.refunded",
+        created: 1_700_000_100,
+        data: {
+          object: {
+            id: "ch_1",
+            payment_intent: "pi_1",
+            ...overrides,
+          },
+        },
+      };
+    }
+
+    const succeededRefund = {
+      id: "re_1",
+      status: "succeeded",
+      amount: 1000,
+      currency: "usd",
+      created: 1_700_000_050,
+    };
+
+    it("records an external succeeded refund via record_refund_ledger and transitions the order to partially_refunded", async () => {
+      h.constructEvent.mockReturnValue(chargeRefundedEvent());
+      h.piLookup.mockResolvedValue({
+        data: { id: "pi-row-1", shop_id: "shop-1", order_ref: "order-1", currency: "usd" },
+        error: null,
+      });
+      h.refundsList.mockResolvedValue({ data: [succeededRefund] });
+      h.rpc.mockResolvedValue({
+        data: { captured_cents: 2500, refunded_cents: 1000, fully_refunded: false, inserted: true },
+        error: null,
+      });
+      h.orderState = "paid";
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.refundsList).toHaveBeenCalledWith({ charge: "ch_1", limit: 100 });
+      expect(h.rpc).toHaveBeenCalledWith("record_refund_ledger", {
+        p_shop_id: "shop-1",
+        p_payment_intent_id: "pi-row-1",
+        p_order_ref: "order-1",
+        p_amount_cents: 1000,
+        p_currency: "usd",
+        p_stripe_ref: "ch_1",
+        p_stripe_event_id: "re_1",
+        p_occurred_at: new Date(succeededRefund.created * 1000).toISOString(),
+      });
+      expect(h.transitionOrder).toHaveBeenCalledWith("shop-1", "order-1", "partially_refunded", "stripe:charge.refunded");
+      expect(h.ordersUpdate).toHaveBeenCalledWith({ financial_status: "partially_refunded" });
+    });
+
+    it("transitions to refunded when the RPC reports fully_refunded", async () => {
+      h.constructEvent.mockReturnValue(chargeRefundedEvent());
+      h.piLookup.mockResolvedValue({
+        data: { id: "pi-row-1", shop_id: "shop-1", order_ref: "order-1", currency: "usd" },
+        error: null,
+      });
+      h.refundsList.mockResolvedValue({ data: [succeededRefund] });
+      h.rpc.mockResolvedValue({
+        data: { captured_cents: 1000, refunded_cents: 1000, fully_refunded: true, inserted: true },
+        error: null,
+      });
+      h.orderState = "paid";
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.transitionOrder).toHaveBeenCalledWith("shop-1", "order-1", "refunded", "stripe:charge.refunded");
+      expect(h.ordersUpdate).toHaveBeenCalledWith({ financial_status: "refunded" });
+    });
+
+    it("is a no-op (ACK duplicate) when the refund already landed via executeRefundAction (RPC replay, inserted:false)", async () => {
+      h.constructEvent.mockReturnValue(chargeRefundedEvent());
+      h.piLookup.mockResolvedValue({
+        data: { id: "pi-row-1", shop_id: "shop-1", order_ref: "order-1", currency: "usd" },
+        error: null,
+      });
+      h.refundsList.mockResolvedValue({ data: [succeededRefund] });
+      h.rpc.mockResolvedValue({
+        data: { captured_cents: 2500, refunded_cents: 1000, fully_refunded: false, inserted: false },
+        error: null,
+      });
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: false, duplicate: true });
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+      expect(h.ordersUpdate).not.toHaveBeenCalled();
+    });
+
+    it("ACKs and calls no RPC for a charge with no matching payment_intent row", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      h.constructEvent.mockReturnValue(chargeRefundedEvent());
+      h.piLookup.mockResolvedValue({ data: null, error: null });
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: false, duplicate: false });
+      expect(h.rpc).not.toHaveBeenCalled();
+      expect(h.refundsList).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/charge not originated by Calderyn/));
+      warn.mockRestore();
+    });
+
+    it("does not re-transition when the order is already in the resolved state (identity move)", async () => {
+      h.constructEvent.mockReturnValue(chargeRefundedEvent());
+      h.piLookup.mockResolvedValue({
+        data: { id: "pi-row-1", shop_id: "shop-1", order_ref: "order-1", currency: "usd" },
+        error: null,
+      });
+      h.refundsList.mockResolvedValue({ data: [succeededRefund] });
+      h.rpc.mockResolvedValue({
+        data: { captured_cents: 1000, refunded_cents: 1000, fully_refunded: false, inserted: true },
+        error: null,
+      });
+      h.orderState = "partially_refunded"; // already partially_refunded -> resolvedState is identical
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+      // The financial_status stamp is still applied (best-effort, mirrors executeRefundAction's tail).
+      expect(h.ordersUpdate).toHaveBeenCalledWith({ financial_status: "partially_refunded" });
+    });
+
+    it("logs loudly and skips (never throws) an illegal transition, e.g. the order is still checkout_pending", async () => {
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      h.constructEvent.mockReturnValue(chargeRefundedEvent());
+      h.piLookup.mockResolvedValue({
+        data: { id: "pi-row-1", shop_id: "shop-1", order_ref: "order-1", currency: "usd" },
+        error: null,
+      });
+      h.refundsList.mockResolvedValue({ data: [succeededRefund] });
+      h.rpc.mockResolvedValue({
+        data: { captured_cents: 1000, refunded_cents: 1000, fully_refunded: false, inserted: true },
+        error: null,
+      });
+      h.orderState = "checkout_pending"; // checkout_pending -> partially_refunded is illegal
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+      expect(err).toHaveBeenCalledWith(expect.stringMatching(/cannot legally move to/));
+      err.mockRestore();
+    });
+
+    it("warns and skips reconciliation (but keeps the ledger write) when the payment_intent has no order_ref", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      h.constructEvent.mockReturnValue(chargeRefundedEvent());
+      h.piLookup.mockResolvedValue({
+        data: { id: "pi-row-1", shop_id: "shop-1", order_ref: null, currency: "usd" },
+        error: null,
+      });
+      h.refundsList.mockResolvedValue({ data: [succeededRefund] });
+      h.rpc.mockResolvedValue({
+        data: { captured_cents: 1000, refunded_cents: 1000, fully_refunded: false, inserted: true },
+        error: null,
+      });
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+      expect(h.ordersUpdate).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/no order_ref/));
+      warn.mockRestore();
+    });
+
+    it("skips ignored (non-succeeded) refunds on the charge and treats an all-ignored list as a no-op ACK", async () => {
+      h.constructEvent.mockReturnValue(chargeRefundedEvent());
+      h.piLookup.mockResolvedValue({
+        data: { id: "pi-row-1", shop_id: "shop-1", order_ref: "order-1", currency: "usd" },
+        error: null,
+      });
+      h.refundsList.mockResolvedValue({ data: [{ ...succeededRefund, status: "pending" }] });
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: false, duplicate: true });
+      expect(h.rpc).not.toHaveBeenCalled();
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+    });
+
+    it("ACKs and calls no RPC when the charge carries no payment_intent at all", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      h.constructEvent.mockReturnValue({
+        id: "evt_refund_no_pi",
+        type: "charge.refunded",
+        created: 1_700_000_100,
+        data: { object: { id: "ch_2", payment_intent: null } },
+      });
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: false, duplicate: false });
+      expect(h.piLookup).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/no payment_intent/));
+      warn.mockRestore();
+    });
+  });
+
+  describe("charge.dispute.created (dispute visibility)", () => {
+    function disputeEvent(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "evt_dispute",
+        type: "charge.dispute.created",
+        created: 1_700_000_200,
+        data: {
+          object: {
+            id: "dp_1",
+            payment_intent: "pi_1",
+            amount: 2500,
+            currency: "usd",
+            reason: "fraudulent",
+            ...overrides,
+          },
+        },
+      };
+    }
+
+    it("logs loudly and stamps financial_status='disputed' for a dispute on our payment_intent", async () => {
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      h.constructEvent.mockReturnValue(disputeEvent());
+      h.piLookup.mockResolvedValue({
+        data: { id: "pi-row-1", shop_id: "shop-1", order_ref: "order-1", currency: "usd" },
+        error: null,
+      });
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: true, duplicate: false });
+      expect(err).toHaveBeenCalledWith(
+        expect.stringMatching(/DISPUTE dp_1 on order order-1 \(shop shop-1\).*fraudulent/s),
+      );
+      expect(h.ordersUpdate).toHaveBeenCalledWith({ financial_status: "disputed" });
+      expect(h.rpc).not.toHaveBeenCalled();
+      expect(h.transitionOrder).not.toHaveBeenCalled();
+      err.mockRestore();
+    });
+
+    it("ACKs (warn, no error log) for a dispute on a payment_intent we don't recognize", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      h.constructEvent.mockReturnValue(disputeEvent());
+      h.piLookup.mockResolvedValue({ data: null, error: null });
+
+      const res = await processStripeEvent("raw-body", "sig");
+
+      expect(res).toEqual({ status: 200, processed: false, duplicate: false });
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/dispute not ours/));
+      expect(err).not.toHaveBeenCalled();
+      expect(h.ordersUpdate).not.toHaveBeenCalled();
+      warn.mockRestore();
+      err.mockRestore();
     });
   });
 });

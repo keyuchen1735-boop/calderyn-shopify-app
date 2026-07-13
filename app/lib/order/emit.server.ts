@@ -113,6 +113,15 @@ export async function emitPaidOrder(
     return { externalId, sourceVersion, lineCount: 0, clickRefCount: 0, skipped: true };
   }
 
+  // DELIBERATE NON-NETTING (orders phase 3, Task 3): this reads order_line.quantity — the
+  // immutable time-of-sale SNAPSHOT — directly, never effectiveLineQuantities. order_line_fact is
+  // a warehouse record of what was SOLD at checkout, not a live "what's this order worth today"
+  // view; a later reduction (order_line_edit) is a refund_fact, already emitted natively by
+  // executeRefundAction, not a rewrite of this fact row. Any Stripe redelivery that re-enters this
+  // function (this whole emit is self-guarded to only run while state==='paid', see above) must
+  // re-derive the SAME quantity it originally emitted, or the idempotent upsert below would
+  // silently overwrite a correct historical row with a post-edit number. See
+  // emit.server.test.ts's pinning test for the redelivery-after-edit case this guards.
   const linesRead = await sb
     .from("order_line")
     .select("id, variant_id, quantity, unit_price_cents")

@@ -13,9 +13,10 @@
 // order_fact. Mirror native orders into that view when the dashboard order surface is built
 // (CLAUDE.md "Dashboard parity"); the warehouse emit already feeds the analytics views for free.
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
 import { priceCart } from "./cart.server";
+import { lockQuote } from "~/lib/commerce/quote-store.server";
 import {
   upsertGuestBuyer,
   addBuyerAddress,
@@ -23,6 +24,7 @@ import {
   type BuyerAddressInput,
 } from "~/lib/buyer/identity.server";
 import { createPaymentIntent, isSupportedCurrency } from "~/lib/payments/stripe.server";
+import { paymentsReadiness, PaymentsNotReadyError } from "~/lib/payments/connect.server";
 import { quoteCart } from "~/lib/commerce/quote.server";
 import { reserveStock, releaseReservation } from "~/lib/inventory/engine.server";
 import { transitionOrder } from "./order.server";
@@ -76,6 +78,11 @@ export interface CheckoutResult {
   taxCents: number;
   totalCents: number;
   currency: string;
+  /** The priced shipping option's display name (buyer-chosen or cheapest), for the review step. */
+  shippingService: string | null;
+  /** Quoted delivery window (ISO calendar dates) for the priced option, when the carrier gave one. */
+  deliveryEarliest: string | null;
+  deliveryLatest: string | null;
 }
 
 /** A confirmed-order summary for the buyer-facing confirmation page. PII-free by construction. */
@@ -88,6 +95,7 @@ export interface ConfirmedOrder {
   totalCents: number;
   currency: string;
   createdAt: string;
+  shippingService: string | null;
   lines: Array<{ title: string; quantity: number; unitPriceCents: number }>;
 }
 
@@ -110,10 +118,18 @@ export async function createCheckout(
   cartId: string,
   buyer: CheckoutBuyer,
   attribution: Record<string, unknown> = {},
+  opts: { shippingService?: string | null } = {},
 ): Promise<CheckoutResult> {
   if (!shopId) throw new Error("shopId is required");
   if (!cartId) throw new Error("cartId is required");
   if (!buyer?.email) throw new Error("buyer.email is required to originate a checkout");
+
+  // Fail CLOSED before any write when the shop cannot accept payments (no fully-enabled
+  // Stripe connected account, and not a demo shop). Without this gate the charge would
+  // settle into the PLATFORM account — buyer money the merchant never sees. The checkout
+  // route renders an honest "not accepting payments yet" state off this same signal.
+  const readiness = await paymentsReadiness(shopId);
+  if (!readiness.ready) throw new PaymentsNotReadyError(shopId, readiness.reason);
 
   const priced = await priceCart(shopId, cartId);
   // When a shipping address is present, use the single source-of-truth quote engine (same as
@@ -128,24 +144,47 @@ export async function createCheckout(
   }
   let shippingCents = 0;
   let taxCents = 0;
+  let shippingService: string | null = null;
+  let deliveryEarliest: string | null = null;
+  let deliveryLatest: string | null = null;
   if (buyer.address) {
+    const destination = {
+      street1: buyer.address.line1 ?? "",
+      street2: buyer.address.line2 ?? undefined,
+      city: buyer.address.city ?? "",
+      state: buyer.address.region ?? "",
+      zip: buyer.address.postal ?? "",
+      country: buyer.address.country ?? "US",
+    };
     const quoted = await quoteCart(
       shopId,
       priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
-      {
-        street1: buyer.address.line1 ?? "",
-        street2: buyer.address.line2 ?? undefined,
-        city: buyer.address.city ?? "",
-        state: buyer.address.region ?? "",
-        zip: buyer.address.postal ?? "",
-        country: buyer.address.country ?? "US",
-      },
+      destination,
       // Pin the authoritative subtotal so quoteCart computes tax on what Stripe will actually
-      // charge (the snapshot price), not on a potentially-drifted live catalog price.
-      { subtotalCentsOverride: priced.subtotalCents },
+      // charge (the snapshot price), not on a potentially-drifted live catalog price. The
+      // buyer's chosen shipping option (when they picked one) prices as ITSELF or throws
+      // ShippingOptionUnavailableError — never a silent swap.
+      { subtotalCentsOverride: priced.subtotalCents, shippingService: opts.shippingService },
     );
     shippingCents = quoted.shippingCents;
     taxCents = quoted.taxCents;
+    shippingService = quoted.shippingService;
+    deliveryEarliest = quoted.deliveryEarliest;
+    deliveryLatest = quoted.deliveryLatest;
+
+    // Record the quote into commerce_quote_fact so storefront checkouts show up in the
+    // dashboard's 30d quote stats alongside the agentic surfaces. Best-effort ledger
+    // write: a stats hiccup must never lose a sale.
+    try {
+      const destinationHash = createHash("sha256")
+        .update(JSON.stringify([destination.zip, destination.country, destination.city]))
+        .digest("hex");
+      // clientId tags these rows as stat records, distinguishing them from redeemable
+      // agentic locks in the same table (nobody ever redeems a storefront row).
+      await lockQuote(shopId, quoted, { destinationHash, clientId: "storefront_checkout" });
+    } catch (err) {
+      console.warn(`[checkout] quote-fact write failed for shop ${shopId} (continuing):`, err);
+    }
   }
   const totalCents = priced.subtotalCents + shippingCents + taxCents;
 
@@ -187,6 +226,7 @@ export async function createCheckout(
       // state defaults to 'checkout_pending' (orders.state default); the order is BORN here.
       subtotal_cents: priced.subtotalCents,
       shipping_cents: shippingCents,
+      shipping_service: shippingService,
       tax_cents: taxCents,
       total_cents: totalCents,
       currency: priced.currency,
@@ -199,6 +239,24 @@ export async function createCheckout(
   if (!orderIns.data) throw new Error("orders insert returned no row");
   const orderId = String((orderIns.data as Record<string, unknown>).id);
 
+  // Cost snapshot (Phase 4 Task 1) + tracked-variant classification (oversell protection below), in
+  // ONE shop-scoped query. unit_cost_cents_snapshot is stamped onto order_line at insert time — same
+  // snapshot posture as unit_price_cents/title_snapshot — so a later catalog cost change never
+  // re-prices an already-sold line's profit read model. priced.lines (from priceCart) carries no
+  // cost column (buyer-facing price/title snapshot only), so this is a dedicated read; the oversell
+  // check below reuses its `tracked` set rather than re-querying variant_dim a second time.
+  const variantRes = await sb
+    .from("variant_dim")
+    .select("id, inventory_tracked, unit_cost_cents")
+    .eq("shop_id", shopId)
+    .in("id", priced.lines.map((l) => l.variantId));
+  if (variantRes.error) throw variantRes.error;
+  const variantRows = (variantRes.data ?? []) as Record<string, unknown>[];
+  const costByVariant = new Map<string, number | null>(
+    variantRows.map((r) => [String(r.id), r.unit_cost_cents == null ? null : Number(r.unit_cost_cents)]),
+  );
+  const tracked = new Set(variantRows.filter((r) => r.inventory_tracked === true).map((r) => String(r.id)));
+
   // Snapshot the cart lines onto the order (variant_id + price + title carried verbatim from
   // the cart_line snapshot — what the buyer saw is what is recorded on the order).
   const lineRows = priced.lines.map((l) => ({
@@ -208,6 +266,7 @@ export async function createCheckout(
     quantity: l.quantity,
     unit_price_cents: l.unitPriceCents,
     title_snapshot: l.titleSnapshot,
+    unit_cost_cents_snapshot: costByVariant.get(l.variantId) ?? null,
   }));
   const lineIns = await sb.from("order_line").insert(lineRows);
   if (lineIns.error) throw lineIns.error;
@@ -218,19 +277,7 @@ export async function createCheckout(
   // The reservation is keyed on the ORDER id: the Stripe webhook commits it by that same key on
   // payment success (turning holds into on_hand decrements), and the reaper releases it if the
   // checkout is abandoned. Untracked/digital lines (inventory_tracked false/null) hold no ledger
-  // balance, so they are skipped — reserving them would 422 a perfectly valid sale. Runs here,
-  // after the order + lines are persisted, so the checkout_ref (= orderId) is a stable key.
-  const trackedRes = await sb
-    .from("variant_dim")
-    .select("id, inventory_tracked")
-    .eq("shop_id", shopId)
-    .in("id", priced.lines.map((l) => l.variantId));
-  if (trackedRes.error) throw trackedRes.error;
-  const tracked = new Set(
-    ((trackedRes.data ?? []) as Record<string, unknown>[])
-      .filter((r) => r.inventory_tracked === true)
-      .map((r) => String(r.id)),
-  );
+  // balance, so they are skipped — reserving them would 422 a perfectly valid sale.
   if (tracked.size > 0) {
     const soldOut: string[] = [];
     for (const line of priced.lines) {
@@ -248,11 +295,38 @@ export async function createCheckout(
     }
   }
 
+  // No PaymentIntent exists until the create below returns, so on ANY failure here it
+  // is safe (and required) to unwind: free the holds and cancel the just-born order —
+  // otherwise a Stripe 5xx or a routing race leaves held stock blocking other buyers
+  // until the reaper, plus an orphan checkout_pending order. Cleanup failures are
+  // logged but never replace the original error: the route maps the ORIGINAL
+  // (PaymentsNotReadyError → honest 503, everything else → 502), and the reaper
+  // remains the backstop for holds a failed cleanup left behind.
+  let pi: Awaited<ReturnType<typeof createPaymentIntent>>;
+  try {
+    pi = await createPaymentIntent(shopId, totalCents, priced.currency, orderId, readiness);
+  } catch (err) {
+    const reason =
+      err instanceof PaymentsNotReadyError ? "checkout:payments_not_ready" : "checkout:payment_intent_failed";
+    try {
+      await releaseReservation(shopId, orderId);
+      await transitionOrder(shopId, orderId, "cancelled", reason);
+    } catch (cleanupErr) {
+      console.error(
+        `[checkout] failed to unwind order ${orderId} (shop ${shopId}) after PI-create failure; reaper will release holds:`,
+        cleanupErr,
+      );
+    }
+    throw err;
+  }
+
   // Mark the source cart consumed (cart → checkout_pending, the shared state
   // vocabulary) so open-basket surfaces (Orders → Draft carts, Customers →
   // "In cart now") stop presenting it as an open basket — the order created
-  // above is the record from here on. Best-effort: a failed flag must not
-  // fail a checkout that already has its order + lines written.
+  // above is the record from here on. Deliberately AFTER the PaymentIntent
+  // exists: a failed checkout must leave the cart an open basket (the buyer
+  // keeps it and the UI says so). Best-effort: a failed flag must not fail a
+  // checkout that already has its order + lines + PI written.
   const cartUpd = await sb
     .from("cart")
     .update({ state: "checkout_pending" })
@@ -264,8 +338,6 @@ export async function createCheckout(
     );
   }
 
-  const pi = await createPaymentIntent(shopId, totalCents, priced.currency, orderId);
-
   return {
     orderId,
     clientSecret: pi.clientSecret,
@@ -275,11 +347,14 @@ export async function createCheckout(
     taxCents,
     totalCents,
     currency: priced.currency,
+    shippingService,
+    deliveryEarliest,
+    deliveryLatest,
   };
 }
 
 const ORDER_SUMMARY_COLS =
-  "id, state, subtotal_cents, shipping_cents, tax_cents, total_cents, currency, created_at";
+  "id, state, subtotal_cents, shipping_cents, shipping_service, tax_cents, total_cents, currency, created_at";
 
 /**
  * IDOR-safe confirmation lookup (#2c-2): resolve an order by its unguessable confirmation token,
@@ -334,6 +409,7 @@ export async function findOrderByConfirmationToken(
     totalCents: Number(o.total_cents),
     currency: String(o.currency),
     createdAt: String(o.created_at),
+    shippingService: o.shipping_service == null ? null : String(o.shipping_service),
     lines,
   };
 }

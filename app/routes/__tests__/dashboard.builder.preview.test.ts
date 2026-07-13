@@ -8,6 +8,8 @@ import BuilderPreview, { loader, action } from "../dashboard.builder.preview";
 const { sessionMock, getCatalogMock, loadDraftMock, loaderDataRef, enhanceMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(), getCatalogMock: vi.fn(), loadDraftMock: vi.fn(), loaderDataRef: { current: null as unknown }, enhanceMock: vi.fn(),
 }));
+// The route imports the storefront stylesheet as a URL; stub it like the other preview test.
+vi.mock("~/styles/storefront.css?url", () => ({ default: "/assets/storefront.css" }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireVerifiedSession: sessionMock }));
 vi.mock("~/lib/dashboard/http.server", () => ({ requireSameOrigin: () => {} }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
@@ -33,6 +35,21 @@ describe("builder draft preview", () => {
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(BuilderPreview))).toContain("DRAFTED");
   });
+  it("renders the PDP pane through the shared column layout (same composition as the live PDP)", async () => {
+    loadDraftMock.mockImplementation(async (_s: string, page: string) =>
+      page === "pdp"
+        ? { kind: "template", pageKey: "pdp", blocks: [
+            { id: "g", type: "productGallery", layout: { x: 0, y: 0, w: 6, h: 6 }, props: { maxImages: 6 } },
+            { id: "t", type: "productTitle", layout: { x: 6, y: 0, w: 6, h: 1 }, props: {} },
+          ] }
+        : null);
+    const data = await (await loader(req())).json();
+    loaderDataRef.current = data;
+    const html = renderToStaticMarkup(createElement(BuilderPreview));
+    expect(html).toContain("cd-pdp cd-pdp--blocks"); // not a flat stack
+    expect(html.match(/class="cd-pdp__col"/g)).toHaveLength(2); // gallery left, title right
+  });
+
   it("shows an empty-state when there is no draft yet", async () => {
     loadDraftMock.mockResolvedValue(null);
     const data = await (await loader(req())).json();

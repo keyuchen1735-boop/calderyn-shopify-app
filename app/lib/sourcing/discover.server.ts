@@ -2,6 +2,8 @@
 import { getSupabase } from "~/lib/supabase.server";
 import { createProduct } from "~/lib/catalog/catalog.server";
 import { generateStore } from "~/lib/storegen/generate.server";
+import { assertCanGenerate } from "~/lib/storegen/guard.server";
+import { CalderynError } from "~/lib/calderyn.server";
 import type { ProductInput } from "~/lib/catalog/types";
 import { suggestedRetailCents } from "./ingest.server";
 import type { DiscoverFeedItem, NormalizedSourceProduct, PickResult } from "./types";
@@ -74,8 +76,14 @@ export async function listDiscoverFeed(limit = 40): Promise<DiscoverFeedItem[]> 
   });
 }
 
-/** Pick: write owned product + media + link, then generate a draft store. */
-export async function pickProduct(shopId: string, sourceProductId: string): Promise<PickResult> {
+/** Pick: write owned product + media + link, then generate a draft store. The auto-build goes
+ *  through the same generate guard as every other entry point (mid-test refusal, burst limit,
+ *  daily designer quota) — a refusal skips the rebuild but never fails the pick itself. */
+export async function pickProduct(
+  shopId: string,
+  sourceProductId: string,
+  opts: { trusted: boolean } = { trusted: false },
+): Promise<PickResult> {
   const sb = getSupabase();
   const { data: src, error } = await sb
     .from("source_product")
@@ -139,7 +147,18 @@ export async function pickProduct(shopId: string, sourceProductId: string): Prom
   });
   if (lErr) throw lErr;
 
-  // 4. Auto-build a draft store from the now-non-empty catalog.
+  // 4. Auto-build a draft store from the now-non-empty catalog — unless the shared generate
+  // guard refuses (running experiment would have both its arms rewritten mid-flight; quota and
+  // burst limits must not be dodgeable through Discover). The product is already picked either
+  // way; only the rebuild is skipped, with the reason surfaced to the caller.
+  try {
+    await assertCanGenerate(shopId, undefined, { trusted: opts.trusted });
+  } catch (err) {
+    if (err instanceof CalderynError) {
+      return { productId, storeRunId: null, storeBuildSkipped: err.code };
+    }
+    throw err;
+  }
   const gen = await generateStore({ shopId, mode: "catalog" });
   return { productId, storeRunId: gen.runId };
 }

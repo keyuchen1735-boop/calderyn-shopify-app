@@ -157,10 +157,29 @@ export function PasswordField({
   );
 }
 
+// Where the Shopify button leads. "login" starts Shopify OAuth directly
+// (existing connected-shop flows); "signup" sends a brand-new visitor to
+// account creation first — onboarding offers Connect Shopify right after,
+// so the import intent survives without a dead-end OAuth bounce.
+export function shopifyButtonHref(
+  baseUrl: string | null | undefined,
+  returnTo: string | null | undefined,
+  mode: "login" | "signup",
+): string {
+  const path =
+    mode === "signup"
+      ? `/signup?from=shopify${returnTo ? `&return_to=${encodeURIComponent(returnTo)}` : ""}`
+      : returnTo
+        ? `/dashboard/login?return_to=${encodeURIComponent(returnTo)}`
+        : "/dashboard/login";
+  return `${baseUrl ?? ""}${path}`;
+}
+
 export function ShopifyButton({
   label,
   returnTo,
   baseUrl,
+  mode = "login",
 }: {
   label: string;
   returnTo?: string | null;
@@ -169,11 +188,9 @@ export function ShopifyButton({
   // start there and not on this app.* origin, or the callback's state check
   // never sees the cookie. Empty in single-host dev.
   baseUrl?: string;
+  mode?: "login" | "signup";
 }) {
-  const path = returnTo
-    ? `/dashboard/login?return_to=${encodeURIComponent(returnTo)}`
-    : "/dashboard/login";
-  const href = `${baseUrl ?? ""}${path}`;
+  const href = shopifyButtonHref(baseUrl, returnTo ?? null, mode);
   return (
     <a className="cd-auth-google" href={href}>
       <CDIcon name="store" size={16} />

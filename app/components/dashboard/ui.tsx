@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useRef,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -15,6 +16,8 @@ import { PlatformIcon } from "../PlatformIcon";
 import type { DailyRow, Severity, Grade, Platform, Toast } from "./view-models";
 import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
 import { scorePillStyle } from "./score-pill";
+
+gsap.registerPlugin(useGSAP);
 
 /* ---------- CountUp: animated number ticker ---------- */
 export function useCountUp(value: number, dur = 800): number {
@@ -65,6 +68,21 @@ export function CountNum({
 }
 
 /* ---------- Surfaces ---------- */
+
+/* Phone-width pan container for wide tables: at ≤767px it becomes a horizontal
+   scroll area whose content keeps `min` px of width so columns stay readable;
+   at desktop widths it is inert (overflow stays visible, so row tooltips and
+   entrance animations aren't clipped by a scroll context). */
+export function Pan({ min, children }: { min: number; children: ReactNode }) {
+  return (
+    <div className="cd-pan">
+      <div className="cd-pan-in" style={{ "--pan-min": `${min}px` } as CSSProperties}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function Card({
   children,
   className = "",
@@ -101,6 +119,112 @@ export function Card({
     );
   }
   return <div className={cls}>{children}</div>;
+}
+
+export function Reveal({
+  label,
+  summary,
+  warning = false,
+  className = "",
+  children,
+}: {
+  label: ReactNode;
+  summary?: ReactNode;
+  warning?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const innerRef = useRef<HTMLDivElement | null>(null);
+  const chevronRef = useRef<HTMLSpanElement | null>(null);
+  const panelId = `cd-reveal-${useId().replace(/:/g, "")}`;
+
+  const { contextSafe } = useGSAP(
+    () => {
+      const body = bodyRef.current;
+      const chevron = chevronRef.current;
+      if (!body || !chevron) return;
+      body.inert = true;
+      gsap.set(body, { height: 0 });
+      gsap.set(chevron, { rotation: 0 });
+    },
+    { scope: rootRef },
+  );
+
+  const toggle = contextSafe(() => {
+    const body = bodyRef.current;
+    const inner = innerRef.current;
+    const chevron = chevronRef.current;
+    if (!body || !inner || !chevron) return;
+    const next = !open;
+    setOpen(next);
+
+    if (!next && body.contains(document.activeElement)) triggerRef.current?.focus();
+    body.inert = !next;
+
+    if (reduced()) {
+      gsap.killTweensOf([body, chevron]);
+      gsap.set(body, { height: next ? "auto" : 0 });
+      gsap.set(chevron, { rotation: next ? 90 : 0 });
+      return;
+    }
+
+    const currentHeight = body.getBoundingClientRect().height;
+    const targetHeight = next ? inner.offsetHeight : 0;
+    gsap.to(body, {
+      height: targetHeight,
+      duration: next ? 0.32 : 0.24,
+      ease: next ? "power2.out" : "power2.inOut",
+      overwrite: "auto",
+      onStart: () => gsap.set(body, { height: currentHeight }),
+      onComplete: () => {
+        if (next) gsap.set(body, { height: "auto" });
+      },
+    });
+    gsap.to(chevron, {
+      rotation: next ? 90 : 0,
+      duration: 0.24,
+      ease: "power2.out",
+      overwrite: "auto",
+    });
+  });
+
+  return (
+    <div
+      ref={rootRef}
+      className={`cd-reveal ${className}`.trim()}
+      data-open={open ? "1" : "0"}
+      data-warning={warning ? "1" : "0"}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className="cd-reveal-trigger"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={toggle}
+      >
+        <span ref={chevronRef} className="cd-reveal-chev" aria-hidden="true">
+          <CDIcon name="chevronRight" size={15} strokeWidth={2} />
+        </span>
+        <span className="cd-reveal-label">{label}</span>
+        {summary != null && <span className="cd-reveal-summary">{summary}</span>}
+      </button>
+      <div
+        ref={bodyRef}
+        id={panelId}
+        className="cd-reveal-body"
+        aria-hidden={!open}
+      >
+        <div ref={innerRef} className="cd-reveal-inner">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function SectionTitle({
@@ -240,6 +364,58 @@ export function Toggle({
   );
 }
 
+/** Toolbar search box with an inline clear button once it has text. Shared by
+ *  the list screens (Catalog, Inventory, Collections detail) so the markup and
+ *  the clear affordance never drift between them. */
+export function ClearableSearchInput({
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  placeholder: string;
+  ariaLabel: string;
+}) {
+  return (
+    <div style={{ position: "relative", flex: "1 1 220px", minWidth: 220 }}>
+      <input
+        className="cd-input"
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ width: "100%", paddingRight: value ? 30 : undefined }}
+      />
+      {value && (
+        <button
+          type="button"
+          aria-label="Clear search"
+          onClick={() => onChange("")}
+          style={{
+            position: "absolute",
+            right: 6,
+            top: "50%",
+            transform: "translateY(-50%)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 22,
+            height: 22,
+            background: "none",
+            border: 0,
+            color: "inherit",
+            cursor: "pointer",
+          }}
+        >
+          <CDIcon name="x" size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 type SegOption = string | { value: string; label: ReactNode };
 
 export function Segmented({
@@ -281,6 +457,8 @@ export function Btn({
   disabled,
   small,
   className = "",
+  type = "button",
+  ariaLabel,
 }: {
   children: ReactNode;
   kind?: "primary" | "secondary" | "danger";
@@ -289,12 +467,17 @@ export function Btn({
   disabled?: boolean;
   small?: boolean;
   className?: string;
+  /** "submit" opts into native form submission (keeps built-in field validation). */
+  type?: "button" | "submit";
+  /** Accessible name for icon-only buttons (no visible text child). */
+  ariaLabel?: string;
 }) {
   return (
     <button
-      type="button"
+      type={type}
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
       className={`cd-btn cd-btn-${kind} ${small ? "cd-btn-sm" : ""} ${className}`}
     >
       {icon && <CDIcon name={icon} size={small ? 14 : 16} strokeWidth={1.9} />}
@@ -758,6 +941,11 @@ export function ToastHost({ toasts }: { toasts: Toast[] }) {
             style={{ color: t.tone === "critical" ? "var(--red)" : "var(--green)" }}
           />
           {t.text}
+          {t.action && (
+            <button type="button" className="cd-toast-act" onClick={t.action.run}>
+              {t.action.label}
+            </button>
+          )}
         </div>
       ))}
     </div>

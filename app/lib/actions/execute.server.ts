@@ -13,6 +13,7 @@ import { acknowledgeAlert } from "../alerts.server";
 import type { MetaWriteConn } from "../meta/ad-create.server";
 import { createPausedAd, metaWriteClientForShopId } from "../meta/ad-create.server";
 import { listCampaignAdSets, type MetaAdSet } from "../meta/creatives.server";
+import { duplicateCampaign } from "../meta/campaigns.server";
 import type { MetaClient } from "../meta/campaigns.server";
 import type { CreativeInput } from "~/lib/screener/types";
 
@@ -21,8 +22,12 @@ export type ExecutableKind =
   | "resume_campaign"
   | "reduce_campaign_budget"
   | "increase_campaign_budget"
+  | "update_campaign_budget"
   | "exclude_geo"
-  | "push_creative_draft";
+  | "push_creative_draft"
+  | "duplicate_campaign"
+  | "fulfill_order"
+  | "cancel_order";
 
 export interface ExecuteInput {
   alertId: string | null;
@@ -217,7 +222,9 @@ export async function executeAction(
   // 0. Validate input: a missing/zero target budget must refuse loudly —
   // the old `?? 0` fallthrough would set the live campaign budget to $0.
   if (
-    (input.kind === "reduce_campaign_budget" || input.kind === "increase_campaign_budget") &&
+    (input.kind === "reduce_campaign_budget" ||
+      input.kind === "increase_campaign_budget" ||
+      input.kind === "update_campaign_budget") &&
     !input.dailyBudgetCents
   ) {
     throw new Error(
@@ -243,7 +250,7 @@ export async function executeAction(
   // 2. Ownership + resolve campaign.
   const { data: camp, error: cErr } = await sb
     .from("ad_campaign_dim")
-    .select("id, shop_id, external_id, platform, status, daily_budget_cents")
+    .select("id, shop_id, external_id, platform, status, daily_budget_cents, name")
     .eq("id", input.campaignId)
     .eq("shop_id", shopId)
     .maybeSingle();
@@ -261,8 +268,18 @@ export async function executeAction(
     return executePushCreativeDraft(shopId, input, sb, { camp, externalId, platform }, deps);
   }
 
+  // Duplicate is not a campaign mutation either — it creates a NEW campaign
+  // (deep copy), so like push_creative_draft it has its own post-state shape
+  // and skips the campaign mirror below. Routed here so it still inherits
+  // idempotency + ownership for free.
+  if (input.kind === "duplicate_campaign") {
+    return executeDuplicateCampaign(shopId, input, sb, { camp, externalId, platform }, deps);
+  }
+
   const postState =
-    input.kind === "reduce_campaign_budget" || input.kind === "increase_campaign_budget"
+    input.kind === "reduce_campaign_budget" ||
+    input.kind === "increase_campaign_budget" ||
+    input.kind === "update_campaign_budget"
       ? { status: camp.status, daily_budget_cents: input.dailyBudgetCents ?? null }
       : input.kind === "resume_campaign"
         ? { status: "active", daily_budget_cents: camp.daily_budget_cents }
@@ -323,6 +340,41 @@ export async function executeAction(
         sb,
       );
     }
+  }
+
+  // Outcome-idempotent guard for update_campaign_budget: an arbitrary target
+  // that already matches the live budget is a no-op (mirrors the
+  // reduce_campaign_budget guard above, but exact-match instead of <=, since
+  // this kind can move the budget in either direction).
+  if (
+    input.kind === "update_campaign_budget" &&
+    (camp.daily_budget_cents ?? 0) === input.dailyBudgetCents
+  ) {
+    console.info(
+      `[actions] update_campaign_budget no-op for ${input.campaignId}: already at target=${input.dailyBudgetCents}c`,
+    );
+    return insertAuditWithIdempotency(
+      shopId,
+      input.idempotencyKey,
+      {
+        alert_id: input.alertId,
+        action_kind: input.kind,
+        params: {
+          campaign_id: input.campaignId,
+          external_id: externalId,
+          platform,
+          daily_budget_cents: input.dailyBudgetCents,
+          noop_reason: "already_at_target",
+        },
+        outcome: "succeeded",
+        pre_state: preState,
+        post_state: { status: camp.status, daily_budget_cents: camp.daily_budget_cents },
+        last_error: null,
+        actor_user_id: input.actor ?? "merchant",
+        trigger_reason: input.triggerReason ?? null,
+      },
+      sb,
+    );
   }
 
   // 3. Resolve adapter + 4. call platform.
@@ -467,6 +519,108 @@ async function executePushCreativeDraft(
       outcome,
       pre_state: preState,
       post_state: outcome === "succeeded" ? postState : null,
+      last_error: lastError,
+      actor_user_id: input.actor ?? "merchant",
+      trigger_reason: input.triggerReason ?? null,
+    },
+    sb,
+  );
+}
+
+async function executeDuplicateCampaign(
+  shopId: string,
+  input: ExecuteInput,
+  sb: SupabaseClient,
+  ctx: {
+    camp: { status?: unknown; daily_budget_cents?: unknown; name?: unknown };
+    externalId: string;
+    platform: string;
+  },
+  deps: ExecuteDeps,
+): Promise<ExecutedAudit> {
+  const { camp, externalId, platform } = ctx;
+  const preState = { status: camp.status, daily_budget_cents: camp.daily_budget_cents };
+
+  let outcome: "succeeded" | "failed" | "retrying" = "succeeded";
+  let lastError: string | null = null;
+  let copiedCampaignExternalId: string | null = null;
+  let copiedCampaignDimId: string | null = null;
+
+  if (platform.toLowerCase() !== "meta") {
+    // Duplicate is Meta-only today; refuse on other platforms rather than
+    // forcing Google/TikTok adapters to implement a deep-copy call. The copy is
+    // merchant-facing (audit last_error) and must not blame the platform — no
+    // platform call was made.
+    outcome = "failed";
+    lastError = `Duplicating is only available for Meta campaigns today (campaign platform: ${platform})`;
+  } else {
+    const resolveClient = deps.resolveMetaWriteClient ?? metaWriteClientForShopId;
+    const conn = await resolveClient(shopId);
+    if (!conn) {
+      // No integration / token — permanent until reconnect, so fail fast
+      // rather than burn the retry budget (mirrors the push_creative_draft path).
+      outcome = "failed";
+      lastError = "meta not connected";
+    } else {
+      try {
+        const { copiedCampaignId } = await duplicateCampaign(conn.client, externalId);
+        copiedCampaignExternalId = copiedCampaignId;
+
+        // Mirror-insert the copy into ad_campaign_dim so the campaigns view shows
+        // it immediately (ingestion alone would refresh it on the next sync).
+        // Best-effort: the platform call already succeeded, so an insert failure
+        // must not fail the action — log it, the next sync still picks it up.
+        const { data: inserted, error: insertErr } = await sb
+          .from("ad_campaign_dim")
+          .insert({
+            shop_id: shopId,
+            external_id: copiedCampaignId,
+            platform: "meta",
+            name: `${(camp.name as string | null | undefined) ?? "Campaign"} (copy)`,
+            status: "paused",
+            daily_budget_cents: camp.daily_budget_cents,
+          })
+          .select("id")
+          .single();
+        if (insertErr) {
+          console.error(
+            `[actions] ad_campaign_dim mirror insert failed for duplicate of campaign ${input.campaignId} (copy ${copiedCampaignId} will appear on next sync)`,
+            insertErr,
+          );
+        } else {
+          copiedCampaignDimId = String(inserted.id);
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        // Transient Meta errors park as `retrying`; known-permanent errors
+        // (bad token/permission) fail terminally.
+        outcome = isRetriableFailure(err) ? "retrying" : "failed";
+      }
+    }
+  }
+
+  // No ad_campaign_dim mirror update for the ORIGINAL campaign: duplicate
+  // creates a new object and never changes the source campaign's own state.
+  return insertAuditWithIdempotency(
+    shopId,
+    input.idempotencyKey,
+    {
+      alert_id: input.alertId,
+      action_kind: input.kind,
+      params: {
+        campaign_id: input.campaignId,
+        external_id: externalId,
+        platform,
+      },
+      outcome,
+      pre_state: preState,
+      post_state:
+        outcome === "succeeded"
+          ? {
+              copied_campaign_external_id: copiedCampaignExternalId,
+              copied_campaign_dim_id: copiedCampaignDimId,
+            }
+          : null,
       last_error: lastError,
       actor_user_id: input.actor ?? "merchant",
       trigger_reason: input.triggerReason ?? null,

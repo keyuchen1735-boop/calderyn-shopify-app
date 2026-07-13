@@ -14,11 +14,14 @@ vi.mock("~/lib/supabase.server", () => ({
     from: (table: string) => {
       if (table === "location_dim") {
         return {
+          // ensurePrimaryLocation filters shop_id AND active before ordering.
           select: () => ({
             eq: () => ({
-              order: () => ({
+              eq: () => ({
                 order: () => ({
-                  limit: () => Promise.resolve({ data: h.state.locations, error: null }),
+                  order: () => ({
+                    limit: () => Promise.resolve({ data: h.state.locations, error: null }),
+                  }),
                 }),
               }),
             }),

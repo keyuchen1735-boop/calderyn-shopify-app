@@ -2,6 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, jsonOk, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getVariantBalances, adjustStock, setReorderPoint, markUnavailable } from "~/lib/inventory/engine.server";
+import { getSupabase } from "~/lib/supabase.server";
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
@@ -20,6 +21,20 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (!locationId) return jsonError(422, "missing_location");
 
   try {
+    // Every mutation targets one location; a deactivated one is out of every
+    // picker and must stay untouchable, so reject before dispatching.
+    const { data: activeLoc, error: locErr } = await getSupabase()
+      .from("location_dim")
+      .select("id")
+      .eq("shop_id", session.shopId)
+      .eq("id", locationId)
+      .eq("active", true)
+      .limit(1);
+    if (locErr) throw locErr;
+    if (!activeLoc || activeLoc.length === 0) {
+      return jsonError(422, "location_inactive", "This location is deactivated. Reactivate it first.");
+    }
+
     switch (body.intent) {
       case "set_on_hand": {
         if (!Number.isFinite(body.onHand)) return jsonError(422, "invalid_quantity");

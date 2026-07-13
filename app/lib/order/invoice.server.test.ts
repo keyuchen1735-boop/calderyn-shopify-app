@@ -1,0 +1,697 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// In-memory stand-in for the tables sendDraftOrderInvoice/payableInvoiceSession touch (cart/
+// cart_line read by priceCart, buyer_dim/buyer_address written by upsertGuestBuyer/addBuyerAddress,
+// orders + order_line written here). Same Builder shape/convention as checkout.server.test.ts.
+const store = vi.hoisted(() => {
+  type Row = Record<string, any>;
+  const db: Record<string, Row[]> = {
+    cart: [],
+    cart_line: [],
+    buyer_dim: [],
+    buyer_address: [],
+    orders: [],
+    order_line: [],
+    order_return: [],
+    stripe_connected_account: [],
+    shops: [],
+    variant_dim: [],
+  };
+
+  class Builder {
+    private op: "select" | "insert" | "update" | "upsert" | "delete" = "select";
+    private payload: Row | Row[] = {};
+    private vals: Row = {};
+    private conflict: string[] = [];
+    private filters: Array<[string, unknown]> = [];
+    private inFilters: Array<[string, unknown[]]> = [];
+    private wantSingle = false;
+    private readonly table: string;
+
+    constructor(table: string) {
+      this.table = table;
+    }
+    insert(payload: Row | Row[]) {
+      this.op = "insert";
+      this.payload = payload;
+      return this;
+    }
+    upsert(payload: Row | Row[], opts?: { onConflict?: string }) {
+      this.op = "upsert";
+      this.payload = payload;
+      this.conflict = opts?.onConflict ? opts.onConflict.split(",").map((c) => c.trim()) : [];
+      return this;
+    }
+    update(vals: Row) {
+      this.op = "update";
+      this.vals = vals;
+      return this;
+    }
+    delete() {
+      this.op = "delete";
+      return this;
+    }
+    select(_cols?: string) {
+      return this;
+    }
+    eq(col: string, val: unknown) {
+      this.filters.push([col, val]);
+      return this;
+    }
+    in(col: string, vals: unknown[]) {
+      this.inFilters.push([col, vals]);
+      return this;
+    }
+    single() {
+      this.wantSingle = true;
+      return this;
+    }
+    maybeSingle() {
+      this.wantSingle = true;
+      return this;
+    }
+    then(resolve: (v: { data: unknown; error: unknown }) => unknown, reject?: (e: unknown) => unknown) {
+      return Promise.resolve(this.run()).then(resolve, reject);
+    }
+
+    private wrap(rows: Row[]) {
+      return { data: this.wantSingle ? rows[0] ?? null : rows, error: null };
+    }
+    private insertOne(p: Row): Row {
+      const t = db[this.table];
+      const row: Row = { id: `${this.table}-${t.length + 1}`, created_at: new Date().toISOString(), ...p };
+      t.push(row);
+      return row;
+    }
+    private matches(r: Row) {
+      return (
+        this.filters.every(([c, v]) => r[c] === v) &&
+        this.inFilters.every(([c, vals]) => vals.includes(r[c]))
+      );
+    }
+    private run(): { data: unknown; error: unknown } {
+      const t = db[this.table];
+      if (this.op === "insert") {
+        const rows = (Array.isArray(this.payload) ? this.payload : [this.payload]).map((p) => this.insertOne(p));
+        return this.wrap(rows);
+      }
+      if (this.op === "upsert") {
+        const rows = (Array.isArray(this.payload) ? this.payload : [this.payload]).map((p) => {
+          const existing = this.conflict.length
+            ? t.find((r) => this.conflict.every((c) => r[c] === p[c]))
+            : undefined;
+          if (existing) {
+            Object.assign(existing, p);
+            return existing;
+          }
+          return this.insertOne(p);
+        });
+        return this.wrap(rows);
+      }
+      if (this.op === "update") {
+        const matched = t.filter((r) => this.matches(r));
+        for (const r of matched) Object.assign(r, this.vals);
+        return this.wrap(matched);
+      }
+      if (this.op === "delete") {
+        const matched = t.filter((r) => this.matches(r));
+        for (const r of matched) t.splice(t.indexOf(r), 1);
+        return this.wrap(matched);
+      }
+      const matched = t.filter((r) => this.matches(r));
+      return this.wrap(matched);
+    }
+  }
+
+  const client = { from: (table: string) => new Builder(table) };
+  return { db, client };
+});
+
+const stripeCheckout = vi.hoisted(() => ({ createCommerceCheckoutSession: vi.fn() }));
+const emailer = vi.hoisted(() => ({ sendInvoiceEmail: vi.fn() }));
+const quote = vi.hoisted(() => ({ quoteCart: vi.fn() }));
+const stripeClient = vi.hoisted(() => ({ expire: vi.fn() }));
+const shopServer = vi.hoisted(() => ({ getShopStorefrontOrigin: vi.fn() }));
+
+vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
+vi.mock("~/lib/commerce/stripe-checkout.server", () => ({
+  createCommerceCheckoutSession: stripeCheckout.createCommerceCheckoutSession,
+}));
+vi.mock("~/lib/commerce/quote.server", () => ({ quoteCart: quote.quoteCart }));
+vi.mock("./notify-email.server", () => ({ sendInvoiceEmail: emailer.sendInvoiceEmail }));
+vi.mock("~/lib/payments/stripe-client.server", () => ({
+  getStripe: () => ({ checkout: { sessions: { expire: stripeClient.expire } } }),
+}));
+vi.mock("~/lib/storefront/shop.server", () => ({
+  getShopStorefrontOrigin: shopServer.getShopStorefrontOrigin,
+  // cart.server.ts (real, unmocked here) reads DEMO_SHOP_ID off this same module for its own
+  // assertPersistableShop guard — mirror the real sentinel so that guard keeps working.
+  DEMO_SHOP_ID: "demo-shop",
+}));
+
+// eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
+import { sendDraftOrderInvoice, payableInvoiceSession, expireInvoiceSession } from "./invoice.server";
+// eslint-disable-next-line import/first -- follows vi.mock like the import above
+import { PaymentsNotReadyError } from "~/lib/payments/errors";
+// priceCart is a REAL, unmocked module here — the test DB tables it reads/writes are the same
+// store.db.cart/cart_line the rest of this file seeds — spied on (not mocked) so tests can assert
+// it was never called without changing its behavior.
+// eslint-disable-next-line import/first -- follows vi.mock like the import above
+import * as cartServer from "./cart.server";
+
+function seedPaymentReady(shopId: string) {
+  store.db.stripe_connected_account.push({
+    shop_id: shopId,
+    stripe_account_id: "acct_test",
+    account_type: "express",
+    charges_enabled: true,
+    payouts_enabled: true,
+    details_submitted: true,
+    application_fee_bps: 0,
+    application_fee_flat_cents: 0,
+    country: "US",
+    default_currency: "usd",
+    onboarded_at: "2026-07-01T00:00:00.000Z",
+  });
+}
+
+/** Seed a variant_dim row so the cost-snapshot read (Phase 4 Task 1) can resolve unit_cost_cents. */
+function seedVariant(shopId: string, variantId: string, unitCostCents: number | null) {
+  store.db.variant_dim.push({ id: variantId, shop_id: shopId, unit_cost_cents: unitCostCents });
+}
+
+function seedDraftCart(shopId: string, cartId: string, line: Partial<Record<string, unknown>> = {}) {
+  if (!store.db.cart.some((c) => c.id === cartId)) {
+    store.db.cart.push({ id: cartId, shop_id: shopId, state: "cart", origin: "merchant_draft" });
+  }
+  store.db.cart_line.push({
+    id: `cart_line-${store.db.cart_line.length + 1}`,
+    shop_id: shopId,
+    cart_id: cartId,
+    variant_id: "v-tee-s",
+    quantity: 2,
+    unit_price_cents: 1999,
+    currency: "usd",
+    title_snapshot: "Cotton Tee - Small",
+    ...line,
+  });
+}
+
+beforeEach(() => {
+  for (const k of Object.keys(store.db)) store.db[k].length = 0;
+  vi.clearAllMocks();
+  seedPaymentReady("shop-1");
+  emailer.sendInvoiceEmail.mockResolvedValue({ sent: true, id: "email-1" });
+  stripeCheckout.createCommerceCheckoutSession.mockResolvedValue({ sessionId: "cs_1", url: "https://stripe/pay/cs_1" });
+  stripeClient.expire.mockResolvedValue({});
+  shopServer.getShopStorefrontOrigin.mockResolvedValue("https://peakandpine.calderyncompany.com");
+});
+
+describe("sendDraftOrderInvoice", () => {
+  it("sends the invoice: order channel invoice, lines snapshotted, cart consumed, email fired, no reservation/PI", async () => {
+    seedDraftCart("shop-1", "cart-1", { quantity: 2, unit_price_cents: 1999 }); // 3998
+
+    const out = await sendDraftOrderInvoice("shop-1", "cart-1", { email: "Buyer@Example.com" });
+
+    expect(store.db.orders).toHaveLength(1);
+    const order = store.db.orders[0];
+    expect(order).toMatchObject({
+      shop_id: "shop-1",
+      channel: "invoice",
+      subtotal_cents: 3998,
+      shipping_cents: 0,
+      tax_cents: 0,
+      total_cents: 3998,
+      currency: "usd",
+    });
+    expect(out.orderId).toBe(order.id);
+    expect(out.totalCents).toBe(3998);
+    expect(out.currency).toBe("usd");
+
+    expect(store.db.buyer_dim).toHaveLength(1);
+    expect(store.db.buyer_dim[0].email_normalized).toBe("buyer@example.com");
+
+    expect(store.db.order_line).toHaveLength(1);
+    expect(store.db.order_line[0]).toMatchObject({
+      shop_id: "shop-1",
+      order_id: out.orderId,
+      variant_id: "v-tee-s",
+      quantity: 2,
+      unit_price_cents: 1999,
+    });
+
+    // Draft cart consumed.
+    expect(store.db.cart[0]).toMatchObject({ id: "cart-1", state: "checkout_pending" });
+
+    // The invoice email fired with the confirmation token + line summary + total.
+    expect(emailer.sendInvoiceEmail).toHaveBeenCalledWith(
+      "shop-1",
+      out.orderId,
+      expect.objectContaining({
+        confirmationToken: out.confirmationToken,
+        totalCents: 3998,
+        lines: [{ title: "Cotton Tee - Small", quantity: 2 }],
+      }),
+    );
+    expect(out.emailSent).toBe(true);
+    expect(typeof out.confirmationToken).toBe("string");
+    expect(out.confirmationToken.length).toBeGreaterThan(10);
+
+    // No inventory reservation, no PaymentIntent creation — invoice.server.ts must never import
+    // the inventory engine or a PI-create seam at all (this is a shape assertion via absence).
+    expect(stripeCheckout.createCommerceCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("stamps unit_cost_cents_snapshot from variant_dim onto the invoiced line (Phase 4 Task 1)", async () => {
+    seedVariant("shop-1", "v-tee-s", 750);
+    seedDraftCart("shop-1", "cart-cost", { variant_id: "v-tee-s", quantity: 2, unit_price_cents: 1999 });
+
+    const out = await sendDraftOrderInvoice("shop-1", "cart-cost", { email: "cost@example.com" });
+
+    expect(store.db.order_line).toHaveLength(1);
+    expect(store.db.order_line[0]).toMatchObject({
+      order_id: out.orderId,
+      variant_id: "v-tee-s",
+      unit_cost_cents_snapshot: 750,
+    });
+  });
+
+  it("snapshots a null unit_cost_cents_snapshot for a variant with no cost recorded (never fabricates 0)", async () => {
+    seedVariant("shop-1", "v-tee-s", null);
+    seedDraftCart("shop-1", "cart-nocost", { variant_id: "v-tee-s" });
+
+    await sendDraftOrderInvoice("shop-1", "cart-nocost", { email: "nocost@example.com" });
+
+    expect(store.db.order_line[0].unit_cost_cents_snapshot).toBeNull();
+  });
+
+  it("snapshots a null unit_cost_cents_snapshot when the variant has no variant_dim row at all", async () => {
+    seedDraftCart("shop-1", "cart-novariant", { variant_id: "v-ghost" });
+
+    await sendDraftOrderInvoice("shop-1", "cart-novariant", { email: "novariant@example.com" });
+
+    expect(store.db.order_line[0].unit_cost_cents_snapshot).toBeNull();
+  });
+
+  it("fails CLOSED (409 payments_not_ready) BEFORE any write when the shop cannot accept payments", async () => {
+    store.db.stripe_connected_account.length = 0;
+    seedDraftCart("shop-1", "cart-noready");
+
+    await expect(sendDraftOrderInvoice("shop-1", "cart-noready", { email: "b@example.com" })).rejects.toMatchObject({
+      status: 409,
+      code: "payments_not_ready",
+    });
+    expect(store.db.buyer_dim).toHaveLength(0);
+    expect(store.db.orders).toHaveLength(0);
+    expect(store.db.order_line).toHaveLength(0);
+    expect(emailer.sendInvoiceEmail).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cart that is not a merchant draft (404) without writing anything", async () => {
+    store.db.cart.push({ id: "cart-plain", shop_id: "shop-1", state: "cart", origin: null });
+    store.db.cart_line.push({
+      id: "cl-1",
+      shop_id: "shop-1",
+      cart_id: "cart-plain",
+      variant_id: "v-tee-s",
+      quantity: 1,
+      unit_price_cents: 1999,
+      currency: "usd",
+      title_snapshot: "Cotton Tee",
+    });
+
+    await expect(sendDraftOrderInvoice("shop-1", "cart-plain", { email: "b@example.com" })).rejects.toMatchObject({
+      status: 404,
+      code: "not_a_draft",
+    });
+    expect(store.db.orders).toHaveLength(0);
+  });
+
+  it("rejects re-invoicing an already-consumed draft (409 draft_already_sent) via the CAS claim, without pricing or writing anything", async () => {
+    // origin is still 'merchant_draft' but state already advanced past 'cart' — this is the
+    // double-click / retried-request shape Fix I2's atomic claim guards: the CAS update's own
+    // .eq("state", "cart") WHERE clause matches zero rows here (state is already
+    // checkout_pending), so the codepath never gets far enough to price the cart at all.
+    store.db.cart.push({ id: "cart-sent", shop_id: "shop-1", state: "checkout_pending", origin: "merchant_draft" });
+    const priceCartSpy = vi.spyOn(cartServer, "priceCart");
+
+    await expect(sendDraftOrderInvoice("shop-1", "cart-sent", { email: "b@example.com" })).rejects.toMatchObject({
+      status: 409,
+      code: "draft_already_sent",
+    });
+    expect(priceCartSpy).not.toHaveBeenCalled();
+    expect(store.db.buyer_dim).toHaveLength(0);
+    expect(store.db.orders).toHaveLength(0);
+    expect(store.db.order_line).toHaveLength(0);
+    expect(emailer.sendInvoiceEmail).not.toHaveBeenCalled();
+    // The CAS never claimed this cart (it didn't match), so its state is untouched by our call —
+    // no accidental revert of a state we never actually changed.
+    expect(store.db.cart[0].state).toBe("checkout_pending");
+    priceCartSpy.mockRestore();
+  });
+
+  it("a REAL double-send: the second call on the same cart 409s draft_already_sent and never re-prices", async () => {
+    seedDraftCart("shop-1", "cart-double", { quantity: 1, unit_price_cents: 1500 });
+
+    const first = await sendDraftOrderInvoice("shop-1", "cart-double", { email: "b@example.com" });
+    expect(first.orderId).toBeTruthy();
+
+    const priceCartSpy = vi.spyOn(cartServer, "priceCart");
+    await expect(sendDraftOrderInvoice("shop-1", "cart-double", { email: "b@example.com" })).rejects.toMatchObject({
+      status: 409,
+      code: "draft_already_sent",
+    });
+    expect(priceCartSpy).not.toHaveBeenCalled();
+    // Still exactly the one order the FIRST call created.
+    expect(store.db.orders).toHaveLength(1);
+    priceCartSpy.mockRestore();
+  });
+
+  it("reverts the CAS claim back to 'cart' when a downstream step fails before the order is created", async () => {
+    seedDraftCart("shop-1", "cart-revert", { quantity: 1, unit_price_cents: 1500 });
+    quote.quoteCart.mockRejectedValueOnce(new Error("shipping quote blew up"));
+
+    await expect(
+      sendDraftOrderInvoice("shop-1", "cart-revert", {
+        email: "b@example.com",
+        address: { kind: "shipping", line1: "123 Main St", city: "Springfield", region: "IL", postal: "62701", country: "US" },
+      }),
+    ).rejects.toThrow(/shipping quote blew up/);
+
+    expect(store.db.orders).toHaveLength(0);
+    // Reverted so the merchant can retry sending — NOT stranded checkout_pending with no order.
+    expect(store.db.cart.find((c) => c.id === "cart-revert")).toMatchObject({ state: "cart" });
+  });
+
+  it("reverts the CAS claim AND deletes the zero-line order when the order_line insert fails", async () => {
+    seedDraftCart("shop-1", "cart-lineins-fail", { quantity: 1, unit_price_cents: 1500 });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const realFrom = store.client.from;
+    const fromSpy = vi.spyOn(store.client, "from").mockImplementation((table: string) => {
+      if (table === "order_line") {
+        return { insert: () => Promise.resolve({ data: null, error: new Error("order_line insert blew up") }) } as any;
+      }
+      return realFrom(table);
+    });
+
+    await expect(
+      sendDraftOrderInvoice("shop-1", "cart-lineins-fail", { email: "b@example.com" }),
+    ).rejects.toThrow(/order_line insert blew up/);
+
+    // Cart reverted back to retryable, and the zero-line order it briefly created is gone —
+    // never a stranded checkout_pending cart with an orphan zero-line invoice order.
+    expect(store.db.cart.find((c) => c.id === "cart-lineins-fail")).toMatchObject({ state: "cart" });
+    expect(store.db.orders).toHaveLength(0);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/order_line insert failed.*cart-lineins-fail.*reverted.*zero-line order was deleted/s),
+      expect.any(Error),
+    );
+
+    fromSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("rejects an empty draft (422) without writing anything", async () => {
+    store.db.cart.push({ id: "cart-empty", shop_id: "shop-1", state: "cart", origin: "merchant_draft" });
+
+    await expect(sendDraftOrderInvoice("shop-1", "cart-empty", { email: "b@example.com" })).rejects.toMatchObject({
+      status: 422,
+      code: "empty_draft",
+    });
+    expect(store.db.orders).toHaveLength(0);
+  });
+
+  it("rejects a non-empty draft that totals $0 (422) before any buyer/order write", async () => {
+    seedDraftCart("shop-1", "cart-free", { quantity: 3, unit_price_cents: 0 });
+
+    await expect(sendDraftOrderInvoice("shop-1", "cart-free", { email: "b@example.com" })).rejects.toMatchObject({
+      status: 422,
+      code: "zero_total",
+    });
+    expect(store.db.buyer_dim).toHaveLength(0);
+    expect(store.db.orders).toHaveLength(0);
+  });
+
+  it("quotes shipping+tax via quoteCart when an address is supplied", async () => {
+    seedDraftCart("shop-1", "cart-addr", { quantity: 2, unit_price_cents: 1999 });
+    quote.quoteCart.mockResolvedValueOnce({
+      shippingCents: 500,
+      taxCents: 80,
+      subtotalCents: 3998,
+      totalCents: 4578,
+      currency: "usd",
+      lines: [],
+      deliveryEarliest: null,
+      deliveryLatest: null,
+      lowConfidence: false,
+      fallbackUsed: false,
+    });
+
+    const out = await sendDraftOrderInvoice("shop-1", "cart-addr", {
+      email: "addr@example.com",
+      address: { kind: "shipping", line1: "123 Main St", city: "Springfield", region: "IL", postal: "62701", country: "US" },
+    });
+
+    expect(store.db.orders[0]).toMatchObject({ shipping_cents: 500, tax_cents: 80, total_cents: 4578 });
+    expect(out.totalCents).toBe(4578);
+  });
+
+  it("includes the merchant note on the email but records no consent", async () => {
+    seedDraftCart("shop-1", "cart-note");
+    await sendDraftOrderInvoice("shop-1", "cart-note", { email: "b@example.com", note: "Pay within 7 days" });
+    expect(emailer.sendInvoiceEmail).toHaveBeenCalledWith(
+      "shop-1",
+      expect.any(String),
+      expect.objectContaining({ note: "Pay within 7 days" }),
+    );
+    expect(store.db.buyer_dim.some((b) => "consent" in b)).toBe(false);
+  });
+
+  it("stamps exchange_for into attribution when this invoice replaces a return (Phase 4 Task 2)", async () => {
+    seedDraftCart("shop-1", "cart-exchange");
+    const returnId = "9f9a2b1c-2222-4e5f-8a9b-0c1d2e3f4a5b";
+    store.db.order_return.push({ id: returnId, shop_id: "shop-1", order_id: "order-prior", status: "open" });
+
+    await sendDraftOrderInvoice("shop-1", "cart-exchange", {
+      email: "exchange@example.com",
+      exchangeForReturnId: returnId,
+    });
+    expect(store.db.orders[0].attribution).toEqual({
+      channel: "invoice",
+      exchange_for: returnId,
+    });
+  });
+
+  it("omits exchange_for from attribution for an ordinary (non-replacement) invoice", async () => {
+    seedDraftCart("shop-1", "cart-ordinary");
+    await sendDraftOrderInvoice("shop-1", "cart-ordinary", { email: "ordinary@example.com" });
+    expect(store.db.orders[0].attribution).toEqual({ channel: "invoice" });
+  });
+
+  it("422s unknown_return when exchange_for_return_id references a non-existent return, before any buyer/order write", async () => {
+    seedDraftCart("shop-1", "cart-badreturn");
+    const ghostReturnId = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+
+    await expect(
+      sendDraftOrderInvoice("shop-1", "cart-badreturn", {
+        email: "badreturn@example.com",
+        exchangeForReturnId: ghostReturnId,
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "unknown_return",
+    });
+
+    expect(store.db.buyer_dim).toHaveLength(0);
+    expect(store.db.orders).toHaveLength(0);
+    expect(store.db.order_line).toHaveLength(0);
+  });
+
+  it("422s unknown_return when exchange_for_return_id belongs to a different shop, before any buyer/order write", async () => {
+    seedDraftCart("shop-1", "cart-othershop");
+    const otherReturnId = "9f9a2b1c-2222-4e5f-8a9b-0c1d2e3f4a5b";
+    store.db.order_return.push({ id: otherReturnId, shop_id: "shop-other", order_id: "order-other", status: "open" });
+
+    await expect(
+      sendDraftOrderInvoice("shop-1", "cart-othershop", {
+        email: "othershop@example.com",
+        exchangeForReturnId: otherReturnId,
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "unknown_return",
+    });
+
+    expect(store.db.buyer_dim).toHaveLength(0);
+    expect(store.db.orders).toHaveLength(0);
+  });
+});
+
+describe("payableInvoiceSession", () => {
+  function seedInvoiceOrder(overrides: Partial<Record<string, unknown>> = {}) {
+    const row = {
+      id: "order-1",
+      shop_id: "shop-1",
+      channel: "invoice",
+      state: "checkout_pending",
+      total_cents: 3998,
+      currency: "usd",
+      confirmation_token: "tok-abc",
+      ...overrides,
+    };
+    store.db.orders.push(row);
+    return row;
+  }
+
+  it("mints a fresh hosted session for a checkout_pending invoice, with tenant-origin return URLs, and persists its id", async () => {
+    seedInvoiceOrder();
+    const result = await payableInvoiceSession("shop-1", "tok-abc");
+    expect(result).toEqual({ kind: "pay", url: "https://stripe/pay/cs_1" });
+    expect(shopServer.getShopStorefrontOrigin).toHaveBeenCalledWith("shop-1");
+    expect(stripeCheckout.createCommerceCheckoutSession).toHaveBeenCalledWith("shop-1", {
+      orderId: "order-1",
+      totalCents: 3998,
+      currency: "usd",
+      confirmationToken: "tok-abc",
+      returnUrls: {
+        success: "https://peakandpine.calderyncompany.com/storefront/checkout/confirmation/tok-abc",
+        cancel: "https://peakandpine.calderyncompany.com/storefront/invoice/tok-abc/pay",
+      },
+    });
+    // No prior session on this order, so nothing to expire.
+    expect(stripeClient.expire).not.toHaveBeenCalled();
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: "cs_1" });
+  });
+
+  it("fix C1: returns not_ready and mints NO session when the shop has no live storefront origin", async () => {
+    seedInvoiceOrder();
+    shopServer.getShopStorefrontOrigin.mockResolvedValueOnce("");
+
+    const result = await payableInvoiceSession("shop-1", "tok-abc");
+
+    expect(result).toEqual({ kind: "not_ready" });
+    expect(stripeCheckout.createCommerceCheckoutSession).not.toHaveBeenCalled();
+    expect(store.db.orders[0].invoice_session_id).toBeUndefined();
+  });
+
+  it("expires the PRIOR hosted session before minting + persisting a replacement", async () => {
+    seedInvoiceOrder({ invoice_session_id: "cs_prev" });
+    stripeCheckout.createCommerceCheckoutSession.mockResolvedValue({ sessionId: "cs_new", url: "https://stripe/pay/cs_new" });
+
+    const result = await payableInvoiceSession("shop-1", "tok-abc");
+
+    expect(stripeClient.expire).toHaveBeenCalledWith("cs_prev");
+    expect(result).toEqual({ kind: "pay", url: "https://stripe/pay/cs_new" });
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: "cs_new" });
+  });
+
+  it("swallows an expire failure (session already completed/expired) and still mints + persists a fresh session", async () => {
+    seedInvoiceOrder({ invoice_session_id: "cs_prev" });
+    stripeClient.expire.mockRejectedValueOnce(new Error("No such checkout session"));
+    stripeCheckout.createCommerceCheckoutSession.mockResolvedValue({ sessionId: "cs_new", url: "https://stripe/pay/cs_new" });
+
+    const result = await payableInvoiceSession("shop-1", "tok-abc");
+
+    expect(result).toEqual({ kind: "pay", url: "https://stripe/pay/cs_new" });
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: "cs_new" });
+  });
+
+  it("mints a NEW session on every call, expiring the previous one each time", async () => {
+    seedInvoiceOrder();
+    stripeCheckout.createCommerceCheckoutSession
+      .mockResolvedValueOnce({ sessionId: "cs_1", url: "https://stripe/pay/cs_1" })
+      .mockResolvedValueOnce({ sessionId: "cs_2", url: "https://stripe/pay/cs_2" });
+    const first = await payableInvoiceSession("shop-1", "tok-abc");
+    const second = await payableInvoiceSession("shop-1", "tok-abc");
+    expect(first).toEqual({ kind: "pay", url: "https://stripe/pay/cs_1" });
+    expect(second).toEqual({ kind: "pay", url: "https://stripe/pay/cs_2" });
+    expect(stripeCheckout.createCommerceCheckoutSession).toHaveBeenCalledTimes(2);
+    // Second call finds the first call's persisted session id and expires it.
+    expect(stripeClient.expire).toHaveBeenCalledWith("cs_1");
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: "cs_2" });
+  });
+
+  it("maps a PaymentsNotReadyError from session creation to kind not_ready, without persisting anything", async () => {
+    seedInvoiceOrder();
+    stripeCheckout.createCommerceCheckoutSession.mockRejectedValueOnce(
+      new PaymentsNotReadyError("shop-1", "onboarding_incomplete"),
+    );
+
+    const result = await payableInvoiceSession("shop-1", "tok-abc");
+
+    expect(result).toEqual({ kind: "not_ready" });
+    expect(store.db.orders[0].invoice_session_id).toBeUndefined();
+  });
+
+  it("returns paid for a paid order, WITHOUT minting a session", async () => {
+    seedInvoiceOrder({ state: "paid" });
+    const result = await payableInvoiceSession("shop-1", "tok-abc");
+    expect(result).toEqual({ kind: "paid", confirmationToken: "tok-abc" });
+    expect(stripeCheckout.createCommerceCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("returns paid for fulfilled/partially_fulfilled/partially_refunded states", async () => {
+    for (const state of ["fulfilled", "partially_fulfilled", "partially_refunded"]) {
+      store.db.orders.length = 0;
+      seedInvoiceOrder({ state });
+      const result = await payableInvoiceSession("shop-1", "tok-abc");
+      expect(result).toEqual({ kind: "paid", confirmationToken: "tok-abc" });
+    }
+  });
+
+  it("returns void for a cancelled or refunded order", async () => {
+    seedInvoiceOrder({ state: "cancelled" });
+    expect(await payableInvoiceSession("shop-1", "tok-abc")).toEqual({ kind: "void" });
+
+    store.db.orders.length = 0;
+    seedInvoiceOrder({ state: "refunded" });
+    expect(await payableInvoiceSession("shop-1", "tok-abc")).toEqual({ kind: "void" });
+  });
+
+  it("returns null for a wrong-channel order (not an invoice)", async () => {
+    seedInvoiceOrder({ channel: "storefront" });
+    expect(await payableInvoiceSession("shop-1", "tok-abc")).toBeNull();
+  });
+
+  it("returns null for an unknown token", async () => {
+    expect(await payableInvoiceSession("shop-1", "no-such-token")).toBeNull();
+  });
+
+  it("returns null for a foreign-shop token (shop-scoped)", async () => {
+    seedInvoiceOrder();
+    expect(await payableInvoiceSession("other-shop", "tok-abc")).toBeNull();
+  });
+});
+
+describe("expireInvoiceSession (fix C2)", () => {
+  it("expires the persisted session and nulls invoice_session_id", async () => {
+    store.db.orders.push({ id: "order-9", shop_id: "shop-1", invoice_session_id: "cs_stale" });
+
+    await expireInvoiceSession("shop-1", "order-9");
+
+    expect(stripeClient.expire).toHaveBeenCalledWith("cs_stale");
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: null });
+  });
+
+  it("is a no-op when the order has no persisted session", async () => {
+    store.db.orders.push({ id: "order-10", shop_id: "shop-1", invoice_session_id: null });
+
+    await expireInvoiceSession("shop-1", "order-10");
+
+    expect(stripeClient.expire).not.toHaveBeenCalled();
+  });
+
+  it("swallows a Stripe expire failure (already completed/expired) and still nulls the column", async () => {
+    store.db.orders.push({ id: "order-11", shop_id: "shop-1", invoice_session_id: "cs_gone" });
+    stripeClient.expire.mockRejectedValueOnce(new Error("No such checkout session"));
+
+    await expireInvoiceSession("shop-1", "order-11");
+
+    expect(store.db.orders[0]).toMatchObject({ invoice_session_id: null });
+  });
+
+  it("is a no-op for an unknown order", async () => {
+    await expect(expireInvoiceSession("shop-1", "ghost")).resolves.toBeUndefined();
+    expect(stripeClient.expire).not.toHaveBeenCalled();
+  });
+});

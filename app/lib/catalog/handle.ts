@@ -2,6 +2,24 @@
 // Slugify a collection title into a URL handle. Shared by the server (the
 // authoritative write) and the dashboard client (the optimistic row label) so the
 // two can't drift. Pure (no server deps) - safe to import from the browser client.
+
+// The product-handle contract, shared by the server validator (validate.ts) and
+// the editor's pre-submit check so the two can't drift: lowercase slug segments
+// joined by single hyphens (no leading/trailing/double hyphen), 1-80 chars.
+export const PRODUCT_HANDLE_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const PRODUCT_HANDLE_MAX = 80;
+
+/** Editing state for the existing-product address field. Blank and malformed
+ * changed values are deliberately dirty + invalid; only an exact saved-value
+ * match is unchanged. */
+export function productHandleEditState(
+  handle: string,
+  savedHandle: string,
+): { dirty: boolean; valid: boolean } {
+  const dirty = handle !== savedHandle;
+  return { dirty, valid: !dirty || PRODUCT_HANDLE_RE.test(handle) };
+}
+
 export function collectionHandle(title: string): string {
   return (
     title

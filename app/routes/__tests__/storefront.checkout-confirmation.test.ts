@@ -9,6 +9,7 @@ const getCartState = vi.fn();
 
 vi.mock("~/lib/storefront/shop.server", () => ({
   resolveStorefrontShop: (...a: unknown[]) => resolveStorefrontShop(...a),
+  DEMO_SHOP_ID: "demo-shop",
 }));
 vi.mock("~/lib/order/checkout.server", () => ({
   findOrderByConfirmationToken: (...a: unknown[]) => findOrderByConfirmationToken(...a),
@@ -22,7 +23,7 @@ vi.mock("~/lib/order/cart.server", () => ({
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { commitCartId } from "~/lib/storefront/cart-cookie.server";
 // eslint-disable-next-line import/first
-import { loader } from "../storefront.checkout.confirmation.$token";
+import { loader } from "../storefront.checkout_.confirmation.$token";
 
 const SECRET = "test-app-secret-0000000000000000000000000000";
 
@@ -78,6 +79,14 @@ describe("confirmation loader — IDOR safety", () => {
 
   it("404s when the token is absent without hitting the DB", async () => {
     const err = await loader(args(undefined)).catch((e) => e);
+    expect((err as Response).status).toBe(404);
+    expect(findOrderByConfirmationToken).not.toHaveBeenCalled();
+  });
+
+  it("404s on the demo shell host BEFORE any DB read (fix I3 — the sentinel shop id can't back a uuid-keyed orders lookup)", async () => {
+    resolveStorefrontShop.mockResolvedValue("demo-shop");
+    const err = await loader(args("some-token")).catch((e) => e);
+    expect(err).toBeInstanceOf(Response);
     expect((err as Response).status).toBe(404);
     expect(findOrderByConfirmationToken).not.toHaveBeenCalled();
   });
