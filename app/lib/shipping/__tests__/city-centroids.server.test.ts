@@ -93,4 +93,24 @@ describe("city centroid resolution", () => {
     expect(Number.isFinite(resolved?.latitude)).toBe(true);
     expect(Number.isFinite(resolved?.longitude)).toBe(true);
   });
+
+  it("reuses one normalized package index across default lookups", async () => {
+    const cityCentroids = await import("../city-centroids.server");
+    const getDefaultCityIndex = (
+      cityCentroids as typeof cityCentroids & {
+        getDefaultCityIndex?: () => object;
+      }
+    ).getDefaultCityIndex;
+
+    expect(getDefaultCityIndex).toBeTypeOf("function");
+    const index = getDefaultCityIndex?.();
+
+    expect(
+      resolveCityCentroid({ city: "Toronto", region: "Ontario", country: "CA" }),
+    ).toMatchObject({ city: "Toronto", region: "Ontario", country: "CA" });
+    expect(
+      resolveCityCentroid({ city: "Montréal", region: "Quebec", country: "Canada" }),
+    ).toMatchObject({ city: "Montréal", region: "Quebec", country: "CA" });
+    expect(getDefaultCityIndex?.()).toBe(index);
+  });
 });

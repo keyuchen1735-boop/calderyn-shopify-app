@@ -33,9 +33,65 @@ export interface ResolvedCity {
 
 const require = createRequire(import.meta.url);
 
+interface IndexedWorldCityRow {
+  row: WorldCityRow;
+  latitude: number;
+  longitude: number;
+  region: string;
+  countries: readonly string[];
+  population: number;
+}
+
+export type CityCentroidIndex = ReadonlyMap<
+  string,
+  readonly IndexedWorldCityRow[]
+>;
+
+let defaultCityIndex: CityCentroidIndex | undefined;
+
 function loadWorldCityRows(): readonly WorldCityRow[] {
   const dataset = require("world-cities-json") as WorldCitiesJsonModule;
   return dataset.cities;
+}
+
+function buildCityIndex(rows: readonly WorldCityRow[]): CityCentroidIndex {
+  const index = new Map<string, IndexedWorldCityRow[]>();
+
+  for (const row of rows) {
+    const latitude = Number(row.lat);
+    const longitude = Number(row.lng);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
+
+    const cityNames = new Set([
+      normalizePlace(row.city),
+      normalizePlace(row.city_ascii),
+    ]);
+    const indexedRow: IndexedWorldCityRow = {
+      row,
+      latitude,
+      longitude,
+      region: normalizePlace(row.admin_name),
+      countries: [
+        normalizePlace(row.country),
+        normalizePlace(row.iso2),
+        normalizePlace(row.iso3),
+      ],
+      population: Number(row.population),
+    };
+
+    for (const cityName of cityNames) {
+      const candidates = index.get(cityName);
+      if (candidates) candidates.push(indexedRow);
+      else index.set(cityName, [indexedRow]);
+    }
+  }
+
+  return index;
+}
+
+export function getDefaultCityIndex(): CityCentroidIndex {
+  defaultCityIndex ??= buildCityIndex(loadWorldCityRows());
+  return defaultCityIndex;
 }
 
 export function resolveCityCentroid(
@@ -46,24 +102,14 @@ export function resolveCityCentroid(
   const region = normalizePlace(input.region);
   const country = normalizePlace(input.country);
 
-  const candidates = (rows ?? loadWorldCityRows())
-    .map((row) => ({
-      row,
-      latitude: Number(row.lat),
-      longitude: Number(row.lng),
-      regionMatch:
-        region.length > 0 && normalizePlace(row.admin_name) === region,
-      population: Number(row.population),
+  const index = rows ? buildCityIndex(rows) : getDefaultCityIndex();
+  const candidates = (index.get(city) ?? [])
+    .map((candidate) => ({
+      ...candidate,
+      regionMatch: region.length > 0 && candidate.region === region,
     }))
     .filter(
-      ({ row, latitude, longitude }) =>
-        (normalizePlace(row.city) === city ||
-          normalizePlace(row.city_ascii) === city) &&
-        (normalizePlace(row.country) === country ||
-          normalizePlace(row.iso2) === country ||
-          normalizePlace(row.iso3) === country) &&
-        Number.isFinite(latitude) &&
-        Number.isFinite(longitude),
+      ({ countries }) => countries.includes(country),
     )
     .sort(
       (left, right) =>
