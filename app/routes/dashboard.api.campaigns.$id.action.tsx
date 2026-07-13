@@ -1,4 +1,4 @@
-﻿// POST { type, idempotency_key, daily_budget_cents? } → shared action pipeline.
+// POST { type, idempotency_key, daily_budget_cents? } → shared action pipeline.
 
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
@@ -21,6 +21,7 @@ const KINDS: ExecutableKind[] = [
   "update_campaign_budget",
   "exclude_geo",
   "push_creative_draft",
+  "duplicate_campaign",
 ];
 
 export async function action({ request, params }: ActionFunctionArgs) {
@@ -44,23 +45,53 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   if (!KINDS.includes(kind)) return jsonError(422, "invalid_action_type");
 
-  if (kind === "push_creative_draft") {
-    const parsed = parsePushDraftCreative(body.creative);
-    if (!parsed.ok) return jsonError(422, parsed.error);
-    // Defense in depth: refuse before any Meta call if the stored token lacks
-    // ads_management (the UI gate is advisory; a direct POST bypasses it).
+  if (kind === "push_creative_draft" || kind === "duplicate_campaign") {
+    // Both branch out early because they create a NEW Meta object rather than
+    // mutating the campaign in place — same defense-in-depth scope gate (the
+    // UI gate is advisory; a direct POST bypasses it).
     if (!(await metaDraftPushEnabled(getSupabase(), session.shopId))) {
       return jsonError(403, "meta_scope_insufficient");
     }
     const campaignId = String(params.id);
+
+    if (kind === "push_creative_draft") {
+      const parsed = parsePushDraftCreative(body.creative);
+      if (!parsed.ok) return jsonError(422, parsed.error);
+      const result = await executeAction(
+        session.shopId,
+        {
+          alertId: null,
+          kind,
+          campaignId,
+          idempotencyKey: pushCreativeDraftKey(campaignId, parsed.creative),
+          creative: parsed.creative,
+          actor: "merchant:web-dashboard",
+        },
+        getSupabase(),
+      );
+      if (result.outcome === "failed") {
+        return new Response(
+          JSON.stringify({
+            error: "action_failed",
+            message: "Couldn't push the draft — the ad platform rejected it. See the action history for details.",
+            audit_id: result.id,
+            outcome: result.outcome,
+          }),
+          { status: 502, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
+        );
+      }
+      return dashboardJson(async () => ({ audit_id: result.id, outcome: result.outcome }));
+    }
+
+    // duplicate_campaign
+    if (!idempotencyKey) return jsonError(422, "missing_idempotency_key");
     const result = await executeAction(
       session.shopId,
       {
         alertId: null,
         kind,
         campaignId,
-        idempotencyKey: pushCreativeDraftKey(campaignId, parsed.creative),
-        creative: parsed.creative,
+        idempotencyKey,
         actor: "merchant:web-dashboard",
       },
       getSupabase(),
@@ -69,7 +100,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return new Response(
         JSON.stringify({
           error: "action_failed",
-          message: "Couldn't push the draft — the ad platform rejected it. See the action history for details.",
+          message: "Couldn't duplicate the campaign — the ad platform rejected it. See the action history for details.",
           audit_id: result.id,
           outcome: result.outcome,
         }),

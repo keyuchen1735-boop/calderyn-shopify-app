@@ -24,6 +24,7 @@ export type ActionKind =
   | "issue_refund"
   | "snooze_alert"
   | "push_creative_draft"
+  | "duplicate_campaign"
   | "fulfill_order"
   | "cancel_order"
   | "edit_order"

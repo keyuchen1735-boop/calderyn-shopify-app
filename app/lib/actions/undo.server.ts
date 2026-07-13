@@ -393,6 +393,44 @@ export async function undoAction(
     const conn = await resolveClient(shopId);
     if (!conn) throw new Error("Meta not connected; cannot undo creative draft");
     await del(conn.client, adId);
+  } else if (orig.action_kind === "duplicate_campaign") {
+    // Reversal = delete the copied campaign we created. The copy was created
+    // PAUSED (never spent), so deleting it is safe. MetaClient has no DELETE
+    // verb, so deleteAd (POST /{id} {status: DELETED}) is reused here — the
+    // same call works for a campaign id as it does for an ad id. Absolute-state,
+    // so a retry is safe. Refuse loudly without the copied campaign id or a
+    // write client rather than record a "succeeded" undo that deleted nothing
+    // (rule 12). No mirrorBackToPreState — duplicating never changed the
+    // ORIGINAL campaign's own status/budget.
+    const post = (orig.post_state ?? {}) as {
+      copied_campaign_external_id?: string;
+      copied_campaign_dim_id?: string;
+    };
+    const copiedExternalId = String(post.copied_campaign_external_id ?? "");
+    if (!copiedExternalId) {
+      throw new Error(`audit ${auditId} lacks copied_campaign_external_id; cannot undo a duplicate`);
+    }
+    const resolveClient = deps.resolveMetaWriteClient ?? metaWriteClientForShopId;
+    const del = deps.deleteAd ?? realDeleteAd;
+    const conn = await resolveClient(shopId);
+    if (!conn) throw new Error("Meta not connected; cannot undo duplicate campaign");
+    await del(conn.client, copiedExternalId);
+    // Best-effort delete of the mirrored ad_campaign_dim row — the platform
+    // deletion already happened, so a mirror-write failure must not fail the
+    // undo (next sync reconciles).
+    if (post.copied_campaign_dim_id) {
+      const { error: mirrorDelErr } = await sb
+        .from("ad_campaign_dim")
+        .delete()
+        .eq("id", post.copied_campaign_dim_id)
+        .eq("shop_id", shopId);
+      if (mirrorDelErr) {
+        console.error(
+          `[undo] mirror delete failed for duplicated campaign dim row ${post.copied_campaign_dim_id}`,
+          mirrorDelErr,
+        );
+      }
+    }
   } else if (orig.action_kind === "exclude_geo") {
     // Reverse a geo exclusion: re-include the recorded region's targeting.
     // No mirror restore — exclude_geo never changed ad_campaign_dim status/budget.
