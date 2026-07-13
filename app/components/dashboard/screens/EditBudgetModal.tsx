@@ -34,6 +34,9 @@ export function EditBudgetModal({
       await executeCampaignAction(c.id, { type: "update_campaign_budget", dailyBudgetCents: cents });
       app.toast("Budget updated.", "check", "success");
       onSaved(cents);
+      // The server mirrors the budget before responding, so the refreshed
+      // campaigns data supersedes (and clears) the local patch onSaved wrote.
+      app.refresh();
       onClose();
     } catch (err) {
       const message =

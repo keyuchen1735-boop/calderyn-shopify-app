@@ -1103,10 +1103,19 @@ function CampaignList({
   }, []);
 
   // Local optimistic patches from row quick actions (pause/resume/budget),
-  // keyed by campaign id — merged over the server data until the next sync
-  // refetches it for real.
+  // keyed by campaign id — merged over the server data until the next
+  // refresh lands.
   const [overrides, setOverrides] = useState<Record<string, Partial<CampaignVM>>>({});
   const [budgetFor, setBudgetFor] = useState<CampaignVM | null>(null);
+  // Drop the patches once a new campaigns array arrives: executeAction
+  // updates the ad_campaign_dim mirror BEFORE responding, and the quick
+  // actions only call app.refresh() after the action resolves, so any fresh
+  // array already reflects the action — fresh data supersedes overrides.
+  // Keyed on array identity (a new fetch always allocates a new array), not
+  // deep equality, so unrelated re-renders never clear an in-flight patch.
+  useEffect(() => {
+    setOverrides({});
+  }, [app.campaigns]);
   const merged = joined.map((c) => (overrides[c.id] ? { ...c, ...overrides[c.id] } : c));
 
   // Active campaigns sort to the top; within each status group, highest 7d
