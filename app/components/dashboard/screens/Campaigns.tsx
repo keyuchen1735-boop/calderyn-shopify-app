@@ -1054,17 +1054,23 @@ function CampaignList({
 }: {
   app: DashboardCtx;
   joined: CampaignVM[];
-  setDraftPrefill: (p: { name?: string; platform?: CampaignDraftPlatform } | null) => void;
+  setDraftPrefill: (p: { id?: string; name?: string; platform?: CampaignDraftPlatform } | null) => void;
 }) {
   // Owned campaign drafts render alongside synced campaigns. Fetched on mount,
   // and re-fetched after a draft is deleted or a new one is saved from the
   // inline empty-state wizard (which never unmounts this component).
   const [drafts, setDrafts] = useState<CampaignDraftRow[]>([]);
+  // Returns its promise so callers (the empty-state wizard's onExit) can wait
+  // for the refresh to land before flipping to the "no campaigns" placeholder
+  // — otherwise a just-saved draft flashes the wrong empty state for a frame.
   const refreshDrafts = () => {
-    fetchCampaignDrafts()
+    return fetchCampaignDrafts()
       .then((rows) => setDrafts(rows))
-      .catch(() => {
-        // Non-fatal: the list still renders the synced campaigns.
+      .catch((err) => {
+        // Non-fatal: the list still renders the synced campaigns. A toast is
+        // overkill for a background refresh the merchant didn't initiate —
+        // just log it so a real failure isn't silently swallowed.
+        console.error("[campaigns] failed to refresh drafts", err);
       });
   };
   useEffect(() => {
@@ -1215,8 +1221,11 @@ function CampaignList({
                 prefill={null}
                 embedded
                 onExit={() => {
-                  refreshDrafts();
-                  setSkippedEmpty(true);
+                  // Wait for the refreshed draft list to land before flipping
+                  // to the empty placeholder — otherwise the just-saved draft
+                  // is momentarily invisible and the wrong "Connect ad
+                  // account" state flashes for a frame.
+                  void refreshDrafts().then(() => setSkippedEmpty(true));
                 }}
               />
             </div>
@@ -1254,7 +1263,7 @@ function CampaignList({
                 key={d.id}
                 d={d}
                 onContinue={() => {
-                  setDraftPrefill({ name: d.name, platform: d.platform });
+                  setDraftPrefill({ id: d.id, name: d.name, platform: d.platform });
                   app.navigate("campaigns", "new");
                 }}
                 onDelete={() => deleteDraft(d)}
@@ -1287,10 +1296,11 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   // While this is in flight the campaigns render with whatever grade they carry.
   const [grades, setGrades] = useState<CampaignGradeRow[]>([]);
   const [metaCanPushDrafts, setMetaCanPushDrafts] = useState(false);
-  // Carries a draft's { name, platform } into the wizard when the merchant hits
-  // "Continue setup" on a DraftRow — lifted here since the wizard mounts fresh
-  // on the "new" nav param, unrelated to CampaignList's own state.
-  const [draftPrefill, setDraftPrefill] = useState<{ name?: string; platform?: CampaignDraftPlatform } | null>(
+  // Carries a draft's { id, name, platform } into the wizard when the merchant
+  // hits "Continue setup" on a DraftRow — lifted here since the wizard mounts
+  // fresh on the "new" nav param, unrelated to CampaignList's own state. The
+  // id lets the wizard replace the resumed draft instead of duplicating it.
+  const [draftPrefill, setDraftPrefill] = useState<{ id?: string; name?: string; platform?: CampaignDraftPlatform } | null>(
     null,
   );
 

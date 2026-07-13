@@ -43,14 +43,18 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!productId) return jsonError(422, "invalid_request", "productId is required");
 
   return dashboardJson(async () => {
-    const product = await getProduct(session.shopId, productId);
+    // getShopStorefrontOrigin only needs shopId — no reason to wait on
+    // getProduct before starting it.
+    const [product, origin] = await Promise.all([
+      getProduct(session.shopId, productId),
+      getShopStorefrontOrigin(session.shopId),
+    ]);
     if (!product) throw jsonError(404, "not_found");
 
     const primaryMedia =
       product.media.find((m) => m.isPrimary) ?? product.media[0] ?? null;
     const imageUrl = primaryMedia ? await signMediaPath(primaryMedia.storagePath) : null;
 
-    const origin = await getShopStorefrontOrigin(session.shopId);
     const productUrl = origin
       ? `${origin}/storefront/products/${product.handle}`
       : `/storefront/products/${product.handle}`;

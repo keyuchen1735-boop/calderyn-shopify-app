@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState, type ReactNode } from "react";
-import { Card, Btn, PlatformMark } from "../ui";
+import { Card, Btn, ClearableSearchInput, Placeholder, PlatformMark } from "../ui";
 import { CDIcon } from "../icons";
 import { money } from "../format";
 import {
@@ -12,12 +12,17 @@ import {
   type FirstRunCreativeVariant,
   type ProductSummaryVM,
 } from "~/lib/dashboard/client";
-import { createCampaignDraft } from "~/lib/dashboard/campaign-drafts-client";
+import { createCampaignDraft, deleteCampaignDraft } from "~/lib/dashboard/campaign-drafts-client";
 import {
   CAMPAIGN_DRAFT_PLATFORM_LABELS,
+  MAX_CAMPAIGN_DRAFT_NAME_LENGTH,
   type CampaignDraftPlatform,
 } from "~/lib/ads/campaign-draft-types";
 import type { DashboardCtx } from "../context";
+
+/** Draft resume carries the id being replaced, alongside the name/platform the
+ *  draft was saved with. */
+type WizardPrefill = { id?: string; name?: string; platform?: CampaignDraftPlatform } | null;
 
 /* ---------- Shared constants ---------- */
 
@@ -66,6 +71,11 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
     case "step":
       return { ...state, step: action.step };
     case "platform":
+      // Re-picking the already-selected platform is a no-op. Resetting
+      // preflight here would leave PlatformStep's guarded effect dep unchanged
+      // (state.platform), so the "Checking your Meta connection…" state would
+      // never resolve again.
+      if (action.platform === state.platform) return state;
       // Switching platform invalidates any Meta preflight read for the old pick.
       return { ...state, platform: action.platform, preflight: null };
     case "preflight":
@@ -88,7 +98,7 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   }
 }
 
-function initWizardState(prefill: { name?: string; platform?: CampaignDraftPlatform } | null): WizardState {
+function initWizardState(prefill: WizardPrefill): WizardState {
   const platform = prefill?.platform ?? "meta";
   return {
     // A Google/TikTok draft already picked a platform — jump straight to the
@@ -193,7 +203,12 @@ function PlatformStep({
   const [retryTick, setRetryTick] = useState(0);
 
   useEffect(() => {
-    if (state.platform !== "meta") return;
+    // Skip once a preflight read already exists — remounting this step (e.g.
+    // Back from ProductStep, then Continue again) must not re-hit the Meta
+    // API for a result the wizard already has. retryTick still works: on
+    // error state.preflight stays null, so the guard falls through and this
+    // re-runs.
+    if (state.platform !== "meta" || state.preflight) return;
     let alive = true;
     setPreflightError(false);
     fetchFirstRunPreflight()
@@ -208,7 +223,7 @@ function PlatformStep({
     };
     // dispatch from useReducer is referentially stable — safe to omit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.platform, retryTick]);
+  }, [state.platform, state.preflight, retryTick]);
 
   const connect = async () => {
     if (connecting) return;
@@ -315,8 +330,11 @@ function PlatformStep({
                   </a>
                 </StatusRow>
               ) : (
-                <StatusRow tone={state.preflight.fundingOk ? "good" : "warn"} icon={state.preflight.fundingOk ? "check" : "warn"}>
-                  {state.preflight.fundingOk ? "Billing is set up" : "Billing isn't set up yet"}
+                // The preflight contract only ever produces true | null for
+                // fundingOk (see FirstRunPreflight) — this branch is only
+                // reachable when it's true.
+                <StatusRow tone="good" icon="check">
+                  Billing is set up
                 </StatusRow>
               )}
             </div>
@@ -338,13 +356,22 @@ function PlatformStep({
 function ProductStep({
   state,
   dispatch,
+  app,
   onNext,
 }: {
   state: WizardState;
   dispatch: React.Dispatch<WizardAction>;
+  app: DashboardCtx;
   onNext: () => void;
 }) {
   const [search, setSearch] = useState("");
+  // Debounce the search box so each keystroke doesn't fire a request — same
+  // pattern as Catalog.tsx / Collections.tsx.
+  const [query, setQuery] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
   const [products, setProducts] = useState<ProductSummaryVM[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [budgetInput, setBudgetInput] = useState(String(state.budgetCents / 100));
@@ -353,7 +380,7 @@ function ProductStep({
   useEffect(() => {
     let alive = true;
     setLoadError(false);
-    fetchProducts({ status: "active", search: search || undefined })
+    fetchProducts({ status: "active", search: query || undefined })
       .then((res) => {
         if (alive) setProducts(res.products);
       })
@@ -363,7 +390,7 @@ function ProductStep({
     return () => {
       alive = false;
     };
-  }, [search]);
+  }, [query]);
 
   const commitBudget = (raw: string) => {
     setBudgetInput(raw);
@@ -394,13 +421,11 @@ function ProductStep({
         <p className="cd-caption">Pick the product this ad sends people to.</p>
       </div>
 
-      <input
-        className="cd-input"
-        placeholder="Search products"
-        aria-label="Search products"
+      <ClearableSearchInput
         value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ width: "100%" }}
+        onChange={setSearch}
+        placeholder="Search products"
+        ariaLabel="Search products"
       />
 
       {products === null && !loadError ? (
@@ -409,6 +434,14 @@ function ProductStep({
         <p className="cd-caption" style={{ color: "var(--red)" }}>
           Couldn't load your products — try again.
         </p>
+      ) : products && products.length === 0 && !query ? (
+        <Placeholder
+          icon="box"
+          title="No products yet"
+          sub="Add your first product and come back."
+          actionLabel="Go to products"
+          onAction={() => app.navigate("catalog")}
+        />
       ) : products && products.length === 0 ? (
         <p className="cd-caption">No active products found.</p>
       ) : (
@@ -496,7 +529,13 @@ function CreativeStep({
   const productTitle = state.productTitle;
 
   useEffect(() => {
-    if (!productId) return;
+    // Skip when a creative already exists for this product — this effect
+    // fires on every remount (Back to ProductStep, then Continue again re-
+    // mounts CreativeStep), and without this guard it would re-bill Claude
+    // and clobber whatever the merchant just edited. The reducer nulls
+    // state.creative whenever the product changes (see "product" case), so
+    // this is safe: a real product change always clears it and re-generates.
+    if (!productId || state.creative) return;
     let alive = true;
     setVariants(null);
     setLoadError(false);
@@ -534,7 +573,7 @@ function CreativeStep({
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId]);
+  }, [productId, state.creative]);
 
   const loading = state.creative === null && !loadError;
   const creative = state.creative;
@@ -691,7 +730,7 @@ function ReviewStep({
 }: {
   state: WizardState;
   app: DashboardCtx;
-  prefill: { name?: string; platform?: CampaignDraftPlatform } | null;
+  prefill: WizardPrefill;
   onExit: () => void;
 }) {
   const [saving, setSaving] = useState(false);
@@ -700,9 +739,22 @@ function ReviewStep({
   const saveDraft = async () => {
     if (saving) return;
     setSaving(true);
-    const name = prefill?.name?.trim() || state.productTitle || "New campaign";
+    // Prefer the live selection over the name the draft was originally saved
+    // under — the merchant may have picked a different product since.
+    const rawName = state.productTitle || prefill?.name?.trim() || "New campaign";
+    const name = rawName.slice(0, MAX_CAMPAIGN_DRAFT_NAME_LENGTH);
     try {
       await createCampaignDraft({ name, platform: state.platform });
+      if (prefill?.id) {
+        // There's no update endpoint for drafts, so resuming one is really
+        // "create the new row, then remove the old one" — replace semantics.
+        // Best-effort: a failed delete must not fail the save itself.
+        try {
+          await deleteCampaignDraft(prefill.id);
+        } catch (err) {
+          console.error("[campaign wizard] failed to delete superseded draft", err);
+        }
+      }
       app.toast("Draft saved.", "check", "success");
       onExit();
     } catch (err) {
@@ -741,10 +793,18 @@ function ReviewStep({
 
       {state.platform === "meta" ? (
         <div className="flex flex-col items-end" style={{ gap: 6 }}>
-          <Btn kind="primary" disabled={!META_CREATE_ENABLED}>
-            Create on Meta
-          </Btn>
-          <span className="cd-caption">Creating on Meta lands in the next update</span>
+          <div className="flex items-center" style={{ gap: 10 }}>
+            {/* Same saveDraft path as Google/TikTok (replace semantics from a
+                resumed draft included) — a Meta user gets a real finish line
+                while direct create is still disabled. */}
+            <Btn disabled={saving} onClick={saveDraft}>
+              {saving ? "Saving…" : "Save as draft"}
+            </Btn>
+            <Btn kind="primary" disabled={!META_CREATE_ENABLED}>
+              Create on Meta
+            </Btn>
+          </div>
+          <span className="cd-caption">Creating on Meta lands in the next update — save as a draft for now</span>
         </div>
       ) : (
         <div className="flex flex-col" style={{ gap: 10 }}>
@@ -779,7 +839,7 @@ export function CampaignWizard({
   embedded = false,
 }: {
   app: DashboardCtx;
-  prefill: { name?: string; platform?: CampaignDraftPlatform } | null;
+  prefill: WizardPrefill;
   onExit: () => void;
   /** True when the wizard lives inside an existing card (the Campaigns
    *  empty state) — skips the full-page cd-screen chrome so padding and
@@ -802,7 +862,7 @@ export function CampaignWizard({
     <>
       <WizardHeader step={state.step} canBack={idx > 0} onBack={goBack} onExit={onExit} />
       {state.step === "platform" && <PlatformStep state={state} dispatch={dispatch} app={app} onNext={goNext} />}
-      {state.step === "product" && <ProductStep state={state} dispatch={dispatch} onNext={goNext} />}
+      {state.step === "product" && <ProductStep state={state} dispatch={dispatch} app={app} onNext={goNext} />}
       {state.step === "creative" && <CreativeStep state={state} dispatch={dispatch} onNext={goNext} />}
       {state.step === "review" && <ReviewStep state={state} app={app} prefill={prefill} onExit={onExit} />}
     </>
