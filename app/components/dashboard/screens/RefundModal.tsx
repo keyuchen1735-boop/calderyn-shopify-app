@@ -107,7 +107,7 @@ export default function RefundModal({
             </label>
             {!full && (
               <label className="cd-field">
-                <span>Partial amount (USD)</span>
+                <span>Partial amount ({(order.currency || "usd").toUpperCase()})</span>
                 <input
                   className="cd-input tabular-nums"
                   type="number"
