@@ -486,6 +486,29 @@ export async function fetchFirstRunPreflight(): Promise<FirstRunPreflight> {
   return apiGet<FirstRunPreflight>("/dashboard/api/campaigns/first-run");
 }
 
+/** One AI-generated ad-copy variant for the first-campaign wizard's step 3. */
+export interface FirstRunCreativeVariant {
+  headline: string;
+  primaryText: string;
+  cta: string;
+  rationale: string;
+}
+
+/**
+ * Generate up to 3 ad-copy variants from a chosen catalog product. `available:
+ * false` means the generator is unconfigured (no API key / quota) - the wizard
+ * should fall back to manual copy editing rather than treat it as an error.
+ */
+export async function generateFirstRunCreatives(
+  productId: string,
+): Promise<{ available: boolean; variants: FirstRunCreativeVariant[] }> {
+  return apiSend<{ available: boolean; variants: FirstRunCreativeVariant[] }>(
+    "POST",
+    "/dashboard/api/campaigns/first-run/creatives",
+    { productId },
+  );
+}
+
 /** Per-campaign daily spend+revenue series for the detail chart (default 90d window). */
 export async function fetchCampaignSeries(id: string, days = 90): Promise<DailyRoasRow[]> {
   const data = await apiGet<{ series: DailyRoasRow[] }>(
