@@ -274,6 +274,9 @@ export interface Toast {
   text: string;
   icon?: string;
   tone?: string;
+  /** Optional next-step action rendered as a button inside the toast (e.g.
+   *  "Go" -> navigate to the next journey step). */
+  action?: { label: string; run: () => void };
 }
 
 export interface Tweaks {

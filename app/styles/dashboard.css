@@ -746,6 +746,11 @@
     padding: 11px 18px; font-size: calc(13.5px * var(--type-scale)); font-weight: 500; letter-spacing: -0.008em;
     animation: cd-toast-in 0.35s cubic-bezier(0.22, 1, 0.36, 1);
   }
+  .cd-toast-act {
+    margin-left: 2px; padding: 0; border: 0; background: none; color: var(--accent);
+    font: inherit; font-weight: 650; cursor: pointer; letter-spacing: -0.008em;
+  }
+  .cd-toast-act:hover { text-decoration: underline; }
   @keyframes cd-toast-in { from { opacity: 0; transform: translateY(-12px) scale(0.96); } to { opacity: 1; transform: none; } }
   .cd-ph-icon {
     width: 44px; height: 44px; border-radius: 50%; background: var(--gray-bg); color: var(--text-3);
