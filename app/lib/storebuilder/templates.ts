@@ -1,6 +1,8 @@
 import type { StudioVibe } from "./studio-types";
+import { STORE_TEMPLATE_REGISTRY } from "~/lib/storefront-bundle/registry";
+import type { StoreTemplateId } from "~/lib/storefront-bundle/types";
 
-export type StoreTemplateId = "atelier-nine";
+export type { StoreTemplateId } from "~/lib/storefront-bundle/types";
 
 export interface StoreTemplateRecipe {
   id: StoreTemplateId;
@@ -12,18 +14,19 @@ export interface StoreTemplateRecipe {
   generationInstructions: string;
 }
 
+const atelier = STORE_TEMPLATE_REGISTRY.templates.find((template) => template.id === "atelier-nine");
+if (!atelier) throw new Error("Atelier Grid compatibility recipe is missing");
+
+/** @deprecated Runtime-0 Store Studio adapter. Runtime-1 reads STORE_TEMPLATE_REGISTRY directly. */
 export const STORE_TEMPLATE_RECIPES: readonly StoreTemplateRecipe[] = [
   {
-    id: "atelier-nine",
-    name: "Atelier Grid",
-    descriptor: "Editorial / restrained / fashion-led",
-    previewSrc: "/template-previews/atelier-nine.webp",
-    vibe: "minimal",
-    matchTerms: [
-      "apparel", "beauty", "clothing", "editorial", "fashion", "jewelry", "luxury", "minimal", "skincare", "studio",
-    ],
-    generationInstructions:
-      "Use an original editorial commerce system: warm-white canvas, black typography, one vermilion accent, asymmetric magazine composition, oversized condensed display type, thin rules, square controls, restrained motion, and image-led product storytelling. Preserve generous negative space and avoid rounded cards, pill buttons, gradients, and centered generic hero layouts.",
+    id: atelier.id,
+    name: atelier.name,
+    descriptor: atelier.descriptor,
+    previewSrc: atelier.previewSrc,
+    vibe: atelier.legacyVibe,
+    matchTerms: [...atelier.promptTerms, ...atelier.catalogTerms],
+    generationInstructions: atelier.generationInstructions,
   },
 ] as const;
 
