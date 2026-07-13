@@ -45,53 +45,25 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   if (!KINDS.includes(kind)) return jsonError(422, "invalid_action_type");
 
-  if (kind === "push_creative_draft" || kind === "duplicate_campaign") {
-    // Both branch out early because they create a NEW Meta object rather than
-    // mutating the campaign in place — same defense-in-depth scope gate (the
-    // UI gate is advisory; a direct POST bypasses it).
+  if (kind === "push_creative_draft") {
+    // Creative-shape validation stays FIRST: a malformed body is always 422,
+    // regardless of scope.
+    const parsed = parsePushDraftCreative(body.creative);
+    if (!parsed.ok) return jsonError(422, parsed.error);
+    // Defense in depth: refuse before any Meta call if the stored token lacks
+    // ads_management (the UI gate is advisory; a direct POST bypasses it).
     if (!(await metaDraftPushEnabled(getSupabase(), session.shopId))) {
       return jsonError(403, "meta_scope_insufficient");
     }
     const campaignId = String(params.id);
-
-    if (kind === "push_creative_draft") {
-      const parsed = parsePushDraftCreative(body.creative);
-      if (!parsed.ok) return jsonError(422, parsed.error);
-      const result = await executeAction(
-        session.shopId,
-        {
-          alertId: null,
-          kind,
-          campaignId,
-          idempotencyKey: pushCreativeDraftKey(campaignId, parsed.creative),
-          creative: parsed.creative,
-          actor: "merchant:web-dashboard",
-        },
-        getSupabase(),
-      );
-      if (result.outcome === "failed") {
-        return new Response(
-          JSON.stringify({
-            error: "action_failed",
-            message: "Couldn't push the draft — the ad platform rejected it. See the action history for details.",
-            audit_id: result.id,
-            outcome: result.outcome,
-          }),
-          { status: 502, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
-        );
-      }
-      return dashboardJson(async () => ({ audit_id: result.id, outcome: result.outcome }));
-    }
-
-    // duplicate_campaign
-    if (!idempotencyKey) return jsonError(422, "missing_idempotency_key");
     const result = await executeAction(
       session.shopId,
       {
         alertId: null,
         kind,
         campaignId,
-        idempotencyKey,
+        idempotencyKey: pushCreativeDraftKey(campaignId, parsed.creative),
+        creative: parsed.creative,
         actor: "merchant:web-dashboard",
       },
       getSupabase(),
@@ -100,7 +72,42 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return new Response(
         JSON.stringify({
           error: "action_failed",
-          message: "Couldn't duplicate the campaign — the ad platform rejected it. See the action history for details.",
+          message: "Couldn't push the draft — the ad platform rejected it. See the action history for details.",
+          audit_id: result.id,
+          outcome: result.outcome,
+        }),
+        { status: 502, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } },
+      );
+    }
+    return dashboardJson(async () => ({ audit_id: result.id, outcome: result.outcome }));
+  }
+
+  if (kind === "duplicate_campaign") {
+    if (!idempotencyKey) return jsonError(422, "missing_idempotency_key");
+    // Same defense-in-depth scope gate as push_creative_draft: duplicating
+    // creates a NEW Meta object, so it needs ads_management too (the UI gate
+    // is advisory; a direct POST bypasses it).
+    if (!(await metaDraftPushEnabled(getSupabase(), session.shopId))) {
+      return jsonError(403, "meta_scope_insufficient");
+    }
+    const result = await executeAction(
+      session.shopId,
+      {
+        alertId: null,
+        kind,
+        campaignId: String(params.id),
+        idempotencyKey,
+        actor: "merchant:web-dashboard",
+      },
+      getSupabase(),
+    );
+    if (result.outcome === "failed") {
+      // No "the platform rejected it" claim: this kind can also fail before any
+      // platform call (non-Meta campaign, Meta not connected).
+      return new Response(
+        JSON.stringify({
+          error: "action_failed",
+          message: "Couldn't duplicate the campaign. See the action history for details.",
           audit_id: result.id,
           outcome: result.outcome,
         }),

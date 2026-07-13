@@ -72,4 +72,14 @@ describe("dashboard campaign action — push_creative_draft", () => {
     expect(res.status).toBe(403);
     expect(executeAction).not.toHaveBeenCalled();
   });
+
+  it("returns 422 (not 403) when the creative is malformed AND scope is insufficient", async () => {
+    // Shape validation must run before the scope gate: a malformed body is
+    // always 422, regardless of the token's scopes.
+    metaDraftPushEnabled.mockResolvedValue(false);
+    const res = await action({ request: req({ type: "push_creative_draft", creative: { primaryText: "x" } }), params: { id: "c-1" }, context: {} } as never);
+    expect(res.status).toBe(422);
+    expect(metaDraftPushEnabled).not.toHaveBeenCalled();
+    expect(executeAction).not.toHaveBeenCalled();
+  });
 });

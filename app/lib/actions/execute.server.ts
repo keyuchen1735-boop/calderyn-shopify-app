@@ -548,9 +548,11 @@ async function executeDuplicateCampaign(
 
   if (platform.toLowerCase() !== "meta") {
     // Duplicate is Meta-only today; refuse on other platforms rather than
-    // forcing Google/TikTok adapters to implement a deep-copy call.
+    // forcing Google/TikTok adapters to implement a deep-copy call. The copy is
+    // merchant-facing (audit last_error) and must not blame the platform — no
+    // platform call was made.
     outcome = "failed";
-    lastError = `duplicate_campaign is Meta-only today (campaign platform: ${platform})`;
+    lastError = `Duplicating is only available for Meta campaigns today (campaign platform: ${platform})`;
   } else {
     const resolveClient = deps.resolveMetaWriteClient ?? metaWriteClientForShopId;
     const conn = await resolveClient(shopId);
