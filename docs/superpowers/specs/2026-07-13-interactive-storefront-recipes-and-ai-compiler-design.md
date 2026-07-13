@@ -348,7 +348,14 @@ export interface StorefrontBundleV1 {
   validationProfileVersion: 1;
   source:
     | { kind: "recipe"; templateId: StoreTemplateId; templateVersion: number }
-    | { kind: "custom"; generationId: string; promptHash: string };
+    | {
+        kind: "custom";
+        generationId: string;
+        promptHash: string;
+        derivedFromVersionId?: string;
+        derivedFromTemplateId?: StoreTemplateId;
+        derivedFromTemplateVersion?: number;
+      };
   concept: {
     name: string;
     rationale: string;
@@ -627,6 +634,23 @@ Repair only the failing route or region, passing the compiler/browser diagnostic
 
 Candidates and checkpoints are stored separately from the merchant's current draft. Only a complete bundle that passes all required gates becomes the new draft release. A failed, timed-out, or cancelled generation leaves the existing draft untouched.
 
+### 10.9 Prompt-directed editing
+
+The Store Studio composer edits the current immutable draft instead of treating every follow-up as a new-store request. An edit request includes the merchant prompt, the expected base bundle ID and artifact hash, the active preview route, and optional platform-issued region/element IDs from preview markup. The server rejects stale bases with `409 storefront_edit_conflict`; it never applies a patch to a newer draft implicitly.
+
+Every accepted edit produces a new candidate bundle version and an audit record. Published bundles are never mutated. The candidate passes the same compiler, security, data-binding, accessibility, route, browser, and asset gates as a new build before an atomic draft-pointer swap. Failure leaves the current draft and published release untouched. Undo installs the recorded base version through the same compare-and-swap path rather than attempting an inverse text patch.
+
+Edits use the narrowest safe path:
+
+1. A deterministic intent parser handles supported token, copy, visibility, and bounded ordering changes such as palette tokens, typography IDs, announcement text, hero copy, section visibility, and movement within a validated container. These edits do not spend model quota.
+2. A targeted AI patch compiler handles layout, composition, imagery direction, and interaction changes. It receives only the validated bundle schema, current route/region artifact, public presentation data needed for that region, and the merchant instruction. It returns a typed `StorefrontBundlePatchV1`, never executable JavaScript or an unconstrained whole-store replacement.
+3. A recipe remains `source.kind = "recipe"` while the change fits its declared override surface. A structural patch outside that surface creates `source.kind = "custom"` with `derivedFromVersionId`, `derivedFromTemplateId`, and the original recipe version recorded in provenance. Detachment starts from the currently rendered artifact and changes only the requested scope; it does not regenerate unrelated routes.
+4. A custom bundle always receives a targeted patch. A whole-store redesign requires an explicit new-build intent such as “start over” or “create a completely new site,” and follows the normal prompt router/custom-build flow.
+
+`StorefrontBundlePatchV1` is a closed discriminated union of design-token updates, trusted text replacements, route/region subtree replacements, scoped CSS replacements, interaction-manifest replacements, and owned-asset reference changes. Every operation names compiler-issued IDs and carries precondition hashes. Arbitrary selectors, data queries, URLs, form actions, scripts, and raw database IDs are forbidden. The patch compiler applies all operations in memory, validates the complete resulting bundle, and persists only the resulting immutable bundle plus the audit patch; the runtime never interprets an unapplied patch.
+
+The build stream distinguishes `routing`, `editing`, `compiling`, `validating`, `proofing`, and `installed` stages. The completion message states which routes/regions changed and whether a recipe was detached. Preview reloads to the new draft only after installation. The same prompt, base hash, compiler/profile versions, and deterministic catalog snapshot are retained for replay and support diagnostics.
+
 ## 11. Storefront Runtime and APIs
 
 ### 11.1 Rendering
@@ -716,7 +740,7 @@ storefront_release_history
   shop_id uuid not null references shops(id) on delete cascade
   from_version_id uuid null
   to_version_id uuid not null
-  operation text check (operation in ('capture_legacy','install_draft','publish','rollback'))
+  operation text check (operation in ('capture_legacy','install_draft','edit_draft','publish','rollback'))
   actor_id uuid null references auth.users(id) on delete set null
   created_at timestamptz not null
   foreign key (shop_id, from_version_id)
