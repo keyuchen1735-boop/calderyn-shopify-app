@@ -4,7 +4,8 @@
 /** Merchant ship-from address (shop_origin), or null when never configured. */
 export interface ShipOriginDto {
   street1: string;
-  street2: string;
+  /** Optional second address line; older cached summaries may not include it. */
+  street2?: string;
   city: string;
   state: string;
   zip: string;
@@ -47,6 +48,32 @@ export interface Quotes30dSummary {
   avgPromise: string | null;
 }
 
+export interface ShippingRouteOrigin {
+  city: string;
+  region: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface ShippingRouteDestination {
+  id: string;
+  city: string;
+  region: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+  orderCount: number;
+}
+
+export interface ShippingRoutes30d {
+  origin: ShippingRouteOrigin | null;
+  destinations: ShippingRouteDestination[];
+  mappedOrderCount: number;
+  unmappedOrderCount: number;
+  hasInternationalDestinations: boolean;
+}
+
 /** Merchant rate rules (ship_rules), engine-neutral units: cents + whole days. */
 export interface ShipRulesDtoView {
   markupPct: number;
@@ -79,7 +106,11 @@ export interface ShippingSummary {
   coverage: ShipCoverage;
   rateCard: RateCardRow[];
   quotes30d: Quotes30dSummary;
-  rules: ShipRulesDtoView;
-  flatRates: FlatRateRowView[];
-  rateSourceKind: RateSourceKindView;
+  routes30d: ShippingRoutes30d;
+  /** Optional only for compatibility with summaries cached before settings shipped. */
+  rules?: ShipRulesDtoView;
+  /** Optional only for compatibility with summaries cached before settings shipped. */
+  flatRates?: FlatRateRowView[];
+  /** Optional only for compatibility with summaries cached before settings shipped. */
+  rateSourceKind?: RateSourceKindView;
 }

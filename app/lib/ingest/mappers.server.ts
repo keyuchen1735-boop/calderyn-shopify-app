@@ -48,6 +48,13 @@ type OrderNode = {
   totalShippingPriceSet?: Money;
   currentTotalTaxSet?: Money;
   currentTotalDiscountsSet?: Money;
+  shippingAddress?: {
+    city?: string | null;
+    province?: string | null;
+    provinceCode?: string | null;
+    country?: string | null;
+    countryCodeV2?: string | null;
+  } | null;
   lineItems?: { nodes?: OrderLineNode[] };
 };
 // Weight conversion factors to grams for each WeightUnit enum value.
@@ -85,6 +92,11 @@ type OrderLineNode = {
 
 function amount(m: Money | undefined): string | null {
   return m?.shopMoney?.amount ?? null;
+}
+
+function destinationPart(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed || null;
 }
 
 export function mapLocation(shopId: string, n: LocationNode): LocationRow {
@@ -143,6 +155,14 @@ export function mapOrder(shopId: string, o: OrderNode): OrderRow {
     discount_cents: moneyToCents(amount(o.currentTotalDiscountsSet)),
     currency: o.currentTotalPriceSet?.shopMoney?.currencyCode ?? "USD",
     financial_status: o.displayFinancialStatus ?? null,
+    customer_city: destinationPart(o.shippingAddress?.city),
+    customer_region: destinationPart(
+      o.shippingAddress?.provinceCode ?? o.shippingAddress?.province,
+    ),
+    customer_country: destinationPart(
+      o.shippingAddress?.countryCodeV2 ?? o.shippingAddress?.country,
+    ),
+    destination_repair_checked_at: o.updatedAt,
     source_version: Date.parse(o.updatedAt),
     // backfill (GraphQL) does not carry landing/UTM — null them.
     landing_site: null,
@@ -282,6 +302,13 @@ type RawOrderWebhook = {
   total_discounts?: string | number | null;
   currency?: string | null;
   financial_status?: string | null;
+  shipping_address?: {
+    city?: string | null;
+    province?: string | null;
+    province_code?: string | null;
+    country?: string | null;
+    country_code?: string | null;
+  } | null;
   line_items?: RawOrderLineItem[];
   landing_site?: string | null;
   referring_site?: string | null;
@@ -313,6 +340,14 @@ export function parseOrderWebhook(p: RawOrderWebhook): {
     discount_cents: moneyToCents(p.total_discounts),
     currency: String(p.currency ?? "USD"),
     financial_status: p.financial_status ?? null,
+    customer_city: destinationPart(p.shipping_address?.city),
+    customer_region: destinationPart(
+      p.shipping_address?.province_code ?? p.shipping_address?.province,
+    ),
+    customer_country: destinationPart(
+      p.shipping_address?.country_code ?? p.shipping_address?.country,
+    ),
+    destination_repair_checked_at: updatedAt,
     source_version: Date.parse(updatedAt),
     landing_site: landingSite,
     referring_site: referringSite,
@@ -448,13 +483,15 @@ export function minimizeRefundWebhook(p: Record<string, unknown>): RawRefundWebh
 // Strip an `orders/create` webhook body down to ONLY the fields the ingest
 // pipeline reads (the same set parseOrderWebhook consumes). Shopify always
 // includes customer PII on this webhook — name, email, phone, billing/shipping
-// addresses, notes, IP — which the app never uses; dropping it before anything
-// is stored keeps the data footprint to order totals + line items (Shopify
-// protected-customer-data Level 1). landing_site/referring_site are marketing
-// URLs (used for attribution), not restricted customer fields, so they stay.
+// addresses, notes, IP — which the app never uses. Only coarse destination
+// city/region/country is retained for aggregate shipping routes; street,
+// postal, recipient, and contact fields are dropped before storage.
+// landing_site/referring_site are marketing URLs (used for attribution), so
+// they stay.
 export function minimizeOrderWebhook(p: Record<string, unknown>): RawOrderWebhook {
   const ship = p.total_shipping_price_set as RawMoneySet | null | undefined;
   const shipAmount = ship?.shop_money?.amount;
+  const destination = p.shipping_address as RawOrderWebhook["shipping_address"];
   const rawLines = Array.isArray(p.line_items)
     ? (p.line_items as Array<Record<string, unknown>>)
     : [];
@@ -470,6 +507,13 @@ export function minimizeOrderWebhook(p: Record<string, unknown>): RawOrderWebhoo
     total_discounts: p.total_discounts as string | number | null | undefined,
     currency: p.currency as string | null | undefined,
     financial_status: p.financial_status as string | null | undefined,
+    shipping_address: destination
+      ? {
+          city: destinationPart(destination.city),
+          province_code: destinationPart(destination.province_code ?? destination.province),
+          country_code: destinationPart(destination.country_code ?? destination.country),
+        }
+      : null,
     line_items: rawLines.map((ln) => ({
       admin_graphql_api_id: ln.admin_graphql_api_id as string | number | undefined,
       quantity: ln.quantity as number | undefined,

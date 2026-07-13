@@ -125,6 +125,13 @@ export type AdminOrder = {
   totalShippingPriceSet: { shopMoney: { amount: string } };
   currentTotalTaxSet: { shopMoney: { amount: string } };
   currentTotalDiscountsSet: { shopMoney: { amount: string } };
+  shippingAddress: {
+    city: string | null;
+    province: string | null;
+    provinceCode: string | null;
+    country: string | null;
+    countryCodeV2: string | null;
+  } | null;
   lineItems: {
     nodes: Array<{
       id: string;
@@ -141,6 +148,68 @@ export type AdminOrder = {
 };
 
 type OrdersPage = { orders: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: AdminOrder[] } };
+
+export type AdminOrderDestination = {
+  id: string;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+};
+
+const MAX_DESTINATION_BATCH_SIZE = 50;
+const SHOPIFY_ORDER_GID = /^gid:\/\/shopify\/Order\/[1-9]\d*$/;
+
+/**
+ * Fetch an exact batch of repair candidates without the full order payload.
+ * Null nodes (deleted/inaccessible orders) are omitted; the caller has the
+ * requested IDs and treats an absent node as a terminal checked result.
+ */
+export async function fetchOrderDestinationsByIds(
+  shopDomain: string,
+  ids: string[],
+): Promise<AdminOrderDestination[]> {
+  if (ids.length < 1 || ids.length > MAX_DESTINATION_BATCH_SIZE) {
+    throw new Error(`Order destination batch must contain between 1 and ${MAX_DESTINATION_BATCH_SIZE} IDs`);
+  }
+  if (ids.some((id) => !SHOPIFY_ORDER_GID.test(id))) {
+    throw new Error("Order destination batch contains an invalid Shopify Order GID");
+  }
+
+  const admin = await adminFor(shopDomain);
+  const data = await gql<{
+    nodes: Array<{
+      id: string;
+      shippingAddress: {
+        city: string | null;
+        provinceCode: string | null;
+        countryCodeV2: string | null;
+      } | null;
+    } | null>;
+  }>(
+    admin,
+    `#graphql
+    query OrderDestinations($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Order {
+          id
+          shippingAddress { city provinceCode countryCodeV2 }
+        }
+      }
+    }`,
+    { ids },
+  );
+
+  return data.nodes.flatMap((order) =>
+    order
+      ? [{
+          id: order.id,
+          city: order.shippingAddress?.city ?? null,
+          region: order.shippingAddress?.provinceCode ?? null,
+          country: order.shippingAddress?.countryCodeV2 ?? null,
+        }]
+      : [],
+  );
+}
 
 export async function* fetchRecentOrders(shopDomain: string, sinceISO: string): AsyncGenerator<AdminOrder> {
   const admin = await adminFor(shopDomain);
@@ -160,6 +229,10 @@ export async function* fetchRecentOrders(shopDomain: string, sinceISO: string): 
             totalShippingPriceSet { shopMoney { amount } }
             currentTotalTaxSet { shopMoney { amount } }
             currentTotalDiscountsSet { shopMoney { amount } }
+            # Retain only coarse destination geography for the shipping route
+            # read model. Street, postal, recipient, and contact fields are
+            # intentionally not requested from Shopify.
+            shippingAddress { city province provinceCode country countryCodeV2 }
             # Slice-1 cap: single-page (orders with >100 line items truncate).
             # Weight is NOT a field on LineItem — it lives on the variant's
             # inventoryItem.measurement.weight. We select unit alongside value
