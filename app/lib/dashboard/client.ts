@@ -471,6 +471,21 @@ export async function fetchCampaignDirection(id: string): Promise<CampaignDirect
   return apiGet<CampaignDirectionDTO>(`/dashboard/api/campaigns/${encodeURIComponent(id)}/direction`);
 }
 
+// Mirror of FirstRunPreflight in ~/lib/meta/first-run.server.ts - a browser-safe
+// copy (.server modules can't be imported into client bundles). Keep these
+// fields in sync by hand when the server type changes.
+export interface FirstRunPreflight {
+  metaConnected: boolean;
+  adsScope: boolean;
+  pageOk: boolean;
+  fundingOk: boolean | null; // null = Meta didn't tell us; UI shows a "check billing" link, never blocks
+}
+
+/** Meta preflight for the first-campaign wizard (connected/scope/page/funding). */
+export async function fetchFirstRunPreflight(): Promise<FirstRunPreflight> {
+  return apiGet<FirstRunPreflight>("/dashboard/api/campaigns/first-run");
+}
+
 /** Per-campaign daily spend+revenue series for the detail chart (default 90d window). */
 export async function fetchCampaignSeries(id: string, days = 90): Promise<DailyRoasRow[]> {
   const data = await apiGet<{ series: DailyRoasRow[] }>(
