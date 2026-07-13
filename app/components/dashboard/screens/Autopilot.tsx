@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useMemo } from "react";
 import { Btn, Card, Placeholder, TickGauge } from "../ui";
 import { hasEngineSignals } from "../first-run";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
-import { money } from "../format";
+import { money, moneyK } from "../format";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import type { ActionKind, RejectReason } from "~/lib/types";
@@ -165,23 +165,21 @@ function CalibrationTrainer({
         <div className="cd-calib-left">
           <div className="cd-calib-rail">
             <TickGauge pct={pct} size={148} />
-            <div className="cd-calib-eyebrow">
-              <span className="cd-eg-live-dot" />
-              Calibrating
-            </div>
+            {/* The screen-header pill already reads "N% calibrated"; the rail
+                doesn't repeat it. */}
             <div className="cd-calib-stats">
               <div className="cd-calib-stat">
                 <b className="tabular-nums">{ptsToGo}</b>
-                <span>pts to full auto</span>
+                <span>to full auto</span>
               </div>
               <div className="cd-calib-stat">
                 <b className="tabular-nums">{queue.length}</b>
-                <span>waiting on you</span>
+                <span>waiting</span>
               </div>
               {atStake > 0 && (
                 <div className="cd-calib-stat">
-                  <b className="tabular-nums">{money(atStake)}</b>
-                  <span>on the table</span>
+                  <b className="tabular-nums">{moneyK(atStake)}</b>
+                  <span>at stake</span>
                 </div>
               )}
             </div>
@@ -194,7 +192,6 @@ function CalibrationTrainer({
               <CDIcon name="sparkle" size={15} strokeWidth={1.9} />
               Approve to train
             </div>
-            <span className="cd-caption">Approve the good calls; soon it handles them for you.</span>
           </div>
 
           {groups.map((g) => {
@@ -209,7 +206,7 @@ function CalibrationTrainer({
                   <span className="cd-apq-grp-n tabular-nums">{g.items.length}</span>
                   <span className="cd-apq-grp-spacer" />
                   {g.totalImpact > 0 && (
-                    <span className="cd-apq-grp-money tabular-nums">~{money(g.totalImpact)}</span>
+                    <span className="cd-apq-grp-money tabular-nums">~{moneyK(g.totalImpact)}</span>
                   )}
                   {allOneClick && g.items.length > 1 && (
                     <button
@@ -248,9 +245,11 @@ function CalibrationTrainer({
                           </span>
                           <span className="cd-apq-say">{rowTitle(p)}</span>
                           {p.dollar_impact !== 0 && (
-                            <span className="cd-apq-money">
-                              {moneyVerb(p.action_kind).toLowerCase()}{" "}
-                              <b className="tabular-nums">~{money(p.dollar_impact)}</b>
+                            <span
+                              className="cd-apq-money"
+                              title={`${moneyVerb(p.action_kind)} about ${money(p.dollar_impact)}`}
+                            >
+                              <b className="tabular-nums">~{moneyK(p.dollar_impact)}</b>
                             </span>
                           )}
                           <span className="cd-apq-conf tabular-nums" title="How sure Calderyn is">
@@ -283,9 +282,6 @@ function CalibrationTrainer({
                             {r.narrative ? ` ${r.narrative}` : ""}
                           </div>
                           <div className="cd-apq-rej">
-                            <span className="cd-caption" style={{ flexShrink: 0 }}>
-                              Skip because:
-                            </span>
                             {REJECT_CHIPS.map((c) => (
                               <button
                                 key={c.label}
