@@ -104,8 +104,74 @@ function copyPresentationContext(host: HTMLElement, computed: CSSStyleDeclaratio
 function setProjectedRect(host: HTMLElement, rect: DOMRect): void {
   host.style.setProperty("left", `${rect.left}px`, "important");
   host.style.setProperty("top", `${rect.top}px`, "important");
-  host.style.setProperty("width", `${rect.width}px`, "important");
-  host.style.setProperty("height", `${rect.height}px`, "important");
+  if (rect.width > 0) host.style.setProperty("width", `${rect.width}px`, "important");
+  if (rect.height > 0) host.style.setProperty("height", `${rect.height}px`, "important");
+}
+
+function projectCommerceHost(host: HTMLElement, layer: HTMLElement): CommerceProjection {
+  const originalHostStyle = host.getAttribute("style");
+  const view = host.ownerDocument.defaultView;
+  const computed = view?.getComputedStyle(host);
+  const initialRect = host.getBoundingClientRect();
+  const placeholder = host.ownerDocument.createElement("div");
+  placeholder.setAttribute("data-cd-overlay-commerce-placeholder", host.id);
+  placeholder.setAttribute("aria-hidden", "true");
+  placeholder.style.display = computed?.display || "block";
+  placeholder.style.boxSizing = computed?.boxSizing || "border-box";
+  if (initialRect.width > 0) placeholder.style.width = `${initialRect.width}px`;
+  if (initialRect.height > 0) placeholder.style.height = `${initialRect.height}px`;
+  placeholder.style.marginTop = computed?.marginTop || "0px";
+  placeholder.style.marginRight = computed?.marginRight || "0px";
+  placeholder.style.marginBottom = computed?.marginBottom || "0px";
+  placeholder.style.marginLeft = computed?.marginLeft || "0px";
+  placeholder.style.visibility = "hidden";
+  placeholder.style.pointerEvents = "none";
+  if (computed) {
+    placeholder.style.flex = computed.flex;
+    placeholder.style.alignSelf = computed.alignSelf;
+    placeholder.style.order = computed.order;
+    placeholder.style.gridArea = computed.gridArea;
+    copyPresentationContext(host, computed);
+  }
+  let observer: ResizeObserver | null = null;
+  let frameId: number | undefined;
+  const sync = (): void => setProjectedRect(host, placeholder.getBoundingClientRect());
+  const stopSync = (): void => {
+    view?.removeEventListener("scroll", sync, true);
+    view?.removeEventListener("resize", sync);
+    observer?.disconnect();
+    if (frameId !== undefined) view?.cancelAnimationFrame(frameId);
+    frameId = undefined;
+  };
+  try {
+    host.replaceWith(placeholder);
+    layer.append(host);
+    host.style.setProperty("position", "absolute", "important");
+    host.style.setProperty("margin", "0", "important");
+    host.style.setProperty("box-sizing", "border-box", "important");
+    host.style.setProperty("z-index", "1", "important");
+    host.style.setProperty("pointer-events", "auto", "important");
+    setProjectedRect(host, initialRect);
+    view?.addEventListener("scroll", sync, true);
+    view?.addEventListener("resize", sync);
+    const Observer = view?.ResizeObserver;
+    observer = Observer ? new Observer(sync) : null;
+    observer?.observe(placeholder);
+    if ((initialRect.width === 0 || initialRect.height === 0) && view?.requestAnimationFrame) {
+      frameId = view.requestAnimationFrame(() => {
+        frameId = undefined;
+        sync();
+      });
+    }
+    return { host, placeholder, originalHostStyle, stopSync };
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    try { stopSync(); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    try { if (placeholder.isConnected) placeholder.replaceWith(host); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    try { restoreAttribute(host, "style", originalHostStyle); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
+    if (rollbackErrors.length > 0) throw new AggregateError([error, ...rollbackErrors], `Failed to project commerce host ${host.id}`);
+    throw error;
+  }
 }
 
 export function createOverlayManager(root: HTMLElement): OverlayManager {
@@ -296,95 +362,91 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
       const element = localElement(targetId, opener);
       const concreteId = element.id;
       if (openSurfaces.has(concreteId)) return;
-      acquireBackground();
+      const originalHidden = element.hidden;
+      const originalRole = element.getAttribute("role");
+      const originalTabIndex = element.getAttribute("tabindex");
+      const originalAriaModal = element.getAttribute("aria-modal");
+      const originalAttributes = [...element.attributes].map(({ name, value }) => [name, value] as const);
       const placeholder = document.createComment(`cd-overlay:${concreteId}`);
-      element.replaceWith(placeholder);
-      const presentation = document.createElement("div");
-      presentation.setAttribute("data-cd-overlay-presentation", concreteId);
-      presentation.setAttribute("role", "presentation");
-      const bundleNamespace = targetId.split("-")[1];
-      if (bundleNamespace) presentation.setAttribute("data-cd-bundle", bundleNamespace);
-      presentation.style.pointerEvents = "auto";
-      presentation.style.position = "relative";
-      presentation.style.zIndex = "1";
-      presentation.style.isolation = "isolate";
-      presentation.style.setProperty("--cd-overlay-surface", "Canvas");
-      presentation.style.setProperty("--cd-overlay-foreground", "CanvasText");
-      presentation.append(element);
-      portal.append(presentation);
-      const commerceHosts = [...element.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")];
-      const commerceLayer = commerceHosts.length > 0 ? document.createElement("div") : null;
-      if (commerceLayer) {
-        commerceLayer.setAttribute("data-cd-overlay-commerce-layer", concreteId);
-        commerceLayer.setAttribute("role", "presentation");
-        Object.assign(commerceLayer.style, {
-          position: "absolute", inset: "0", zIndex: "2", pointerEvents: "none", isolation: "isolate",
-        });
-        portal.append(commerceLayer);
-      }
-      const commerce = commerceHosts.map((host): CommerceProjection => {
-        const originalHostStyle = host.getAttribute("style");
-        const view = host.ownerDocument.defaultView;
-        const computed = view?.getComputedStyle(host);
-        const initialRect = host.getBoundingClientRect();
-        const flowPlaceholder = document.createElement("div");
-        flowPlaceholder.setAttribute("data-cd-overlay-commerce-placeholder", host.id);
-        flowPlaceholder.setAttribute("aria-hidden", "true");
-        flowPlaceholder.style.display = computed?.display || "block";
-        flowPlaceholder.style.boxSizing = computed?.boxSizing || "border-box";
-        flowPlaceholder.style.width = `${initialRect.width}px`;
-        flowPlaceholder.style.height = `${initialRect.height}px`;
-        flowPlaceholder.style.marginTop = computed?.marginTop || "0px";
-        flowPlaceholder.style.marginRight = computed?.marginRight || "0px";
-        flowPlaceholder.style.marginBottom = computed?.marginBottom || "0px";
-        flowPlaceholder.style.marginLeft = computed?.marginLeft || "0px";
-        flowPlaceholder.style.visibility = "hidden";
-        flowPlaceholder.style.pointerEvents = "none";
-        if (computed) {
-          flowPlaceholder.style.flex = computed.flex;
-          flowPlaceholder.style.alignSelf = computed.alignSelf;
-          flowPlaceholder.style.order = computed.order;
-          flowPlaceholder.style.gridArea = computed.gridArea;
-          copyPresentationContext(host, computed);
+      let presentation: HTMLElement | null = null;
+      let commerceLayer: HTMLElement | null = null;
+      const commerce: CommerceProjection[] = [];
+      let registered = false;
+      const acquiredBackground = background === null;
+      acquireBackground();
+      try {
+        element.replaceWith(placeholder);
+        presentation = document.createElement("div");
+        presentation.setAttribute("data-cd-overlay-presentation", concreteId);
+        presentation.setAttribute("role", "presentation");
+        const bundleNamespace = targetId.split("-")[1];
+        if (bundleNamespace) presentation.setAttribute("data-cd-bundle", bundleNamespace);
+        presentation.style.visibility = "hidden";
+        presentation.style.pointerEvents = "none";
+        presentation.style.position = "relative";
+        presentation.style.zIndex = "1";
+        presentation.style.isolation = "isolate";
+        presentation.style.setProperty("--cd-overlay-surface", "Canvas");
+        presentation.style.setProperty("--cd-overlay-foreground", "CanvasText");
+        presentation.append(element);
+        portal.append(presentation);
+
+        element.hidden = false;
+        element.setAttribute("role", "dialog");
+        element.setAttribute("aria-modal", "true");
+        if (!element.hasAttribute("tabindex")) element.setAttribute("tabindex", "-1");
+        void presentation.offsetWidth;
+
+        const commerceHosts = [...element.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")];
+        if (commerceHosts.length > 0) {
+          commerceLayer = document.createElement("div");
+          commerceLayer.setAttribute("data-cd-overlay-commerce-layer", concreteId);
+          commerceLayer.setAttribute("role", "presentation");
+          Object.assign(commerceLayer.style, {
+            position: "absolute", inset: "0", zIndex: "2", pointerEvents: "none",
+            isolation: "isolate", visibility: "hidden",
+          });
+          portal.append(commerceLayer);
+          for (const host of commerceHosts) commerce.push(projectCommerceHost(host, commerceLayer));
         }
-        host.replaceWith(flowPlaceholder);
-        commerceLayer!.append(host);
-        host.style.setProperty("position", "absolute", "important");
-        host.style.setProperty("margin", "0", "important");
-        host.style.setProperty("box-sizing", "border-box", "important");
-        host.style.setProperty("z-index", "1", "important");
-        host.style.setProperty("pointer-events", "auto", "important");
-        setProjectedRect(host, initialRect);
-        const sync = (): void => setProjectedRect(host, flowPlaceholder.getBoundingClientRect());
-        view?.addEventListener("scroll", sync, true);
-        view?.addEventListener("resize", sync);
-        const Observer = view?.ResizeObserver;
-        const observer = Observer ? new Observer(sync) : null;
-        observer?.observe(flowPlaceholder);
-        return {
-          host,
-          placeholder: flowPlaceholder,
-          originalHostStyle,
-          stopSync() {
-            view?.removeEventListener("scroll", sync, true);
-            view?.removeEventListener("resize", sync);
-            observer?.disconnect();
-          },
-        };
-      });
-      openSurfaces.set(concreteId, {
-        element, presentation, commerceLayer, commerce, placeholder, opener,
-        originalHidden: element.hidden,
-        originalRole: element.getAttribute("role"),
-        originalTabIndex: element.getAttribute("tabindex"),
-        originalAriaModal: element.getAttribute("aria-modal"),
-      });
-      stack.push(concreteId);
-      element.hidden = false;
-      element.setAttribute("role", "dialog");
-      if (!element.hasAttribute("tabindex")) element.setAttribute("tabindex", "-1");
-      syncStackOwnership();
-      focusSurface(element, commerce);
+
+        openSurfaces.set(concreteId, {
+          element, presentation, commerceLayer, commerce, placeholder, opener,
+          originalHidden, originalRole, originalTabIndex, originalAriaModal,
+        });
+        stack.push(concreteId);
+        registered = true;
+        syncStackOwnership();
+        presentation.style.visibility = "visible";
+        presentation.style.pointerEvents = "auto";
+        if (commerceLayer) commerceLayer.style.visibility = "visible";
+        focusSurface(element, commerce);
+      } catch (error) {
+        const rollbackErrors: unknown[] = [];
+        if (registered) {
+          openSurfaces.delete(concreteId);
+          const index = stack.lastIndexOf(concreteId);
+          if (index >= 0) stack.splice(index, 1);
+        }
+        for (const projection of [...commerce].reverse()) {
+          attempt(rollbackErrors, projection.stopSync);
+          attempt(rollbackErrors, () => projection.placeholder.replaceWith(projection.host));
+          attempt(rollbackErrors, () => restoreAttribute(projection.host, "style", projection.originalHostStyle));
+        }
+        if (commerceLayer) attempt(rollbackErrors, () => commerceLayer!.remove());
+        attempt(rollbackErrors, () => {
+          for (const attribute of [...element.attributes]) element.removeAttribute(attribute.name);
+          for (const [name, value] of originalAttributes) element.setAttribute(name, value);
+        });
+        attempt(rollbackErrors, () => { if (placeholder.isConnected) placeholder.replaceWith(element); });
+        if (presentation) attempt(rollbackErrors, () => presentation!.remove());
+        syncStackOwnership(rollbackErrors);
+        if (acquiredBackground) rollbackErrors.push(...releaseBackground());
+        if (rollbackErrors.length > 0) {
+          throw new AggregateError([error, ...rollbackErrors], `Failed to open overlay ${concreteId}`);
+        }
+        throw error;
+      }
     },
     close(targetId, opener) {
       restore(openId(targetId, opener), true);

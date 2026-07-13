@@ -218,6 +218,72 @@ describe("platform overlay portal", () => {
     expect(slot.getAttribute("style")).toBeNull();
   });
 
+  it("lays out an initially hidden surface before measuring and atomically revealing commerce", () => {
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a" hidden><div id="slot" data-cd-trusted-slot="addToCart"></div></section></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const surface = document.getElementById("cd-home-a") as HTMLElement;
+    const slot = document.getElementById("slot") as HTMLElement;
+    const measurements: Array<{ hidden: boolean; visibility: string; pointerEvents: string }> = [];
+    vi.spyOn(slot, "getBoundingClientRect").mockImplementation(() => {
+      const presentation = document.querySelector<HTMLElement>("[data-cd-overlay-presentation]");
+      measurements.push({
+        hidden: surface.hidden,
+        visibility: presentation?.style.visibility ?? "missing",
+        pointerEvents: presentation?.style.pointerEvents ?? "missing",
+      });
+      return surface.hidden ? rect(0, 0, 0, 0) : rect(15, 25, 150, 45);
+    });
+    const manager = createOverlayManager(root);
+    manager.open("cd-home-a", null);
+    const presentation = document.querySelector<HTMLElement>("[data-cd-overlay-presentation]")!;
+    expect(measurements).toContainEqual({ hidden: false, visibility: "hidden", pointerEvents: "none" });
+    expect(slot.style.width).toBe("150px");
+    expect(slot.style.height).toBe("45px");
+    expect(presentation.style.visibility).toBe("visible");
+    expect(presentation.style.pointerEvents).toBe("auto");
+    manager.teardown();
+    expect(surface.hidden).toBe(true);
+  });
+
+  it("does not pin a transient zero measurement and recovers on the next frame", () => {
+    let nextFrame: FrameRequestCallback | undefined;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => { nextFrame = callback; return 17; });
+    const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a" hidden><div id="slot" data-cd-trusted-slot="addToCart"></div></section></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const slot = document.getElementById("slot") as HTMLElement;
+    vi.spyOn(slot, "getBoundingClientRect").mockReturnValue(rect(0, 0, 0, 0));
+    const manager = createOverlayManager(root);
+    manager.open("cd-home-a", null);
+    expect(slot.style.width).not.toBe("0px");
+    expect(slot.style.height).not.toBe("0px");
+    const placeholder = document.querySelector<HTMLElement>("[data-cd-overlay-commerce-placeholder]")!;
+    vi.spyOn(placeholder, "getBoundingClientRect").mockReturnValue(rect(5, 6, 70, 80));
+    nextFrame?.(0);
+    expect(slot.style.width).toBe("70px");
+    expect(slot.style.height).toBe("80px");
+    manager.teardown();
+    expect(cancelFrame).not.toHaveBeenCalled();
+  });
+
+  it("restores the exact source and background when hidden-surface projection fails", () => {
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a" hidden aria-modal="false"><div id="slot" data-cd-trusted-slot="addToCart" style="color: red;"></div></section></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const slot = document.getElementById("slot") as HTMLElement;
+    const before = root.innerHTML;
+    document.body.style.overflow = "clip";
+    vi.spyOn(slot, "getBoundingClientRect").mockImplementation(() => { throw new Error("measure failed"); });
+    const manager = createOverlayManager(root);
+    expect(() => manager.open("cd-home-a", null)).toThrow(/measure failed/);
+    expect(root.innerHTML).toBe(before);
+    expect(root.hasAttribute("inert")).toBe(false);
+    expect(root.getAttribute("aria-hidden")).toBeNull();
+    expect(document.body.style.overflow).toBe("clip");
+    expect(document.querySelector("[data-cd-overlay-presentation]")).toBeNull();
+    expect(document.querySelector("[data-cd-overlay-commerce-layer]")).toBeNull();
+    manager.teardown();
+  });
+
   it("leaves unrelated static and absolute overlay geometry untouched while open", () => {
     document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="anchor" style="position: relative; width: 20rem;"><p id="static" style="margin: 1rem; color: red;">Copy</p><div id="slot" data-cd-trusted-slot="addToCart"></div><div id="absolute" style="position: absolute; inset: 0; pointer-events: none;"></div></div></section></main>`;
     const root = document.getElementById("root") as HTMLElement;
