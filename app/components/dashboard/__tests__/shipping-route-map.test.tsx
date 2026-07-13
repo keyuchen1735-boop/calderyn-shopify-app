@@ -3,7 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ShippingRoutes30d } from "~/lib/shipping/summary-types";
-import { ShippingRouteMapFrame } from "../ShippingRouteMap";
+import {
+  resolveShippingRouteColors,
+  ShippingRouteMapFrame,
+  subscribeToStyleLoads,
+} from "../ShippingRouteMap";
 
 vi.mock("~/components/ui/mapcn-map", () => ({
   Map: ({
@@ -114,9 +118,51 @@ describe("ShippingRouteMapFrame", () => {
   it("renders an accessible adjacent destination list with order counts", () => {
     const html = markup(resolvedRoutes);
 
+    expect(html).toContain('class="cd-shipping-route-map"');
+    expect(html).toContain('class="cd-shipping-route-destinations"');
+    expect(html).not.toContain("height:340px");
+    expect(html).not.toContain("grid-template-columns");
     expect(html).toContain('aria-label="Shipping destinations"');
     expect(html).toMatch(/New York[\s\S]*7 orders/);
     expect(html).toMatch(/Vancouver[\s\S]*2 orders/);
+  });
+
+  it("resolves WebGL colors from inherited Calderyn tokens", () => {
+    const colors = resolveShippingRouteColors({
+      getPropertyValue: (name) =>
+        ({
+          "--text-1": " rgb(11, 12, 13) ",
+          "--text-3": "rgb(91, 92, 93)",
+          "--accent": "rgb(201, 202, 203)",
+        })[name] ?? "",
+    });
+
+    expect(colors).toEqual({
+      route: "rgb(91, 92, 93)",
+      highlight: "rgb(201, 202, 203)",
+      planeStroke: "rgb(11, 12, 13)",
+    });
+  });
+
+  it("reinstalls map resources after style.load and unregisters on cleanup", () => {
+    const listeners = new Map<string, () => void>();
+    const map = {
+      on: vi.fn((event: string, listener: () => void) =>
+        listeners.set(event, listener),
+      ),
+      off: vi.fn((event: string, listener: () => void) => {
+        if (listeners.get(event) === listener) listeners.delete(event);
+      }),
+    };
+    const install = vi.fn();
+
+    const cleanup = subscribeToStyleLoads(map, install);
+    expect(install).toHaveBeenCalledOnce();
+    listeners.get("style.load")?.();
+    expect(install).toHaveBeenCalledTimes(2);
+
+    cleanup();
+    expect(listeners.has("style.load")).toBe(false);
   });
 
   it("renders the ship-from origin and disables repeated world copies", () => {

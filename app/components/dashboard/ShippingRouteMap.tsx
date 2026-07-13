@@ -51,12 +51,33 @@ type ShippingRouteMapProps = {
 
 type ShippingRouteLayerProps = {
   routes: RouteArc[];
-  destinations: ShippingRouteDestination[];
   highlightedRouteId: string | null;
   onHighlightRoute: (routeId: string | null) => void;
   viewportRootRef: RefObject<HTMLDivElement | null>;
   maxZoom: 3.25 | 2.4;
 };
+
+type CssPropertyReader = {
+  getPropertyValue: (property: string) => string;
+};
+
+type StyleLoadMap = {
+  on: (event: "style.load", listener: () => void) => unknown;
+  off: (event: "style.load", listener: () => void) => unknown;
+};
+
+export function resolveShippingRouteColors(style: CssPropertyReader) {
+  const text1 = style.getPropertyValue("--text-1").trim() || "rgb(29, 29, 31)";
+  const text3 = style.getPropertyValue("--text-3").trim() || text1;
+  const accent = style.getPropertyValue("--accent").trim() || text1;
+  return { route: text3, highlight: accent, planeStroke: text1 };
+}
+
+export function subscribeToStyleLoads(map: StyleLoadMap, install: () => void) {
+  install();
+  map.on("style.load", install);
+  return () => map.off("style.load", install);
+}
 
 function routeFeatureCollection(
   routes: readonly RouteArc[],
@@ -129,10 +150,10 @@ function fitBoundsForRoutes(
   );
 }
 
-function paperPlaneSvgDataUrl(): string {
+function paperPlaneSvgDataUrl(fill: string, stroke: string): string {
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">',
-    '<path d="M5 23.6 42 7 29.8 42l-7.5-12.4L5 23.6Zm18.4 2.1 5.2 8.5 7-20.1-12.2 11.6Z" fill="#fff" stroke="#17202a" stroke-width="2.5" stroke-linejoin="round"/>',
+    `<path d="M5 23.6 42 7 29.8 42l-7.5-12.4L5 23.6Zm18.4 2.1 5.2 8.5 7-20.1-12.2 11.6Z" fill="${fill}" stroke="${stroke}" stroke-width="2.5" stroke-linejoin="round"/>`,
     "</svg>",
   ].join("");
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -177,7 +198,6 @@ function useIntersection(
 
 function ShippingRouteLayer({
   routes,
-  destinations,
   highlightedRouteId,
   onHighlightRoute,
   viewportRootRef,
@@ -189,6 +209,13 @@ function ShippingRouteLayer({
   const [documentVisible, setDocumentVisible] = useState(true);
   const routeData = useMemo(() => routeFeatureCollection(routes), [routes]);
   const animatedRoutes = useMemo(() => selectAnimatedRoutes(routes), [routes]);
+  const latestRouteState = useRef({
+    routeData,
+    routes,
+    maxZoom,
+    highlightedRouteId,
+  });
+  latestRouteState.current = { routeData, routes, maxZoom, highlightedRouteId };
   const latestHighlight = useRef(onHighlightRoute);
   latestHighlight.current = onHighlightRoute;
 
@@ -202,41 +229,11 @@ function ShippingRouteLayer({
 
   useEffect(() => {
     if (!map || !isLoaded) return;
+    let image: HTMLImageElement | null = null;
+    let disposed = false;
 
-    if (!map.getSource(ROUTE_SOURCE_ID)) {
-      map.addSource(ROUTE_SOURCE_ID, { type: "geojson", data: routeData });
-    }
-    if (!map.getLayer(ROUTE_BASE_LAYER_ID)) {
-      map.addLayer({
-        id: ROUTE_BASE_LAYER_ID,
-        type: "line",
-        source: ROUTE_SOURCE_ID,
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: {
-          "line-color": "#8b9aad",
-          "line-width": 2,
-          "line-opacity": 0.58,
-        },
-      });
-    }
-    if (!map.getLayer(ROUTE_HIGHLIGHT_LAYER_ID)) {
-      map.addLayer({
-        id: ROUTE_HIGHLIGHT_LAYER_ID,
-        type: "line",
-        source: ROUTE_SOURCE_ID,
-        filter: ["==", ["get", "routeId"], ""],
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: {
-          "line-color": "#ff7a45",
-          "line-width": 4,
-          "line-opacity": 0.96,
-        },
-      });
-    }
-    if (!map.getSource(PLANE_SOURCE_ID)) {
-      map.addSource(PLANE_SOURCE_ID, { type: "geojson", data: EMPTY_POINTS });
-    }
-    if (!map.getLayer(PLANE_LAYER_ID)) {
+    const addPlaneLayer = () => {
+      if (map.getLayer(PLANE_LAYER_ID) || !map.hasImage(PLANE_IMAGE_ID)) return;
       map.addLayer({
         id: PLANE_LAYER_ID,
         type: "symbol",
@@ -249,29 +246,101 @@ function ShippingRouteLayer({
           "icon-allow-overlap": true,
         },
       });
-    }
-
-    const image = new Image(48, 48);
-    const addPlaneImage = () => {
-      if (!map.hasImage(PLANE_IMAGE_ID)) {
-        map.addImage(PLANE_IMAGE_ID, image, { pixelRatio: 2 });
-      }
     };
-    image.addEventListener("load", addPlaneImage);
-    image.src = paperPlaneSvgDataUrl();
+
+    const install = () => {
+      const {
+        routeData: currentData,
+        routes: currentRoutes,
+        maxZoom: currentMaxZoom,
+        highlightedRouteId: currentHighlight,
+      } = latestRouteState.current;
+      const tokenRoot = viewportRootRef.current ?? map.getContainer();
+      const colors = resolveShippingRouteColors(getComputedStyle(tokenRoot));
+
+      const routeSource = map.getSource(ROUTE_SOURCE_ID) as
+        | GeoJSONSource
+        | undefined;
+      if (routeSource) routeSource.setData(currentData);
+      else
+        map.addSource(ROUTE_SOURCE_ID, { type: "geojson", data: currentData });
+
+      if (!map.getLayer(ROUTE_BASE_LAYER_ID)) {
+        map.addLayer({
+          id: ROUTE_BASE_LAYER_ID,
+          type: "line",
+          source: ROUTE_SOURCE_ID,
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": colors.route,
+            "line-width": 2,
+            "line-opacity": 0.58,
+          },
+        });
+      } else {
+        map.setPaintProperty(ROUTE_BASE_LAYER_ID, "line-color", colors.route);
+      }
+      if (!map.getLayer(ROUTE_HIGHLIGHT_LAYER_ID)) {
+        map.addLayer({
+          id: ROUTE_HIGHLIGHT_LAYER_ID,
+          type: "line",
+          source: ROUTE_SOURCE_ID,
+          filter: ["==", ["get", "routeId"], ""],
+          layout: { "line-cap": "round", "line-join": "round" },
+          paint: {
+            "line-color": colors.highlight,
+            "line-width": 4,
+            "line-opacity": 0.96,
+          },
+        });
+      } else {
+        map.setPaintProperty(
+          ROUTE_HIGHLIGHT_LAYER_ID,
+          "line-color",
+          colors.highlight,
+        );
+      }
+      map.setFilter(ROUTE_HIGHLIGHT_LAYER_ID, [
+        "==",
+        ["get", "routeId"],
+        currentHighlight ?? "",
+      ]);
+      if (!map.getSource(PLANE_SOURCE_ID)) {
+        map.addSource(PLANE_SOURCE_ID, { type: "geojson", data: EMPTY_POINTS });
+      }
+
+      if (map.hasImage(PLANE_IMAGE_ID)) {
+        addPlaneLayer();
+      } else {
+        if (image) image.onload = null;
+        image = new Image(48, 48);
+        image.onload = () => {
+          if (disposed || !image) return;
+          if (!map.hasImage(PLANE_IMAGE_ID)) {
+            map.addImage(PLANE_IMAGE_ID, image, { pixelRatio: 2 });
+          }
+          addPlaneLayer();
+          image = null;
+        };
+        image.src = paperPlaneSvgDataUrl(colors.highlight, colors.planeStroke);
+      }
+
+      fitBoundsForRoutes(map, currentRoutes, currentMaxZoom);
+    };
 
     const highlightFromEvent = (event: MapLayerMouseEvent) => {
       const routeId = event.features?.[0]?.properties?.routeId;
       latestHighlight.current(typeof routeId === "string" ? routeId : null);
     };
     const clearHighlight = () => latestHighlight.current(null);
+    const unsubscribeStyleLoads = subscribeToStyleLoads(map, install);
     map.on("mouseenter", ROUTE_BASE_LAYER_ID, highlightFromEvent);
     map.on("mouseleave", ROUTE_BASE_LAYER_ID, clearHighlight);
 
-    fitBoundsForRoutes(map, routes, maxZoom);
-
     return () => {
-      image.removeEventListener("load", addPlaneImage);
+      disposed = true;
+      if (image) image.onload = null;
+      unsubscribeStyleLoads();
       map.off("mouseenter", ROUTE_BASE_LAYER_ID, highlightFromEvent);
       map.off("mouseleave", ROUTE_BASE_LAYER_ID, clearHighlight);
       try {
@@ -288,7 +357,7 @@ function ShippingRouteLayer({
         // The owning Map may already have replaced or removed its style.
       }
     };
-    // Sources and layers are created once per loaded style, then updated below.
+    // Installation reads latest route data from a ref and is repeated on style.load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded, map]);
 
@@ -297,7 +366,7 @@ function ShippingRouteLayer({
     const source = map.getSource(ROUTE_SOURCE_ID) as GeoJSONSource | undefined;
     source?.setData(routeData);
     fitBoundsForRoutes(map, routes, maxZoom);
-  }, [destinations, isLoaded, map, maxZoom, routeData, routes]);
+  }, [isLoaded, map, maxZoom, routeData, routes]);
 
   useEffect(() => {
     if (!map || !isLoaded || !map.getLayer(ROUTE_HIGHLIGHT_LAYER_ID)) return;
@@ -310,13 +379,17 @@ function ShippingRouteLayer({
 
   useEffect(() => {
     if (!map || !isLoaded) return;
-    const source = map.getSource(PLANE_SOURCE_ID) as GeoJSONSource | undefined;
-    if (!source) return;
+    const setPlaneData = (data: GeoJSON.FeatureCollection<GeoJSON.Point>) => {
+      const source = map.getSource(PLANE_SOURCE_ID) as
+        | GeoJSONSource
+        | undefined;
+      source?.setData(data);
+    };
 
     let animationFrame = 0;
     const animate = (elapsedMs: number) => {
       if (reducedMotion || document.hidden || !intersecting) return;
-      source.setData(
+      setPlaneData(
         frameFeatureCollection(planeFrame(animatedRoutes, elapsedMs)),
       );
       animationFrame = requestAnimationFrame(animate);
@@ -325,7 +398,7 @@ function ShippingRouteLayer({
     if (!reducedMotion && documentVisible && intersecting) {
       animationFrame = requestAnimationFrame(animate);
     } else {
-      source.setData(EMPTY_POINTS);
+      setPlaneData(EMPTY_POINTS);
     }
 
     return () => cancelAnimationFrame(animationFrame);
@@ -412,18 +485,15 @@ function ResolvedShippingRouteMap({
   );
 
   return (
-    <div>
+    <div
+      className="cd-shipping-route-frame"
+      data-theme={dark ? "dark" : "light"}
+    >
       <div
         ref={viewportRootRef}
+        className="cd-shipping-route-map"
         role="region"
         aria-label="Customer shipping routes"
-        style={{
-          height: 340,
-          overflow: "hidden",
-          borderRadius: 14,
-          border: "1px solid var(--cd-border, rgba(128, 140, 158, .24))",
-          background: dark ? "#121820" : "#eef2f5",
-        }}
       >
         {/* Omitting `theme` deliberately keeps the primitive's dashboard/system Carto detection. */}
         <Map
@@ -434,7 +504,6 @@ function ResolvedShippingRouteMap({
           <MapControls position="bottom-right" showZoom />
           <ShippingRouteLayer
             routes={routeArcs}
-            destinations={routes.destinations}
             highlightedRouteId={highlightedRouteId}
             onHighlightRoute={setHighlightedRouteId}
             viewportRootRef={viewportRootRef}
@@ -449,8 +518,8 @@ function ResolvedShippingRouteMap({
                   width: 15,
                   height: 15,
                   borderRadius: 4,
-                  border: "2px solid white",
-                  background: "#ff7a45",
+                  border: "2px solid var(--card-solid)",
+                  background: "var(--accent)",
                   boxShadow: "0 2px 8px rgba(0,0,0,.34)",
                 }}
               />
@@ -476,11 +545,11 @@ function ResolvedShippingRouteMap({
                     width: 12,
                     height: 12,
                     borderRadius: "50%",
-                    border: "2px solid white",
+                    border: "2px solid var(--card-solid)",
                     background:
                       highlightedRouteId === destination.id
-                        ? "#ff7a45"
-                        : "#52708f",
+                        ? "var(--accent)"
+                        : "var(--text-3)",
                     boxShadow: "0 2px 8px rgba(0,0,0,.3)",
                   }}
                 />
@@ -495,19 +564,13 @@ function ResolvedShippingRouteMap({
       </div>
 
       <ul
+        className="cd-shipping-route-destinations"
         aria-label="Shipping destinations"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-          gap: 8,
-          padding: 0,
-          margin: "12px 0 0",
-          listStyle: "none",
-        }}
       >
         {routes.destinations.map((destination) => (
-          <li key={destination.id}>
+          <li className="cd-shipping-route-destination" key={destination.id}>
             <button
+              className="cd-shipping-route-destination-button"
               type="button"
               aria-pressed={highlightedRouteId === destination.id}
               onFocus={() => setHighlightedRouteId(destination.id)}
@@ -515,24 +578,11 @@ function ResolvedShippingRouteMap({
               onMouseEnter={() => setHighlightedRouteId(destination.id)}
               onMouseLeave={() => setHighlightedRouteId(null)}
               onClick={() => focusDestination(destination)}
-              style={{
-                width: "100%",
-                padding: "9px 11px",
-                textAlign: "left",
-                borderRadius: 10,
-                border: "1px solid var(--cd-border, rgba(128, 140, 158, .24))",
-                color: "inherit",
-                background:
-                  highlightedRouteId === destination.id
-                    ? "var(--cd-surface-hover, rgba(128, 140, 158, .14))"
-                    : "transparent",
-                cursor: "pointer",
-              }}
             >
-              <span style={{ display: "block", fontWeight: 650 }}>
+              <span className="cd-shipping-route-destination-city">
                 {destination.city}
               </span>
-              <span style={{ color: "var(--cd-muted, #748094)", fontSize: 12 }}>
+              <span className="cd-shipping-route-destination-orders">
                 {orderLabel(destination.orderCount)}
               </span>
             </button>
