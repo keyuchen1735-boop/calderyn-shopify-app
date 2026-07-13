@@ -12,8 +12,7 @@ export interface OverlayManager {
 interface OpenSurface {
   element: HTMLElement;
   presentation: HTMLElement;
-  commerce: Array<{ host: HTMLElement; wrapper: HTMLElement }>;
-  styled: Array<{ element: HTMLElement; originalStyle: string | null }>;
+  commerce: Array<{ host: HTMLElement; wrapper: HTMLElement; originalHostStyle: string | null }>;
   placeholder: Comment;
   opener: HTMLElement | null;
   originalHidden: boolean;
@@ -179,9 +178,7 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
     attempt(errors, () => surface.placeholder.replaceWith(surface.element));
     for (const protection of surface.commerce) {
       attempt(errors, () => protection.wrapper.replaceWith(protection.host));
-    }
-    for (const snapshot of surface.styled) {
-      attempt(errors, () => restoreAttribute(snapshot.element, "style", snapshot.originalStyle));
+      attempt(errors, () => restoreAttribute(protection.host, "style", protection.originalHostStyle));
     }
     attempt(errors, () => surface.presentation.remove());
     openSurfaces.delete(concreteId);
@@ -254,44 +251,30 @@ export function createOverlayManager(root: HTMLElement): OverlayManager {
       presentation.style.pointerEvents = "auto";
       presentation.style.position = "relative";
       presentation.style.zIndex = "1";
+      presentation.style.isolation = "isolate";
       presentation.style.setProperty("--cd-overlay-surface", "Canvas");
       presentation.style.setProperty("--cd-overlay-foreground", "CanvasText");
       presentation.append(element);
       portal.append(presentation);
       const commerce = [...element.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")].map((host) => {
+        const originalHostStyle = host.getAttribute("style");
         const wrapper = document.createElement("div");
         wrapper.setAttribute("data-cd-overlay-commerce", concreteId);
         wrapper.style.setProperty("display", "contents", "important");
         wrapper.style.setProperty("pointer-events", "none", "important");
+        wrapper.style.setProperty("isolation", "isolate", "important");
         host.replaceWith(wrapper);
         wrapper.append(host);
-        return { host, wrapper };
-      });
-      const commerceHosts = new Set(commerce.map(({ host }) => host));
-      const commerceWrappers = new Set<HTMLElement>(commerce.map(({ wrapper }) => wrapper));
-      const protectedBranches = new Set<HTMLElement>();
-      for (const { wrapper } of commerce) {
-        let branch = wrapper.parentElement;
-        while (branch && branch !== element) {
-          protectedBranches.add(branch);
-          branch = branch.parentElement;
+        host.style.setProperty("isolation", "isolate", "important");
+        if (host.ownerDocument.defaultView?.getComputedStyle(host).position === "static") {
+          host.style.setProperty("position", "relative", "important");
         }
-      }
-      const styled = [element, ...element.querySelectorAll<HTMLElement>("*")].flatMap((candidate) => {
-        if (commerceWrappers.has(candidate)) return [];
-        const snapshot = { element: candidate, originalStyle: candidate.getAttribute("style") };
-        candidate.style.setProperty("isolation", "isolate", "important");
-        if (candidate !== element) {
-          if (candidate.ownerDocument.defaultView?.getComputedStyle(candidate).position === "static") {
-            candidate.style.setProperty("position", "relative", "important");
-          }
-          candidate.style.setProperty("z-index", commerceHosts.has(candidate) ? "2" : protectedBranches.has(candidate) ? "1" : "0", "important");
-        }
-        if (commerceHosts.has(candidate)) candidate.style.setProperty("pointer-events", "auto", "important");
-        return [snapshot];
+        host.style.setProperty("z-index", "2147483647", "important");
+        host.style.setProperty("pointer-events", "auto", "important");
+        return { host, wrapper, originalHostStyle };
       });
       openSurfaces.set(concreteId, {
-        element, presentation, commerce, styled, placeholder, opener,
+        element, presentation, commerce, placeholder, opener,
         originalHidden: element.hidden,
         originalRole: element.getAttribute("role"),
         originalTabIndex: element.getAttribute("tabindex"),

@@ -120,7 +120,7 @@ describe("platform overlay portal", () => {
   });
 
   it("protects trusted commerce in place without changing its layout parent or order", () => {
-    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="row"><span id="before"></span><div id="slot" data-cd-trusted-slot="addToCart"></div><div id="cover"></div></div></section></main>`;
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="row"><span id="before"></span><div id="slot" data-cd-trusted-slot="addToCart"></div><div id="cover" style="opacity: 0.5;"></div></div></section></main>`;
     const root = document.getElementById("root") as HTMLElement;
     const surface = document.getElementById("cd-home-a") as HTMLElement;
     const slot = document.getElementById("slot") as HTMLElement;
@@ -139,14 +139,34 @@ describe("platform overlay portal", () => {
     expect(commerceWrapper.style.display).toBe("contents");
     expect(Number(slot.style.zIndex)).toBeGreaterThan(Number(cover.style.zIndex));
     expect(slot.style.isolation).toBe("isolate");
-    expect(cover.style.isolation).toBe("isolate");
+    expect(cover.getAttribute("style")).toBe("opacity: 0.5;");
     expect(slot.style.pointerEvents).toBe("auto");
     manager.close(surface.id, null);
     expect(slot.parentElement).toBe(row);
     expect(slot.previousElementSibling).toBe(before);
     expect(slot.nextElementSibling).toBe(cover);
     expect(document.querySelector("[data-cd-overlay-commerce]")).toBeNull();
-    expect(cover.getAttribute("style")).toBeNull();
+    expect(cover.getAttribute("style")).toBe("opacity: 0.5;");
+    manager.teardown();
+  });
+
+  it("leaves unrelated static and absolute overlay geometry untouched while open", () => {
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="anchor" style="position: relative; width: 20rem;"><p id="static" style="margin: 1rem; color: red;">Copy</p><div id="slot" data-cd-trusted-slot="addToCart"></div><div id="absolute" style="position: absolute; inset: 0; pointer-events: none;"></div></div></section></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const anchor = document.getElementById("anchor") as HTMLElement;
+    const staticChild = document.getElementById("static") as HTMLElement;
+    const absoluteChild = document.getElementById("absolute") as HTMLElement;
+    const anchorStyle = anchor.getAttribute("style");
+    const staticStyle = staticChild.getAttribute("style");
+    const absoluteStyle = absoluteChild.getAttribute("style");
+    const manager = createOverlayManager(root);
+    manager.open("cd-home-a", null);
+    expect(anchor.getAttribute("style")).toBe(anchorStyle);
+    expect(staticChild.getAttribute("style")).toBe(staticStyle);
+    expect(absoluteChild.getAttribute("style")).toBe(absoluteStyle);
+    expect(absoluteChild.parentElement).toBe(anchor);
+    expect(anchor.style.position).toBe("relative");
+    expect(absoluteChild.style.position).toBe("absolute");
     manager.teardown();
   });
 

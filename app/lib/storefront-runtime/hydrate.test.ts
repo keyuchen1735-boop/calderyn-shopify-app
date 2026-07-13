@@ -212,8 +212,9 @@ describe("declarative storefront hydration", () => {
     expect(runtime.hydrated).toBe(false);
     expect((document.getElementById("cd-home-drawer") as HTMLElement).hidden).toBe(false);
     expect(document.getElementById("cd-home-progress")?.getAttribute("style")).toBeNull();
-    expect((document.getElementById("cd-product-slot-1") as HTMLElement).hidden).toBe(true);
+    expect((document.getElementById("cd-product-slot-1") as HTMLElement).hidden).toBe(false);
     expect(document.getElementById("cd-product-slot-1")?.getAttribute("data-cd-commerce-state")).toBe("unavailable");
+    expect(document.getElementById("cd-product-slot-1")?.getAttribute("aria-disabled")).toBe("true");
     expect(document.querySelector("[data-cd-overlay-portal]")).toBeNull();
   });
 
@@ -246,10 +247,15 @@ describe("declarative storefront hydration", () => {
     expect(runtime.hydrated).toBe(false);
     expect(actualShadow).toBeDefined();
     expect(actualShadow?.querySelector("[data-partial-commerce]")).toBeNull();
-    expect(actualShadow?.querySelector("[data-cd-commerce-unavailable]")).not.toBeNull();
+    const unavailable = actualShadow?.querySelector<HTMLElement>("[data-cd-commerce-unavailable]");
+    expect(unavailable?.getAttribute("role")).toBe("status");
+    expect(unavailable?.getAttribute("aria-live")).toBe("polite");
+    expect(unavailable?.textContent).toMatch(/commerce unavailable/i);
     expect(host.shadowRoot).toBeNull();
-    expect(host.hidden).toBe(true);
+    expect(host.hidden).toBe(false);
     expect(host.getAttribute("data-cd-commerce-state")).toBe("unavailable");
+    expect(host.getAttribute("aria-disabled")).toBe("true");
+    expect(host.getAttribute("data-cd-commerce-state")).not.toBe("pending");
   });
 
   it("tabs through generated and trusted closed-shadow controls in DOM order", () => {

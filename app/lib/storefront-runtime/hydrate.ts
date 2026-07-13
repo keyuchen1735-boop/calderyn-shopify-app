@@ -309,10 +309,13 @@ function mountCommerce(
     const unavailable = host.ownerDocument.createElement("span");
     unavailable.setAttribute("data-cd-commerce-unavailable", "");
     unavailable.setAttribute("role", "status");
+    unavailable.setAttribute("aria-live", "polite");
     unavailable.textContent = "Commerce unavailable";
     shadowRoot.replaceChildren(reset(host.ownerDocument), unavailable);
-    host.hidden = true;
+    host.hidden = false;
     host.setAttribute("data-cd-commerce-state", "unavailable");
+    host.setAttribute("aria-disabled", "true");
+    host.removeAttribute("aria-busy");
   };
   for (const slot of slots) {
     for (const host of localElements(root, slot.id)) {
@@ -321,10 +324,13 @@ function mountCommerce(
       if (host.shadowRoot) throw new RuntimeManifestError("Trusted commerce host uses an untrusted open root");
       const originalHidden = host.hidden;
       const originalState = host.getAttribute("data-cd-commerce-state");
+      const originalAriaDisabled = host.getAttribute("aria-disabled");
+      const originalAriaBusy = host.getAttribute("aria-busy");
       const shadowRoot = trustedCommerceRoot(host) ?? host.attachShadow({ mode: "closed" });
       retainTrustedCommerceRoot(host, shadowRoot);
       host.hidden = true;
       host.setAttribute("data-cd-commerce-state", "pending");
+      host.setAttribute("aria-busy", "true");
       shadowRoot.replaceChildren(reset(host.ownerDocument));
       let cleanup: void | (() => void);
       try {
@@ -355,6 +361,8 @@ function mountCommerce(
       }
       host.hidden = originalHidden;
       restoreAttribute(host, "data-cd-commerce-state", originalState);
+      restoreAttribute(host, "aria-disabled", originalAriaDisabled);
+      restoreAttribute(host, "aria-busy", originalAriaBusy);
       committed.push({ host, shadowRoot });
       cleanups.push(() => {
         const errors: unknown[] = [];
@@ -364,6 +372,8 @@ function mountCommerce(
         try { shadowRoot.replaceChildren(reset(host.ownerDocument)); } catch (error) { errors.push(error); }
         try { host.hidden = originalHidden; } catch (error) { errors.push(error); }
         try { restoreAttribute(host, "data-cd-commerce-state", originalState); } catch (error) { errors.push(error); }
+        try { restoreAttribute(host, "aria-disabled", originalAriaDisabled); } catch (error) { errors.push(error); }
+        try { restoreAttribute(host, "aria-busy", originalAriaBusy); } catch (error) { errors.push(error); }
         if (errors.length > 0) throw new AggregateError(errors, `Failed to cleanup commerce host ${host.id}`);
       });
     }
