@@ -5,6 +5,8 @@ import { money } from "../format";
 import {
   fetchFirstRunPreflight,
   generateFirstRunCreatives,
+  createFirstCampaignRun,
+  executeCampaignAction,
   startIntegrationConnect,
   fetchProducts,
   DashboardApiError,
@@ -13,6 +15,7 @@ import {
   type ProductSummaryVM,
 } from "~/lib/dashboard/client";
 import { createCampaignDraft, deleteCampaignDraft } from "~/lib/dashboard/campaign-drafts-client";
+import { META_CTA_TYPES } from "~/lib/meta/cta-types";
 import {
   CAMPAIGN_DRAFT_PLATFORM_LABELS,
   MAX_CAMPAIGN_DRAFT_NAME_LENGTH,
@@ -30,10 +33,9 @@ const MIN_BUDGET_CENTS = 500;
 const MAX_BUDGET_CENTS = 20000;
 const DEFAULT_BUDGET_CENTS = 1500;
 
-/** Meta's actual create call is Task 13's job — this stub keeps the button
- *  disabled and the copy honest until that lands. Flip this to gate on real
- *  wiring, not a guess. */
-const META_CREATE_ENABLED = false;
+/** Meta's actual create call landed in Task 13 — the review step's "Create on
+ *  Meta" button is real, gated on a green preflight rather than a stub. */
+const META_CREATE_ENABLED = true;
 
 const BADGE_NEUTRAL = { color: "var(--text-2)", background: "var(--gray-bg)" } as const;
 const BADGE_GOOD = { color: "var(--green)", background: "var(--green-bg)" } as const;
@@ -45,10 +47,20 @@ interface CreativeFields {
   headline: string;
   primaryText: string;
   cta: string;
+  /** Signed product image the copy was scored against — server-resolved
+   *  (Task 13's first-run/creatives route), not derivable in the browser. */
+  imageUrl: string | null;
+  /** The product's storefront page — server-resolved for the same reason. */
+  destinationUrl: string;
+  audience: string;
 }
 
 interface WizardState {
   step: WizardStep;
+  /** Client-minted once at wizard mount and held stable for the wizard's whole
+   *  lifetime, including retries after a failed Meta create — that's what makes
+   *  a retried create idempotent server-side instead of a second campaign. */
+  runId: string;
   platform: CampaignDraftPlatform;
   preflight: FirstRunPreflight | null;
   productId: string | null;
@@ -64,7 +76,10 @@ type WizardAction =
   | { type: "preflight"; preflight: FirstRunPreflight }
   | { type: "product"; id: string; title: string; imageUrl: string | null }
   | { type: "budget"; cents: number }
-  | { type: "creative"; creative: CreativeFields };
+  | { type: "creative"; creative: CreativeFields }
+  /** Mint a fresh runId: the server 409s (run_input_mismatch) when a runId is
+   *  replayed with different campaign details, so an edited run starts over. */
+  | { type: "newRunId" };
 
 function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   switch (action.type) {
@@ -93,6 +108,8 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
       return { ...state, budgetCents: action.cents };
     case "creative":
       return { ...state, creative: action.creative };
+    case "newRunId":
+      return { ...state, runId: crypto.randomUUID() };
     default:
       return state;
   }
@@ -106,6 +123,7 @@ function initWizardState(prefill: WizardPrefill): WizardState {
     // so the connect button / readiness checks are never skipped: resuming a
     // draft is exactly when the account may still be unconnected.
     step: prefill?.platform && prefill.platform !== "meta" ? "product" : "platform",
+    runId: crypto.randomUUID(),
     platform,
     preflight: null,
     productId: null,
@@ -525,6 +543,7 @@ function CreativeStep({
   const [available, setAvailable] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState(0);
+  const [retryTick, setRetryTick] = useState(0);
   const productId = state.productId;
   const productTitle = state.productTitle;
 
@@ -535,6 +554,8 @@ function CreativeStep({
     // and clobber whatever the merchant just edited. The reducer nulls
     // state.creative whenever the product changes (see "product" case), so
     // this is safe: a real product change always clears it and re-generates.
+    // retryTick still re-fires this on a failed load: state.creative stays
+    // null on that path (below), so the guard falls through.
     if (!productId || state.creative) return;
     let alive = true;
     setVariants(null);
@@ -549,47 +570,69 @@ function CreativeStep({
           const first = res.variants[0];
           dispatch({
             type: "creative",
-            creative: { headline: first.headline, primaryText: first.primaryText, cta: first.cta },
+            creative: {
+              headline: first.headline,
+              primaryText: first.primaryText,
+              cta: first.cta,
+              imageUrl: res.imageUrl,
+              destinationUrl: res.destinationUrl,
+              audience: "Broad — your country",
+            },
           });
         } else {
           setVariants(null);
           dispatch({
             type: "creative",
-            creative: { headline: productTitle ?? "", primaryText: "", cta: "Shop now" },
+            creative: {
+              headline: productTitle ?? "",
+              primaryText: "",
+              cta: "SHOP_NOW",
+              imageUrl: res.imageUrl,
+              destinationUrl: res.destinationUrl,
+              audience: "Broad — your country",
+            },
           });
         }
       })
       .catch(() => {
+        // No destinationUrl to fall back to (server-only resolution) — leave
+        // state.creative null and show a real retry rather than silently
+        // continuing with an ad that has no landing page.
         if (!alive) return;
         setLoadError(true);
         setAvailable(false);
         setVariants(null);
-        dispatch({
-          type: "creative",
-          creative: { headline: productTitle ?? "", primaryText: "", cta: "Shop now" },
-        });
       });
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId, state.creative]);
+  }, [productId, state.creative, retryTick]);
 
   const loading = state.creative === null && !loadError;
   const creative = state.creative;
 
   const selectVariant = (i: number) => {
-    if (!variants) return;
+    if (!variants || !creative) return;
     setSelectedIdx(i);
     const v = variants[i];
-    dispatch({ type: "creative", creative: { headline: v.headline, primaryText: v.primaryText, cta: v.cta } });
+    dispatch({
+      type: "creative",
+      creative: { ...creative, headline: v.headline, primaryText: v.primaryText, cta: v.cta },
+    });
   };
 
   const editCreative = (patch: Partial<CreativeFields>) => {
-    dispatch({ type: "creative", creative: { ...(creative ?? { headline: "", primaryText: "", cta: "" }), ...patch } });
+    if (!creative) return;
+    dispatch({ type: "creative", creative: { ...creative, ...patch } });
   };
 
-  const canContinue = !!creative && creative.headline.trim() !== "" && creative.primaryText.trim() !== "" && creative.cta.trim() !== "";
+  const canContinue =
+    !!creative &&
+    creative.headline.trim() !== "" &&
+    creative.primaryText.trim() !== "" &&
+    creative.cta.trim() !== "" &&
+    creative.destinationUrl.trim() !== "";
 
   return (
     <div className="flex flex-col" style={{ gap: 20 }}>
@@ -600,6 +643,17 @@ function CreativeStep({
 
       {loading ? (
         <p className="cd-caption">Writing your ad…</p>
+      ) : loadError ? (
+        <Card>
+          <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: 10 }}>
+            <span className="cd-caption" style={{ color: "var(--red)" }}>
+              Couldn't prepare your ad — try again.
+            </span>
+            <Btn small onClick={() => setRetryTick((t) => t + 1)}>
+              Try again
+            </Btn>
+          </div>
+        </Card>
       ) : available && variants ? (
         <div className="flex flex-col" style={{ gap: 12 }}>
           {variants.map((v, i) => {
@@ -636,8 +690,12 @@ function CreativeStep({
                           value={creative.cta}
                           onChange={(e) => editCreative({ cta: e.target.value })}
                           aria-label="Call to action"
+                          list="wizard-cta-options"
                           style={{ width: 160 }}
                         />
+                        <p className="cd-caption" style={{ opacity: 0.8 }}>
+                          Button label — pick from Meta's list; anything else becomes “Shop now”.
+                        </p>
                       </>
                     ) : (
                       <>
@@ -683,12 +741,24 @@ function CreativeStep({
                 value={creative.cta}
                 onChange={(e) => editCreative({ cta: e.target.value })}
                 aria-label="Call to action"
+                list="wizard-cta-options"
                 style={{ width: 160 }}
               />
+              <p className="cd-caption" style={{ opacity: 0.8 }}>
+                Button label — pick from Meta's list; anything else becomes “Shop now”.
+              </p>
             </div>
           </Card>
         )
       )}
+
+      {/* Meta's call_to_action is an enum — offer the allowed values so a
+          hand-typed label isn't a trap (the server normalizes either way). */}
+      <datalist id="wizard-cta-options">
+        {META_CTA_TYPES.map((cta) => (
+          <option key={cta} value={cta} />
+        ))}
+      </datalist>
 
       <div className="flex justify-end">
         <Btn kind="primary" disabled={!canContinue} onClick={onNext}>
@@ -724,17 +794,100 @@ function buildPlanText(state: WizardState): string {
 
 function ReviewStep({
   state,
+  dispatch,
   app,
   prefill,
   onExit,
 }: {
   state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
   app: DashboardCtx;
   prefill: WizardPrefill;
   onExit: () => void;
 }) {
   const [saving, setSaving] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  /** Error code of the last failed create (drives code-specific affordances
+   *  like the run_needs_review "Start over" link). */
+  const [createErrorCode, setCreateErrorCode] = useState<string | null>(null);
+  const [created, setCreated] = useState<{ campaignDimId: string } | null>(null);
+  const [turningOn, setTurningOn] = useState(false);
+  /** True once resume_campaign succeeded — makes the Turn on button single-use. */
+  const [turnedOn, setTurnedOn] = useState(false);
   const monthlyCents = state.budgetCents * 30;
+
+  // Re-checked here, not just trusted from an earlier step: the preflight read
+  // happened on PlatformStep, and a merchant can sit on Review for a while (or
+  // resume a draft that skipped it) — never fire a real Meta create off a stale
+  // or unconfirmed connection state.
+  const metaReady = state.platform === "meta" && state.preflight?.metaConnected === true;
+
+  const createOnMeta = async () => {
+    if (creating || created || !metaReady || !state.creative || !state.productId) return;
+    setCreating(true);
+    setCreateError(null);
+    setCreateErrorCode(null);
+    try {
+      const result = await createFirstCampaignRun({
+        runId: state.runId,
+        productId: state.productId,
+        budgetCents: state.budgetCents,
+        creative: {
+          headline: state.creative.headline,
+          primaryText: state.creative.primaryText,
+          cta: state.creative.cta,
+          imageUrl: state.creative.imageUrl,
+          destinationUrl: state.creative.destinationUrl,
+        },
+      });
+      setCreated({ campaignDimId: result.campaignDimId });
+      // Pull fresh data now: in the embedded (Campaigns empty-state) instance
+      // navigate("campaigns") is a no-op, so without this the new campaign
+      // wouldn't appear until the next background poll.
+      app.refresh();
+    } catch (err) {
+      if (err instanceof DashboardApiError && err.code === "run_input_mismatch") {
+        // The runId was used before with different details (the merchant went
+        // back and edited something after a failed attempt). Safe to start a
+        // fresh run — the server only reopens runs that created nothing on
+        // Meta, and it refuses this one rather than redirecting it.
+        dispatch({ type: "newRunId" });
+        setCreateError("Your campaign details changed since the last attempt — click Create on Meta to start fresh.");
+      } else {
+        // Honest server message — the SAME runId is reused on the next click
+        // (state.runId is stable), so a retry resumes this run instead of
+        // creating a second campaign on Meta. run_needs_review keeps the dead
+        // runId but additionally renders a "Start over" link (below) that
+        // mints a fresh one, so the merchant isn't stranded.
+        const message = err instanceof DashboardApiError ? err.message : "Couldn't create the campaign — try again.";
+        setCreateError(message);
+        setCreateErrorCode(err instanceof DashboardApiError ? err.code : null);
+      }
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const turnOn = async () => {
+    // Single-use: once the resume succeeded, a second click must never fire
+    // another resume (in the embedded instance the card stays mounted, since
+    // navigate("campaigns") is a no-op there).
+    if (!created || turningOn || turnedOn) return;
+    setTurningOn(true);
+    try {
+      await executeCampaignAction(created.campaignDimId, { type: "resume_campaign" });
+      setTurnedOn(true);
+      app.toast("Campaign is live.", "check", "success");
+      app.refresh();
+    } catch (err) {
+      const message = err instanceof DashboardApiError ? err.message : "Couldn't turn it on — try from Campaigns.";
+      app.toast(message, "x", "critical");
+    } finally {
+      setTurningOn(false);
+      app.navigate("campaigns");
+    }
+  };
 
   const saveDraft = async () => {
     if (saving) return;
@@ -774,8 +927,20 @@ function ReviewStep({
       <Card>
         <SummaryRow label="Product" value={state.productTitle ?? "—"} />
         <SummaryRow label="Budget" value={`${money(state.budgetCents)}/day · about ${money(monthlyCents)}/month`} />
-        <SummaryRow label="Audience" value="Broad — your country" />
+        {/* Honest about what the Meta create actually targets today: the server
+            has no shop-country source yet (shop-country.server.ts), so first
+            campaigns target the United States. Non-Meta plans are executed by
+            the merchant in that platform's own Ads manager. */}
+        <SummaryRow
+          label="Audience"
+          value={state.platform === "meta" ? "Broad — United States" : "Broad — your country"}
+        />
         <SummaryRow label="Platform" value={CAMPAIGN_DRAFT_PLATFORM_LABELS[state.platform]} />
+        {state.platform === "meta" && (
+          <p className="cd-caption" style={{ marginTop: 4 }}>
+            First campaigns target the United States — regional targeting is coming.
+          </p>
+        )}
       </Card>
 
       <Card>
@@ -792,20 +957,80 @@ function ReviewStep({
       </Card>
 
       {state.platform === "meta" ? (
-        <div className="flex flex-col items-end" style={{ gap: 6 }}>
-          <div className="flex items-center" style={{ gap: 10 }}>
-            {/* Same saveDraft path as Google/TikTok (replace semantics from a
-                resumed draft included) — a Meta user gets a real finish line
-                while direct create is still disabled. */}
-            <Btn disabled={saving} onClick={saveDraft}>
-              {saving ? "Saving…" : "Save as draft"}
-            </Btn>
-            <Btn kind="primary" disabled={!META_CREATE_ENABLED}>
-              Create on Meta
-            </Btn>
+        created ? (
+          <Card>
+            <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <div className="cd-h3">{turnedOn ? "Campaign is live" : "Created on Meta — paused"}</div>
+                <p className="cd-caption">
+                  {turnedOn ? "Manage it anytime from Campaigns." : "Nothing spends until you turn it on."}
+                </p>
+              </div>
+              <Btn kind="primary" disabled={turningOn || turnedOn} icon={turnedOn ? "check" : undefined} onClick={turnOn}>
+                {turnedOn ? "Running" : turningOn ? "Turning on…" : "Turn on"}
+              </Btn>
+            </div>
+            {!turnedOn && (
+              <div style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="cd-link"
+                  onClick={() => {
+                    // The campaign list must show the new (paused) campaign on
+                    // exit — in the embedded instance navigate is a no-op, so
+                    // the refresh is what actually updates the screen.
+                    app.refresh();
+                    app.navigate("campaigns");
+                  }}
+                >
+                  Keep it paused for now
+                </button>
+              </div>
+            )}
+          </Card>
+        ) : (
+          <div className="flex flex-col items-end" style={{ gap: 6 }}>
+            <div className="flex items-center" style={{ gap: 10 }}>
+              {/* Same saveDraft path as Google/TikTok (replace semantics from a
+                  resumed draft included) — an escape hatch if the merchant would
+                  rather finish setting up Meta before it goes live. */}
+              <Btn disabled={saving || creating} onClick={saveDraft}>
+                {saving ? "Saving…" : "Save as draft"}
+              </Btn>
+              <Btn kind="primary" disabled={!META_CREATE_ENABLED || !metaReady || creating} onClick={createOnMeta}>
+                {creating ? "Creating…" : "Create on Meta"}
+              </Btn>
+            </div>
+            {createError && createErrorCode === "run_needs_review" ? (
+              // Retrying the SAME runId would just 409 again — offer a fresh
+              // start instead of the generic "try again" suffix. Safe: the new
+              // runId creates a new run; the old attempt's campaign (if any)
+              // is paused and spending nothing.
+              <span className="cd-caption" style={{ color: "var(--red)" }}>
+                {createError}{" "}
+                <button
+                  type="button"
+                  className="cd-link"
+                  onClick={() => {
+                    dispatch({ type: "newRunId" });
+                    setCreateError(null);
+                    setCreateErrorCode(null);
+                  }}
+                >
+                  Start over
+                </button>
+              </span>
+            ) : createError ? (
+              <span className="cd-caption" style={{ color: "var(--red)" }}>
+                {createError} — try again, or save as a draft instead.
+              </span>
+            ) : !metaReady ? (
+              <span className="cd-caption">
+                Reconnect Meta on the first step to create this directly — save as a draft for now.
+              </span>
+            ) : null}
           </div>
-          <span className="cd-caption">Creating on Meta lands in the next update — save as a draft for now</span>
-        </div>
+        )
       ) : (
         <div className="flex flex-col" style={{ gap: 10 }}>
           <p className="cd-caption">
@@ -864,7 +1089,9 @@ export function CampaignWizard({
       {state.step === "platform" && <PlatformStep state={state} dispatch={dispatch} app={app} onNext={goNext} />}
       {state.step === "product" && <ProductStep state={state} dispatch={dispatch} app={app} onNext={goNext} />}
       {state.step === "creative" && <CreativeStep state={state} dispatch={dispatch} onNext={goNext} />}
-      {state.step === "review" && <ReviewStep state={state} app={app} prefill={prefill} onExit={onExit} />}
+      {state.step === "review" && (
+        <ReviewStep state={state} dispatch={dispatch} app={app} prefill={prefill} onExit={onExit} />
+      )}
     </>
   );
 

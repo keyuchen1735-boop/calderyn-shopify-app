@@ -498,15 +498,60 @@ export interface FirstRunCreativeVariant {
  * Generate up to 3 ad-copy variants from a chosen catalog product. `available:
  * false` means the generator is unconfigured (no API key / quota) - the wizard
  * should fall back to manual copy editing rather than treat it as an error.
+ * destinationUrl/imageUrl are always returned (even when unavailable) — the
+ * server-resolved product page link and signed image the wizard's Meta-create
+ * step needs, which the browser can't derive on its own.
  */
 export async function generateFirstRunCreatives(
   productId: string,
-): Promise<{ available: boolean; variants: FirstRunCreativeVariant[] }> {
-  return apiSend<{ available: boolean; variants: FirstRunCreativeVariant[] }>(
+): Promise<{
+  available: boolean;
+  variants: FirstRunCreativeVariant[];
+  destinationUrl: string;
+  imageUrl: string | null;
+}> {
+  return apiSend<{
+    available: boolean;
+    variants: FirstRunCreativeVariant[];
+    destinationUrl: string;
+    imageUrl: string | null;
+  }>("POST", "/dashboard/api/campaigns/first-run/creatives", { productId });
+}
+
+/** The wizard's Meta-create input: the runId is client-minted (crypto.randomUUID())
+ *  and held stable across retries of the SAME run — that's what makes a retry
+ *  idempotent server-side instead of creating a second campaign on Meta. */
+export interface FirstRunCreateInput {
+  runId: string;
+  productId: string;
+  budgetCents: number;
+  creative: {
+    headline: string;
+    primaryText: string;
+    cta: string;
+    imageUrl: string | null;
+    destinationUrl: string;
+  };
+}
+
+/** Create the merchant's first campaign on Meta (paused): campaign -> ad set ->
+ *  creative + ad, audited, mirrored into ad_campaign_dim. A 502 "meta_create_failed"
+ *  surfaces as a DashboardApiError with the real platform/validation message —
+ *  retry with the SAME runId to resume the same run instead of starting a new one. */
+export async function createFirstCampaignRun(
+  input: FirstRunCreateInput,
+): Promise<{ runId: string; campaignDimId: string }> {
+  const data = await apiSend<{ run_id: string; campaign_dim_id: string; status: string }>(
     "POST",
-    "/dashboard/api/campaigns/first-run/creatives",
-    { productId },
+    "/dashboard/api/campaigns/first-run",
+    {
+      runId: input.runId,
+      productId: input.productId,
+      budgetCents: input.budgetCents,
+      creative: input.creative,
+    },
   );
+  return { runId: data.run_id, campaignDimId: data.campaign_dim_id };
 }
 
 /** Per-campaign daily spend+revenue series for the detail chart (default 90d window). */

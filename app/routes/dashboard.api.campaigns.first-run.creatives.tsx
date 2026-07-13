@@ -73,8 +73,12 @@ export async function action({ request }: ActionFunctionArgs) {
     // The copy generator itself is always-on (no key check in its available()),
     // unlike the image generator, so the "no key / not configured" gate for this
     // wizard step has to happen here rather than via generator.available().
+    // destinationUrl/imageUrl are returned alongside the copy either way — the
+    // wizard's Meta-create step (Task 13) needs the SAME product page link and
+    // signed image the creative was scored against, and re-deriving them
+    // client-side is impossible (storefront origin resolution is server-only).
     if (!process.env.ANTHROPIC_API_KEY) {
-      return { available: false, variants: [] as CreativeVariantDTO[] };
+      return { available: false, variants: [] as CreativeVariantDTO[], destinationUrl: productUrl, imageUrl };
     }
 
     // Same dep wiring as dashboard.api.campaigns.$id.regenerate.tsx: one
@@ -107,7 +111,7 @@ export async function action({ request }: ActionFunctionArgs) {
     );
 
     if (!result.available) {
-      return { available: false, variants: [] as CreativeVariantDTO[] };
+      return { available: false, variants: [] as CreativeVariantDTO[], destinationUrl: productUrl, imageUrl };
     }
 
     const variants: CreativeVariantDTO[] = result.variants.slice(0, 3).map((v) => ({
@@ -116,6 +120,6 @@ export async function action({ request }: ActionFunctionArgs) {
       cta: v.input.cta,
       rationale: v.rationale,
     }));
-    return { available: true, variants };
+    return { available: true, variants, destinationUrl: productUrl, imageUrl };
   });
 }

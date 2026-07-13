@@ -28,7 +28,8 @@ export type ActionKind =
   | "fulfill_order"
   | "cancel_order"
   | "edit_order"
-  | "return_received";
+  | "return_received"
+  | "create_campaign_wizard";
 export type DetectorId =
   | "ad_tax_overload"
   | "campaign_below_breakeven"

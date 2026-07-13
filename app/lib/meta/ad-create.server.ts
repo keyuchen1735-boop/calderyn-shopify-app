@@ -23,12 +23,19 @@ const DEFAULT_RETRY: RetryOptions = { maxAttempts: 4, baseDelayMs: 500 };
 // convention (campaigns.server + actions.server already each define their own).
 const META_PERMANENT_CODES = new Set([100, 190, 200, 10, 803, 272]);
 
-function check(r: MetaResponse): MetaResponse {
+function check(r: MetaResponse, step: string): MetaResponse {
   assertNotRateLimited(r);
   if (r.error) {
     const code = r.error.code;
-    const codeStr = code != null ? ` (code ${code})` : "";
-    throw new ActionError("meta", `${r.error.message}${codeStr}`, {
+    // Include subcode + error_user_msg when Meta sends them — they carry the
+    // actually-actionable reason, and the step label says which of the flow's
+    // Meta writes rejected (mirrors campaign-create.server.ts).
+    const codeStr =
+      code != null
+        ? ` (code ${code}${r.error.error_subcode != null ? `/${r.error.error_subcode}` : ""})`
+        : "";
+    const userMsg = r.error.error_user_msg ? ` — ${r.error.error_user_msg}` : "";
+    throw new ActionError("meta", `${step}: ${r.error.message}${codeStr}${userMsg}`, {
       retriable: !(code != null && META_PERMANENT_CODES.has(code)),
     });
   }
@@ -43,7 +50,7 @@ export interface MetaWriteConn {
 /** First usable Facebook Page for the ad account; required for object_story_spec.
  *  Not stored anywhere today, so resolved live. Fails loudly when none exists. */
 async function resolvePageId(client: MetaClient, adAccountId: string): Promise<string> {
-  const body = check(await client.get(`/${adAccountId}/promote_pages`, { fields: "id" }));
+  const body = check(await client.get(`/${adAccountId}/promote_pages`, { fields: "id" }), "page lookup");
   const page = ((body.data as Array<{ id?: string }>) ?? [])[0];
   const pageId = page?.id ? String(page.id) : "";
   if (!pageId) {
@@ -81,6 +88,7 @@ export async function createPausedAd(
           name: creative.headline || "Calderyn draft creative",
           object_story_spec: objectStorySpec,
         }),
+        "creative create",
       ),
     DEFAULT_RETRY,
   );
@@ -96,6 +104,7 @@ export async function createPausedAd(
           creative: JSON.stringify({ creative_id: creativeId }),
           status: "PAUSED",
         }),
+        "ad create",
       ),
     DEFAULT_RETRY,
   );
@@ -108,7 +117,7 @@ export async function createPausedAd(
  *  writable configured status to DELETED — the ad leaves the active account set. */
 export async function deleteAd(client: MetaClient, adId: string): Promise<void> {
   await withRetry(async () => {
-    check(await client.post(`/${adId}`, { status: "DELETED" }));
+    check(await client.post(`/${adId}`, { status: "DELETED" }), "ad delete");
   }, DEFAULT_RETRY);
 }
 
