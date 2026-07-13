@@ -46,10 +46,37 @@ export interface Quotes30dSummary {
   avgPromise: string | null;
 }
 
+export interface ShippingRouteOrigin {
+  city: string;
+  region: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface ShippingRouteDestination {
+  id: string;
+  city: string;
+  region: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+  orderCount: number;
+}
+
+export interface ShippingRoutes30d {
+  origin: ShippingRouteOrigin | null;
+  destinations: ShippingRouteDestination[];
+  mappedOrderCount: number;
+  unmappedOrderCount: number;
+  hasInternationalDestinations: boolean;
+}
+
 export interface ShippingSummary {
   origin: ShipOriginDto | null;
   carrierService: CarrierServiceDto | null;
   coverage: ShipCoverage;
   rateCard: RateCardRow[];
   quotes30d: Quotes30dSummary;
+  routes30d: ShippingRoutes30d;
 }

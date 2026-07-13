@@ -6,6 +6,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import { buildFallbackOptions } from "~/lib/ship-cost/adapters/easypost-rate.server";
 import type { Address, RateRequest } from "~/lib/ship-cost/adapters/rate-quote";
 import { DEFAULT_HANDLING_DAYS } from "./delivery-window";
+import { loadShippingRoutes30d } from "./routes.server";
 import type {
   CarrierServiceDto,
   Quotes30dSummary,
@@ -223,11 +224,12 @@ async function loadQuotes30d(shopId: string): Promise<Quotes30dSummary> {
 }
 
 export async function loadShippingSummary(shopId: string): Promise<ShippingSummary> {
-  const [origin, carrierService, coverage, quotes30d] = await Promise.all([
+  const [origin, carrierService, coverage, quotes30d, routes30d] = await Promise.all([
     loadOrigin(shopId),
     loadCarrierService(shopId),
     loadCoverage(shopId),
     loadQuotes30d(shopId),
+    loadShippingRoutes30d(shopId),
   ]);
   return {
     origin,
@@ -235,5 +237,6 @@ export async function loadShippingSummary(shopId: string): Promise<ShippingSumma
     coverage,
     rateCard: buildRateCard(origin?.country ?? "US"),
     quotes30d,
+    routes30d,
   };
 }

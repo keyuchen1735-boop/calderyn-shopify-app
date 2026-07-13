@@ -1,6 +1,9 @@
 import { createRequire } from "node:module";
 
 import type { WorldCitiesJsonModule } from "world-cities-json";
+import { normalizePlace } from "./destination-aggregation";
+
+export { normalizePlace } from "./destination-aggregation";
 
 export interface CityLookupInput {
   city: string;
@@ -29,16 +32,6 @@ export interface ResolvedCity {
 }
 
 const require = createRequire(import.meta.url);
-
-export function normalizePlace(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/\p{M}+/gu, "")
-    .toLowerCase()
-    .replace(/[\p{P}\p{S}]+/gu, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
 
 function loadWorldCityRows(): readonly WorldCityRow[] {
   const dataset = require("world-cities-json") as WorldCitiesJsonModule;

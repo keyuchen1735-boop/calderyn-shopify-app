@@ -17,15 +17,17 @@ export interface DestinationPartition {
   incompleteOrderCount: number;
 }
 
-export function normalizeDestinationPart(value: string): string {
+export function normalizePlace(value: string): string {
   return value
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\p{M}+/gu, "")
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/[\p{P}\p{S}]+/gu, " ")
     .trim()
     .replace(/\s+/g, " ");
 }
+
+export const normalizeDestinationPart = normalizePlace;
 
 export function stableDestinationId(city: string, region: string, country: string): string {
   const key = [city, region, country].map(normalizeDestinationPart).join("\u001f");
