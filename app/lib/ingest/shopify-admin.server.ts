@@ -125,6 +125,13 @@ export type AdminOrder = {
   totalShippingPriceSet: { shopMoney: { amount: string } };
   currentTotalTaxSet: { shopMoney: { amount: string } };
   currentTotalDiscountsSet: { shopMoney: { amount: string } };
+  shippingAddress: {
+    city: string | null;
+    province: string | null;
+    provinceCode: string | null;
+    country: string | null;
+    countryCodeV2: string | null;
+  } | null;
   lineItems: {
     nodes: Array<{
       id: string;
@@ -160,6 +167,10 @@ export async function* fetchRecentOrders(shopDomain: string, sinceISO: string): 
             totalShippingPriceSet { shopMoney { amount } }
             currentTotalTaxSet { shopMoney { amount } }
             currentTotalDiscountsSet { shopMoney { amount } }
+            # Retain only coarse destination geography for the shipping route
+            # read model. Street, postal, recipient, and contact fields are
+            # intentionally not requested from Shopify.
+            shippingAddress { city province provinceCode country countryCodeV2 }
             # Slice-1 cap: single-page (orders with >100 line items truncate).
             # Weight is NOT a field on LineItem — it lives on the variant's
             # inventoryItem.measurement.weight. We select unit alongside value

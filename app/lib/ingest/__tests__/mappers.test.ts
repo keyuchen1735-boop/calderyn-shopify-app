@@ -13,6 +13,9 @@ import {
   minimizeOrderWebhook,
   minimizeRefundWebhook,
 } from "../mappers.server";
+import { buildShippingRoutes } from "../../shipping/routes.server";
+import type { DestinationOrderRow } from "../../shipping/destination-aggregation";
+import type { WorldCityRow } from "../../shipping/city-centroids.server";
 
 describe("gidToId", () => {
   it("extracts the trailing id from a Shopify GID", () => {
@@ -163,6 +166,13 @@ describe("mapOrder / mapOrderLines", () => {
     totalShippingPriceSet: { shopMoney: { amount: "5.00" } },
     currentTotalTaxSet: { shopMoney: { amount: "0.97" } },
     currentTotalDiscountsSet: { shopMoney: { amount: "0.00" } },
+    shippingAddress: {
+      city: "Toronto",
+      province: "Ontario",
+      provinceCode: "ON",
+      country: "Canada",
+      countryCodeV2: "CA",
+    },
     lineItems: {
       nodes: [
         {
@@ -193,6 +203,9 @@ describe("mapOrder / mapOrderLines", () => {
       discount_cents: 0,
       currency: "USD",
       financial_status: "PAID",
+      customer_city: "Toronto",
+      customer_region: "ON",
+      customer_country: "CA",
       source_version: Date.parse("2026-05-01T12:00:00Z"),
       landing_site: null,
       referring_site: null,
@@ -455,6 +468,9 @@ describe("parseOrderWebhook", () => {
       discount_cents: 0,
       currency: "USD",
       financial_status: "paid",
+      customer_city: null,
+      customer_region: null,
+      customer_country: null,
       source_version: Date.parse("2026-05-01T12:00:00Z"),
       landing_site: null,
       referring_site: null,
@@ -685,14 +701,25 @@ describe("minimizeOrderWebhook", () => {
     phone: "+1-555-0100",
     customer: { id: 1, first_name: "Jane", last_name: "Doe", email: "jane@example.com" },
     billing_address: { name: "Jane Doe", address1: "1 Main St", city: "Springfield", zip: "00000" },
-    shipping_address: { name: "Jane Doe", address1: "1 Main St", city: "Springfield", zip: "00000" },
+    shipping_address: {
+      name: "Jane Doe",
+      address1: "1 Main St",
+      address2: "Unit 4",
+      city: "Toronto",
+      province: "Ontario",
+      province_code: "ON",
+      country: "Canada",
+      country_code: "CA",
+      zip: "M5V 3A8",
+      phone: "+1-555-0100",
+    },
     note: "leave at the door",
     browser_ip: "203.0.113.7",
   };
 
-  it("drops every customer-PII field", () => {
+  it("drops direct customer PII and detailed address fields", () => {
     const min = minimizeOrderWebhook(fullPayload) as Record<string, unknown>;
-    for (const k of ["email", "phone", "customer", "billing_address", "shipping_address", "note", "browser_ip"]) {
+    for (const k of ["email", "phone", "customer", "billing_address", "note", "browser_ip"]) {
       expect(min[k]).toBeUndefined();
     }
     // line items keep only the read fields — no titles or other extras
@@ -703,5 +730,56 @@ describe("minimizeOrderWebhook", () => {
 
   it("is lossless: the stripped body parses to exactly the same result", () => {
     expect(parseOrderWebhook(minimizeOrderWebhook(fullPayload))).toEqual(parseOrderWebhook(fullPayload));
+  });
+
+  it("carries only destination city, region, and country through to the shipping route model", () => {
+    const minimal = minimizeOrderWebhook(fullPayload) as Record<string, unknown>;
+    expect(minimal.shipping_address).toEqual({
+      city: "Toronto",
+      province_code: "ON",
+      country_code: "CA",
+    });
+
+    const parsed = parseOrderWebhook(minimizeOrderWebhook(fullPayload));
+    const cities: WorldCityRow[] = [
+      {
+        city: "Toronto",
+        city_ascii: "Toronto",
+        lat: "43.6532",
+        lng: "-79.3832",
+        country: "Canada",
+        iso2: "CA",
+        iso3: "CAN",
+        admin_name: "Ontario",
+        population: "2794356",
+      },
+      {
+        city: "Vancouver",
+        city_ascii: "Vancouver",
+        lat: "49.2827",
+        lng: "-123.1207",
+        country: "Canada",
+        iso2: "CA",
+        iso3: "CAN",
+        admin_name: "British Columbia",
+        population: "662248",
+      },
+    ];
+
+    const routes = buildShippingRoutes(
+      { city: "Vancouver", state: "BC", country: "CA" },
+      [parsed.order as unknown as DestinationOrderRow],
+      cities,
+    );
+
+    expect(routes.destinations).toHaveLength(1);
+    expect(routes.destinations[0]).toMatchObject({
+      city: "Toronto",
+      region: "Ontario",
+      country: "CA",
+      orderCount: 1,
+    });
+    expect(routes.destinations[0]).not.toHaveProperty("orderId");
+    expect(routes.destinations[0]).not.toHaveProperty("external_id");
   });
 });

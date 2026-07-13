@@ -49,6 +49,11 @@ export type OrderRow = {
   discount_cents: number;
   currency: string;
   financial_status: string | null;
+  // Coarse shipping destination only. Do not add street, postal, recipient,
+  // contact, or other customer-identifying address fields to this fact row.
+  customer_city: string | null;
+  customer_region: string | null;
+  customer_country: string | null;
   source_version: number;
   landing_site: string | null;
   referring_site: string | null;
