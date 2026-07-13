@@ -458,6 +458,7 @@ export function Btn({
   small,
   className = "",
   type = "button",
+  ariaLabel,
 }: {
   children: ReactNode;
   kind?: "primary" | "secondary" | "danger";
@@ -468,12 +469,15 @@ export function Btn({
   className?: string;
   /** "submit" opts into native form submission (keeps built-in field validation). */
   type?: "button" | "submit";
+  /** Accessible name for icon-only buttons (no visible text child). */
+  ariaLabel?: string;
 }) {
   return (
     <button
       type={type}
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
       className={`cd-btn cd-btn-${kind} ${small ? "cd-btn-sm" : ""} ${className}`}
     >
       {icon && <CDIcon name={icon} size={small ? 14 : 16} strokeWidth={1.9} />}

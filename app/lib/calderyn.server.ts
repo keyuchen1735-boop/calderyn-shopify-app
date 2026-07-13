@@ -19,6 +19,7 @@
   SkuSource,
   TopAdRow,
 } from "./types";
+import { aggregateSpendRows, type SpendFactRow } from "./roas-series";
 import { rankMoves, toNumericEvidence } from "./remediation/rank";
 import { synopsisFor } from "./remediation/synopsis";
 import type { RemediationInput } from "./remediation/types";
@@ -946,19 +947,36 @@ export function calderynClient(shop: string) {
             .gte("day", since)
             .order("day", { ascending: true });
           if (error) throw error;
-          const byDay = new Map<string, { spend: number; revenue: number }>();
-          for (const r of data ?? []) {
-            const day = String(r.day);
-            const acc = byDay.get(day) ?? { spend: 0, revenue: 0 };
-            acc.spend += Number(r.spend_cents ?? 0);
-            acc.revenue += Number(r.revenue_attrib_cents ?? 0);
-            byDay.set(day, acc);
-          }
-          return [...byDay.entries()]
-            .sort((a, b) => (a[0] < b[0] ? -1 : 1))
-            .map(([day, v]) => ({ day, spend_cents: v.spend, revenue_cents: v.revenue }));
+          return aggregateSpendRows((data ?? []) as SpendFactRow[]);
         } catch (err) {
           rethrow("analytics.dailyRoasSeries", err);
+        }
+      },
+
+      // Single-campaign spend+revenue series for the campaign detail chart.
+      // Same query shape and window logic as dailyRoasSeries, scoped to one
+      // campaign; explicit .limit(400) even though the window rarely nears it
+      // (PostgREST clamps every response at 1000 regardless of .limit()).
+      async campaignRoasSeries(
+        campaignId: string,
+        windowDays = 90,
+        _signal?: AbortSignal,
+      ): Promise<DailyRoasRow[]> {
+        try {
+          const shopId = await shopIdP;
+          const since = isoDaysAgo(windowDays);
+          const { data, error } = await supabase
+            .from("ad_spend_fact")
+            .select("day, spend_cents, revenue_attrib_cents")
+            .eq("shop_id", shopId)
+            .eq("campaign_id", campaignId)
+            .gte("day", since)
+            .order("day", { ascending: true })
+            .limit(400);
+          if (error) throw error;
+          return aggregateSpendRows((data ?? []) as SpendFactRow[]);
+        } catch (err) {
+          rethrow("analytics.campaignRoasSeries", err);
         }
       },
 

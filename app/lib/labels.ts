@@ -98,6 +98,7 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
   resume_campaign: "Resume campaign",
   reduce_campaign_budget: "Reduce campaign budget",
   increase_campaign_budget: "Scale campaign budget",
+  update_campaign_budget: "Set campaign budget",
   reallocate_budget: "Reallocate budget",
   reallocate_spend_sku: "Move ad budget to a winner",
   exclude_geo: "Exclude geography",
@@ -110,10 +111,12 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
   issue_refund: "Issue a refund",
   snooze_alert: "Snooze alert",
   push_creative_draft: "Push to Meta as paused draft",
+  duplicate_campaign: "Duplicate campaign",
   fulfill_order: "Fulfill order",
   cancel_order: "Cancel order",
   edit_order: "Reduce order line",
   return_received: "Return received",
+  create_campaign_wizard: "Create campaign",
 };
 
 // Plain-language name for a (detector, action) autopilot feature. Several
@@ -137,6 +140,7 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
   resume_campaign: "Resumed campaign",
   reduce_campaign_budget: "Reduced budget",
   increase_campaign_budget: "Scaled budget",
+  update_campaign_budget: "Set budget",
   reallocate_budget: "Reallocated budget",
   reallocate_spend_sku: "Moved ad budget to a winner",
   exclude_geo: "Excluded geo",
@@ -149,10 +153,12 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
   issue_refund: "Issued refund",
   snooze_alert: "Snoozed alert",
   push_creative_draft: "Pushed paused draft to Meta",
+  duplicate_campaign: "Duplicate",
   fulfill_order: "Fulfilled order",
   cancel_order: "Cancelled order",
   edit_order: "Reduced order line",
   return_received: "Received return",
+  create_campaign_wizard: "Create",
 };
 
 // Who acted, in the merchant's terms. Raw actor_user_id values ("merchant",

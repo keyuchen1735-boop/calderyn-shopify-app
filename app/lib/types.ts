@@ -11,6 +11,7 @@ export type ActionKind =
   | "resume_campaign"
   | "reduce_campaign_budget"
   | "increase_campaign_budget"
+  | "update_campaign_budget"
   | "reallocate_budget"
   | "reallocate_spend_sku"
   | "exclude_geo"
@@ -23,10 +24,12 @@ export type ActionKind =
   | "issue_refund"
   | "snooze_alert"
   | "push_creative_draft"
+  | "duplicate_campaign"
   | "fulfill_order"
   | "cancel_order"
   | "edit_order"
-  | "return_received";
+  | "return_received"
+  | "create_campaign_wizard";
 export type DetectorId =
   | "ad_tax_overload"
   | "campaign_below_breakeven"

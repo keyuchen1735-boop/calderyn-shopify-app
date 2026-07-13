@@ -471,6 +471,97 @@ export async function fetchCampaignDirection(id: string): Promise<CampaignDirect
   return apiGet<CampaignDirectionDTO>(`/dashboard/api/campaigns/${encodeURIComponent(id)}/direction`);
 }
 
+// Mirror of FirstRunPreflight in ~/lib/meta/first-run.server.ts - a browser-safe
+// copy (.server modules can't be imported into client bundles). Keep these
+// fields in sync by hand when the server type changes.
+export interface FirstRunPreflight {
+  metaConnected: boolean;
+  adsScope: boolean;
+  pageOk: boolean;
+  fundingOk: boolean | null; // null = Meta didn't tell us; UI shows a "check billing" link, never blocks
+}
+
+/** Meta preflight for the first-campaign wizard (connected/scope/page/funding). */
+export async function fetchFirstRunPreflight(): Promise<FirstRunPreflight> {
+  return apiGet<FirstRunPreflight>("/dashboard/api/campaigns/first-run");
+}
+
+/** One AI-generated ad-copy variant for the first-campaign wizard's step 3. */
+export interface FirstRunCreativeVariant {
+  headline: string;
+  primaryText: string;
+  cta: string;
+  rationale: string;
+}
+
+/**
+ * Generate up to 3 ad-copy variants from a chosen catalog product. `available:
+ * false` means the generator is unconfigured (no API key / quota) - the wizard
+ * should fall back to manual copy editing rather than treat it as an error.
+ * destinationUrl/imageUrl are always returned (even when unavailable) — the
+ * server-resolved product page link and signed image the wizard's Meta-create
+ * step needs, which the browser can't derive on its own.
+ */
+export async function generateFirstRunCreatives(
+  productId: string,
+): Promise<{
+  available: boolean;
+  variants: FirstRunCreativeVariant[];
+  destinationUrl: string;
+  imageUrl: string | null;
+}> {
+  return apiSend<{
+    available: boolean;
+    variants: FirstRunCreativeVariant[];
+    destinationUrl: string;
+    imageUrl: string | null;
+  }>("POST", "/dashboard/api/campaigns/first-run/creatives", { productId });
+}
+
+/** The wizard's Meta-create input: the runId is client-minted (crypto.randomUUID())
+ *  and held stable across retries of the SAME run — that's what makes a retry
+ *  idempotent server-side instead of creating a second campaign on Meta. */
+export interface FirstRunCreateInput {
+  runId: string;
+  productId: string;
+  budgetCents: number;
+  creative: {
+    headline: string;
+    primaryText: string;
+    cta: string;
+    imageUrl: string | null;
+    destinationUrl: string;
+  };
+}
+
+/** Create the merchant's first campaign on Meta (paused): campaign -> ad set ->
+ *  creative + ad, audited, mirrored into ad_campaign_dim. A 502 "meta_create_failed"
+ *  surfaces as a DashboardApiError with the real platform/validation message —
+ *  retry with the SAME runId to resume the same run instead of starting a new one. */
+export async function createFirstCampaignRun(
+  input: FirstRunCreateInput,
+): Promise<{ runId: string; campaignDimId: string }> {
+  const data = await apiSend<{ run_id: string; campaign_dim_id: string; status: string }>(
+    "POST",
+    "/dashboard/api/campaigns/first-run",
+    {
+      runId: input.runId,
+      productId: input.productId,
+      budgetCents: input.budgetCents,
+      creative: input.creative,
+    },
+  );
+  return { runId: data.run_id, campaignDimId: data.campaign_dim_id };
+}
+
+/** Per-campaign daily spend+revenue series for the detail chart (default 90d window). */
+export async function fetchCampaignSeries(id: string, days = 90): Promise<DailyRoasRow[]> {
+  const data = await apiGet<{ series: DailyRoasRow[] }>(
+    `/dashboard/api/campaigns/${encodeURIComponent(id)}/series?days=${days}`,
+  );
+  return data.series;
+}
+
 /** Top "frequently bought with" SKUs for one SKU (trailing 90 days). */
 export async function fetchSkuAffinity(id: string): Promise<SkuAffinityItem[]> {
   const data = await apiGet<{ affinity: SkuAffinityItem[] }>(
