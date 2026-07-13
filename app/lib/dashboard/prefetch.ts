@@ -39,6 +39,8 @@ import {
 // they usually self-warm on mount, so by the time the chain reaches them the
 // cache is hot and they cost nothing.
 const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
+  // Home renders the setup-journey card on first paint, so it warms first.
+  [SCREEN_CACHE_KEYS.setupProgress, () => apiGet("/dashboard/api/setup-progress")],
   [SCREEN_CACHE_KEYS.orders, fetchOrdersPage],
   // Unified orders list (Phase 2 Task 6), default view only — the screen's own mount fetch reads
   // this exact key/params, so the seed always matches what it would have fetched itself.
