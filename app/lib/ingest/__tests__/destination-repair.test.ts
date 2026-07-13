@@ -5,6 +5,7 @@ const fetchOrderDestinationsByIds = vi.fn();
 vi.mock("../shopify-admin.server", () => ({ fetchOrderDestinationsByIds }));
 
 type OrderRow = {
+  id?: string;
   shop_id: string;
   external_id: string;
   customer_city: string | null;
@@ -12,8 +13,16 @@ type OrderRow = {
   customer_country: string | null;
 };
 
-function fakeSupabase(rows: OrderRow[], updateErrors: Array<Error | null> = []) {
-  const updates: Array<{ table: string; payload: Record<string, unknown>; filters: unknown[] }> = [];
+function fakeSupabase(
+  rows: OrderRow[],
+  updateErrors: Array<Error | null> = [],
+  updateResults: Array<unknown[] | undefined> = [],
+) {
+  const updates: Array<{
+    table: string;
+    payload: Record<string, unknown>;
+    filters: unknown[];
+  }> = [];
   const limits: number[] = [];
   let updateIndex = 0;
 
@@ -27,7 +36,7 @@ function fakeSupabase(rows: OrderRow[], updateErrors: Array<Error | null> = []) 
         const filters: unknown[] = [];
         const chain = {
           select() {
-            operation = "select";
+            if (operation !== "update") operation = "select";
             return chain;
           },
           update(next: Record<string, unknown>) {
@@ -67,13 +76,21 @@ function fakeSupabase(rows: OrderRow[], updateErrors: Array<Error | null> = []) 
             limits.push(value);
             return chain;
           },
-          then(resolve: (value: { data: unknown; error: Error | null }) => unknown) {
+          then(
+            resolve: (value: { data: unknown; error: Error | null }) => unknown,
+          ) {
             if (operation === "select") {
               return Promise.resolve(resolve({ data: rows, error: null }));
             }
             updates.push({ table, payload, filters: [...filters] });
-            const error = updateErrors[updateIndex++] ?? null;
-            return Promise.resolve(resolve({ data: null, error }));
+            const resultIndex = updateIndex++;
+            const error = updateErrors[resultIndex] ?? null;
+            const affected = error
+              ? null
+              : (updateResults[resultIndex] ?? [
+                  { id: rows[0]?.id ?? "order-1", shop_id: integration.shopId },
+                ]);
+            return Promise.resolve(resolve({ data: affected, error }));
           },
         };
         return chain;
@@ -85,6 +102,7 @@ function fakeSupabase(rows: OrderRow[], updateErrors: Array<Error | null> = []) 
 const integration = {
   shopId: "shop-1",
   shopDomain: "one.myshopify.com",
+  claimedAt: "2026-07-13T11:59:00.000Z",
 };
 
 describe("repairOrderDestinationsForIntegration", () => {
@@ -96,8 +114,13 @@ describe("repairOrderDestinationsForIntegration", () => {
 
   it("updates only missing destination columns for matching recent order rows", async () => {
     fetchOrderDestinationsByIds.mockResolvedValue([
-        { id: "gid://shopify/Order/1", city: " Toronto ", region: "ON", country: "CA" },
-      ]);
+      {
+        id: "gid://shopify/Order/1",
+        city: " Toronto ",
+        region: "ON",
+        country: "CA",
+      },
+    ]);
     const sb = fakeSupabase([
       {
         shop_id: "shop-1",
@@ -108,19 +131,33 @@ describe("repairOrderDestinationsForIntegration", () => {
       },
     ]);
 
-    const { repairOrderDestinationsForIntegration } = await import("../destination-repair.server");
-    const result = await repairOrderDestinationsForIntegration(integration, sb.client as never);
+    const { repairOrderDestinationsForIntegration } =
+      await import("../destination-repair.server");
+    const result = await repairOrderDestinationsForIntegration(
+      integration,
+      sb.client as never,
+    );
 
     expect(fetchOrderDestinationsByIds).toHaveBeenCalledWith(
       "one.myshopify.com",
       ["gid://shopify/Order/1"],
     );
-    expect(result).toMatchObject({ scanned: 1, updated: 1, checked: 1, completed: true });
+    expect(result).toMatchObject({
+      scanned: 1,
+      updated: 1,
+      checked: 1,
+      completed: true,
+    });
     expect(sb.limits).toContain(11);
 
-    const orderWrites = sb.updates.filter((write) => write.table === "order_fact");
+    const orderWrites = sb.updates.filter(
+      (write) => write.table === "order_fact",
+    );
     const orderUpdate = orderWrites[0];
-    expect(orderUpdate?.payload).toEqual({ customer_city: "Toronto", customer_country: "CA" });
+    expect(orderUpdate?.payload).toEqual({
+      customer_city: "Toronto",
+      customer_country: "CA",
+    });
     expect(orderUpdate?.payload).not.toHaveProperty("landing_site");
     expect(orderUpdate?.payload).not.toHaveProperty("utm_source");
     expect(orderUpdate?.payload).not.toHaveProperty("source_version");
@@ -151,23 +188,42 @@ describe("repairOrderDestinationsForIntegration", () => {
       },
     ]);
 
-    const { repairOrderDestinationsForIntegration } = await import("../destination-repair.server");
-    const result = await repairOrderDestinationsForIntegration(integration, sb.client as never);
+    const { repairOrderDestinationsForIntegration } =
+      await import("../destination-repair.server");
+    const result = await repairOrderDestinationsForIntegration(
+      integration,
+      sb.client as never,
+    );
 
-    expect(result).toMatchObject({ scanned: 1, updated: 0, checked: 1, completed: true });
-    expect(sb.updates.filter((write) => write.table === "order_fact")).toHaveLength(1);
-    expect(sb.updates.find((write) => write.table === "order_fact")?.payload).toEqual({
+    expect(result).toMatchObject({
+      scanned: 1,
+      updated: 0,
+      checked: 1,
+      completed: true,
+    });
+    expect(
+      sb.updates.filter((write) => write.table === "order_fact"),
+    ).toHaveLength(1);
+    expect(
+      sb.updates.find((write) => write.table === "order_fact")?.payload,
+    ).toEqual({
       destination_repair_checked_at: "2026-07-13T12:00:00.000Z",
     });
-    expect(sb.updates.find((write) => write.table === "shop_integrations")?.payload).toEqual({
+    expect(
+      sb.updates.find((write) => write.table === "shop_integrations")?.payload,
+    ).toEqual({
       destination_repair_completed_at: "2026-07-13T12:00:00.000Z",
-      destination_repair_attempted_at: "2026-07-13T12:00:00.000Z",
     });
   });
 
   it("leaves the checked marker null when a destination write fails so the row is retryable", async () => {
     fetchOrderDestinationsByIds.mockResolvedValue([
-      { id: "gid://shopify/Order/1", city: "Toronto", region: "ON", country: "CA" },
+      {
+        id: "gid://shopify/Order/1",
+        city: "Toronto",
+        region: "ON",
+        country: "CA",
+      },
     ]);
     const row = {
       shop_id: "shop-1",
@@ -177,7 +233,8 @@ describe("repairOrderDestinationsForIntegration", () => {
       customer_country: null,
     };
     const failed = fakeSupabase([row], [new Error("write failed")]);
-    const { repairOrderDestinationsForIntegration } = await import("../destination-repair.server");
+    const { repairOrderDestinationsForIntegration } =
+      await import("../destination-repair.server");
 
     await expect(
       repairOrderDestinationsForIntegration(
@@ -185,9 +242,9 @@ describe("repairOrderDestinationsForIntegration", () => {
         failed.client as never,
       ),
     ).rejects.toThrow("write failed");
-    expect(failed.updates.find((write) => write.table === "shop_integrations")?.payload).toEqual({
-      destination_repair_attempted_at: "2026-07-13T12:00:00.000Z",
-    });
+    expect(
+      failed.updates.find((write) => write.table === "shop_integrations"),
+    ).toBeUndefined();
 
     const retried = fakeSupabase([row]);
     await repairOrderDestinationsForIntegration(
@@ -198,13 +255,18 @@ describe("repairOrderDestinationsForIntegration", () => {
       "one.myshopify.com",
       ["gid://shopify/Order/1"],
     );
-    expect(retried.updates.find((write) => write.table === "shop_integrations")?.payload).toMatchObject({
+    expect(
+      retried.updates.find((write) => write.table === "shop_integrations")
+        ?.payload,
+    ).toMatchObject({
       destination_repair_completed_at: "2026-07-13T12:00:00.000Z",
     });
   });
 
   it("leaves every order unchecked when the Admin API batch fails", async () => {
-    fetchOrderDestinationsByIds.mockRejectedValue(new Error("Shopify unavailable"));
+    fetchOrderDestinationsByIds.mockRejectedValue(
+      new Error("Shopify unavailable"),
+    );
     const sb = fakeSupabase([
       {
         shop_id: "shop-1",
@@ -215,20 +277,28 @@ describe("repairOrderDestinationsForIntegration", () => {
       },
     ]);
 
-    const { repairOrderDestinationsForIntegration } = await import("../destination-repair.server");
+    const { repairOrderDestinationsForIntegration } =
+      await import("../destination-repair.server");
     await expect(
       repairOrderDestinationsForIntegration(integration, sb.client as never),
     ).rejects.toThrow("Shopify unavailable");
 
-    expect(sb.updates.filter((write) => write.table === "order_fact")).toHaveLength(0);
-    expect(sb.updates.find((write) => write.table === "shop_integrations")?.payload).toEqual({
-      destination_repair_attempted_at: "2026-07-13T12:00:00.000Z",
-    });
+    expect(
+      sb.updates.filter((write) => write.table === "order_fact"),
+    ).toHaveLength(0);
+    expect(
+      sb.updates.find((write) => write.table === "shop_integrations"),
+    ).toBeUndefined();
   });
 
   it("never sends malformed external IDs to Shopify and checks them as terminal local rows", async () => {
     fetchOrderDestinationsByIds.mockResolvedValue([
-      { id: "gid://shopify/Order/2", city: "Ottawa", region: "ON", country: "CA" },
+      {
+        id: "gid://shopify/Order/2",
+        city: "Ottawa",
+        region: "ON",
+        country: "CA",
+      },
     ]);
     const sb = fakeSupabase([
       {
@@ -247,12 +317,17 @@ describe("repairOrderDestinationsForIntegration", () => {
       },
     ]);
 
-    const { repairOrderDestinationsForIntegration } = await import("../destination-repair.server");
-    const result = await repairOrderDestinationsForIntegration(integration, sb.client as never);
+    const { repairOrderDestinationsForIntegration } =
+      await import("../destination-repair.server");
+    const result = await repairOrderDestinationsForIntegration(
+      integration,
+      sb.client as never,
+    );
 
-    expect(fetchOrderDestinationsByIds).toHaveBeenCalledWith("one.myshopify.com", [
-      "gid://shopify/Order/2",
-    ]);
+    expect(fetchOrderDestinationsByIds).toHaveBeenCalledWith(
+      "one.myshopify.com",
+      ["gid://shopify/Order/2"],
+    );
     expect(result).toMatchObject({ scanned: 2, checked: 2, completed: true });
   });
 
@@ -267,13 +342,90 @@ describe("repairOrderDestinationsForIntegration", () => {
     fetchOrderDestinationsByIds.mockResolvedValue([]);
     const sb = fakeSupabase(rows);
 
-    const { repairOrderDestinationsForIntegration } = await import("../destination-repair.server");
-    const result = await repairOrderDestinationsForIntegration(integration, sb.client as never);
+    const { repairOrderDestinationsForIntegration } =
+      await import("../destination-repair.server");
+    const result = await repairOrderDestinationsForIntegration(
+      integration,
+      sb.client as never,
+    );
 
     expect(fetchOrderDestinationsByIds.mock.calls[0][1]).toHaveLength(10);
-    expect(result).toMatchObject({ scanned: 10, checked: 10, completed: false });
-    expect(sb.updates.find((write) => write.table === "shop_integrations")?.payload).toMatchObject({
-      destination_repair_completed_at: null,
+    expect(result).toMatchObject({
+      scanned: 10,
+      checked: 10,
+      completed: false,
     });
+    expect(
+      sb.updates.find((write) => write.table === "shop_integrations"),
+    ).toBeUndefined();
+  });
+
+  it("counts only rows actually affected by fenced updates", async () => {
+    fetchOrderDestinationsByIds.mockResolvedValue([
+      {
+        id: "gid://shopify/Order/1",
+        city: "Toronto",
+        region: "ON",
+        country: "CA",
+      },
+    ]);
+    const sb = fakeSupabase(
+      [
+        {
+          id: "order-1",
+          shop_id: "shop-1",
+          external_id: "gid://shopify/Order/1",
+          customer_city: null,
+          customer_region: null,
+          customer_country: null,
+        },
+      ],
+      [],
+      [[], [], [{ shop_id: "shop-1" }]],
+    );
+
+    const { repairOrderDestinationsForIntegration } =
+      await import("../destination-repair.server");
+    const result = await repairOrderDestinationsForIntegration(
+      integration,
+      sb.client as never,
+    );
+
+    expect(result).toMatchObject({ scanned: 1, updated: 0, checked: 0 });
+  });
+
+  it("fences completion progress to the exact claimed Shopify tenant row", async () => {
+    fetchOrderDestinationsByIds.mockResolvedValue([]);
+    const sb = fakeSupabase([]);
+
+    const { repairOrderDestinationsForIntegration } =
+      await import("../destination-repair.server");
+    await repairOrderDestinationsForIntegration(
+      integration,
+      sb.client as never,
+    );
+
+    const progress = sb.updates.find(
+      (write) => write.table === "shop_integrations",
+    );
+    expect(progress?.filters).toEqual(
+      expect.arrayContaining([
+        ["eq", "shop_id", "shop-1"],
+        ["eq", "kind", "shopify"],
+        ["eq", "destination_repair_attempted_at", "2026-07-13T11:59:00.000Z"],
+      ]),
+    );
+  });
+
+  it("fails visibly when claimed completion affects no integration row", async () => {
+    fetchOrderDestinationsByIds.mockResolvedValue([]);
+    const sb = fakeSupabase([], [], [[]]);
+
+    const { repairOrderDestinationsForIntegration } =
+      await import("../destination-repair.server");
+
+    await expect(
+      repairOrderDestinationsForIntegration(integration, sb.client as never),
+    ).rejects.toThrow("destination repair claim lost for shop shop-1");
   });
 });
