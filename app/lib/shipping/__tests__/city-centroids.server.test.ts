@@ -1,4 +1,6 @@
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 import type { WorldCitiesJsonModule } from "world-cities-json";
@@ -47,6 +49,18 @@ const rows: WorldCityRow[] = [
 const require = createRequire(import.meta.url);
 
 describe("city centroid resolution", () => {
+  it("statically imports the city dataset so Vercel includes it", () => {
+    const source = readFileSync(
+      path.resolve(process.cwd(), "app/lib/shipping/city-centroids.server.ts"),
+      "utf8",
+    );
+
+    expect(source).toMatch(
+      /import\s+\{\s*cities\s+as\s+worldCities\s*\}\s+from\s+["']world-cities-json["']/,
+    );
+    expect(source).not.toContain("createRequire");
+  });
+
   it("normalizes accents, punctuation, and whitespace", () => {
     expect(normalizePlace("  Montréal—Nord ")).toBe("montreal nord");
   });

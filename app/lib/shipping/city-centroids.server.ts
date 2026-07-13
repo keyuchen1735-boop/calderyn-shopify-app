@@ -1,6 +1,4 @@
-import { createRequire } from "node:module";
-
-import type { WorldCitiesJsonModule } from "world-cities-json";
+import { cities as worldCities } from "world-cities-json";
 import { normalizePlace } from "./destination-aggregation";
 
 export { normalizePlace } from "./destination-aggregation";
@@ -31,8 +29,6 @@ export interface ResolvedCity {
   longitude: number;
 }
 
-const require = createRequire(import.meta.url);
-
 interface IndexedWorldCityRow {
   row: WorldCityRow;
   latitude: number;
@@ -50,8 +46,7 @@ type CityCentroidIndex = ReadonlyMap<
 let defaultCityIndex: CityCentroidIndex | undefined;
 
 function loadWorldCityRows(): readonly WorldCityRow[] {
-  const dataset = require("world-cities-json") as WorldCitiesJsonModule;
-  return dataset.cities;
+  return worldCities;
 }
 
 function buildCityIndex(rows: readonly WorldCityRow[]): CityCentroidIndex {
