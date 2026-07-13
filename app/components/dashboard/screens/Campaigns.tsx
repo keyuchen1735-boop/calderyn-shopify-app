@@ -10,6 +10,7 @@ import {
   Tooltip,
   TableSkeleton,
   PlatformMark,
+  Sparkline,
 } from "../ui";
 import { scorePillStyle } from "../score-pill";
 import { creativeEmptyText } from "./campaign-creative-status";
@@ -23,6 +24,7 @@ import {
   pushCreativeDraft,
   DashboardApiError,
   fetchCampaignCreatives,
+  fetchCampaignSeries,
   regenerateCampaign,
   screenCampaignCreative,
   type CampaignCreativesDTO,
@@ -42,7 +44,7 @@ import { DEFAULT_SPEND_CENTS } from "~/lib/screener/types";
 import { sortActiveFirst } from "~/lib/campaign-sort";
 import type { DashboardCtx } from "../context";
 import type { CampaignVM } from "../view-models";
-import type { CampaignGradeRow } from "~/lib/types";
+import type { CampaignGradeRow, DailyRoasRow } from "~/lib/types";
 
 const PENDING_SCORE: CampaignCalderynScore = {
   value: null, band: "nodata", performance: null, creative: null, confidence: "low",
@@ -562,6 +564,18 @@ function CampaignDetail({
     return () => { live = false; };
   }, [c.id]);
 
+  // Spend + ROAS history for the chart card, below. Null while loading (the
+  // card falls back to the existing empty state until it resolves).
+  const [series, setSeries] = useState<DailyRoasRow[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    setSeries(null);
+    fetchCampaignSeries(c.id)
+      .then((s) => { if (live) setSeries(s); })
+      .catch(() => { if (live) setSeries([]); });
+    return () => { live = false; };
+  }, [c.id]);
+
   const runRegen = async () => {
     const adIds = (creativeData?.creatives ?? []).map((x) => x.adId).filter(Boolean);
     if (adIds.length === 0) { app.toast("No creatives to regenerate yet.", "x", "critical"); return; }
@@ -751,19 +765,42 @@ function CampaignDetail({
     </Card>
   );
 
-  // No per-campaign daily spend/revenue series exists yet, so the chart card
-  // ships the design's honest no-data state rather than a fabricated series.
+  // Spend/day and ROAS/day sparklines from ad_spend_fact, aggregated per day
+  // by the server. Needs >=2 days to draw a line, so anything short of that
+  // falls back to the same honest empty state the card used to always show.
+  const spendSeries = series?.map((r) => r.spend_cents / 100) ?? [];
+  const roasSeries = series?.map((r) => (r.spend_cents > 0 ? r.revenue_cents / r.spend_cents : 0)) ?? [];
+  const chartWidth = narrow ? 260 : 440;
   const chartCard = (
     <Card>
       <div className="cd-anh-wrap">
         <div className="cd-anh">
           <CDIcon name="arrowUpRight" size={15} />
-          Spend vs revenue · 12 days
+          Spend vs revenue · {series ? `${series.length} days` : "loading"}
         </div>
       </div>
-      <div className="cd-nc-empty" style={{ minHeight: 120 }}>
-        No data yet · launch to start collecting
-      </div>
+      {!series || series.length < 2 ? (
+        <div className="cd-nc-empty" style={{ minHeight: 120 }}>
+          No history yet — data appears after the first day of spend
+        </div>
+      ) : (
+        <div className="flex flex-col" style={{ gap: 16, padding: "4px 0" }}>
+          <div>
+            <div className="cd-caption" style={{ marginBottom: 6 }}>Spend/day</div>
+            <Sparkline data={spendSeries} width={chartWidth} height={56} />
+          </div>
+          <div>
+            <div className="cd-caption" style={{ marginBottom: 6 }}>ROAS/day</div>
+            <Sparkline
+              data={roasSeries}
+              width={chartWidth}
+              height={56}
+              stroke="var(--green)"
+              refLine={c.breakeven_roas > 0 ? c.breakeven_roas : null}
+            />
+          </div>
+        </div>
+      )}
     </Card>
   );
 
