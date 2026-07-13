@@ -11,7 +11,15 @@ import TransferModal from "./TransferModal";
 // edited inline; "Move stock" opens the transfer modal; a per-row "Damaged"
 // control marks units unavailable; in-transit transfers are received from the
 // "In transit" list; "History" shows recent ledger entries.
-export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; variantId: string }) {
+export default function InventoryPanel({
+  app,
+  variantId,
+  onBalancesChange,
+}: {
+  app: DashboardCtx;
+  variantId: string;
+  onBalancesChange?: (variantId: string, balances: readonly client.VariantBalanceVM[]) => void;
+}) {
   const [rows, setRows] = useState<client.VariantBalanceVM[]>([]);
   const [pending, setPending] = useState<client.PendingTransferVM[]>([]);
   const [loading, setLoading] = useState(true);
@@ -25,7 +33,10 @@ export default function InventoryPanel({ app, variantId }: { app: DashboardCtx; 
   // empty state (which would make a fully-stocked variant look empty, inviting a double-count).
   const reload = () =>
     Promise.all([
-      client.fetchVariantInventory(variantId).then(setRows),
+      client.fetchVariantInventory(variantId).then((nextRows) => {
+        setRows(nextRows);
+        onBalancesChange?.(variantId, nextRows);
+      }),
       client.fetchPendingTransfers(variantId).then(setPending),
     ])
       .then(() => setLoadError(false))

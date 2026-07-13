@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -11,10 +11,23 @@ import {
   SEO_TITLE_MAX,
   SEO_DESCRIPTION_MAX,
 } from "~/lib/catalog/types";
-import { Card, Btn, Pill, Placeholder, SectionTitle } from "../ui";
+import { Card, Btn, Pill, Placeholder, Reveal, SectionTitle } from "../ui";
 import { CDIcon } from "../icons";
 import InventoryPanel from "./InventoryPanel";
 import NewProductFlow from "./NewProductFlow";
+import {
+  organizeSummary,
+  searchSummary,
+  shippingSummary,
+  stockSummary,
+  variantsSummary,
+} from "./product-editor-summaries";
+
+const STATUS_TONE: Record<"draft" | "active" | "archived", "neutral" | "success" | "warn"> = {
+  draft: "neutral",
+  active: "success",
+  archived: "warn",
+};
 
 // Option values are edited as raw text (not a parsed array) so typing the comma
 // separator doesn't fight a controlled input. The array is derived on demand
@@ -88,6 +101,9 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [collectionsError, setCollectionsError] = useState(false);
+  const [balancesByVariant, setBalancesByVariant] = useState<
+    Record<string, readonly client.VariantBalanceVM[]>
+  >({});
 
   useEffect(() => {
     setCollectionsError(false);
@@ -97,6 +113,7 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
   useEffect(() => {
     if (!id) return;
     let alive = true;
+    setBalancesByVariant({});
     setLoading(true);
     setLoadError(null);
     client
@@ -130,6 +147,13 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
       alive = false;
     };
   }, [id]);
+
+  const onBalancesChange = useCallback(
+    (variantId: string, balances: readonly client.VariantBalanceVM[]) => {
+      setBalancesByVariant((current) => ({ ...current, [variantId]: balances }));
+    },
+    [],
+  );
 
   // Regenerate the variant grid whenever options change, preserving entered data.
   const regen = (next: Opt[]) => {
@@ -288,6 +312,11 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
   const previewTitle = metaTitle.trim() || seoListing?.defaultTitle || title;
   const previewDescription = metaDescription.trim() || seoListing?.defaultDescription || "";
   const previewUrl = `${urlPrefix}${handle || savedHandle}`;
+  const variantsMeta = variantsSummary(parseOptions(options), variants);
+  const stockMeta = stockSummary(variants, balancesByVariant);
+  const shippingMeta = shippingSummary(variants);
+  const searchMeta = searchSummary({ handle, savedHandle, metaTitle, metaDescription, seoAvailable: !seoUnavailable });
+  const organizeMeta = organizeSummary(vendor, tags, selectedCollections);
 
   return (
     <div className="cd-screen" data-screen-label="Product editor">
@@ -296,8 +325,11 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
         Products
       </button>
       <header className="cd-screen-head" style={{ marginTop: 4 }}>
-        <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
           <h1 className="cd-h1">{id ? "Edit product" : "New product"}</h1>
+          {!loading && !loadError && (
+            <Pill tone={STATUS_TONE[status]}>{status.charAt(0).toUpperCase() + status.slice(1)}</Pill>
+          )}
         </div>
         <div className="flex items-center gap-2.5">
           {id && (
@@ -322,146 +354,26 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
       ) : (
         <>
           <Card>
+            <SectionTitle>Essentials</SectionTitle>
             <div className="flex flex-col gap-3">
               <label className="cd-field">
                 <span>Title</span>
                 <input className="cd-input" value={title} onChange={(e) => setTitle(e.target.value)} />
               </label>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="cd-field">
-                  <span>Status</span>
-                  <select className="cd-input" value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
-                    <option value="draft">Draft</option>
-                    <option value="active">Active</option>
-                    <option value="archived">Archived</option>
-                  </select>
-                </label>
-                <label className="cd-field">
-                  <span>Vendor</span>
-                  <input className="cd-input" value={vendor} onChange={(e) => setVendor(e.target.value)} />
-                </label>
-              </div>
               <label className="cd-field">
-                <span>Tags (comma-separated)</span>
-                <input className="cd-input" value={tags} onChange={(e) => setTags(e.target.value)} />
+                <span>Status</span>
+                <select className="cd-input" value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
+                  <option value="draft">Draft</option>
+                  <option value="active">Active</option>
+                  <option value="archived">Archived</option>
+                </select>
               </label>
               <label className="cd-field">
                 <span>Description</span>
                 <textarea className="cd-input" rows={4} value={description} onChange={(e) => setDescription(e.target.value)} />
               </label>
             </div>
-          </Card>
-
-          <Card>
-            <SectionTitle>Search listing</SectionTitle>
-            <p className="cd-caption" style={{ marginBottom: 10 }}>
-              How this product shows up in search results, and its address on your store.
-            </p>
-            {seoUnavailable && (
-              <p className="cd-caption" role="status" style={{ marginBottom: 10 }}>
-                Search settings couldn't be loaded right now, so they can't be edited. Your saved
-                settings are unchanged — reload to try again.
-              </p>
-            )}
-            <div className="flex flex-col gap-3">
-              <label className="cd-field">
-                <span>Page address</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span
-                    className="cd-caption"
-                    title={urlPrefix}
-                    style={{ flex: "0 1 auto", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
-                  >
-                    {urlPrefix}
-                  </span>
-                  <input
-                    className="cd-input"
-                    maxLength={PRODUCT_HANDLE_MAX}
-                    value={handle}
-                    aria-label="Page address"
-                    onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))}
-                    style={{ flex: "1 1 0", minWidth: 120 }}
-                  />
-                </div>
-                <span className="cd-caption">Changing the address redirects the old link to the new one.</span>
-              </label>
-              <label className="cd-field">
-                <span>Search title</span>
-                <div className="cd-seo__inputwrap" style={{ width: "100%" }}>
-                  <input
-                    className="cd-input"
-                    maxLength={SEO_TITLE_MAX}
-                    value={metaTitle}
-                    placeholder={seoListing?.defaultTitle ?? ""}
-                    disabled={seoUnavailable}
-                    onChange={(e) => setMetaTitle(e.target.value)}
-                    style={{ flex: "1 1 0", paddingRight: 58 }}
-                  />
-                  <CharCounter length={metaTitle.length} max={SEO_TITLE_SOFT_MAX} />
-                </div>
-              </label>
-              <label className="cd-field">
-                <span>Search description</span>
-                <div className="cd-seo__inputwrap" style={{ width: "100%" }}>
-                  <textarea
-                    className="cd-input"
-                    rows={2}
-                    maxLength={SEO_DESCRIPTION_MAX}
-                    value={metaDescription}
-                    placeholder={seoListing?.defaultDescription ?? ""}
-                    disabled={seoUnavailable}
-                    onChange={(e) => setMetaDescription(e.target.value)}
-                    style={{ flex: "1 1 0", paddingRight: 58 }}
-                  />
-                  <CharCounter length={metaDescription.length} max={SEO_DESCRIPTION_SOFT_MAX} />
-                </div>
-              </label>
-              <div className="cd-field">
-                <span>Preview</span>
-                <div
-                  style={{
-                    border: "1px solid var(--hairline)",
-                    borderRadius: 10,
-                    padding: "10px 14px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 3,
-                    minWidth: 0,
-                  }}
-                >
-                  <span
-                    style={{
-                      color: "var(--accent)",
-                      fontWeight: 550,
-                      fontSize: "calc(14px * var(--type-scale))",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {previewTitle}
-                  </span>
-                  <span
-                    style={{
-                      color: "var(--green)",
-                      fontSize: "calc(11.5px * var(--type-scale))",
-                      overflowWrap: "anywhere",
-                    }}
-                  >
-                    {previewUrl}
-                  </span>
-                  <span
-                    className="cd-caption"
-                    style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}
-                  >
-                    {previewDescription}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          <Card>
+            <div className="cd-product-editor-divider" />
             <SectionTitle>Images</SectionTitle>
             {!id && <p className="cd-caption" style={{ marginBottom: 10 }}>Save the product first, then add images.</p>}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start" }}>
@@ -580,12 +492,20 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
             </div>
           </Card>
 
-          <Card>
-            <SectionTitle>Options</SectionTitle>
-            <p className="cd-caption" style={{ marginBottom: 10 }}>
-              Add options like Size or Color to generate a variant per combination.
-            </p>
-            <div className="flex flex-col gap-2">
+          <Card pad={false}>
+            <Reveal
+              className="cd-reveal--card"
+              label="Variants"
+              summary={variantsMeta.text}
+              warning={variantsMeta.warning}
+            >
+              <div className="cd-product-editor-stack">
+                <div>
+                  <SectionTitle>Options</SectionTitle>
+                  <p className="cd-caption" style={{ marginBottom: 10 }}>
+                    Add options like Size or Color to generate a variant per combination.
+                  </p>
+                  <div className="flex flex-col gap-2">
               {options.map((o, i) => (
                 <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <input
@@ -607,17 +527,17 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
                   </Btn>
                 </div>
               ))}
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <Btn small icon="plus" onClick={() => regen([...options, { name: "", valuesText: "" }])}>
-                Add option
-              </Btn>
-            </div>
-          </Card>
-
-          <Card>
-            <SectionTitle>Variants</SectionTitle>
-            <div style={{ overflowX: "auto" }}>
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <Btn small icon="plus" onClick={() => regen([...options, { name: "", valuesText: "" }])}>
+                      Add option
+                    </Btn>
+                  </div>
+                </div>
+                <div className="cd-product-editor-divider" />
+                <div>
+                  <SectionTitle>Variants</SectionTitle>
+                  <div style={{ overflowX: "auto" }}>
               <div className="flex flex-col gap-2" style={{ minWidth: 780 }}>
                 <div className="cd-caption" style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <span style={{ flex: "1 1 0", minWidth: 120 }}>Variant</span>
@@ -702,32 +622,54 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
                   </div>
                 ))}
               </div>
-            </div>
-            <p className="cd-caption" style={{ marginTop: 10 }}>
-              {id
-                ? "Manage live stock per location in the section below."
-                : "Stock is a starting on-hand count. Per-location availability opens once the product is saved."}
-            </p>
+                  </div>
+                  <p className="cd-caption" style={{ marginTop: 10 }}>
+                    {id
+                      ? "Manage live stock per location in the section below."
+                      : "Stock is a starting on-hand count. Per-location availability opens once the product is saved."}
+                  </p>
+                </div>
+              </div>
+            </Reveal>
           </Card>
 
-          {id && showStock && variants.some((v) => v.id) && (
-            <Card>
-              <SectionTitle>Stock by location</SectionTitle>
-              <div className="flex flex-col gap-4">
-                {variants
-                  .filter((v) => v.id)
-                  .map((v) => (
-                    <div key={v.id}>
-                      <div className="cd-row-title" style={{ marginBottom: 6 }}>{variantLabel(v)}</div>
-                      <InventoryPanel app={app} variantId={v.id as string} />
-                    </div>
-                  ))}
-              </div>
-            </Card>
-          )}
+          <Card pad={false}>
+            <Reveal
+              className="cd-reveal--card"
+              label="Stock"
+              summary={stockMeta.text}
+              warning={stockMeta.warning}
+            >
+              {id && showStock && variants.some((v) => v.id) ? (
+                <div className="flex flex-col gap-4">
+                  {variants
+                    .filter((v) => v.id)
+                    .map((v) => (
+                      <div key={v.id}>
+                        <div className="cd-row-title" style={{ marginBottom: 6 }}>{variantLabel(v)}</div>
+                        <InventoryPanel
+                          app={app}
+                          variantId={v.id as string}
+                          onBalancesChange={onBalancesChange}
+                        />
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <p className="cd-caption">
+                  Turn on inventory tracking in Variants to manage stock by location.
+                </p>
+              )}
+            </Reveal>
+          </Card>
 
-          <Card>
-            <SectionTitle>Shipping</SectionTitle>
+          <Card pad={false}>
+            <Reveal
+              className="cd-reveal--card"
+              label="Shipping"
+              summary={shippingMeta.text}
+              warning={shippingMeta.warning}
+            >
             <p className="cd-caption" style={{ marginBottom: 10 }}>
               Per-variant dimensions and weight are required before a variant can go live as a shippable product.
             </p>
@@ -865,10 +807,109 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
                 </div>
               ))}
             </div>
+            </Reveal>
           </Card>
 
-          <Card>
-            <SectionTitle>Collections</SectionTitle>
+          <Card pad={false}>
+            <Reveal
+              className="cd-reveal--card"
+              label="Search listing"
+              summary={searchMeta.text}
+              warning={searchMeta.warning}
+            >
+              <p className="cd-caption" style={{ marginBottom: 10 }}>
+                How this product shows up in search results, and its address on your store.
+              </p>
+              {seoUnavailable && (
+                <p className="cd-caption" role="status" style={{ marginBottom: 10 }}>
+                  Search settings couldn&apos;t be loaded right now, so they can&apos;t be edited. Your saved
+                  settings are unchanged — reload to try again.
+                </p>
+              )}
+              <div className="flex flex-col gap-3">
+                <label className="cd-field">
+                  <span>Page address</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span
+                      className="cd-caption"
+                      title={urlPrefix}
+                      style={{ flex: "0 1 auto", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+                    >
+                      {urlPrefix}
+                    </span>
+                    <input
+                      className="cd-input"
+                      maxLength={PRODUCT_HANDLE_MAX}
+                      value={handle}
+                      aria-label="Page address"
+                      onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, ""))}
+                      style={{ flex: "1 1 0", minWidth: 120 }}
+                    />
+                  </div>
+                  <span className="cd-caption">Changing the address redirects the old link to the new one.</span>
+                </label>
+                <label className="cd-field">
+                  <span>Search title</span>
+                  <div className="cd-seo__inputwrap" style={{ width: "100%" }}>
+                    <input
+                      className="cd-input"
+                      maxLength={SEO_TITLE_MAX}
+                      value={metaTitle}
+                      placeholder={seoListing?.defaultTitle ?? ""}
+                      disabled={seoUnavailable}
+                      onChange={(e) => setMetaTitle(e.target.value)}
+                      style={{ flex: "1 1 0", paddingRight: 58 }}
+                    />
+                    <CharCounter length={metaTitle.length} max={SEO_TITLE_SOFT_MAX} />
+                  </div>
+                </label>
+                <label className="cd-field">
+                  <span>Search description</span>
+                  <div className="cd-seo__inputwrap" style={{ width: "100%" }}>
+                    <textarea
+                      className="cd-input"
+                      rows={2}
+                      maxLength={SEO_DESCRIPTION_MAX}
+                      value={metaDescription}
+                      placeholder={seoListing?.defaultDescription ?? ""}
+                      disabled={seoUnavailable}
+                      onChange={(e) => setMetaDescription(e.target.value)}
+                      style={{ flex: "1 1 0", paddingRight: 58 }}
+                    />
+                    <CharCounter length={metaDescription.length} max={SEO_DESCRIPTION_SOFT_MAX} />
+                  </div>
+                </label>
+                <div className="cd-field">
+                  <span>Preview</span>
+                  <div className="cd-product-search-preview">
+                    <span className="cd-product-search-title">{previewTitle}</span>
+                    <span className="cd-product-search-url">{previewUrl}</span>
+                    <span className="cd-caption cd-product-search-description">{previewDescription}</span>
+                  </div>
+                </div>
+              </div>
+            </Reveal>
+          </Card>
+
+          <Card pad={false}>
+            <Reveal
+              className="cd-reveal--card"
+              label="Organize"
+              summary={organizeMeta.text}
+              warning={organizeMeta.warning}
+            >
+              <div className="grid grid-cols-2 gap-3 cd-product-organize-grid">
+                <label className="cd-field">
+                  <span>Vendor</span>
+                  <input className="cd-input" value={vendor} onChange={(e) => setVendor(e.target.value)} />
+                </label>
+                <label className="cd-field">
+                  <span>Tags (comma-separated)</span>
+                  <input className="cd-input" value={tags} onChange={(e) => setTags(e.target.value)} />
+                </label>
+              </div>
+              <div className="cd-product-editor-divider" />
+              <SectionTitle>Collections</SectionTitle>
             {collectionsError ? (
               <p className="cd-caption">Couldn&apos;t load collections. Reopen this product to try again.</p>
             ) : collections.length === 0 ? (
@@ -899,6 +940,7 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
                 })}
               </div>
             )}
+            </Reveal>
           </Card>
         </>
       )}
