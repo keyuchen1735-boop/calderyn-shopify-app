@@ -27,6 +27,7 @@ import {
 } from "~/lib/catalog/listing-prompt";
 import { reduced } from "../hero/hero-motion";
 import { addPhotos, summarizePhotoRejections, type PhotoDraft } from "./new-product-photos";
+import { variantSummary } from "./new-product-copy";
 import { Card, Btn, SectionTitle, Segmented } from "../ui";
 import { CDIcon } from "../icons";
 
@@ -263,6 +264,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
   const [desc, setDesc] = useState("");
   const [opts, setOpts] = useState<OptRow[]>([]);
   const [cells, setCells] = useState<Record<string, Cell>>({});
+  const [combosOpen, setCombosOpen] = useState(false);
   const [physical, setPhysical] = useState(true);
   const [weight, setWeight] = useState("");
   const [dims, setDims] = useState({ l: "", w: "", h: "" });
@@ -1026,12 +1028,25 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                 ) : (
                   <>
                     <OptionRows opts={opts} onChange={setOpts} />
-                    <ComboTable
-                      combos={combos}
-                      cells={cells}
-                      onCell={(label, patch) => setCells((c) => mergeCell(c, label, patch))}
-                      basePlaceholder={price || undefined}
-                    />
+                    {combos.length > 0 && !combosOpen && (
+                      <button type="button" className="cd-npf-combo-summary" onClick={() => setCombosOpen(true)}>
+                        {variantSummary(combos.length, price)}
+                        <span className="cd-npf-combo-edit">Edit each</span>
+                      </button>
+                    )}
+                    {combos.length > 0 && combosOpen && (
+                      <>
+                        <ComboTable
+                          combos={combos}
+                          cells={cells}
+                          onCell={(label, patch) => setCells((c) => mergeCell(c, label, patch))}
+                          basePlaceholder={price || undefined}
+                        />
+                        <button type="button" className="cd-npf-combo-summary" onClick={() => setCombosOpen(false)}>
+                          Done
+                        </button>
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -1041,16 +1056,23 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
               <div data-f="shipping" style={{ borderRadius: 10, margin: -6, padding: 6 }}>
                 <SectionTitle>Shipping</SectionTitle>
                 <div className="flex flex-col gap-3">
-                  <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                    <input type="checkbox" checked={physical} onChange={(e) => setPhysical(e.target.checked)} />
-                    <span>Physical product (requires shipping)</span>
-                  </label>
-                  {physical && (
+                  <div className="cd-npf-shipq">
+                    <span className="cd-npf-shipq-l">Does this ship in a box?</span>
+                    <div className="cd-npf-shipq-btns">
+                      <Btn small kind={physical ? "primary" : undefined} onClick={() => setPhysical(true)}>
+                        Yes
+                      </Btn>
+                      <Btn small kind={!physical ? "primary" : undefined} onClick={() => setPhysical(false)}>
+                        No
+                      </Btn>
+                    </div>
+                  </div>
+                  {physical ? (
                     <div className="grid grid-cols-2 gap-2">
-                      <Field label="Weight (g)">
+                      <Field label="Weight (grams)">
                         <input className="cd-input tabular-nums" type="number" min="0" inputMode="numeric" value={weight} onChange={(e) => setWeight(e.target.value)} />
                       </Field>
-                      <Field label="Box (L × W × H, mm)">
+                      <Field label="Box size (L × W × H, mm)">
                         <div style={{ display: "flex", gap: 6 }}>
                           {(["l", "w", "h"] as const).map((k) => (
                             <input
@@ -1069,6 +1091,8 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                         </div>
                       </Field>
                     </div>
+                  ) : (
+                    <p className="cd-caption">No shipping needed — digital, service, or pickup-only.</p>
                   )}
                 </div>
               </div>
@@ -1077,6 +1101,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
 
               <div>
                 <SectionTitle>Organize</SectionTitle>
+                <p className="cd-caption">Optional — helps group products later. Fine to skip.</p>
                 <div className="flex flex-col gap-3">
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Vendor">
