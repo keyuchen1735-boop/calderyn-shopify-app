@@ -26,7 +26,8 @@ async function readSignals(shopId: string): Promise<JourneySignals> {
       sb.from("page_document").select("published_json").eq("shop_id", shopId).eq("page_key", "home").maybeSingle(),
       sb.from("shop_origin").select("shop_id").eq("shop_id", shopId).maybeSingle(),
       count(sb.from("ship_flat_rate").select("id", { count: "exact", head: true }).eq("shop_id", shopId)),
-      count(sb.from("ship_carrier_service_registration").select("id", { count: "exact", head: true }).eq("shop_id", shopId)),
+      // ship_carrier_service_registration has no id column (PK = shop_id) — selecting one 400s and, because HEAD responses carry no body, surfaces as an empty-message error.
+      count(sb.from("ship_carrier_service_registration").select("shop_id", { count: "exact", head: true }).eq("shop_id", shopId)),
       count(sb.from("orders").select("id", { count: "exact", head: true }).eq("shop_id", shopId).eq("channel", "test").in("state", [...PROBE_SALE_STATES])),
       count(sb.from("orders").select("id", { count: "exact", head: true }).eq("shop_id", shopId).neq("channel", "test").in("state", [...PROBE_SALE_STATES])),
       sb.from("guardrail_config").select("autopilot_enabled").eq("shop_id", shopId).maybeSingle(),
@@ -75,7 +76,8 @@ export async function recomputeJourney(shopId: string): Promise<void> {
       });
     if (error) throw error;
   } catch (err) {
-    console.error("[journey] recompute failed", { shopId, err });
+    const detail = err && typeof err === "object" ? (err as { message?: string; code?: string; details?: string; hint?: string }) : null;
+    console.error("[journey] recompute failed", { shopId, err, code: detail?.code, details: detail?.details, hint: detail?.hint });
   }
 }
 
