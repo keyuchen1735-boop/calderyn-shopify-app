@@ -40,19 +40,28 @@ export interface RuntimeActionContext {
   root: HTMLElement;
   manifest: InteractionManifestV1;
   state: RuntimeState;
-  setState(next: RuntimeState): void;
-  applyBindings(): void;
+  getState?(instanceId?: string): RuntimeState;
+  setState(next: RuntimeState, instanceId?: string): void;
+  applyBindings(instanceId?: string): void;
+  snapshotElement?(element: HTMLElement): void;
+  reducedMotion?: boolean;
   adapters: RuntimeAdapters;
   overlays: OverlayManager;
 }
 
 export type CommerceIntent =
-  | { type: "variant.select"; variantId: string }
-  | { type: "cart.add"; variantId: string; quantity: number }
+  | { type: "variant.select"; productId: string; variantId: string }
+  | { type: "cart.add"; productId: string; variantId: string; quantity: number }
   | { type: "cart.quantity"; lineId: string; quantity: number }
   | { type: "cart.remove"; lineId: string }
-  | { type: "cart.clear" }
-  | { type: "checkout.start" };
+  | { type: "cart.clear"; cartId: string }
+  | { type: "checkout.start"; cartId: string };
+
+export interface CommerceDispatch {
+  authorityKey: string;
+  slotKind: TrustedSlotManifest["kind"];
+  intent: CommerceIntent;
+}
 
 export interface CommerceMountContext {
   shadowRoot: ShadowRoot;
@@ -64,7 +73,15 @@ export interface CommerceMountContext {
 
 export interface CommerceAdapter {
   mount(context: CommerceMountContext): void | (() => void);
-  dispatch(intent: CommerceIntent): void;
+  dispatch(command: CommerceDispatch): void;
+}
+
+function instanceIdFor(source: HTMLElement | null): string | undefined {
+  return source?.closest<HTMLElement>("[data-cd-instance]")?.dataset.cdInstance;
+}
+
+function currentState(context: RuntimeActionContext, source: HTMLElement | null): RuntimeState {
+  return context.getState?.(instanceIdFor(source)) ?? context.state;
 }
 
 function eventValue(event: Event, field: Extract<PublicDataRef, { kind: "event" }>["field"]): unknown {
@@ -88,16 +105,20 @@ export function resolveRuntimeRef(
   source: HTMLElement | null,
 ): unknown {
   if (ref.kind === "literal") return ref.value;
-  if (ref.kind === "state") return context.state[ref.stateId];
+  if (ref.kind === "state") return currentState(context, source)[ref.stateId];
   if (ref.kind === "event") return eventValue(event, ref.field);
   return context.adapters.resolveData?.(ref, source) ?? null;
 }
 
-function localElements(root: HTMLElement, targetId: string): HTMLElement[] {
+function localElements(root: HTMLElement, targetId: string, source: HTMLElement | null): HTMLElement[] {
   if (!isCompilerIssuedId(targetId)) throw new RuntimeManifestError("Action target is not compiler-issued");
-  const matches = [...root.querySelectorAll<HTMLElement>("[id]")].filter(
-    (element) => element.id === targetId || element.id.startsWith(`${targetId}-`),
-  );
+  const instanceId = instanceIdFor(source);
+  const concreteId = instanceId ? `${targetId}-${instanceId}` : targetId;
+  const candidate = root.ownerDocument.getElementById(concreteId);
+  const matches = candidate instanceof HTMLElement && root.contains(candidate) &&
+    (!instanceId || candidate.closest<HTMLElement>("[data-cd-instance]")?.dataset.cdInstance === instanceId)
+    ? [candidate]
+    : [];
   if (matches.length === 0) throw new RuntimeManifestError(`Action target ${targetId} is not local`);
   return matches;
 }
@@ -110,11 +131,18 @@ function stateBindingFor(
   return context.manifest.bindings.find((binding) => binding.targetId === targetId && binding.property === property)?.stateId ?? null;
 }
 
-function setBoundState(context: RuntimeActionContext, targetId: string, property: InteractionManifestV1["bindings"][number]["property"], value: unknown): boolean {
+function setBoundState(
+  context: RuntimeActionContext,
+  targetId: string,
+  property: InteractionManifestV1["bindings"][number]["property"],
+  value: unknown,
+  source: HTMLElement | null,
+): boolean {
   const stateId = stateBindingFor(context, targetId, property);
   if (!stateId) return false;
-  context.setState(reduceRuntimeState(context.manifest, context.state, { type: "set", stateId, value }));
-  context.applyBindings();
+  const instanceId = instanceIdFor(source);
+  context.setState(reduceRuntimeState(context.manifest, currentState(context, source), { type: "set", stateId, value }), instanceId);
+  context.applyBindings(instanceId);
   return true;
 }
 
@@ -137,8 +165,9 @@ export function executeRuntimeAction(
     const update = action.type === "state.set"
       ? { type: "set" as const, stateId: action.stateId, value: resolveRuntimeRef(context, action.value!, event, source) }
       : { type: action.type === "state.increment" ? "increment" as const : "decrement" as const, stateId: action.stateId };
-    context.setState(reduceRuntimeState(context.manifest, context.state, update));
-    context.applyBindings();
+    const instanceId = instanceIdFor(source);
+    context.setState(reduceRuntimeState(context.manifest, currentState(context, source), update), instanceId);
+    context.applyBindings(instanceId);
     return;
   }
   if (action.type === "surface.open" || action.type === "surface.close" || action.type === "surface.toggle") {
@@ -148,29 +177,35 @@ export function executeRuntimeAction(
     return;
   }
   if (action.type === "tabs.select" || action.type === "gallery.select") {
-    localElements(context.root, action.targetId);
+    localElements(context.root, action.targetId, source);
     const value = resolveRuntimeRef(context, action.value, event, source);
-    if (!setBoundState(context, action.targetId, "selected", value)) {
-      for (const target of localElements(context.root, action.targetId)) target.setAttribute("data-cd-active-value", String(value ?? ""));
+    if (!setBoundState(context, action.targetId, "selected", value, source)) {
+      for (const target of localElements(context.root, action.targetId, source)) {
+        context.snapshotElement?.(target);
+        target.setAttribute("data-cd-active-value", String(value ?? ""));
+      }
     }
     return;
   }
   if (action.type === "accordion.toggle") {
-    localElements(context.root, action.targetId);
+    localElements(context.root, action.targetId, source);
     const stateId = stateBindingFor(context, action.targetId, "expanded") ?? stateBindingFor(context, action.targetId, "hidden");
-    if (!stateId || typeof context.state[stateId] !== "boolean") throw new RuntimeManifestError("Accordion target lacks boolean state");
-    context.setState(reduceRuntimeState(context.manifest, context.state, { type: "set", stateId, value: !context.state[stateId] }));
-    context.applyBindings();
+    const activeState = currentState(context, source);
+    if (!stateId || typeof activeState[stateId] !== "boolean") throw new RuntimeManifestError("Accordion target lacks boolean state");
+    const instanceId = instanceIdFor(source);
+    context.setState(reduceRuntimeState(context.manifest, activeState, { type: "set", stateId, value: !activeState[stateId] }), instanceId);
+    context.applyBindings(instanceId);
     return;
   }
   if (action.type === "carousel.previous" || action.type === "carousel.next") {
-    localElements(context.root, action.targetId);
+    localElements(context.root, action.targetId, source);
     const stateId = stateBindingFor(context, action.targetId, "activeIndex");
     if (!stateId || !runtimeStateDefinition(context.manifest, stateId)) throw new RuntimeManifestError("Carousel target lacks index state");
-    context.setState(reduceRuntimeState(context.manifest, context.state, {
+    const instanceId = instanceIdFor(source);
+    context.setState(reduceRuntimeState(context.manifest, currentState(context, source), {
       type: action.type === "carousel.next" ? "increment" : "decrement", stateId,
-    }));
-    context.applyBindings();
+    }), instanceId);
+    context.applyBindings(instanceId);
     return;
   }
   if (action.type === "collection.filter") {
@@ -194,8 +229,8 @@ export function executeRuntimeAction(
     return;
   }
   if (action.type === "scroll.to") {
-    const target = localElements(context.root, action.targetId)[0]!;
-    target.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    const target = localElements(context.root, action.targetId, source)[0]!;
+    target.scrollIntoView?.({ behavior: context.reducedMotion ? "auto" : "smooth", block: "start" });
     return;
   }
   if (action.type === "navigate") {

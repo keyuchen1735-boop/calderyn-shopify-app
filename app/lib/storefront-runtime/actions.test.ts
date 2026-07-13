@@ -103,4 +103,13 @@ describe("trusted runtime action dispatch", () => {
       type: "cart.add",
     } as unknown as RuntimeActionSpec, new Event("click"), null)).toThrow(/unsupported/i);
   });
+
+  it("disables smooth scrolling when reduced motion is active", () => {
+    const { context } = setup();
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(document.getElementById("cd-home-scroll"), "scrollIntoView", { value: scrollIntoView });
+    (context as RuntimeActionContext & { reducedMotion: boolean }).reducedMotion = true;
+    executeRuntimeAction(context, { type: "scroll.to", targetId: "cd-home-scroll" }, new Event("click"), null);
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "auto", block: "start" });
+  });
 });

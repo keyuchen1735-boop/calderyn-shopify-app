@@ -7,6 +7,7 @@ export {
 export type {
   CollectionIntent,
   CommerceAdapter,
+  CommerceDispatch,
   CommerceIntent,
   CommerceMountContext,
   ResolvedRouteTarget,

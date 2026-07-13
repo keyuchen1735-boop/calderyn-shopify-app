@@ -50,9 +50,21 @@ const closedCommerceRoots = new WeakMap<HTMLElement, ShadowRoot>();
 
 function localElements(root: HTMLElement, id: string): HTMLElement[] {
   if (!isCompilerIssuedId(id)) throw new RuntimeManifestError(`ID ${JSON.stringify(id)} is not compiler-issued`);
-  return [...root.querySelectorAll<HTMLElement>("[id]")].filter(
-    (element) => element.id === id || element.id.startsWith(`${id}-`),
-  );
+  return [...root.querySelectorAll<HTMLElement>("[id]")].filter((element) => {
+    if (element.id === id) return true;
+    const instanceId = element.closest<HTMLElement>("[data-cd-instance]")?.dataset.cdInstance;
+    return Boolean(instanceId) && element.id === `${id}-${instanceId}`;
+  });
+}
+
+function instanceElement(root: HTMLElement, id: string, instanceId?: string): HTMLElement[] {
+  if (!instanceId) {
+    const element = root.ownerDocument.getElementById(id);
+    return element instanceof HTMLElement && root.contains(element) ? [element] : [];
+  }
+  const element = root.ownerDocument.getElementById(`${id}-${instanceId}`);
+  return element instanceof HTMLElement && root.contains(element) &&
+    element.closest<HTMLElement>("[data-cd-instance]")?.dataset.cdInstance === instanceId ? [element] : [];
 }
 
 function actionTarget(action: RuntimeActionSpec): string | null {
@@ -117,6 +129,10 @@ function validateArtifact(
   if (artifact.requiredCapabilities.includes("commerce") && !adapters.commerce) {
     throw new RuntimeManifestError("Commerce requires a trusted adapter");
   }
+  if ((artifact.requiredCapabilities.includes("navigation") ||
+    artifact.interactions.transitions.some((transition) => transition.action.type === "navigate")) && !adapters.navigate) {
+    throw new RuntimeManifestError("Navigation requires a trusted adapter");
+  }
   const manifest = artifact.interactions;
   if (manifest.version !== 1 || manifest.bindings.length > 256 || manifest.transitions.length > 256) {
     throw new RuntimeManifestError("Interaction manifest version or size is unsupported");
@@ -147,10 +163,49 @@ function validateArtifact(
   return state;
 }
 
-function applyBindings(root: HTMLElement, manifest: InteractionManifestV1, state: RuntimeState): void {
+interface ElementSnapshot {
+  attributes: Array<[string, string]>;
+  value?: string;
+}
+
+class DomMutationJournal {
+  private readonly snapshots = new Map<HTMLElement, ElementSnapshot>();
+
+  capture(element: HTMLElement): void {
+    if (this.snapshots.has(element)) return;
+    this.snapshots.set(element, {
+      attributes: [...element.attributes].map((attribute) => [attribute.name, attribute.value]),
+      value: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : undefined,
+    });
+  }
+
+  restore(): void {
+    for (const [element, snapshot] of this.snapshots) {
+      for (const attribute of [...element.attributes]) element.removeAttribute(attribute.name);
+      for (const [name, value] of snapshot.attributes) element.setAttribute(name, value);
+      if (snapshot.value !== undefined && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) {
+        element.value = snapshot.value;
+      }
+    }
+    this.snapshots.clear();
+  }
+}
+
+function applyBindings(
+  root: HTMLElement,
+  manifest: InteractionManifestV1,
+  stateFor: (instanceId?: string) => RuntimeState,
+  journal: DomMutationJournal,
+  onlyInstanceId?: string,
+): void {
   for (const binding of manifest.bindings) {
-    const value = state[binding.stateId];
-    for (const target of localElements(root, binding.targetId)) {
+    const targets = onlyInstanceId === undefined
+      ? localElements(root, binding.targetId)
+      : instanceElement(root, binding.targetId, onlyInstanceId);
+    for (const target of targets) {
+      const instanceId = target.closest<HTMLElement>("[data-cd-instance]")?.dataset.cdInstance;
+      const value = stateFor(instanceId)[binding.stateId];
+      journal.capture(target);
       if (binding.property === "hidden") target.hidden = Boolean(value);
       else if (binding.property === "expanded") target.setAttribute("aria-expanded", String(Boolean(value)));
       else if (binding.property === "selected") {
@@ -159,7 +214,10 @@ function applyBindings(root: HTMLElement, manifest: InteractionManifestV1, state
       } else if (binding.property === "activeIndex") {
         target.setAttribute("data-cd-active-index", String(value));
         [...target.children].forEach((child, index) => {
-          if (child instanceof HTMLElement) child.hidden = index !== value;
+          if (child instanceof HTMLElement) {
+            journal.capture(child);
+            child.hidden = index !== value;
+          }
         });
       } else if (binding.property === "textQuery") {
         if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) target.value = String(value);
@@ -182,14 +240,33 @@ function commerceIntentAllowed(slot: TrustedSlotManifest, intent: CommerceIntent
 }
 
 function validCommerceIntent(intent: CommerceIntent): boolean {
-  if (intent.type === "cart.clear" || intent.type === "checkout.start") return true;
-  if (intent.type === "variant.select") return typeof intent.variantId === "string" && intent.variantId.length > 0 && intent.variantId.length <= 160;
+  if (intent.type === "cart.clear" || intent.type === "checkout.start") {
+    return typeof intent.cartId === "string" && intent.cartId.length > 0 && intent.cartId.length <= 160;
+  }
+  if (intent.type === "variant.select") {
+    return typeof intent.productId === "string" && intent.productId.length > 0 && intent.productId.length <= 160 &&
+      typeof intent.variantId === "string" && intent.variantId.length > 0 && intent.variantId.length <= 160;
+  }
   if (intent.type === "cart.add") {
-    return typeof intent.variantId === "string" && intent.variantId.length > 0 && intent.variantId.length <= 160 &&
+    return typeof intent.productId === "string" && intent.productId.length > 0 && intent.productId.length <= 160 &&
+      typeof intent.variantId === "string" && intent.variantId.length > 0 && intent.variantId.length <= 160 &&
       Number.isSafeInteger(intent.quantity) && intent.quantity >= 1 && intent.quantity <= 100;
   }
   if (typeof intent.lineId !== "string" || intent.lineId.length === 0 || intent.lineId.length > 160) return false;
   return intent.type === "cart.remove" || (Number.isSafeInteger(intent.quantity) && intent.quantity >= 0 && intent.quantity <= 100);
+}
+
+function commerceIntentMatchesAuthority(authorityKey: string, intent: CommerceIntent): boolean {
+  const separator = authorityKey.indexOf(":");
+  if (separator <= 0) return false;
+  const kind = authorityKey.slice(0, separator);
+  const id = authorityKey.slice(separator + 1);
+  if (!id || id.length > 200) return false;
+  if (kind === "product") return (intent.type === "variant.select" || intent.type === "cart.add") && intent.productId === id;
+  if (kind === "variant") return (intent.type === "variant.select" || intent.type === "cart.add") && intent.variantId === id;
+  if (kind === "cartLine") return (intent.type === "cart.quantity" || intent.type === "cart.remove") && intent.lineId === id;
+  if (kind === "cart") return (intent.type === "cart.clear" || intent.type === "checkout.start") && intent.cartId === id;
+  return false;
 }
 
 function mountCommerce(
@@ -217,10 +294,11 @@ function mountCommerce(
         slot,
         authorityKey,
         bridge(intent) {
-          if (!validCommerceIntent(intent) || !commerceIntentAllowed(slot, intent)) {
-            throw new RuntimeManifestError("Trusted commerce bridge rejected the intent");
+          if (!validCommerceIntent(intent) || !commerceIntentAllowed(slot, intent) ||
+            !commerceIntentMatchesAuthority(authorityKey, intent)) {
+            throw new RuntimeManifestError("Trusted commerce bridge rejected intent authority");
           }
-          commerce.dispatch(intent);
+          commerce.dispatch({ authorityKey, slotKind: slot.kind, intent });
         },
       });
       if (cleanup) cleanups.push(cleanup);
@@ -231,6 +309,19 @@ function mountCommerce(
 
 function failedHandle(error: RuntimeManifestError): StorefrontRuntimeHandle {
   return { hydrated: false, error, getState: () => Object.freeze({}), teardown() {} };
+}
+
+function runCleanups(cleanups: Array<() => void>): unknown[] {
+  const errors: unknown[] = [];
+  for (const cleanup of [...cleanups].reverse()) {
+    try {
+      cleanup();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  cleanups.length = 0;
+  return errors;
 }
 
 export function hydrateStorefront(options: HydrateStorefrontOptions): StorefrontRuntimeHandle {
@@ -246,21 +337,41 @@ export function hydrateStorefront(options: HydrateStorefrontOptions): Storefront
 
   const overlays = createOverlayManager(options.root);
   let state = initialState;
+  const instanceStates = new Map<string, RuntimeState>();
+  const journal = new DomMutationJournal();
   const removers: Array<() => void> = [];
   let tornDown = false;
+  const stateFor = (instanceId?: string): RuntimeState => {
+    if (!instanceId) return state;
+    const existing = instanceStates.get(instanceId);
+    if (existing) return existing;
+    instanceStates.set(instanceId, initialState);
+    return initialState;
+  };
   const context: RuntimeActionContext = {
     root: options.root,
     manifest: options.artifact.interactions,
     state,
-    setState(next) { state = next; context.state = next; },
-    applyBindings() { applyBindings(options.root, options.artifact.interactions, state); },
+    getState: stateFor,
+    setState(next, instanceId) {
+      if (instanceId) instanceStates.set(instanceId, next);
+      else {
+        state = next;
+        context.state = next;
+      }
+    },
+    applyBindings(instanceId) {
+      applyBindings(options.root, options.artifact.interactions, stateFor, journal, instanceId);
+    },
+    snapshotElement(element) { journal.capture(element); },
     adapters,
     overlays,
   };
 
   const reducedMotion = options.root.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  context.reducedMotion = reducedMotion;
   try {
-    applyBindings(options.root, options.artifact.interactions, state);
+    applyBindings(options.root, options.artifact.interactions, stateFor, journal);
     removers.push(...mountCommerce(options.root, options.artifact.trustedSlots, adapters));
     for (const transition of options.artifact.interactions.transitions) {
       for (const source of localElements(options.root, transition.sourceId)) {
@@ -297,8 +408,12 @@ export function hydrateStorefront(options: HydrateStorefrontOptions): Storefront
       }
     }
   } catch (error) {
-    for (const remove of removers.reverse()) remove();
-    overlays.teardown();
+    runCleanups(removers);
+    try {
+      overlays.teardown();
+    } finally {
+      journal.restore();
+    }
     return failedHandle(error instanceof RuntimeManifestError ? error : new RuntimeManifestError("Storefront hydration failed"));
   }
 
@@ -308,10 +423,21 @@ export function hydrateStorefront(options: HydrateStorefrontOptions): Storefront
     teardown() {
       if (tornDown) return;
       tornDown = true;
-      for (const remove of removers.reverse()) remove();
-      overlays.teardown();
-      mounted.delete(options.root);
-      active.delete(handle);
+      const errors = runCleanups(removers);
+      try {
+        overlays.teardown();
+      } catch (error) {
+        errors.push(error);
+      } finally {
+        try {
+          journal.restore();
+        } catch (error) {
+          errors.push(error);
+        }
+        mounted.delete(options.root);
+        active.delete(handle);
+      }
+      if (errors.length) throw new AggregateError(errors, "Storefront runtime teardown failed");
     },
   };
   mounted.set(options.root, handle);
@@ -321,5 +447,15 @@ export function hydrateStorefront(options: HydrateStorefrontOptions): Storefront
 
 export function teardownStorefront(root?: HTMLElement): void {
   if (root) mounted.get(root)?.teardown();
-  else for (const handle of [...active]) handle.teardown();
+  else {
+    const errors: unknown[] = [];
+    for (const handle of [...active]) {
+      try {
+        handle.teardown();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length) throw new AggregateError(errors, "Storefront runtime teardown failed");
+  }
 }

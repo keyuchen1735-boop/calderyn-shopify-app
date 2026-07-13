@@ -74,9 +74,11 @@ describe("declarative storefront hydration", () => {
     const root = document.getElementById("root") as HTMLElement;
     const host = document.getElementById("cd-product-slot-1") as HTMLElement;
     const dispatch = vi.fn();
-    const mount = vi.fn(({ shadowRoot, bridge }) => {
+    let bridge: ((intent: unknown) => void) | undefined;
+    const mount = vi.fn(({ shadowRoot, bridge: trustedBridge }) => {
+      bridge = trustedBridge;
       const button = document.createElement("button");
-      button.addEventListener("click", () => bridge({ type: "cart.add", variantId: "v1", quantity: 1 }));
+      button.addEventListener("click", () => trustedBridge({ type: "cart.add", productId: "p1", variantId: "v1", quantity: 1 }));
       shadowRoot.append(button);
       button.click();
     });
@@ -91,19 +93,89 @@ describe("declarative storefront hydration", () => {
     });
     expect(runtime.hydrated).toBe(true);
     expect(mount).toHaveBeenCalledOnce();
-    expect(dispatch).toHaveBeenCalledWith({ type: "cart.add", variantId: "v1", quantity: 1 });
+    expect(dispatch).toHaveBeenCalledWith({
+      authorityKey: "product:p1",
+      slotKind: "addToCart",
+      intent: { type: "cart.add", productId: "p1", variantId: "v1", quantity: 1 },
+    });
+    expect(() => bridge?.({ type: "cart.add", productId: "p2", variantId: "v2", quantity: 1 })).toThrow(/authority/i);
+    expect(dispatch).toHaveBeenCalledOnce();
     expect(host.shadowRoot).toBeNull();
+  });
+
+  it("rejects a cart-line mutation outside the trusted host authority", () => {
+    document.body.innerHTML = `<main id="root"><div id="cd-cart-slot-1" data-cd-trusted-slot="cartLineControls" data-cd-authority-key="cartLine:line-1"></div></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const dispatch = vi.fn();
+    const mount = vi.fn(({ bridge }) => {
+      expect(() => bridge({ type: "cart.quantity", lineId: "line-2", quantity: 2 })).toThrow(/authority/i);
+    });
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({
+        requiredCapabilities: ["commerce"], interactions: { version: 1, state: [], bindings: [], transitions: [] },
+        trustedSlots: [{ id: "cd-cart-slot-1", kind: "cartLineControls", scopeId: "root", hostSize: "block", themeTokenIds: [] }],
+      }),
+      adapters: { commerce: { mount, dispatch } },
+    });
+    expect(runtime.hydrated).toBe(true);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 
   it("is idempotent, tears down cleanly, and can hydrate again", () => {
     const root = rootMarkup();
+    const before = root.innerHTML;
     const first = hydrateStorefront({ root, artifact: artifact() });
     const second = hydrateStorefront({ root, artifact: artifact() });
     expect(second).toBe(first);
     first.teardown();
+    expect(root.innerHTML).toBe(before);
+    expect(document.querySelector("[data-cd-overlay-portal]")).toBeNull();
     const third = hydrateStorefront({ root, artifact: artifact() });
     expect(third).not.toBe(first);
     expect(third.hydrated).toBe(true);
+  });
+
+  it("rolls back binding mutations when trusted mounting fails", () => {
+    const root = rootMarkup();
+    root.insertAdjacentHTML("beforeend", `<div id="cd-product-slot-1" data-cd-trusted-slot="addToCart" data-cd-authority-key="product:p1"></div>`);
+    const before = root.innerHTML;
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({
+        requiredCapabilities: ["localState", "commerce"],
+        trustedSlots: [{ id: "cd-product-slot-1", kind: "addToCart", scopeId: "root", hostSize: "block", themeTokenIds: [] }],
+      }),
+      adapters: { commerce: { mount: () => { throw new Error("mount failed"); }, dispatch: vi.fn() } },
+    });
+    expect(runtime.hydrated).toBe(false);
+    expect(root.innerHTML).toBe(before);
+    expect(document.querySelector("[data-cd-overlay-portal]")).toBeNull();
+  });
+
+  it("runs every cleanup and restores SSR state when one cleanup throws", () => {
+    document.body.innerHTML = `<main id="root"><div id="cd-product-slot-1" data-cd-trusted-slot="addToCart" data-cd-authority-key="product:p1"></div><div id="cd-product-slot-2" data-cd-trusted-slot="addToCart" data-cd-authority-key="product:p2"></div></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const before = root.innerHTML;
+    const firstCleanup = vi.fn(() => { throw new Error("cleanup failed"); });
+    const secondCleanup = vi.fn();
+    const cleanups = [firstCleanup, secondCleanup];
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({
+        requiredCapabilities: ["commerce"], interactions: { version: 1, state: [], bindings: [], transitions: [] },
+        trustedSlots: [
+          { id: "cd-product-slot-1", kind: "addToCart", scopeId: "root", hostSize: "block", themeTokenIds: [] },
+          { id: "cd-product-slot-2", kind: "addToCart", scopeId: "root", hostSize: "block", themeTokenIds: [] },
+        ],
+      }),
+      adapters: { commerce: { mount: () => cleanups.shift()!, dispatch: vi.fn() } },
+    });
+    expect(() => runtime.teardown()).toThrow(AggregateError);
+    expect(firstCleanup).toHaveBeenCalledOnce();
+    expect(secondCleanup).toHaveBeenCalledOnce();
+    expect(root.innerHTML).toBe(before);
+    expect(document.querySelector("[data-cd-overlay-portal]")).toBeNull();
   });
 
   it("can remount a trusted closed-shadow host after teardown", () => {
@@ -122,6 +194,49 @@ describe("declarative storefront hydration", () => {
     expect(first.hydrated).toBe(true);
     expect(second.hydrated).toBe(true);
     expect(mount).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps repeated state, bindings, and scroll targets inside the current compiler instance", () => {
+    document.body.innerHTML = `<main id="root">
+      <div data-cd-instance="one"><button id="cd-home-toggle-one" data-cd-instance="one">One</button><aside id="cd-home-drawer-one" data-cd-instance="one"></aside><div id="cd-home-scroll-one" data-cd-instance="one"></div></div>
+      <div data-cd-instance="two"><button id="cd-home-toggle-two" data-cd-instance="two">Two</button><aside id="cd-home-drawer-two" data-cd-instance="two"></aside><div id="cd-home-scroll-two" data-cd-instance="two"></div></div>
+    </main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const scrollOne = vi.fn();
+    const scrollTwo = vi.fn();
+    Object.defineProperty(document.getElementById("cd-home-scroll-one"), "scrollIntoView", { value: scrollOne });
+    Object.defineProperty(document.getElementById("cd-home-scroll-two"), "scrollIntoView", { value: scrollTwo });
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({
+        interactions: {
+          version: 1,
+          state: [{ id: "cd-home-state-open", type: "boolean", initial: false }],
+          bindings: [{ targetId: "cd-home-drawer", property: "hidden", stateId: "cd-home-state-open" }],
+          transitions: [
+            { on: "click", sourceId: "cd-home-toggle", action: { type: "state.set", stateId: "cd-home-state-open", value: { kind: "literal", value: true } } },
+            { on: "click", sourceId: "cd-home-toggle", action: { type: "scroll.to", targetId: "cd-home-scroll" } },
+          ],
+        },
+      }),
+    });
+    expect(runtime.hydrated).toBe(true);
+    document.getElementById("cd-home-toggle-two")?.click();
+    expect((document.getElementById("cd-home-drawer-one") as HTMLElement).hidden).toBe(false);
+    expect((document.getElementById("cd-home-drawer-two") as HTMLElement).hidden).toBe(true);
+    expect(scrollOne).not.toHaveBeenCalled();
+    expect(scrollTwo).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat an unrelated ID prefix as a repeated compiler instance", () => {
+    const root = rootMarkup();
+    root.insertAdjacentHTML("beforeend", `<aside id="cd-home-drawer-extra"></aside>`);
+    const unrelated = document.getElementById("cd-home-drawer-extra") as HTMLElement;
+    const runtime = hydrateStorefront({ root, artifact: artifact() });
+    expect(runtime.hydrated).toBe(true);
+    document.getElementById("cd-home-toggle")?.click();
+    expect((document.getElementById("cd-home-drawer") as HTMLElement).hidden).toBe(true);
+    expect(unrelated.hidden).toBe(false);
   });
 
   it("preserves SSR markup and installs no listeners for unsupported capabilities or malformed IDs", () => {
@@ -157,6 +272,18 @@ describe("declarative storefront hydration", () => {
     });
     expect(runtime.hydrated).toBe(false);
     expect(runtime.error?.message).toMatch(/adapter/i);
+    expect(root.innerHTML).toBe(before);
+  });
+
+  it("fails closed before mutation when navigation has no trusted adapter", () => {
+    const root = rootMarkup();
+    const before = root.innerHTML;
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({ requiredCapabilities: ["navigation", "localState"] }),
+    });
+    expect(runtime.hydrated).toBe(false);
+    expect(runtime.error?.message).toMatch(/navigation.*adapter/i);
     expect(root.innerHTML).toBe(before);
   });
 
