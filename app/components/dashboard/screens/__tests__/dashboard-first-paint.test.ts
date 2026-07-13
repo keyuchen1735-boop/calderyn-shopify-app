@@ -5,7 +5,8 @@
 // already be the right page:
 //   established store → metrics strip + deck skeleton + pending gauge — never
 //     a void, never a fake "All clear", never a lit "0%" calibration readout;
-//   fresh store → the setup guide, immediately.
+//   fresh store → the welcome layout immediately; the guided journey card
+//     renders only once its cached or fetched payload lands.
 import { describe, expect, it } from "vitest";
 import { createElement as h } from "react";
 import { renderToString } from "react-dom/server";
@@ -70,9 +71,8 @@ describe("Home first paint (pre-fetch SSR)", () => {
     expect(html).not.toContain("<b>0</b>");
   });
 
-  it("a fresh store paints the setup guide immediately", () => {
+  it("a fresh store paints its layout immediately (guide card pops in once the journey fetch lands)", () => {
     const html = renderToString(h(Dashboard, { app: makeCtx({ hasCatalog: false, loading: true }) }));
-    expect(html).toContain("Set up your store");
     expect(html).toContain("Welcome.");
     expect(html).not.toContain("Sales · today");
   });

@@ -6,15 +6,24 @@ import { randomBytes } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabase } from "~/lib/supabase.server";
 import { getOrgMode } from "~/lib/cutover/org-mode.server";
-import { paymentsReadiness } from "~/lib/payments/connect.server";
+import { paymentsReadiness, type PaymentsReadiness } from "~/lib/payments/connect.server";
 import { upsertGuestBuyer } from "~/lib/buyer/identity.server";
 import { createCommerceCheckoutSession } from "~/lib/commerce/stripe-checkout.server";
 import { executeRefundAction } from "~/lib/actions/refund.server";
+import { CalderynError } from "~/lib/calderyn.server";
 import { GOLIVE_PATH, TEST_TX_PARAM, TEST_TX_SUCCESS, TEST_TX_CANCELLED } from "./test-tx-return";
 
 /** Stripe's minimum chargeable amount (USD). ponytail: fixed 50c/usd; per-currency
  *  minimums if a non-USD test store ever needs it. */
 export const TEST_CHARGE_CENTS = 50;
+
+/** Order states that represent a captured (possibly since-refunded) probe charge.
+ *  Shared by journey.server.ts's readSignals (has the merchant landed a paid-ish
+ *  test order yet?) and the journey-test-order route's confirm handler (is there
+ *  anything left to refund?) so the two definitions never drift apart. Mirrors the
+ *  `as const` + spread-on-use convention in analytics/commerce.server.ts's
+ *  SALE_STATES — do not change these four values without checking both callers. */
+export const PROBE_SALE_STATES = ["paid", "fulfilled", "refunded", "partially_refunded"] as const;
 
 /**
  * `returnOrigin` is the merchant's validated browser origin (requireSameOrigin's
@@ -47,6 +56,55 @@ export async function startTestTransaction(
     throw new Error("Finish connecting Stripe (charges and payouts enabled) before running a test transaction.");
   }
 
+  const golive = `${returnOrigin}${GOLIVE_PATH}`;
+  return createTestProbeCheckout(shopId, readiness, {
+    // The Cutover screen reads the return marker to confirm the payment (success) or
+    // note the abandoned checkout (cancelled) without the merchant hunting for Re-check.
+    success: `${golive}?${TEST_TX_PARAM}=${TEST_TX_SUCCESS}`,
+    cancel: `${golive}?${TEST_TX_PARAM}=${TEST_TX_CANCELLED}`,
+  });
+}
+
+/**
+ * Journey "place a test order": same 50c probe as the go-live gate (guest-buyer upsert
+ * -> channel='test' order -> Stripe Checkout session), but for the onboarding journey's
+ * own milestone — no org-mode requirement, since native (never-dual_run) shops must be
+ * able to run it too. The probe is refunded by the journey API on confirm, not by
+ * transitionOrgMode, so it never touches org_mode.
+ */
+export async function startJourneyTestOrder(shopId: string, returnOrigin: string): Promise<{ url: string }> {
+  if (!shopId) throw new Error("shopId is required");
+  if (!returnOrigin) throw new Error("returnOrigin is required");
+
+  const readiness = await paymentsReadiness(shopId);
+  if (!readiness.ready) {
+    // CalderynError (not a bare Error) so dashboardJson surfaces this exact message to
+    // the merchant instead of collapsing it into a generic 500 "internal_error".
+    throw new CalderynError({
+      status: 400,
+      code: "stripe_not_ready",
+      message: "Connect Stripe (charges and payouts enabled) before running a test order.",
+    });
+  }
+
+  const home = `${returnOrigin}/dashboard`;
+  return createTestProbeCheckout(shopId, readiness, {
+    success: `${home}?test_order=success`,
+    cancel: `${home}?test_order=cancelled`,
+  });
+}
+
+/**
+ * Shared probe core: originate a channel='test' order at the Stripe minimum and hand it
+ * to the existing checkout session + webhook path. `returnUrls` differ per caller (the
+ * Go live screen vs. the Home journey card); everything else — buyer upsert, order
+ * shape, checkout params — is identical.
+ */
+async function createTestProbeCheckout(
+  shopId: string,
+  readiness: PaymentsReadiness,
+  returnUrls: { success: string; cancel: string },
+): Promise<{ url: string }> {
   // orders.buyer_id is NOT NULL (order_spine.sql:122) — every money-path order carries a
   // buyer, so the probe reuses the same guest-buyer upsert the storefront checkout uses.
   const buyer = await upsertGuestBuyer(shopId, { email: "test-probe@calderyn.internal" });
@@ -70,7 +128,6 @@ export async function startTestTransaction(
   if (error) throw error;
   const row = data as { id: string; confirmation_token: string };
 
-  const golive = `${returnOrigin}${GOLIVE_PATH}`;
   const session = await createCommerceCheckoutSession(
     shopId,
     {
@@ -78,12 +135,7 @@ export async function startTestTransaction(
       totalCents: TEST_CHARGE_CENTS,
       currency: "usd",
       confirmationToken: row.confirmation_token,
-      // The Cutover screen reads the return marker to confirm the payment (success) or
-      // note the abandoned checkout (cancelled) without the merchant hunting for Re-check.
-      returnUrls: {
-        success: `${golive}?${TEST_TX_PARAM}=${TEST_TX_SUCCESS}`,
-        cancel: `${golive}?${TEST_TX_PARAM}=${TEST_TX_CANCELLED}`,
-      },
+      returnUrls,
     },
     readiness,
   );

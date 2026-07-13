@@ -171,7 +171,12 @@ export interface DashboardCtx {
   pushAdDraft: (name: string) => void;
 
   // --- chrome ---
-  toast: (text: string, icon?: string, tone?: string) => void;
+  toast: (
+    text: string,
+    icon?: string,
+    tone?: string,
+    action?: { label: string; run: () => void },
+  ) => void;
   relTime: (ts: number) => string;
   /** Open the Ask Calderyn assistant panel (same panel the sidebar button
    *  opens). Home's prompt bar and the global ⌘K shortcut ride this. With

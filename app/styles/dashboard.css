@@ -746,6 +746,11 @@
     padding: 11px 18px; font-size: calc(13.5px * var(--type-scale)); font-weight: 500; letter-spacing: -0.008em;
     animation: cd-toast-in 0.35s cubic-bezier(0.22, 1, 0.36, 1);
   }
+  .cd-toast-act {
+    margin-left: 2px; padding: 0; border: 0; background: none; color: var(--accent);
+    font: inherit; font-weight: 650; cursor: pointer; letter-spacing: -0.008em;
+  }
+  .cd-toast-act:hover { text-decoration: underline; }
   @keyframes cd-toast-in { from { opacity: 0; transform: translateY(-12px) scale(0.96); } to { opacity: 1; transform: none; } }
   .cd-ph-icon {
     width: 44px; height: 44px; border-radius: 50%; background: var(--gray-bg); color: var(--text-3);
@@ -2433,6 +2438,31 @@
 @media (prefers-reduced-motion: reduce) {
   .cd-su-3dcard, .cd-su-row:hover .cd-su-3dcard { transition: none; transform: perspective(220px) rotateX(16deg) rotateY(-18deg); }
 }
+
+/* ============ Home journey card (cd-jr-*) ============
+   3-phase guided journey that replaces the old static setup checklist.
+   Visual baseline matches cd-su-* (same paddings, dividers, type sizes). */
+.cd-jr-card { padding: 16px 22px 8px; }
+.cd-jr-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+.cd-jr-title { font-size: calc(13px * var(--type-scale)); font-weight: 600; }
+.cd-jr-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 0.78em; opacity: 0.7; border: 1px solid var(--hairline-strong); }
+.cd-jr-row { display: flex; align-items: center; gap: 12px; padding: calc(10px * var(--density)) 0; border-top: 0.5px solid var(--hairline); }
+.cd-jr-row:first-of-type { border-top: none; }
+.cd-jr-row.spot { background: color-mix(in oklch, var(--accent) 6%, transparent); border-radius: 10px; padding-left: 8px; padding-right: 8px; margin: 0 -8px; }
+.cd-jr-body { flex: 1; min-width: 0; }
+.cd-jr-t { font-size: calc(14px * var(--type-scale)); font-weight: 570; letter-spacing: -0.01em; color: var(--text-1); }
+.cd-jr-s { font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); margin-top: 2px; }
+.cd-jr-row.done .cd-jr-t { opacity: 0.55; text-decoration: none; }
+.cd-jr-check { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--text-3); }
+.cd-jr-row.done .cd-jr-check { color: var(--green); }
+.cd-jr-row > .cd-btn { min-width: 84px; justify-content: center; }
+.cd-jr-live, .cd-jr-recap { position: relative; padding: 14px 40px 14px 18px; margin-bottom: 10px; }
+.cd-jr-live-t { font-size: calc(14px * var(--type-scale)); font-weight: 600; color: var(--text-1); }
+.cd-jr-live-url { display: flex; gap: 10px; align-items: center; margin-top: 6px; font-size: calc(12.5px * var(--type-scale)); }
+.cd-jr-live-url a { color: var(--text-2); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cd-jr-x { position: absolute; top: 10px; right: 10px; background: none; border: 0; cursor: pointer; color: inherit; opacity: 0.6; padding: 4px; }
+.cd-jr-x:hover { opacity: 1; }
+.cd-jr-recap .cd-btn { margin-top: 10px; }
 
 /* ============ Preferences (SEO / AIO) screen ============
    Calm, text-forward settings surface: a short lede, then the controls a merchant

@@ -829,6 +829,11 @@ export function ToastHost({ toasts }: { toasts: Toast[] }) {
             style={{ color: t.tone === "critical" ? "var(--red)" : "var(--green)" }}
           />
           {t.text}
+          {t.action && (
+            <button type="button" className="cd-toast-act" onClick={t.action.run}>
+              {t.action.label}
+            </button>
+          )}
         </div>
       ))}
     </div>
