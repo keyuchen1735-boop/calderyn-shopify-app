@@ -22,3 +22,9 @@ export async function createCampaignDraft(input: CampaignDraftInput): Promise<Ca
   );
   return data.draft;
 }
+
+/** Delete one draft. The route 404s if it is already gone or belongs to
+ *  another shop — apiSend surfaces that as a DashboardApiError. */
+export async function deleteCampaignDraft(id: string): Promise<void> {
+  await apiSend("DELETE", `/dashboard/api/campaign-drafts?id=${encodeURIComponent(id)}`);
+}
