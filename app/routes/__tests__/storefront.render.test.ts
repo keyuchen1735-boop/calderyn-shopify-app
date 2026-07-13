@@ -9,6 +9,7 @@ import StorefrontCollection, { loader as collectionLoader } from "../storefront.
 import StorefrontProduct, { loader as productLoader } from "../storefront.products.$handle";
 import type { StorefrontCatalog } from "~/lib/storefront/catalog";
 import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
+import { requireLegacyLoaderData } from "./storefront-runtime-test-data";
 
 // getCatalog is mocked file-wide; default returns the REAL fixture so the
 // criterion-1 loader tests exercise real fixture data, while the swap test
@@ -28,6 +29,7 @@ vi.mock("@remix-run/react", async () => {
   return {
     useLoaderData: () => loaderDataRef.current,
     Outlet: () => null,
+    useMatches: () => [],
     Form: ({ children, method, className }: { children?: unknown; method?: string; className?: string }) =>
       createElement("form", { method, className }, children as never),
   };
@@ -46,7 +48,7 @@ function req(url = "https://demo.calderyncompany.com/storefront") {
 describe("storefront layout", () => {
   it("loads demo store settings (read-only)", async () => {
     const res = await layoutLoader({ request: req(), params: {}, context: {} });
-    const data = await res.json();
+    const data = requireLegacyLoaderData(await res.json());
     expect(data.settings.storeName.length).toBeGreaterThan(0);
     expect(data.settings.palette).toHaveProperty("primary");
   });
@@ -121,7 +123,7 @@ describe("storefront layout", () => {
 
   it("loads collections for the category nav (failure-isolated in the loader)", async () => {
     const res = await layoutLoader({ request: req(), params: {}, context: {} });
-    const data = await res.json();
+    const data = requireLegacyLoaderData(await res.json());
     expect(Array.isArray(data.collections)).toBe(true);
     expect(data.collections.length).toBeGreaterThan(0);
   });
@@ -130,7 +132,7 @@ describe("storefront layout", () => {
 describe("storefront home", () => {
   it("loads the home block document + resolved fixture data (shopId-scoped)", async () => {
     const res = await homeLoader({ request: req(), params: {}, context: {} });
-    const data = await res.json();
+    const data = requireLegacyLoaderData(await res.json());
     // The demo (non-uuid) shop has no published doc → the never-blank default doc.
     expect(data.doc.blocks.map((b: { type: string }) => b.type)).toEqual(["hero", "productGrid"]);
     // The default doc's product grid uses the `all` source → all 4 fixture products.
@@ -167,7 +169,7 @@ describe("storefront home", () => {
 describe("storefront collection", () => {
   it("loads only that collection's products (shopId-scoped)", async () => {
     const res = await collectionLoader({ request: req(), params: { handle: "apparel" }, context: {} });
-    const data = await res.json();
+    const data = requireLegacyLoaderData(await res.json());
     expect(data.handle).toBe("apparel");
     expect(data.title).toBe("Apparel");
     expect(data.products.map((p: { handle: string }) => p.handle).sort()).toEqual([
@@ -195,7 +197,7 @@ describe("storefront collection", () => {
       },
     });
     const res = await collectionLoader({ request: req(), params: { handle: "spring" }, context: {} });
-    const data = await res.json();
+    const data = requireLegacyLoaderData(await res.json());
     expect(data.title).toBe("Spring");
     expect(data.products).toEqual([]);
   });
@@ -225,7 +227,7 @@ describe("storefront collection", () => {
 describe("storefront PDP", () => {
   it("loads the product with its variants (shopId-scoped)", async () => {
     const res = await productLoader({ request: req(), params: { handle: "zip-hoodie" }, context: {} });
-    const data = await res.json();
+    const data = requireLegacyLoaderData(await res.json());
     expect(data.product.title).toBe("Zip Hoodie");
     expect(data.product.variants.length).toBe(2);
     expect(data.product.variants[0].priceCents).toBe(5499);
@@ -283,18 +285,18 @@ describe("storefront swap seam (criterion 2)", () => {
     };
     getCatalogMock.mockReturnValue(secondFake);
 
-    const home = await (await homeLoader({ request: req(), params: {}, context: {} })).json();
+    const home = requireLegacyLoaderData(await (await homeLoader({ request: req(), params: {}, context: {} })).json());
     // Home now returns { doc, data }; the default doc's `all` grid pulls products from the swapped catalog.
     expect(home.data.allProducts[0].handle).toBe("novel");
 
-    const collection = await (
+    const collection = requireLegacyLoaderData(await (
       await collectionLoader({ request: req(), params: { handle: "books" }, context: {} })
-    ).json();
+    ).json());
     expect(collection.products[0].handle).toBe("novel");
 
-    const pdp = await (
+    const pdp = requireLegacyLoaderData(await (
       await productLoader({ request: req(), params: { handle: "novel" }, context: {} })
-    ).json();
+    ).json());
     expect(pdp.product.handle).toBe("novel");
   });
 });

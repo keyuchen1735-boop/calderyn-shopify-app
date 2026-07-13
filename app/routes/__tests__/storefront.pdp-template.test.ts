@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
 import StorefrontProduct, { loader } from "../storefront.products.$handle";
+import { requireLegacyLoaderData } from "./storefront-runtime-test-data";
 
 const { getCatalogMock, loadPublishedMock, loaderDataRef } = vi.hoisted(() => ({
   getCatalogMock: vi.fn(), loadPublishedMock: vi.fn(), loaderDataRef: { current: null as unknown },
@@ -30,7 +31,7 @@ describe("PDP route on the block spine", () => {
         { id: "atc", type: "addToCart", layout: { x: 6, y: 3, w: 6, h: 1 }, props: {} },
       ],
     });
-    const data = await (await loader(args(handle))).json();
+    const data = requireLegacyLoaderData(await (await loader(args(handle))).json());
     expect(data.doc).toBeTruthy();
     loaderDataRef.current = data;
     const out = renderToStaticMarkup(createElement(StorefrontProduct));
@@ -41,7 +42,7 @@ describe("PDP route on the block spine", () => {
   it("falls back to the legacy PDP when there is no template doc", async () => {
     const handle = await firstHandle();
     loadPublishedMock.mockResolvedValue(null);
-    const data = await (await loader(args(handle))).json();
+    const data = requireLegacyLoaderData(await (await loader(args(handle))).json());
     expect(data.doc).toBeNull();
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(StorefrontProduct))).toContain("cd-pdp");

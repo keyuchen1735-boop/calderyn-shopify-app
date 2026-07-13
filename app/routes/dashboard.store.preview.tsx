@@ -5,9 +5,10 @@
 // Session-gated (only the owner sees their own draft), same-origin frameable
 // (see entry.server SELF_FRAMEABLE_PATH), and never blank (falls back to the
 // deterministic starter doc when nothing has been generated yet).
-import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
+import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
+import { randomBytes } from "node:crypto";
 import storefrontCss from "~/styles/storefront.css?url";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { getSupabase } from "~/lib/supabase.server";
@@ -22,8 +23,21 @@ import { PREVIEW_LINKS } from "~/lib/storebuilder/links";
 import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
 import { fallbackDoc } from "~/lib/storegen/fallback";
 import type { BlockDocument, PageKey, RenderContext } from "~/lib/storebuilder/types";
+import { isStorefrontBundleReadEnabled } from "~/lib/storefront-runtime/csp.server";
+import { resolveRuntime1VersionRoute } from "~/lib/storefront-runtime/release-resolution.server";
+import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-runtime/render";
+import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
+import {
+  commitPreviewCommerceSession,
+  createPreviewCommerceAdapter,
+  readPreviewBundleVersion,
+  readPreviewCommerceSession,
+} from "~/lib/storefront-runtime/preview-commerce.server";
+import type { PublicRouteContext } from "~/lib/storefront-runtime/public-data.server";
+import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
+export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
 const PAGES: PageKey[] = ["home", "collection", "pdp"];
 function pageParam(url: string): PageKey {
@@ -86,9 +100,46 @@ async function tenantStorefrontOrigin(shopId: string): Promise<string | null> {
   }
 }
 
+async function previewRouteContext(request: Request, shopId: string): Promise<PublicRouteContext> {
+  const url = new URL(request.url);
+  const route = url.searchParams.get("route") ?? "home";
+  const catalog = getCatalog();
+  if (route === "product") {
+    const requested = url.searchParams.get("handle");
+    const handle = requested ?? (await catalog.listProducts(shopId, { limit: 1 }))[0]?.handle ?? "";
+    return { kind: "product", handle };
+  }
+  if (route === "collection") {
+    const requested = url.searchParams.get("handle");
+    const handle = requested ?? (await catalog.listCollections(shopId))[0]?.handle ?? "";
+    return { kind: "collection", handle };
+  }
+  if (route === "search") return { kind: "search", query: url.searchParams.get("q")?.slice(0, 200) ?? "" };
+  if (route === "cart" || route === "checkout") return { kind: route };
+  return { kind: "home" };
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const shopId = session.shopId;
+  if (isStorefrontBundleReadEnabled()) {
+    const version = await readPreviewBundleVersion(shopId);
+    if (version) {
+      const route = await previewRouteContext(request, shopId);
+      const commerce = await readPreviewCommerceSession(request, shopId);
+      const runtime1 = await resolveRuntime1VersionRoute({
+        shopId,
+        route,
+        version,
+        dataDependencies: { cartLoader: async () => commerce.cart },
+      });
+      if (runtime1) {
+        const nonce = randomBytes(18).toString("base64url");
+        const headers = storefrontCacheHeaders({ routeId: "preview", personalized: true });
+        return json({ ...runtime1, nonce }, { headers });
+      }
+    }
+  }
   const page = pageParam(request.url);
   const catalog = getCatalog();
   const [settings, draft, products, collections] = await Promise.all([
@@ -135,8 +186,63 @@ export async function loader({ request }: LoaderFunctionArgs) {
   return json({ doc, data, record, settings: settingsDto });
 }
 
+export async function action({ request }: ActionFunctionArgs) {
+  const session = await requireDashboardSession(request);
+  const shopId = session.shopId;
+  if (!isStorefrontBundleReadEnabled() || !(await readPreviewBundleVersion(shopId))) {
+    throw new Response(null, { status: 404 });
+  }
+  const current = await readPreviewCommerceSession(request, shopId);
+  const adapter = createPreviewCommerceAdapter(current);
+  const form = await request.formData();
+  const intent = form.get("intent");
+  if (intent === "checkout") {
+    return json(adapter.checkout(), { headers: storefrontCacheHeaders({ routeId: "preview", personalized: true }) });
+  }
+  if (intent === "add") {
+    const variantId = form.get("variantId");
+    const quantity = Number(form.get("quantity") ?? 1);
+    if (typeof variantId !== "string" || !Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+      throw new Response("Invalid preview cart line", { status: 400 });
+    }
+    const catalog = getCatalog();
+    const resolved = catalog.getVariantById
+      ? await catalog.getVariantById(shopId, variantId)
+      : (await catalog.listProducts(shopId)).flatMap((product) => product.variants.map((variant) => ({ product, variant })))
+        .find((entry) => entry.variant.id === variantId) ?? null;
+    if (!resolved || !resolved.variant.available) throw new Response("Variant unavailable", { status: 422 });
+    adapter.add({
+      lineId: `preview:${variantId}`,
+      variantId,
+      title: resolved.variant.title && resolved.variant.title !== resolved.product.title
+        ? `${resolved.product.title} - ${resolved.variant.title}`
+        : resolved.product.title,
+      quantity,
+      unitPrice: { cents: resolved.variant.priceCents, currency: resolved.variant.currency.toUpperCase() },
+    });
+  } else if (intent === "quantity") {
+    const lineId = form.get("lineId");
+    const quantity = Number(form.get("quantity"));
+    if (typeof lineId !== "string") throw new Response("lineId is required", { status: 400 });
+    adapter.setQuantity(lineId, quantity);
+  } else if (intent === "remove") {
+    const lineId = form.get("lineId");
+    if (typeof lineId !== "string") throw new Response("lineId is required", { status: 400 });
+    adapter.remove(lineId);
+  } else if (intent === "clear") adapter.clear();
+  else throw new Response("Unknown preview action", { status: 400 });
+
+  const headers = storefrontCacheHeaders({ routeId: "preview", personalized: true });
+  headers.append("Set-Cookie", await commitPreviewCommerceSession(adapter.snapshot()));
+  return json({ cart: adapter.cart() }, { headers });
+}
+
 export default function StoreDraftPreview() {
-  const { doc, data, record, settings } = useLoaderData<typeof loader>();
+  const loaded = useLoaderData<typeof loader>();
+  if (isRuntime1RenderData(loaded)) {
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: loaded.routeId, data: loaded.data, nonce: loaded.nonce, mode: "preview" })}<StorefrontHydrator bundle={loaded.bundle} routeId={loaded.routeId} data={loaded.data} mode="preview" /></>;
+  }
+  const { doc, data, record, settings } = loaded;
   return (
     <div
       className="cd-store"

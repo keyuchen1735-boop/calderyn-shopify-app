@@ -3,7 +3,7 @@
 // read the signed cart cookie, price the cart purely from the line snapshots.
 // Checkout (payment + PII capture) is #2c-2 — the Checkout link points at its
 // future route, which 404s until that module lands.
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
@@ -14,6 +14,13 @@ import { loadShipRules } from "~/lib/shipping/rules.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
+import { randomBytes } from "node:crypto";
+import { resolveRuntime1Route } from "~/lib/storefront-runtime/release-resolution.server";
+import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-runtime/render";
+import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
+import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
+import type { PublicCart } from "~/lib/storefront-runtime/public-data.server";
+import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 
 export const meta: MetaFunction = ({ matches }) => {
   const title = `Cart — ${storeNameFromMatches(matches)}`;
@@ -23,9 +30,42 @@ export const meta: MetaFunction = ({ matches }) => {
     { property: "og:title", content: title },
   ];
 };
+export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
+  const runtime1 = await resolveRuntime1Route({
+    shopId,
+    route: { kind: "cart" },
+    dataDependencies: {
+      cartLoader: async (): Promise<PublicCart | null> => {
+        if (shopId === DEMO_SHOP_ID) return null;
+        const cartId = await readCartId(request);
+        if (!cartId) return null;
+        const priced = await priceCart(shopId, cartId);
+        return {
+          id: priced.cartId,
+          count: priced.lines.reduce((sum, line) => sum + line.quantity, 0),
+          lines: priced.lines.map((line) => ({
+            id: line.id,
+            title: line.titleSnapshot,
+            quantity: line.quantity,
+            unitPrice: { cents: line.unitPriceCents, currency: line.currency.toUpperCase() },
+            total: { cents: line.unitPriceCents * line.quantity, currency: line.currency.toUpperCase() },
+          })),
+          subtotal: { cents: priced.subtotalCents, currency: priced.currency.toUpperCase() },
+          discounts: { cents: 0, currency: priced.currency.toUpperCase() },
+          total: { cents: priced.subtotalCents, currency: priced.currency.toUpperCase() },
+        };
+      },
+    },
+  });
+  if (runtime1) {
+    const nonce = randomBytes(18).toString("base64url");
+    const headers = storefrontCacheHeaders({ routeId: "cart", personalized: true });
+    markStorefrontBundleRendered(headers, nonce);
+    return json({ ...runtime1, nonce }, { headers });
+  }
   // The demo shell is browse-only (no shop row, uuid-keyed cart tables can't
   // hold its sentinel id) — always an empty cart, never a DB read.
   if (shopId === DEMO_SHOP_ID) return json({ cart: null, freeShipThresholdCents: null, error: null });
@@ -98,7 +138,11 @@ export async function action({ request }: ActionFunctionArgs) {
 
 
 export default function StorefrontCart() {
-  const { cart, freeShipThresholdCents, error } = useLoaderData<typeof loader>();
+  const loaded = useLoaderData<typeof loader>();
+  if (isRuntime1RenderData(loaded)) {
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "cart", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="cart" data={loaded.data} mode="public" /></>;
+  }
+  const { cart, freeShipThresholdCents, error } = loaded;
 
   if (!cart || cart.lines.length === 0) {
     return (

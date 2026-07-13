@@ -5,7 +5,9 @@ import type {
   StorefrontReleaseResolutionError,
   StorefrontVersionRecord,
 } from "./release-resolution.server";
-import { resolveStorefrontRelease } from "./release-resolution.server";
+import { resolveRuntime1Route, resolveStorefrontRelease } from "./release-resolution.server";
+import { compileBundle } from "~/lib/storefront-compiler/compile";
+import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const originalBundleRead = process.env.STOREFRONT_BUNDLE_READ;
@@ -53,6 +55,41 @@ afterEach(() => {
 });
 
 describe("storefront release resolution", () => {
+  it("resolves one immutable bundle for shell, route artifact, and live data", async () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const live = {
+      ...version("live", 1, "2026-07-02T00:00:00Z"),
+      artifact: { sourceKind: "custom" as const, bundle },
+    };
+    const source = reader(live, []);
+    const catalog = {
+      listProducts: vi.fn(async () => []),
+      listCollections: vi.fn(async () => []),
+      getProduct: vi.fn(async () => null),
+    };
+    const result = await resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "product", handle: "missing" },
+      reader: source,
+      bundleReadEnabled: true,
+      dataDependencies: {
+        catalog,
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+      },
+    });
+
+    expect(source.readPublished).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      runtime: 1,
+      bundleId: "live",
+      artifactHash: "sha256:live",
+      bundle,
+      routeId: "product",
+      data: { notFound: { kind: "product", handle: "missing" } },
+    });
+    expect(catalog.getProduct).toHaveBeenCalledWith(SHOP, "missing");
+  });
+
   it("uses only STOREFRONT_BUNDLE_READ to select the immutable bundle", async () => {
     const legacy = version("legacy", 0, "2026-07-01T00:00:00Z");
     const live = version("live", 1, "2026-07-02T00:00:00Z");

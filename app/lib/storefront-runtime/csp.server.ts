@@ -1,6 +1,7 @@
 const NONCE_PATTERN = /^[A-Za-z0-9+/_=-]{8,160}$/;
 const BUNDLE_RENDERER_HEADER = "X-Calderyn-Storefront-Renderer";
 const BUNDLE_RENDERER_VALUE = "bundle-v1";
+const BUNDLE_NONCE_HEADER = "X-Calderyn-Storefront-Nonce";
 const SHOPIFY_CDN_ORIGIN = "https://cdn.shopify.com";
 
 export type StorefrontCspSurface = "browse" | "checkout" | "accountCards";
@@ -13,8 +14,17 @@ export function isStorefrontBundleReadEnabled(value = process.env.STOREFRONT_BUN
   return /^(?:1|true)$/i.test(value ?? "");
 }
 
-export function markStorefrontBundleRendered(headers: Headers): void {
+export function markStorefrontBundleRendered(headers: Headers, nonce?: string): void {
   headers.set(BUNDLE_RENDERER_HEADER, BUNDLE_RENDERER_VALUE);
+  if (nonce) {
+    if (!NONCE_PATTERN.test(nonce)) throw new Error("Invalid storefront CSP nonce");
+    headers.set(BUNDLE_NONCE_HEADER, nonce);
+  }
+}
+
+export function resolveStorefrontBundleNonce(headers: Headers): string | undefined {
+  const nonce = headers.get(BUNDLE_NONCE_HEADER);
+  return nonce && NONCE_PATTERN.test(nonce) ? nonce : undefined;
 }
 
 export function resolveStorefrontCspSurface(headers: Headers, pathname: string): StorefrontCspSurface | null {
@@ -26,6 +36,7 @@ export function resolveStorefrontCspSurface(headers: Headers, pathname: string):
 
 export function stripStorefrontRendererHeader(headers: Headers): void {
   headers.delete(BUNDLE_RENDERER_HEADER);
+  headers.delete(BUNDLE_NONCE_HEADER);
 }
 
 function directive(name: string, values: readonly string[]): string {

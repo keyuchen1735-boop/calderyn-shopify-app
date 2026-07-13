@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
 import StorefrontCollection, { loader } from "../storefront.collections.$handle";
+import { requireLegacyLoaderData } from "./storefront-runtime-test-data";
 
 const { getCatalogMock, loadPublishedMock, loaderDataRef } = vi.hoisted(() => ({
   getCatalogMock: vi.fn(), loadPublishedMock: vi.fn(), loaderDataRef: { current: null as unknown },
@@ -26,7 +27,7 @@ describe("collection route on the block spine", () => {
       kind: "template", pageKey: "collection",
       blocks: [{ id: "cg", type: "collectionGrid", layout: { x: 0, y: 0, w: 12, h: 6 }, props: {} }],
     });
-    const data = await (await loader(args("apparel"))).json();
+    const data = requireLegacyLoaderData(await (await loader(args("apparel"))).json());
     expect(data.doc).toBeTruthy();
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(StorefrontCollection))).toContain("cd-store__grid");
@@ -34,7 +35,7 @@ describe("collection route on the block spine", () => {
 
   it("falls back to the legacy grid when there is no template doc", async () => {
     loadPublishedMock.mockResolvedValue(null);
-    const data = await (await loader(args("apparel"))).json();
+    const data = requireLegacyLoaderData(await (await loader(args("apparel"))).json());
     expect(data.doc).toBeNull();
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(StorefrontCollection))).toContain("cd-store__grid");

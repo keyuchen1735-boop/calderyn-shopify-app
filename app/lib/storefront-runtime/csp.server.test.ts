@@ -4,7 +4,9 @@ import {
   isStorefrontBundleReadEnabled,
   isStorefrontDocumentPath,
   markStorefrontBundleRendered,
+  resolveStorefrontBundleNonce,
   resolveStorefrontCspSurface,
+  stripStorefrontRendererHeader,
 } from "./csp.server";
 
 const trustedMedia = {
@@ -13,6 +15,14 @@ const trustedMedia = {
 };
 
 describe("storefront document CSP", () => {
+  it("carries the route renderer nonce into entry.server and strips the internal header", () => {
+    const headers = new Headers();
+    markStorefrontBundleRendered(headers, "route-owned-nonce");
+    expect(resolveStorefrontBundleNonce(headers)).toBe("route-owned-nonce");
+    stripStorefrontRendererHeader(headers);
+    expect(headers.has("X-Calderyn-Storefront-Nonce")).toBe(false);
+  });
+
   it("allows exact trusted live-media origins without arbitrary HTTPS", () => {
     const csp = buildStorefrontCsp({ nonce: "nonce-value", surface: "browse", ...trustedMedia });
     expect(csp).toContain("'nonce-nonce-value'");

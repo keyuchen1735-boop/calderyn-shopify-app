@@ -10,6 +10,7 @@ import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
 import {
   buildStorefrontCsp,
+  resolveStorefrontBundleNonce,
   resolveStorefrontCspSurface,
   stripStorefrontRendererHeader,
 } from "./lib/storefront-runtime/csp.server";
@@ -158,7 +159,7 @@ export default async function handleRequest(
 ) {
   const pathname = new URL(request.url).pathname;
   const storefrontNonce = resolveStorefrontCspSurface(responseHeaders, pathname)
-    ? randomBytes(18).toString("base64url")
+    ? resolveStorefrontBundleNonce(responseHeaders) ?? randomBytes(18).toString("base64url")
     : undefined;
   addDocumentResponseHeaders(request, responseHeaders);
   applySecurityHeaders(responseHeaders, pathname, storefrontNonce);

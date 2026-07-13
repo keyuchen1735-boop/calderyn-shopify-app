@@ -5,6 +5,7 @@ import type { RouteArtifact, StorefrontBundleV1 } from "~/lib/storefront-bundle/
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 import {
+  renderStorefrontSurface,
   renderCheckoutRoute,
   renderStorefrontRoute,
   type PublicPresentationData,
@@ -69,6 +70,45 @@ function artifact(overrides: Partial<RouteArtifact> = {}): RouteArtifact {
 }
 
 describe("compiled-node server renderer", () => {
+  it("renders shell and route artifacts from one immutable bundle with identical compiled keys", () => {
+    const compiled = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const bundle: StorefrontBundleV1 = {
+      ...compiled,
+      shell: {
+        ...compiled.shell,
+        tree: [{
+          kind: "element",
+          id: "cd-shell-home-link",
+          tag: "a",
+          attributes: {},
+          routeTarget: { routeId: "home", params: {} },
+          children: [{ kind: "text", value: "Home" }],
+        }, ...compiled.shell.tree],
+      },
+    };
+    const publicHtml = renderToStaticMarkup(renderStorefrontSurface({
+      bundle,
+      routeId: "home",
+      data,
+      nonce: "same-request-nonce",
+      mode: "public",
+    }));
+    const previewHtml = renderToStaticMarkup(renderStorefrontSurface({
+      bundle,
+      routeId: "home",
+      data,
+      nonce: "same-request-nonce",
+      mode: "preview",
+    }));
+
+    expect(publicHtml).toContain('data-cd-bundle-shell="home"');
+    expect(publicHtml).toContain('data-cd-bundle-route="home"');
+    expect(publicHtml).toContain('nonce="same-request-nonce"');
+    expect(previewHtml.match(/id="cd-[^"]+"/g)).toEqual(publicHtml.match(/id="cd-[^"]+"/g));
+    expect(previewHtml).toContain("/dashboard/store/preview?route=home");
+    expect(publicHtml).toContain('href="/storefront"');
+  });
+
   it("composes deterministic collision-resistant instance IDs across nested repeats", () => {
     const repeatedArtifact = artifact({
       tree: [{

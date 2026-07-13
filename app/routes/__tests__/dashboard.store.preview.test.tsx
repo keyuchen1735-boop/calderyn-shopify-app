@@ -4,6 +4,8 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { renderBlocks } from "~/lib/storebuilder/render";
 import { PdpBlockColumns } from "~/lib/storebuilder/pdp-layout";
 import type { Block, BlockDocument, RenderData } from "~/lib/storebuilder/types";
+import { compileBundle } from "~/lib/storefront-compiler/compile";
+import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 // vi.mock calls are hoisted above every import, so the mocks below still apply
 // before the route module is evaluated.
 import { loader, rewriteStorefrontHrefs, rewriteDocStorefrontHrefs } from "../dashboard.store.preview";
@@ -11,12 +13,14 @@ import { loader, rewriteStorefrontHrefs, rewriteDocStorefrontHrefs } from "../da
 // The route imports the storefront stylesheet as a URL and several server-only
 // data sources. Stub the URL import and the DB/session reads so the loader's
 // real doc-selection + render wiring runs in isolation.
-const { sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock } = vi.hoisted(() => ({
+const { sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   getCatalogMock: vi.fn(),
   getSettingsMock: vi.fn(),
   loadDraftMock: vi.fn(),
   getSupabaseMock: vi.fn(),
+  readPreviewBundleVersionMock: vi.fn(),
+  readPreviewCommerceSessionMock: vi.fn(),
 }));
 vi.mock("~/styles/storefront.css?url", () => ({ default: "/assets/storefront.css" }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sessionMock }));
@@ -24,6 +28,12 @@ vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }
 vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: getSettingsMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadDraftDoc: loadDraftMock }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: getSupabaseMock }));
+vi.mock("~/lib/storefront-runtime/preview-commerce.server", () => ({
+  readPreviewBundleVersion: readPreviewBundleVersionMock,
+  readPreviewCommerceSession: readPreviewCommerceSessionMock,
+  createPreviewCommerceAdapter: vi.fn(),
+  commitPreviewCommerceSession: vi.fn(),
+}));
 
 /** Chainable shops.org_slug read: getSupabase().from().select().eq().maybeSingle(). */
 function stubOrgSlug(orgSlug: string | null) {
@@ -49,10 +59,19 @@ const catalog = {
 };
 
 beforeEach(() => {
-  for (const m of [sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock]) m.mockReset();
+  for (const m of [sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock]) m.mockReset();
   sessionMock.mockResolvedValue({ shopId: SHOP });
   getCatalogMock.mockReturnValue(catalog);
   getSettingsMock.mockResolvedValue(settings);
+  readPreviewBundleVersionMock.mockResolvedValue(null);
+  readPreviewCommerceSessionMock.mockResolvedValue({
+    shopId: SHOP,
+    lines: [],
+    cart: {
+      id: `preview:${SHOP}`, count: 0, lines: [],
+      subtotal: { cents: 0, currency: "USD" }, discounts: { cents: 0, currency: "USD" }, total: { cents: 0, currency: "USD" },
+    },
+  });
 });
 
 async function loaderData(url: string) {
@@ -61,6 +80,28 @@ async function loaderData(url: string) {
 }
 
 describe("dashboard.store.preview loader", () => {
+  it("loads every runtime-1 preview route from the authenticated shop's immutable draft bundle", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    readPreviewBundleVersionMock.mockResolvedValue({
+      id: "draft-1", shopId: SHOP, sourceKind: "custom", status: "validated",
+      schemaVersion: 1, runtimeVersion: 1, validationProfileVersion: 1,
+      artifactHash: "sha256:draft", artifact: { sourceKind: "custom", bundle }, createdAt: "2026-07-13T00:00:00Z",
+    });
+    try {
+      for (const route of ["home", "search", "cart", "checkout"] as const) {
+        const result = await loaderData(`https://app.example.com/dashboard/store/preview?route=${route}`);
+        expect(result).toMatchObject({ runtime: 1, bundleId: "draft-1", routeId: route });
+      }
+      expect(sessionMock).toHaveBeenCalledTimes(4);
+      expect(loadDraftMock).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
   it("renders the merchant's generated draft home doc as real storefront HTML", async () => {
     const draft: BlockDocument = {
       kind: "singleton",

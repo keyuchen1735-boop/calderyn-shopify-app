@@ -1,6 +1,14 @@
-import type { StorefrontBundleV1 } from "~/lib/storefront-bundle/types";
+import type { DataRequirement, StorefrontBundleV1, StorefrontRouteId } from "~/lib/storefront-bundle/types";
 import { getSupabase } from "~/lib/supabase.server";
+import { isUuid } from "~/lib/ids";
 import { isStorefrontBundleReadEnabled } from "./csp.server";
+import {
+  resolvePublicData,
+  routeIdForPublicContext,
+  type PublicDataDependencies,
+  type PublicPresentationData,
+  type PublicRouteContext,
+} from "./public-data.server";
 
 export interface StorefrontVersionRecord {
   id: string;
@@ -236,4 +244,78 @@ export async function resolveStorefrontRelease(input: {
     );
   }
   return resolvedVersion(fallback, published.id);
+}
+
+export interface Runtime1RouteData {
+  runtime: 1;
+  bundleId: string;
+  artifactHash: string;
+  routeId: StorefrontRouteId;
+  bundle: StorefrontBundleV1;
+  data: PublicPresentationData;
+}
+
+function routeRequirements(bundle: StorefrontBundleV1, route: PublicRouteContext): DataRequirement[] {
+  const routeId = routeIdForPublicContext(route);
+  const artifact = bundle.routes[routeId];
+  const required: DataRequirement[] = [...bundle.shell.requiredData, ...artifact.requiredData];
+  const force = (requirement: DataRequirement) => {
+    if (!required.some((entry) => entry.kind === requirement.kind)) required.push(requirement);
+  };
+  if (route.kind === "product") force({ kind: "currentProduct" });
+  if (route.kind === "collection") force({ kind: "currentCollection" });
+  if (route.kind === "search") force({ kind: "searchResults", limit: 24 });
+  if (route.kind === "cart") force({ kind: "cart" });
+  return required;
+}
+
+/** Resolve once, then derive shell, route artifact, and presentation data from that immutable bundle. */
+export async function resolveRuntime1Route(input: {
+  shopId: string;
+  route: PublicRouteContext;
+  bundleReadEnabled?: boolean;
+  reader?: StorefrontReleaseReader;
+  dataDependencies?: PublicDataDependencies;
+}): Promise<Runtime1RouteData | null> {
+  if (!(input.bundleReadEnabled ?? isStorefrontBundleReadEnabled())) return null;
+  if (!isUuid(input.shopId)) return null;
+  const release = await resolveStorefrontRelease(input);
+  if (release.kind !== "runtime1") return null;
+  return resolveRuntime1VersionRoute({ ...input, version: release.version });
+}
+
+export async function resolveRuntime1VersionRoute(input: {
+  shopId: string;
+  route: PublicRouteContext;
+  version: StorefrontVersionRecord;
+  dataDependencies?: PublicDataDependencies;
+}): Promise<Runtime1RouteData | null> {
+  const bundle = input.version.runtimeVersion === 1 && input.version.artifact.sourceKind !== "legacy"
+    ? input.version.artifact.bundle
+    : null;
+  if (!bundle) return null;
+  const routeId = routeIdForPublicContext(input.route);
+  const data = await resolvePublicData({
+    shopId: input.shopId,
+    route: input.route,
+    requiredData: routeRequirements(bundle, input.route),
+  }, input.dataDependencies);
+  return {
+    runtime: 1,
+    bundleId: input.version.id,
+    artifactHash: input.version.artifactHash,
+    routeId,
+    bundle,
+    data,
+  };
+}
+
+export async function hasRuntime1Storefront(input: {
+  shopId: string;
+  bundleReadEnabled?: boolean;
+  reader?: StorefrontReleaseReader;
+}): Promise<boolean> {
+  if (!(input.bundleReadEnabled ?? isStorefrontBundleReadEnabled())) return false;
+  if (!isUuid(input.shopId)) return false;
+  return (await resolveStorefrontRelease(input)).kind === "runtime1";
 }

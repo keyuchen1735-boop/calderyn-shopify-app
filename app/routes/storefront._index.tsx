@@ -1,5 +1,5 @@
 // app/routes/storefront._index.tsx
-import type { LoaderFunctionArgs, MetaFunction, MetaDescriptor } from "@remix-run/node";
+import type { HeadersFunction, LoaderFunctionArgs, MetaFunction, MetaDescriptor } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { getCatalog } from "~/lib/storefront/catalog.server";
@@ -18,8 +18,16 @@ import { buildHomeDraft } from "~/lib/seo/writer.server";
 import { safeMetaFromDraft } from "~/lib/seo/render.server";
 import { storefrontOrigin } from "~/lib/seo/origin.server";
 import type { BlockDocument } from "~/lib/storebuilder/types";
+import { randomBytes } from "node:crypto";
+import { resolveRuntime1Route } from "~/lib/storefront-runtime/release-resolution.server";
+import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-runtime/render";
+import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
+import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
+import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 
-export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Store" }];
+export const meta: MetaFunction<typeof loader> = ({ data }) =>
+  data && "seoMeta" in data ? data.seoMeta : [{ title: "Store" }];
+export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
 interface ExperimentArm {
   /** Set only on arm b — the champion doc renders when this is null. */
@@ -30,6 +38,13 @@ interface ExperimentArm {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
+  const runtime1 = await resolveRuntime1Route({ shopId, route: { kind: "home" } });
+  if (runtime1) {
+    const nonce = randomBytes(18).toString("base64url");
+    const headers = storefrontCacheHeaders({ routeId: "home", personalized: false });
+    markStorefrontBundleRendered(headers, nonce);
+    return json({ ...runtime1, nonce, seoMeta: [{ title: runtime1.data.store.name }] }, { headers });
+  }
   const catalog = getCatalog();
   // The visitor session backs live analytics; A/B bucketing resolves through the shared
   // experiments helper, which keys off the COOKIE id only — every surface (this doc swap, the
@@ -80,6 +95,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export default function StorefrontHome() {
-  const { doc, data } = useLoaderData<typeof loader>();
+  const loaded = useLoaderData<typeof loader>();
+  if (isRuntime1RenderData(loaded)) {
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "home", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="home" data={loaded.data} mode="public" /></>;
+  }
+  const { doc, data } = loaded;
   return <div className="cd-store__home">{renderBlocks(doc, { data })}</div>;
 }
