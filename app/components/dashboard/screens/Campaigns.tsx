@@ -16,6 +16,7 @@ import { creativeEmptyText } from "./campaign-creative-status";
 import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
 import { money, timeAgo } from "../format";
 import { CDIcon } from "../icons";
+import { EditBudgetModal } from "./EditBudgetModal";
 import {
   fetchAnalytics,
   executeCampaignAction,
@@ -49,7 +50,7 @@ const PENDING_SCORE: CampaignCalderynScore = {
 };
 
 /** Shared column template for the campaigns table (header + rows). */
-const CAMP_GRID = "minmax(0,1fr) 72px 96px 68px 54px 22px";
+const CAMP_GRID = "minmax(0,1fr) 72px 96px 68px 54px 104px 22px";
 
 const BADGE_ACTIVE = { color: "var(--green)", background: "var(--green-bg)" } as const;
 const BADGE_NEUTRAL = { color: "var(--text-2)", background: "var(--gray-bg)" } as const;
@@ -169,7 +170,115 @@ function ScreenHeader({
 }
 
 /* ---------- List rows ---------- */
-function CampaignRow({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
+/** Per-row quick actions: pause/resume (all platforms), edit budget + duplicate
+ *  (Meta only — the only platform with those write paths today). Rendered as
+ *  real <button>s, so the row itself can not be a <button> (invalid nesting);
+ *  see CampaignRow below. */
+function RowQuickActions({
+  app,
+  c,
+  onEditBudget,
+  onChanged,
+}: {
+  app: DashboardCtx;
+  c: CampaignVM;
+  onEditBudget: () => void;
+  onChanged: (patch: Partial<CampaignVM>) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const paused = c.status === "paused";
+  const isMeta = c.platform === "Meta";
+
+  const run = async (
+    type: "pause_campaign" | "resume_campaign" | "duplicate_campaign",
+    done: string,
+    patch: Partial<CampaignVM>,
+  ) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await executeCampaignAction(c.id, { type });
+      app.toast(done, "check", "success");
+      onChanged(patch);
+      // Local patch is instant; also kick a background refresh so the next
+      // full sync (e.g. duplicate's new row) reconciles for real.
+      app.refresh();
+    } catch (err) {
+      const message =
+        err instanceof DashboardApiError ? err.message : "Action failed — try again.";
+      app.toast(message, "x", "critical");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center"
+      style={{ gap: 6, justifyContent: "flex-end" }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <Tooltip content={paused ? "Resume" : "Pause"}>
+        <Btn
+          small
+          icon={paused ? "play" : "pause"}
+          className="cd-btn-icon"
+          ariaLabel={paused ? "Resume campaign" : "Pause campaign"}
+          disabled={busy}
+          onClick={() =>
+            paused
+              ? run("resume_campaign", "Campaign resumed.", { status: "active" })
+              : run("pause_campaign", "Campaign paused.", { status: "paused" })
+          }
+        >
+          {""}
+        </Btn>
+      </Tooltip>
+      {isMeta && (
+        <>
+          <Tooltip content="Edit daily budget">
+            <Btn
+              small
+              icon="pencil"
+              className="cd-btn-icon"
+              ariaLabel="Edit daily budget"
+              disabled={busy}
+              onClick={onEditBudget}
+            >
+              {""}
+            </Btn>
+          </Tooltip>
+          <Tooltip content="Duplicate (created paused)">
+            <Btn
+              small
+              icon="copy"
+              className="cd-btn-icon"
+              ariaLabel="Duplicate campaign"
+              disabled={busy}
+              onClick={() => run("duplicate_campaign", "Copy created on Meta (paused).", {})}
+            >
+              {""}
+            </Btn>
+          </Tooltip>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CampaignRow({
+  app,
+  c,
+  onClick,
+  onEditBudget,
+  onChanged,
+}: {
+  app: DashboardCtx;
+  c: CampaignVM;
+  onClick: () => void;
+  onEditBudget: () => void;
+  onChanged: (patch: Partial<CampaignVM>) => void;
+}) {
   const losing = c.roas_7d < c.breakeven_roas;
   const paused = c.status === "paused";
   // Spend/day prefers the real daily budget; falls back to the 7-day average
@@ -181,9 +290,23 @@ function CampaignRow({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
       ? Math.round(c.spend_7d / 7)
       : null;
   return (
-    <button
+    // A div with button semantics rather than a real <button>: the row nests
+    // the per-row action buttons (pause/resume, edit budget, duplicate),
+    // which are invalid inside <button>.
+    <div
+      role="button"
+      tabIndex={0}
       className="cd-camp-row"
       onClick={onClick}
+      onKeyDown={(e) => {
+        // Only when the row itself is focused — Enter/Space on a nested
+        // action button must trigger that button, not open the detail.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       data-dim={paused ? "1" : "0"}
       style={{ gridTemplateColumns: CAMP_GRID, padding: "14px 20px", opacity: paused ? 0.55 : undefined }}
     >
@@ -218,10 +341,11 @@ function CampaignRow({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
       <div className="text-right">
         <ScoreChip score={c.calderynScore ?? PENDING_SCORE} />
       </div>
+      <RowQuickActions app={app} c={c} onEditBudget={onEditBudget} onChanged={onChanged} />
       <div className="flex" style={{ justifyContent: "flex-end", color: "var(--text-3)" }}>
         <CDIcon name="chevronRight" size={15} />
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -257,6 +381,7 @@ function DraftRow({ d }: { d: CampaignDraftRow }) {
       <div className="text-right">
         <span className="cd-score" style={BAND_CHIP.nodata}>—</span>
       </div>
+      <div />
       <div />
     </div>
   );
@@ -977,9 +1102,16 @@ function CampaignList({
     return () => { live = false; };
   }, []);
 
+  // Local optimistic patches from row quick actions (pause/resume/budget),
+  // keyed by campaign id — merged over the server data until the next sync
+  // refetches it for real.
+  const [overrides, setOverrides] = useState<Record<string, Partial<CampaignVM>>>({});
+  const [budgetFor, setBudgetFor] = useState<CampaignVM | null>(null);
+  const merged = joined.map((c) => (overrides[c.id] ? { ...c, ...overrides[c.id] } : c));
+
   // Active campaigns sort to the top; within each status group, highest 7d
   // spend first. Paused rows still render (dimmed), just below the active ones.
-  const shown = sortActiveFirst(joined, (a, b) => b.spend_7d - a.spend_7d);
+  const shown = sortActiveFirst(merged, (a, b) => b.spend_7d - a.spend_7d);
 
   const loading = app.loading && joined.length === 0;
 
@@ -1059,9 +1191,19 @@ function CampaignList({
               <span>ROAS</span>
               <span className="text-right">Score</span>
               <span />
+              <span />
             </div>
             {shown.map((c) => (
-              <CampaignRow key={c.id} c={c} onClick={() => app.navigate("campaigns", c.id)} />
+              <CampaignRow
+                key={c.id}
+                app={app}
+                c={c}
+                onClick={() => app.navigate("campaigns", c.id)}
+                onEditBudget={() => setBudgetFor(c)}
+                onChanged={(patch) =>
+                  setOverrides((cur) => ({ ...cur, [c.id]: { ...cur[c.id], ...patch } }))
+                }
+              />
             ))}
             {drafts.map((d) => (
               <DraftRow key={d.id} d={d} />
@@ -1070,6 +1212,19 @@ function CampaignList({
         )}
       </div>
       <ScreenNewCreativeCard app={app} campaigns={shown} />
+      {budgetFor && (
+        <EditBudgetModal
+          app={app}
+          c={budgetFor}
+          onClose={() => setBudgetFor(null)}
+          onSaved={(newCents) =>
+            setOverrides((cur) => ({
+              ...cur,
+              [budgetFor.id]: { ...cur[budgetFor.id], daily_budget_cents: newCents },
+            }))
+          }
+        />
+      )}
     </div>
   );
 }

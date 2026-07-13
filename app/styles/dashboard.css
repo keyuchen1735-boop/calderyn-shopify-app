@@ -337,6 +337,7 @@
   .cd-btn-danger { background: var(--red); color: #fff; }
   .cd-btn-danger:hover { opacity: 0.88; }
   .cd-btn-sm { padding: 5.5px 12px; font-size: calc(12.5px * var(--type-scale)); }
+  .cd-btn-icon { padding: calc(7px * var(--density)); }
 
   /* ============ meters ============ */
   .cd-meter { background: var(--gray-bg); border-radius: 99px; overflow: hidden; width: 100%; }
@@ -1842,8 +1843,12 @@
 .cd-geo-pop[data-on="1"] { opacity: 1; }
 
 /* ---- campaigns ---- */
-.cd-camp-row { display: grid; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 13px 18px; background: transparent; border: 0; border-top: 0.5px solid var(--hairline); cursor: pointer; transition: background .12s; font: inherit; color: var(--text-1); }
-.cd-camp-row:first-of-type { border-top: 0; }
+.cd-camp-row { display: grid; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 13px 18px; background: transparent; border: 0; cursor: pointer; transition: background .12s; font: inherit; color: var(--text-1); }
+/* Row root is a div (role=button), not a real <button> — a real <button> can not
+   nest the per-row action buttons. :first-of-type would match the table-head
+   div (also a div) instead of the first row, so use a sibling combinator that
+   only cares about the .cd-camp-row class, not the tag. */
+.cd-camp-row ~ .cd-camp-row { border-top: 0.5px solid var(--hairline); }
 .cd-camp-row:hover { background: var(--gray-bg); }
 .cd-score { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; height: 27px; padding: 0 9px; border-radius: 8px; font-size: calc(14px * var(--type-scale)); font-weight: 700; font-variant-numeric: tabular-nums; }
 
