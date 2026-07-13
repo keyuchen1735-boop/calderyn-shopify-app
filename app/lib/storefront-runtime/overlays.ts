@@ -135,8 +135,26 @@ function projectCommerceHost(host: HTMLElement, layer: HTMLElement): CommercePro
   }
   let observer: ResizeObserver | null = null;
   let frameId: number | undefined;
-  const sync = (): void => setProjectedRect(host, placeholder.getBoundingClientRect());
+  let stopped = false;
+  let projectedRect = initialRect;
+  const sync = (): void => {
+    const nextRect = placeholder.getBoundingClientRect();
+    if (nextRect.left === projectedRect.left && nextRect.top === projectedRect.top &&
+      nextRect.width === projectedRect.width && nextRect.height === projectedRect.height) return;
+    setProjectedRect(host, nextRect);
+    projectedRect = nextRect;
+  };
+  const scheduleFrame = (): void => {
+    if (stopped || !view?.requestAnimationFrame) return;
+    frameId = view.requestAnimationFrame(() => {
+      frameId = undefined;
+      if (stopped || !host.isConnected || !placeholder.isConnected) return;
+      sync();
+      scheduleFrame();
+    });
+  };
   const stopSync = (): void => {
+    stopped = true;
     view?.removeEventListener("scroll", sync, true);
     view?.removeEventListener("resize", sync);
     observer?.disconnect();
@@ -157,12 +175,7 @@ function projectCommerceHost(host: HTMLElement, layer: HTMLElement): CommercePro
     const Observer = view?.ResizeObserver;
     observer = Observer ? new Observer(sync) : null;
     observer?.observe(placeholder);
-    if ((initialRect.width === 0 || initialRect.height === 0) && view?.requestAnimationFrame) {
-      frameId = view.requestAnimationFrame(() => {
-        frameId = undefined;
-        sync();
-      });
-    }
+    scheduleFrame();
     return { host, placeholder, originalHostStyle, stopSync };
   } catch (error) {
     const rollbackErrors: unknown[] = [];

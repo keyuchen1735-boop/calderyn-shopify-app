@@ -204,6 +204,49 @@ describe("platform overlay portal", () => {
     expect(disconnect).toHaveBeenCalledOnce();
   });
 
+  it("tracks transform-driven geometry each frame and stops when the overlay closes", () => {
+    let frameId = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frameId += 1;
+      frames.set(frameId, callback);
+      return frameId;
+    });
+    const cancelFrame = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+      frames.delete(id);
+    });
+    const runNextFrame = (): void => {
+      const next = frames.entries().next().value;
+      if (!next) throw new Error("Expected a pending animation frame");
+      const [id, callback] = next;
+      frames.delete(id);
+      callback(0);
+    };
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="slot" data-cd-trusted-slot="addToCart"></div></section></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const slot = document.getElementById("slot") as HTMLElement;
+    vi.spyOn(slot, "getBoundingClientRect").mockReturnValue(rect(1, 2, 30, 40));
+    const manager = createOverlayManager(root);
+    manager.open("cd-home-a", null);
+    const placeholder = document.querySelector<HTMLElement>("[data-cd-overlay-commerce-placeholder]")!;
+    const placeholderRect = vi.spyOn(placeholder, "getBoundingClientRect");
+
+    placeholderRect.mockReturnValue(rect(11, 22, 30, 40));
+    runNextFrame();
+    expect(slot.style.left).toBe("11px");
+    expect(slot.style.top).toBe("22px");
+    placeholderRect.mockReturnValue(rect(31, 42, 30, 40));
+    runNextFrame();
+    expect(slot.style.left).toBe("31px");
+    expect(slot.style.top).toBe("42px");
+    expect(frames.size).toBe(1);
+
+    manager.close("cd-home-a", null);
+    expect(cancelFrame).toHaveBeenCalledOnce();
+    expect(frames.size).toBe(0);
+    manager.teardown();
+  });
+
   it("copies safe inherited presentation tokens onto the projected host", () => {
     document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div style="--commerce-accent: rebeccapurple; color: rgb(1, 2, 3); font-family: serif;"><div id="slot" data-cd-trusted-slot="addToCart"></div></div></section></main>`;
     const root = document.getElementById("root") as HTMLElement;
@@ -263,7 +306,7 @@ describe("platform overlay portal", () => {
     expect(slot.style.width).toBe("70px");
     expect(slot.style.height).toBe("80px");
     manager.teardown();
-    expect(cancelFrame).not.toHaveBeenCalled();
+    expect(cancelFrame).toHaveBeenCalledWith(17);
   });
 
   it("restores the exact source and background when hidden-surface projection fails", () => {
