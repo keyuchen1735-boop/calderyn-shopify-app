@@ -31,6 +31,7 @@ function sbStub(rows: {
     const chain: Record<string, unknown> = {
       select: () => chain,
       eq: () => chain,
+      neq: () => chain,
       gte: () => chain,
       in: () => chain,
       like: () => chain,
@@ -216,6 +217,28 @@ describe("buildLiveSnapshot", () => {
     expect(named.has("Unknown") || snap.by_location[8].sessions >= 1).toBe(true);
   });
 
+  it("hourly buckets align today's orders and sessions to store-local hours", async () => {
+    const sb = sbStub({
+      guardrail_config: { timezone: "UTC" },
+      storefront_event: [
+        SESS("s1", "page_view", { created_at: "2026-07-02T05:30:00Z" }),
+        SESS("s2", "page_view"), // 19:00Z
+      ],
+      orders: [{ id: "o1", total_cents: 5000, currency: "usd", created_at: "2026-07-02T18:10:00Z" }],
+      order_line: [],
+    });
+    const snap = await buildLiveSnapshot(sb, "shop-1", NOW);
+    // 20:00Z now → hours 0..20 (the in-progress hour is the last bucket).
+    expect(snap.hourly.sales_cents).toHaveLength(21);
+    expect(snap.hourly.sales_cents[18]).toBe(5000);
+    expect(snap.hourly.orders[18]).toBe(1);
+    expect(snap.hourly.sessions[5]).toBe(1);
+    expect(snap.hourly.sessions[19]).toBe(1);
+    // The hourly buckets and the headline total tell the same story.
+    expect(snap.hourly.sales_cents.reduce((a, b) => a + b, 0)).toBe(snap.total_sales_today_cents);
+    expect(snap.hourly.orders.reduce((a, b) => a + b, 0)).toBe(snap.orders_today);
+  });
+
   it("all-zero snapshot is valid (cold start)", async () => {
     const sb = sbStub({ guardrail_config: null, storefront_event: [], orders: [], order_line: [] });
     const snap = await buildLiveSnapshot(sb, "shop-1", NOW);
@@ -223,5 +246,8 @@ describe("buildLiveSnapshot", () => {
     expect(snap.total_sales_today_cents).toBe(0);
     expect(snap.top_products).toEqual([]);
     expect(typeof snap.generated_at).toBe("string");
+    // Even a dead-quiet store gets a drawable (≥2-point, all-zero) series.
+    expect(snap.hourly.sales_cents.length).toBeGreaterThanOrEqual(2);
+    expect(snap.hourly.sales_cents.every((v) => v === 0)).toBe(true);
   });
 });

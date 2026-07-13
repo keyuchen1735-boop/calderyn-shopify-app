@@ -8,14 +8,10 @@ import { CDIcon } from "../icons";
 import { money } from "../format";
 import { CalderynHexMark } from "~/components/CalderynHexMark";
 import * as client from "~/lib/dashboard/client";
-import { fetchCommerceAnalytics } from "~/lib/dashboard/commerce-analytics-client";
-import type { CommerceAnalytics } from "~/lib/dashboard/commerce-analytics-client";
 import {
-  analyticsCacheKey,
   cacheScreenData,
   cachedScreenData,
   catalogCacheKey,
-  prefetchScreenData,
   SCREEN_CACHE_KEYS,
 } from "~/lib/dashboard/screen-cache";
 import { canOneClickAlert, oneClickKind } from "~/lib/dashboard/one-click";
@@ -42,9 +38,9 @@ function LiveMark({ on }: { on: boolean }) {
   );
 }
 
-/** Tiny sparkline over a daily series; shares the extension's path geometry
- *  (app/lib/sparkline.ts) so both surfaces draw the same shape. Renders an
- *  empty box until data lands so the strip never reflows. */
+/** Tiny sparkline over today's hourly series; shares the extension's path
+ *  geometry (app/lib/sparkline.ts) so both surfaces draw the same shape.
+ *  Renders an empty box until data lands so the strip never reflows. */
 const Spark = memo(function Spark({ points }: { points: number[] }) {
   const d = sparklinePath(points, 100, 18);
   return (
@@ -76,31 +72,19 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   // realtime order ping). Cells render em dashes until numbers arrive.
   const { snapshot: live } = useLiveAnalytics(true);
 
-  // 30-day daily series for the metric sparklines — same request/key as the
-  // Analytics screen's default range. Rides prefetchScreenData so it dedups
-  // against the idle warm-up and skips entirely when the cache is already
-  // warm; session-stale is fine for a trend line (it's an enhancement).
-  const [commerce, setCommerce] = useState<CommerceAnalytics | null>(() =>
-    cachedScreenData<CommerceAnalytics>(analyticsCacheKey(30)),
-  );
-  useEffect(() => {
-    let alive = true;
-    void prefetchScreenData(analyticsCacheKey(30), () => fetchCommerceAnalytics(30)).then(() => {
-      if (alive) setCommerce(cachedScreenData<CommerceAnalytics>(analyticsCacheKey(30)));
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
+  // Sparkline series = TODAY, hour by hour, from the same snapshot as the
+  // numbers above them — a $0 day draws a flat line instead of the old 14-day
+  // history whose spikes contradicted the zeros. Optional-chained because a
+  // session-cached snapshot may predate the hourly field.
   const series = useMemo(() => {
-    const days = commerce?.daily.slice(-14) ?? [];
+    const h = live?.hourly;
     return {
-      gross: days.map((d) => d.grossCents),
-      orders: days.map((d) => d.orders),
-      conversion: days.map((d) => d.conversionPct ?? 0),
-      sessions: days.map((d) => d.sessions),
+      gross: h?.sales_cents ?? [],
+      orders: h?.orders ?? [],
+      conversion: h?.conversion_pct ?? [],
+      sessions: h?.sessions ?? [],
     };
-  }, [commerce]);
+  }, [live]);
 
   // catalogTotal is the first-run signal: 0 = brand-new store, null = not yet
   // fetched. Until the fetch lands, the loader's `hasCatalog` hint decides the
