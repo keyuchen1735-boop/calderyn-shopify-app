@@ -23,6 +23,7 @@ import {
 
 import dashboardUtils from "~/styles/dashboard-utils.css?url";
 import dashboard from "~/styles/dashboard.css?url";
+import shipping from "~/styles/shipping.css?url";
 import rglStyles from "react-grid-layout/css/styles.css?url";
 import rglResize from "react-resizable/css/styles.css?url";
 
@@ -49,6 +50,7 @@ export const links: LinksFunction = () => [
   { rel: "stylesheet", href: rglStyles },
   { rel: "stylesheet", href: rglResize },
   { rel: "stylesheet", href: dashboard },
+  { rel: "stylesheet", href: shipping },
 ];
 
 export async function loader({ request }: LoaderFunctionArgs) {
