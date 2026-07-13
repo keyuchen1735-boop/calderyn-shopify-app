@@ -3,12 +3,12 @@ import { gradeFromRow } from "~/lib/campaign-grade";
 import {
   Card,
   Btn,
-  Pan,
   Segmented,
   Placeholder,
   CountMoney,
   Tooltip,
   TableSkeleton,
+  PlatformMark,
 } from "../ui";
 import { scorePillStyle } from "../score-pill";
 import { creativeEmptyText } from "./campaign-creative-status";
@@ -186,9 +186,12 @@ function CampaignRow({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
       data-dim={paused ? "1" : "0"}
       style={{ gridTemplateColumns: CAMP_GRID, padding: "14px 20px", opacity: paused ? 0.55 : undefined }}
     >
-      <div className="min-w-0">
-        <div className="cd-row-title truncate">{c.name}</div>
-        <div className="cd-caption">{c.platform}</div>
+      <div className="min-w-0 flex items-center" style={{ gap: 11 }}>
+        <PlatformMark platform={c.platform} />
+        <div className="min-w-0">
+          <div className="cd-row-title truncate">{c.name}</div>
+          <div className="cd-caption">{c.platform}</div>
+        </div>
       </div>
       <div>
         <span className="cd-badge" style={paused ? BADGE_NEUTRAL : BADGE_ACTIVE}>
@@ -236,10 +239,13 @@ function DraftRow({ d }: { d: CampaignDraftRow }) {
         fontSize: 13.5,
       }}
     >
-      <div className="min-w-0">
-        <div className="cd-row-title truncate">{d.name}</div>
-        <div className="cd-caption">
-          {CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} · Draft · created {timeAgo(d.createdAt)}
+      <div className="min-w-0 flex items-center" style={{ gap: 11 }}>
+        <PlatformMark platform={CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} />
+        <div className="min-w-0">
+          <div className="cd-row-title truncate">{d.name}</div>
+          <div className="cd-caption">
+            {CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} · Draft · created {timeAgo(d.createdAt)}
+          </div>
         </div>
       </div>
       <div>
@@ -976,13 +982,57 @@ function CampaignList({
 
   const loading = app.loading && joined.length === 0;
 
+  // Restrained, plain-language readout of the whole account: which platforms are
+  // connected, how many campaigns are live, the combined daily spend, and how
+  // many are spending without earning their keep. Derived from real fields only.
+  const active = shown.filter((c) => c.status !== "paused");
+  // Only live campaigns spend, so paused budgets stay out of the $/day figure.
+  const perDayCents = active.reduce(
+    (sum, c) =>
+      sum +
+      (c.daily_budget_cents > 0
+        ? c.daily_budget_cents
+        : c.spend_7d > 0
+          ? Math.round(c.spend_7d / 7)
+          : 0),
+    0,
+  );
+  // A campaign with no spend yet (just launched, ad in review) isn't "losing
+  // money" — require real spend before judging, matching trueRoas().
+  const losers = active.filter((c) => c.spend_7d > 0 && c.roas_7d < c.breakeven_roas);
+  const platforms = Array.from(new Set(shown.map((c) => c.platform)));
+
   return (
     <div className="cd-screen">
-      <ScreenHeader title="Campaigns">
+      <ScreenHeader title="Campaigns" sub="Every ad platform, in one place.">
         <Btn kind="primary" small onClick={() => app.navigate("campaigns", "new")}>
           New campaign
         </Btn>
       </ScreenHeader>
+      {shown.length > 0 && (
+        <div
+          className="flex items-center"
+          style={{ gap: 14, flexWrap: "wrap", fontSize: 13, color: "var(--text-2)", margin: "-8px 2px 0" }}
+        >
+          <div className="flex items-center" style={{ gap: 5 }}>
+            {platforms.map((p) => (
+              <PlatformMark key={p} platform={p} />
+            ))}
+          </div>
+          <span>
+            <b style={{ color: "var(--text-1)", fontWeight: 600 }}>{active.length}</b> live{" "}
+            {active.length === 1 ? "campaign" : "campaigns"}
+          </span>
+          <span className="tabular-nums">
+            <b style={{ color: "var(--text-1)", fontWeight: 600 }}>{money(perDayCents)}</b>/day
+          </span>
+          {losers.length > 0 && (
+            <span className="cd-badge" style={{ color: "var(--red)", background: "var(--red-bg)" }}>
+              {losers.length} losing money
+            </span>
+          )}
+        </div>
+      )}
       <div className="cd-card" style={{ overflow: "hidden" }}>
         {loading ? (
           <TableSkeleton />
@@ -995,7 +1045,7 @@ function CampaignList({
             onAction={() => app.navigate("settings", null, "connectors")}
           />
         ) : (
-          <Pan min={560}>
+          <>
             <div
               className="cd-tablehd"
               style={{ gridTemplateColumns: CAMP_GRID, gap: 12, padding: "13px 20px" }}
@@ -1015,7 +1065,7 @@ function CampaignList({
             {drafts.map((d) => (
               <DraftRow key={d.id} d={d} />
             ))}
-          </Pan>
+          </>
         )}
       </div>
       <ScreenNewCreativeCard app={app} campaigns={shown} />
