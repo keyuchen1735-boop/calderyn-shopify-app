@@ -82,3 +82,23 @@ export async function getCampaignStatus(client: MetaClient, campaignId: string):
   const body = check(await client.get(`/${campaignId}`, { fields: "status" }));
   return String((body as { status?: unknown }).status ?? "UNKNOWN");
 }
+
+/** Deep-copy a campaign on Meta. The copy (campaign + ad sets + ads) is created
+ *  PAUSED so duplicating a winner never spends until the merchant turns it on. */
+export async function duplicateCampaign(
+  client: MetaClient,
+  campaignId: string,
+): Promise<{ copiedCampaignId: string }> {
+  const body = check(
+    await client.post(`/${campaignId}/copies`, {
+      deep_copy: "true",
+      status_option: "PAUSED",
+      rename_options: JSON.stringify({ rename_suffix: " (copy)" }),
+    }),
+  ) as MetaResponse & { copied_campaign_id?: string };
+  const copiedCampaignId = body.copied_campaign_id ? String(body.copied_campaign_id) : "";
+  if (!copiedCampaignId) {
+    throw new Error("Meta copy response had no copied_campaign_id");
+  }
+  return { copiedCampaignId };
+}

@@ -471,6 +471,14 @@ export async function fetchCampaignDirection(id: string): Promise<CampaignDirect
   return apiGet<CampaignDirectionDTO>(`/dashboard/api/campaigns/${encodeURIComponent(id)}/direction`);
 }
 
+/** Per-campaign daily spend+revenue series for the detail chart (default 90d window). */
+export async function fetchCampaignSeries(id: string, days = 90): Promise<DailyRoasRow[]> {
+  const data = await apiGet<{ series: DailyRoasRow[] }>(
+    `/dashboard/api/campaigns/${encodeURIComponent(id)}/series?days=${days}`,
+  );
+  return data.series;
+}
+
 /** Top "frequently bought with" SKUs for one SKU (trailing 90 days). */
 export async function fetchSkuAffinity(id: string): Promise<SkuAffinityItem[]> {
   const data = await apiGet<{ affinity: SkuAffinityItem[] }>(

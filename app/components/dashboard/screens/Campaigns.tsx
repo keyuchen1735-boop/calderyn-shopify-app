@@ -9,18 +9,22 @@ import {
   CountMoney,
   Tooltip,
   TableSkeleton,
+  PlatformMark,
+  Sparkline,
 } from "../ui";
 import { scorePillStyle } from "../score-pill";
 import { creativeEmptyText } from "./campaign-creative-status";
 import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
 import { money, timeAgo } from "../format";
 import { CDIcon } from "../icons";
+import { EditBudgetModal } from "./EditBudgetModal";
 import {
   fetchAnalytics,
   executeCampaignAction,
   pushCreativeDraft,
   DashboardApiError,
   fetchCampaignCreatives,
+  fetchCampaignSeries,
   regenerateCampaign,
   screenCampaignCreative,
   type CampaignCreativesDTO,
@@ -40,7 +44,7 @@ import { DEFAULT_SPEND_CENTS } from "~/lib/screener/types";
 import { sortActiveFirst } from "~/lib/campaign-sort";
 import type { DashboardCtx } from "../context";
 import type { CampaignVM } from "../view-models";
-import type { CampaignGradeRow } from "~/lib/types";
+import type { CampaignGradeRow, DailyRoasRow } from "~/lib/types";
 
 const PENDING_SCORE: CampaignCalderynScore = {
   value: null, band: "nodata", performance: null, creative: null, confidence: "low",
@@ -48,7 +52,7 @@ const PENDING_SCORE: CampaignCalderynScore = {
 };
 
 /** Shared column template for the campaigns table (header + rows). */
-const CAMP_GRID = "minmax(0,1fr) 72px 96px 68px 54px 22px";
+const CAMP_GRID = "minmax(0,1fr) 72px 96px 68px 54px 104px 22px";
 
 const BADGE_ACTIVE = { color: "var(--green)", background: "var(--green-bg)" } as const;
 const BADGE_NEUTRAL = { color: "var(--text-2)", background: "var(--gray-bg)" } as const;
@@ -168,7 +172,115 @@ function ScreenHeader({
 }
 
 /* ---------- List rows ---------- */
-function CampaignRow({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
+/** Per-row quick actions: pause/resume (all platforms), edit budget + duplicate
+ *  (Meta only — the only platform with those write paths today). Rendered as
+ *  real <button>s, so the row itself can not be a <button> (invalid nesting);
+ *  see CampaignRow below. */
+function RowQuickActions({
+  app,
+  c,
+  onEditBudget,
+  onChanged,
+}: {
+  app: DashboardCtx;
+  c: CampaignVM;
+  onEditBudget: () => void;
+  onChanged: (patch: Partial<CampaignVM>) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const paused = c.status === "paused";
+  const isMeta = c.platform === "Meta";
+
+  const run = async (
+    type: "pause_campaign" | "resume_campaign" | "duplicate_campaign",
+    done: string,
+    patch: Partial<CampaignVM>,
+  ) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await executeCampaignAction(c.id, { type });
+      app.toast(done, "check", "success");
+      onChanged(patch);
+      // Local patch is instant; also kick a background refresh so the next
+      // full sync (e.g. duplicate's new row) reconciles for real.
+      app.refresh();
+    } catch (err) {
+      const message =
+        err instanceof DashboardApiError ? err.message : "Action failed — try again.";
+      app.toast(message, "x", "critical");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center"
+      style={{ gap: 6, justifyContent: "flex-end" }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <Tooltip content={paused ? "Resume" : "Pause"}>
+        <Btn
+          small
+          icon={paused ? "play" : "pause"}
+          className="cd-btn-icon"
+          ariaLabel={paused ? "Resume campaign" : "Pause campaign"}
+          disabled={busy}
+          onClick={() =>
+            paused
+              ? run("resume_campaign", "Campaign resumed.", { status: "active" })
+              : run("pause_campaign", "Campaign paused.", { status: "paused" })
+          }
+        >
+          {""}
+        </Btn>
+      </Tooltip>
+      {isMeta && (
+        <>
+          <Tooltip content="Edit daily budget">
+            <Btn
+              small
+              icon="pencil"
+              className="cd-btn-icon"
+              ariaLabel="Edit daily budget"
+              disabled={busy}
+              onClick={onEditBudget}
+            >
+              {""}
+            </Btn>
+          </Tooltip>
+          <Tooltip content="Duplicate (created paused)">
+            <Btn
+              small
+              icon="copy"
+              className="cd-btn-icon"
+              ariaLabel="Duplicate campaign"
+              disabled={busy}
+              onClick={() => run("duplicate_campaign", "Copy created on Meta (paused).", {})}
+            >
+              {""}
+            </Btn>
+          </Tooltip>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CampaignRow({
+  app,
+  c,
+  onClick,
+  onEditBudget,
+  onChanged,
+}: {
+  app: DashboardCtx;
+  c: CampaignVM;
+  onClick: () => void;
+  onEditBudget: () => void;
+  onChanged: (patch: Partial<CampaignVM>) => void;
+}) {
   const losing = c.roas_7d < c.breakeven_roas;
   const paused = c.status === "paused";
   // Spend/day prefers the real daily budget; falls back to the 7-day average
@@ -180,15 +292,32 @@ function CampaignRow({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
       ? Math.round(c.spend_7d / 7)
       : null;
   return (
-    <button
+    // A div with button semantics rather than a real <button>: the row nests
+    // the per-row action buttons (pause/resume, edit budget, duplicate),
+    // which are invalid inside <button>.
+    <div
+      role="button"
+      tabIndex={0}
       className="cd-camp-row"
       onClick={onClick}
+      onKeyDown={(e) => {
+        // Only when the row itself is focused — Enter/Space on a nested
+        // action button must trigger that button, not open the detail.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       data-dim={paused ? "1" : "0"}
       style={{ gridTemplateColumns: CAMP_GRID, padding: "14px 20px", opacity: paused ? 0.55 : undefined }}
     >
-      <div className="min-w-0">
-        <div className="cd-row-title truncate">{c.name}</div>
-        <div className="cd-caption">{c.platform}</div>
+      <div className="min-w-0 flex items-center" style={{ gap: 11 }}>
+        <PlatformMark platform={c.platform} />
+        <div className="min-w-0">
+          <div className="cd-row-title truncate">{c.name}</div>
+          <div className="cd-caption">{c.platform}</div>
+        </div>
       </div>
       <div>
         <span className="cd-badge" style={paused ? BADGE_NEUTRAL : BADGE_ACTIVE}>
@@ -214,10 +343,11 @@ function CampaignRow({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
       <div className="text-right">
         <ScoreChip score={c.calderynScore ?? PENDING_SCORE} />
       </div>
+      <RowQuickActions app={app} c={c} onEditBudget={onEditBudget} onChanged={onChanged} />
       <div className="flex" style={{ justifyContent: "flex-end", color: "var(--text-3)" }}>
         <CDIcon name="chevronRight" size={15} />
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -236,10 +366,13 @@ function DraftRow({ d }: { d: CampaignDraftRow }) {
         fontSize: 13.5,
       }}
     >
-      <div className="min-w-0">
-        <div className="cd-row-title truncate">{d.name}</div>
-        <div className="cd-caption">
-          {CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} · Draft · created {timeAgo(d.createdAt)}
+      <div className="min-w-0 flex items-center" style={{ gap: 11 }}>
+        <PlatformMark platform={CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} />
+        <div className="min-w-0">
+          <div className="cd-row-title truncate">{d.name}</div>
+          <div className="cd-caption">
+            {CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} · Draft · created {timeAgo(d.createdAt)}
+          </div>
         </div>
       </div>
       <div>
@@ -250,6 +383,7 @@ function DraftRow({ d }: { d: CampaignDraftRow }) {
       <div className="text-right">
         <span className="cd-score" style={BAND_CHIP.nodata}>—</span>
       </div>
+      <div />
       <div />
     </div>
   );
@@ -427,6 +561,23 @@ function CampaignDetail({
     fetchCampaignCreatives(c.id)
       .then((d) => { if (live) setCreativeData(d); })
       .catch(() => { if (live) setCreativesLoadError(true); });
+    return () => { live = false; };
+  }, [c.id]);
+
+  // Spend + ROAS history for the chart card, below. Null while loading (the
+  // card falls back to the existing empty state until it resolves). As with
+  // creativesLoadError above, a fetch failure must not masquerade as "no
+  // history yet" — that copy tells the merchant to wait for data that may
+  // already exist (rule 12, fail visibly).
+  const [series, setSeries] = useState<DailyRoasRow[] | null>(null);
+  const [seriesLoadError, setSeriesLoadError] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setSeries(null);
+    setSeriesLoadError(false);
+    fetchCampaignSeries(c.id)
+      .then((s) => { if (live) setSeries(s); })
+      .catch(() => { if (live) setSeriesLoadError(true); });
     return () => { live = false; };
   }, [c.id]);
 
@@ -619,19 +770,55 @@ function CampaignDetail({
     </Card>
   );
 
-  // No per-campaign daily spend/revenue series exists yet, so the chart card
-  // ships the design's honest no-data state rather than a fabricated series.
+  // Spend/day and ROAS/day sparklines from ad_spend_fact, aggregated per day
+  // by the server. Needs >=2 days to draw a line, so anything short of that
+  // falls back to the same honest empty state the card used to always show.
+  const spendSeries = series?.map((r) => r.spend_cents / 100) ?? [];
+  // Zero-spend days are dropped rather than mapped to 0 — a day can have
+  // revenue with no spend recorded yet (rounding/attribution lag), and a 0
+  // would draw a false dip. roasSeries renders in its own Sparkline (not
+  // index-paired with spendSeries), so dropping points is safe.
+  const roasSeries = (series ?? []).filter((r) => r.spend_cents > 0).map((r) => r.revenue_cents / r.spend_cents);
+  const chartWidth = narrow ? 260 : 440;
   const chartCard = (
     <Card>
       <div className="cd-anh-wrap">
         <div className="cd-anh">
           <CDIcon name="arrowUpRight" size={15} />
-          Spend vs revenue · 12 days
+          Spend vs revenue ·{" "}
+          {seriesLoadError
+            ? "unavailable"
+            : series
+              ? `${series.length} ${series.length === 1 ? "day" : "days"}`
+              : "loading"}
         </div>
       </div>
-      <div className="cd-nc-empty" style={{ minHeight: 120 }}>
-        No data yet · launch to start collecting
-      </div>
+      {seriesLoadError ? (
+        <div className="cd-nc-empty" style={{ minHeight: 120 }}>
+          Couldn't load history — refresh to retry
+        </div>
+      ) : !series || series.length < 2 ? (
+        <div className="cd-nc-empty" style={{ minHeight: 120 }}>
+          No history yet — data appears after the first day of spend
+        </div>
+      ) : (
+        <div className="flex flex-col" style={{ gap: 16, padding: "4px 0" }}>
+          <div>
+            <div className="cd-caption" style={{ marginBottom: 6 }}>Spend/day</div>
+            <Sparkline data={spendSeries} width={chartWidth} height={56} />
+          </div>
+          <div>
+            <div className="cd-caption" style={{ marginBottom: 6 }}>ROAS/day</div>
+            <Sparkline
+              data={roasSeries}
+              width={chartWidth}
+              height={56}
+              stroke="var(--green)"
+              refLine={c.breakeven_roas > 0 ? c.breakeven_roas : null}
+            />
+          </div>
+        </div>
+      )}
     </Card>
   );
 
@@ -970,19 +1157,100 @@ function CampaignList({
     return () => { live = false; };
   }, []);
 
+  // Local optimistic patches from row quick actions (pause/resume/budget),
+  // keyed by campaign id — merged over the server data until the next
+  // refresh lands.
+  const [overrides, setOverrides] = useState<Record<string, Partial<CampaignVM>>>({});
+  const [budgetFor, setBudgetFor] = useState<CampaignVM | null>(null);
+  // Reconcile patches once a new campaigns array arrives: executeAction
+  // updates the ad_campaign_dim mirror BEFORE responding, so the action's own
+  // refresh() reflects the patch and it can be cleared. But a live poll
+  // in flight before the action committed can land after the override is
+  // set, with pre-action data — clearing unconditionally would revert the
+  // row for ~15s until the next poll. So only drop an override once the
+  // fresh row actually reflects every field it patched; otherwise keep it.
+  // Keyed on array identity (a new fetch always allocates a new array), not
+  // deep equality, so unrelated re-renders still re-run the reconcile (cheap
+  // — it is a no-op once everything is reflected).
+  useEffect(() => {
+    setOverrides((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      const fresh = new Map(joined.map((c) => [c.id, c]));
+      let changed = false;
+      const next: Record<string, Partial<CampaignVM>> = {};
+      for (const [id, patch] of Object.entries(prev)) {
+        const freshRow = fresh.get(id);
+        const reflected =
+          freshRow != null &&
+          (Object.keys(patch) as (keyof CampaignVM)[]).every((k) => freshRow[k] === patch[k]);
+        if (reflected) {
+          changed = true;
+        } else {
+          next[id] = patch;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [app.campaigns, joined]);
+  const merged = joined.map((c) => (overrides[c.id] ? { ...c, ...overrides[c.id] } : c));
+
   // Active campaigns sort to the top; within each status group, highest 7d
   // spend first. Paused rows still render (dimmed), just below the active ones.
-  const shown = sortActiveFirst(joined, (a, b) => b.spend_7d - a.spend_7d);
+  const shown = sortActiveFirst(merged, (a, b) => b.spend_7d - a.spend_7d);
 
   const loading = app.loading && joined.length === 0;
 
+  // Restrained, plain-language readout of the whole account: which platforms are
+  // connected, how many campaigns are live, the combined daily spend, and how
+  // many are spending without earning their keep. Derived from real fields only.
+  const active = shown.filter((c) => c.status !== "paused");
+  // Only live campaigns spend, so paused budgets stay out of the $/day figure.
+  const perDayCents = active.reduce(
+    (sum, c) =>
+      sum +
+      (c.daily_budget_cents > 0
+        ? c.daily_budget_cents
+        : c.spend_7d > 0
+          ? Math.round(c.spend_7d / 7)
+          : 0),
+    0,
+  );
+  // A campaign with no spend yet (just launched, ad in review) isn't "losing
+  // money" — require real spend before judging, matching trueRoas().
+  const losers = active.filter((c) => c.spend_7d > 0 && c.roas_7d < c.breakeven_roas);
+  const platforms = Array.from(new Set(shown.map((c) => c.platform)));
+
   return (
     <div className="cd-screen">
-      <ScreenHeader title="Campaigns">
+      <ScreenHeader title="Campaigns" sub="Every ad platform, in one place.">
         <Btn kind="primary" small onClick={() => app.navigate("campaigns", "new")}>
           New campaign
         </Btn>
       </ScreenHeader>
+      {shown.length > 0 && (
+        <div
+          className="flex items-center"
+          style={{ gap: 14, flexWrap: "wrap", fontSize: 13, color: "var(--text-2)", margin: "-8px 2px 0" }}
+        >
+          <div className="flex items-center" style={{ gap: 5 }}>
+            {platforms.map((p) => (
+              <PlatformMark key={p} platform={p} />
+            ))}
+          </div>
+          <span>
+            <b style={{ color: "var(--text-1)", fontWeight: 600 }}>{active.length}</b> live{" "}
+            {active.length === 1 ? "campaign" : "campaigns"}
+          </span>
+          <span className="tabular-nums">
+            <b style={{ color: "var(--text-1)", fontWeight: 600 }}>{money(perDayCents)}</b>/day
+          </span>
+          {losers.length > 0 && (
+            <span className="cd-badge" style={{ color: "var(--red)", background: "var(--red-bg)" }}>
+              {losers.length} losing money
+            </span>
+          )}
+        </div>
+      )}
       <div className="cd-card" style={{ overflow: "hidden" }}>
         {loading ? (
           <TableSkeleton />
@@ -1008,9 +1276,19 @@ function CampaignList({
               <span>ROAS</span>
               <span className="text-right">Score</span>
               <span />
+              <span />
             </div>
             {shown.map((c) => (
-              <CampaignRow key={c.id} c={c} onClick={() => app.navigate("campaigns", c.id)} />
+              <CampaignRow
+                key={c.id}
+                app={app}
+                c={c}
+                onClick={() => app.navigate("campaigns", c.id)}
+                onEditBudget={() => setBudgetFor(c)}
+                onChanged={(patch) =>
+                  setOverrides((cur) => ({ ...cur, [c.id]: { ...cur[c.id], ...patch } }))
+                }
+              />
             ))}
             {drafts.map((d) => (
               <DraftRow key={d.id} d={d} />
@@ -1019,6 +1297,19 @@ function CampaignList({
         )}
       </div>
       <ScreenNewCreativeCard app={app} campaigns={shown} />
+      {budgetFor && (
+        <EditBudgetModal
+          app={app}
+          c={budgetFor}
+          onClose={() => setBudgetFor(null)}
+          onSaved={(newCents) =>
+            setOverrides((cur) => ({
+              ...cur,
+              [budgetFor.id]: { ...cur[budgetFor.id], daily_budget_cents: newCents },
+            }))
+          }
+        />
+      )}
     </div>
   );
 }
