@@ -2,6 +2,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { getSupabase } from "~/lib/supabase.server";
 import { backfillShop, syncProductInventorySettings } from "~/lib/ingest/backfill.server";
+import { repairOrderDestinationsForIntegration } from "~/lib/ingest/destination-repair.server";
 import { transformPendingWebhooks } from "~/lib/ingest/transform.server";
 import { transformPendingOwnedEvents } from "~/lib/ingest/owned/transform.server";
 import { reconcileAttributedRevenue } from "~/lib/attribution/revenue.server";
@@ -9,6 +10,7 @@ import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
+const MAX_DESTINATION_REPAIR_SHOPS = 5;
 
 // Stringify an unknown thrown value usefully. A raw Supabase/PostgREST error is a
 // plain object `{ message, details, hint, code }` (NOT an Error), so `String(err)`
@@ -41,6 +43,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     backfillErrors: [] as string[],
     inventorySettingsSynced: [] as string[],
     inventorySettingsErrors: [] as string[],
+    destinationRepair: { shops: 0, scanned: 0, updated: 0, checked: 0 },
+    destinationRepairErrors: [] as string[],
     transform: { processed: 0, facts: 0, dlq: 0 },
     transformError: null as string | null,
     ownedTransform: { processed: 0, facts: 0, dlq: 0 },
@@ -110,6 +114,44 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
   mark("inventory_settings");
+
+  // Legacy rows predate coarse destination ingestion. Process the least
+  // recently attempted incomplete integrations first so a large or failing
+  // shop cannot monopolize the bounded batch. The worker itself caps each shop
+  // at ten exact order IDs and advances only durable checked markers.
+  const { data: repairIntegrations, error: repairSelectError } = await sb
+    .from("shop_integrations")
+    .select(
+      "shop_id, destination_repair_attempted_at, shops!inner(shop_domain)",
+    )
+    .eq("kind", "shopify")
+    .in("sync_status", ["ready", "live"])
+    .is("destination_repair_completed_at", null)
+    .order("destination_repair_attempted_at", { ascending: true, nullsFirst: true })
+    .limit(MAX_DESTINATION_REPAIR_SHOPS);
+  if (repairSelectError) {
+    summary.destinationRepairErrors.push(`selection: ${stringifyError(repairSelectError)}`);
+  } else {
+    for (const row of repairIntegrations ?? []) {
+      const shopId = String(row.shop_id);
+      const domain = (row as unknown as { shops?: { shop_domain?: string } }).shops?.shop_domain;
+      if (!domain) continue;
+      try {
+        const repaired = await repairOrderDestinationsForIntegration(
+          { shopId, shopDomain: domain },
+          sb,
+        );
+        summary.destinationRepair.shops += 1;
+        summary.destinationRepair.scanned += repaired.scanned;
+        summary.destinationRepair.updated += repaired.updated;
+        summary.destinationRepair.checked += repaired.checked;
+      } catch (err) {
+        summary.destinationRepairErrors.push(`${domain}: ${stringifyError(err)}`);
+        console.error("[cron.ingest] destination repair failed for shop", shopId, err);
+      }
+    }
+  }
+  mark("destination_repair");
 
   // Phase 2: transform queued webhooks (isolated so a transform-query failure
   // doesn't abort the response).

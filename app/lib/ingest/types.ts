@@ -54,6 +54,9 @@ export type OrderRow = {
   customer_city: string | null;
   customer_region: string | null;
   customer_country: string | null;
+  // Non-null means destination presence (including a legitimate no-address
+  // result) has already been checked. Legacy rows remain null for repair.
+  destination_repair_checked_at: string;
   source_version: number;
   landing_site: string | null;
   referring_site: string | null;

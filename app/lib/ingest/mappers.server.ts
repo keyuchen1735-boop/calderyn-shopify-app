@@ -162,6 +162,7 @@ export function mapOrder(shopId: string, o: OrderNode): OrderRow {
     customer_country: destinationPart(
       o.shippingAddress?.countryCodeV2 ?? o.shippingAddress?.country,
     ),
+    destination_repair_checked_at: o.updatedAt,
     source_version: Date.parse(o.updatedAt),
     // backfill (GraphQL) does not carry landing/UTM — null them.
     landing_site: null,
@@ -346,6 +347,7 @@ export function parseOrderWebhook(p: RawOrderWebhook): {
     customer_country: destinationPart(
       p.shipping_address?.country_code ?? p.shipping_address?.country,
     ),
+    destination_repair_checked_at: updatedAt,
     source_version: Date.parse(updatedAt),
     landing_site: landingSite,
     referring_site: referringSite,

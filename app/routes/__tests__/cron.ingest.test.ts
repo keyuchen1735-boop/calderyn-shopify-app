@@ -5,17 +5,32 @@ import { loader } from "../cron.ingest";
 // Hoisted mocks — declared before any imports so vi.mock factory can reference
 // them (mirrors the cron.ingest-ads.test.ts pattern).
 // ---------------------------------------------------------------------------
-const { reconcileAttributedRevenue, transformPendingWebhooks, backfillShop, runShipCostResolution } =
+const {
+  reconcileAttributedRevenue,
+  transformPendingWebhooks,
+  backfillShop,
+  syncProductInventorySettings,
+  repairOrderDestinationsForIntegration,
+  runShipCostResolution,
+} =
   vi.hoisted(() => ({
     reconcileAttributedRevenue: vi.fn(async (_shopId: string, _sb: unknown) => {}),
     transformPendingWebhooks: vi.fn(async () => ({ processed: 2, facts: 3, dlq: 0 })),
     backfillShop: vi.fn(async () => {}),
+    syncProductInventorySettings: vi.fn(async () => 0),
+    repairOrderDestinationsForIntegration: vi.fn(async (_integration: { shopId: string }) => ({
+      scanned: 1,
+      updated: 1,
+      checked: 1,
+      completed: true,
+    })),
     runShipCostResolution: vi.fn(async (_sb: unknown, _shopId: string, _opts: unknown) => {}),
   }));
 
 vi.mock("~/lib/attribution/revenue.server", () => ({ reconcileAttributedRevenue }));
 vi.mock("~/lib/ingest/transform.server", () => ({ transformPendingWebhooks }));
-vi.mock("~/lib/ingest/backfill.server", () => ({ backfillShop }));
+vi.mock("~/lib/ingest/backfill.server", () => ({ backfillShop, syncProductInventorySettings }));
+vi.mock("~/lib/ingest/destination-repair.server", () => ({ repairOrderDestinationsForIntegration }));
 vi.mock("~/lib/ship-cost/runner.server", () => ({ runShipCostResolution }));
 
 // Fake Supabase modelling the two cron.ingest query shapes against a fixed set
@@ -26,20 +41,29 @@ vi.mock("~/lib/ship-cost/runner.server", () => ({ runShipCostResolution }));
 //   Phase 1 (backfill):    ...{eq|in}("sync_status", ...).limit(5)   → empty here
 //   Phase 3/4 (liveShops): ...{eq|in}("sync_status", ...) (thenable) → status-matched shops
 const ACTIVE_SHOPS = [
-  { shop_id: "s1", sync_status: "ready" },
-  { shop_id: "s2", sync_status: "ready" },
+  { shop_id: "s1", sync_status: "ready", shops: { shop_domain: "one.myshopify.com" } },
+  { shop_id: "s2", sync_status: "live", shops: { shop_domain: "two.myshopify.com" } },
 ];
+
+const repairSelection = { limit: 0, orderedBy: "", nullsFirst: false };
 
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     from: (table: string) => {
       if (table !== "shop_integrations") {
         // Not used in these tests — return a no-op chain
-        return { select: () => ({ eq: () => ({ eq: () => ({ limit: () => Promise.resolve({ data: [], error: null }) }) }) }) };
+        const noop = {
+          select: () => noop,
+          eq: () => noop,
+          is: () => noop,
+          limit: () => Promise.resolve({ data: [], error: null }),
+        };
+        return noop;
       }
       // Capture the sync_status filter from either .eq or .in so the thenable
       // resolves the shops whose status actually matches the query.
       let statusFilter: string[] = [];
+      let repairOnly = false;
       const chain = {
         select: () => chain,
         eq: (col: string, val: string) => {
@@ -50,10 +74,24 @@ vi.mock("~/lib/supabase.server", () => ({
           if (col === "sync_status") statusFilter = vals;
           return chain;
         },
-        limit: () => Promise.resolve({ data: [], error: null }), // backfill: always empty
+        is: (col: string) => {
+          if (col === "destination_repair_completed_at") repairOnly = true;
+          return chain;
+        },
+        order: (col: string, opts: { nullsFirst?: boolean }) => {
+          repairSelection.orderedBy = col;
+          repairSelection.nullsFirst = opts.nullsFirst === true;
+          return chain;
+        },
+        limit: (value: number) => {
+          if (!repairOnly) return Promise.resolve({ data: [], error: null }); // pending backfill
+          repairSelection.limit = value;
+          const data = ACTIVE_SHOPS.filter((s) => statusFilter.includes(s.sync_status)).slice(0, value);
+          return Promise.resolve({ data, error: null });
+        },
         then: (cb: (r: { data: unknown; error: null }) => unknown) => {
           const data = ACTIVE_SHOPS.filter((s) => statusFilter.includes(s.sync_status)).map(
-            (s) => ({ shop_id: s.shop_id }),
+            (s) => ({ shop_id: s.shop_id, shops: s.shops }),
           );
           return Promise.resolve(cb({ data, error: null }));
         },
@@ -72,6 +110,15 @@ function req(auth?: string): Request {
 describe("cron.ingest loader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    repairOrderDestinationsForIntegration.mockResolvedValue({
+      scanned: 1,
+      updated: 1,
+      checked: 1,
+      completed: true,
+    });
+    repairSelection.limit = 0;
+    repairSelection.orderedBy = "";
+    repairSelection.nullsFirst = false;
     process.env.CRON_SECRET = "s3cret";
   });
 
@@ -107,6 +154,7 @@ describe("cron.ingest loader", () => {
     expect(Object.keys(body.phaseMs)).toEqual([
       "backfill",
       "inventory_settings",
+      "destination_repair",
       "transform",
       "owned_transform",
       "attribution",
@@ -116,6 +164,45 @@ describe("cron.ingest loader", () => {
       expect(typeof ms).toBe("number");
       expect(ms).toBeGreaterThanOrEqual(0);
     }
+  });
+
+  it("fairly selects bounded incomplete ready/live integrations for destination repair", async () => {
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    expect(repairOrderDestinationsForIntegration).toHaveBeenCalledTimes(2);
+    expect(repairOrderDestinationsForIntegration).toHaveBeenCalledWith(
+      { shopId: "s1", shopDomain: "one.myshopify.com" },
+      expect.anything(),
+    );
+    expect(repairOrderDestinationsForIntegration).toHaveBeenCalledWith(
+      { shopId: "s2", shopDomain: "two.myshopify.com" },
+      expect.anything(),
+    );
+    expect(repairSelection).toEqual({
+      limit: 5,
+      orderedBy: "destination_repair_attempted_at",
+      nullsFirst: true,
+    });
+    expect(body.destinationRepair).toMatchObject({ shops: 2, scanned: 2, updated: 2, checked: 2 });
+    expect(body.destinationRepairErrors).toEqual([]);
+  });
+
+  it("keeps a failed repair retryable and continues with the next integration", async () => {
+    repairOrderDestinationsForIntegration.mockImplementation(async ({ shopId }: { shopId: string }) => {
+      if (shopId === "s1") throw new Error("transient Admin API failure");
+      return { scanned: 1, updated: 0, checked: 1, completed: true };
+    });
+
+    const res = await loader({ request: req("Bearer s3cret") } as never);
+    const body = await res.json();
+
+    expect(repairOrderDestinationsForIntegration).toHaveBeenCalledWith(
+      { shopId: "s2", shopDomain: "two.myshopify.com" },
+      expect.anything(),
+    );
+    expect(body.destinationRepairErrors).toEqual(["one.myshopify.com: transient Admin API failure"]);
+    expect(body.destinationRepair).toMatchObject({ shops: 1, checked: 1 });
   });
 
   it("records a ship-cost resolution failure in shipCostErrors and does not abort other shops", async () => {
