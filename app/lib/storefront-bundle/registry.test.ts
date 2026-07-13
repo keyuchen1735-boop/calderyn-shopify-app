@@ -68,6 +68,19 @@ describe("versioned storefront recipe registry", () => {
       expect(Object.isFrozen(recipe.versions)).toBe(true);
       expect(Object.isFrozen(activeVersion)).toBe(true);
       expect(Object.isFrozen(activeVersion?.routeBlueprints)).toBe(true);
+
+      const blueprintEntries = Object.entries(activeVersion!.routeBlueprints);
+      expect(new Set(blueprintEntries.map(([, blueprint]) => blueprint.compositionFamily)).size).toBe(7);
+      expect(new Set(blueprintEntries.map(([, blueprint]) => blueprint.heroTreatment)).size).toBe(7);
+      expect(new Set(blueprintEntries.map(([, blueprint]) => blueprint.scrollModel)).size).toBe(7);
+      expect(new Set(blueprintEntries.map(([, blueprint]) => blueprint.cardTopology)).size).toBe(7);
+      expect(new Set(blueprintEntries.map(([, blueprint]) => blueprint.signatureInteractions.join("|"))).size).toBe(7);
+      for (const [routeId, blueprint] of blueprintEntries) {
+        expect(blueprint.compositionFamily).toMatch(new RegExp(`\\.${routeId}$`));
+        expect(blueprint.heroTreatment).toMatch(new RegExp(`\\.${routeId}$`));
+        expect(blueprint.scrollModel).toMatch(new RegExp(`\\.${routeId}$`));
+        expect(blueprint.cardTopology).toMatch(new RegExp(`\\.${routeId}$`));
+      }
     }
     const semanticSignatures = STORE_TEMPLATE_REGISTRY.templates.map((recipe) => {
       const shell = recipe.versions.find((version) => version.templateVersion === recipe.activeVersion)!.routeBlueprints.shell;
@@ -169,5 +182,21 @@ describe("versioned storefront recipe registry", () => {
     expect(() => createStoreTemplateRegistry([base, { ...second, versions: base.versions }])).toThrow(
       /duplicate semantic signature/i,
     );
+    expect(() =>
+      createStoreTemplateRegistry([
+        {
+          ...base,
+          versions: [
+            {
+              ...active,
+              routeBlueprints: {
+                ...active.routeBlueprints,
+                home: active.routeBlueprints.shell,
+              },
+            },
+          ],
+        },
+      ]),
+    ).toThrow(/composition family|route semantic signature/i);
   });
 });

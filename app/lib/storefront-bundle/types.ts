@@ -83,7 +83,18 @@ export const RECIPE_COMPOSITION_FAMILIES = [
   "signal-patch-bay",
   "asymmetric-magazine",
 ] as const;
-export type RecipeCompositionFamily = (typeof RECIPE_COMPOSITION_FAMILIES)[number];
+export type RecipeCompositionIdentity = (typeof RECIPE_COMPOSITION_FAMILIES)[number];
+export const ROUTE_COMPOSITION_PATTERNS = {
+  shell: "persistent-utility-frame",
+  home: "narrative-entry-sequence",
+  collection: "faceted-catalog-index",
+  product: "media-purchase-split",
+  search: "query-result-workspace",
+  cart: "line-summary-ledger",
+  checkout: "trust-rail-flow",
+} as const;
+export type RouteCompositionPattern = (typeof ROUTE_COMPOSITION_PATTERNS)[StorefrontRecipeBlueprintId];
+export type RecipeCompositionFamily = `${RecipeCompositionIdentity}.${RouteCompositionPattern}.${StorefrontRecipeBlueprintId}`;
 
 export const RECIPE_HERO_TREATMENTS = [
   "configurator-workbench",
@@ -98,7 +109,18 @@ export const RECIPE_HERO_TREATMENTS = [
   "rig-signal-chain",
   "editorial-grid-hero",
 ] as const;
-export type RecipeHeroTreatment = (typeof RECIPE_HERO_TREATMENTS)[number];
+export type RecipeHeroIdentity = (typeof RECIPE_HERO_TREATMENTS)[number];
+export const ROUTE_HERO_PATTERNS = {
+  shell: "navigation-identity-band",
+  home: "immersive-brand-intro",
+  collection: "collection-context-banner",
+  product: "product-media-stage",
+  search: "query-state-header",
+  cart: "order-review-header",
+  checkout: "progress-trust-header",
+} as const;
+export type RouteHeroPattern = (typeof ROUTE_HERO_PATTERNS)[StorefrontRecipeBlueprintId];
+export type RecipeHeroTreatment = `${RecipeHeroIdentity}.${RouteHeroPattern}.${StorefrontRecipeBlueprintId}`;
 
 export const RECIPE_SCROLL_MODELS = [
   "guided-steps",
@@ -113,7 +135,18 @@ export const RECIPE_SCROLL_MODELS = [
   "modular-patching",
   "restrained-editorial",
 ] as const;
-export type RecipeScrollModel = (typeof RECIPE_SCROLL_MODELS)[number];
+export type RecipeScrollIdentity = (typeof RECIPE_SCROLL_MODELS)[number];
+export const ROUTE_SCROLL_PATTERNS = {
+  shell: "persistent-chrome",
+  home: "narrative-sequence",
+  collection: "sticky-facet-results",
+  product: "sticky-purchase-detail",
+  search: "sticky-query-results",
+  cart: "synchronized-line-summary",
+  checkout: "linear-step-flow",
+} as const;
+export type RouteScrollPattern = (typeof ROUTE_SCROLL_PATTERNS)[StorefrontRecipeBlueprintId];
+export type RecipeScrollModel = `${RecipeScrollIdentity}.${RouteScrollPattern}.${StorefrontRecipeBlueprintId}`;
 
 export const RECIPE_CARD_TOPOLOGIES = [
   "material-specimen-grid",
@@ -128,7 +161,18 @@ export const RECIPE_CARD_TOPOLOGIES = [
   "signal-modules",
   "magazine-grid",
 ] as const;
-export type RecipeCardTopology = (typeof RECIPE_CARD_TOPOLOGIES)[number];
+export type RecipeCardIdentity = (typeof RECIPE_CARD_TOPOLOGIES)[number];
+export const ROUTE_CARD_PATTERNS = {
+  shell: "navigation-utility-cluster",
+  home: "featured-story-modules",
+  collection: "browse-product-matrix",
+  product: "related-product-rail",
+  search: "ranked-result-list",
+  cart: "editable-line-items",
+  checkout: "fulfillment-payment-summary",
+} as const;
+export type RouteCardPattern = (typeof ROUTE_CARD_PATTERNS)[StorefrontRecipeBlueprintId];
+export type RecipeCardTopology = `${RecipeCardIdentity}.${RouteCardPattern}.${StorefrontRecipeBlueprintId}`;
 
 export type ProtectedStorefrontSlot =
   | "variantPicker"

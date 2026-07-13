@@ -14,6 +14,7 @@ const MAX_PROMPT_CODE_POINTS = 4_000;
 const MIN_PROMPT_SCORE = 6;
 const MIN_CATALOG_SCORE = 4;
 const MIN_MARGIN = 2;
+const NEGATION_FOCUS_WORDS = new Set(["only", "just", "merely", "exclusively", "simply"]);
 
 export function normalizeRoutingText(value: string): string {
   return value
@@ -161,10 +162,17 @@ function isNegativeNameSpan(promptTokens: string[], span: Span): boolean {
   const last = preceding[preceding.length - 1];
   if (last === "not" || last === "avoid" || last === "without") return true;
   const governor = preceding[preceding.length - 2];
+  if (governor === "not" && last && NEGATION_FOCUS_WORDS.has(last)) return false;
   if (last && (governor === "not" || governor === "avoid" || governor === "without")) {
     return true;
   }
   const priorGovernor = preceding[preceding.length - 3];
+  if (
+    priorGovernor === "not" &&
+    governor &&
+    NEGATION_FOCUS_WORDS.has(governor) &&
+    (last === "a" || last === "the")
+  ) return false;
   if ((last === "a" || last === "the") && governor && (priorGovernor === "not" || priorGovernor === "avoid" || priorGovernor === "without")) return true;
   return false;
 }

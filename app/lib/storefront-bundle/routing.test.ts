@@ -143,6 +143,21 @@ describe("deterministic store design resolver", () => {
     ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
   });
 
+  it("keeps focus constructions positive so multiple named recipes stay ambiguous", () => {
+    for (const prompt of [
+      "Not only Atelier but Soft Chemistry",
+      "Not just Atelier or Soft Chemistry",
+      "Not merely Atelier; also Soft Chemistry",
+      "Not exclusively Atelier, maybe Soft Chemistry",
+      "Not simply Atelier but Soft Chemistry",
+    ]) {
+      expect(resolveStoreDesign({ prompt, mode: "auto" }, evidence(), STORE_TEMPLATE_REGISTRY)).toMatchObject({
+        kind: "custom",
+        reason: "ambiguous_recipe_names",
+      });
+    }
+  });
+
   it("scores longest non-overlapping phrases once and excludes their prompt terms", () => {
     const result = resolveStoreDesign(
       { prompt: "clean skin care clean skin care sensitive skin", mode: "auto" },

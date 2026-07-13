@@ -1,10 +1,14 @@
 import type {
   CuratedFontId,
-  RecipeCardTopology,
-  RecipeCompositionFamily,
-  RecipeHeroTreatment,
+  RecipeCardIdentity,
+  RecipeCompositionIdentity,
+  RecipeHeroIdentity,
   RecipeProtectedSlotPlacement,
-  RecipeScrollModel,
+  RecipeScrollIdentity,
+  RouteCardPattern,
+  RouteCompositionPattern,
+  RouteHeroPattern,
+  RouteScrollPattern,
   StoreTemplateId,
   StoreTemplateRouteBlueprint,
   StoreTemplateVersionRecord,
@@ -18,6 +22,10 @@ import {
   RECIPE_COMPOSITION_FAMILIES,
   RECIPE_HERO_TREATMENTS,
   RECIPE_SCROLL_MODELS,
+  ROUTE_CARD_PATTERNS,
+  ROUTE_COMPOSITION_PATTERNS,
+  ROUTE_HERO_PATTERNS,
+  ROUTE_SCROLL_PATTERNS,
   isCuratedFontId,
 } from "./types";
 
@@ -40,16 +48,92 @@ const DEFAULT_OVERRIDE_SURFACE = {
 } as const;
 
 interface RecipeSemanticSignature {
-  compositionFamily: RecipeCompositionFamily;
-  heroTreatment: RecipeHeroTreatment;
-  scrollModel: RecipeScrollModel;
+  compositionFamily: RecipeCompositionIdentity;
+  heroTreatment: RecipeHeroIdentity;
+  scrollModel: RecipeScrollIdentity;
   displayFontId: CuratedFontId;
   bodyFontId: CuratedFontId;
   iconRules: readonly string[];
-  cardTopology: RecipeCardTopology;
+  cardTopology: RecipeCardIdentity;
   signatureInteractions: readonly string[];
   forbiddenGenericStructures: readonly string[];
 }
+
+interface RouteSemanticLayer {
+  compositionPattern: RouteCompositionPattern;
+  heroPattern: RouteHeroPattern;
+  scrollPattern: RouteScrollPattern;
+  cardPattern: RouteCardPattern;
+  iconRules: readonly string[];
+  signatureInteractions: readonly string[];
+  forbiddenGenericStructures: readonly string[];
+}
+
+const ROUTE_SEMANTIC_LAYERS: Readonly<Record<StorefrontRecipeBlueprintId, RouteSemanticLayer>> = {
+  shell: {
+    compositionPattern: ROUTE_COMPOSITION_PATTERNS.shell,
+    heroPattern: ROUTE_HERO_PATTERNS.shell,
+    scrollPattern: ROUTE_SCROLL_PATTERNS.shell,
+    cardPattern: ROUTE_CARD_PATTERNS.shell,
+    iconRules: ["persistent navigation marks", "cart status indicators"],
+    signatureInteractions: ["navigation state choreography", "cart drawer focus handoff"],
+    forbiddenGenericStructures: ["route hero content inside the shell", "route-owned commerce forms in global chrome"],
+  },
+  home: {
+    compositionPattern: ROUTE_COMPOSITION_PATTERNS.home,
+    heroPattern: ROUTE_HERO_PATTERNS.home,
+    scrollPattern: ROUTE_SCROLL_PATTERNS.home,
+    cardPattern: ROUTE_CARD_PATTERNS.home,
+    iconRules: ["brand-story wayfinding marks", "featured collection cues"],
+    signatureInteractions: ["hero-to-collection narrative handoff", "featured story module reveal"],
+    forbiddenGenericStructures: ["generic centered hero plus three cards", "collection filters in the brand entry sequence"],
+  },
+  collection: {
+    compositionPattern: ROUTE_COMPOSITION_PATTERNS.collection,
+    heroPattern: ROUTE_HERO_PATTERNS.collection,
+    scrollPattern: ROUTE_SCROLL_PATTERNS.collection,
+    cardPattern: ROUTE_CARD_PATTERNS.collection,
+    iconRules: ["facet state symbols", "product density controls"],
+    signatureInteractions: ["sticky facet result synchronization", "collection density switching"],
+    forbiddenGenericStructures: ["editorial hero obscuring browse controls", "product grids without collection context"],
+  },
+  product: {
+    compositionPattern: ROUTE_COMPOSITION_PATTERNS.product,
+    heroPattern: ROUTE_HERO_PATTERNS.product,
+    scrollPattern: ROUTE_SCROLL_PATTERNS.product,
+    cardPattern: ROUTE_CARD_PATTERNS.product,
+    iconRules: ["media position markers", "variant availability signals"],
+    signatureInteractions: ["media-to-variant synchronization", "sticky purchase detail progression"],
+    forbiddenGenericStructures: ["detached add-to-cart controls", "generic specification accordion stack"],
+  },
+  search: {
+    compositionPattern: ROUTE_COMPOSITION_PATTERNS.search,
+    heroPattern: ROUTE_HERO_PATTERNS.search,
+    scrollPattern: ROUTE_SCROLL_PATTERNS.search,
+    cardPattern: ROUTE_CARD_PATTERNS.search,
+    iconRules: ["query refinement marks", "result relevance signals"],
+    signatureInteractions: ["query refinement result handoff", "ranked result state transition"],
+    forbiddenGenericStructures: ["marketing hero above search feedback", "results without query or empty-state context"],
+  },
+  cart: {
+    compositionPattern: ROUTE_COMPOSITION_PATTERNS.cart,
+    heroPattern: ROUTE_HERO_PATTERNS.cart,
+    scrollPattern: ROUTE_SCROLL_PATTERNS.cart,
+    cardPattern: ROUTE_CARD_PATTERNS.cart,
+    iconRules: ["line quantity controls", "discount and subtotal status marks"],
+    signatureInteractions: ["line update summary synchronization", "checkout readiness transition"],
+    forbiddenGenericStructures: ["decorative content between lines and totals", "untrusted replacement cart controls"],
+  },
+  checkout: {
+    compositionPattern: ROUTE_COMPOSITION_PATTERNS.checkout,
+    heroPattern: ROUTE_HERO_PATTERNS.checkout,
+    scrollPattern: ROUTE_SCROLL_PATTERNS.checkout,
+    cardPattern: ROUTE_CARD_PATTERNS.checkout,
+    iconRules: ["checkout progress marks", "trust and fulfillment indicators"],
+    signatureInteractions: ["trusted checkout step progression", "order summary disclosure"],
+    forbiddenGenericStructures: ["merchant-authored payment controls", "promotional detours inside checkout flow"],
+  },
+};
 
 const RECIPE_SEMANTIC_SIGNATURES: Readonly<Record<StoreTemplateId, RecipeSemanticSignature>> = {
   "custom-bench": {
@@ -193,16 +277,38 @@ function protectedSlotsFor(blueprint: StorefrontRecipeBlueprintId): RecipeProtec
   }
 }
 
+function routeSemanticValue<Base extends string, Pattern extends string, Route extends string>(
+  base: Base,
+  pattern: Pattern,
+  route: Route,
+): `${Base}.${Pattern}.${Route}` {
+  return `${base}.${pattern}.${route}`;
+}
+
 function recipe(
   value: Omit<VersionedStoreTemplate, "activeVersion" | "versions" | "routeCapabilities" | "overrideSurface" | "previewSrc">,
 ): VersionedStoreTemplate {
   const blueprintRoot = `app/lib/storefront-recipes/${value.id}/bundle.ts`;
   const signature = RECIPE_SEMANTIC_SIGNATURES[value.id];
-  const blueprint = (blueprintId: StorefrontRecipeBlueprintId): StoreTemplateRouteBlueprint => ({
-    sourceRef: `${blueprintRoot}#${blueprintId}`,
-    ...signature,
-    protectedSlotPlacement: protectedSlotsFor(blueprintId),
-  });
+  const blueprint = (blueprintId: StorefrontRecipeBlueprintId): StoreTemplateRouteBlueprint => {
+    const routeLayer = ROUTE_SEMANTIC_LAYERS[blueprintId];
+    return {
+      sourceRef: `${blueprintRoot}#${blueprintId}`,
+      compositionFamily: routeSemanticValue(signature.compositionFamily, routeLayer.compositionPattern, blueprintId),
+      heroTreatment: routeSemanticValue(signature.heroTreatment, routeLayer.heroPattern, blueprintId),
+      scrollModel: routeSemanticValue(signature.scrollModel, routeLayer.scrollPattern, blueprintId),
+      displayFontId: signature.displayFontId,
+      bodyFontId: signature.bodyFontId,
+      iconRules: [...signature.iconRules, ...routeLayer.iconRules],
+      cardTopology: routeSemanticValue(signature.cardTopology, routeLayer.cardPattern, blueprintId),
+      protectedSlotPlacement: protectedSlotsFor(blueprintId),
+      signatureInteractions: [...signature.signatureInteractions, ...routeLayer.signatureInteractions],
+      forbiddenGenericStructures: [
+        ...signature.forbiddenGenericStructures,
+        ...routeLayer.forbiddenGenericStructures,
+      ],
+    };
+  };
   const routeBlueprints = {
     shell: blueprint("shell"),
     home: blueprint("home"),
@@ -384,6 +490,28 @@ function validateUniqueStrings(values: readonly string[], label: string, templat
   if (new Set(normalized).size !== normalized.length) throw new Error(`Duplicate ${label}: ${templateId}`);
 }
 
+function isRouteSemanticValue(
+  value: string,
+  recipeIdentities: ReadonlySet<string>,
+  routePattern: string,
+  blueprintId: StorefrontRecipeBlueprintId,
+): boolean {
+  const suffix = `.${routePattern}.${blueprintId}`;
+  return value.endsWith(suffix) && recipeIdentities.has(value.slice(0, -suffix.length));
+}
+
+function routeSemanticSignature(blueprint: StoreTemplateRouteBlueprint): string {
+  return JSON.stringify([
+    blueprint.compositionFamily,
+    blueprint.heroTreatment,
+    blueprint.scrollModel,
+    blueprint.cardTopology,
+    [...blueprint.iconRules].sort(),
+    [...blueprint.signatureInteractions].sort(),
+    [...blueprint.forbiddenGenericStructures].sort(),
+  ]);
+}
+
 function validateBlueprint(
   blueprint: StoreTemplateRouteBlueprint,
   blueprintId: StorefrontRecipeBlueprintId,
@@ -392,10 +520,18 @@ function validateBlueprint(
   if (!blueprint || !isSafeArtifactReference(blueprint.sourceRef)) {
     throw new Error(`Invalid route blueprint source reference: ${templateId}/${blueprintId}`);
   }
-  if (!COMPOSITION_FAMILIES.has(blueprint.compositionFamily)) throw new Error(`Invalid composition family: ${templateId}/${blueprintId}`);
-  if (!HERO_TREATMENTS.has(blueprint.heroTreatment)) throw new Error(`Invalid hero treatment: ${templateId}/${blueprintId}`);
-  if (!SCROLL_MODELS.has(blueprint.scrollModel)) throw new Error(`Invalid scroll model: ${templateId}/${blueprintId}`);
-  if (!CARD_TOPOLOGIES.has(blueprint.cardTopology)) throw new Error(`Invalid card topology: ${templateId}/${blueprintId}`);
+  if (!isRouteSemanticValue(blueprint.compositionFamily, COMPOSITION_FAMILIES, ROUTE_COMPOSITION_PATTERNS[blueprintId], blueprintId)) {
+    throw new Error(`Invalid composition family: ${templateId}/${blueprintId}`);
+  }
+  if (!isRouteSemanticValue(blueprint.heroTreatment, HERO_TREATMENTS, ROUTE_HERO_PATTERNS[blueprintId], blueprintId)) {
+    throw new Error(`Invalid hero treatment: ${templateId}/${blueprintId}`);
+  }
+  if (!isRouteSemanticValue(blueprint.scrollModel, SCROLL_MODELS, ROUTE_SCROLL_PATTERNS[blueprintId], blueprintId)) {
+    throw new Error(`Invalid scroll model: ${templateId}/${blueprintId}`);
+  }
+  if (!isRouteSemanticValue(blueprint.cardTopology, CARD_TOPOLOGIES, ROUTE_CARD_PATTERNS[blueprintId], blueprintId)) {
+    throw new Error(`Invalid card topology: ${templateId}/${blueprintId}`);
+  }
   if (!isCuratedFontId(blueprint.displayFontId) || !isCuratedFontId(blueprint.bodyFontId)) {
     throw new Error(`Invalid curated font: ${templateId}/${blueprintId}`);
   }
@@ -485,7 +621,14 @@ export function createStoreTemplateRegistry(
       ) {
         throw new Error(`Incomplete route blueprint metadata: ${template.id}`);
       }
-      for (const blueprintId of ALL_BLUEPRINTS) validateBlueprint(version.routeBlueprints[blueprintId], blueprintId, template.id);
+      const routeSemanticSignatures = new Set<string>();
+      for (const blueprintId of ALL_BLUEPRINTS) {
+        const blueprint = version.routeBlueprints[blueprintId];
+        validateBlueprint(blueprint, blueprintId, template.id);
+        const signature = routeSemanticSignature(blueprint);
+        if (routeSemanticSignatures.has(signature)) throw new Error(`Duplicate route semantic signature: ${template.id}`);
+        routeSemanticSignatures.add(signature);
+      }
     }
     if (!versionNumbers.has(template.activeVersion)) throw new Error(`Active version is not registered: ${template.id}`);
     const activeBlueprint = template.versions.find((version) => version.templateVersion === template.activeVersion)!.routeBlueprints.shell;
