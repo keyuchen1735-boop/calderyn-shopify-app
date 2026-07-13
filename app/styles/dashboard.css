@@ -2741,6 +2741,22 @@
   .npf-step-lab:not([data-active="1"]) { display: none; }
 }
 
+/* Product editor: one essential card, followed by compact disclosure rows. */
+.cd-product-editor-stack { display: flex; flex-direction: column; }
+.cd-product-editor-divider { height: 1px; margin: 16px 0; background: var(--hairline); }
+.cd-product-search-preview {
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+  padding: 10px 14px; border: 1px solid var(--hairline); border-radius: 10px;
+}
+.cd-product-search-title {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--accent); font-size: calc(14px * var(--type-scale)); font-weight: 550;
+}
+.cd-product-search-url { color: var(--green); font-size: calc(11.5px * var(--type-scale)); overflow-wrap: anywhere; }
+.cd-product-search-description {
+  display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+
 /* New-product flow: collapsed variant grid + shipping question */
 .cd-npf-prompt {
   position: relative; overflow: hidden; display: flex; align-items: center; gap: 8px;
@@ -2761,6 +2777,7 @@
 .cd-npf-shipq-btns { display: flex; gap: 6px; }
 
 @media (max-width: 560px) {
+  .cd-product-organize-grid { grid-template-columns: 1fr; }
   .cd-npf-prompt { flex-wrap: wrap; }
   .cd-npf-prompt > .cd-input { flex: 1 1 calc(100% - 44px); }
   .cd-npf-prompt > .cd-btn:nth-of-type(1) { margin-left: auto; }
