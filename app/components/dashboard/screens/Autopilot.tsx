@@ -53,8 +53,11 @@ function CalibrationTrainer({
   const [note, setNote] = useState("");
   // The one row whose "why" + reject reasons are expanded (null = all folded).
   const [openRow, setOpenRow] = useState<string | null>(null);
-  // Group-level approve-all in flight: items remaining, null when idle.
-  const [batchLeft, setBatchLeft] = useState<number | null>(null);
+  // Group-level approve-all in flight: which group is running + items
+  // remaining, null when idle. Keyed by group so only the running group's
+  // button shows the progress label (a bare count would bleed onto every
+  // other group's "Approve all" button).
+  const [batch, setBatch] = useState<{ key: MoveGroupKey; left: number } | null>(null);
 
   const queue = app.actionQueue;
   const ptsToGo = Math.max(0, 100 - Math.round(pct));
@@ -62,7 +65,7 @@ function CalibrationTrainer({
   // ONE teaching signal at a time, across both verbs: an in-flight approve
   // locks reject (and vice versa) so a single decision can never send the
   // calibration engine contradictory feedback.
-  const teachingBusy = approving !== null || rejectBusy || batchLeft !== null;
+  const teachingBusy = approving !== null || rejectBusy || batch !== null;
 
   // Cluster the queue by move type so nine cards read as three decisions;
   // groups keep the queue's own ordering inside themselves.
@@ -136,20 +139,20 @@ function CalibrationTrainer({
 
   // Sequential group approve — one real execution at a time, same as the Home
   // batch card. Failures toast inside executeAction and the run keeps going.
-  const approveAll = async (items: QueueProposalVM[]) => {
+  const approveAll = async (key: MoveGroupKey, items: QueueProposalVM[]) => {
     if (teachingBusy) return;
-    setBatchLeft(items.length);
+    setBatch({ key, left: items.length });
     try {
       for (const p of items) {
         const alert = app.alerts.find((a) => a.id === p.alertId);
         // oneClickKind re-narrows the string kind; callers only pass groups
         // where every item already passed canOneClick.
         if (alert && oneClickKind(p.action_kind)) await app.executeAction(alert, p.action_kind);
-        setBatchLeft((n) => (n === null ? null : Math.max(0, n - 1)));
+        setBatch((b) => (b === null ? null : { ...b, left: Math.max(0, b.left - 1) }));
       }
       app.refresh();
     } finally {
-      setBatchLeft(null);
+      setBatch(null);
     }
   };
 
@@ -213,9 +216,9 @@ function CalibrationTrainer({
                       type="button"
                       className="cd-btn cd-btn-secondary cd-btn-sm"
                       disabled={teachingBusy}
-                      onClick={() => void approveAll(g.items)}
+                      onClick={() => void approveAll(g.key, g.items)}
                     >
-                      {batchLeft !== null ? `Approving… ${batchLeft} left` : `Approve all ${g.items.length}`}
+                      {batch?.key === g.key ? `Approving… ${batch.left} left` : `Approve all ${g.items.length}`}
                     </button>
                   )}
                 </div>
