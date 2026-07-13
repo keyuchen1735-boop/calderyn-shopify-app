@@ -10,6 +10,7 @@
 // the secret is read per request (mirrors cookieKey() in lib/mcp_oauth.server.ts),
 // keeping the public store renderable even before env is fully wired.
 import { createCookie } from "@remix-run/node";
+import { isUuid } from "~/lib/ids";
 
 const COOKIE_NAME = "cd_cart";
 const MAX_AGE_SEC = 60 * 60 * 24 * 30; // 30 days
@@ -33,15 +34,34 @@ function cartCookie() {
   });
 }
 
+export interface CartIdentity {
+  cartId: string;
+  shopId: string;
+}
+
+function isCartIdentity(value: unknown): value is CartIdentity {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.cartId === "string" && isUuid(record.cartId)
+    && typeof record.shopId === "string" && record.shopId.length > 0;
+}
+
 /** Read the cart_id from the signed cookie, or null when absent/invalid. */
 export async function readCartId(request: Request): Promise<string | null> {
   const value = await cartCookie().parse(request.headers.get("Cookie"));
+  if (isCartIdentity(value)) return value.cartId;
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+/** Read a UUID cart id bound to the tenant that minted it. Legacy string cookies are unowned. */
+export async function readCartIdentity(request: Request): Promise<CartIdentity | null> {
+  const value: unknown = await cartCookie().parse(request.headers.get("Cookie"));
+  return isCartIdentity(value) ? value : null;
+}
+
 /** Serialize a Set-Cookie that persists the cart_id signed with the app secret. */
-export async function commitCartId(cartId: string): Promise<string> {
-  return cartCookie().serialize(cartId);
+export async function commitCartId(cartId: string, shopId?: string): Promise<string> {
+  return cartCookie().serialize(shopId ? { cartId, shopId } : cartId);
 }
 
 /**

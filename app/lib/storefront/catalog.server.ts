@@ -20,6 +20,7 @@ function pick(shopId: string): StorefrontCatalog {
 const routingCatalog: StorefrontCatalog = {
   listProducts: (shopId, opts) => pick(shopId).listProducts(shopId, opts),
   getProduct: (shopId, handle) => pick(shopId).getProduct(shopId, handle),
+  getVariantById: (shopId, variantId) => pick(shopId).getVariantById?.(shopId, variantId) ?? Promise.resolve(null),
   listCollections: (shopId) => pick(shopId).listCollections(shopId),
   getCollection: (shopId, handle) => pick(shopId).getCollection?.(shopId, handle) ?? Promise.resolve(null),
 };

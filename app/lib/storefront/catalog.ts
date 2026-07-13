@@ -9,6 +9,11 @@ export interface StorefrontCatalog {
    *  scope the id read to the shop and skip the full-catalog fetch. */
   listProducts(shopId: string, opts?: { collection?: string; ids?: string[]; limit?: number; query?: string }): Promise<StoreProduct[]>;
   getProduct(shopId: string, handle: string): Promise<StoreProduct | null>;
+  /** Direct commerce lookup that is not constrained by the presentation catalog cap. */
+  getVariantById?(
+    shopId: string,
+    variantId: string,
+  ): Promise<{ product: StoreProduct; variant: StoreVariant } | null>;
   getCollection?(shopId: string, handle: string): Promise<StoreCollection | null>;
   listCollections(shopId: string): Promise<StoreCollection[]>;
 }

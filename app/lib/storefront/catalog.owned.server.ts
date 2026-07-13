@@ -244,7 +244,13 @@ export const ownedCatalog: StorefrontCatalog = {
       .eq("shop_id", shopId)
       .eq("status", "active");
     if (restrictToIds) q = q.in("id", restrictToIds);
-    if (opts?.query) q = q.ilike("title", `%${opts.query.replaceAll("%", "\\%").replaceAll("_", "\\_")}%`);
+    if (opts?.query) {
+      const literal = opts.query
+        .replaceAll("\\", "\\\\")
+        .replaceAll("%", "\\%")
+        .replaceAll("_", "\\_");
+      q = q.ilike("title", `%${literal}%`);
+    }
     const limit = Math.min(Math.max(opts?.limit ?? MAX_STOREFRONT_PRODUCTS, 0), MAX_STOREFRONT_PRODUCTS);
     const { data: products, error } = await q.order("title").limit(limit);
     if (error) throw error;
@@ -267,6 +273,45 @@ export const ownedCatalog: StorefrontCatalog = {
     if (!p) return null;
     const [product] = await assemble(sb, shopId, [p as Row]);
     return product ?? null;
+  },
+
+  async getVariantById(shopId, variantId) {
+    const sb = getSupabase();
+    const variantResult = await sb
+      .from("variant_dim")
+      .select("id, product_id, sku, title, retail_price_cents, compare_at_price_cents, currency, inventory_tracked, inventory_on_hand")
+      .eq("shop_id", shopId)
+      .eq("id", variantId)
+      .maybeSingle();
+    if (variantResult.error) throw variantResult.error;
+    if (!variantResult.data) return null;
+
+    const variantRow = variantResult.data as Row;
+    const productResult = await sb
+      .from("product_dim")
+      .select("id, handle, title, description, category, tags")
+      .eq("shop_id", shopId)
+      .eq("id", String(variantRow.product_id))
+      .eq("status", "active")
+      .maybeSingle();
+    if (productResult.error) throw productResult.error;
+    if (!productResult.data) return null;
+
+    const sellable = await sellableByVariant(sb, shopId, [variantId]);
+    const productRow = productResult.data as Row;
+    const variant = toVariant(variantRow, sellable.get(variantId));
+    const product: StoreProduct = {
+      id: String(productRow.id),
+      handle: String(productRow.handle),
+      title: String(productRow.title),
+      description: (productRow.description as string | null) ?? "",
+      images: [],
+      variants: [variant],
+      collections: [],
+      category: (productRow.category as string | null) ?? null,
+      tags: (productRow.tags as string[] | null) ?? [],
+    };
+    return { product, variant };
   },
 
   async getCollection(shopId, handle) {

@@ -129,24 +129,44 @@ const PRISTINE: StoreProduct[] = [
   },
 ];
 
-const catalog = vi.hoisted(() => ({ products: [] as StoreProduct[] }));
+const catalog = vi.hoisted(() => ({
+  products: [] as StoreProduct[],
+  getVariantById: vi.fn(),
+}));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => store.client }));
 vi.mock("~/lib/storefront/catalog.server", () => ({
   getCatalog: () => ({
     listProducts: async () => catalog.products,
+    getVariantById: catalog.getVariantById,
     getProduct: async (_s: string, h: string) => catalog.products.find((p) => p.handle === h) ?? null,
     listCollections: async () => [],
   }),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
-import { buildCart, addCartLine, priceCart, priceLines, getCartOrigin } from "./cart.server";
+import {
+  buildCart,
+  addCartLine,
+  priceCart,
+  priceLines,
+  getCartOrigin,
+  setCartLineQuantity,
+  CartLineNotFoundError,
+} from "./cart.server";
 
 beforeEach(() => {
   store.db.cart.length = 0;
   store.db.cart_line.length = 0;
   catalog.products = structuredClone(PRISTINE);
+  catalog.getVariantById.mockReset();
+  catalog.getVariantById.mockImplementation(async (_shopId: string, variantId: string) => {
+    for (const product of catalog.products) {
+      const variant = product.variants.find((entry) => entry.id === variantId);
+      if (variant) return { product, variant };
+    }
+    return null;
+  });
 });
 
 describe("buildCart", () => {
@@ -160,6 +180,12 @@ describe("buildCart", () => {
 });
 
 describe("addCartLine", () => {
+  it("uses the direct shop-scoped variant lookup instead of a capped catalog scan", async () => {
+    const cart = await buildCart("shop-1");
+    const line = await addCartLine("shop-1", cart.id, "v-tee-s", 1);
+    expect(catalog.getVariantById).toHaveBeenCalledWith("shop-1", "v-tee-s");
+    expect(line.variantId).toBe("v-tee-s");
+  });
   it("snapshots unit price + currency + composed title from the catalog", async () => {
     const cart = await buildCart("shop-1");
     const line = await addCartLine("shop-1", cart.id, "v-tee-s", 2);
@@ -251,6 +277,42 @@ describe("priceCart", () => {
     await addCartLine("shop-1", cart.id, "v-tee-s", 1); // USD
     await addCartLine("shop-1", cart.id, "v-cap", 1); // EUR
     await expect(priceCart("shop-1", cart.id)).rejects.toThrow(/mixes currencies/);
+  });
+});
+
+describe("setCartLineQuantity", () => {
+  it("sets an authoritative absolute quantity without changing the add-time snapshot", async () => {
+    const cart = await buildCart("shop-1");
+    const line = await addCartLine("shop-1", cart.id, "v-tee-s", 2);
+
+    catalog.products[0].variants[0].priceCents = 4999;
+    const updated = await setCartLineQuantity("shop-1", cart.id, line.id, 7);
+
+    expect(updated).toMatchObject({ quantity: 7, unitPriceCents: 1999, currency: "usd" });
+  });
+
+  it("rejects invalid quantities before reading the cart or catalog", async () => {
+    await expect(setCartLineQuantity("shop-1", "cart-1", "line-1", 0)).rejects.toThrow(/1.*999/);
+    await expect(setCartLineQuantity("shop-1", "cart-1", "line-1", 1.5)).rejects.toThrow(/1.*999/);
+    await expect(setCartLineQuantity("shop-1", "cart-1", "line-1", 1000)).rejects.toThrow(/1.*999/);
+  });
+
+  it("rechecks live variant availability before changing quantity", async () => {
+    const cart = await buildCart("shop-1");
+    const line = await addCartLine("shop-1", cart.id, "v-tee-s", 1);
+    catalog.products[0].variants[0].available = false;
+
+    await expect(setCartLineQuantity("shop-1", cart.id, line.id, 3)).rejects.toThrow(/not available/);
+    expect(store.db.cart_line[0].quantity).toBe(1);
+  });
+
+  it("rejects a line outside the resolved shop and cart", async () => {
+    const cart = await buildCart("shop-a");
+    const line = await addCartLine("shop-a", cart.id, "v-tee-s", 1);
+
+    await expect(setCartLineQuantity("shop-b", cart.id, line.id, 2)).rejects.toBeInstanceOf(
+      CartLineNotFoundError,
+    );
   });
 });
 

@@ -80,6 +80,13 @@ export const fixtureCatalog: StorefrontCatalog = {
   async getProduct(_shopId, handle) {
     return PRODUCTS.find((p) => p.handle === handle) ?? null;
   },
+  async getVariantById(_shopId, variantId) {
+    for (const product of PRODUCTS) {
+      const variant = product.variants.find((entry) => entry.id === variantId);
+      if (variant) return { product, variant };
+    }
+    return null;
+  },
   async getCollection(_shopId, handle) {
     const collection = COLLECTIONS.find((entry) => entry.handle === handle);
     return collection
