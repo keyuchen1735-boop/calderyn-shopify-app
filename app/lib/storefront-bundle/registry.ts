@@ -1,11 +1,14 @@
 import type {
   StoreTemplateId,
+  StoreTemplateVersionRecord,
+  StorefrontRecipeBlueprintId,
   StorefrontRouteId,
   VersionedStoreTemplate,
   VersionedStoreTemplateRegistry,
 } from "./types";
 
 const ALL_ROUTES: readonly StorefrontRouteId[] = ["home", "collection", "product", "search", "cart", "checkout"];
+const ALL_BLUEPRINTS: readonly StorefrontRecipeBlueprintId[] = ["shell", ...ALL_ROUTES];
 const GENERIC_COMMERCE_TERMS = new Set(["shop", "product", "collection", "sale", "new", "premium", "gift"]);
 
 const DEFAULT_OVERRIDE_SURFACE = {
@@ -16,11 +19,28 @@ const DEFAULT_OVERRIDE_SURFACE = {
 } as const;
 
 function recipe(
-  value: Omit<VersionedStoreTemplate, "activeVersion" | "routeCapabilities" | "overrideSurface" | "previewSrc">,
+  value: Omit<VersionedStoreTemplate, "activeVersion" | "versions" | "routeCapabilities" | "overrideSurface" | "previewSrc">,
 ): VersionedStoreTemplate {
+  const blueprintRoot = `app/lib/storefront-recipes/${value.id}/bundle.ts`;
+  const routeBlueprints = Object.fromEntries(
+    ALL_BLUEPRINTS.map((blueprint) => [blueprint, `${blueprintRoot}#${blueprint}`]),
+  ) as Record<StorefrontRecipeBlueprintId, string>;
+  const version: StoreTemplateVersionRecord = {
+    templateVersion: 1,
+    baselineArtifact:
+      value.id === "atelier-nine"
+        ? "public/atelier-grid/index.html"
+        : `docs/superpowers/prototypes/storefront-recipes/${value.id}.html`,
+    screenshots: {
+      desktop: `public/storefront-recipes/${value.id}/baselines/v1-desktop.webp`,
+      mobile: `public/storefront-recipes/${value.id}/baselines/v1-mobile.webp`,
+    },
+    routeBlueprints,
+  };
   return {
     ...value,
     activeVersion: 1,
+    versions: [version],
     routeCapabilities: ALL_ROUTES,
     overrideSurface: DEFAULT_OVERRIDE_SURFACE,
     previewSrc: `/template-previews/${value.id}.webp`,
@@ -166,16 +186,67 @@ function normalizedKey(value: string): string {
   return value.normalize("NFKC").toLocaleLowerCase("und").replace(/[’‘`]/g, "'").replace(/[\p{Pd}-]+/gu, " ").replace(/\s+/g, " ").trim();
 }
 
+function isSafeArtifactReference(value: string): boolean {
+  return /^(?:app|docs|public)\/[A-Za-z0-9._/#-]+$/.test(value) && !value.includes("..") && !value.includes("//");
+}
+
+function freezeTemplate(template: VersionedStoreTemplate): VersionedStoreTemplate {
+  const versions = template.versions.map((version) =>
+    Object.freeze({
+      ...version,
+      screenshots: Object.freeze({ ...version.screenshots }),
+      routeBlueprints: Object.freeze({ ...version.routeBlueprints }),
+    }),
+  );
+  return Object.freeze({
+    ...template,
+    aliases: Object.freeze([...template.aliases]),
+    strongPhrases: Object.freeze([...template.strongPhrases]),
+    promptTerms: Object.freeze([...template.promptTerms]),
+    catalogTerms: Object.freeze([...template.catalogTerms]),
+    versions: Object.freeze(versions),
+    routeCapabilities: Object.freeze([...template.routeCapabilities]),
+    overrideSurface: Object.freeze({
+      designTokens: Object.freeze([...template.overrideSurface.designTokens]),
+      textSlots: Object.freeze([...template.overrideSurface.textSlots]),
+      optionalRegions: Object.freeze([...template.overrideSurface.optionalRegions]),
+      reorderableRegions: Object.freeze([...template.overrideSurface.reorderableRegions]),
+    }),
+  });
+}
+
 export function createStoreTemplateRegistry(
   templates: readonly VersionedStoreTemplate[],
   versions: { registryVersion?: number; routingVersion?: number } = {},
 ): VersionedStoreTemplateRegistry {
   const ids = new Set<StoreTemplateId>();
   const namesAndAliases = new Set<string>();
+  const validatedTemplates: VersionedStoreTemplate[] = [];
   for (const template of templates) {
     if (ids.has(template.id)) throw new Error(`Duplicate template ID: ${template.id}`);
     ids.add(template.id);
     if (template.activeVersion < 1 || !Number.isInteger(template.activeVersion)) throw new Error(`Invalid active version: ${template.id}`);
+    const versionNumbers = new Set<number>();
+    for (const version of template.versions) {
+      if (version.templateVersion < 1 || !Number.isInteger(version.templateVersion) || versionNumbers.has(version.templateVersion)) {
+        throw new Error(`Invalid template version record: ${template.id}`);
+      }
+      versionNumbers.add(version.templateVersion);
+      const artifactReferences = [version.baselineArtifact, version.screenshots.desktop, version.screenshots.mobile];
+      if (artifactReferences.some((reference) => !isSafeArtifactReference(reference))) {
+        throw new Error(`Invalid artifact reference: ${template.id}`);
+      }
+      const blueprintKeys = Object.keys(version.routeBlueprints);
+      if (
+        blueprintKeys.length !== ALL_BLUEPRINTS.length ||
+        ALL_BLUEPRINTS.some(
+          (blueprint) => !isSafeArtifactReference(version.routeBlueprints[blueprint]),
+        )
+      ) {
+        throw new Error(`Incomplete route blueprint metadata: ${template.id}`);
+      }
+    }
+    if (!versionNumbers.has(template.activeVersion)) throw new Error(`Active version is not registered: ${template.id}`);
     if (ALL_ROUTES.some((route) => !template.routeCapabilities.includes(route)) || template.routeCapabilities.length !== ALL_ROUTES.length) {
       throw new Error(`Incomplete route capabilities: ${template.id}`);
     }
@@ -200,11 +271,12 @@ export function createStoreTemplateRegistry(
         seen.add(normalized);
       }
     }
+    validatedTemplates.push(freezeTemplate(template));
   }
   return Object.freeze({
     registryVersion: versions.registryVersion ?? 1,
     routingVersion: versions.routingVersion ?? 1,
-    templates: Object.freeze([...templates]),
+    templates: Object.freeze(validatedTemplates),
   });
 }
 

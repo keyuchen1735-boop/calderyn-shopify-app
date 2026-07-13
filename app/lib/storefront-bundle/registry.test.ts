@@ -31,6 +31,25 @@ describe("versioned storefront recipe registry", () => {
       expect(recipe.strongPhrases.length).toBeGreaterThan(0);
       expect(recipe.promptTerms.length).toBeGreaterThan(1);
       expect(recipe.catalogTerms.length).toBeGreaterThan(1);
+      expect(recipe.versions.length).toBeGreaterThan(0);
+      const activeVersion = recipe.versions.find((version) => version.templateVersion === recipe.activeVersion);
+      expect(activeVersion).toBeDefined();
+      expect(activeVersion?.baselineArtifact).toMatch(/^(app|docs|public)\//);
+      expect(activeVersion?.screenshots.desktop).toMatch(/^public\//);
+      expect(activeVersion?.screenshots.mobile).toMatch(/^public\//);
+      expect(Object.keys(activeVersion?.routeBlueprints ?? {}).sort()).toEqual([
+        "cart",
+        "checkout",
+        "collection",
+        "home",
+        "product",
+        "search",
+        "shell",
+      ]);
+      expect(Object.isFrozen(recipe)).toBe(true);
+      expect(Object.isFrozen(recipe.versions)).toBe(true);
+      expect(Object.isFrozen(activeVersion)).toBe(true);
+      expect(Object.isFrozen(activeVersion?.routeBlueprints)).toBe(true);
     }
     expect(getStoreTemplate("atelier-nine").name).toBe("Atelier Grid");
   });
@@ -57,5 +76,31 @@ describe("versioned storefront recipe registry", () => {
     expect(() => createStoreTemplateRegistry([{ ...base, routeCapabilities: ["home", "product"] }])).toThrow(
       /route capabilities/i,
     );
+  });
+
+  it("rejects missing active versions, incomplete blueprints, and unsafe artifact references", () => {
+    const base = STORE_TEMPLATE_REGISTRY.templates[0];
+    expect(() => createStoreTemplateRegistry([{ ...base, activeVersion: 99 }])).toThrow(/active version/i);
+    expect(() =>
+      createStoreTemplateRegistry([
+        {
+          ...base,
+          versions: [
+            {
+              ...base.versions[0],
+              routeBlueprints: { ...base.versions[0].routeBlueprints, shell: "" },
+            },
+          ],
+        },
+      ]),
+    ).toThrow(/route blueprint/i);
+    expect(() =>
+      createStoreTemplateRegistry([
+        {
+          ...base,
+          versions: [{ ...base.versions[0], baselineArtifact: "https://example.com/template.html" }],
+        },
+      ]),
+    ).toThrow(/artifact reference/i);
   });
 });

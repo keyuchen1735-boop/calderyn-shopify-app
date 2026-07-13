@@ -78,6 +78,40 @@ describe("deterministic store design resolver", () => {
     expect(substring.kind).toBe("custom");
   });
 
+  it("does not treat narrative originality or compounded no-template gaps as explicit custom intent", () => {
+    expect(
+      resolveStoreDesign(
+        { prompt: "We make something completely new for every product launch", mode: "auto" },
+        evidence(),
+        STORE_TEMPLATE_REGISTRY,
+      ),
+    ).toMatchObject({ kind: "custom", reason: "low_confidence" });
+    expect(
+      resolveStoreDesign(
+        { prompt: "Avoid ever choosing to use any kind of template for my clean skincare store", mode: "auto" },
+        evidence(),
+        STORE_TEMPLATE_REGISTRY,
+      ),
+    ).toMatchObject({ kind: "recipe", templateId: "soft-chemistry" });
+  });
+
+  it("keeps governed recipe-name negation local to that occurrence", () => {
+    expect(
+      resolveStoreDesign(
+        { prompt: "Do not pick Atelier; use Soft Chemistry", mode: "auto" },
+        evidence(),
+        STORE_TEMPLATE_REGISTRY,
+      ),
+    ).toMatchObject({ kind: "recipe", templateId: "soft-chemistry", selectionKind: "explicit_name" });
+    expect(
+      resolveStoreDesign(
+        { prompt: "Do not choose Soft Chemistry; use Atelier", mode: "auto" },
+        evidence(),
+        STORE_TEMPLATE_REGISTRY,
+      ),
+    ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
+  });
+
   it("scores longest non-overlapping phrases once and excludes their prompt terms", () => {
     const result = resolveStoreDesign(
       { prompt: "clean skin care clean skin care sensitive skin", mode: "auto" },
@@ -139,5 +173,19 @@ describe("deterministic store design resolver", () => {
       expect(first.margin).toBeGreaterThanOrEqual(2);
       expect(first.reasons.length).toBeGreaterThan(0);
     }
+  });
+
+  it("never falls back to global metadata for a manual recipe resolution", () => {
+    const isolatedRegistry = {
+      ...STORE_TEMPLATE_REGISTRY,
+      templates: [STORE_TEMPLATE_REGISTRY.templates[0]],
+    };
+    expect(() =>
+      resolveStoreDesign(
+        { prompt: "", mode: "recipe", templateId: "atelier-nine" },
+        evidence(),
+        isolatedRegistry,
+      ),
+    ).toThrow(/supplied registry/i);
   });
 });

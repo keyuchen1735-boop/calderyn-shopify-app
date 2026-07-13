@@ -1,4 +1,4 @@
-import { getStoreTemplate, isStoreTemplateId } from "./registry";
+import { isStoreTemplateId } from "./registry";
 import type {
   CatalogRoutingEvidence,
   CatalogRoutingField,
@@ -113,27 +113,31 @@ function hasExplicitCustomIntent(prompt: string): boolean {
 
   for (const clause of clauses) {
     const clauseTokens = tokens(clause);
+    const standaloneOffset = clauseTokens[1] === "me" || clauseTokens[1] === "us" ? 2 : 1;
+    if (
+      imperatives.has(clauseTokens[0]) &&
+      clauseTokens.length === standaloneOffset + 3 &&
+      clauseTokens[standaloneOffset] === "something" &&
+      ((clauseTokens[standaloneOffset + 1] === "completely" && clauseTokens[standaloneOffset + 2] === "new") ||
+        (clauseTokens[standaloneOffset + 1] === "entirely" && clauseTokens[standaloneOffset + 2] === "original"))
+    ) return true;
     for (let index = 0; index < clauseTokens.length; index += 1) {
       const token = clauseTokens[index];
       if ((token === "no" || token === "without") && phraseWithin(clauseTokens, index + 1, 3, ["template", "theme"])) return true;
       if (token === "avoid" || (token === "do" && clauseTokens[index + 1] === "not")) {
         const afterNegative = token === "avoid" ? index + 1 : index + 2;
-        for (let cursor = afterNegative; cursor <= Math.min(clauseTokens.length - 1, afterNegative + 4); cursor += 1) {
-          if ((clauseTokens[cursor] === "use" || clauseTokens[cursor] === "apply") &&
-              phraseWithin(clauseTokens, cursor + 1, 4, ["template", "theme"])) return true;
+        const noTemplateWindow = clauseTokens.slice(afterNegative, afterNegative + 4);
+        const verbIndex = noTemplateWindow.findIndex((candidate) => candidate === "use" || candidate === "apply");
+        if (
+          verbIndex >= 0 &&
+          noTemplateWindow.slice(verbIndex + 1).some((candidate) => candidate === "template" || candidate === "theme")
+        ) {
+          return true;
         }
       }
       if (!imperatives.has(token)) continue;
       const before = clauseTokens.slice(Math.max(0, index - 3), index);
       if (before.includes("not") || before.includes("avoid")) continue;
-
-      const optionalPerson = clauseTokens[index + 1] === "me" || clauseTokens[index + 1] === "us" ? 1 : 0;
-      const standaloneStart = index + 1 + optionalPerson;
-      if (
-        clauseTokens[standaloneStart] === "something" &&
-        ((clauseTokens[standaloneStart + 1] === "completely" && clauseTokens[standaloneStart + 2] === "new") ||
-          (clauseTokens[standaloneStart + 1] === "entirely" && clauseTokens[standaloneStart + 2] === "original"))
-      ) return true;
 
       const nounIndexes: number[] = [];
       for (let cursor = Math.max(0, index - 5); cursor <= Math.min(clauseTokens.length - 1, index + 5); cursor += 1) {
@@ -157,9 +161,14 @@ function isNegativeNameSpan(promptTokens: string[], span: Span): boolean {
   const last = preceding[preceding.length - 1];
   if (last === "not" || last === "avoid" || last === "without") return true;
   const governor = preceding[preceding.length - 2];
-  if ((last === "use" || last === "using" || last === "apply") && (governor === "not" || governor === "avoid" || governor === "without")) {
+  const governedVerbs = new Set([
+    "use", "using", "apply", "applying", "pick", "picking", "choose", "choosing", "select", "selecting", "try", "trying",
+  ]);
+  if (governedVerbs.has(last) && (governor === "not" || governor === "avoid" || governor === "without")) {
     return true;
   }
+  const priorGovernor = preceding[preceding.length - 3];
+  if ((last === "a" || last === "the") && governedVerbs.has(governor) && (priorGovernor === "not" || priorGovernor === "avoid" || priorGovernor === "without")) return true;
   return false;
 }
 
@@ -262,7 +271,8 @@ export function resolveStoreDesign(
   registry: VersionedStoreTemplateRegistry,
 ): StoreDesignResolution {
   if (request.mode === "recipe") {
-    const template = registry.templates.find((candidate) => candidate.id === request.templateId) ?? getStoreTemplate(request.templateId!);
+    const template = registry.templates.find((candidate) => candidate.id === request.templateId);
+    if (!template) throw new Error(`Template ${String(request.templateId)} is not present in the supplied registry`);
     return {
       kind: "recipe",
       templateId: template.id,

@@ -68,6 +68,17 @@ export type StoreDesignResolution =
     });
 
 export type StorefrontRouteId = "home" | "collection" | "product" | "search" | "cart" | "checkout";
+export type StorefrontRecipeBlueprintId = "shell" | StorefrontRouteId;
+
+export interface StoreTemplateVersionRecord {
+  templateVersion: number;
+  baselineArtifact: string;
+  screenshots: Readonly<{
+    desktop: string;
+    mobile: string;
+  }>;
+  routeBlueprints: Readonly<Record<StorefrontRecipeBlueprintId, string>>;
+}
 
 export interface RecipeOverrideSurface {
   designTokens: readonly string[];
@@ -86,6 +97,7 @@ export interface VersionedStoreTemplate {
   promptTerms: readonly string[];
   catalogTerms: readonly string[];
   activeVersion: number;
+  versions: readonly StoreTemplateVersionRecord[];
   routeCapabilities: readonly StorefrontRouteId[];
   overrideSurface: RecipeOverrideSurface;
   previewSrc: string;
@@ -99,8 +111,74 @@ export interface VersionedStoreTemplateRegistry {
   templates: readonly VersionedStoreTemplate[];
 }
 
-export type CuratedFontId = string;
-export type PublicBindingPath = string;
+export const CURATED_FONT_IDS = [
+  "archivo-narrow",
+  "atkinson-hyperlegible",
+  "fraunces",
+  "ibm-plex-mono",
+  "inter",
+  "roboto-slab",
+  "source-serif-4",
+  "space-grotesk",
+] as const;
+
+export type CuratedFontId = (typeof CURATED_FONT_IDS)[number];
+
+const CURATED_FONT_ID_SET: ReadonlySet<string> = new Set(CURATED_FONT_IDS);
+
+export function isCuratedFontId(value: unknown): value is CuratedFontId {
+  return typeof value === "string" && CURATED_FONT_ID_SET.has(value);
+}
+
+export const PUBLIC_BINDING_PATHS = [
+  "store.name",
+  "store.logo",
+  "store.tagline",
+  "store.policyLinks",
+  "store.socialLinks",
+  "collection.id",
+  "collection.handle",
+  "collection.title",
+  "collection.description",
+  "collection.image",
+  "collection.productCount",
+  "product.id",
+  "product.handle",
+  "product.title",
+  "product.description",
+  "product.primaryImage",
+  "product.images",
+  "product.price",
+  "product.compareAtPrice",
+  "product.availability",
+  "variant.id",
+  "variant.title",
+  "variant.price",
+  "variant.compareAtPrice",
+  "variant.availability",
+  "cart.id",
+  "cart.count",
+  "cart.lines",
+  "cart.subtotal",
+  "cart.discounts",
+  "cart.total",
+  "cartLine.id",
+  "cartLine.title",
+  "cartLine.quantity",
+  "cartLine.unitPrice",
+  "cartLine.total",
+  "search.query",
+  "search.results",
+  "search.nextCursor",
+] as const;
+
+export type PublicBindingPath = (typeof PUBLIC_BINDING_PATHS)[number];
+
+const PUBLIC_BINDING_PATH_SET: ReadonlySet<string> = new Set(PUBLIC_BINDING_PATHS);
+
+export function isPublicBindingPath(value: unknown): value is PublicBindingPath {
+  return typeof value === "string" && PUBLIC_BINDING_PATH_SET.has(value);
+}
 export type RuntimeCapability =
   | "navigation"
   | "localState"
