@@ -56,7 +56,7 @@ const Spark = memo(function Spark({ points }: { points: number[] }) {
 
 // Home — the calm landing screen. Greeting with the agent's one-liner, a
 // compact today strip, the decision deck (one ask at a time), the autopilot
-// card, and a prompt bar into the assistant. New stores get the setup guide.
+// card. New stores get the setup guide and a bar into the first-product flow.
 export default function Dashboard({ app }: { app: DashboardCtx }) {
   // Time-of-day greeting resolves the local hour POST-MOUNT only (SSR renders
   // "Welcome back") to avoid a UTC-vs-local hydration mismatch.
@@ -173,10 +173,6 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   const setupDone = 1 + (hasProduct ? 1 : 0) + (payoutsActive ? 1 : 0);
   const setupComplete = hasProduct && payoutsActive;
   const showSetup = !setupComplete && (freshStore || (payoutsKnown && !payoutsActive));
-
-  // ---- prompt bar (the front door to Ask Calderyn) ----
-  const [ask, setAsk] = useState("");
-  const askRef = useRef<HTMLInputElement | null>(null);
 
   // ---- decision deck ----
   // The queue is triaged, not listed: the biggest asks get one card at a time,
@@ -471,9 +467,10 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         </Card>
       )}
 
-      {freshStore ? (
+      {freshStore && (
         // Fresh store: the bar routes to the prompt-first product flow — no
-        // free text here, the editor owns the description.
+        // free text here, the editor owns the description. Established stores
+        // reach the assistant from the sidebar's Ask Calderyn instead.
         <button
           type="button"
           className="cd-promptbar"
@@ -483,37 +480,6 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           <span className="cd-promptbar-ph">Describe your first product…</span>
           <CDIcon name="arrowRight" size={15} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
         </button>
-      ) : (
-        // The page bar is only an entry point — the conversation lives in the
-        // assistant panel, so Home never floods. Submitting hands the text off
-        // and the panel opens with it as the first turn.
-        <form
-          className="cd-promptbar cd-promptbar-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const text = ask.trim();
-            // With text: the panel opens and sends it as the next turn.
-            // Empty: still open the panel (the bar's old click behavior — the
-            // thread stays reachable from here without typing).
-            app.openAssistant(text || undefined);
-            setAsk("");
-          }}
-          onClick={() => askRef.current?.focus()}
-        >
-          <LiveMark on={false} />
-          <input
-            ref={askRef}
-            className="cd-promptbar-in"
-            type="text"
-            placeholder="Tell Calderyn what to do…"
-            aria-label="Ask Calderyn"
-            value={ask}
-            onChange={(e) => setAsk(e.target.value)}
-          />
-          <button type="submit" className="cd-promptbar-send" aria-label="Send to Calderyn">
-            <CDIcon name="arrowRight" size={15} strokeWidth={1.9} />
-          </button>
-        </form>
       )}
 
       {showSetup && (

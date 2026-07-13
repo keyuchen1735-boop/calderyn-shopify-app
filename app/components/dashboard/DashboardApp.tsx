@@ -1437,10 +1437,7 @@ export default function DashboardApp({
             onClick={() => setAssistantSignal((n) => n + 1)}
           >
             <CDIcon name="assist" size={18} strokeWidth={1.8} />
-            <span>
-              Ask Calderyn
-              <span className="cd-ask-sub">Operator for every screen</span>
-            </span>
+            <span>Ask Calderyn</span>
           </button>
           {NAV_GROUPS.map((group) => (
             <div key={group.label} style={{ display: "contents" }}>
