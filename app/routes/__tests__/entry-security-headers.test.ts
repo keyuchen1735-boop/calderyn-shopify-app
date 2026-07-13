@@ -74,6 +74,17 @@ describe("applySecurityHeaders", () => {
     expect(csp).not.toContain("default-src");
   });
 
+  it("installs the storefront-specific nonce CSP without affecting dashboard policy", () => {
+    const storefront = new Headers();
+    applySecurityHeaders(storefront, "/storefront/products/shoe", "request-nonce");
+    expect(storefront.get("Content-Security-Policy") ?? "").toContain("script-src 'self' 'nonce-request-nonce'");
+    expect(storefront.get("Content-Security-Policy") ?? "").toContain("connect-src 'self'");
+
+    const dashboard = new Headers();
+    applySecurityHeaders(dashboard, "/dashboard", "request-nonce");
+    expect(dashboard.get("Content-Security-Policy") ?? "").not.toContain("script-src");
+  });
+
   it("allows same-origin framing on the studio draft-preview path (not DENY)", () => {
     // The Store studio iframes /dashboard/store/preview; DENY would blank it.
     const headers = new Headers();
