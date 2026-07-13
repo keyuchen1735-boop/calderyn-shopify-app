@@ -217,8 +217,14 @@ export async function buildLiveSnapshot(
     // sales use orders.created_at (no paid-at timestamp exists), and mixed
     // currencies would be summed as-is with the most recent order's currency
     // label — revisit when a multi-currency tenant onboards.
-    total_sales_today_cents:
+    // Gross today minus today's native refunds. Floored at 0: a refund
+    // processed today can settle a prior-day order (not in today's gross), so
+    // the netting can dip below zero — a negative "Sales today" headline is
+    // nonsensical to a merchant, so clamp it rather than surface it.
+    total_sales_today_cents: Math.max(
+      0,
       orders.reduce((n, o) => n + Number(o.total_cents), 0) - todayNativeRefundCents,
+    ),
     currency: orders[0]?.currency ?? "usd",
     orders_today: orders.length,
     funnel: {
