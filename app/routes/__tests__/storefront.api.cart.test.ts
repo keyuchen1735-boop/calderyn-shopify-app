@@ -36,7 +36,7 @@ vi.mock("~/lib/order/cart.server", () => ({
 }));
 
 // eslint-disable-next-line import/first -- route imports follow hoisted mocks
-import { commitCartId } from "~/lib/storefront/cart-cookie.server";
+import { commitCartId, readCartIdentity } from "~/lib/storefront/cart-cookie.server";
 // eslint-disable-next-line import/first
 import { loader as cartLoader } from "../storefront.api.cart";
 // eslint-disable-next-line import/first
@@ -56,6 +56,16 @@ const actionArgs = (request: Request) => ({ request, params: {}, context: {} }) 
 
 async function cookie(cartId = CART_ID, shopId = "shop-a") {
   return (await commitCartId(cartId, shopId)).split(";")[0];
+}
+
+async function legacyCookie(cartId = CART_ID) {
+  return (await commitCartId(cartId)).split(";")[0];
+}
+
+async function identityFromSetCookie(setCookie: string | null) {
+  return readCartIdentity(new Request("https://shop.example/storefront/api/cart", {
+    headers: setCookie ? { Cookie: setCookie.split(";")[0] } : {},
+  }));
 }
 
 async function jsonRequest(path: string, body: unknown, options: { cookie?: string; origin?: string; contentType?: string } = {}) {
@@ -80,6 +90,7 @@ beforeEach(() => {
   cart.addCartLine.mockImplementation(async () => { calls.push("add"); return {}; });
   cart.priceCart.mockImplementation(async (_shopId: string, cartId: string) => { calls.push("price"); return { cartId, lines: [], subtotalCents: 0, currency: "usd" }; });
   cart.setCartLineQuantity.mockResolvedValue({ id: "line-1", quantity: 3 });
+  cart.getCartState.mockReset();
   cart.getCartState.mockImplementation(async () => { calls.push("state"); return "cart"; });
 });
 
@@ -92,6 +103,31 @@ describe("storefront cart JSON bridge", () => {
     expect(response.headers.get("Cache-Control")).toContain("no-store");
     expect(response.headers.get("Vary")).toContain("Cookie");
     expect(await response.json()).toEqual({ ok: true, data: { cart: expect.objectContaining({ cartId: CART_ID }) } });
+  });
+
+  it("migrates a legacy signed UUID cookie only after shop-scoped active-cart verification", async () => {
+    const response = await cartLoader(loaderArgs(new Request("https://shop.example/storefront/api/cart", {
+      headers: { Cookie: await legacyCookie() },
+    })));
+    expect(calls).toEqual(["resolve", "state", "price"]);
+    expect(await identityFromSetCookie(response.headers.get("Set-Cookie"))).toEqual({
+      cartId: CART_ID,
+      shopId: "shop-a",
+    });
+    expect(await response.json()).toEqual({
+      ok: true,
+      data: { cart: expect.objectContaining({ cartId: CART_ID }) },
+    });
+  });
+
+  it("clears a legacy UUID cookie when that cart is foreign, missing, or consumed", async () => {
+    cart.getCartState.mockResolvedValueOnce(null);
+    const response = await cartLoader(loaderArgs(new Request("https://shop.example/storefront/api/cart", {
+      headers: { Cookie: await legacyCookie() },
+    })));
+    expect(cart.priceCart).not.toHaveBeenCalled();
+    expect(response.headers.get("Set-Cookie")).toContain("Max-Age=0");
+    expect(await response.json()).toEqual({ ok: true, data: { cart: null } });
   });
 
   it("rejects a signed cart belonging to another resolved shop before cart reads", async () => {
@@ -120,6 +156,20 @@ describe("storefront cart JSON bridge", () => {
     expect(cart.addCartLine).toHaveBeenCalledWith("shop-a", NEW_CART_ID, "v-1", 2);
     expect(response.headers.get("Set-Cookie")).toContain("cd_cart=");
     expect(await response.json()).toEqual({ ok: true, data: { cart: expect.objectContaining({ cartId: NEW_CART_ID }) } });
+  });
+
+  it("preserves an active legacy cart on add and upgrades its cookie", async () => {
+    const response = await addAction(actionArgs(await jsonRequest(
+      "/storefront/api/cart/add",
+      { variantId: "v-1", quantity: 2 },
+      { cookie: await legacyCookie() },
+    )));
+    expect(cart.buildCart).not.toHaveBeenCalled();
+    expect(cart.addCartLine).toHaveBeenCalledWith("shop-a", CART_ID, "v-1", 2);
+    expect(await identityFromSetCookie(response.headers.get("Set-Cookie"))).toEqual({
+      cartId: CART_ID,
+      shopId: "shop-a",
+    });
   });
 
   it("requires exact same-origin JSON mutations with strict bodies", async () => {
@@ -156,6 +206,19 @@ describe("storefront cart JSON bridge", () => {
 
     const invalid = await quantityAction(actionArgs(await jsonRequest("/storefront/api/cart/quantity", { lineId: "line-1", quantity: 1000 }, { cookie: await cookie() })));
     expect(invalid.status).toBe(422);
+  });
+
+  it("upgrades a verified legacy cookie on cart mutations", async () => {
+    const response = await quantityAction(actionArgs(await jsonRequest(
+      "/storefront/api/cart/quantity",
+      { lineId: "line-1", quantity: 3 },
+      { cookie: await legacyCookie() },
+    )));
+    expect(cart.setCartLineQuantity).toHaveBeenCalledWith("shop-a", CART_ID, "line-1", 3);
+    expect(await identityFromSetCookie(response.headers.get("Set-Cookie"))).toEqual({
+      cartId: CART_ID,
+      shopId: "shop-a",
+    });
   });
 
   it("supports scoped remove and clear without accepting cart IDs from the body", async () => {

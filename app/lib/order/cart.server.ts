@@ -157,45 +157,19 @@ export async function addCartLine(
     throw new VariantUnavailableError(variantId, "unavailable");
   }
 
-  const sb = getSupabase();
-  const existing = await sb
-    .from("cart_line")
-    .select(LINE_COLS)
-    .eq("shop_id", shopId)
-    .eq("cart_id", cartId)
-    .eq("variant_id", variantId)
-    .maybeSingle();
-  if (existing.error) throw existing.error;
-
-  if (existing.data) {
-    const line = mapLine(existing.data as Record<string, unknown>);
-    const bumped = await sb
-      .from("cart_line")
-      .update({ quantity: Math.min(line.quantity + quantity, MAX_LINE_QUANTITY) }) // keep original price/currency snapshot
-      .eq("shop_id", shopId)
-      .eq("id", line.id)
-      .select(LINE_COLS)
-      .single();
-    if (bumped.error) throw bumped.error;
-    if (!bumped.data) throw new Error("cart_line update returned no row");
-    return { ...mapLine(bumped.data as Record<string, unknown>), productId: resolved.product.id };
-  }
-
-  const { data, error } = await sb
-    .from("cart_line")
-    .insert({
-      shop_id: shopId,
-      cart_id: cartId,
-      variant_id: variantId,
-      quantity,
-      unit_price_cents: resolved.variant.priceCents, // SNAPSHOT
-      currency: resolved.variant.currency.toLowerCase(), // SNAPSHOT
-      title_snapshot: snapshotTitle(resolved.product, resolved.variant), // SNAPSHOT
-    })
-    .select(LINE_COLS)
-    .single();
+  const { data, error } = await getSupabase().rpc("cart_add_line_atomic", {
+    p_shop_id: shopId,
+    p_cart_id: cartId,
+    p_variant_id: variantId,
+    p_quantity: quantity,
+    p_unit_price_cents: resolved.variant.priceCents,
+    p_currency: resolved.variant.currency.toLowerCase(),
+    p_title_snapshot: snapshotTitle(resolved.product, resolved.variant),
+  });
   if (error) throw error;
-  if (!data) throw new Error("cart_line insert returned no row");
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("cart_add_line_atomic returned no row");
+  }
   return { ...mapLine(data as Record<string, unknown>), productId: resolved.product.id };
 }
 

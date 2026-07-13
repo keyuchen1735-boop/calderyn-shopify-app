@@ -29,7 +29,10 @@ export async function action({ request }: ActionFunctionArgs): Promise<Response>
   if (context.kind !== "active") return cartContextError(context);
   try {
     await setCartLineQuantity(shopId, context.identity.cartId, body.lineId, Number(body.quantity));
-    return storefrontOk({ cart: await priceCart(shopId, context.identity.cartId) });
+    return storefrontOk(
+      { cart: await priceCart(shopId, context.identity.cartId) },
+      context.upgradeCookie ? { headers: { "Set-Cookie": context.upgradeCookie } } : {},
+    );
   } catch (error) {
     const mapped = mapCartError(error);
     if (mapped) return mapped;

@@ -26,5 +26,8 @@ export async function action({ request }: ActionFunctionArgs): Promise<Response>
   const context = await resolveCartContext(request, shopId);
   if (context.kind !== "active") return cartContextError(context);
   await removeCartLine(shopId, context.identity.cartId, body.lineId);
-  return storefrontOk({ cart: await priceCart(shopId, context.identity.cartId) });
+  return storefrontOk(
+    { cart: await priceCart(shopId, context.identity.cartId) },
+    context.upgradeCookie ? { headers: { "Set-Cookie": context.upgradeCookie } } : {},
+  );
 }

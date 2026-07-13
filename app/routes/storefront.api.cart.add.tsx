@@ -34,6 +34,7 @@ export async function action({ request }: ActionFunctionArgs): Promise<Response>
   let setCookie: string | null = null;
   if (context.kind === "active") {
     cartId = context.identity.cartId;
+    setCookie = context.upgradeCookie;
   } else {
     cartId = (await buildCart(shopId)).id;
     setCookie = await commitCartId(cartId, shopId);

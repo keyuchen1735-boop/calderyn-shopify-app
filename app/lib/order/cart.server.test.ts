@@ -92,7 +92,35 @@ const store = vi.hoisted(() => {
     }
   }
 
-  const client = { from: (table: string) => new Builder(table) };
+  const rpc = vi.fn(async (name: string, args: Row) => {
+    if (name !== "cart_add_line_atomic") return { data: null, error: { message: `unknown rpc ${name}` } };
+    const parent = db.cart.find(
+      (row) => row.shop_id === args.p_shop_id && row.id === args.p_cart_id && row.state === "cart",
+    );
+    if (!parent) return { data: null, error: { message: "active cart not found for shop (composite FK)" } };
+    const existing = db.cart_line.find(
+      (row) => row.shop_id === args.p_shop_id
+        && row.cart_id === args.p_cart_id
+        && row.variant_id === args.p_variant_id,
+    );
+    if (existing) {
+      existing.quantity = Math.min(999, existing.quantity + Number(args.p_quantity));
+      return { data: { ...existing }, error: null };
+    }
+    const row = {
+      id: `cart_line-${db.cart_line.length + 1}`,
+      shop_id: args.p_shop_id,
+      cart_id: args.p_cart_id,
+      variant_id: args.p_variant_id,
+      quantity: args.p_quantity,
+      unit_price_cents: args.p_unit_price_cents,
+      currency: args.p_currency,
+      title_snapshot: args.p_title_snapshot,
+    };
+    db.cart_line.push(row);
+    return { data: { ...row }, error: null };
+  });
+  const client = { from: (table: string) => new Builder(table), rpc };
   return { db, client };
 });
 
@@ -158,6 +186,7 @@ import {
 beforeEach(() => {
   store.db.cart.length = 0;
   store.db.cart_line.length = 0;
+  store.client.rpc.mockClear();
   catalog.products = structuredClone(PRISTINE);
   catalog.getVariantById.mockReset();
   catalog.getVariantById.mockImplementation(async (_shopId: string, variantId: string) => {
@@ -203,6 +232,22 @@ describe("addCartLine", () => {
     expect(second.id).toBe(first.id); // same line
     expect(second.quantity).toBe(5); // 2 + 3
     expect(store.db.cart_line).toHaveLength(1); // no duplicate row
+  });
+
+  it("atomically preserves every concurrent increment and the original snapshot", async () => {
+    const cart = await buildCart("shop-1");
+    const [first] = await Promise.all([
+      addCartLine("shop-1", cart.id, "v-tee-s", 1),
+      ...Array.from({ length: 19 }, () => addCartLine("shop-1", cart.id, "v-tee-s", 1)),
+    ]);
+    expect(store.client.rpc).toHaveBeenCalledTimes(20);
+    expect(store.db.cart_line).toHaveLength(1);
+    expect(store.db.cart_line[0]).toMatchObject({
+      quantity: 20,
+      unit_price_cents: first.unitPriceCents,
+      currency: first.currency,
+      title_snapshot: first.titleSnapshot,
+    });
   });
 
   it("rejects a non-positive / non-integer quantity (fail visibly)", async () => {

@@ -20,5 +20,8 @@ export async function loader({ request }: LoaderFunctionArgs): Promise<Response>
   if (context.kind === "stale") {
     return storefrontOk({ cart: null }, { headers: { "Set-Cookie": context.clearCookie } });
   }
-  return storefrontOk({ cart: await priceCart(shopId, context.identity.cartId) });
+  return storefrontOk(
+    { cart: await priceCart(shopId, context.identity.cartId) },
+    context.upgradeCookie ? { headers: { "Set-Cookie": context.upgradeCookie } } : {},
+  );
 }

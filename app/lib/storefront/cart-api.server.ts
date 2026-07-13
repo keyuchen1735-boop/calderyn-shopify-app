@@ -6,9 +6,12 @@ import {
 } from "~/lib/order/cart.server";
 import {
   clearCartId,
+  commitCartId,
+  readCartId,
   readCartIdentity,
   type CartIdentity,
 } from "~/lib/storefront/cart-cookie.server";
+import { isUuid } from "~/lib/ids";
 
 const PRIVATE_JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
@@ -74,15 +77,21 @@ export type CartContext =
   | { kind: "absent" }
   | { kind: "mismatch" }
   | { kind: "stale"; clearCookie: string }
-  | { kind: "active"; identity: CartIdentity };
+  | { kind: "active"; identity: CartIdentity; upgradeCookie: string | null };
 
 export async function resolveCartContext(request: Request, shopId: string): Promise<CartContext> {
   const identity = await readCartIdentity(request);
-  if (!identity) return { kind: "absent" };
-  if (identity.shopId !== shopId) return { kind: "mismatch" };
-  const state = await getCartState(shopId, identity.cartId);
+  if (identity && identity.shopId !== shopId) return { kind: "mismatch" };
+  const legacyCartId = identity ? null : await readCartId(request);
+  const cartId = identity?.cartId ?? (legacyCartId && isUuid(legacyCartId) ? legacyCartId : null);
+  if (!cartId) return { kind: "absent" };
+  const state = await getCartState(shopId, cartId);
   if (state !== "cart") return { kind: "stale", clearCookie: await clearCartId() };
-  return { kind: "active", identity };
+  return {
+    kind: "active",
+    identity: identity ?? { cartId, shopId },
+    upgradeCookie: identity ? null : await commitCartId(cartId, shopId),
+  };
 }
 
 export function cartContextError(context: Exclude<CartContext, { kind: "active" }>): Response {

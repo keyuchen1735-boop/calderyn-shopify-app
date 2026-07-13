@@ -119,7 +119,35 @@ const store = vi.hoisted(() => {
     }
   }
 
-  const client = { from: (table: string) => new Builder(table) };
+  const rpc = vi.fn(async (name: string, args: Row) => {
+    if (name !== "cart_add_line_atomic") return { data: null, error: { message: `unknown rpc ${name}` } };
+    const parent = db.cart.find(
+      (row) => row.shop_id === args.p_shop_id && row.id === args.p_cart_id && row.state === "cart",
+    );
+    if (!parent) return { data: null, error: { message: "active cart not found for shop" } };
+    const existing = db.cart_line.find(
+      (row) => row.shop_id === args.p_shop_id
+        && row.cart_id === args.p_cart_id
+        && row.variant_id === args.p_variant_id,
+    );
+    if (existing) {
+      existing.quantity = Math.min(999, existing.quantity + Number(args.p_quantity));
+      return { data: { ...existing }, error: null };
+    }
+    const row = {
+      id: `cart_line-${db.cart_line.length + 1}`,
+      shop_id: args.p_shop_id,
+      cart_id: args.p_cart_id,
+      variant_id: args.p_variant_id,
+      quantity: args.p_quantity,
+      unit_price_cents: args.p_unit_price_cents,
+      currency: args.p_currency,
+      title_snapshot: args.p_title_snapshot,
+    };
+    db.cart_line.push(row);
+    return { data: { ...row }, error: null };
+  });
+  const client = { from: (table: string) => new Builder(table), rpc };
   return { db, client };
 });
 

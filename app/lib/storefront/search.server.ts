@@ -134,10 +134,7 @@ function facet(values: string[]): Array<{ value: string; count: number }> {
 }
 
 export async function searchStorefront(shopId: string, input: StorefrontSearchInput) {
-  const products = await getCatalog().listProducts(shopId, {
-    limit: MAX_SCAN,
-    ...(input.query ? { query: input.query } : {}),
-  });
+  const products = await getCatalog().listProducts(shopId, { limit: MAX_SCAN });
   const query = lower(input.query);
   let filtered = products.filter((product) => {
     if (query && !lower(`${product.title} ${product.description} ${product.category ?? ""} ${(product.tags ?? []).join(" ")}`).includes(query)) return false;

@@ -53,7 +53,11 @@ const products: StoreProduct[] = [
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.SHOPIFY_API_SECRET = "search-cursor-secret-0000000000000000000000";
-  catalog.listProducts.mockResolvedValue(products);
+  catalog.listProducts.mockImplementation(async (_shopId: string, opts?: { query?: string }) => {
+    if (!opts?.query) return products;
+    const query = opts.query.toLocaleLowerCase();
+    return products.filter((product) => product.title.toLocaleLowerCase().includes(query));
+  });
 });
 
 describe("parseStorefrontSearchParams", () => {
@@ -133,9 +137,14 @@ describe("searchStorefront", () => {
     ]);
   });
 
-  it("pushes a literal query through the bounded shop-scoped catalog search", async () => {
-    const input = parseStorefrontSearchParams(new URL("https://shop.example/?q=50%25_off%5Csale").searchParams);
-    await searchStorefront("shop-a", input);
-    expect(catalog.listProducts).toHaveBeenCalledWith("shop-a", { limit: 250, query: String.raw`50%_off\sale` });
+  it.each([
+    ["daily wash", ["cloud-cleanser"]],
+    ["wellness", ["tea-tonic"]],
+    ["vegan", ["cloud-cleanser", "tea-tonic"]],
+  ])("matches description/category/tag text without a title-only database prefilter: %s", async (query, handles) => {
+    const input = parseStorefrontSearchParams(new URL(`https://shop.example/?q=${encodeURIComponent(query)}`).searchParams);
+    const result = await searchStorefront("shop-a", input);
+    expect(catalog.listProducts).toHaveBeenCalledWith("shop-a", { limit: 250 });
+    expect(result.items.map((item) => item.handle)).toEqual(handles);
   });
 });
