@@ -43,6 +43,15 @@ function makeSupabaseFake(tables: Record<string, any[]>) {
         selectedRows = selectedRows.filter((r) => r[col] !== null && r[col] !== undefined);
         return chain;
       },
+      order(col: string, opts?: { ascending?: boolean }) {
+        const asc = opts?.ascending !== false;
+        selectedRows = [...selectedRows].sort((a, b) => {
+          if (a[col] < b[col]) return asc ? -1 : 1;
+          if (a[col] > b[col]) return asc ? 1 : -1;
+          return 0;
+        });
+        return chain;
+      },
       // PostgREST-style pagination added to runner.server (fetchAllRows): slice to
       // the [from, to] inclusive window. Test data is < PAGE_SIZE so the runner
       // reads one short page and stops.

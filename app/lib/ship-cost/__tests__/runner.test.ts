@@ -55,6 +55,15 @@ function makeSupabaseFake(tables: Record<string, any[]>) {
         selectedRows = selectedRows.filter((r) => r[col] !== null && r[col] !== undefined);
         return chain;
       },
+      order(col: string, opts?: { ascending?: boolean }) {
+        const asc = opts?.ascending !== false;
+        selectedRows = [...selectedRows].sort((a, b) => {
+          if (a[col] < b[col]) return asc ? -1 : 1;
+          if (a[col] > b[col]) return asc ? 1 : -1;
+          return 0;
+        });
+        return chain;
+      },
       limit(n: number) {
         explicitLimit = n;
         return chain;
@@ -518,6 +527,7 @@ describe("runShipCostResolution — failures are loud and readable", () => {
       eq: () => failingChain,
       in: () => failingChain,
       not: () => failingChain,
+      order: () => failingChain,
       range: () => failingChain,
       then: (cb: (r: { data: null; error: unknown }) => unknown) =>
         Promise.resolve(cb({ data: null, error: { message: "column v_order_ship_features.ship_cost_cents does not exist", code: "42703" } })),
