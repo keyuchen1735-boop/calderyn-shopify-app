@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { captureLegacyRelease } from "./legacy.server";
+import { captureLegacyRelease, prepareLegacyCapturePayload } from "./legacy.server";
 
 const { rpc } = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ rpc }) }));
@@ -38,6 +38,17 @@ beforeEach(() => {
 });
 
 describe("legacy storefront release capture", () => {
+  it("prepares and validates a capture payload without committing a release", async () => {
+    await expect(prepareLegacyCapturePayload(SHOP)).resolves.toEqual(expect.objectContaining({
+      snapshot: expect.objectContaining({ runtimeVersion: 0 }),
+      artifactHash: `sha256:${"a".repeat(64)}`,
+      validationReport: expect.objectContaining({ legacyAdapter: "validated" }),
+      captureToken: `sha256:${"b".repeat(64)}`,
+    }));
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(rpc).not.toHaveBeenCalledWith("capture_storefront_legacy_release", expect.anything());
+  });
+
   it("delegates one-time, transactionally consistent capture to the database", async () => {
     await expect(captureLegacyRelease({ shopId: SHOP, actorId: null })).resolves.toBe(LEGACY);
     expect(rpc).toHaveBeenNthCalledWith(1, "prepare_storefront_legacy_capture", { p_shop_id: SHOP });

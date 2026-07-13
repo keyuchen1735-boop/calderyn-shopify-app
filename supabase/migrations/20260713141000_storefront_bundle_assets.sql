@@ -22,9 +22,9 @@ create table public.storefront_bundle_asset (
   created_at timestamptz not null default now(),
   primary key (shop_id, bundle_id, asset_key),
   foreign key (shop_id, bundle_id)
-    references public.storefront_bundle_version (shop_id, id) on delete restrict,
+    references public.storefront_bundle_version (shop_id, id) on delete no action deferrable initially deferred,
   foreign key (shop_id, asset_key)
-    references public.storefront_asset_object (shop_id, asset_key) on delete restrict
+    references public.storefront_asset_object (shop_id, asset_key) on delete no action deferrable initially deferred
 );
 
 create index storefront_bundle_asset_object_idx

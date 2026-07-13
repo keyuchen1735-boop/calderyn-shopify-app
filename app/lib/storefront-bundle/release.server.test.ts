@@ -9,13 +9,15 @@ import {
 } from "./release.server";
 import type { StorefrontReleaseError } from "./release.server";
 
-const { rpc, hasRunningExperiment } = vi.hoisted(() => ({
+const { rpc, hasRunningExperiment, prepareLegacyCapturePayload } = vi.hoisted(() => ({
   rpc: vi.fn(),
   hasRunningExperiment: vi.fn(),
+  prepareLegacyCapturePayload: vi.fn(),
 }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ rpc }) }));
 vi.mock("~/lib/experiments/store-experiment.server", () => ({ hasRunningExperiment }));
+vi.mock("./legacy.server", () => ({ prepareLegacyCapturePayload }));
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const VERSION = "22222222-2222-2222-2222-222222222222";
@@ -24,6 +26,13 @@ const BASE = "33333333-3333-3333-3333-333333333333";
 beforeEach(() => {
   vi.clearAllMocks();
   hasRunningExperiment.mockResolvedValue(false);
+  prepareLegacyCapturePayload.mockResolvedValue({
+    snapshot: { runtimeVersion: 0 },
+    assetManifest: { entries: [] },
+    artifactHash: `sha256:${"b".repeat(64)}`,
+    validationReport: { valid: true, legacyAdapter: "validated" },
+    captureToken: `sha256:${"c".repeat(64)}`,
+  });
   rpc.mockImplementation(async (name: string) => ({
     data: name === "hash_storefront_artifact" ? `sha256:${"a".repeat(64)}` : VERSION,
     error: null,
@@ -116,6 +125,24 @@ describe("storefront bundle release repository", () => {
     expect(rpc).toHaveBeenNthCalledWith(3, "rollback_storefront_release", expect.objectContaining({
       p_target_version_id: BASE,
       p_expected_published_version_id: VERSION,
+    }));
+  });
+
+  it("passes a validated legacy candidate into the single first-publish transaction", async () => {
+    await expect(publishStorefrontRelease({
+      shopId: SHOP,
+      expectedDraftVersionId: VERSION,
+      expectedPublishedVersionId: null,
+      actorId: null,
+    })).resolves.toBe(VERSION);
+    expect(prepareLegacyCapturePayload).toHaveBeenCalledWith(SHOP);
+    expect(rpc).toHaveBeenCalledWith("publish_storefront_release", expect.objectContaining({
+      p_expected_published_version_id: null,
+      p_legacy_snapshot: { runtimeVersion: 0 },
+      p_legacy_asset_manifest: { entries: [] },
+      p_legacy_artifact_hash: `sha256:${"b".repeat(64)}`,
+      p_legacy_validation_report: { valid: true, legacyAdapter: "validated" },
+      p_legacy_capture_token: `sha256:${"c".repeat(64)}`,
     }));
   });
 

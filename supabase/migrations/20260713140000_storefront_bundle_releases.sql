@@ -44,9 +44,9 @@ create table public.storefront_release (
   published_version_id uuid,
   updated_at timestamptz not null default now(),
   foreign key (shop_id, draft_version_id)
-    references public.storefront_bundle_version (shop_id, id) on delete restrict,
+    references public.storefront_bundle_version (shop_id, id) on delete no action deferrable initially deferred,
   foreign key (shop_id, published_version_id)
-    references public.storefront_bundle_version (shop_id, id) on delete restrict
+    references public.storefront_bundle_version (shop_id, id) on delete no action deferrable initially deferred
 );
 
 create table public.storefront_release_history (
@@ -58,9 +58,9 @@ create table public.storefront_release_history (
   actor_id uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   foreign key (shop_id, from_version_id)
-    references public.storefront_bundle_version (shop_id, id) on delete restrict,
+    references public.storefront_bundle_version (shop_id, id) on delete no action deferrable initially deferred,
   foreign key (shop_id, to_version_id)
-    references public.storefront_bundle_version (shop_id, id) on delete restrict
+    references public.storefront_bundle_version (shop_id, id) on delete no action deferrable initially deferred
 );
 
 create index storefront_release_history_shop_created_idx
@@ -81,9 +81,9 @@ create table public.storefront_bundle_edit (
   actor_id uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   foreign key (shop_id, base_version_id)
-    references public.storefront_bundle_version (shop_id, id) on delete restrict,
+    references public.storefront_bundle_version (shop_id, id) on delete no action deferrable initially deferred,
   foreign key (shop_id, result_version_id)
-    references public.storefront_bundle_version (shop_id, id) on delete restrict,
+    references public.storefront_bundle_version (shop_id, id) on delete no action deferrable initially deferred,
   unique (shop_id, result_version_id)
 );
 
@@ -98,6 +98,9 @@ set search_path = ''
 as $$
 begin
   if tg_op = 'DELETE' then
+    if not exists (select 1 from public.shops where id = old.shop_id) then
+      return old;
+    end if;
     if old.status = 'validated' then
       raise exception using errcode = '55000', message = 'validated_storefront_bundle_is_immutable';
     end if;

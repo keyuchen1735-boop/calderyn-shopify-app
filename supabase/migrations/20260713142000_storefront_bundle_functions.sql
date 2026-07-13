@@ -386,6 +386,9 @@ as $$
 declare
   v_bundle_status text;
 begin
+  if tg_op = 'DELETE' and not exists (select 1 from public.shops where id = old.shop_id) then
+    return old;
+  end if;
   if tg_op = 'INSERT' then
     select status into v_bundle_status from public.storefront_bundle_version
       where shop_id = new.shop_id and id = new.bundle_id;
@@ -426,6 +429,9 @@ security invoker
 set search_path = ''
 as $$
 begin
+  if not exists (select 1 from public.shops where id = old.shop_id) then
+    return old;
+  end if;
   raise exception using errcode = '55000', message = 'storefront_asset_tombstones_are_immutable';
 end;
 $$;
@@ -617,6 +623,17 @@ begin
     if coalesce(v_existing_report ->> 'legacyAdapter', v_existing_report ->> 'legacy_adapter') <> 'validated'
       or coalesce((v_existing_report ->> 'valid')::boolean, false) is not true then
       raise exception using errcode = '55000', message = 'legacy_capture_validation_proof_missing';
+    end if;
+    update public.storefront_release
+      set published_version_id = v_existing, updated_at = now()
+      where shop_id = p_shop_id and published_version_id is null;
+    if found and not exists (
+      select 1 from public.storefront_release_history
+      where shop_id = p_shop_id and to_version_id = v_existing and operation = 'capture_legacy'
+    ) then
+      insert into public.storefront_release_history (
+        shop_id, from_version_id, to_version_id, operation, actor_id
+      ) values (p_shop_id, null, v_existing, 'capture_legacy', p_actor_id);
     end if;
     return v_existing;
   end if;
@@ -841,7 +858,12 @@ create function public.publish_storefront_release(
   p_shop_id uuid,
   p_expected_draft_version_id uuid,
   p_expected_published_version_id uuid,
-  p_actor_id uuid default null
+  p_actor_id uuid,
+  p_legacy_snapshot jsonb,
+  p_legacy_asset_manifest jsonb,
+  p_legacy_artifact_hash text,
+  p_legacy_validation_report jsonb,
+  p_legacy_capture_token text
 )
 returns uuid
 language plpgsql
@@ -864,10 +886,22 @@ begin
     raise exception using errcode = '40001', message = 'storefront_publish_conflict';
   end if;
   if v_current_published is null then
-    raise exception using errcode = '55000', message = 'legacy_capture_required';
+    if p_expected_published_version_id is not null then
+      raise exception using errcode = '40001', message = 'storefront_publish_conflict';
+    end if;
+    v_compare_published := public.capture_storefront_legacy_release(
+      p_shop_id,
+      p_actor_id,
+      p_legacy_snapshot,
+      p_legacy_asset_manifest,
+      p_legacy_artifact_hash,
+      p_legacy_validation_report,
+      p_legacy_capture_token
+    );
+  else
+    v_compare_published := p_expected_published_version_id;
   end if;
-  v_compare_published := p_expected_published_version_id;
-  if v_current_published is distinct from v_compare_published then
+  if v_current_published is not null and v_current_published is distinct from v_compare_published then
     raise exception using errcode = '40001', message = 'storefront_publish_conflict';
   end if;
   perform public.storefront_assert_installable(p_shop_id, p_expected_draft_version_id);
@@ -1040,7 +1074,7 @@ revoke all on function public.prepare_storefront_legacy_capture(uuid) from publi
 revoke all on function public.capture_storefront_legacy_release(uuid, uuid, jsonb, jsonb, text, jsonb, text) from public, anon, authenticated;
 revoke all on function public.install_storefront_draft(uuid, uuid, uuid, uuid) from public, anon, authenticated;
 revoke all on function public.edit_storefront_draft(uuid, uuid, uuid, uuid, text, text, text, jsonb, jsonb, jsonb, jsonb, uuid) from public, anon, authenticated;
-revoke all on function public.publish_storefront_release(uuid, uuid, uuid, uuid) from public, anon, authenticated;
+revoke all on function public.publish_storefront_release(uuid, uuid, uuid, uuid, jsonb, jsonb, text, jsonb, text) from public, anon, authenticated;
 revoke all on function public.rollback_storefront_release(uuid, uuid, uuid, uuid) from public, anon, authenticated;
 revoke all on function public.start_store_experiment(uuid, text, text, text, jsonb, jsonb) from public, anon, authenticated;
 revoke all on function public.transition_store_experiment(uuid, uuid, text, jsonb) from public, anon, authenticated;
@@ -1064,7 +1098,7 @@ grant execute on function public.prepare_storefront_legacy_capture(uuid) to serv
 grant execute on function public.capture_storefront_legacy_release(uuid, uuid, jsonb, jsonb, text, jsonb, text) to service_role;
 grant execute on function public.install_storefront_draft(uuid, uuid, uuid, uuid) to service_role;
 grant execute on function public.edit_storefront_draft(uuid, uuid, uuid, uuid, text, text, text, jsonb, jsonb, jsonb, jsonb, uuid) to service_role;
-grant execute on function public.publish_storefront_release(uuid, uuid, uuid, uuid) to service_role;
+grant execute on function public.publish_storefront_release(uuid, uuid, uuid, uuid, jsonb, jsonb, text, jsonb, text) to service_role;
 grant execute on function public.rollback_storefront_release(uuid, uuid, uuid, uuid) to service_role;
 grant execute on function public.start_store_experiment(uuid, text, text, text, jsonb, jsonb) to service_role;
 grant execute on function public.transition_store_experiment(uuid, uuid, text, jsonb) to service_role;

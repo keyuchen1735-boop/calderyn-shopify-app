@@ -200,11 +200,19 @@ export interface PublishStorefrontReleaseInput {
 
 export async function publishStorefrontRelease(input: PublishStorefrontReleaseInput): Promise<string> {
   await assertStorefrontWriteAllowed(input.shopId);
+  const legacyPayload = input.expectedPublishedVersionId === null
+    ? await (await import("./legacy.server")).prepareLegacyCapturePayload(input.shopId)
+    : null;
   return writeRpc<string>("publish_storefront_release", {
     p_shop_id: input.shopId,
     p_expected_draft_version_id: input.expectedDraftVersionId,
     p_expected_published_version_id: input.expectedPublishedVersionId,
     p_actor_id: input.actorId ?? null,
+    p_legacy_snapshot: legacyPayload?.snapshot ?? null,
+    p_legacy_asset_manifest: legacyPayload?.assetManifest ?? null,
+    p_legacy_artifact_hash: legacyPayload?.artifactHash ?? null,
+    p_legacy_validation_report: legacyPayload?.validationReport ?? null,
+    p_legacy_capture_token: legacyPayload?.captureToken ?? null,
   }, "storefront_publish_failed");
 }
 

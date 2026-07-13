@@ -119,7 +119,20 @@ describe("storefront bundle persistence migrations", () => {
     expect(SQL).toMatch(/tg_op = 'delete'/);
     expect(SQL).toMatch(/locked_storefront_bundle_asset_is_immutable/);
     expect(SQL).toMatch(/storefront_bundle_asset_locked_guard/);
-    expect(SQL).toMatch(/on delete restrict/);
+    expect(SQL).toMatch(/on delete no action[^;]+deferrable initially deferred/);
+  });
+
+  it("permits genuine shop cascades without permitting direct immutable deletes", () => {
+    expect(RELEASES).toMatch(/not exists[^;]+from public\.shops[^;]+old\.shop_id/);
+    expect(FUNCTIONS).toMatch(/not exists[^;]+from public\.shops[^;]+old\.shop_id/);
+    expect(SQL).toMatch(/deferrable initially deferred/);
+  });
+
+  it("captures validated legacy state inside the first publish transaction", () => {
+    const publish = FUNCTIONS.match(/function public\.publish_storefront_release[\s\S]+?\$\$;/)?.[0] ?? "";
+    expect(publish).toContain("p_legacy_snapshot");
+    expect(publish).toContain("capture_storefront_legacy_release");
+    expect(publish).not.toContain("legacy_capture_required");
   });
 
   it("derives immutable asset keys and verifies deletion generation immediately before removal", () => {
