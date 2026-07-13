@@ -1,10 +1,34 @@
 import { describe, expect, it } from "vitest";
 import { validationLimitsV1, validateCompiledBundle } from "./validate";
-import type { StorefrontBundleV1 } from "../storefront-bundle/types";
+import type { CompiledElementNode, CompiledNode, StorefrontBundleV1 } from "../storefront-bundle/types";
 import { compileBundle } from "./compile";
 import { VALID_BUNDLE_SOURCE } from "./__fixtures__/valid-bundle";
 import { compileCss } from "./css";
 import { serializeCompiledTree } from "./html";
+
+function compileRouteTargetScopeFixture() {
+  const source = structuredClone(VALID_BUNDLE_SOURCE);
+  source.routes.collection.html = `
+    <main>
+      <a id="root-anchor" data-cd-route="collection" data-cd-param-handle="collection.handle">Collection</a>
+      <section data-cd-repeat="collection.products">
+        <a id="first-anchor" data-cd-route="product" data-cd-param-handle="product.handle">First</a>
+      </section>
+      <section data-cd-repeat="collection.products">
+        <a id="second-anchor" data-cd-route="product" data-cd-param-handle="product.handle">Second</a>
+      </section>
+    </main>`;
+  return compileBundle(source).bundle;
+}
+
+function flattenElements(nodes: readonly CompiledNode[]): CompiledElementNode[] {
+  const elements: CompiledElementNode[] = [];
+  for (const node of nodes) {
+    if (node.kind !== "element") continue;
+    elements.push(node, ...flattenElements(node.children));
+  }
+  return elements;
+}
 
 describe("validation profile v1", () => {
   it("rejects unknown and malformed deserialized input without throwing", () => {
@@ -124,5 +148,34 @@ describe("validation profile v1", () => {
     const codes = validateCompiledBundle(bundle).diagnostics.map((item) => item.code);
     expect(codes).toContain("bundle.tokens");
     expect(codes).toContain("asset.entry");
+  });
+
+  it("accepts compiler-generated route targets bound to their owning element scope", () => {
+    expect(validateCompiledBundle(compileRouteTargetScopeFixture()).ok).toBe(true);
+  });
+
+  it("rejects a forged route target that borrows a sibling repeat scope", () => {
+    const bundle = compileRouteTargetScopeFixture();
+    const collection = bundle.routes.collection;
+    const elements = flattenElements(collection.tree);
+    const firstScope = elements.find((node) => node.repeat)?.repeat?.scopeId;
+    const secondAnchor = elements.find((node) => node.id === "cd-collection-second-anchor");
+    if (!firstScope || !secondAnchor?.routeTarget) throw new Error("route-target fixture is malformed");
+    secondAnchor.routeTarget.params.handle = { kind: "data", scopeId: firstScope, path: "product.handle" };
+    expect(validateCompiledBundle(bundle).diagnostics.map((item) => item.code)).toContain("route.scope");
+  });
+
+  it("rejects a root anchor that borrows a nested repeat scope", () => {
+    const bundle = compileRouteTargetScopeFixture();
+    const collection = bundle.routes.collection;
+    const elements = flattenElements(collection.tree);
+    const nestedScope = elements.find((node) => node.repeat)?.repeat?.scopeId;
+    const rootAnchor = elements.find((node) => node.id === "cd-collection-root-anchor");
+    if (!nestedScope || !rootAnchor) throw new Error("route-target fixture is malformed");
+    rootAnchor.routeTarget = {
+      routeId: "product",
+      params: { handle: { kind: "data", scopeId: nestedScope, path: "product.handle" } },
+    };
+    expect(validateCompiledBundle(bundle).diagnostics.map((item) => item.code)).toContain("route.scope");
   });
 });

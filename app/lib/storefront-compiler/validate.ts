@@ -121,7 +121,13 @@ interface TreeContext {
   count: number;
 }
 
-function parseRouteTarget(value: unknown, path: string, add: AddDiagnostic, scopes: ReadonlyMap<string, BindingScope>): RouteTarget | null {
+function parseRouteTarget(
+  value: unknown,
+  path: string,
+  add: AddDiagnostic,
+  scopes: ReadonlyMap<string, BindingScope>,
+  elementScopeId: string,
+): RouteTarget | null {
   const input = record(value);
   if (!input || typeof input.routeId !== "string" || !ROUTE_IDS.has(input.routeId)) {
     add("route.target", path, "Route target is malformed");
@@ -142,7 +148,7 @@ function parseRouteTarget(value: unknown, path: string, add: AddDiagnostic, scop
       add("route.param", `${path}.params.${key}`, "Unsupported route parameter");
       continue;
     }
-    const ref = parseDataRef(refValue, `${path}.params.${key}`, add, scopes);
+    const ref = parseDataRef(refValue, `${path}.params.${key}`, add, scopes, elementScopeId, "route.scope");
     if (!ref) continue;
     if (key === "handle") {
       const expected = input.routeId === "product" ? "product.handle" : "collection.handle";
@@ -266,7 +272,7 @@ function parseTree(
       };
       if (compiledRepeat) element.repeat = compiledRepeat;
       if (input.routeTarget !== undefined) {
-        const target = parseRouteTarget(input.routeTarget, `${currentPath}.routeTarget`, add, context.scopes);
+        const target = parseRouteTarget(input.routeTarget, `${currentPath}.routeTarget`, add, context.scopes, elementScopeId);
         if (target) element.routeTarget = target;
       }
       if (input.trustedSlotId !== undefined) {
@@ -315,7 +321,14 @@ function parseTree(
   return context;
 }
 
-function parseDataRef(value: unknown, path: string, add: AddDiagnostic, scopes: ReadonlyMap<string, BindingScope>): PublicDataRef | null {
+function parseDataRef(
+  value: unknown,
+  path: string,
+  add: AddDiagnostic,
+  scopes: ReadonlyMap<string, BindingScope>,
+  expectedScopeId?: string,
+  scopeDiagnosticCode = "binding.scope",
+): PublicDataRef | null {
   const input = record(value);
   if (!input || typeof input.kind !== "string") {
     add("binding.ref", path, "Data reference is malformed");
@@ -326,13 +339,18 @@ function parseDataRef(value: unknown, path: string, add: AddDiagnostic, scopes: 
       add("binding.path", `${path}.path`, "Binding path is not public");
       return null;
     }
-    const scope = typeof input.scopeId === "string" ? scopes.get(input.scopeId) : undefined;
+    if (expectedScopeId !== undefined && input.scopeId !== expectedScopeId) {
+      add(scopeDiagnosticCode, `${path}.scopeId`, "Data reference does not belong to the owning element scope");
+      return null;
+    }
+    const resolvedScopeId = expectedScopeId ?? (typeof input.scopeId === "string" ? input.scopeId : undefined);
+    const scope = resolvedScopeId === undefined ? undefined : scopes.get(resolvedScopeId);
     if (!scope) {
-      add("binding.scope", `${path}.scopeId`, "Binding scope is unresolved");
+      add(scopeDiagnosticCode, `${path}.scopeId`, "Data reference scope is unresolved");
       return null;
     }
     if (!isPathVisible(input.path, scope)) {
-      add("binding.scope", path, `Binding ${input.path} is not visible from scope ${scope.id}`);
+      add(scopeDiagnosticCode, path, `Data path ${input.path} is not visible from scope ${scope.id}`);
       return null;
     }
     return { kind: "data", scopeId: scope.id, path: input.path };
@@ -407,7 +425,13 @@ function parseState(value: unknown, path: string, add: AddDiagnostic): Interacti
   return null;
 }
 
-function parseAction(value: unknown, path: string, add: AddDiagnostic, scopes: ReadonlyMap<string, BindingScope>): RuntimeActionSpec | null {
+function parseAction(
+  value: unknown,
+  path: string,
+  add: AddDiagnostic,
+  scopes: ReadonlyMap<string, BindingScope>,
+  elementScopeId: string,
+): RuntimeActionSpec | null {
   const input = record(value);
   if (!input || typeof input.type !== "string") {
     add("interaction.action", path, "Action is malformed");
@@ -468,7 +492,7 @@ function parseAction(value: unknown, path: string, add: AddDiagnostic, scopes: R
       if (typeof input.targetId === "string") return { type: "scroll.to", targetId: input.targetId };
       break;
     case "navigate": {
-      const target = parseRouteTarget(input.target, `${path}.target`, add, scopes);
+      const target = parseRouteTarget(input.target, `${path}.target`, add, scopes, elementScopeId);
       if (target) return { type: "navigate", target };
       break;
     }
@@ -520,7 +544,13 @@ function parseInteractions(value: unknown, path: string, tree: TreeContext, add:
       return;
     }
     if (!tree.ids.has(transition.sourceId)) add("interaction.unresolved_source", currentPath, "Transition source is unresolved");
-    const action = parseAction(transition.action, `${currentPath}.action`, add, tree.scopes);
+    const action = parseAction(
+      transition.action,
+      `${currentPath}.action`,
+      add,
+      tree.scopes,
+      tree.elementScopes.get(transition.sourceId) ?? "root",
+    );
     if (!action) return;
     const targetId = "surfaceId" in action ? action.surfaceId : "targetId" in action ? action.targetId : undefined;
     if (targetId && !tree.ids.has(targetId)) add("interaction.unresolved_target", currentPath, "Action target is unresolved");
