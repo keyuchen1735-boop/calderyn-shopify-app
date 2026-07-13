@@ -5,7 +5,8 @@
 // already be the right page:
 //   established store → metrics strip + deck skeleton + pending gauge — never
 //     a void, never a fake "All clear", never a lit "0%" calibration readout;
-//   fresh store → the setup guide, immediately.
+//   fresh store → the welcome layout immediately; the guided journey card
+//     renders only once its cached or fetched payload lands.
 import { describe, expect, it } from "vitest";
 import { createElement as h } from "react";
 import { renderToString } from "react-dom/server";

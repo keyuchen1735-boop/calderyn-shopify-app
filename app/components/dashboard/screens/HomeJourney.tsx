@@ -100,7 +100,17 @@ export function HomeJourney({
               <a href={data.storefrontUrl} target="_blank" rel="noreferrer">
                 {data.storefrontUrl}
               </a>
-              <Btn small onClick={() => navigator.clipboard.writeText(data.storefrontUrl!)}>
+              <Btn
+                small
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(data.storefrontUrl!);
+                    app.toast("Link copied", "check");
+                  } catch {
+                    app.toast("Couldn't copy — select the link manually.", "x", "critical");
+                  }
+                }}
+              >
                 Copy link
               </Btn>
             </div>

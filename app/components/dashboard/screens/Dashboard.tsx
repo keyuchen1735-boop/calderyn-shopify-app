@@ -140,12 +140,21 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
       alive = false;
     };
   }, []);
+  // Mirrors the mount fetch's alive guard: a slow refresh response must not
+  // set state after the screen unmounts.
+  const journeyAlive = useRef(true);
+  useEffect(() => {
+    journeyAlive.current = true;
+    return () => {
+      journeyAlive.current = false;
+    };
+  }, []);
   const refreshJourney = useCallback(() => {
     client
       .apiGet<JourneyProgress>("/dashboard/api/setup-progress")
       .then((p) => {
         cacheScreenData(SCREEN_CACHE_KEYS.setupProgress, p);
-        setJourney(p);
+        if (journeyAlive.current) setJourney(p);
       })
       .catch(() => {});
   }, []);
