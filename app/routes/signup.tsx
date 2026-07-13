@@ -27,6 +27,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // Threaded connector/deep-link destination; carried through signup +
     // onboarding so an interrupted flow resumes. Validated server-side on use.
     returnTo: url.searchParams.get("return_to") ?? "",
+    // Marker indicating signup started from the login page's Shopify button.
+    fromShopify: url.searchParams.get("from") === "shopify",
     // OAuth provider flows must start on the public apex (their callback host),
     // not this app.* origin — see GoogleButton.
     authBase: publicBaseUrl(),
@@ -34,12 +36,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export default function SignupPage() {
-  const { error, email, store, returnTo, authBase } = useLoaderData<typeof loader>();
+  const { error, email, store, returnTo, authBase, fromShopify } = useLoaderData<typeof loader>();
   return (
     <AuthShell>
       <h1 className="cd-auth-title">Create account</h1>
       <p className="cd-auth-sub">Live in about a minute.</p>
       <AuthError code={error} />
+      {fromShopify && (
+        <p className="cd-auth-sub">
+          Create your account first — you'll connect your Shopify store and import
+          everything right after.
+        </p>
+      )}
       <GoogleButton label="Sign up with Google" baseUrl={authBase} />
       <div className="cd-auth-divider">or</div>
       <AuthForm action="/dashboard/signup">

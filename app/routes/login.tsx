@@ -50,7 +50,7 @@ export default function LoginPage() {
       <AuthError code={error} />
       <AuthNotice notice={notice} />
       <GoogleButton label="Continue with Google" returnTo={returnTo} baseUrl={authBase} />
-      <ShopifyButton label="Continue with Shopify" returnTo={returnTo} baseUrl={authBase} />
+      <ShopifyButton label="Continue with Shopify" returnTo={returnTo} baseUrl={authBase} mode="signup" />
       <div className="cd-auth-divider">or</div>
       <AuthForm action="/dashboard/signin">
         <label className="cd-auth-label" htmlFor="email">
