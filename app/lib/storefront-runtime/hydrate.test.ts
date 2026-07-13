@@ -103,6 +103,52 @@ describe("declarative storefront hydration", () => {
     expect(host.shadowRoot).toBeNull();
   });
 
+  it("mounts on the retained live host and root so async updates and cleanup stay live", async () => {
+    document.body.innerHTML = `<main id="root"><div id="cd-product-slot-1" data-cd-trusted-slot="addToCart" data-cd-authority-key="product:p1"></div></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const liveHost = document.getElementById("cd-product-slot-1") as HTMLElement;
+    let retainedHost: HTMLElement | undefined;
+    let retainedRoot: ShadowRoot | undefined;
+    let cleanupSawAsyncUpdate = false;
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({
+        requiredCapabilities: ["commerce"], interactions: { version: 1, state: [], bindings: [], transitions: [] },
+        trustedSlots: [{ id: "cd-product-slot-1", kind: "addToCart", scopeId: "root", hostSize: "block", themeTokenIds: [] }],
+      }),
+      adapters: { commerce: {
+        mount: ({ host, shadowRoot }) => {
+          retainedHost = host;
+          retainedRoot = shadowRoot;
+          expect(host).toBe(liveHost);
+          expect(host.isConnected).toBe(true);
+          expect(host.hidden).toBe(true);
+          expect(host.getAttribute("data-cd-commerce-state")).toBe("pending");
+          shadowRoot.innerHTML = `<button id="live-buy">Buy</button>`;
+          queueMicrotask(() => {
+            const asyncUpdate = document.createElement("span");
+            asyncUpdate.setAttribute("data-async-update", "");
+            shadowRoot.append(asyncUpdate);
+          });
+          return () => {
+            cleanupSawAsyncUpdate = shadowRoot.querySelector("[data-async-update]") !== null;
+            shadowRoot.querySelector("[data-async-update]")?.remove();
+          };
+        },
+        dispatch: vi.fn(),
+      } },
+    });
+    expect(runtime.hydrated).toBe(true);
+    expect(retainedHost).toBe(liveHost);
+    expect(liveHost.hidden).toBe(false);
+    expect(liveHost.hasAttribute("data-cd-commerce-state")).toBe(false);
+    await Promise.resolve();
+    expect(retainedRoot?.querySelector("[data-async-update]")).not.toBeNull();
+    runtime.teardown();
+    expect(cleanupSawAsyncUpdate).toBe(true);
+    expect(retainedRoot?.querySelector("[data-async-update]")).toBeNull();
+  });
+
   it("rejects a cart-line mutation outside the trusted host authority", () => {
     document.body.innerHTML = `<main id="root"><div data-cd-instance="i-cart-line-1"><div id="cd-cart-slot-1-i-cart-line-1" data-cd-instance="i-cart-line-1" data-cd-trusted-slot="cartLineControls" data-cd-slot-scope="cd-cart-scope-1" data-cd-authority-key="cartLine:line-1"></div></div></main>`;
     const root = document.getElementById("root") as HTMLElement;
@@ -155,7 +201,6 @@ describe("declarative storefront hydration", () => {
   it("rolls back binding mutations when trusted mounting fails", () => {
     const root = rootMarkup();
     root.insertAdjacentHTML("beforeend", `<div id="cd-product-slot-1" data-cd-trusted-slot="addToCart" data-cd-authority-key="product:p1"></div>`);
-    const before = root.innerHTML;
     const runtime = hydrateStorefront({
       root,
       artifact: artifact({
@@ -165,7 +210,10 @@ describe("declarative storefront hydration", () => {
       adapters: { commerce: { mount: () => { throw new Error("mount failed"); }, dispatch: vi.fn() } },
     });
     expect(runtime.hydrated).toBe(false);
-    expect(root.innerHTML).toBe(before);
+    expect((document.getElementById("cd-home-drawer") as HTMLElement).hidden).toBe(false);
+    expect(document.getElementById("cd-home-progress")?.getAttribute("style")).toBeNull();
+    expect((document.getElementById("cd-product-slot-1") as HTMLElement).hidden).toBe(true);
+    expect(document.getElementById("cd-product-slot-1")?.getAttribute("data-cd-commerce-state")).toBe("unavailable");
     expect(document.querySelector("[data-cd-overlay-portal]")).toBeNull();
   });
 
@@ -187,6 +235,8 @@ describe("declarative storefront hydration", () => {
       }),
       adapters: { commerce: {
         mount: ({ shadowRoot }) => {
+          expect(host.hidden).toBe(true);
+          expect(host.getAttribute("data-cd-commerce-state")).toBe("pending");
           shadowRoot.innerHTML = `<button data-partial-commerce>Buy</button>`;
           throw new Error("mount failed after mutation");
         },
@@ -198,6 +248,53 @@ describe("declarative storefront hydration", () => {
     expect(actualShadow?.querySelector("[data-partial-commerce]")).toBeNull();
     expect(actualShadow?.querySelector("[data-cd-commerce-unavailable]")).not.toBeNull();
     expect(host.shadowRoot).toBeNull();
+    expect(host.hidden).toBe(true);
+    expect(host.getAttribute("data-cd-commerce-state")).toBe("unavailable");
+  });
+
+  it("tabs through generated and trusted closed-shadow controls in DOM order", () => {
+    document.body.innerHTML = `<main id="root">
+      <button id="cd-home-open">Open</button>
+      <section id="cd-home-drawer" hidden>
+        <button id="before">Before</button>
+        <div id="cd-home-slot-1" data-cd-trusted-slot="addToCart" data-cd-authority-key="product:p1"></div>
+        <button id="after">After</button>
+      </section>
+    </main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    let trustedRoot: ShadowRoot | undefined;
+    let trustedButton: HTMLButtonElement | undefined;
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({
+        requiredCapabilities: ["commerce", "overlay", "localState"],
+        interactions: {
+          version: 1, state: [], bindings: [],
+          transitions: [{ on: "click", sourceId: "cd-home-open", action: { type: "surface.open", surfaceId: "cd-home-drawer" } }],
+        },
+        trustedSlots: [{ id: "cd-home-slot-1", kind: "addToCart", scopeId: "root", hostSize: "block", themeTokenIds: [] }],
+      }),
+      adapters: { commerce: {
+        mount: ({ shadowRoot }) => {
+          trustedRoot = shadowRoot;
+          trustedButton = document.createElement("button");
+          trustedButton.id = "trusted";
+          trustedButton.textContent = "Trusted";
+          shadowRoot.append(trustedButton);
+        },
+        dispatch: vi.fn(),
+      } },
+    });
+    expect(runtime.hydrated).toBe(true);
+    document.getElementById("cd-home-open")?.click();
+    expect(document.activeElement?.id).toBe("before");
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    expect(trustedRoot?.activeElement).toBe(trustedButton);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    expect(document.activeElement?.id).toBe("after");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true }));
+    expect(trustedRoot?.activeElement).toBe(trustedButton);
   });
 
   it("exhausts hydration rollback and reports restoration errors", () => {

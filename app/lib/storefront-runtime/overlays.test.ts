@@ -119,24 +119,34 @@ describe("platform overlay portal", () => {
     manager.teardown();
   });
 
-  it("projects trusted commerce into an isolated overlay-owned layer and restores it", () => {
-    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="cover"></div><div id="slot" data-cd-trusted-slot="addToCart"></div></section></main>`;
+  it("protects trusted commerce in place without changing its layout parent or order", () => {
+    document.body.innerHTML = `<main id="root"><section id="cd-home-a"><div id="row"><span id="before"></span><div id="slot" data-cd-trusted-slot="addToCart"></div><div id="cover"></div></div></section></main>`;
     const root = document.getElementById("root") as HTMLElement;
     const surface = document.getElementById("cd-home-a") as HTMLElement;
     const slot = document.getElementById("slot") as HTMLElement;
+    const row = document.getElementById("row") as HTMLElement;
+    const before = document.getElementById("before") as HTMLElement;
+    const cover = document.getElementById("cover") as HTMLElement;
     const manager = createOverlayManager(root);
     manager.open(surface.id, null);
     const presentation = document.querySelector<HTMLElement>("[data-cd-overlay-presentation]")!;
-    const commerceLayer = document.querySelector<HTMLElement>("[data-cd-overlay-commerce]")!;
-    expect(commerceLayer).not.toBeNull();
-    expect(commerceLayer.contains(slot)).toBe(true);
-    expect(presentation.contains(slot)).toBe(false);
-    expect(Number(commerceLayer.style.zIndex)).toBeGreaterThan(Number(presentation.style.zIndex || 0));
-    expect(commerceLayer.style.pointerEvents).toBe("none");
+    const commerceWrapper = slot.parentElement as HTMLElement;
+    expect(commerceWrapper.hasAttribute("data-cd-overlay-commerce")).toBe(true);
+    expect(commerceWrapper.parentElement).toBe(row);
+    expect(commerceWrapper.previousElementSibling).toBe(before);
+    expect(commerceWrapper.nextElementSibling).toBe(cover);
+    expect(presentation.contains(slot)).toBe(true);
+    expect(commerceWrapper.style.display).toBe("contents");
+    expect(Number(slot.style.zIndex)).toBeGreaterThan(Number(cover.style.zIndex));
+    expect(slot.style.isolation).toBe("isolate");
+    expect(cover.style.isolation).toBe("isolate");
     expect(slot.style.pointerEvents).toBe("auto");
     manager.close(surface.id, null);
-    expect(surface.contains(slot)).toBe(true);
+    expect(slot.parentElement).toBe(row);
+    expect(slot.previousElementSibling).toBe(before);
+    expect(slot.nextElementSibling).toBe(cover);
     expect(document.querySelector("[data-cd-overlay-commerce]")).toBeNull();
+    expect(cover.getAttribute("style")).toBeNull();
     manager.teardown();
   });
 

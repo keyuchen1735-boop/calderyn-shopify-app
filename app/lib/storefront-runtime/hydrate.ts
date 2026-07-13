@@ -20,6 +20,7 @@ import {
   RuntimeManifestError,
   type RuntimeState,
 } from "./state";
+import { retainTrustedCommerceRoot, trustedCommerceRoot } from "./trusted-roots";
 
 const SUPPORTED_CAPABILITIES: ReadonlySet<RuntimeCapability> = new Set([
   "navigation", "localState", "overlay", "catalogFiltering", "catalogSearch", "commerce",
@@ -46,7 +47,6 @@ export interface StorefrontRuntimeHandle {
 
 const mounted = new WeakMap<HTMLElement, StorefrontRuntimeHandle>();
 const active = new Set<StorefrontRuntimeHandle>();
-const closedCommerceRoots = new WeakMap<HTMLElement, ShadowRoot>();
 
 function localElements(root: HTMLElement, id: string): HTMLElement[] {
   if (!isCompilerIssuedId(id)) throw new RuntimeManifestError(`ID ${JSON.stringify(id)} is not compiler-issued`);
@@ -296,31 +296,41 @@ function mountCommerce(
   if (slots.length === 0) return cleanups;
   const commerce = adapters.commerce;
   if (!commerce) throw new RuntimeManifestError("Commerce capability requires a trusted adapter");
+  const reset = (ownerDocument: Document): HTMLStyleElement => {
+    const style = ownerDocument.createElement("style");
+    style.textContent = ":host{box-sizing:border-box;contain:content}*,*::before,*::after{box-sizing:border-box}";
+    return style;
+  };
+  const restoreAttribute = (host: HTMLElement, name: string, value: string | null): void => {
+    if (value === null) host.removeAttribute(name);
+    else host.setAttribute(name, value);
+  };
+  const markUnavailable = (host: HTMLElement, shadowRoot: ShadowRoot): void => {
+    const unavailable = host.ownerDocument.createElement("span");
+    unavailable.setAttribute("data-cd-commerce-unavailable", "");
+    unavailable.setAttribute("role", "status");
+    unavailable.textContent = "Commerce unavailable";
+    shadowRoot.replaceChildren(reset(host.ownerDocument), unavailable);
+    host.hidden = true;
+    host.setAttribute("data-cd-commerce-state", "unavailable");
+  };
   for (const slot of slots) {
     for (const host of localElements(root, slot.id)) {
       const authorityKey = host.dataset.cdAuthorityKey;
       if (!authorityKey || authorityKey.length > 240) throw new RuntimeManifestError("Trusted commerce authority is missing");
       if (host.shadowRoot) throw new RuntimeManifestError("Trusted commerce host uses an untrusted open root");
-      const reset = (): HTMLStyleElement => {
-        const style = host.ownerDocument.createElement("style");
-        style.textContent = ":host{box-sizing:border-box;contain:content}*,*::before,*::after{box-sizing:border-box}";
-        return style;
-      };
-      const markUnavailable = (targetHost: HTMLElement, targetRoot: ShadowRoot): void => {
-        const unavailable = targetHost.ownerDocument.createElement("span");
-        unavailable.setAttribute("data-cd-commerce-unavailable", "");
-        unavailable.setAttribute("role", "status");
-        unavailable.textContent = "Commerce unavailable";
-        targetRoot.replaceChildren(reset(), unavailable);
-      };
-      const provisionalHost = host.ownerDocument.createElement("div");
-      const provisionalRoot = provisionalHost.attachShadow({ mode: "closed" });
-      provisionalRoot.append(reset());
+      const originalHidden = host.hidden;
+      const originalState = host.getAttribute("data-cd-commerce-state");
+      const shadowRoot = trustedCommerceRoot(host) ?? host.attachShadow({ mode: "closed" });
+      retainTrustedCommerceRoot(host, shadowRoot);
+      host.hidden = true;
+      host.setAttribute("data-cd-commerce-state", "pending");
+      shadowRoot.replaceChildren(reset(host.ownerDocument));
       let cleanup: void | (() => void);
       try {
         cleanup = commerce.mount({
-          shadowRoot: provisionalRoot,
-          host: provisionalHost,
+          shadowRoot,
+          host,
           slot,
           authorityKey,
           bridge(intent) {
@@ -333,13 +343,7 @@ function mountCommerce(
         });
       } catch (error) {
         const rollbackErrors: unknown[] = [];
-        try {
-          const shadowRoot = closedCommerceRoots.get(host) ?? host.attachShadow({ mode: "closed" });
-          closedCommerceRoots.set(host, shadowRoot);
-          markUnavailable(host, shadowRoot);
-        } catch (rollbackError) {
-          rollbackErrors.push(rollbackError);
-        }
+        try { markUnavailable(host, shadowRoot); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
         rollbackErrors.push(...runCleanups(cleanups));
         for (const mounted of committed) {
           try { markUnavailable(mounted.host, mounted.shadowRoot); } catch (rollbackError) { rollbackErrors.push(rollbackError); }
@@ -349,16 +353,17 @@ function mountCommerce(
         }
         throw error;
       }
-      const shadowRoot = closedCommerceRoots.get(host) ?? host.attachShadow({ mode: "closed" });
-      closedCommerceRoots.set(host, shadowRoot);
-      shadowRoot.replaceChildren(...provisionalRoot.childNodes);
+      host.hidden = originalHidden;
+      restoreAttribute(host, "data-cd-commerce-state", originalState);
       committed.push({ host, shadowRoot });
       cleanups.push(() => {
         const errors: unknown[] = [];
         if (cleanup) {
           try { cleanup(); } catch (error) { errors.push(error); }
         }
-        try { shadowRoot.replaceChildren(reset()); } catch (error) { errors.push(error); }
+        try { shadowRoot.replaceChildren(reset(host.ownerDocument)); } catch (error) { errors.push(error); }
+        try { host.hidden = originalHidden; } catch (error) { errors.push(error); }
+        try { restoreAttribute(host, "data-cd-commerce-state", originalState); } catch (error) { errors.push(error); }
         if (errors.length > 0) throw new AggregateError(errors, `Failed to cleanup commerce host ${host.id}`);
       });
     }
