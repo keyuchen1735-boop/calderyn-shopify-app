@@ -31,21 +31,26 @@ async function assetRpc<T>(name: string, params: Record<string, unknown>): Promi
 
 export interface VerifiedStorefrontAssetInput {
   shopId: string;
-  assetKey: string;
+  assetKey?: string;
   contentHash: string;
   mediaType: string;
   byteSize: number;
 }
 
-export async function recordVerifiedStorefrontAsset(input: VerifiedStorefrontAssetInput): Promise<void> {
+export async function recordVerifiedStorefrontAsset(input: VerifiedStorefrontAssetInput): Promise<string> {
   await assertStorefrontWriteAllowed(input.shopId);
+  const assetKey = storefrontAssetKey(input.shopId, input.contentHash, input.mediaType);
+  if (input.assetKey !== undefined && input.assetKey !== assetKey) {
+    throw new StorefrontReleaseError("storefront_asset_key_mismatch", "Asset key does not match its immutable content identity", 422);
+  }
   await assetRpc("record_storefront_verified_asset", {
     p_shop_id: input.shopId,
-    p_asset_key: input.assetKey,
+    p_asset_key: assetKey,
     p_content_hash: input.contentHash,
     p_media_type: input.mediaType,
     p_byte_size: input.byteSize,
   });
+  return assetKey;
 }
 
 export interface PersistStorefrontAssetBytesInput {
@@ -105,8 +110,26 @@ export async function attachVerifiedStorefrontAsset(input: { shopId: string; bun
   });
 }
 
-export async function beginStorefrontAssetGarbageCollection(input: { shopId: string; assetKey: string }): Promise<number> {
-  return assetRpc<number>("begin_storefront_asset_gc", { p_shop_id: input.shopId, p_asset_key: input.assetKey });
+export async function beginStorefrontAssetGarbageCollection(input: { shopId: string; assetKey: string }): Promise<number | null> {
+  return assetRpc<number | null>("begin_storefront_asset_gc", { p_shop_id: input.shopId, p_asset_key: input.assetKey });
+}
+
+export async function deleteStorefrontAssetGeneration(input: {
+  shopId: string;
+  assetKey: string;
+  expectedGeneration: number;
+}): Promise<boolean> {
+  const verified = await assetRpc<boolean>("verify_storefront_asset_gc", {
+    p_shop_id: input.shopId,
+    p_asset_key: input.assetKey,
+    p_expected_generation: input.expectedGeneration,
+  });
+  if (!verified) return false;
+  const removed = await getSupabase().storage.from(SHOP_ASSETS_BUCKET).remove([input.assetKey]);
+  if (removed.error) {
+    throw new StorefrontReleaseError("storefront_asset_delete_failed", removed.error.message, 503, removed.error);
+  }
+  return finalizeStorefrontAssetGarbageCollection(input);
 }
 
 export async function finalizeStorefrontAssetGarbageCollection(input: {

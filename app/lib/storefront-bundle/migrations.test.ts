@@ -48,6 +48,7 @@ describe("storefront bundle persistence migrations", () => {
   it("defines service-role-only transactional RPCs and explicit stale-pointer conflicts", () => {
     for (const fn of [
       "create_storefront_bundle_version",
+      "validate_storefront_bundle_version",
       "capture_storefront_legacy_release",
       "install_storefront_draft",
       "edit_storefront_draft",
@@ -86,5 +87,44 @@ describe("storefront bundle persistence migrations", () => {
     }
     expect(FUNCTIONS).toMatch(/storefront_experiment_running/);
     expect(FUNCTIONS).toMatch(/from public\.store_experiment[^;]+state = 'running'/);
+  });
+
+  it("serializes bundle and legacy-experiment transitions through one shop lock", () => {
+    expect(FUNCTIONS).toMatch(/create (or replace )?function public\.lock_storefront_design_shop/);
+    expect(FUNCTIONS).toMatch(/pg_advisory_xact_lock/);
+    for (const fn of [
+      "create_storefront_bundle_version",
+      "capture_storefront_legacy_release",
+      "install_storefront_draft",
+      "edit_storefront_draft",
+      "publish_storefront_release",
+      "rollback_storefront_release",
+      "start_store_experiment",
+      "transition_store_experiment",
+    ]) {
+      const body = FUNCTIONS.match(new RegExp(`function public\\.${fn}[\\s\\S]+?\\$\\$;`))?.[0] ?? "";
+      expect(body).toContain("lock_storefront_design_shop");
+    }
+  });
+
+  it("recomputes canonical hashes and reserves legacy creation for validated capture", () => {
+    expect(FUNCTIONS).toMatch(/create (or replace )?function public\.storefront_artifact_hash/);
+    expect(FUNCTIONS).toMatch(/storefront_artifact_hash_mismatch/);
+    expect(FUNCTIONS).toMatch(/legacy_source_requires_capture/);
+    expect(FUNCTIONS).toMatch(/legacy_adapter[^;]+validated/);
+  });
+
+  it("protects validated versions, locked references, and retained release targets from deletion", () => {
+    expect(SQL).toMatch(/validated_storefront_bundle_is_immutable/);
+    expect(SQL).toMatch(/tg_op = 'delete'/);
+    expect(SQL).toMatch(/locked_storefront_bundle_asset_is_immutable/);
+    expect(SQL).toMatch(/storefront_bundle_asset_locked_guard/);
+    expect(SQL).toMatch(/on delete restrict/);
+  });
+
+  it("derives immutable asset keys and verifies deletion generation immediately before removal", () => {
+    expect(FUNCTIONS).toMatch(/storefront_asset_key/);
+    expect(FUNCTIONS).toMatch(/storefront_asset_key_mismatch/);
+    expect(FUNCTIONS).toMatch(/verify_storefront_asset_gc/);
   });
 });

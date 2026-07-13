@@ -44,9 +44,9 @@ create table public.storefront_release (
   published_version_id uuid,
   updated_at timestamptz not null default now(),
   foreign key (shop_id, draft_version_id)
-    references public.storefront_bundle_version (shop_id, id),
+    references public.storefront_bundle_version (shop_id, id) on delete restrict,
   foreign key (shop_id, published_version_id)
-    references public.storefront_bundle_version (shop_id, id)
+    references public.storefront_bundle_version (shop_id, id) on delete restrict
 );
 
 create table public.storefront_release_history (
@@ -58,9 +58,9 @@ create table public.storefront_release_history (
   actor_id uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   foreign key (shop_id, from_version_id)
-    references public.storefront_bundle_version (shop_id, id),
+    references public.storefront_bundle_version (shop_id, id) on delete restrict,
   foreign key (shop_id, to_version_id)
-    references public.storefront_bundle_version (shop_id, id)
+    references public.storefront_bundle_version (shop_id, id) on delete restrict
 );
 
 create index storefront_release_history_shop_created_idx
@@ -81,9 +81,9 @@ create table public.storefront_bundle_edit (
   actor_id uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   foreign key (shop_id, base_version_id)
-    references public.storefront_bundle_version (shop_id, id),
+    references public.storefront_bundle_version (shop_id, id) on delete restrict,
   foreign key (shop_id, result_version_id)
-    references public.storefront_bundle_version (shop_id, id),
+    references public.storefront_bundle_version (shop_id, id) on delete restrict,
   unique (shop_id, result_version_id)
 );
 
@@ -97,15 +97,24 @@ security invoker
 set search_path = ''
 as $$
 begin
+  if tg_op = 'DELETE' then
+    if old.status = 'validated' then
+      raise exception using errcode = '55000', message = 'validated_storefront_bundle_is_immutable';
+    end if;
+    return old;
+  end if;
   if old.status = 'validated' then
     raise exception using errcode = '55000', message = 'validated_storefront_bundle_is_immutable';
+  end if;
+  if new.status = 'validated' and coalesce(current_setting('app.storefront_validate_bundle', true), '') <> '1' then
+    raise exception using errcode = '55000', message = 'storefront_bundle_validation_requires_rpc';
   end if;
   return new;
 end;
 $$;
 
 create trigger storefront_bundle_version_immutable
-before update on public.storefront_bundle_version
+before update or delete on public.storefront_bundle_version
 for each row execute function public.storefront_reject_validated_bundle_mutation();
 
 alter table public.storefront_bundle_version enable row level security;

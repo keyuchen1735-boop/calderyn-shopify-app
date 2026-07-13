@@ -5,6 +5,7 @@ import {
   installStorefrontDraft,
   publishStorefrontRelease,
   rollbackStorefrontRelease,
+  validateStorefrontBundleVersion,
 } from "./release.server";
 import type { StorefrontReleaseError } from "./release.server";
 
@@ -23,7 +24,10 @@ const BASE = "33333333-3333-3333-3333-333333333333";
 beforeEach(() => {
   vi.clearAllMocks();
   hasRunningExperiment.mockResolvedValue(false);
-  rpc.mockResolvedValue({ data: VERSION, error: null });
+  rpc.mockImplementation(async (name: string) => ({
+    data: name === "hash_storefront_artifact" ? `sha256:${"a".repeat(64)}` : VERSION,
+    error: null,
+  }));
 });
 
 describe("storefront bundle release repository", () => {
@@ -35,7 +39,6 @@ describe("storefront bundle release repository", () => {
       schemaVersion: 1,
       runtimeVersion: 1,
       validationProfileVersion: 1,
-      artifactHash: "sha256:result",
       artifact: { sourceKind: "custom", bundle: { schemaVersion: 1 } },
       assetManifest: { entries: [] },
       validationReport: { valid: true },
@@ -44,12 +47,48 @@ describe("storefront bundle release repository", () => {
     })).resolves.toBe(VERSION);
 
     expect(hasRunningExperiment).toHaveBeenCalledWith(SHOP);
-    expect(rpc).toHaveBeenCalledWith("create_storefront_bundle_version", expect.objectContaining({
+    expect(rpc).toHaveBeenNthCalledWith(1, "hash_storefront_artifact", expect.objectContaining({
+      p_schema_version: 1,
+      p_runtime_version: 1,
+      p_validation_profile_version: 1,
+    }));
+    expect(rpc).toHaveBeenNthCalledWith(2, "create_storefront_bundle_version", expect.objectContaining({
       p_shop_id: SHOP,
       p_source_kind: "custom",
-      p_artifact_hash: "sha256:result",
+      p_artifact_hash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
       p_bundle_json: expect.objectContaining({ sourceKind: "custom" }),
     }));
+  });
+
+  it("never permits the generic creator to forge a legacy source", async () => {
+    await expect(createStorefrontBundleVersion({
+      shopId: SHOP,
+      sourceKind: "legacy",
+      status: "validated",
+      schemaVersion: 1,
+      runtimeVersion: 0,
+      validationProfileVersion: 0,
+      artifact: { sourceKind: "legacy" },
+      assetManifest: { entries: [] },
+      validationReport: { valid: true },
+      resolution: { kind: "legacy_capture" },
+    })).rejects.toMatchObject({ code: "legacy_source_requires_capture" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("validates an asset-bearing candidate only through the guarded transition RPC", async () => {
+    await expect(validateStorefrontBundleVersion({
+      shopId: SHOP,
+      versionId: VERSION,
+      artifactHash: `sha256:${"a".repeat(64)}`,
+      validationReport: { valid: true, profileVersion: 1 },
+    })).resolves.toBe(VERSION);
+    expect(rpc).toHaveBeenCalledWith("validate_storefront_bundle_version", {
+      p_shop_id: SHOP,
+      p_version_id: VERSION,
+      p_expected_artifact_hash: `sha256:${"a".repeat(64)}`,
+      p_validation_report: { valid: true, profileVersion: 1 },
+    });
   });
 
   it("refuses every runtime-1 write before calling PostgREST while an experiment is running", async () => {

@@ -65,7 +65,6 @@ export interface CreateStorefrontBundleVersionInput {
   schemaVersion: number;
   runtimeVersion: number;
   validationProfileVersion: number;
-  artifactHash: string;
   artifact: Record<string, unknown>;
   assetManifest: Record<string, unknown>;
   validationReport?: Record<string, unknown> | null;
@@ -74,7 +73,21 @@ export interface CreateStorefrontBundleVersionInput {
 }
 
 export async function createStorefrontBundleVersion(input: CreateStorefrontBundleVersionInput): Promise<string> {
+  if (input.sourceKind === "legacy") {
+    throw new StorefrontReleaseError(
+      "legacy_source_requires_capture",
+      "Legacy versions can only be created by the validated capture path.",
+      422,
+    );
+  }
   await assertStorefrontWriteAllowed(input.shopId);
+  const artifactHash = await hashStorefrontArtifact({
+    schemaVersion: input.schemaVersion,
+    runtimeVersion: input.runtimeVersion,
+    validationProfileVersion: input.validationProfileVersion,
+    artifact: input.artifact,
+    assetManifest: input.assetManifest,
+  });
   const id = await writeRpc<string>("create_storefront_bundle_version", {
     p_shop_id: input.shopId,
     p_source_kind: input.sourceKind,
@@ -84,7 +97,7 @@ export async function createStorefrontBundleVersion(input: CreateStorefrontBundl
     p_schema_version: input.schemaVersion,
     p_runtime_version: input.runtimeVersion,
     p_validation_profile_version: input.validationProfileVersion,
-    p_artifact_hash: input.artifactHash,
+    p_artifact_hash: artifactHash,
     p_bundle_json: input.artifact,
     p_asset_manifest: input.assetManifest,
     p_validation_report: input.validationReport ?? null,
@@ -93,6 +106,49 @@ export async function createStorefrontBundleVersion(input: CreateStorefrontBundl
   }, "storefront_bundle_create_failed");
   requireUuid(id, "bundleVersionId");
   return id;
+}
+
+export interface HashStorefrontArtifactInput {
+  schemaVersion: number;
+  runtimeVersion: number;
+  validationProfileVersion: number;
+  artifact: Record<string, unknown>;
+  assetManifest: Record<string, unknown>;
+}
+
+export async function hashStorefrontArtifact(input: HashStorefrontArtifactInput): Promise<string> {
+  const hash = await writeRpc<string>("hash_storefront_artifact", {
+    p_schema_version: input.schemaVersion,
+    p_runtime_version: input.runtimeVersion,
+    p_validation_profile_version: input.validationProfileVersion,
+    p_bundle_json: input.artifact,
+    p_asset_manifest: input.assetManifest,
+  }, "storefront_artifact_hash_failed");
+  if (!/^sha256:[a-f0-9]{64}$/.test(hash)) {
+    throw new StorefrontReleaseError("storefront_artifact_hash_failed", "Database returned an invalid artifact hash", 500);
+  }
+  return hash;
+}
+
+export interface ValidateStorefrontBundleVersionInput {
+  shopId: string;
+  versionId: string;
+  artifactHash: string;
+  validationReport: Record<string, unknown>;
+}
+
+export async function validateStorefrontBundleVersion(input: ValidateStorefrontBundleVersionInput): Promise<string> {
+  await assertStorefrontWriteAllowed(input.shopId);
+  requireUuid(input.versionId, "versionId");
+  if (!/^sha256:[a-f0-9]{64}$/.test(input.artifactHash)) {
+    throw new StorefrontReleaseError("invalid_storefront_release", "artifactHash must be a canonical SHA-256 hash", 422);
+  }
+  return writeRpc<string>("validate_storefront_bundle_version", {
+    p_shop_id: input.shopId,
+    p_version_id: input.versionId,
+    p_expected_artifact_hash: input.artifactHash,
+    p_validation_report: input.validationReport,
+  }, "storefront_bundle_validation_failed");
 }
 
 export interface InstallStorefrontDraftInput {

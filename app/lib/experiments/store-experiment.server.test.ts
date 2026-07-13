@@ -15,10 +15,11 @@ import {
 
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // mocks still apply even though they are written below them.
-const { fromMock, pageDoc, catalogMock, settingsMock, storegenMock, visitorMock } = vi.hoisted(() => ({
+const { fromMock, rpcMock, pageDoc, catalogMock, settingsMock, storegenMock, visitorMock } = vi.hoisted(() => ({
   storegenMock: { generateChallengerHome: vi.fn() },
   visitorMock: { peekVisitorId: vi.fn(), ensureVisitorSession: vi.fn() },
   fromMock: vi.fn(),
+  rpcMock: vi.fn(),
   pageDoc: {
     loadPublishedDoc: vi.fn(),
     saveDraft: vi.fn(),
@@ -31,7 +32,7 @@ const { fromMock, pageDoc, catalogMock, settingsMock, storegenMock, visitorMock 
   settingsMock: { getStoreSettings: vi.fn(), saveStoreSettings: vi.fn() },
 }));
 
-vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
+vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock, rpc: rpcMock }) }));
 vi.mock("~/lib/storebuilder/page-document.server", () => pageDoc);
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: () => catalogMock }));
 vi.mock("~/lib/storefront/settings.server", () => settingsMock);
@@ -115,6 +116,15 @@ beforeEach(() => {
   resultQueues.clear();
   calls.length = 0;
   fromMock.mockImplementation((table: string) => makeBuilder(table));
+  rpcMock.mockImplementation(async (name: string, params: Record<string, unknown>) => {
+    if (name === "start_store_experiment") return nextResult("store_experiment:insert.single");
+    if (name === "transition_store_experiment") {
+      calls.push({ table: "store_experiment", verb: "update", payload: { state: params.p_state } });
+      const result = nextResult("store_experiment:update");
+      return Array.isArray(result.data) && result.data.length === 0 ? { ...result, data: null } : result;
+    }
+    return { data: null, error: null };
+  });
   pageDoc.loadPublishedDoc.mockResolvedValue(null);
   pageDoc.saveDraft.mockResolvedValue(undefined);
   pageDoc.publishDoc.mockResolvedValue(undefined);
@@ -187,6 +197,27 @@ describe("getRunningExperiment", () => {
 });
 
 describe("startExperiment", () => {
+  it("commits the start through the shared-lock transition RPC", async () => {
+    pageDoc.loadPublishedDoc.mockResolvedValue(HOME_DOC);
+    rpcMock.mockResolvedValue({
+      data: {
+        id: EXP_ID,
+        page_key: "home",
+        name: "Sharper headline",
+        why: "w",
+        state: "running",
+        started_at: "2026-07-05T00:00:00Z",
+        decided_at: null,
+      },
+      error: null,
+    });
+    await startExperiment(SHOP, { kind: "headline" });
+    expect(rpcMock).toHaveBeenCalledWith("start_store_experiment", expect.objectContaining({
+      p_shop_id: SHOP,
+      p_variant_doc: expect.objectContaining({ pageKey: "home" }),
+    }));
+    expect(calls.find((call) => call.table === "store_experiment" && call.verb === "insert")).toBeUndefined();
+  });
   it("rejects demo shops with a clean 422", async () => {
     await expect(startExperiment("demo-shop", { kind: "headline" })).rejects.toMatchObject({
       status: 422,
@@ -224,16 +255,15 @@ describe("startExperiment", () => {
     });
     const exp = await startExperiment(SHOP, { kind: "headline" });
     expect(exp.state).toBe("running");
-    const insert = calls.find((c) => c.table === "store_experiment" && c.verb === "insert");
-    const payload = insert?.payload as {
-      variant_doc: typeof HOME_DOC;
-      variant_settings: unknown;
-      page_key: string;
+    const payload = rpcMock.mock.calls.find((c) => c[0] === "start_store_experiment")?.[1] as {
+      p_variant_doc: typeof HOME_DOC;
+      p_variant_settings: unknown;
+      p_page_key: string;
     };
-    expect(payload.page_key).toBe("home");
-    expect(payload.variant_settings).toBeNull();
-    expect(payload.variant_doc.blocks[0].props.headline).toBe("Start with Alpine Mug");
-    expect(payload.variant_doc.blocks[0].props.subhead).toContain("Peak & Pine");
+    expect(payload.p_page_key).toBe("home");
+    expect(payload.p_variant_settings).toBeNull();
+    expect(payload.p_variant_doc.blocks[0].props.headline).toBe("Start with Alpine Mug");
+    expect(payload.p_variant_doc.blocks[0].props.subhead).toContain("Peak & Pine");
     // The champion doc is untouched — the challenger is a patched clone.
     expect(HOME_DOC.blocks[0].props.headline).toBe("Welcome");
   });
@@ -251,10 +281,12 @@ describe("startExperiment", () => {
       },
     });
     await startExperiment(SHOP, { kind: "vibe" });
-    const insert = calls.find((c) => c.table === "store_experiment" && c.verb === "insert");
-    const payload = insert?.payload as { variant_doc: unknown; variant_settings: unknown };
-    expect(payload.variant_settings).toEqual({ vibe: "bold" });
-    expect(payload.variant_doc).toEqual(HOME_DOC);
+    const payload = rpcMock.mock.calls.find((c) => c[0] === "start_store_experiment")?.[1] as {
+      p_variant_doc: unknown;
+      p_variant_settings: unknown;
+    };
+    expect(payload.p_variant_settings).toEqual({ vibe: "bold" });
+    expect(payload.p_variant_doc).toEqual(HOME_DOC);
   });
 
   it("maps the one-running unique-index race (23505) to a 409", async () => {
@@ -448,43 +480,42 @@ describe("decideExperiment", () => {
     expect(settingsMock.saveStoreSettings).not.toHaveBeenCalled();
   });
 
-  it("ship publishes a headline challenger through validate + saveDraft + publishDoc", async () => {
+  it("ship passes a validated headline challenger through the atomic transition RPC", async () => {
     queue("store_experiment:select.maybeSingle", { data: runningRow });
     queue("store_experiment:update", { data: [{ id: EXP_ID }] });
     const exp = await decideExperiment(SHOP, EXP_ID, "ship");
     expect(exp.state).toBe("decided_ship");
-    expect(pageDoc.saveDraft).toHaveBeenCalledWith(
-      SHOP,
-      "home",
-      expect.objectContaining({
+    expect(rpcMock).toHaveBeenCalledWith("transition_store_experiment", expect.objectContaining({
+      p_shop_id: SHOP,
+      p_state: "decided_ship",
+      p_validated_variant_doc: expect.objectContaining({
         blocks: expect.arrayContaining([expect.objectContaining({ type: "hero" })]),
       }),
-    );
-    expect(pageDoc.publishDoc).toHaveBeenCalledWith(SHOP, "home");
+    }));
+    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
   });
 
-  it("ship applies a vibe challenger through the StoreSettings contract instead of publishing", async () => {
+  it("ship applies a vibe challenger inside the atomic transition RPC", async () => {
     queue("store_experiment:select.maybeSingle", {
       data: { ...runningRow, variant_settings: { vibe: "warm" } },
     });
     queue("store_experiment:update", { data: [{ id: EXP_ID }] });
     await decideExperiment(SHOP, EXP_ID, "ship");
-    expect(settingsMock.saveStoreSettings).toHaveBeenCalledWith(
-      SHOP,
-      expect.objectContaining({ storeName: "Peak & Pine", vibe: "warm" }),
-    );
+    expect(rpcMock).toHaveBeenCalledWith("transition_store_experiment", expect.objectContaining({
+      p_state: "decided_ship",
+      p_validated_variant_doc: null,
+    }));
+    expect(settingsMock.saveStoreSettings).not.toHaveBeenCalled();
     expect(pageDoc.publishDoc).not.toHaveBeenCalled();
   });
 
-  it("reverts the row to running when the ship apply fails, so ship can be retried", async () => {
+  it("leaves the row running when the atomic transition fails", async () => {
     queue("store_experiment:select.maybeSingle", { data: runningRow });
-    queue("store_experiment:update", { data: [{ id: EXP_ID }] }); // guarded flip wins
-    queue("store_experiment:update", { data: [{ id: EXP_ID }] }); // compensating revert
-    pageDoc.publishDoc.mockRejectedValue(new Error("publish blew up"));
+    queue("store_experiment:update", { error: new Error("publish blew up") });
     await expect(decideExperiment(SHOP, EXP_ID, "ship")).rejects.toThrow("publish blew up");
     const updates = calls.filter((c) => c.table === "store_experiment" && c.verb === "update");
-    expect(updates).toHaveLength(2);
-    expect(updates[1].payload).toMatchObject({ state: "running", decided_at: null });
+    expect(updates).toHaveLength(1);
+    expect(updates[0].payload).toMatchObject({ state: "decided_ship" });
   });
 });
 
@@ -592,15 +623,14 @@ describe("new challenger kinds (pdp_copy / ai_page)", () => {
     const exp = await startExperiment(SHOP, { kind: "pdp_copy" });
     expect(exp.pageKey).toBe("pdp");
     expect(pageDoc.loadPublishedDoc).toHaveBeenCalledWith(SHOP, "pdp");
-    const insert = calls.find((c) => c.table === "store_experiment" && c.verb === "insert");
-    const payload = insert?.payload as { page_key: string; variant_doc: typeof PDP_DOC };
-    expect(payload.page_key).toBe("pdp");
+    const payload = rpcMock.mock.calls.find((c) => c[0] === "start_store_experiment")?.[1] as { p_page_key: string; p_variant_doc: typeof PDP_DOC };
+    expect(payload.p_page_key).toBe("pdp");
     // The reassurance line sits directly under Add to cart ON THE GRID (renderers place by
     // layout, not array order): addToCart ends at y=4, reassurance occupies x:6 y:4.
-    const reassurance = payload.variant_doc.blocks.find((b) => b.id === "pdp-experiment-reassurance")!;
+    const reassurance = payload.p_variant_doc.blocks.find((b) => b.id === "pdp-experiment-reassurance")!;
     expect(reassurance).toMatchObject({ type: "richText", layout: expect.objectContaining({ x: 6, y: 4 }) });
     // Blocks at/below the insertion row are pushed down; nothing overlaps.
-    const blurb = payload.variant_doc.blocks.find((b) => b.id === "r")!;
+    const blurb = payload.p_variant_doc.blocks.find((b) => b.id === "r")!;
     expect(blurb.layout.y).toBe(5);
     // The champion doc is untouched — the challenger is a patched clone.
     expect(PDP_DOC.blocks).toHaveLength(6);
@@ -621,8 +651,8 @@ describe("new challenger kinds (pdp_copy / ai_page)", () => {
     });
     queue("store_experiment:insert.single", { data: insertedRow });
     await startExperiment(SHOP, { kind: "pdp_copy" });
-    const insert = calls.find((c) => c.table === "store_experiment" && c.verb === "insert");
-    const blocks = (insert?.payload as { variant_doc: { blocks: { id: string; layout: { y: number } }[] } }).variant_doc.blocks;
+    const start = rpcMock.mock.calls.find((c) => c[0] === "start_store_experiment")?.[1] as { p_variant_doc: { blocks: { id: string; layout: { y: number } }[] } };
+    const blocks = start.p_variant_doc.blocks;
     expect(blocks.filter((b) => b.id === "pdp-experiment-reassurance")).toHaveLength(1);
     // The early-array featureRow at y:6 moved down despite preceding addToCart in the array.
     expect(blocks.find((b) => b.id === "f")!.layout.y).toBe(7);
@@ -647,8 +677,8 @@ describe("new challenger kinds (pdp_copy / ai_page)", () => {
     const exp = await startExperiment(SHOP, { kind: "ai_page" });
     expect(exp.pageKey).toBe("home");
     expect(storegenMock.generateChallengerHome).toHaveBeenCalledWith(SHOP);
-    const insert = calls.find((c) => c.table === "store_experiment" && c.verb === "insert");
-    expect((insert?.payload as { page_key: string }).page_key).toBe("home");
+    const start = rpcMock.mock.calls.find((c) => c[0] === "start_store_experiment")?.[1] as { p_page_key: string };
+    expect(start.p_page_key).toBe("home");
   });
 
   it("ai_page refuses with 503 when the design engine produced nothing — never a fake variant", async () => {
@@ -751,7 +781,7 @@ describe("expireOverdueExperiment (max duration + lazy auto-decide)", () => {
     const updates = calls.filter((c) => c.table === "store_experiment" && c.verb === "update");
     expect(updates).toHaveLength(1);
     expect(updates[0].payload).toMatchObject({ state: "decided_ship" });
-    expect(pageDoc.publishDoc).toHaveBeenCalledWith(SHOP, "home");
+    expect(rpcMock).toHaveBeenCalledWith("transition_store_experiment", expect.objectContaining({ p_state: "decided_ship" }));
   });
 
   it("keeps the champion when the overdue variant is not a confident winner", async () => {

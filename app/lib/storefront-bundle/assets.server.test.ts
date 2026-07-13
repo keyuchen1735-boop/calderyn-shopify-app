@@ -3,6 +3,7 @@ import {
   attachVerifiedStorefrontAsset,
   beginStorefrontAssetGarbageCollection,
   finalizeStorefrontAssetGarbageCollection,
+  deleteStorefrontAssetGeneration,
   persistStorefrontAssetBytes,
   recordVerifiedStorefrontAsset,
   storefrontAssetKey,
@@ -39,10 +40,22 @@ describe("storefront bundle asset repository", () => {
 
   it("durably records verified metadata and adds a reference through row-locking RPCs", async () => {
     const assetKey = storefrontAssetKey(SHOP, "a".repeat(64), "image/png");
-    await recordVerifiedStorefrontAsset({ shopId: SHOP, assetKey, contentHash: "a".repeat(64), mediaType: "image/png", byteSize: 123 });
+    await expect(recordVerifiedStorefrontAsset({ shopId: SHOP, contentHash: "a".repeat(64), mediaType: "image/png", byteSize: 123 }))
+      .resolves.toBe(assetKey);
     await attachVerifiedStorefrontAsset({ shopId: SHOP, bundleId: BUNDLE, assetKey });
     expect(rpc).toHaveBeenNthCalledWith(1, "record_storefront_verified_asset", expect.objectContaining({ p_asset_key: assetKey, p_byte_size: 123 }));
     expect(rpc).toHaveBeenNthCalledWith(2, "attach_storefront_bundle_asset", expect.objectContaining({ p_bundle_id: BUNDLE, p_asset_key: assetKey }));
+  });
+
+  it("rejects any caller-supplied key that disagrees with the derived immutable key", async () => {
+    await expect(recordVerifiedStorefrontAsset({
+      shopId: SHOP,
+      assetKey: "caller/chosen.png",
+      contentHash: "a".repeat(64),
+      mediaType: "image/png",
+      byteSize: 123,
+    })).rejects.toMatchObject({ code: "storefront_asset_key_mismatch" });
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("sniffs, hashes, uploads, and durably verifies bytes under the content-addressed key", async () => {
@@ -70,8 +83,26 @@ describe("storefront bundle asset repository", () => {
     rpc.mockResolvedValueOnce({ data: 7, error: null }).mockResolvedValueOnce({ data: true, error: null });
     const generation = await beginStorefrontAssetGarbageCollection({ shopId: SHOP, assetKey: "key" });
     expect(generation).toBe(7);
+    if (generation === null) throw new Error("expected a GC generation");
     await expect(finalizeStorefrontAssetGarbageCollection({ shopId: SHOP, assetKey: "key", expectedGeneration: generation }))
       .resolves.toBe(true);
     expect(rpc).toHaveBeenLastCalledWith("finalize_storefront_asset_gc", expect.objectContaining({ p_expected_generation: 7 }));
+  });
+
+  it("rechecks generation immediately before remove and finalizes only after successful storage deletion", async () => {
+    rpc.mockResolvedValueOnce({ data: true, error: null }).mockResolvedValueOnce({ data: true, error: null });
+    await expect(deleteStorefrontAssetGeneration({ shopId: SHOP, assetKey: "key", expectedGeneration: 7 }))
+      .resolves.toBe(true);
+    expect(rpc).toHaveBeenNthCalledWith(1, "verify_storefront_asset_gc", expect.objectContaining({ p_expected_generation: 7 }));
+    expect(remove).toHaveBeenCalledWith(["key"]);
+    expect(rpc).toHaveBeenNthCalledWith(2, "finalize_storefront_asset_gc", expect.objectContaining({ p_expected_generation: 7 }));
+  });
+
+  it("leaves deleting state retryable when Storage removal fails", async () => {
+    rpc.mockResolvedValueOnce({ data: true, error: null });
+    remove.mockResolvedValueOnce({ error: { message: "storage down" } });
+    await expect(deleteStorefrontAssetGeneration({ shopId: SHOP, assetKey: "key", expectedGeneration: 7 }))
+      .rejects.toMatchObject({ code: "storefront_asset_delete_failed" });
+    expect(rpc).toHaveBeenCalledTimes(1);
   });
 });
