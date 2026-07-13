@@ -498,15 +498,24 @@ export interface FirstRunCreativeVariant {
  * Generate up to 3 ad-copy variants from a chosen catalog product. `available:
  * false` means the generator is unconfigured (no API key / quota) - the wizard
  * should fall back to manual copy editing rather than treat it as an error.
+ * destinationUrl/imageUrl are always returned (even when unavailable) — the
+ * server-resolved product page link and signed image the wizard's Meta-create
+ * step needs, which the browser can't derive on its own.
  */
 export async function generateFirstRunCreatives(
   productId: string,
-): Promise<{ available: boolean; variants: FirstRunCreativeVariant[] }> {
-  return apiSend<{ available: boolean; variants: FirstRunCreativeVariant[] }>(
-    "POST",
-    "/dashboard/api/campaigns/first-run/creatives",
-    { productId },
-  );
+): Promise<{
+  available: boolean;
+  variants: FirstRunCreativeVariant[];
+  destinationUrl: string;
+  imageUrl: string | null;
+}> {
+  return apiSend<{
+    available: boolean;
+    variants: FirstRunCreativeVariant[];
+    destinationUrl: string;
+    imageUrl: string | null;
+  }>("POST", "/dashboard/api/campaigns/first-run/creatives", { productId });
 }
 
 /** The wizard's Meta-create input: the runId is client-minted (crypto.randomUUID())
