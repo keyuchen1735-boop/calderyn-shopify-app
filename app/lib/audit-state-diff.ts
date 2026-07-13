@@ -100,6 +100,14 @@ export function stateDiff(actionKind: string, preState: unknown, postState: unkn
       if (externalId != null) rows.push({ label: "Copy created", before: null, after: externalId });
       break;
     }
+
+    case "create_campaign_wizard": {
+      // The first-campaign wizard's Meta create is also a creation — no
+      // "before". The new campaign's Meta id lives in post_state.
+      const externalId = str(post, "meta_campaign_id");
+      if (externalId != null) rows.push({ label: "Campaign created", before: null, after: externalId });
+      break;
+    }
   }
 
   return rows;

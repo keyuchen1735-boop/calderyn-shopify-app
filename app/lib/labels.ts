@@ -116,6 +116,7 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
   cancel_order: "Cancel order",
   edit_order: "Reduce order line",
   return_received: "Return received",
+  create_campaign_wizard: "Create campaign",
 };
 
 // Plain-language name for a (detector, action) autopilot feature. Several
@@ -157,6 +158,7 @@ export const ACTION_VERBS: Record<ActionKind, string> = {
   cancel_order: "Cancelled order",
   edit_order: "Reduced order line",
   return_received: "Received return",
+  create_campaign_wizard: "Create",
 };
 
 // Who acted, in the merchant's terms. Raw actor_user_id values ("merchant",

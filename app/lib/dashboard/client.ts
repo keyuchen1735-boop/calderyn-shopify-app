@@ -509,6 +509,42 @@ export async function generateFirstRunCreatives(
   );
 }
 
+/** The wizard's Meta-create input: the runId is client-minted (crypto.randomUUID())
+ *  and held stable across retries of the SAME run — that's what makes a retry
+ *  idempotent server-side instead of creating a second campaign on Meta. */
+export interface FirstRunCreateInput {
+  runId: string;
+  productId: string;
+  budgetCents: number;
+  creative: {
+    headline: string;
+    primaryText: string;
+    cta: string;
+    imageUrl: string | null;
+    destinationUrl: string;
+  };
+}
+
+/** Create the merchant's first campaign on Meta (paused): campaign -> ad set ->
+ *  creative + ad, audited, mirrored into ad_campaign_dim. A 502 "meta_create_failed"
+ *  surfaces as a DashboardApiError with the real platform/validation message —
+ *  retry with the SAME runId to resume the same run instead of starting a new one. */
+export async function createFirstCampaignRun(
+  input: FirstRunCreateInput,
+): Promise<{ runId: string; campaignDimId: string }> {
+  const data = await apiSend<{ run_id: string; campaign_dim_id: string; status: string }>(
+    "POST",
+    "/dashboard/api/campaigns/first-run",
+    {
+      runId: input.runId,
+      productId: input.productId,
+      budgetCents: input.budgetCents,
+      creative: input.creative,
+    },
+  );
+  return { runId: data.run_id, campaignDimId: data.campaign_dim_id };
+}
+
 /** Per-campaign daily spend+revenue series for the detail chart (default 90d window). */
 export async function fetchCampaignSeries(id: string, days = 90): Promise<DailyRoasRow[]> {
   const data = await apiGet<{ series: DailyRoasRow[] }>(
