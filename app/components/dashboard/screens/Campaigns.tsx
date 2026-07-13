@@ -3,6 +3,7 @@ import { gradeFromRow } from "~/lib/campaign-grade";
 import {
   Card,
   Btn,
+  Pan,
   Segmented,
   Placeholder,
   CountMoney,
@@ -1045,7 +1046,7 @@ function CampaignList({
             onAction={() => app.navigate("settings", null, "connectors")}
           />
         ) : (
-          <>
+          <Pan min={560}>
             <div
               className="cd-tablehd"
               style={{ gridTemplateColumns: CAMP_GRID, gap: 12, padding: "13px 20px" }}
@@ -1065,7 +1066,7 @@ function CampaignList({
             {drafts.map((d) => (
               <DraftRow key={d.id} d={d} />
             ))}
-          </>
+          </Pan>
         )}
       </div>
       <ScreenNewCreativeCard app={app} campaigns={shown} />
