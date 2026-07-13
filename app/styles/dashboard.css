@@ -2687,4 +2687,5 @@
 .cd-npf-combo-summary:hover { border-color: var(--accent); }
 .cd-npf-combo-edit { color: var(--accent); font-size: 0.85em; }
 .cd-npf-shipq { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.cd-npf-shipq-l { font-size: 0.9rem; color: var(--text-1); }
 .cd-npf-shipq-btns { display: flex; gap: 6px; }
