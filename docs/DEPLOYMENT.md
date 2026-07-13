@@ -12,7 +12,7 @@ This rollout is **schema-first**: the app reads and writes the destination-repai
 columns added by the migration below, while Supabase migrations are applied manually.
 
 - [ ] **Before deploying the app**, apply `supabase/migrations/20260713160000_order_destination_repair.sql`
-      to the target Supabase project with `supabase db push` (or `supabase migration up`),
+      to the target Supabase project with `supabase db push` (or `supabase migration up --linked`),
       and confirm the migration is recorded as applied. Only then deploy the app.
       Deploying the app first will make the destination-repair cron and current
       webhook/backfill order writes fail on missing columns.
