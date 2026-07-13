@@ -813,6 +813,8 @@ function ReviewStep({
   const [createErrorCode, setCreateErrorCode] = useState<string | null>(null);
   const [created, setCreated] = useState<{ campaignDimId: string } | null>(null);
   const [turningOn, setTurningOn] = useState(false);
+  /** True once resume_campaign succeeded — makes the Turn on button single-use. */
+  const [turnedOn, setTurnedOn] = useState(false);
   const monthlyCents = state.budgetCents * 30;
 
   // Re-checked here, not just trusted from an earlier step: the preflight read
@@ -840,6 +842,10 @@ function ReviewStep({
         },
       });
       setCreated({ campaignDimId: result.campaignDimId });
+      // Pull fresh data now: in the embedded (Campaigns empty-state) instance
+      // navigate("campaigns") is a no-op, so without this the new campaign
+      // wouldn't appear until the next background poll.
+      app.refresh();
     } catch (err) {
       if (err instanceof DashboardApiError && err.code === "run_input_mismatch") {
         // The runId was used before with different details (the merchant went
@@ -864,11 +870,16 @@ function ReviewStep({
   };
 
   const turnOn = async () => {
-    if (!created || turningOn) return;
+    // Single-use: once the resume succeeded, a second click must never fire
+    // another resume (in the embedded instance the card stays mounted, since
+    // navigate("campaigns") is a no-op there).
+    if (!created || turningOn || turnedOn) return;
     setTurningOn(true);
     try {
       await executeCampaignAction(created.campaignDimId, { type: "resume_campaign" });
+      setTurnedOn(true);
       app.toast("Campaign is live.", "check", "success");
+      app.refresh();
     } catch (err) {
       const message = err instanceof DashboardApiError ? err.message : "Couldn't turn it on — try from Campaigns.";
       app.toast(message, "x", "critical");
@@ -950,18 +961,32 @@ function ReviewStep({
           <Card>
             <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: 12 }}>
               <div>
-                <div className="cd-h3">Created on Meta — paused</div>
-                <p className="cd-caption">Nothing spends until you turn it on.</p>
+                <div className="cd-h3">{turnedOn ? "Campaign is live" : "Created on Meta — paused"}</div>
+                <p className="cd-caption">
+                  {turnedOn ? "Manage it anytime from Campaigns." : "Nothing spends until you turn it on."}
+                </p>
               </div>
-              <Btn kind="primary" disabled={turningOn} onClick={turnOn}>
-                {turningOn ? "Turning on…" : "Turn on"}
+              <Btn kind="primary" disabled={turningOn || turnedOn} icon={turnedOn ? "check" : undefined} onClick={turnOn}>
+                {turnedOn ? "Running" : turningOn ? "Turning on…" : "Turn on"}
               </Btn>
             </div>
-            <div style={{ marginTop: 10 }}>
-              <button type="button" className="cd-link" onClick={() => app.navigate("campaigns")}>
-                Keep it paused for now
-              </button>
-            </div>
+            {!turnedOn && (
+              <div style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="cd-link"
+                  onClick={() => {
+                    // The campaign list must show the new (paused) campaign on
+                    // exit — in the embedded instance navigate is a no-op, so
+                    // the refresh is what actually updates the screen.
+                    app.refresh();
+                    app.navigate("campaigns");
+                  }}
+                >
+                  Keep it paused for now
+                </button>
+              </div>
+            )}
           </Card>
         ) : (
           <div className="flex flex-col items-end" style={{ gap: 6 }}>

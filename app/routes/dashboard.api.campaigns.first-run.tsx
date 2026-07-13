@@ -163,7 +163,13 @@ export async function action({ request }: ActionFunctionArgs) {
         .eq("id", parsed.runId)
         .maybeSingle(),
     ]);
-    if (!pushEnabled) throw jsonError(403, "meta_scope_insufficient");
+    if (!pushEnabled) {
+      throw jsonError(
+        403,
+        "meta_scope_insufficient",
+        "Your Meta connection doesn't allow creating ads — reconnect Meta with ad-management access.",
+      );
+    }
     const { data: existing, error: selErr } = runRowRes;
     if (selErr) throw selErr;
 
@@ -267,7 +273,11 @@ export async function action({ request }: ActionFunctionArgs) {
         .update({ status: "failed", error: "meta not connected", updated_at: new Date().toISOString() })
         .eq("shop_id", shopId)
         .eq("id", parsed.runId);
-      throw jsonError(403, "meta_not_connected");
+      throw jsonError(
+        403,
+        "meta_not_connected",
+        "Connect your Meta account first — the connection may have expired.",
+      );
     }
     const countryCode = shopCountry ?? "US";
 
