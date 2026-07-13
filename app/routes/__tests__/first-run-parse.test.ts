@@ -108,4 +108,20 @@ describe("parseFirstRunBody", () => {
     expect(r.creative.imageUrl).toBeNull();
     expect(r.creative.cta).toBe("SHOP_NOW");
   });
+
+  it("normalizes cta to Meta's call_to_action enum (case/spaces) and whitelists it", () => {
+    const cases: Array<[string, string]> = [
+      ["Shop now", "SHOP_NOW"], // human casing + space → enum
+      ["learn more", "LEARN_MORE"],
+      ["SIGN_UP", "SIGN_UP"], // already-valid enum passes through
+      ["nonsense", "SHOP_NOW"], // unrecognized → safe default
+      ["Shop the summer sale!", "SHOP_NOW"], // AI free text → safe default
+    ];
+    for (const [input, expected] of cases) {
+      const r = parseFirstRunBody(validBody({ creative: { ...validBody().creative as object, cta: input } }));
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      expect(r.creative.cta).toBe(expected);
+    }
+  });
 });

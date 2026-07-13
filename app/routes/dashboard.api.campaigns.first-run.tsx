@@ -5,6 +5,8 @@ import { getSupabase } from "~/lib/supabase.server";
 import { firstRunPreflight } from "~/lib/meta/first-run.server";
 import { metaWriteClientForShopId, metaDraftPushEnabled } from "~/lib/meta/ad-create.server";
 import { createFirstCampaign, RollbackFailedError } from "~/lib/meta/campaign-create.server";
+import { decideRunTransition, canonicalJson } from "~/lib/meta/first-run-state";
+import { normalizeMetaCta } from "~/lib/meta/cta-types";
 import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
 import { insertAuditWithIdempotency } from "~/lib/actions/execute.server";
 import type { CreativeInput } from "~/lib/screener/types";
@@ -84,7 +86,10 @@ export function parseFirstRunBody(body: Record<string, unknown>): ParsedFirstRun
   }
 
   const primaryText = str(creativeRaw.primaryText).slice(0, MAX_PRIMARY_TEXT_LEN);
-  const cta = str(creativeRaw.cta) || "SHOP_NOW";
+  // call_to_action.type is a Meta ENUM — free text (including AI-generated
+  // copy like "Shop the sale") is rejected at ad-create time. Normalize and
+  // whitelist; anything unrecognized becomes SHOP_NOW.
+  const cta = normalizeMetaCta(str(creativeRaw.cta));
   const imageUrlRaw = str(creativeRaw.imageUrl);
 
   return {
@@ -143,20 +148,45 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     // --- idempotency: one campaign_wizard_runs row per client-minted runId ---
+    // decideRunTransition (pure, exhaustively unit-tested) is the ONLY judge of
+    // whether this request may call Meta — the money-safety invariant is that a
+    // runId whose row records a Meta campaign id never creates again.
     const { data: existing, error: selErr } = await sb
       .from("campaign_wizard_runs")
-      .select("status, meta_campaign_id")
+      .select("status, meta_campaign_id, updated_at, input")
       .eq("shop_id", shopId)
       .eq("id", parsed.runId)
       .maybeSingle();
     if (selErr) throw selErr;
 
-    if (existing?.status === "created") {
+    const transition = decideRunTransition(
+      existing
+        ? {
+            status: String(existing.status),
+            meta_campaign_id: (existing.meta_campaign_id as string | null) ?? null,
+            updated_at: String(existing.updated_at),
+          }
+        : null,
+      new Date().toISOString(),
+    );
+
+    if (transition === "fresh" || !existing) {
+      // (`!existing` is for TS narrowing only — decideRunTransition returns
+      // "fresh" exactly when the row is null.)
+      const { error: insErr } = await sb
+        .from("campaign_wizard_runs")
+        .insert({ id: parsed.runId, shop_id: shopId, status: "creating", input: inputRecord });
+      if (insErr) {
+        // A concurrent request for the SAME runId lost the race to insert first.
+        if ((insErr as { code?: string }).code === "23505") throw jsonError(409, "run_in_progress");
+        throw insErr;
+      }
+    } else if (transition === "replay") {
       // Replay of an already-finished run: return the SAME campaign, never a
       // second Meta create. meta_campaign_id is always set once status flips
-      // to 'created' (set in the same update below), so a missing dim row here
-      // means the mirror write itself failed after a real success — surfaced
-      // as a genuine 500 rather than silently 200-ing with a bogus id.
+      // to 'created' (same update, below), so a missing dim row here means the
+      // mirror write itself failed after a real success — surfaced as a
+      // genuine 500 rather than silently 200-ing with a bogus id.
       const campaignDimId = existing.meta_campaign_id
         ? await resolveCampaignDimId(sb, shopId, "meta", String(existing.meta_campaign_id))
         : null;
@@ -166,30 +196,39 @@ export async function action({ request }: ActionFunctionArgs) {
         );
       }
       return { run_id: parsed.runId, campaign_dim_id: campaignDimId, status: "created" as const };
-    }
-    if (existing?.status === "creating") {
+    } else if (transition === "reject_in_progress") {
       throw jsonError(409, "run_in_progress");
-    }
-
-    if (existing) {
-      // A prior attempt on this SAME runId failed or rolled back — retrying is
-      // exactly the idempotent-retry contract, so reopen the row instead of
-      // insisting on a fresh runId.
-      const { error: updErr } = await sb
-        .from("campaign_wizard_runs")
-        .update({ status: "creating", input: inputRecord, error: null, updated_at: new Date().toISOString() })
-        .eq("shop_id", shopId)
-        .eq("id", parsed.runId);
-      if (updErr) throw updErr;
+    } else if (transition === "needs_review") {
+      // A dead attempt already recorded a Meta campaign id (or the row is
+      // unclassifiable). Creating again could double-create — refuse, honestly.
+      throw jsonError(
+        409,
+        "run_needs_review",
+        "A previous attempt left a paused campaign on Meta — nothing is spending; contact support or delete it in Ads Manager, then start a new campaign.",
+      );
     } else {
-      const { error: insErr } = await sb
-        .from("campaign_wizard_runs")
-        .insert({ id: parsed.runId, shop_id: shopId, status: "creating", input: inputRecord });
-      if (insErr) {
-        // A concurrent request for the SAME runId lost the race to insert first.
-        if ((insErr as { code?: string }).code === "23505") throw jsonError(409, "run_in_progress");
-        throw insErr;
+      // reopen: a dead attempt with NO Meta object recorded — retrying the
+      // same run is the idempotent-retry contract. Two guards:
+      // 1. The retry must be for the SAME campaign — a stale runId must not
+      //    silently redirect a run to different input.
+      if (canonicalJson(existing.input) !== canonicalJson(inputRecord)) {
+        throw jsonError(
+          409,
+          "run_input_mismatch",
+          "This run id was already used with different campaign details — start over to create a new campaign.",
+        );
       }
+      // 2. Compare-and-set on the status we just read: a concurrent retry
+      //    racing us here flips the row first and we lose (empty update).
+      const { data: reopened, error: updErr } = await sb
+        .from("campaign_wizard_runs")
+        .update({ status: "creating", error: null, updated_at: new Date().toISOString() })
+        .eq("id", parsed.runId)
+        .eq("shop_id", shopId)
+        .eq("status", String(existing.status))
+        .select("id");
+      if (updErr) throw updErr;
+      if (!reopened || reopened.length === 0) throw jsonError(409, "run_in_progress");
     }
 
     const conn = await metaWriteClientForShopId(shopId);
@@ -216,14 +255,35 @@ export async function action({ request }: ActionFunctionArgs) {
       audience: "",
     };
 
+    // Crash-window bookkeeping: the campaign id is written onto the run row the
+    // moment Meta returns it, BEFORE the ad set is attempted. If the process
+    // dies mid-build, the stale 'creating' row still carries the id, and
+    // decideRunTransition routes the retry to needs_review instead of creating
+    // a second campaign. If this write itself fails, createFirstCampaign aborts
+    // before the ad set and rollback-deletes the campaign — never an object our
+    // bookkeeping didn't record.
+    const bookkeepCampaignId = async (campaignId: string): Promise<void> => {
+      const { error } = await sb
+        .from("campaign_wizard_runs")
+        .update({ meta_campaign_id: campaignId, updated_at: new Date().toISOString() })
+        .eq("shop_id", shopId)
+        .eq("id", parsed.runId);
+      if (error) throw error;
+    };
+
     let created: { campaignId: string; adSetId: string; adId: string };
     try {
-      created = await createFirstCampaign(conn, {
-        name: parsed.creative.headline,
-        dailyBudgetCents: parsed.budgetCents,
-        countryCode,
-        creative,
-      });
+      created = await createFirstCampaign(
+        conn,
+        {
+          name: parsed.creative.headline,
+          dailyBudgetCents: parsed.budgetCents,
+          countryCode,
+          creative,
+        },
+        undefined,
+        bookkeepCampaignId,
+      );
     } catch (err) {
       // Honest regardless of thrown type: resolvePageId (inside createPausedAd)
       // throws a plain Error for "no Facebook Page", not an ActionError — never

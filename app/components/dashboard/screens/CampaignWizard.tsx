@@ -15,6 +15,7 @@ import {
   type ProductSummaryVM,
 } from "~/lib/dashboard/client";
 import { createCampaignDraft, deleteCampaignDraft } from "~/lib/dashboard/campaign-drafts-client";
+import { META_CTA_TYPES } from "~/lib/meta/cta-types";
 import {
   CAMPAIGN_DRAFT_PLATFORM_LABELS,
   MAX_CAMPAIGN_DRAFT_NAME_LENGTH,
@@ -75,7 +76,10 @@ type WizardAction =
   | { type: "preflight"; preflight: FirstRunPreflight }
   | { type: "product"; id: string; title: string; imageUrl: string | null }
   | { type: "budget"; cents: number }
-  | { type: "creative"; creative: CreativeFields };
+  | { type: "creative"; creative: CreativeFields }
+  /** Mint a fresh runId: the server 409s (run_input_mismatch) when a runId is
+   *  replayed with different campaign details, so an edited run starts over. */
+  | { type: "newRunId" };
 
 function wizardReducer(state: WizardState, action: WizardAction): WizardState {
   switch (action.type) {
@@ -104,6 +108,8 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
       return { ...state, budgetCents: action.cents };
     case "creative":
       return { ...state, creative: action.creative };
+    case "newRunId":
+      return { ...state, runId: crypto.randomUUID() };
     default:
       return state;
   }
@@ -580,7 +586,7 @@ function CreativeStep({
             creative: {
               headline: productTitle ?? "",
               primaryText: "",
-              cta: "Shop now",
+              cta: "SHOP_NOW",
               imageUrl: res.imageUrl,
               destinationUrl: res.destinationUrl,
               audience: "Broad — your country",
@@ -684,8 +690,12 @@ function CreativeStep({
                           value={creative.cta}
                           onChange={(e) => editCreative({ cta: e.target.value })}
                           aria-label="Call to action"
+                          list="wizard-cta-options"
                           style={{ width: 160 }}
                         />
+                        <p className="cd-caption" style={{ opacity: 0.8 }}>
+                          Button label — pick from Meta's list; anything else becomes “Shop now”.
+                        </p>
                       </>
                     ) : (
                       <>
@@ -731,12 +741,24 @@ function CreativeStep({
                 value={creative.cta}
                 onChange={(e) => editCreative({ cta: e.target.value })}
                 aria-label="Call to action"
+                list="wizard-cta-options"
                 style={{ width: 160 }}
               />
+              <p className="cd-caption" style={{ opacity: 0.8 }}>
+                Button label — pick from Meta's list; anything else becomes “Shop now”.
+              </p>
             </div>
           </Card>
         )
       )}
+
+      {/* Meta's call_to_action is an enum — offer the allowed values so a
+          hand-typed label isn't a trap (the server normalizes either way). */}
+      <datalist id="wizard-cta-options">
+        {META_CTA_TYPES.map((cta) => (
+          <option key={cta} value={cta} />
+        ))}
+      </datalist>
 
       <div className="flex justify-end">
         <Btn kind="primary" disabled={!canContinue} onClick={onNext}>
@@ -772,11 +794,13 @@ function buildPlanText(state: WizardState): string {
 
 function ReviewStep({
   state,
+  dispatch,
   app,
   prefill,
   onExit,
 }: {
   state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
   app: DashboardCtx;
   prefill: WizardPrefill;
   onExit: () => void;
@@ -813,11 +837,20 @@ function ReviewStep({
       });
       setCreated({ campaignDimId: result.campaignDimId });
     } catch (err) {
-      // Honest server message — the SAME runId is reused on the next click
-      // (state.runId never changes), so a retry resumes this run instead of
-      // creating a second campaign on Meta.
-      const message = err instanceof DashboardApiError ? err.message : "Couldn't create the campaign — try again.";
-      setCreateError(message);
+      if (err instanceof DashboardApiError && err.code === "run_input_mismatch") {
+        // The runId was used before with different details (the merchant went
+        // back and edited something after a failed attempt). Safe to start a
+        // fresh run — the server only reopens runs that created nothing on
+        // Meta, and it refuses this one rather than redirecting it.
+        dispatch({ type: "newRunId" });
+        setCreateError("Your campaign details changed since the last attempt — click Create on Meta to start fresh.");
+      } else {
+        // Honest server message — the SAME runId is reused on the next click
+        // (state.runId is stable), so a retry resumes this run instead of
+        // creating a second campaign on Meta.
+        const message = err instanceof DashboardApiError ? err.message : "Couldn't create the campaign — try again.";
+        setCreateError(message);
+      }
     } finally {
       setCreating(false);
     }
@@ -993,7 +1026,9 @@ export function CampaignWizard({
       {state.step === "platform" && <PlatformStep state={state} dispatch={dispatch} app={app} onNext={goNext} />}
       {state.step === "product" && <ProductStep state={state} dispatch={dispatch} app={app} onNext={goNext} />}
       {state.step === "creative" && <CreativeStep state={state} dispatch={dispatch} onNext={goNext} />}
-      {state.step === "review" && <ReviewStep state={state} app={app} prefill={prefill} onExit={onExit} />}
+      {state.step === "review" && (
+        <ReviewStep state={state} dispatch={dispatch} app={app} prefill={prefill} onExit={onExit} />
+      )}
     </>
   );
 

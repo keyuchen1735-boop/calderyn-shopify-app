@@ -4,14 +4,6 @@ import type { MetaClient } from "../campaigns.server";
 import type { MetaWriteConn } from "../ad-create.server";
 import type { CreativeInput } from "~/lib/screener/types";
 
-function fakeClient(over: Partial<MetaClient> = {}): MetaClient {
-  return {
-    get: vi.fn(async () => ({ data: [] })),
-    post: vi.fn(async () => ({ success: true })),
-    ...over,
-  };
-}
-
 const CREATIVE: CreativeInput = {
   imageUrl: "https://cdn.example.com/a.jpg",
   headline: "Summer Sale",
@@ -149,5 +141,39 @@ describe("createFirstCampaign", () => {
     const err = caught as RollbackFailedError;
     expect(err.orphanCampaignId).toBe("camp_1");
     expect(err.message).toContain("invalid targeting");
+  });
+
+  it("(f) onCampaignCreated is awaited with the campaign id after the campaign post and before the ad set", async () => {
+    const { conn, calls } = wiredClient();
+    const pathsAtInvoke: string[][] = [];
+    const onCampaignCreated = vi.fn(async (_id: string) => {
+      pathsAtInvoke.push(calls.map((c) => c.path));
+    });
+
+    await createFirstCampaign(conn, BASE_INPUT, NO_RETRY, onCampaignCreated);
+
+    expect(onCampaignCreated).toHaveBeenCalledTimes(1);
+    expect(onCampaignCreated).toHaveBeenCalledWith("camp_1");
+    // At invocation time the campaign post had happened and the ad set had not.
+    expect(pathsAtInvoke[0]).toContain("/act_1/campaigns");
+    expect(pathsAtInvoke[0]).not.toContain("/act_1/adsets");
+  });
+
+  it("(g) onCampaignCreated rejection aborts before the ad set, rollback-deletes the campaign, and rethrows", async () => {
+    const { conn, calls } = wiredClient();
+    const onCampaignCreated = vi.fn(async () => {
+      throw new Error("bookkeeping write failed");
+    });
+
+    await expect(
+      createFirstCampaign(conn, BASE_INPUT, NO_RETRY, onCampaignCreated),
+    ).rejects.toThrow(/bookkeeping write failed/);
+
+    // No ad set (or anything downstream) was created past the failed checkpoint.
+    expect(calls.some((c) => c.path === "/act_1/adsets")).toBe(false);
+    expect(calls.some((c) => c.path === "/act_1/adcreatives")).toBe(false);
+    // The orphan campaign was rollback-deleted.
+    const deleteCall = calls.find((c) => c.path === "/camp_1" && c.body.status === "DELETED");
+    expect(deleteCall).toBeTruthy();
   });
 });

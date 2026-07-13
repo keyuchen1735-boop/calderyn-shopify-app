@@ -9,7 +9,7 @@
 
 import { ActionError } from "../ads/actions";
 import { withRetry, type RetryOptions } from "../ads/backoff";
-import { assertNotRateLimited, type MetaClient, type MetaResponse } from "./campaigns.server";
+import { assertNotRateLimited, type MetaResponse } from "./campaigns.server";
 import { createPausedAd, type MetaWriteConn } from "./ad-create.server";
 import type { CreativeInput } from "~/lib/screener/types";
 
@@ -61,11 +61,20 @@ export class RollbackFailedError extends Error {
  * (via createPausedAd) the creative + ad. Everything is created PAUSED. If
  * the ad set or ad step fails, the campaign is deleted before the original
  * error is rethrown — we never leave a partial funnel live on the account.
+ *
+ * `onCampaignCreated` (when given) is awaited with the new campaign id right
+ * after the campaign POST resolves and BEFORE the ad-set step — the caller's
+ * chance to bookkeep the id durably (the route writes it onto the wizard-run
+ * row) so a crash mid-build never leaves an untracked object on Meta. If the
+ * callback itself rejects, the build aborts before the ad set and the campaign
+ * is rollback-deleted like any other partial failure: we never proceed past an
+ * object our bookkeeping failed to record.
  */
 export async function createFirstCampaign(
   conn: MetaWriteConn,
   input: FirstCampaignInput,
   retry: RetryOptions = DEFAULT_RETRY,
+  onCampaignCreated?: (campaignId: string) => Promise<void>,
 ): Promise<{ campaignId: string; adSetId: string; adId: string }> {
   const { client, adAccountId } = conn;
 
@@ -89,6 +98,11 @@ export async function createFirstCampaign(
   if (!campaignId) throw new Error("Meta did not return a campaign id");
 
   try {
+    // Bookkeeping checkpoint FIRST (inside the rollback scope): the id must be
+    // durably recorded before any further Meta object exists. A rejection here
+    // aborts before the ad set and rolls the campaign back below.
+    if (onCampaignCreated) await onCampaignCreated(campaignId);
+
     const adSetRes = await withRetry(
       async () =>
         check(
