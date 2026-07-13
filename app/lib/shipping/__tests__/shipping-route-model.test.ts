@@ -87,6 +87,21 @@ describe("selectAnimatedRoutes", () => {
     expect(selected.map((route) => route.orderCount)).toEqual([20, 12, 8]);
     expect(fourRoutes.map((route) => route.id)).toEqual(originalOrder);
   });
+
+  it("breaks equal order-count ties by route ID", () => {
+    const tiedRoutes = ["charlie", "alpha", "bravo"].map((id) => ({
+      id,
+      from: [-123.1207, 49.2827] as [number, number],
+      to: [-74.006, 40.7128] as [number, number],
+      orderCount: 10,
+    }));
+
+    expect(selectAnimatedRoutes(tiedRoutes).map((route) => route.id)).toEqual([
+      "alpha",
+      "bravo",
+      "charlie",
+    ]);
+  });
 });
 
 describe("sampleRouteArc", () => {
@@ -110,6 +125,26 @@ describe("sampleRouteArc", () => {
       }
     }
   });
+
+  it.each([
+    { from: [170, 0], to: [-170, 0] },
+    { from: [-170, 0], to: [170, 0] },
+    { from: [180, 0], to: [-170, 0] },
+    { from: [-180, 0], to: [170, 0] },
+  ] as const)(
+    "keeps exact and boundary-start antimeridian samples contiguous from $from to $to",
+    ({ from, to }) => {
+      const segments = sampleRouteArc([...from], [...to]);
+
+      for (const segment of segments) {
+        for (let index = 1; index < segment.length; index += 1) {
+          expect(
+            Math.abs(segment[index][0] - segment[index - 1][0]),
+          ).toBeLessThanOrEqual(180);
+        }
+      }
+    },
+  );
 });
 
 describe("planeFrame", () => {

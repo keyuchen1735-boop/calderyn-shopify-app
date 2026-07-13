@@ -55,7 +55,13 @@ export function routeViewportPolicy(
 
 export function selectAnimatedRoutes(routes: readonly RouteArc[]): RouteArc[] {
   return [...routes]
-    .sort((left, right) => right.orderCount - left.orderCount)
+    .sort((left, right) => {
+      const orderCountDifference = right.orderCount - left.orderCount;
+      if (orderCountDifference !== 0) return orderCountDifference;
+      if (left.id < right.id) return -1;
+      if (left.id > right.id) return 1;
+      return 0;
+    })
     .slice(0, MAX_ANIMATED_ROUTES);
 }
 
@@ -173,8 +179,8 @@ function crossedAntimeridian(
   fromLongitude: number,
   toLongitude: number,
 ): 180 | -180 | undefined {
-  if (fromLongitude < 180 && toLongitude >= 180) return 180;
-  if (fromLongitude > -180 && toLongitude <= -180) return -180;
+  if (fromLongitude <= 180 && toLongitude > 180) return 180;
+  if (fromLongitude >= -180 && toLongitude < -180) return -180;
   return undefined;
 }
 
