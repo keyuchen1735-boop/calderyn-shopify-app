@@ -196,14 +196,41 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
       window.location.pathname + (rest ? `?${rest}` : "") + window.location.hash,
     );
     if (testOrder === "success") {
-      client
-        .apiSend<{ confirmed: boolean }>("POST", "/dashboard/api/journey-test-order", {
-          intent: "confirm",
-        })
-        .then((r) => {
-          if (r.confirmed) refreshJourney();
-        })
-        .catch(() => {});
+      // Stripe's success redirect can land here BEFORE the checkout webhook has
+      // marked the probe order paid, so the very first confirm can come back
+      // confirmed:false even though the charge went through. Retry with backoff
+      // instead of giving up silently — a "refunded automatically" promise that
+      // quietly doesn't refund is a money-path bug. journeyAlive guards every
+      // step so an unmount (nav away) cancels the remaining retries.
+      const RETRY_DELAYS_MS = [2000, 4000, 8000, 16000, 30000];
+      const confirmTestOrder = (attempt: number) => {
+        client
+          .apiSend<{ confirmed: boolean }>("POST", "/dashboard/api/journey-test-order", {
+            intent: "confirm",
+          })
+          .then((r) => {
+            if (!journeyAlive.current) return;
+            if (r.confirmed) {
+              refreshJourney();
+              return;
+            }
+            if (attempt === 0) {
+              app.toast("Confirming your test order…");
+            }
+            if (attempt < RETRY_DELAYS_MS.length) {
+              window.setTimeout(() => {
+                if (journeyAlive.current) confirmTestOrder(attempt + 1);
+              }, RETRY_DELAYS_MS[attempt]);
+            }
+            // Retries exhausted with no confirmed:true: leave it there. The confirm
+            // endpoint is idempotent and the milestone self-heals on the next
+            // setup-progress recompute once the webhook lands, so a manual "Run
+            // test" click or a support escalation can still recover the refund —
+            // this is the one edge case that doesn't resolve itself immediately.
+          })
+          .catch(() => {});
+      };
+      confirmTestOrder(0);
     }
     // Runs once on mount — the return-trip param is only ever present on the
     // page load right after checkout redirects back.

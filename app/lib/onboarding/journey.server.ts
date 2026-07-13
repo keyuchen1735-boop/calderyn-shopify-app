@@ -3,8 +3,8 @@ import { isFullyEnabledAccount, type ConnectedAccountRow } from "~/lib/payments/
 import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
 import type { MilestoneKey } from "~/lib/dashboard/journey-model";
 import { deriveDone, type JourneySignals } from "./journey-derive";
+import { PROBE_SALE_STATES } from "~/lib/cutover/test-transaction.server";
 
-const SALE_STATES = ["paid", "fulfilled", "refunded", "partially_refunded"];
 const MARKER_KEYS = ["live_card_dismissed", "recap_dismissed"] as const;
 
 // shops.id is a uuid for real/demo shops provisioned through the normal path;
@@ -27,8 +27,8 @@ async function readSignals(shopId: string): Promise<JourneySignals> {
       sb.from("shop_origin").select("shop_id").eq("shop_id", shopId).maybeSingle(),
       count(sb.from("ship_flat_rate").select("id", { count: "exact", head: true }).eq("shop_id", shopId)),
       count(sb.from("ship_carrier_service_registration").select("id", { count: "exact", head: true }).eq("shop_id", shopId)),
-      count(sb.from("orders").select("id", { count: "exact", head: true }).eq("shop_id", shopId).eq("channel", "test").in("state", SALE_STATES)),
-      count(sb.from("orders").select("id", { count: "exact", head: true }).eq("shop_id", shopId).neq("channel", "test").in("state", SALE_STATES)),
+      count(sb.from("orders").select("id", { count: "exact", head: true }).eq("shop_id", shopId).eq("channel", "test").in("state", [...PROBE_SALE_STATES])),
+      count(sb.from("orders").select("id", { count: "exact", head: true }).eq("shop_id", shopId).neq("channel", "test").in("state", [...PROBE_SALE_STATES])),
       sb.from("guardrail_config").select("autopilot_enabled").eq("shop_id", shopId).maybeSingle(),
       count(sb.from("assistant_conversations").select("id", { count: "exact", head: true }).eq("shop_id", shopId)),
     ]);

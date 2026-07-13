@@ -17,6 +17,14 @@ import { GOLIVE_PATH, TEST_TX_PARAM, TEST_TX_SUCCESS, TEST_TX_CANCELLED } from "
  *  minimums if a non-USD test store ever needs it. */
 export const TEST_CHARGE_CENTS = 50;
 
+/** Order states that represent a captured (possibly since-refunded) probe charge.
+ *  Shared by journey.server.ts's readSignals (has the merchant landed a paid-ish
+ *  test order yet?) and the journey-test-order route's confirm handler (is there
+ *  anything left to refund?) so the two definitions never drift apart. Mirrors the
+ *  `as const` + spread-on-use convention in analytics/commerce.server.ts's
+ *  SALE_STATES — do not change these four values without checking both callers. */
+export const PROBE_SALE_STATES = ["paid", "fulfilled", "refunded", "partially_refunded"] as const;
+
 /**
  * `returnOrigin` is the merchant's validated browser origin (requireSameOrigin's
  * return value). The probe is a MERCHANT flow: Stripe must send them back to the

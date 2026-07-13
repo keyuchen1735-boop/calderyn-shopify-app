@@ -31,7 +31,7 @@ export const JOURNEY_STEPS: JourneyStepDef[] = [
     pitch: "It watches inventory, pricing and ads — you approve the moves.",
     cta: "Turn on", screen: "autopilot" },
   { key: "ask_calderyn", phase: 3, label: "Ask Calderyn anything",
-    pitch: "Try: \"what should I fix first?\"", cta: "Ask", screen: "__assistant" },
+    pitch: "Try: “what should I fix first?”", cta: "Ask", screen: "__assistant" },
   { key: "first_order", phase: 3, label: "First real order",
     pitch: "This one completes itself.", cta: "", screen: "" },
 ];

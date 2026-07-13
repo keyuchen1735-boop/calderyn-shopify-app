@@ -488,7 +488,10 @@ export default function DashboardApp({
     (text: string, icon?: string, tone?: string, action?: Toast["action"]) => {
       const id = Math.random().toString(36).slice(2);
       setToasts((ts) => [...ts, { id, text, icon, tone, action }]);
-      setTimeout(() => setToasts((ts) => ts.filter((x) => x.id !== id)), 3400);
+      // Action-bearing toasts ("Go" buttons) get longer on-screen time — 3.4s isn't
+      // enough to notice, read, and click a button. Plain toasts stay at 3.4s.
+      const lifespan = action ? 7000 : 3400;
+      setTimeout(() => setToasts((ts) => ts.filter((x) => x.id !== id)), lifespan);
     },
     [],
   );
