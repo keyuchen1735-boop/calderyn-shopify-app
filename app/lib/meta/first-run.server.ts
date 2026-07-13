@@ -20,13 +20,21 @@ export async function firstRunPreflight(
 ): Promise<FirstRunPreflight> {
   const resolveConn = deps?.resolveConn ?? metaWriteClientForShopId;
 
-  const conn = await resolveConn(shopId);
-  const metaConnected = !!conn;
-  const adsScope = await metaDraftPushEnabled(sb, shopId);
+  // Connection lookup is itself a check: a transient DB/decrypt failure means
+  // "not connected right now", not a 500 - same containment as the Meta reads.
+  let conn: MetaWriteConn | null = null;
+  try {
+    conn = await resolveConn(shopId);
+  } catch {
+    conn = null;
+  }
 
   if (!conn) {
-    return { metaConnected: false, adsScope, pageOk: false, fundingOk: null };
+    return { metaConnected: false, adsScope: false, pageOk: false, fundingOk: null };
   }
+
+  const metaConnected = true;
+  const adsScope = await metaDraftPushEnabled(sb, shopId);
 
   let pageOk = false;
   try {

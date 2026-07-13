@@ -49,4 +49,13 @@ describe("firstRunPreflight", () => {
     expect(res.fundingOk).toBeNull();
     expect(res.pageOk).toBe(true);
   });
+
+  it("connection lookup failure degrades to not-connected, never throws", async () => {
+    const res = await firstRunPreflight("shop", sbWithScopes("ads_management"), {
+      resolveConn: async () => {
+        throw new Error("supabase read failed");
+      },
+    });
+    expect(res).toEqual({ metaConnected: false, adsScope: false, pageOk: false, fundingOk: null });
+  });
 });
