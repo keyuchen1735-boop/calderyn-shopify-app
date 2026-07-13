@@ -21,6 +21,7 @@ export type ExecutableKind =
   | "resume_campaign"
   | "reduce_campaign_budget"
   | "increase_campaign_budget"
+  | "update_campaign_budget"
   | "exclude_geo"
   | "push_creative_draft"
   | "fulfill_order"
@@ -219,7 +220,9 @@ export async function executeAction(
   // 0. Validate input: a missing/zero target budget must refuse loudly —
   // the old `?? 0` fallthrough would set the live campaign budget to $0.
   if (
-    (input.kind === "reduce_campaign_budget" || input.kind === "increase_campaign_budget") &&
+    (input.kind === "reduce_campaign_budget" ||
+      input.kind === "increase_campaign_budget" ||
+      input.kind === "update_campaign_budget") &&
     !input.dailyBudgetCents
   ) {
     throw new Error(
@@ -264,7 +267,9 @@ export async function executeAction(
   }
 
   const postState =
-    input.kind === "reduce_campaign_budget" || input.kind === "increase_campaign_budget"
+    input.kind === "reduce_campaign_budget" ||
+    input.kind === "increase_campaign_budget" ||
+    input.kind === "update_campaign_budget"
       ? { status: camp.status, daily_budget_cents: input.dailyBudgetCents ?? null }
       : input.kind === "resume_campaign"
         ? { status: "active", daily_budget_cents: camp.daily_budget_cents }
@@ -325,6 +330,41 @@ export async function executeAction(
         sb,
       );
     }
+  }
+
+  // Outcome-idempotent guard for update_campaign_budget: an arbitrary target
+  // that already matches the live budget is a no-op (mirrors the
+  // reduce_campaign_budget guard above, but exact-match instead of <=, since
+  // this kind can move the budget in either direction).
+  if (
+    input.kind === "update_campaign_budget" &&
+    (camp.daily_budget_cents ?? 0) === input.dailyBudgetCents
+  ) {
+    console.info(
+      `[actions] update_campaign_budget no-op for ${input.campaignId}: already at target=${input.dailyBudgetCents}c`,
+    );
+    return insertAuditWithIdempotency(
+      shopId,
+      input.idempotencyKey,
+      {
+        alert_id: input.alertId,
+        action_kind: input.kind,
+        params: {
+          campaign_id: input.campaignId,
+          external_id: externalId,
+          platform,
+          daily_budget_cents: input.dailyBudgetCents,
+          noop_reason: "already_at_target",
+        },
+        outcome: "succeeded",
+        pre_state: preState,
+        post_state: { status: camp.status, daily_budget_cents: camp.daily_budget_cents },
+        last_error: null,
+        actor_user_id: input.actor ?? "merchant",
+        trigger_reason: input.triggerReason ?? null,
+      },
+      sb,
+    );
   }
 
   // 3. Resolve adapter + 4. call platform.

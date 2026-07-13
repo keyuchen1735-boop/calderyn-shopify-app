@@ -18,6 +18,7 @@ const KINDS: ExecutableKind[] = [
   "resume_campaign",
   "reduce_campaign_budget",
   "increase_campaign_budget",
+  "update_campaign_budget",
   "exclude_geo",
   "push_creative_draft",
 ];
@@ -80,7 +81,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   if (!idempotencyKey) return jsonError(422, "missing_idempotency_key");
   if (
-    (kind === "reduce_campaign_budget" || kind === "increase_campaign_budget") &&
+    (kind === "reduce_campaign_budget" ||
+      kind === "increase_campaign_budget" ||
+      kind === "update_campaign_budget") &&
     (!Number.isFinite(dailyBudgetCents) || (dailyBudgetCents as number) <= 0)
   ) {
     return jsonError(422, "invalid_daily_budget_cents");
