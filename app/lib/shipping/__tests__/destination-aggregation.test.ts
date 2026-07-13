@@ -75,19 +75,19 @@ describe("destination aggregation", () => {
     const normalizedId = stableDestinationId("new york", "ny", "us");
 
     expect(stableDestinationId(" New York ", "NY", "US")).toBe(normalizedId);
-    expect(normalizedId).toMatch(/^destination-[0-9a-f]{8}$/);
+    expect(normalizedId).toMatch(/^destination-[0-9a-f]{16}$/);
     expect(normalizedId).not.toContain("new-york");
     expect(normalizedId).not.toContain("order");
     expect(normalizedId).not.toContain("buyer");
   });
 
-  it("keeps distinct destinations separate when their emitted FNV IDs collide", () => {
+  it("keeps collision-safe groups separate with distinct 64-bit FNV IDs", () => {
     const rows: DestinationOrderRow[] = [
       { customer_city: "costarring", customer_region: "ON", customer_country: "CA" },
       { customer_city: "liquid", customer_region: "ON", customer_country: "CA" },
     ];
 
-    expect(stableDestinationId("costarring", "on", "ca")).toBe(
+    expect(stableDestinationId("costarring", "on", "ca")).not.toBe(
       stableDestinationId("liquid", "on", "ca"),
     );
     expect(aggregateDestinationRows(rows)).toEqual([

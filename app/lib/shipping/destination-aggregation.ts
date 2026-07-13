@@ -29,14 +29,14 @@ export function normalizeDestinationPart(value: string): string {
 
 export function stableDestinationId(city: string, region: string, country: string): string {
   const key = [city, region, country].map(normalizeDestinationPart).join("\u001f");
-  let hash = 0x811c9dc5;
+  let hash = 0xcbf29ce484222325n;
 
-  for (let index = 0; index < key.length; index += 1) {
-    hash ^= key.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
+  for (const byte of new TextEncoder().encode(key)) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
   }
 
-  return `destination-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+  return `destination-${hash.toString(16).padStart(16, "0")}`;
 }
 
 export function aggregateDestinationRows(
