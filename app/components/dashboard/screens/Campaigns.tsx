@@ -201,14 +201,48 @@ function CampaignArtwork({
   health: CampaignHealth | "draft";
   compact?: boolean;
 }) {
+  const artRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(
+    () => {
+      const root = artRef.current;
+      if (!root || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+      const ambient = gsap.timeline({ paused: true, repeat: -1, yoyo: true });
+      ambient
+        .to(".cd-campaign-art-orbit-a", { rotation: 18, x: 7, y: 4, duration: 6.4, ease: "sine.inOut" }, 0)
+        .to(".cd-campaign-art-orbit-b", { rotation: -24, scale: 1.08, x: -5, duration: 5.4, ease: "sine.inOut" }, 0)
+        .to(".cd-campaign-art-spark-a", { y: -7, scale: 1.25, autoAlpha: 0.72, duration: 3.8, ease: "sine.inOut" }, 0)
+        .to(".cd-campaign-art-spark-b", { y: 6, x: -4, scale: 0.75, autoAlpha: 0.5, duration: 4.6, ease: "sine.inOut" }, 0);
+      const beam = gsap.fromTo(
+        ".cd-campaign-art-beam",
+        { xPercent: -145, autoAlpha: 0 },
+        { xPercent: 165, autoAlpha: 0.55, duration: 3.2, repeat: -1, repeatDelay: 2.8, ease: "power1.inOut", paused: true },
+      );
+
+      const play = () => { ambient.play(); beam.play(); };
+      const pause = () => { ambient.pause(); beam.pause(); };
+      if (!("IntersectionObserver" in window)) {
+        play();
+        return;
+      }
+      const observer = new IntersectionObserver(([entry]) => entry?.isIntersecting ? play() : pause(), { threshold: 0.12 });
+      observer.observe(root);
+      return () => observer.disconnect();
+    },
+    { scope: artRef },
+  );
+
   return (
     <div
+      ref={artRef}
       className="cd-campaign-art"
       data-platform={platform.toLowerCase()}
       data-health={health}
       data-compact={compact ? "1" : "0"}
       aria-hidden="true"
     >
+      <span className="cd-campaign-art-beam" />
       <span className="cd-campaign-art-orbit cd-campaign-art-orbit-a" />
       <span className="cd-campaign-art-orbit cd-campaign-art-orbit-b" />
       <span className="cd-campaign-art-spark cd-campaign-art-spark-a" />
@@ -225,6 +259,7 @@ function CampaignArtwork({
 }
 
 function CampaignPoster({ c, onClick }: { c: CampaignVM; onClick: () => void }) {
+  const posterRef = useRef<HTMLButtonElement>(null);
   const story = campaignStory(c);
   const score = c.calderynScore ?? PENDING_SCORE;
   const hasBudget = c.daily_budget_cents > 0;
@@ -234,8 +269,48 @@ function CampaignPoster({ c, onClick }: { c: CampaignVM; onClick: () => void }) 
       ? Math.round(c.spend_7d / 7)
       : null;
 
+  useGSAP(
+    () => {
+      const poster = posterRef.current;
+      if (
+        !poster ||
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+        !window.matchMedia("(hover: hover) and (pointer: fine)").matches
+      ) return;
+      const artwork = poster.querySelector<HTMLElement>(".cd-campaign-art");
+      const rotateX = gsap.quickTo(poster, "rotationX", { duration: 0.42, ease: "power3.out" });
+      const rotateY = gsap.quickTo(poster, "rotationY", { duration: 0.42, ease: "power3.out" });
+      const lift = gsap.quickTo(poster, "y", { duration: 0.32, ease: "power3.out" });
+      const artX = artwork ? gsap.quickTo(artwork, "x", { duration: 0.5, ease: "power3.out" }) : null;
+      const artY = artwork ? gsap.quickTo(artwork, "y", { duration: 0.5, ease: "power3.out" }) : null;
+
+      const onMove = (event: PointerEvent) => {
+        const rect = poster.getBoundingClientRect();
+        const nx = (event.clientX - rect.left) / rect.width - 0.5;
+        const ny = (event.clientY - rect.top) / rect.height - 0.5;
+        rotateX(ny * -5.5);
+        rotateY(nx * 6.5);
+        artX?.(nx * -5);
+        artY?.(ny * -4);
+      };
+      const onEnter = () => lift(-5);
+      const onLeave = () => {
+        rotateX(0); rotateY(0); lift(0); artX?.(0); artY?.(0);
+      };
+      poster.addEventListener("pointermove", onMove);
+      poster.addEventListener("pointerenter", onEnter);
+      poster.addEventListener("pointerleave", onLeave);
+      return () => {
+        poster.removeEventListener("pointermove", onMove);
+        poster.removeEventListener("pointerenter", onEnter);
+        poster.removeEventListener("pointerleave", onLeave);
+      };
+    },
+    { scope: posterRef },
+  );
+
   return (
-    <button className="cd-campaign-poster cd-campaign-reveal" data-health={story.health} onClick={onClick}>
+    <button ref={posterRef} className="cd-campaign-poster cd-campaign-reveal" data-health={story.health} onClick={onClick}>
       <CampaignArtwork platform={c.platform} name={c.name} health={story.health} />
       <div className="cd-campaign-poster-body">
         <div className="flex items-center justify-between" style={{ gap: 10 }}>
@@ -744,7 +819,10 @@ function CampaignDetail({
           { autoAlpha: 0, y: 12 },
           { autoAlpha: 1, y: 0, stagger: 0.07 },
           "intro+=0.1",
-        );
+        )
+        .fromTo(".cd-campaign-roas-rail > div", { scaleX: 0 }, { scaleX: 1, transformOrigin: "left center", duration: 0.72 }, "intro+=0.22")
+        .fromTo(".cd-campaign-roas-rail > div > span", { scaleY: 0, autoAlpha: 0 }, { scaleY: 1, autoAlpha: 1, stagger: 0.1, duration: 0.34 }, "intro+=0.62")
+        .fromTo(".cd-campaign-roas-rail > div > span > b", { y: 5, autoAlpha: 0 }, { y: 0, autoAlpha: 1, stagger: 0.08, duration: 0.32 }, "intro+=0.76");
     },
     { scope: rootRef, dependencies: [c.id], revertOnUpdate: true },
   );
@@ -1018,7 +1096,13 @@ function CampaignDetail({
   const scoreCard = (
     <Card className="cd-campaign-score-story cd-campaign-story-reveal">
       <div className="cd-anh"><CDIcon name="gauge" size={15} /> Calderyn score</div>
-      <div className="cd-campaign-score-orbit" style={{ background: `conic-gradient(${BAND_CHIP[s.band].color} ${(s.value ?? 0) * 1}%, var(--gray-bg) 0)` }}>
+      <div
+        className="cd-campaign-score-orbit"
+        style={{
+          "--score-progress": s.value ?? 0,
+          "--score-tone": BAND_CHIP[s.band].color,
+        } as CSSProperties}
+      >
         <span><b>{s.value ?? "—"}</b><small>/ 100</small></span>
       </div>
       <p className="cd-caption">
@@ -1050,6 +1134,37 @@ function CampaignDetail({
       <MetricRow k="Score confidence" v={s.confidence} />
       <MetricRow k="Ads scored" v={`${s.adsCovered}/${s.adsTotal}`} />
     </Card>
+  );
+
+  useGSAP(
+    () => {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const metrics = gsap.timeline({ defaults: { ease: "power3.out" } });
+      metrics
+        .fromTo(
+          ".cd-campaign-score-orbit",
+          { "--score-progress": 0, scale: 0.82, rotation: -28 },
+          { "--score-progress": s.value ?? 0, scale: 1, rotation: 0, duration: 0.9 },
+          "metrics",
+        )
+        .fromTo(
+          ".cd-campaign-money-flow > div > i > em",
+          { scaleX: 0, transformOrigin: "left center" },
+          { scaleX: 1, duration: 0.78, stagger: 0.12 },
+          "metrics+=0.12",
+        )
+        .fromTo(
+          ".cd-campaign-money-flow > div > span b",
+          { y: 5, autoAlpha: 0 },
+          { y: 0, autoAlpha: 1, duration: 0.35, stagger: 0.08 },
+          "metrics+=0.24",
+        );
+    },
+    {
+      scope: rootRef,
+      dependencies: [grade?.day_bucket, s.value],
+      revertOnUpdate: true,
+    },
   );
 
   return (
@@ -1335,6 +1450,25 @@ function CampaignList({
           { autoAlpha: 1, y: 0, stagger: 0.06 },
           "intro+=0.1",
         );
+      gsap.to(".cd-campaign-pulse-orbit", {
+        rotation: 360,
+        duration: 34,
+        repeat: -1,
+        ease: "none",
+      });
+      gsap.to(".cd-campaign-pulse-orbit > span, .cd-campaign-pulse-orbit > small", {
+        rotation: -360,
+        duration: 34,
+        repeat: -1,
+        ease: "none",
+      });
+      gsap.to(".cd-campaign-pulse-orbit", {
+        scale: 1.025,
+        duration: 2.8,
+        repeat: -1,
+        yoyo: true,
+        ease: "sine.inOut",
+      });
     },
     { scope: rootRef, dependencies: [loading, view, drafts.length], revertOnUpdate: true },
   );
