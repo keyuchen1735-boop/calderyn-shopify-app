@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { Btn, Card, SkelBar, TickGauge } from "../ui";
+import { homeGaugeView } from "./home-gauge";
 import { hasEngineSignals } from "../first-run";
 import { reduced } from "../hero/hero-motion";
 import { CDIcon } from "../icons";
@@ -322,6 +323,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
   // (app.booted): keyed on !loading alone, an in-flight or partially failed
   // boot would flash "standing by" at every established store.
   const dormant = app.booted && (freshStore || !hasEngineSignals(app));
+  const gauge = homeGaugeView(app.booted, dormant, pct);
   const graduated = !dormant && pct !== null && pct >= 100;
   const engineOn = Boolean(engine?.autopilotEnabled) && !dormant;
   const trace = engine?.trace.slice(0, 2) ?? [];
@@ -672,12 +674,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
               row exists — "standing by" and a lit gauge contradict each other.
               While the boot hasn't answered yet, the readout is a dash: a lit
               "0%" before data reads as a real (alarming) score. */}
-          <TickGauge
-            pct={dormant ? 0 : (pct ?? 0)}
-            size={108}
-            sweepFrom0
-            pending={!app.booted && pct === null}
-          />
+          <TickGauge pct={gauge.pct} size={108} sweepFrom0 pending={gauge.pending} />
           <div className="cd-hm-engine-body">
             <div className="cd-hm-engine-head">
               <LiveMark on={engineOn} />
