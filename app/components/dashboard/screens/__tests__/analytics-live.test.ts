@@ -20,6 +20,12 @@ const SNAP: LiveAnalyticsSnapshot = {
   ],
   new_vs_returning: { new: 100, returning: 28 },
   top_products: [{ product_id: "v1", title: "Mug", sales_cents: 80000, units: 40 }],
+  hourly: {
+    sales_cents: [0, 123400],
+    orders: [0, 12],
+    sessions: [50, 78],
+    conversion_pct: [0, 15.4],
+  },
 };
 
 function render(snapshot: LiveAnalyticsSnapshot | null, error: string | null = null): string {

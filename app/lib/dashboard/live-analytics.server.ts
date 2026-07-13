@@ -76,6 +76,22 @@ export async function buildLiveSnapshot(
   const todayStart = storeTodayStartIso(tz, now);
   const nowWindowStartMs = now.getTime() - VISITORS_NOW_WINDOW_MS;
 
+  // Hourly buckets for the Home strip sparklines. The last bucket is the
+  // in-progress hour; the two-bucket floor keeps the series drawable right
+  // after midnight (a one-point polyline renders as nothing). Sales buckets
+  // stay gross: refund netting is a day-level subtraction with no hour to
+  // attribute it to.
+  const todayStartMs = Date.parse(todayStart);
+  const hourCount = Math.min(
+    24,
+    Math.max(2, Math.floor((now.getTime() - todayStartMs) / 3_600_000) + 1),
+  );
+  const hourOf = (iso: string) =>
+    Math.min(hourCount - 1, Math.max(0, Math.floor((Date.parse(iso) - todayStartMs) / 3_600_000)));
+  const hourlySales = new Array<number>(hourCount).fill(0);
+  const hourlyOrders = new Array<number>(hourCount).fill(0);
+  const hourlySessions: Array<Set<string>> = Array.from({ length: hourCount }, () => new Set());
+
   const [eventsRes, ordersRes, refundsRes] = await Promise.all([
     sb
       .from("storefront_event")
@@ -90,6 +106,11 @@ export async function buildLiveSnapshot(
       // refunded cents are netted out of total sales below via refund_fact,
       // mirroring the 30-day model's SALE_STATES semantics.
       .in("financial_status", ["paid", "partially_refunded", "refunded"])
+      // Go-live 50c probe orders never count as sales — and their refunds no
+      // longer emit refund_fact rows, so without this filter a refunded probe
+      // would stay in gross unnetted. channel is NOT NULL (default
+      // 'storefront'), so .neq drops nothing legitimate.
+      .neq("channel", "test")
       .gte("created_at", todayStart)
       .order("created_at", { ascending: false }),
     // Native refunds processed today (external_id gid://calderyn/…). Migrated
@@ -140,6 +161,7 @@ export async function buildLiveSnapshot(
   for (const e of events) {
     const sid = String(e.session_id);
     sessions.add(sid);
+    hourlySessions[hourOf(e.created_at)].add(sid);
     if (Date.parse(e.created_at) >= nowWindowStartMs) now5m.add(sid);
     if (e.type === "cart_add") cartSessions.add(sid);
     else if (e.type === "checkout_start") checkoutSessions.add(sid);
@@ -157,6 +179,9 @@ export async function buildLiveSnapshot(
   for (const o of orders) {
     const sid = o.attribution?.live_session_id;
     if (typeof sid === "string" && sid.length > 0) purchasedSessions.add(sid);
+    const h = hourOf(o.created_at);
+    hourlySales[h] += Number(o.total_cents);
+    hourlyOrders[h] += 1;
   }
 
   const locations = [...byCountry.entries()]
@@ -204,5 +229,14 @@ export async function buildLiveSnapshot(
     by_location: topLocations,
     new_vs_returning: { new: returningBySession.size - returning, returning },
     top_products: topProducts,
+    hourly: {
+      sales_cents: hourlySales,
+      orders: hourlyOrders,
+      sessions: hourlySessions.map((s) => s.size),
+      conversion_pct: hourlyOrders.map((n, i) => {
+        const s = hourlySessions[i].size;
+        return s > 0 ? Math.round((n / s) * 1000) / 10 : 0;
+      }),
+    },
   };
 }
