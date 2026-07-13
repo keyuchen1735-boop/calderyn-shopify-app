@@ -43,6 +43,7 @@ import type {
 
 import AssistantPanel from "./AssistantPanel";
 import BugReportButton from "./BugReportButton";
+import ContactButton from "./ContactButton";
 import { parsePath, pathFor, DASHBOARD_BASE } from "./routes";
 import ScreenDashboard from "./screens/Dashboard";
 import type { JourneyProgress } from "./screens/HomeJourney";
@@ -1548,6 +1549,7 @@ export default function DashboardApp({
 
       <AssistantPanel app={app} openSignal={assistantSignal} prompt={assistantPrompt} />
       <BugReportButton app={app} openSignal={bugSignal} />
+      <ContactButton app={app} />
 
       {/* Mobile bottom tab bar — hidden above the phone breakpoint via CSS. */}
       <nav className="cd-tabbar" aria-label="Primary">
