@@ -8,6 +8,7 @@ import { createFirstCampaign, RollbackFailedError } from "~/lib/meta/campaign-cr
 import { decideRunTransition, canonicalJson } from "~/lib/meta/first-run-state";
 import { normalizeMetaCta } from "~/lib/meta/cta-types";
 import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
+import { getShopCountry } from "~/lib/ship-cost/shop-country.server";
 import { insertAuditWithIdempotency } from "~/lib/actions/execute.server";
 import type { CreativeInput } from "~/lib/screener/types";
 
@@ -144,22 +145,26 @@ export async function action({ request }: ActionFunctionArgs) {
   };
 
   return dashboardJson(async () => {
-    // Defense in depth: the wizard's UI gate is advisory; a direct POST could
-    // otherwise reach here without ads_management on the stored Meta token.
-    if (!(await metaDraftPushEnabled(sb, shopId))) {
-      throw jsonError(403, "meta_scope_insufficient");
-    }
-
-    // --- idempotency: one campaign_wizard_runs row per client-minted runId ---
-    // decideRunTransition (pure, exhaustively unit-tested) is the ONLY judge of
-    // whether this request may call Meta — the money-safety invariant is that a
-    // runId whose row records a Meta campaign id never creates again.
-    const { data: existing, error: selErr } = await sb
-      .from("campaign_wizard_runs")
-      .select("status, meta_campaign_id, updated_at, input")
-      .eq("shop_id", shopId)
-      .eq("id", parsed.runId)
-      .maybeSingle();
+    // Two independent reads, side by side. The scope gate is still checked
+    // FIRST below — the run-row read is a shop-scoped select with no side
+    // effects, so overlapping it never lets an unauthorized request act.
+    const [pushEnabled, runRowRes] = await Promise.all([
+      // Defense in depth: the wizard's UI gate is advisory; a direct POST could
+      // otherwise reach here without ads_management on the stored Meta token.
+      metaDraftPushEnabled(sb, shopId),
+      // --- idempotency: one campaign_wizard_runs row per client-minted runId ---
+      // decideRunTransition (pure, exhaustively unit-tested) is the ONLY judge
+      // of whether this request may call Meta — the money-safety invariant is
+      // that a runId whose row records a Meta campaign id never creates again.
+      sb
+        .from("campaign_wizard_runs")
+        .select("status, meta_campaign_id, updated_at, input")
+        .eq("shop_id", shopId)
+        .eq("id", parsed.runId)
+        .maybeSingle(),
+    ]);
+    if (!pushEnabled) throw jsonError(403, "meta_scope_insufficient");
+    const { data: existing, error: selErr } = runRowRes;
     if (selErr) throw selErr;
 
     const transition = decideRunTransition(
@@ -244,7 +249,16 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    const conn = await metaWriteClientForShopId(shopId);
+    // Independent resolutions, side by side. Country comes from getShopCountry
+    // (shop-country.server.ts) — shops has NO country column yet, so it returns
+    // null by design and campaigns target the US until that module's TODO
+    // (source shop origin country) lands; it stays the single source of truth
+    // when the column arrives. A raw `select country from shops` here would
+    // simply error.
+    const [conn, shopCountry] = await Promise.all([
+      metaWriteClientForShopId(shopId),
+      getShopCountry(sb, shopId),
+    ]);
     if (!conn) {
       // Nothing was created — reopen-able on the next attempt once Meta is
       // actually connected (not stuck at 'creating' forever).
@@ -255,9 +269,7 @@ export async function action({ request }: ActionFunctionArgs) {
         .eq("id", parsed.runId);
       throw jsonError(403, "meta_not_connected");
     }
-
-    const { data: shopRow } = await sb.from("shops").select("country").eq("id", shopId).maybeSingle();
-    const countryCode = (shopRow?.country as string | null) ?? "US";
+    const countryCode = shopCountry ?? "US";
 
     const creative: CreativeInput = {
       headline: parsed.creative.headline,
@@ -372,13 +384,25 @@ export async function action({ request }: ActionFunctionArgs) {
       .eq("id", parsed.runId);
     if (doneErr) throw doneErr;
 
+    // Straight to insertAuditWithIdempotency, bypassing executeAction: this kind
+    // is not an ExecutableKind — creation is orchestrated by the run-state
+    // machine above, which already provides the idempotency + ownership
+    // guarantees executeAction normally supplies.
     await insertAuditWithIdempotency(
       shopId,
       `first_run:${parsed.runId}`,
       {
         alert_id: null,
         action_kind: "create_campaign_wizard",
-        params: { run_id: parsed.runId, product_id: parsed.productId, budget_cents: parsed.budgetCents },
+        params: {
+          run_id: parsed.runId,
+          product_id: parsed.productId,
+          budget_cents: parsed.budgetCents,
+          // v_audit_view's target coalesce reads campaign_name/campaign_id —
+          // without these the audit row renders with a blank target.
+          campaign_id: campaignDimId,
+          campaign_name: parsed.creative.headline,
+        },
         outcome: "succeeded",
         pre_state: {},
         post_state: {

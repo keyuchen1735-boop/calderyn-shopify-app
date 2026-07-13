@@ -916,8 +916,20 @@ function ReviewStep({
       <Card>
         <SummaryRow label="Product" value={state.productTitle ?? "—"} />
         <SummaryRow label="Budget" value={`${money(state.budgetCents)}/day · about ${money(monthlyCents)}/month`} />
-        <SummaryRow label="Audience" value="Broad — your country" />
+        {/* Honest about what the Meta create actually targets today: the server
+            has no shop-country source yet (shop-country.server.ts), so first
+            campaigns target the United States. Non-Meta plans are executed by
+            the merchant in that platform's own Ads manager. */}
+        <SummaryRow
+          label="Audience"
+          value={state.platform === "meta" ? "Broad — United States" : "Broad — your country"}
+        />
         <SummaryRow label="Platform" value={CAMPAIGN_DRAFT_PLATFORM_LABELS[state.platform]} />
+        {state.platform === "meta" && (
+          <p className="cd-caption" style={{ marginTop: 4 }}>
+            First campaigns target the United States — regional targeting is coming.
+          </p>
+        )}
       </Card>
 
       <Card>
