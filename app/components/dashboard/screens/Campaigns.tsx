@@ -4,7 +4,6 @@ import {
   Card,
   Btn,
   Pan,
-  Segmented,
   Placeholder,
   CountMoney,
   Tooltip,
@@ -32,9 +31,10 @@ import {
 } from "~/lib/dashboard/client";
 import {
   fetchCampaignDrafts,
-  createCampaignDraft,
+  deleteCampaignDraft,
   type CampaignDraftRow,
 } from "~/lib/dashboard/campaign-drafts-client";
+import { CampaignWizard } from "./CampaignWizard";
 import {
   CAMPAIGN_DRAFT_PLATFORM_LABELS,
   type CampaignDraftPlatform,
@@ -351,9 +351,18 @@ function CampaignRow({
   );
 }
 
-/** An owned campaign_draft row. Not clickable — a draft has no spend, ROAS, or
- *  score yet, so there is no detail to open; the caption says what it is. */
-function DraftRow({ d }: { d: CampaignDraftRow }) {
+/** An owned campaign_draft row. The row itself is not clickable — a draft has
+ *  no spend, ROAS, or score yet, so there is nothing to open; instead it gets
+ *  two actions: resume the wizard where it left off, or remove it. */
+function DraftRow({
+  d,
+  onContinue,
+  onDelete,
+}: {
+  d: CampaignDraftRow;
+  onContinue: () => void;
+  onDelete: () => void;
+}) {
   return (
     <div
       style={{
@@ -383,8 +392,18 @@ function DraftRow({ d }: { d: CampaignDraftRow }) {
       <div className="text-right">
         <span className="cd-score" style={BAND_CHIP.nodata}>—</span>
       </div>
-      <div />
-      <div />
+      <div className="flex items-center justify-end" style={{ gap: 4 }}>
+        <Btn small icon="arrowRight" onClick={onContinue}>
+          Continue setup
+        </Btn>
+      </div>
+      <div className="flex items-center justify-end">
+        <Tooltip content="Delete draft">
+          <Btn small icon="trash" className="cd-btn-icon" ariaLabel="Delete draft" onClick={onDelete}>
+            {""}
+          </Btn>
+        </Tooltip>
+      </div>
     </div>
   );
 }
@@ -1027,126 +1046,27 @@ function CampaignDetail({
   );
 }
 
-/* ---------- New campaign (create draft) ---------- */
-const PLATFORM_OPTIONS: Array<{ value: CampaignDraftPlatform; label: string }> = [
-  { value: "meta", label: "Meta" },
-  { value: "google", label: "Google" },
-  { value: "tiktok", label: "TikTok" },
-];
-
-// The design's Create-campaign screen: name + platform on the right, the honest
-// empty stat grid on the left (a draft has no data yet), Create draft in the
-// header. Shareable-links / auto-match / activities cards are omitted — no
-// backend exists for them, and a dead "+" button would be dishonest.
-function CampaignNew({ app }: { app: DashboardCtx }) {
-  const [name, setName] = useState("");
-  const [platform, setPlatform] = useState<CampaignDraftPlatform>("meta");
-  const [saving, setSaving] = useState(false);
-  const narrow = useNarrowViewport();
-
-  const create = async () => {
-    if (saving || !name.trim()) return;
-    setSaving(true);
-    try {
-      await createCampaignDraft({ name: name.trim(), platform });
-      app.toast("Draft created.", "check", "success");
-      app.navigate("campaigns");
-    } catch (err) {
-      const message =
-        err instanceof DashboardApiError ? err.message : "Couldn't create the draft — try again.";
-      app.toast(message, "x", "critical");
-      setSaving(false);
-    }
-  };
-
-  const emptyStat = (label: string) => (
-    <Card className="cd-stat">
-      <span className="cd-stat-label">{label}</span>
-      <span className="cd-nc-empty">No data</span>
-    </Card>
-  );
-  const emptyChart = (label: string) => (
-    <div className="cd-card cd-pad" style={{ minHeight: 180, display: "flex", flexDirection: "column" }}>
-      <span className="cd-stat-label">{label}</span>
-      <span className="cd-nc-empty" style={{ flex: 1 }}>No data</span>
-    </div>
-  );
-
-  return (
-    <div className="cd-screen" data-screen-label="Create campaign">
-      <header className="cd-screen-head">
-        <div className="flex items-center" style={{ gap: 10 }}>
-          <Btn small icon="chevronLeft" onClick={() => app.navigate("campaigns")}>
-            Back
-          </Btn>
-          <h1 className="cd-h1" style={{ fontSize: 24 }}>Create campaign</h1>
-          <span className="cd-badge" style={BADGE_NEUTRAL}>Draft</span>
-        </div>
-        <Btn kind="primary" small disabled={saving || !name.trim()} onClick={create}>
-          {saving ? "Creating…" : "Create draft"}
-        </Btn>
-      </header>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: narrow ? "minmax(0,1fr)" : "minmax(0,1fr) 280px",
-          gap: 18,
-          alignItems: "start",
-        }}
-      >
-        <div className="flex flex-col" style={{ gap: 14 }}>
-          <div className="cd-stat-grid">
-            {emptyStat("Sessions")}
-            {emptyStat("Total sales")}
-            {emptyStat("Orders")}
-            {emptyStat("Avg order value")}
-          </div>
-          <div className="cd-grid-duo">
-            {emptyChart("Sessions by channel")}
-            {emptyChart("Sales by channel")}
-          </div>
-          <div className="cd-grid-duo">
-            {emptyChart("New vs returning")}
-            {emptyChart("Sessions by device")}
-          </div>
-        </div>
-
-        <Card>
-          <input
-            className="cd-input"
-            type="text"
-            placeholder="Campaign name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            style={{ width: "100%" }}
-          />
-          <div style={{ marginTop: 12 }}>
-            <Segmented
-              small
-              value={platform}
-              onChange={(v) => setPlatform(v as CampaignDraftPlatform)}
-              options={PLATFORM_OPTIONS}
-            />
-          </div>
-        </Card>
-      </div>
-    </div>
-  );
-}
-
 /* ---------- List ---------- */
 function CampaignList({
   app,
   joined,
+  setDraftPrefill,
 }: {
   app: DashboardCtx;
   joined: CampaignVM[];
+  setDraftPrefill: (p: { name?: string; platform?: CampaignDraftPlatform } | null) => void;
 }) {
-  // Owned campaign drafts render alongside synced campaigns. Fetched on mount —
-  // this component remounts on return from the create screen, so a fresh draft
-  // shows up immediately.
+  // Owned campaign drafts render alongside synced campaigns. Fetched on mount,
+  // and re-fetched after a draft is deleted or a new one is saved from the
+  // inline empty-state wizard (which never unmounts this component).
   const [drafts, setDrafts] = useState<CampaignDraftRow[]>([]);
+  const refreshDrafts = () => {
+    fetchCampaignDrafts()
+      .then((rows) => setDrafts(rows))
+      .catch(() => {
+        // Non-fatal: the list still renders the synced campaigns.
+      });
+  };
   useEffect(() => {
     let live = true;
     fetchCampaignDrafts()
@@ -1156,6 +1076,24 @@ function CampaignList({
       });
     return () => { live = false; };
   }, []);
+
+  // Empty-state entry point (no campaigns, no drafts) shows the first-campaign
+  // wizard inline instead of the plain Placeholder. "Skip" reveals the
+  // Placeholder below without leaving the screen.
+  const [skippedEmpty, setSkippedEmpty] = useState(false);
+
+  const deleteDraft = async (d: CampaignDraftRow) => {
+    if (!window.confirm(`Delete the "${d.name}" draft? This can't be undone.`)) return;
+    try {
+      await deleteCampaignDraft(d.id);
+      setDrafts((cur) => cur.filter((row) => row.id !== d.id));
+      app.toast("Draft deleted.", "check", "success");
+    } catch (err) {
+      const message =
+        err instanceof DashboardApiError ? err.message : "Couldn't delete the draft — try again.";
+      app.toast(message, "x", "critical");
+    }
+  };
 
   // Local optimistic patches from row quick actions (pause/resume/budget),
   // keyed by campaign id — merged over the server data until the next
@@ -1223,7 +1161,14 @@ function CampaignList({
   return (
     <div className="cd-screen">
       <ScreenHeader title="Campaigns" sub="Every ad platform, in one place.">
-        <Btn kind="primary" small onClick={() => app.navigate("campaigns", "new")}>
+        <Btn
+          kind="primary"
+          small
+          onClick={() => {
+            setDraftPrefill(null);
+            app.navigate("campaigns", "new");
+          }}
+        >
           New campaign
         </Btn>
       </ScreenHeader>
@@ -1255,13 +1200,26 @@ function CampaignList({
         {loading ? (
           <TableSkeleton />
         ) : shown.length === 0 && drafts.length === 0 ? (
-          <Placeholder
-            icon="megaphone"
-            title="No campaigns yet"
-            sub="Connect an ad account and your campaigns will appear here."
-            actionLabel="Connect ad account"
-            onAction={() => app.navigate("settings", null, "connectors")}
-          />
+          skippedEmpty ? (
+            <Placeholder
+              icon="megaphone"
+              title="No campaigns yet"
+              sub="Connect an ad account and your campaigns will appear here."
+              actionLabel="Connect ad account"
+              onAction={() => app.navigate("settings", null, "connectors")}
+            />
+          ) : (
+            <div className="cd-pad">
+              <CampaignWizard
+                app={app}
+                prefill={null}
+                onExit={() => {
+                  refreshDrafts();
+                  setSkippedEmpty(true);
+                }}
+              />
+            </div>
+          )
         ) : (
           <Pan min={560}>
             <div
@@ -1291,7 +1249,15 @@ function CampaignList({
               />
             ))}
             {drafts.map((d) => (
-              <DraftRow key={d.id} d={d} />
+              <DraftRow
+                key={d.id}
+                d={d}
+                onContinue={() => {
+                  setDraftPrefill({ name: d.name, platform: d.platform });
+                  app.navigate("campaigns", "new");
+                }}
+                onDelete={() => deleteDraft(d)}
+              />
             ))}
           </Pan>
         )}
@@ -1320,6 +1286,12 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   // While this is in flight the campaigns render with whatever grade they carry.
   const [grades, setGrades] = useState<CampaignGradeRow[]>([]);
   const [metaCanPushDrafts, setMetaCanPushDrafts] = useState(false);
+  // Carries a draft's { name, platform } into the wizard when the merchant hits
+  // "Continue setup" on a DraftRow — lifted here since the wizard mounts fresh
+  // on the "new" nav param, unrelated to CampaignList's own state.
+  const [draftPrefill, setDraftPrefill] = useState<{ name?: string; platform?: CampaignDraftPlatform } | null>(
+    null,
+  );
 
   useEffect(() => {
     let alive = true;
@@ -1353,7 +1325,16 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   );
 
   if (app.nav.param === "new") {
-    return <CampaignNew app={app} />;
+    return (
+      <CampaignWizard
+        app={app}
+        prefill={draftPrefill}
+        onExit={() => {
+          setDraftPrefill(null);
+          app.navigate("campaigns");
+        }}
+      />
+    );
   }
 
   // Row-click / deep-link: nav.param carries the selected campaign id.
@@ -1370,5 +1351,5 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
     );
   }
 
-  return <CampaignList app={app} joined={joined} />;
+  return <CampaignList app={app} joined={joined} setDraftPrefill={setDraftPrefill} />;
 }

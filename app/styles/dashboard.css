@@ -136,6 +136,12 @@
   .cd-card-hover { cursor: pointer; transition: transform 0.18s ease, box-shadow 0.18s ease; }
   .cd-card-hover:hover { transform: translateY(-1px); box-shadow: var(--shadow-pop); }
   .cd-card-hover:active { transform: translateY(0) scale(0.995); }
+  /* First-campaign wizard: selectable tiles (platform/product/creative) reuse
+     cd-card and just need a clear selected state — an inset accent ring that
+     adapts with --accent in both themes. Compound selector (.cd-card.cd-tile-selected)
+     beats the plain .cd-card re-declaration further down (2161) on specificity alone,
+     same trick as .cd-card-tight.cd-pad above. */
+  .cd-card.cd-tile-selected { box-shadow: 0 0 0 2px var(--accent) inset, var(--shadow-card); }
 
   /* ============ grids ============ */
   .cd-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: calc(14px * var(--density)); }
