@@ -17,7 +17,15 @@ import { canOneClickAlert, oneClickKind } from "~/lib/dashboard/one-click";
 import { buildFeatureGroups, countEnabled, flaggedGroups } from "../overview/features-model";
 import AutopilotFeatures from "../overview/AutopilotFeatures";
 import { featureLabel } from "~/lib/labels";
-import { moneyVerb, reasonLines } from "./autopilot-cards";
+import {
+  MOVE_GROUPS,
+  MOVE_GROUP_ORDER,
+  moneyVerb,
+  moveGroupFor,
+  reasonLines,
+  sayLine,
+  type MoveGroupKey,
+} from "./autopilot-cards";
 
 /** Quick reject reasons → real RejectReason codes. "Doesn't fit" has no
  *  dedicated code, so it rides `other` with the label as the note. */
@@ -27,10 +35,10 @@ const REJECT_CHIPS: { label: string; reason: RejectReason; note?: string }[] = [
   { label: "Doesn't fit", reason: "other", note: "Doesn't fit my brand" },
 ];
 
-/** Calibration split panel: the tick gauge on the left and the real pending
- *  queue as approve/reject teaching rows on the right. Shown only while
- *  calibration is incomplete; the feature switchboard card below carries the
- *  unlock progress and the per-feature toggles. */
+/** Calibration split panel: a slim gauge rail on the left and the pending
+ *  queue on the right, clustered by move type into compact expandable rows.
+ *  Shown only while calibration is incomplete; the feature switchboard card
+ *  below carries the unlock progress and the per-feature toggles. */
 function CalibrationTrainer({
   app,
   pct,
@@ -41,16 +49,41 @@ function CalibrationTrainer({
   onReview: (p: QueueProposalVM) => void;
 }) {
   const [approving, setApproving] = useState<string | null>(null);
-  const [rejecting, setRejecting] = useState<string | null>(null);
   const [rejectBusy, setRejectBusy] = useState(false);
   const [note, setNote] = useState("");
+  // The one row whose "why" + reject reasons are expanded (null = all folded).
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  // Group-level approve-all in flight: items remaining, null when idle.
+  const [batchLeft, setBatchLeft] = useState<number | null>(null);
 
   const queue = app.actionQueue;
   const ptsToGo = Math.max(0, 100 - Math.round(pct));
+  const atStake = queue.reduce((n, p) => n + (p.dollar_impact > 0 ? p.dollar_impact : 0), 0);
   // ONE teaching signal at a time, across both verbs: an in-flight approve
   // locks reject (and vice versa) so a single decision can never send the
   // calibration engine contradictory feedback.
-  const teachingBusy = approving !== null || rejectBusy;
+  const teachingBusy = approving !== null || rejectBusy || batchLeft !== null;
+
+  // Cluster the queue by move type so nine cards read as three decisions;
+  // groups keep the queue's own ordering inside themselves.
+  const groups = useMemo(() => {
+    const byKey = new Map<MoveGroupKey, QueueProposalVM[]>();
+    for (const p of queue) {
+      const k = moveGroupFor(p.action_kind);
+      const list = byKey.get(k);
+      if (list) list.push(p);
+      else byKey.set(k, [p]);
+    }
+    return MOVE_GROUP_ORDER.filter((k) => byKey.has(k)).map((k) => {
+      const items = byKey.get(k)!;
+      return {
+        key: k,
+        ...MOVE_GROUPS[k],
+        items,
+        totalImpact: items.reduce((n, p) => n + Math.abs(p.dollar_impact || 0), 0),
+      };
+    });
+  }, [queue]);
 
   // One-click is only offered when the client can actually run the action
   // here: a whitelisted kind, the alert loaded, and (for campaign kinds) a
@@ -89,7 +122,7 @@ function CalibrationTrainer({
         reason,
         ...(noteText ? { note: noteText } : {}),
       });
-      setRejecting(null);
+      setOpenRow(null);
       setNote("");
       app.toast("Feedback saved. Calderyn will factor it in.", "check");
       app.refresh();
@@ -101,143 +134,199 @@ function CalibrationTrainer({
     }
   };
 
+  // Sequential group approve — one real execution at a time, same as the Home
+  // batch card. Failures toast inside executeAction and the run keeps going.
+  const approveAll = async (items: QueueProposalVM[]) => {
+    if (teachingBusy) return;
+    setBatchLeft(items.length);
+    try {
+      for (const p of items) {
+        const alert = app.alerts.find((a) => a.id === p.alertId);
+        // oneClickKind re-narrows the string kind; callers only pass groups
+        // where every item already passed canOneClick.
+        if (alert && oneClickKind(p.action_kind)) await app.executeAction(alert, p.action_kind);
+        setBatchLeft((n) => (n === null ? null : Math.max(0, n - 1)));
+      }
+      app.refresh();
+    } finally {
+      setBatchLeft(null);
+    }
+  };
+
+  const rowTitle = (p: QueueProposalVM): string =>
+    sayLine(p.action_kind, p.title) ??
+    `${featureLabel(p.detector_id, p.action_kind as ActionKind)}: ${p.title}`;
+
   return (
-    <div className="cd-card" style={{ overflow: "hidden" }}>
+    // overflow: clip (not hidden) keeps the rounded-corner clipping without
+    // creating a scroll container, so the gauge rail's position: sticky works.
+    <div className="cd-card" style={{ overflow: "clip" }}>
       <div className="cd-calib-split">
         <div className="cd-calib-left">
-          <TickGauge pct={pct} size={184} />
-          <div className="cd-calib-eyebrow">
-            <span className="cd-eg-live-dot" />
-            Calibrating
-          </div>
-          <div className="cd-caption">
-            <b className="tabular-nums" style={{ color: "var(--text-1)" }}>
-              {ptsToGo}
-            </b>{" "}
-            pts to full auto
+          <div className="cd-calib-rail">
+            <TickGauge pct={pct} size={148} />
+            <div className="cd-calib-eyebrow">
+              <span className="cd-eg-live-dot" />
+              Calibrating
+            </div>
+            <div className="cd-calib-stats">
+              <div className="cd-calib-stat">
+                <b className="tabular-nums">{ptsToGo}</b>
+                <span>pts to full auto</span>
+              </div>
+              <div className="cd-calib-stat">
+                <b className="tabular-nums">{queue.length}</b>
+                <span>waiting on you</span>
+              </div>
+              {atStake > 0 && (
+                <div className="cd-calib-stat">
+                  <b className="tabular-nums">{money(atStake)}</b>
+                  <span>on the table</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-              padding: "16px 20px 8px",
-            }}
-          >
+        <div className="cd-calib-right">
+          <div className="cd-apq-head">
             <div className="cd-anh" style={{ margin: 0 }}>
               <CDIcon name="sparkle" size={15} strokeWidth={1.9} />
               Approve to train
             </div>
-            <span className="cd-caption">{queue.length} left</span>
+            <span className="cd-caption">Approve the good calls; soon it handles them for you.</span>
           </div>
 
-          <div className="cd-caption" style={{ padding: "0 20px 6px", lineHeight: 1.4 }}>
-            Calderyn spotted these while watching your store. Approve the good calls to
-            teach it, and soon it handles them for you.
-          </div>
-
-          {queue.map((p) => (
-            <Fragment key={p.alertId}>
-              <div className="cd-actcard">
-                <div className="cd-actcard-hd">
-                  <span className="cd-sug-ico">
-                    <CDIcon name={CD_ACTION_ICON[p.action_kind] ?? "bolt"} size={17} strokeWidth={1.8} />
+          {groups.map((g) => {
+            const allOneClick = g.items.every((p) => oneClickKind(p.action_kind) && canOneClick(p));
+            return (
+              <Fragment key={g.key}>
+                <div className="cd-apq-grp">
+                  <span className="cd-apq-grp-ico">
+                    <CDIcon name={g.icon} size={13} strokeWidth={2} />
                   </span>
-                  <div className="cd-actcard-title">
-                    {featureLabel(p.detector_id, p.action_kind as ActionKind)}
-                    <div className="cd-actcard-subj">{p.title}</div>
-                  </div>
-                  <span className="cd-actcard-conf">
-                    <b className="tabular-nums">{p.confidence}%</b> sure
-                  </span>
-                </div>
-
-                {(() => {
-                  const r = reasonLines(p.reasoning, p.detector_id);
-                  return (
-                    <div className="cd-actcard-why">
-                      <span className="cd-actcard-why-cat">Why: {r.category}.</span>
-                      {r.narrative ? ` ${r.narrative}` : ""}
-                    </div>
-                  );
-                })()}
-
-                <div className="cd-actcard-foot">
-                  {p.dollar_impact !== 0 && (
-                    <span className="cd-actcard-money">
-                      {moneyVerb(p.action_kind)}{" "}
-                      <b className="tabular-nums">~{money(p.dollar_impact)}</b>
-                    </span>
+                  <span className="cd-apq-grp-name">{g.label}</span>
+                  <span className="cd-apq-grp-n tabular-nums">{g.items.length}</span>
+                  <span className="cd-apq-grp-spacer" />
+                  {g.totalImpact > 0 && (
+                    <span className="cd-apq-grp-money tabular-nums">~{money(g.totalImpact)}</span>
                   )}
-                  <div className="cd-actcard-acts">
+                  {allOneClick && g.items.length > 1 && (
                     <button
                       type="button"
                       className="cd-btn cd-btn-secondary cd-btn-sm"
-                      aria-expanded={rejecting === p.alertId}
-                      aria-controls={`cd-reject-${p.alertId}`}
                       disabled={teachingBusy}
-                      onClick={() => {
-                        setRejecting((cur) => (cur === p.alertId ? null : p.alertId));
-                        setNote("");
-                      }}
+                      onClick={() => void approveAll(g.items)}
                     >
-                      Not now
+                      {batchLeft !== null ? `Approving… ${batchLeft} left` : `Approve all ${g.items.length}`}
                     </button>
-                    <Btn kind="primary" small disabled={teachingBusy} onClick={() => approve(p)}>
-                      {approving === p.alertId
-                        ? "Doing…"
-                        : canOneClick(p)
-                          ? "Do it"
-                          : "Review"}
-                    </Btn>
-                  </div>
+                  )}
                 </div>
-              </div>
-              {rejecting === p.alertId && (
-                <div className="cd-reject-panel" id={`cd-reject-${p.alertId}`}>
-                  <span className="cd-caption" style={{ flexShrink: 0 }}>
-                    Why?
-                  </span>
-                  {REJECT_CHIPS.map((c) => (
-                    <button
-                      key={c.label}
-                      type="button"
-                      className="cd-reject-chip"
-                      disabled={teachingBusy}
-                      onClick={() => reject(p, c.reason, c.note)}
-                    >
-                      {c.label}
-                    </button>
-                  ))}
-                  <input
-                    className="cd-input"
-                    type="text"
-                    placeholder="Other reason"
-                    aria-label="Other reason"
-                    value={note}
-                    disabled={teachingBusy}
-                    onChange={(e) => setNote(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && note.trim()) reject(p, "other", note.trim());
-                    }}
-                    style={{ flex: 1, minWidth: 130, padding: "6px 10px", fontSize: 12.5 }}
-                  />
-                  <Btn
-                    kind="primary"
-                    small
-                    disabled={teachingBusy || !note.trim()}
-                    onClick={() => reject(p, "other", note.trim())}
-                  >
-                    Send
-                  </Btn>
-                </div>
-              )}
-            </Fragment>
-          ))}
+
+                {g.items.map((p) => {
+                  const open = openRow === p.alertId;
+                  const r = reasonLines(p.reasoning, p.detector_id);
+                  return (
+                    <Fragment key={p.alertId}>
+                      <div className="cd-apq-row" data-open={open ? "1" : "0"}>
+                        <button
+                          type="button"
+                          className="cd-apq-main"
+                          aria-expanded={open}
+                          aria-controls={`cd-apq-why-${p.alertId}`}
+                          onClick={() => {
+                            setOpenRow((cur) => (cur === p.alertId ? null : p.alertId));
+                            setNote("");
+                          }}
+                        >
+                          <span className="cd-apq-ico">
+                            <CDIcon
+                              name={CD_ACTION_ICON[p.action_kind] ?? "bolt"}
+                              size={15}
+                              strokeWidth={1.8}
+                            />
+                          </span>
+                          <span className="cd-apq-say">{rowTitle(p)}</span>
+                          {p.dollar_impact !== 0 && (
+                            <span className="cd-apq-money">
+                              {moneyVerb(p.action_kind).toLowerCase()}{" "}
+                              <b className="tabular-nums">~{money(p.dollar_impact)}</b>
+                            </span>
+                          )}
+                          <span className="cd-apq-conf tabular-nums" title="How sure Calderyn is">
+                            {p.confidence}%
+                          </span>
+                          <CDIcon name="chevronDown" size={14} className="cd-apq-chev" />
+                        </button>
+                        <div className="cd-apq-acts">
+                          <button
+                            type="button"
+                            className="cd-btn cd-btn-secondary cd-btn-sm"
+                            disabled={teachingBusy}
+                            onClick={() => {
+                              setOpenRow(p.alertId);
+                              setNote("");
+                            }}
+                          >
+                            Not now
+                          </button>
+                          <Btn kind="primary" small disabled={teachingBusy} onClick={() => approve(p)}>
+                            {approving === p.alertId ? "Doing…" : canOneClick(p) ? "Do it" : "Review"}
+                          </Btn>
+                        </div>
+                      </div>
+
+                      {open && (
+                        <div className="cd-apq-why" id={`cd-apq-why-${p.alertId}`}>
+                          <div className="cd-apq-why-line">
+                            <b>{r.category}.</b>
+                            {r.narrative ? ` ${r.narrative}` : ""}
+                          </div>
+                          <div className="cd-apq-rej">
+                            <span className="cd-caption" style={{ flexShrink: 0 }}>
+                              Skip because:
+                            </span>
+                            {REJECT_CHIPS.map((c) => (
+                              <button
+                                key={c.label}
+                                type="button"
+                                className="cd-reject-chip"
+                                disabled={teachingBusy}
+                                onClick={() => reject(p, c.reason, c.note)}
+                              >
+                                {c.label}
+                              </button>
+                            ))}
+                            <input
+                              className="cd-input"
+                              type="text"
+                              placeholder="Other reason"
+                              aria-label="Other reason"
+                              value={note}
+                              disabled={teachingBusy}
+                              onChange={(e) => setNote(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && note.trim()) reject(p, "other", note.trim());
+                              }}
+                              style={{ flex: 1, minWidth: 130, padding: "6px 10px", fontSize: 12.5 }}
+                            />
+                            <Btn
+                              kind="primary"
+                              small
+                              disabled={teachingBusy || !note.trim()}
+                              onClick={() => reject(p, "other", note.trim())}
+                            >
+                              Send
+                            </Btn>
+                          </div>
+                        </div>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </Fragment>
+            );
+          })}
 
           {queue.length === 0 && (
             <div className="cd-nc-empty" style={{ flex: 1 }}>
