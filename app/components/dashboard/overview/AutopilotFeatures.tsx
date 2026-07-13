@@ -1,13 +1,12 @@
 // The Autopilot feature switchboard: every move Calderyn can make, grouped by
-// domain — unlocked pairs render live autonomy toggles, still-training pairs
-// show their graduation progress, and the rest of the catalog sits locked until
-// the store earns it. This card is the merchant's per-feature on/off surface;
-// the sidebar switch remains the master kill switch.
+// domain in a two-column grid — unlocked pairs render as toggle chips, and the
+// still-locked catalog collapses into one quiet line per group so the card
+// stays a glance, not a wall. This is the merchant's per-feature on/off
+// surface; the sidebar switch remains the master kill switch.
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { CDIcon } from "../icons";
-import { Toggle } from "../ui";
 import { reduced } from "../hero/hero-motion";
 import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
@@ -18,7 +17,8 @@ import { countEnabled, countTotal, LOCKED_FEATURE_TOOLTIP } from "./features-mod
 const PROGRESS_TOOLTIP =
   "Still training: the switch records your preference now, and the feature starts running unattended once it finishes proving itself.";
 
-function FeatureToggleRow({ row, app }: { row: FeatureRowVM; app: DashboardCtx }) {
+/** One unlocked feature as a toggle chip — the whole chip is the switch. */
+function FeatureChip({ row, app }: { row: FeatureRowVM; app: DashboardCtx }) {
   const [on, setOn] = useState(row.enabled);
   const [busy, setBusy] = useState(false);
   useEffect(() => setOn(row.enabled), [row.enabled]);
@@ -39,103 +39,97 @@ function FeatureToggleRow({ row, app }: { row: FeatureRowVM; app: DashboardCtx }
     }
   };
 
-  if (row.locked) {
-    return (
-      <div className="cd-apfeat" data-locked="1" title={LOCKED_FEATURE_TOOLTIP}>
-        <span className="cd-apfeat-name">{row.name}</span>
-        <CDIcon name="lock" size={15} className="cd-apfeat-lock" />
-      </div>
-    );
-  }
-
+  const hint = row.progress ? PROGRESS_TOOLTIP : (row.watching ?? undefined);
   return (
-    <div className="cd-apfeat" data-on={on ? "1" : "0"} title={row.watching ?? undefined}>
-      <span className="cd-apfeat-name">{row.name}</span>
-      {row.recommended && !on && <span className="cd-le-feat-recommend">Ready to turn on</span>}
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={`${row.name} on/off`}
+      className="cd-fx-chip"
+      data-on={on ? "1" : "0"}
+      disabled={busy}
+      title={hint}
+      onClick={toggle}
+    >
+      <span className="cd-fx-chip-name">{row.name}</span>
+      {row.recommended && !on && <span className="cd-fx-chip-ready">ready</span>}
       {row.progress && (
-        <span
-          className="cd-caption tabular-nums"
-          style={{ whiteSpace: "nowrap", flexShrink: 0 }}
-          title={PROGRESS_TOOLTIP}
-        >
-          {row.progress.done}/{row.progress.needed} {row.progress.unit}
+        <span className="cd-fx-chip-prog tabular-nums">
+          {row.progress.done}/{row.progress.needed}
         </span>
       )}
-      <Toggle value={on} onChange={toggle} disabled={busy} ariaLabel={`${row.name} on/off`} />
-    </div>
+      <span className="cd-toggle" data-on={on ? "1" : "0"} aria-hidden="true">
+        <span className="cd-toggle-knob" />
+      </span>
+    </button>
   );
 }
 
-function FeatureGroup({ group, app }: { group: FeatureGroupVM; app: DashboardCtx }) {
-  const [collapsed, setCollapsed] = useState(group.onCount === 0);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const hydrated = useRef(false);
-
-  // Auto-expand when a group gains its first active feature (e.g. a pair just
-  // graduated and the 45s poll rebuilt the groups) so the new toggle isn't
-  // hidden behind a stale collapsed state. Manual collapses still stick until
-  // the active count changes again.
-  useEffect(() => {
-    if (group.onCount > 0) setCollapsed(false);
-  }, [group.onCount]);
-
-  // Fold/unfold the body by animating real height (the chevron rotation is
-  // CSS). First paint and reduced motion snap; an expand settles on height:auto
-  // so rows added later by the poll never clip against a frozen pixel height.
-  useGSAP(
-    () => {
-      const el = bodyRef.current;
-      if (!el) return;
-      if (!hydrated.current || reduced()) {
-        hydrated.current = true;
-        gsap.set(el, { height: collapsed ? 0 : "auto" });
-        return;
-      }
-      if (collapsed) {
-        gsap.to(el, { height: 0, duration: 0.28, ease: "power3.inOut", overwrite: true });
-      } else {
-        gsap.to(el, {
-          height: "auto",
-          duration: 0.32,
-          ease: "power3.inOut",
-          overwrite: true,
-          onComplete: () => gsap.set(el, { height: "auto" }),
-        });
-      }
-    },
-    { dependencies: [collapsed] },
-  );
+/** One domain cell: header, unlocked chips, and the locked tail folded into a
+ *  single line ("N more unlock as calibration grows"). */
+function FeatureGroupCell({ group, app }: { group: FeatureGroupVM; app: DashboardCtx }) {
+  const [showLocked, setShowLocked] = useState(false);
+  const unlocked = group.rows.filter((r) => !r.locked);
+  const locked = group.rows.filter((r) => r.locked);
 
   return (
-    <>
-      <button
-        type="button"
-        className="cd-apgrp"
-        data-has-on={group.onCount > 0 ? "1" : "0"}
-        data-collapsed={collapsed ? "1" : "0"}
-        onClick={() => setCollapsed((c) => !c)}
-      >
-        <span className="cd-apgrp-ico">
+    <div className="cd-fx-cell">
+      <div className="cd-fx-head">
+        <span className="cd-fx-ico" data-has-on={group.onCount > 0 ? "1" : "0"}>
           <CDIcon name={group.icon} size={13} strokeWidth={2} />
         </span>
-        <span className="cd-apgrp-name">{group.label}</span>
-        <span className="cd-apgrp-count">
-          {group.onCount} / {group.total}
-        </span>
-        <CDIcon name="chevronDown" size={15} className="cd-apgrp-chev" />
-      </button>
-      <div ref={bodyRef} className="cd-apgrp-body" data-collapsed={collapsed ? "1" : "0"}>
-        {group.rows.map((r) => (
-          <FeatureToggleRow key={`${r.detectorId}:${r.actionKind}`} row={r} app={app} />
-        ))}
+        <span className="cd-fx-label">{group.label}</span>
+        {group.onCount > 0 && <span className="cd-fx-oncount tabular-nums">{group.onCount} on</span>}
       </div>
-    </>
+
+      {unlocked.length > 0 ? (
+        <div className="cd-fx-chips">
+          {unlocked.map((r) => (
+            <FeatureChip key={`${r.detectorId}:${r.actionKind}`} row={r} app={app} />
+          ))}
+        </div>
+      ) : (
+        <div className="cd-fx-none">Nothing unlocked here yet.</div>
+      )}
+
+      {locked.length > 0 && (
+        <>
+          <button
+            type="button"
+            className="cd-fx-more"
+            aria-expanded={showLocked}
+            onClick={() => setShowLocked((s) => !s)}
+          >
+            <CDIcon name="lock" size={12} strokeWidth={2} />
+            {locked.length} more unlock{locked.length === 1 ? "s" : ""} as calibration grows
+            <CDIcon name="chevronDown" size={13} className="cd-fx-more-chev" data-open={showLocked ? "1" : "0"} />
+          </button>
+          {showLocked && (
+            <div className="cd-fx-chips">
+              {locked.map((r) => (
+                <span
+                  key={`${r.detectorId}:${r.actionKind}`}
+                  className="cd-fx-chip"
+                  data-lock="1"
+                  title={LOCKED_FEATURE_TOOLTIP}
+                >
+                  <span className="cd-fx-chip-name">{r.name}</span>
+                  <CDIcon name="lock" size={12} strokeWidth={2} />
+                </span>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
 export default function AutopilotFeatures({ groups, app }: { groups: FeatureGroupVM[]; app: DashboardCtx }) {
   const onCount = countEnabled(groups);
   const totalRows = countTotal(groups);
+  const unlockedRows = groups.reduce((n, g) => n + g.rows.filter((r) => !r.locked).length, 0);
   const badgeRef = useRef<HTMLSpanElement>(null);
   const prevOn = useRef(onCount);
 
@@ -159,13 +153,19 @@ export default function AutopilotFeatures({ groups, app }: { groups: FeatureGrou
 
   return (
     <div className="cd-card" style={{ padding: 0 }}>
-      <div className="cd-pad-x cd-pad-t" style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 12 }}>
+      <div className="cd-pad-x cd-pad-t" style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 14 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2 className="cd-h2" style={{ margin: 0 }}>
             Autopilot features
           </h2>
           <div className="cd-caption" style={{ marginTop: 2 }}>
             Each switch is one move Calderyn can make on its own.
+            {totalRows > 0 && (
+              <span className="tabular-nums">
+                {" "}
+                {unlockedRows} of {totalRows} unlocked.
+              </span>
+            )}
           </div>
         </div>
         <span
@@ -176,17 +176,19 @@ export default function AutopilotFeatures({ groups, app }: { groups: FeatureGrou
           {onCount} on
         </span>
       </div>
-      <div data-apfeat-scroll style={{ maxHeight: 420, overflowY: "auto", paddingBottom: 6 }}>
-        {totalRows === 0 ? (
-          <div className="cd-apfeat" style={{ color: "var(--text-3)" }}>
-            <span className="cd-apfeat-name" style={{ color: "var(--text-3)" }}>
-              Approve suggestions to unlock autopilot features.
-            </span>
-          </div>
-        ) : (
-          groups.map((g) => <FeatureGroup key={g.key} group={g} app={app} />)
-        )}
-      </div>
+      {totalRows === 0 ? (
+        <div className="cd-fx-none" style={{ padding: "0 20px 18px" }}>
+          Approve suggestions to unlock autopilot features.
+        </div>
+      ) : (
+        <div className="cd-fx-grid">
+          {groups
+            .filter((g) => g.rows.length > 0)
+            .map((g) => (
+              <FeatureGroupCell key={g.key} group={g} app={app} />
+            ))}
+        </div>
+      )}
     </div>
   );
 }
