@@ -107,7 +107,7 @@ export function planeFrame(
       routeId: route.id,
       longitude: normalizeLongitude(current[0]),
       latitude: current[1],
-      bearing: bearingBetween(current, next),
+      bearing: (bearingBetween(current, next) - 45 + 360) % 360,
       progress,
     };
   });
