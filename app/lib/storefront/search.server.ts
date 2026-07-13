@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { getCatalog } from "~/lib/storefront/catalog.server";
-import type { StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
+import type { StorefrontCatalog, StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 
 const MAX_SCAN = 250;
 const MAX_RESULTS = 24;
@@ -105,6 +105,29 @@ export function parseStorefrontSearchParams(params: URLSearchParams): Storefront
   return { query, collection, category, tag, available, sort: sortRaw as StorefrontSearchSort, limit, cursor };
 }
 
+const COLLECTION_FACETS = new Set(["category", "tag", "available"]);
+
+/** Translate runtime collection controls into the closed Task 6 search grammar. */
+export function parseStorefrontCollectionParams(
+  params: URLSearchParams,
+  collectionHandle: string,
+): StorefrontSearchInput {
+  const translated = new URLSearchParams({ collection: collectionHandle });
+  for (const [key, value] of params) {
+    if (params.getAll(key).length !== 1) throw new InvalidSearchRequestError();
+    if (key === "sort" || key === "limit" || key === "cursor") {
+      translated.set(key, value);
+      continue;
+    }
+    if (!key.startsWith("filter.")) throw new InvalidSearchRequestError();
+    const facet = key.slice("filter.".length);
+    if (!COLLECTION_FACETS.has(facet)) throw new InvalidSearchRequestError();
+    if (value) translated.set(facet, value);
+  }
+  if (!translated.has("limit")) translated.set("limit", String(MAX_RESULTS));
+  return parseStorefrontSearchParams(translated);
+}
+
 function lower(value: string): string { return value.toLocaleLowerCase("en-US"); }
 function variantFor(product: StoreProduct): StoreVariant | null {
   return product.variants.slice().sort((a, b) => a.priceCents - b.priceCents || a.id.localeCompare(b.id))[0] ?? null;
@@ -133,8 +156,12 @@ function facet(values: string[]): Array<{ value: string; count: number }> {
     .slice(0, MAX_FACETS);
 }
 
-export async function searchStorefront(shopId: string, input: StorefrontSearchInput) {
-  const products = await getCatalog().listProducts(shopId, { limit: MAX_SCAN });
+export async function searchStorefront(
+  shopId: string,
+  input: StorefrontSearchInput,
+  catalog: StorefrontCatalog = getCatalog(),
+) {
+  const products = await catalog.listProducts(shopId, { limit: MAX_SCAN });
   const query = lower(input.query);
   let filtered = products.filter((product) => {
     if (query && !lower(`${product.title} ${product.description} ${product.category ?? ""} ${(product.tags ?? []).join(" ")}`).includes(query)) return false;

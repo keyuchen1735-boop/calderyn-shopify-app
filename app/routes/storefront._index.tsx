@@ -38,7 +38,7 @@ interface ExperimentArm {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
-  const runtime1 = await resolveRuntime1Route({ shopId, route: { kind: "home" } });
+  const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "home" } });
   if (runtime1) {
     const nonce = randomBytes(18).toString("base64url");
     const headers = storefrontCacheHeaders({ routeId: "home", personalized: false });

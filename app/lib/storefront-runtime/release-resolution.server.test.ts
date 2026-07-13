@@ -5,7 +5,7 @@ import type {
   StorefrontReleaseResolutionError,
   StorefrontVersionRecord,
 } from "./release-resolution.server";
-import { resolveRuntime1Route, resolveStorefrontRelease } from "./release-resolution.server";
+import { hasRuntime1Storefront, resolveRuntime1Route, resolveStorefrontRelease } from "./release-resolution.server";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 
@@ -88,6 +88,30 @@ describe("storefront release resolution", () => {
       data: { notFound: { kind: "product", handle: "missing" } },
     });
     expect(catalog.getProduct).toHaveBeenCalledWith(SHOP, "missing");
+  });
+
+  it("memoizes the immutable release by Request so parent and child consume one pointer read", async () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const live = {
+      ...version("live-request", 1, "2026-07-02T00:00:00Z"),
+      artifact: { sourceKind: "custom" as const, bundle },
+    };
+    const changed = version("changed-to-legacy", 0, "2026-07-03T00:00:00Z");
+    const source = reader(live, []);
+    vi.mocked(source.readPublished).mockResolvedValueOnce(live).mockResolvedValueOnce(changed);
+    const request = new Request("https://shop.example/storefront");
+    const shared = { shopId: SHOP, reader: source, bundleReadEnabled: true, request };
+
+    await expect(hasRuntime1Storefront(shared)).resolves.toBe(true);
+    await expect(resolveRuntime1Route({
+      ...shared,
+      route: { kind: "home" },
+      dataDependencies: {
+        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+      },
+    })).resolves.toMatchObject({ runtime: 1, bundleId: "live-request" });
+    expect(source.readPublished).toHaveBeenCalledTimes(1);
   });
 
   it("uses only STOREFRONT_BUNDLE_READ to select the immutable bundle", async () => {

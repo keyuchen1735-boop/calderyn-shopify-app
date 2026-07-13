@@ -94,7 +94,7 @@ async function checkoutExperimentAttribution(
   shopId: string,
   request: Request,
 ): Promise<Record<string, string>> {
-  if (await hasRuntime1Storefront({ shopId })) return {};
+  if (await hasRuntime1Storefront({ shopId, request })) return {};
   const served = await resolveServedExperiment(shopId, request, "checkout");
   if (!served.experimentId || !served.variantKey) return {};
   return { experiment_id: served.experimentId, variant_key: served.variantKey };
@@ -166,7 +166,7 @@ export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
-  const runtime1 = await resolveRuntime1Route({ shopId, route: { kind: "checkout" } });
+  const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "checkout" } });
   // Demo shell is browse-only — no cart can exist for it (see storefront.cart.tsx).
   if (shopId === DEMO_SHOP_ID) return redirect("/storefront/cart");
   const cartId = await readCartId(request);

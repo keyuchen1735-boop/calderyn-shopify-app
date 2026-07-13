@@ -227,9 +227,29 @@ export async function resolveStorefrontRelease(input: {
   shopId: string;
   bundleReadEnabled?: boolean;
   reader?: StorefrontReleaseReader;
+  request?: Request;
 }): Promise<ResolvedStorefrontRelease> {
   const reader = input.reader ?? storefrontReleaseReader;
   const bundleReadEnabled = input.bundleReadEnabled ?? isStorefrontBundleReadEnabled();
+  if (input.request) {
+    let byReader = requestReleaseMemo.get(input.request);
+    if (!byReader) {
+      byReader = new Map();
+      requestReleaseMemo.set(input.request, byReader);
+    }
+    let byShopAndFlag = byReader.get(reader);
+    if (!byShopAndFlag) {
+      byShopAndFlag = new Map();
+      byReader.set(reader, byShopAndFlag);
+    }
+    const key = `${input.shopId}:${bundleReadEnabled ? "1" : "0"}`;
+    let pending = byShopAndFlag.get(key);
+    if (!pending) {
+      pending = resolveStorefrontRelease({ ...input, request: undefined, reader, bundleReadEnabled });
+      byShopAndFlag.set(key, pending);
+    }
+    return pending;
+  }
   const published = await reader.readPublished(input.shopId);
   if (!published) return { kind: "runtime0-live" };
   if (supported(published) && (bundleReadEnabled || published.runtimeVersion === 0)) {
@@ -245,6 +265,11 @@ export async function resolveStorefrontRelease(input: {
   }
   return resolvedVersion(fallback, published.id);
 }
+
+const requestReleaseMemo = new WeakMap<
+  Request,
+  Map<StorefrontReleaseReader, Map<string, Promise<ResolvedStorefrontRelease>>>
+>();
 
 export interface Runtime1RouteData {
   runtime: 1;
@@ -273,6 +298,7 @@ function routeRequirements(bundle: StorefrontBundleV1, route: PublicRouteContext
 export async function resolveRuntime1Route(input: {
   shopId: string;
   route: PublicRouteContext;
+  request?: Request;
   bundleReadEnabled?: boolean;
   reader?: StorefrontReleaseReader;
   dataDependencies?: PublicDataDependencies;
@@ -312,6 +338,7 @@ export async function resolveRuntime1VersionRoute(input: {
 
 export async function hasRuntime1Storefront(input: {
   shopId: string;
+  request?: Request;
   bundleReadEnabled?: boolean;
   reader?: StorefrontReleaseReader;
 }): Promise<boolean> {

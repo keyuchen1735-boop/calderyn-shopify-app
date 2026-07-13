@@ -4,6 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import { createRuntimeAdapters, type RuntimeFetcher } from "./storefront-hydrator";
 
 describe("runtime-1 route adapters", () => {
+  it("drops a stale collection cursor when sort changes its Task 6 fingerprint", () => {
+    window.history.replaceState({}, "", "/storefront/collections/featured?cursor=stale&sort=title_asc");
+    const assign = vi.fn();
+    const adapters = createRuntimeAdapters({ mode: "public", locationAssign: assign });
+    adapters.collection?.({ type: "sort", value: "price_desc" });
+    expect(assign).toHaveBeenCalledWith("/storefront/collections/featured?sort=price_desc");
+  });
+
   it("dispatches public commerce only through the trusted Task 6 JSON bridges", async () => {
     const fetcher = vi.fn<RuntimeFetcher>(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const adapters = createRuntimeAdapters({ mode: "public", fetcher, refresh: vi.fn() });

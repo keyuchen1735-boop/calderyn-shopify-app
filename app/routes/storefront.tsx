@@ -69,7 +69,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
   }
   const settings = await getStoreSettings(shopId);
-  const runtime1 = await hasRuntime1Storefront({ shopId });
+  const runtime1 = await hasRuntime1Storefront({ shopId, request });
   const experimentVibe = runtime1 ? null : await resolveLayoutExperimentVibe(shopId, request);
   const collections = runtime1 ? [] : await loadNavCollections(shopId);
   return json({ settings, experimentVibe: experimentVibe ?? null, collections });

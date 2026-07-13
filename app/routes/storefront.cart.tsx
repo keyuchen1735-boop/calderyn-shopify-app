@@ -36,6 +36,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   const runtime1 = await resolveRuntime1Route({
     shopId,
+    request,
     route: { kind: "cart" },
     dataDependencies: {
       cartLoader: async (): Promise<PublicCart | null> => {

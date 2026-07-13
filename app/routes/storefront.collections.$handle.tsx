@@ -16,11 +16,13 @@ import { storefrontWeatherCondition } from "~/lib/storefront/weather-serve.serve
 import { renderBlocks } from "~/lib/storebuilder/render";
 import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import { randomBytes } from "node:crypto";
-import { resolveRuntime1Route } from "~/lib/storefront-runtime/release-resolution.server";
+import { hasRuntime1Storefront, resolveRuntime1Route } from "~/lib/storefront-runtime/release-resolution.server";
 import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-runtime/render";
 import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
 import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
+import { InvalidSearchRequestError, parseStorefrontCollectionParams } from "~/lib/storefront/search.server";
+import { storefrontError } from "~/lib/storefront/cart-api.server";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Collection" }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
@@ -28,7 +30,16 @@ export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
   const shopId = await resolveStorefrontShop(request);
-  const runtime1 = await resolveRuntime1Route({ shopId, route: { kind: "collection", handle } });
+  let runtime1: Awaited<ReturnType<typeof resolveRuntime1Route>> = null;
+  if (await hasRuntime1Storefront({ shopId, request })) {
+    try {
+      const searchInput = parseStorefrontCollectionParams(new URL(request.url).searchParams, handle);
+      runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "collection", handle, searchInput } });
+    } catch (error) {
+      if (error instanceof InvalidSearchRequestError) throw storefrontError(422, "invalid_search_request");
+      throw error;
+    }
+  }
   if (runtime1) {
     if (runtime1.data.notFound) throw new Response(null, { status: 404 });
     const nonce = randomBytes(18).toString("base64url");

@@ -59,9 +59,11 @@ export function createRuntimeAdapters(input: {
   data?: PublicPresentationData;
   fetcher?: RuntimeFetcher;
   refresh?: () => void;
+  locationAssign?: (href: string) => void;
 }): RuntimeAdapters {
   const fetcher = input.fetcher ?? fetch;
   const refresh = input.refresh ?? (() => globalThis.window?.location.reload());
+  const locationAssign = input.locationAssign ?? ((href: string) => globalThis.window?.location.assign(href));
   let selectedVariant = input.data?.product?.variants.find((entry) => entry.available) ?? null;
   const dispatch = (intent: CommerceIntent) => {
     if (intent.type === "variant.select") return;
@@ -71,7 +73,7 @@ export function createRuntimeAdapters(input: {
       return;
     }
     if (intent.type === "checkout.start") {
-      globalThis.window?.location.assign("/storefront/checkout");
+      locationAssign("/storefront/checkout");
       return;
     }
     const request = publicCommerceRequest(intent);
@@ -85,19 +87,29 @@ export function createRuntimeAdapters(input: {
   return {
     navigate(target) {
       const href = hrefFor(target, input.mode);
-      if (href !== "#") globalThis.window?.location.assign(href);
+      if (href !== "#") locationAssign(href);
     },
     search(intent) {
       if (intent.type === "update") return;
       const query = intent.type === "clear" ? "" : String(intent.query ?? "").slice(0, 200);
-      globalThis.window?.location.assign(hrefFor({ routeId: "search", params: { query } }, input.mode));
+      locationAssign(hrefFor({ routeId: "search", params: { query } }, input.mode));
     },
     collection(intent) {
       const url = new URL(globalThis.window?.location.href ?? "https://runtime.invalid/");
-      if (intent.type === "filter") url.searchParams.set(`filter.${intent.facetId}`, String(intent.value ?? ""));
-      else if (intent.type === "sort") url.searchParams.set("sort", String(intent.value ?? ""));
+      if (intent.type === "filter") {
+        if (!["category", "tag", "available"].includes(intent.facetId)) return;
+        const key = `filter.${intent.facetId}`;
+        const value = String(intent.value ?? "");
+        if (value) url.searchParams.set(key, value);
+        else url.searchParams.delete(key);
+        url.searchParams.delete("cursor");
+      }
+      else if (intent.type === "sort") {
+        url.searchParams.set("sort", String(intent.value ?? ""));
+        url.searchParams.delete("cursor");
+      }
       else if (intent.type === "page") url.searchParams.set("cursor", String(intent.cursor ?? ""));
-      globalThis.window?.location.assign(`${url.pathname}${url.search}`);
+      locationAssign(`${url.pathname}${url.search}`);
     },
     commerce: {
       mount({ shadowRoot, slot, authorityKey, bridge }) {

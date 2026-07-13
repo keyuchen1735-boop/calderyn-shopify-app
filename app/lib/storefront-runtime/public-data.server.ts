@@ -2,6 +2,11 @@ import type { DataRequirement, StorefrontRouteId } from "~/lib/storefront-bundle
 import type { StorefrontCatalog, StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, type StoreSettings } from "~/lib/storefront/settings.server";
+import {
+  parseStorefrontSearchParams,
+  searchStorefront,
+  type StorefrontSearchInput,
+} from "~/lib/storefront/search.server";
 
 export interface PublicMoney {
   cents: number;
@@ -68,15 +73,26 @@ export interface PublicPresentationData {
   collection: PublicCollection | null;
   featuredProducts: PublicProduct[];
   relatedProducts: PublicProduct[];
-  search: { query: string; results: PublicProduct[]; nextCursor: string | null } | null;
+  search: {
+    query: string;
+    results: PublicProduct[];
+    facets: {
+      categories: Array<{ value: string; count: number }>;
+      tags: Array<{ value: string; count: number }>;
+      collections: Array<{ value: string; count: number }>;
+    };
+    total: number;
+    nextCursor: string | null;
+  } | null;
   cart: PublicCart | null;
   notFound: { kind: "product" | "collection"; handle: string } | null;
 }
 
 export type PublicRouteContext =
   | { kind: "home" | "cart" | "checkout" }
-  | { kind: "product" | "collection"; handle: string }
-  | { kind: "search"; query: string };
+  | { kind: "product"; handle: string }
+  | { kind: "collection"; handle: string; searchInput?: StorefrontSearchInput }
+  | { kind: "search"; query: string; searchInput?: StorefrontSearchInput };
 
 export interface ResolvePublicDataInput {
   shopId: string;
@@ -89,6 +105,7 @@ export interface PublicDataDependencies {
   settingsLoader?: (shopId: string) => Promise<StoreSettings>;
   policyLoader?: (shopId: string) => Promise<PublicPresentationData["policyLinks"]>;
   cartLoader?: (shopId: string) => Promise<PublicCart | null>;
+  searchLoader?: typeof searchStorefront;
 }
 
 const LIMITS = {
@@ -173,6 +190,28 @@ function hasRequirement(input: ResolvePublicDataInput, kind: DataRequirement["ki
   return input.requiredData.some((requirement) => requirement.kind === kind);
 }
 
+async function fullSearchProducts(
+  shopId: string,
+  catalog: StorefrontCatalog,
+  searchInput: StorefrontSearchInput,
+  limit: number,
+  searchLoader: typeof searchStorefront,
+) {
+  const result = await searchLoader(shopId, searchInput, catalog);
+  const items = result.items.slice(0, limit);
+  const products = items.length === 0
+    ? []
+    : await catalog.listProducts(shopId, { ids: items.map((item) => item.id), limit: items.length });
+  const byId = new Map(products.map((product) => [product.id, product]));
+  return {
+    result,
+    products: items.flatMap((item) => {
+      const product = byId.get(item.id);
+      return product ? [presentProduct(product)] : [];
+    }),
+  };
+}
+
 export async function resolvePublicData(
   input: ResolvePublicDataInput,
   dependencies: PublicDataDependencies = {},
@@ -202,17 +241,23 @@ export async function resolvePublicData(
     if (!collection) {
       data.notFound = { kind: "collection", handle: collectionHandle };
     } else {
-      const products = (await catalog.listProducts(input.shopId, { collection: collection.handle, limit: 24 }))
-        .slice(0, 24)
-        .map(presentProduct);
+      const defaultParams = new URLSearchParams({ collection: collection.handle, limit: "24" });
+      const searchInput = input.route.searchInput ?? parseStorefrontSearchParams(defaultParams);
+      const searched = await fullSearchProducts(
+        input.shopId,
+        catalog,
+        searchInput,
+        24,
+        dependencies.searchLoader ?? searchStorefront,
+      );
       data.collection = {
         id: collection.id ?? collection.handle,
         handle: collection.handle,
         title: collection.title,
         description: collection.description ?? "",
-        image: products[0]?.primaryImage ?? null,
-        productCount: collection.productCount ?? products.length,
-        products,
+        image: searched.products[0]?.primaryImage ?? null,
+        productCount: searched.result.total,
+        products: searched.products,
       };
     }
   }
@@ -234,8 +279,26 @@ export async function resolvePublicData(
       }
     } else if (requirement.kind === "searchResults") {
       const query = input.route.kind === "search" ? input.route.query.slice(0, 200) : "";
-      const products = await catalog.listProducts(input.shopId, { limit: requirement.limit, query });
-      data.search = { query, results: products.slice(0, requirement.limit).map(presentProduct), nextCursor: null };
+      const searchInput = input.route.kind === "search" && input.route.searchInput
+        ? input.route.searchInput
+        : parseStorefrontSearchParams(new URLSearchParams({
+          ...(query ? { q: query } : {}),
+          limit: String(requirement.limit),
+        }));
+      const searched = await fullSearchProducts(
+        input.shopId,
+        catalog,
+        searchInput,
+        requirement.limit,
+        dependencies.searchLoader ?? searchStorefront,
+      );
+      data.search = {
+        query: searchInput.query,
+        results: searched.products,
+        facets: searched.result.facets,
+        total: searched.result.total,
+        nextCursor: searched.result.nextCursor,
+      };
     } else if (requirement.kind === "cart") {
       data.cart = await (dependencies.cartLoader?.(input.shopId) ?? Promise.resolve(null));
     }

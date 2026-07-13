@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
+import { parseStorefrontSearchParams } from "~/lib/storefront/search.server";
 import { PublicDataPlanError, resolvePublicData } from "./public-data.server";
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
@@ -27,7 +28,9 @@ function product(handle: string, imageUrl = "https://media.example/one.jpg"): St
 function catalog(products = [product("one"), product("two")]): StorefrontCatalog {
   return {
     listProducts: vi.fn(async (_shopId, opts) => {
-      const selected = opts?.collection
+      const selected = opts?.ids
+        ? products.filter((entry) => opts.ids!.includes(entry.id))
+        : opts?.collection
         ? products.filter((entry) => entry.collections.includes(opts.collection!))
         : products;
       return selected.slice(0, opts?.limit);
@@ -79,7 +82,12 @@ describe("runtime-1 public data plans", () => {
       route: { kind: "search", query: "title" },
     }, { catalog: fake, settingsLoader });
     expect(fake.listProducts).toHaveBeenNthCalledWith(1, SHOP, { collection: "featured", limit: 12 });
-    expect(fake.listProducts).toHaveBeenNthCalledWith(2, SHOP, { limit: 24, query: "title" });
+    expect(fake.listProducts).toHaveBeenNthCalledWith(2, SHOP, { limit: 250 });
+    expect(fake.listProducts).toHaveBeenNthCalledWith(3, SHOP, {
+      ids: expect.any(Array),
+      limit: 24,
+    });
+    expect(vi.mocked(fake.listProducts).mock.calls[2]?.[1]?.ids).toHaveLength(24);
     expect(data.featuredProducts).toHaveLength(12);
     expect(data.search?.results).toHaveLength(24);
   });
@@ -107,6 +115,62 @@ describe("runtime-1 public data plans", () => {
     expect(fake.listCollections).not.toHaveBeenCalled();
     expect(data.collection?.products).toHaveLength(24);
     expect(data.collection?.productCount).toBe(40);
+  });
+
+  it.each([
+    ["daily wash", "description-match"],
+    ["wellness", "category-match"],
+    ["vegan", "tag-match"],
+  ])("uses Task 6 full-field search for runtime-1 query %s", async (query, expectedHandle) => {
+    const products = [
+      { ...product("description-match"), title: "Cleanser", description: "Gentle daily wash" },
+      { ...product("category-match"), title: "Tonic", category: "Wellness" },
+      { ...product("tag-match"), title: "Cream", tags: ["vegan"] },
+    ];
+    const fake = catalog(products);
+    const searchInput = parseStorefrontSearchParams(new URL(`https://shop.example/?q=${encodeURIComponent(query)}`).searchParams);
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "searchResults", limit: 24 }],
+      route: { kind: "search", query, searchInput },
+    }, { catalog: fake, settingsLoader });
+    expect(data.search?.results.map((entry) => entry.handle)).toEqual([expectedHandle]);
+  });
+
+  it("preserves Task 6 sort and cursor while hydrating bounded full product DTOs", async () => {
+    const cheap = { ...product("cheap"), title: "Zed", variants: [{ ...product("cheap").variants[0], priceCents: 100 }] };
+    const expensive = { ...product("expensive"), title: "Able", variants: [{ ...product("expensive").variants[0], priceCents: 900 }] };
+    const fake = catalog([cheap, expensive]);
+    const firstInput = parseStorefrontSearchParams(new URL("https://shop.example/?sort=price_desc&limit=1").searchParams);
+    const first = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "searchResults", limit: 24 }],
+      route: { kind: "search", query: "", searchInput: firstInput },
+    }, { catalog: fake, settingsLoader });
+    expect(first.search?.results[0]).toMatchObject({ handle: "expensive", description: "Description expensive" });
+    expect(first.search?.nextCursor).toEqual(expect.any(String));
+
+    const secondInput = parseStorefrontSearchParams(new URL(`https://shop.example/?sort=price_desc&limit=1&cursor=${encodeURIComponent(first.search!.nextCursor!)}`).searchParams);
+    const second = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "searchResults", limit: 24 }],
+      route: { kind: "search", query: "", searchInput: secondInput },
+    }, { catalog: fake, settingsLoader });
+    expect(second.search?.results.map((entry) => entry.handle)).toEqual(["cheap"]);
+  });
+
+  it("changes collection products when an allowlisted Task 6 facet changes", async () => {
+    const vegan = { ...product("vegan"), tags: ["vegan"] };
+    const wool = { ...product("wool"), tags: ["wool"] };
+    const fake = catalog([vegan, wool]);
+    const searchInput = parseStorefrontSearchParams(new URL("https://shop.example/?collection=featured&tag=vegan").searchParams);
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "currentCollection" }],
+      route: { kind: "collection", handle: "featured", searchInput },
+    }, { catalog: fake, settingsLoader });
+    expect(data.collection?.products.map((entry) => entry.handle)).toEqual(["vegan"]);
+    expect(data.collection?.productCount).toBe(1);
   });
 
   it("resolves live identity/media on every request but excludes release-owned design fields", async () => {
