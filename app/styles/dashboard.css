@@ -2674,3 +2674,15 @@
 @media (max-width: 560px) {
   .npf-step-lab:not([data-active="1"]) { display: none; }
 }
+
+/* New-product flow: collapsed variant grid + shipping question */
+.cd-npf-combo-summary {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; padding: 10px 12px; border: 1px dashed var(--hairline-strong);
+  border-radius: 10px; background: transparent; color: var(--text-1);
+  font: inherit; cursor: pointer; text-align: left;
+}
+.cd-npf-combo-summary:hover { border-color: var(--accent); }
+.cd-npf-combo-edit { color: var(--accent); font-size: 0.85em; }
+.cd-npf-shipq { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.cd-npf-shipq-btns { display: flex; gap: 6px; }
