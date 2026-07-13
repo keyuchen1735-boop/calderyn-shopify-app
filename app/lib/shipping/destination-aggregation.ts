@@ -45,6 +45,12 @@ export function aggregateDestinationRows(
   return partitionDestinationRows(rows).buckets;
 }
 
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 export function partitionDestinationRows(
   rows: readonly DestinationOrderRow[],
 ): DestinationPartition {
@@ -62,22 +68,23 @@ export function partitionDestinationRows(
     }
 
     const id = stableDestinationId(city, region, country);
-    const existingBucket = bucketsByDestination.get(id);
+    const destinationKey = [city, region, country].join("\u001f");
+    const existingBucket = bucketsByDestination.get(destinationKey);
 
     if (existingBucket) {
       existingBucket.orderCount += 1;
       continue;
     }
 
-    bucketsByDestination.set(id, { id, city, region, country, orderCount: 1 });
+    bucketsByDestination.set(destinationKey, { id, city, region, country, orderCount: 1 });
   }
 
   const buckets = [...bucketsByDestination.values()].sort(
     (left, right) =>
       right.orderCount - left.orderCount ||
-      left.city.localeCompare(right.city) ||
-      left.region.localeCompare(right.region) ||
-      left.country.localeCompare(right.country),
+      compareCodeUnits(left.city, right.city) ||
+      compareCodeUnits(left.region, right.region) ||
+      compareCodeUnits(left.country, right.country),
   );
 
   return { buckets, incompleteOrderCount };

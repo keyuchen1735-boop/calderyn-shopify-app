@@ -81,6 +81,67 @@ describe("destination aggregation", () => {
     expect(normalizedId).not.toContain("buyer");
   });
 
+  it("keeps distinct destinations separate when their emitted FNV IDs collide", () => {
+    const rows: DestinationOrderRow[] = [
+      { customer_city: "costarring", customer_region: "ON", customer_country: "CA" },
+      { customer_city: "liquid", customer_region: "ON", customer_country: "CA" },
+    ];
+
+    expect(stableDestinationId("costarring", "on", "ca")).toBe(
+      stableDestinationId("liquid", "on", "ca"),
+    );
+    expect(aggregateDestinationRows(rows)).toEqual([
+      {
+        id: stableDestinationId("costarring", "on", "ca"),
+        city: "costarring",
+        region: "on",
+        country: "ca",
+        orderCount: 1,
+      },
+      {
+        id: stableDestinationId("liquid", "on", "ca"),
+        city: "liquid",
+        region: "on",
+        country: "ca",
+        orderCount: 1,
+      },
+    ]);
+  });
+
+  it("uses locale-independent code-unit ordering for tied destinations", () => {
+    const rows: DestinationOrderRow[] = [
+      { customer_city: "æble", customer_region: "", customer_country: "DK" },
+      { customer_city: "zebra", customer_region: "", customer_country: "DK" },
+      { customer_city: "alpha", customer_region: "", customer_country: "DK" },
+    ];
+
+    expect(aggregateDestinationRows(rows).map((bucket) => bucket.city)).toEqual([
+      "alpha",
+      "zebra",
+      "æble",
+    ]);
+  });
+
+  it("does not mutate its input array or rows", () => {
+    const rows: readonly DestinationOrderRow[] = Object.freeze([
+      Object.freeze({
+        customer_city: " New York ",
+        customer_region: " NY ",
+        customer_country: " US ",
+      }),
+      Object.freeze({
+        customer_city: "Toronto",
+        customer_region: null,
+        customer_country: "CA",
+      }),
+    ]);
+    const before = JSON.parse(JSON.stringify(rows)) as DestinationOrderRow[];
+
+    aggregateDestinationRows(rows);
+
+    expect(rows).toEqual(before);
+  });
+
   it("counts rows with missing city or country separately", () => {
     const rows: DestinationOrderRow[] = [
       { customer_city: "New York", customer_region: "NY", customer_country: "US" },
