@@ -1850,6 +1850,7 @@
    only cares about the .cd-camp-row class, not the tag. */
 .cd-camp-row ~ .cd-camp-row { border-top: 0.5px solid var(--hairline); }
 .cd-camp-row:hover { background: var(--gray-bg); }
+.cd-camp-row[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cd-score { display: inline-flex; align-items: center; justify-content: center; min-width: 40px; height: 27px; padding: 0 9px; border-radius: 8px; font-size: calc(14px * var(--type-scale)); font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* ---- customers ---- */

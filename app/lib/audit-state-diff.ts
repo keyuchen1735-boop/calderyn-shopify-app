@@ -69,6 +69,7 @@ export function stateDiff(actionKind: string, preState: unknown, postState: unkn
     case "pause_campaign":
     case "resume_campaign":
     case "reduce_campaign_budget":
+    case "update_campaign_budget":
       push("Status", str(pre, "status"), str(post, "status"));
       push("Daily budget", money(num(pre, "daily_budget_cents")), money(num(post, "daily_budget_cents")));
       break;
@@ -89,6 +90,14 @@ export function stateDiff(actionKind: string, preState: unknown, postState: unkn
       const qty = num(src, "po", "lines", "0", "quantity");
       if (total != null) rows.push({ label: "PO total", before: null, after: fmtMoneyDec(total) });
       if (qty != null) rows.push({ label: "Quantity", before: null, after: `${qty.toLocaleString("en-US")} units` });
+      break;
+    }
+
+    case "duplicate_campaign": {
+      // A duplicate is a creation — no "before". The new campaign's ids live
+      // in post_state.
+      const externalId = str(post, "copied_campaign_external_id");
+      if (externalId != null) rows.push({ label: "Copy created", before: null, after: externalId });
       break;
     }
   }

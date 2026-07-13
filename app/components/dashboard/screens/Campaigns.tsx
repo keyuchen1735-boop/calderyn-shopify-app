@@ -774,7 +774,11 @@ function CampaignDetail({
   // by the server. Needs >=2 days to draw a line, so anything short of that
   // falls back to the same honest empty state the card used to always show.
   const spendSeries = series?.map((r) => r.spend_cents / 100) ?? [];
-  const roasSeries = series?.map((r) => (r.spend_cents > 0 ? r.revenue_cents / r.spend_cents : 0)) ?? [];
+  // Zero-spend days are dropped rather than mapped to 0 — a day can have
+  // revenue with no spend recorded yet (rounding/attribution lag), and a 0
+  // would draw a false dip. roasSeries renders in its own Sparkline (not
+  // index-paired with spendSeries), so dropping points is safe.
+  const roasSeries = (series ?? []).filter((r) => r.spend_cents > 0).map((r) => r.revenue_cents / r.spend_cents);
   const chartWidth = narrow ? 260 : 440;
   const chartCard = (
     <Card>
@@ -1158,15 +1162,36 @@ function CampaignList({
   // refresh lands.
   const [overrides, setOverrides] = useState<Record<string, Partial<CampaignVM>>>({});
   const [budgetFor, setBudgetFor] = useState<CampaignVM | null>(null);
-  // Drop the patches once a new campaigns array arrives: executeAction
-  // updates the ad_campaign_dim mirror BEFORE responding, and the quick
-  // actions only call app.refresh() after the action resolves, so any fresh
-  // array already reflects the action — fresh data supersedes overrides.
+  // Reconcile patches once a new campaigns array arrives: executeAction
+  // updates the ad_campaign_dim mirror BEFORE responding, so the action's own
+  // refresh() reflects the patch and it can be cleared. But a live poll
+  // in flight before the action committed can land after the override is
+  // set, with pre-action data — clearing unconditionally would revert the
+  // row for ~15s until the next poll. So only drop an override once the
+  // fresh row actually reflects every field it patched; otherwise keep it.
   // Keyed on array identity (a new fetch always allocates a new array), not
-  // deep equality, so unrelated re-renders never clear an in-flight patch.
+  // deep equality, so unrelated re-renders still re-run the reconcile (cheap
+  // — it is a no-op once everything is reflected).
   useEffect(() => {
-    setOverrides({});
-  }, [app.campaigns]);
+    setOverrides((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      const fresh = new Map(joined.map((c) => [c.id, c]));
+      let changed = false;
+      const next: Record<string, Partial<CampaignVM>> = {};
+      for (const [id, patch] of Object.entries(prev)) {
+        const freshRow = fresh.get(id);
+        const reflected =
+          freshRow != null &&
+          (Object.keys(patch) as (keyof CampaignVM)[]).every((k) => freshRow[k] === patch[k]);
+        if (reflected) {
+          changed = true;
+        } else {
+          next[id] = patch;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [app.campaigns, joined]);
   const merged = joined.map((c) => (overrides[c.id] ? { ...c, ...overrides[c.id] } : c));
 
   // Active campaigns sort to the top; within each status group, highest 7d

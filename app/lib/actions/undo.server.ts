@@ -189,7 +189,8 @@ export async function undoAction(
   if (
     orig.action_kind === "pause_campaign" ||
     orig.action_kind === "resume_campaign" ||
-    orig.action_kind === "reduce_campaign_budget"
+    orig.action_kind === "reduce_campaign_budget" ||
+    orig.action_kind === "update_campaign_budget"
   ) {
     if (!externalId) throw new Error(`cannot undo ${String(orig.action_kind)}: missing campaign external id`);
   }
@@ -203,7 +204,7 @@ export async function undoAction(
     if (String(pre.status).toLowerCase() === "active") await adapter.resume(externalId);
     else await adapter.pause(externalId);
     await mirrorBackToPreState();
-  } else if (orig.action_kind === "reduce_campaign_budget") {
+  } else if (orig.action_kind === "reduce_campaign_budget" || orig.action_kind === "update_campaign_budget") {
     const adapter = await requireAdapter();
     if (pre.daily_budget_cents != null) await adapter.setDailyBudget(externalId, pre.daily_budget_cents);
     await mirrorBackToPreState();
