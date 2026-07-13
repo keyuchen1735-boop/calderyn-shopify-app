@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Card, SectionTitle, Pill, Btn } from "./ui";
+import { Btn } from "./ui";
 import { money } from "./format";
 import {
   fetchBilling,
@@ -11,6 +11,139 @@ import {
 } from "~/lib/dashboard/client";
 import { payoutsCardState } from "./view-models";
 import type { DashboardCtx } from "./context";
+
+interface PayoutPanelProps {
+  billing: BillingStatus | null;
+  loadFailed: boolean;
+  busy: boolean;
+  onRetryLoad: () => void;
+  onCta: () => void;
+  onOpenStripe: () => void;
+  onRefresh: () => void;
+}
+
+/** Pure payout surface: every visual state is renderable without network effects. */
+export function PayoutPanel({
+  billing,
+  loadFailed,
+  busy,
+  onRetryLoad,
+  onCta,
+  onOpenStripe,
+  onRefresh,
+}: PayoutPanelProps) {
+  const vm = billing ? payoutsCardState(billing) : null;
+  const phase = loadFailed ? "error" : vm?.phase ?? "loading";
+  const active = vm?.phase === "active";
+  const available = billing?.balance?.available?.[0];
+  const pending = billing?.balance?.pending?.[0];
+  const feeValue = vm?.feeLabel.replace(/^Platform fee:\s*/, "") ?? "—";
+
+  return (
+    <section className="cd-payout-section" aria-labelledby="cd-payout-title">
+      <div
+        className="cd-payout-panel"
+        data-phase={phase}
+        aria-busy={phase === "loading" ? "true" : undefined}
+      >
+        <div className="cd-payout-visual">
+          <div className="cd-payout-head">
+            <h2 id="cd-payout-title" className="cd-payout-title">
+              Payouts
+            </h2>
+            {vm && (
+              <span className="cd-payout-status" data-tone={vm.pillTone}>
+                <i aria-hidden="true" />
+                {vm.pillLabel}
+              </span>
+            )}
+          </div>
+
+          {phase === "loading" ? (
+            <div className="cd-payout-skeleton cd-payout-skeleton--amount" />
+          ) : active ? (
+            <div className="cd-payout-balance">
+              <span>Available balance</span>
+              <strong className="cd-payout-amount tabular-nums">
+                {available ? money(available.amountCents) : "—"}
+              </strong>
+            </div>
+          ) : (
+            <div className="cd-payout-balance cd-payout-balance--setup">
+              <span>Stripe Connect</span>
+              <strong>Money routed to your bank</strong>
+            </div>
+          )}
+
+          <div className="cd-payout-card-art" aria-hidden="true">
+            <span className="cd-payout-card-chip" />
+            <span className="cd-payout-card-mark">PAYOUT</span>
+            <span className="cd-payout-card-lines">
+              <i />
+              <i />
+            </span>
+          </div>
+        </div>
+
+        <div className="cd-payout-details">
+          {phase === "loading" ? (
+            <>
+              <div className="cd-payout-skeleton cd-payout-skeleton--row" />
+              <div className="cd-payout-skeleton cd-payout-skeleton--row" />
+              <div className="cd-payout-skeleton cd-payout-skeleton--button" />
+            </>
+          ) : phase === "error" ? (
+            <div className="cd-payout-state-copy">
+              <h3>Payout status unavailable</h3>
+              <p>We couldn&apos;t read your Stripe payout status just now.</p>
+              <Btn onClick={onRetryLoad}>Retry</Btn>
+            </div>
+          ) : active ? (
+            <>
+              <div className="cd-payout-detail-row">
+                <span>Pending</span>
+                <strong className="tabular-nums">
+                  {pending ? money(pending.amountCents) : "—"}
+                </strong>
+              </div>
+              <div className="cd-payout-detail-row">
+                <span>Platform fee</span>
+                <strong>{feeValue}</strong>
+              </div>
+              <div className="cd-payout-actions">
+                <Btn kind="primary" onClick={onOpenStripe} disabled={busy}>
+                  Open Stripe <span aria-hidden="true">↗</span>
+                </Btn>
+                <button
+                  type="button"
+                  className="cd-payout-refresh"
+                  onClick={onRefresh}
+                  disabled={busy}
+                  aria-label="Refresh payout status"
+                >
+                  <span aria-hidden="true">↻</span> Refresh
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="cd-payout-state-copy">
+              <h3>Finish payout setup</h3>
+              <p>
+                {vm?.phase === "onboarding"
+                  ? "Complete Stripe onboarding to send buyer payments to your bank."
+                  : "Connect Stripe so buyer payments can land in your bank automatically."}
+              </p>
+              <span className="cd-payout-fee">{vm?.feeLabel}</span>
+              <Btn kind="primary" onClick={onCta} disabled={busy}>
+                {vm?.cta === "setup" ? "Set up payouts" : "Resume onboarding"}
+              </Btn>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 /** Payouts (Stripe Connect, #11): onboarding CTA, status pill, live balance, fee line. */
 export function PayoutsCard({ app }: { app: DashboardCtx }) {
@@ -84,65 +217,15 @@ export function PayoutsCard({ app }: { app: DashboardCtx }) {
     }
   };
 
-  const vm = billing ? payoutsCardState(billing) : null;
-  const available = billing?.balance?.available?.[0];
-  const pending = billing?.balance?.pending?.[0];
-
   return (
-    <section>
-      <SectionTitle>Payouts</SectionTitle>
-      <Card>
-        {loadFailed ? (
-          <div className="cd-caption">
-            Couldn't load payout status.{" "}
-            <button type="button" className="cd-link" onClick={onRetryLoad}>
-              Retry
-            </button>
-          </div>
-        ) : !vm || !billing ? (
-          <div className="cd-caption">Loading payout status…</div>
-        ) : (
-          <>
-            <div className="cd-setting">
-              <div className="min-w-0 flex-1">
-                <div className="cd-row-title">
-                  Stripe payouts <Pill tone={vm.pillTone}>{vm.pillLabel}</Pill>
-                </div>
-                <div className="cd-caption" style={{ maxWidth: "46ch" }}>
-                  {vm.phase === "active"
-                    ? "Buyer payments route to your Stripe account and pay out automatically."
-                    : "Connect a payout account so buyer payments land in your bank automatically."}
-                </div>
-                <div className="cd-caption">{vm.feeLabel}</div>
-                {vm.phase === "active" && available && (
-                  <div className="cd-caption">
-                    Balance: {money(available.amountCents)} available
-                    {pending ? ` · ${money(pending.amountCents)} pending` : ""}
-                  </div>
-                )}
-              </div>
-              {vm.cta ? (
-                <Btn kind="primary" onClick={onCta} disabled={busy}>
-                  {vm.cta === "setup" ? "Set up payouts" : "Resume onboarding"}
-                </Btn>
-              ) : (
-                <Btn onClick={onRefresh} disabled={busy} small>
-                  Refresh
-                </Btn>
-              )}
-            </div>
-            {vm.phase === "active" && (
-              <div className="cd-caption">
-                {/* Login links are single-use; mint on click (in-tab nav — an async
-                    window.open would trip popup blockers). */}
-                <button type="button" className="cd-link" onClick={onOpenStripe} disabled={busy}>
-                  Open Stripe payout dashboard
-                </button>
-              </div>
-            )}
-          </>
-        )}
-      </Card>
-    </section>
+    <PayoutPanel
+      billing={billing}
+      loadFailed={loadFailed}
+      busy={busy}
+      onRetryLoad={onRetryLoad}
+      onCta={onCta}
+      onOpenStripe={onOpenStripe}
+      onRefresh={onRefresh}
+    />
   );
 }
