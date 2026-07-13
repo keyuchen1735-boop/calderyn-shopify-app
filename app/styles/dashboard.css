@@ -1001,6 +1001,37 @@
     border: none; cursor: pointer; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: calc(12px * var(--type-scale)); line-height: 1;
   }
 
+  /* ============ contact-us ============ */
+  .cd-contact-fab {
+    position: fixed; right: 20px; bottom: 20px; z-index: 45;
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 14px;
+    border: 0.5px solid var(--hairline-strong); border-radius: 999px;
+    background: var(--card-solid); color: var(--text-1);
+    font: inherit; font-size: calc(12.5px * var(--type-scale)); font-weight: 600;
+    box-shadow: var(--shadow-pop); cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .cd-contact-fab:hover { transform: translateY(-1px); }
+  .cd-contact-fab:active { transform: translateY(0); }
+  /* Above the assistant drawer (70) so an open draft never silently vanishes
+     behind it; below the bug-report overlay (80). */
+  .cd-contact-panel {
+    position: fixed; right: 20px; bottom: 66px; z-index: 75;
+    width: 340px; max-width: calc(100vw - 32px);
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--card-solid);
+    border: 0.5px solid var(--hairline-strong); border-radius: var(--radius);
+    box-shadow: var(--shadow-pop);
+  }
+  .cd-contact-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .cd-contact-foot { display: flex; justify-content: flex-end; padding: 0 16px 14px; }
+  @media (max-width: 767px) {
+    /* Clear the fixed bottom tab bar on phones. */
+    .cd-contact-fab { right: 14px; bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
+    .cd-contact-panel { right: 14px; bottom: calc(112px + env(safe-area-inset-bottom, 0px)); }
+  }
+
 /* Claude connector install guide (Settings → Claude connector) */
 .cd-mcp { display: flex; flex-direction: column; gap: 16px; }
 .cd-mcp-hero {
