@@ -10,6 +10,8 @@ export const HAS_UNDO_BRANCH: ReadonlySet<ActionKind> = new Set<ActionKind>([
   "reduce_campaign_budget",
   "update_campaign_budget",
   "duplicate_campaign",
+  "exclude_geo",
+  "push_creative_draft",
   "reallocate_budget",
   "reallocate_inventory",
   "discontinue_sku",
