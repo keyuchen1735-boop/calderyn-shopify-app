@@ -134,6 +134,34 @@ describe("generateOriginalStorefront", () => {
     )).toBe(true);
   });
 
+  it("installs when the provider follows the trusted-slot source contract", async () => {
+    const deps = passingDependencies();
+    const baseComplete = deps.provider.complete;
+    deps.provider.complete = vi.fn(async (request) => {
+      const response = await baseComplete(request);
+      if (request.operation !== "expand") return response;
+      const documentsSlotSyntax = request.system.includes("data-cd-slot") &&
+        request.system.includes("data-cd-trusted-slot-id") &&
+        request.system.includes("Any other data-cd-*");
+      if (documentsSlotSyntax) return response;
+      const expansion = structuredClone(response.value as ReturnType<typeof createExpansion>);
+      expansion.product.html = `<main><div data-cd-trusted-slot-id="cd-product-slot-1"></div></main>`;
+      return { ...response, value: expansion };
+    });
+
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "Create an original product-first shop",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+    }, deps);
+
+    expect(result.status).toBe("installed");
+    if (result.status !== "installed") throw new Error("expected install");
+    expect(result.bundle.routes.product.html).toContain("data-cd-trusted-slot-id");
+  });
+
   it("installs only content-addressed owned asset references and records their provenance", async () => {
     const deps = passingDependencies();
     const baseComplete = deps.provider.complete;
