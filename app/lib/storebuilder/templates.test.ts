@@ -21,11 +21,12 @@ describe("store template recipes", () => {
     expect(brief).toContain("Visual direction:");
   });
 
-  it("forwards the complete template selection callback into the Store welcome flow", () => {
+  it("forwards the resolved design request into the Store welcome flow", () => {
     const storeSource = readFileSync(
       new URL("../../components/dashboard/screens/Store.tsx", import.meta.url),
       "utf8",
     );
-    expect(storeSource).toContain("onBuildWithVibe={onWelcomeBuildWithVibe}");
+    expect(storeSource).toContain("onBuildDesign={onWelcomeBuildDesign}");
+    expect(storeSource).toContain("void runBuild(request, { firstBuild: true, recommendation })");
   });
 });
