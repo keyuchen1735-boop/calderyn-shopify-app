@@ -7,16 +7,28 @@ import { escapeLike } from "./inventory-list.server";
 import { applySeoOverrideInput } from "./product-seo.server";
 import { collectionHandle, productHandleBase } from "./handle";
 import { catalogSortToOrder, type CatalogSort } from "./catalog-sort";
-import type { ProductInput, ProductStatus, ProductSummary, ProductDetail, VariantInput } from "./types";
+import type {
+  ProductInput,
+  ProductStatus,
+  ProductSummary,
+  ProductDetail,
+  VariantInput,
+} from "./types";
 
 type Supa = ReturnType<typeof getSupabase>;
 
 function notFound(): never {
-  throw new CalderynError({ code: "not_found", status: 404, message: "product not found" });
+  throw new CalderynError({
+    code: "not_found",
+    status: 404,
+    message: "product not found",
+  });
 }
 
 /** List row = summary + the price/ship-readiness fields the catalog table shows. */
 export interface ProductListItem extends ProductSummary {
+  /** Stable public/rehosted media URL when the primary is not bucket-backed. */
+  primaryImageUrl: string | null;
   /** Lowest variant price in cents; null when no variant carries a price. */
   priceCents: number | null;
   /** True when every variant passes the same shipping predicate the activation
@@ -31,7 +43,13 @@ export interface ProductListItem extends ProductSummary {
 
 export async function listProducts(
   shopId: string,
-  opts: { search?: string; status?: ProductStatus; limit?: number; offset?: number; sort?: CatalogSort } = {},
+  opts: {
+    search?: string;
+    status?: ProductStatus;
+    limit?: number;
+    offset?: number;
+    sort?: CatalogSort;
+  } = {},
 ): Promise<{ products: ProductListItem[]; total: number }> {
   const sb = getSupabase();
   const limit = Math.min(opts.limit ?? 50, 100);
@@ -48,14 +66,21 @@ export async function listProducts(
   // Stable tiebreaker after the sort column so offset paging can't skip/duplicate
   // rows that share a value (seeded/imported in the same write).
   const order = catalogSortToOrder(opts.sort ?? "updated");
-  const { data: rows, count, error } = await q
+  const {
+    data: rows,
+    count,
+    error,
+  } = await q
     .order(order.column, { ascending: order.ascending })
     .order("id", { ascending: false })
     .range(offset, offset + limit - 1);
   if (error) throw error;
 
   const ids = (rows ?? []).map((r: { id: string }) => r.id);
-  const mediaByProduct = new Map<string, string>();
+  const mediaByProduct = new Map<
+    string,
+    { storagePath: string | null; externalUrl: string | null }
+  >();
   const variantCount = new Map<string, number>();
   // Per-product rollups for the catalog table: lowest variant price, heaviest
   // physical-variant weight, and whether every variant is ship-complete.
@@ -63,15 +88,31 @@ export async function listProducts(
   const shipOkByProduct = new Map<string, boolean>();
   const maxWeightByProduct = new Map<string, number>();
   if (ids.length) {
-    // Bucket-backed primaries only: a promoted mirror image carries an external_url
-    // and no storage_path (it renders on the storefront, not this admin thumbnail lane).
-    const { data: media, error: mErr } = await sb.from("product_media").select("product_id, storage_path").in("product_id", ids).eq("is_primary", true).not("storage_path", "is", null);
+    // One primary row per product keeps this query well below PostgREST's
+    // 1,000-row cap even for image-heavy catalogs.
+    const { data: media, error: mErr } = await sb
+      .from("product_media")
+      .select("product_id, storage_path, external_url")
+      .in("product_id", ids)
+      .eq("is_primary", true)
+      .order("position");
     if (mErr) throw mErr;
-    for (const m of media ?? []) mediaByProduct.set(String(m.product_id), String(m.storage_path));
-    const { data: variants, error: vcErr } = await sb.from("variant_dim").select("id, product_id, retail_price_cents").in("product_id", ids);
+    for (const m of media ?? []) {
+      if (mediaByProduct.has(String(m.product_id))) continue;
+      mediaByProduct.set(String(m.product_id), {
+        storagePath: m.storage_path ? String(m.storage_path) : null,
+        externalUrl: m.external_url ? String(m.external_url) : null,
+      });
+    }
+    const { data: variants, error: vcErr } = await sb
+      .from("variant_dim")
+      .select("id, product_id, retail_price_cents")
+      .in("product_id", ids);
     if (vcErr) throw vcErr;
 
-    const variantIds = (variants ?? []).map((v: { id: string }) => String(v.id));
+    const variantIds = (variants ?? []).map((v: { id: string }) =>
+      String(v.id),
+    );
     const shippingByVariant = new Map<string, Record<string, unknown>>();
     // Chunk the id list: a page of products can carry hundreds of variants and
     // an unbounded .in() blows past PostgREST's URL length limit.
@@ -79,7 +120,9 @@ export async function listProducts(
     for (let i = 0; i < variantIds.length; i += SHIP_IN_CHUNK) {
       const { data: shipping, error: shErr } = await sb
         .from("variant_shipping")
-        .select("variant_id, weight_grams, length_mm, width_mm, height_mm, requires_shipping")
+        .select(
+          "variant_id, weight_grams, length_mm, width_mm, height_mm, requires_shipping",
+        )
         .eq("shop_id", shopId)
         .in("variant_id", variantIds.slice(i, i + SHIP_IN_CHUNK));
       if (shErr) throw shErr;
@@ -92,7 +135,8 @@ export async function listProducts(
       const pid = String(v.product_id);
       variantCount.set(pid, (variantCount.get(pid) ?? 0) + 1);
 
-      const price = v.retail_price_cents == null ? null : Number(v.retail_price_cents);
+      const price =
+        v.retail_price_cents == null ? null : Number(v.retail_price_cents);
       if (price != null) {
         const cur = minPriceByProduct.get(pid);
         if (cur == null || price < cur) minPriceByProduct.set(pid, price);
@@ -101,7 +145,8 @@ export async function listProducts(
       // Mirror of validate.ts's incomplete_shipping check, with getProduct's
       // defaults for a missing variant_shipping row (physical, zero weight).
       const sh = shippingByVariant.get(String(v.id)) ?? {};
-      const physical = ((sh.requires_shipping as boolean | null) ?? true) !== false;
+      const physical =
+        ((sh.requires_shipping as boolean | null) ?? true) !== false;
       const weight = Number(sh.weight_grams ?? 0);
       const complete =
         !physical ||
@@ -110,47 +155,83 @@ export async function listProducts(
           Number(sh.width_mm ?? 0) > 0 &&
           Number(sh.height_mm ?? 0) > 0);
       shipOkByProduct.set(pid, (shipOkByProduct.get(pid) ?? true) && complete);
-      if (physical && weight > 0 && weight > (maxWeightByProduct.get(pid) ?? 0)) {
+      if (
+        physical &&
+        weight > 0 &&
+        weight > (maxWeightByProduct.get(pid) ?? 0)
+      ) {
         maxWeightByProduct.set(pid, weight);
       }
     }
   }
 
-  const products: ProductListItem[] = (rows ?? []).map((r: Record<string, unknown>) => ({
-    id: String(r.id),
-    title: String(r.title),
-    status: r.status as ProductStatus,
-    primaryImagePath: mediaByProduct.get(String(r.id)) ?? null,
-    variantCount: variantCount.get(String(r.id)) ?? 0,
-    updatedAt: String(r.updated_at),
-    priceCents: minPriceByProduct.get(String(r.id)) ?? null,
-    // A product with zero variants passes vacuously — the same way it passes
-    // the activation validator's per-variant loop.
-    shipDataOk: shipOkByProduct.get(String(r.id)) ?? true,
-    shipWeightGrams: maxWeightByProduct.get(String(r.id)) ?? null,
-  }));
+  const products: ProductListItem[] = (rows ?? []).map(
+    (r: Record<string, unknown>) => ({
+      id: String(r.id),
+      title: String(r.title),
+      status: r.status as ProductStatus,
+      primaryImagePath: mediaByProduct.get(String(r.id))?.storagePath ?? null,
+      primaryImageUrl: mediaByProduct.get(String(r.id))?.externalUrl ?? null,
+      variantCount: variantCount.get(String(r.id)) ?? 0,
+      updatedAt: String(r.updated_at),
+      priceCents: minPriceByProduct.get(String(r.id)) ?? null,
+      // A product with zero variants passes vacuously — the same way it passes
+      // the activation validator's per-variant loop.
+      shipDataOk: shipOkByProduct.get(String(r.id)) ?? true,
+      shipWeightGrams: maxWeightByProduct.get(String(r.id)) ?? null,
+    }),
+  );
   return { products, total: count ?? products.length };
 }
 
-export async function getProduct(shopId: string, productId: string): Promise<ProductDetail | null> {
+export async function getProduct(
+  shopId: string,
+  productId: string,
+): Promise<ProductDetail | null> {
   const sb = getSupabase();
   const { data: p, error } = await sb
     .from("product_dim")
-    .select("id, handle, title, status, vendor, category, description, tags, updated_at")
+    .select(
+      "id, handle, title, status, vendor, category, description, tags, updated_at",
+    )
     .eq("shop_id", shopId)
     .eq("id", productId)
     .maybeSingle();
   if (error) throw error;
   if (!p) return null;
 
-  const [{ data: options }, { data: variants }, { data: vov }, { data: media }, { data: pc }] = await Promise.all([
-    sb.from("product_option").select("id, name, position, product_option_value(id, value, position)").eq("product_id", productId).order("position"),
-    sb.from("variant_dim").select("id, sku, title, retail_price_cents, compare_at_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position").eq("product_id", productId).order("position"),
+  const [
+    { data: options },
+    { data: variants },
+    { data: vov },
+    { data: media },
+    { data: pc },
+  ] = await Promise.all([
+    sb
+      .from("product_option")
+      .select("id, name, position, product_option_value(id, value, position)")
+      .eq("product_id", productId)
+      .order("position"),
+    sb
+      .from("variant_dim")
+      .select(
+        "id, sku, title, retail_price_cents, compare_at_price_cents, unit_cost_cents, inventory_tracked, inventory_on_hand, position",
+      )
+      .eq("product_id", productId)
+      .order("position"),
     sb.from("variant_option_value").select("variant_id, option_value_id"),
     // Bucket-backed media only (see getCatalogProducts): a promoted mirror image
     // has an external_url + no storage_path and is served by the storefront reader.
-    sb.from("product_media").select("id, storage_path, alt, position, is_primary").eq("product_id", productId).not("storage_path", "is", null).order("position"),
-    sb.from("product_collection").select("collection_id").eq("product_id", productId),
+    sb
+      .from("product_media")
+      .select("id, storage_path, alt, position, is_primary")
+      .eq("product_id", productId)
+      .not("storage_path", "is", null)
+      .order("position"),
+    sb
+      .from("product_collection")
+      .select("collection_id")
+      .eq("product_id", productId),
   ]);
 
   // Fetch variant_shipping rows separately (child of variant_dim, not product_dim).
@@ -159,7 +240,9 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
   if (variantIds.length) {
     const { data: shippingRows, error: shErr } = await sb
       .from("variant_shipping")
-      .select("variant_id, weight_grams, length_mm, width_mm, height_mm, requires_shipping, handling_days, signature_required, restricted_countries")
+      .select(
+        "variant_id, weight_grams, length_mm, width_mm, height_mm, requires_shipping, handling_days, signature_required, restricted_countries",
+      )
       .in("variant_id", variantIds);
     if (shErr) throw shErr;
     for (const row of (shippingRows ?? []) as Array<Record<string, unknown>>) {
@@ -168,9 +251,15 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
   }
 
   const valuesByVariant = new Map<string, string[]>();
-  for (const row of (vov ?? []) as Array<{ variant_id: string; option_value_id: string }>) {
+  for (const row of (vov ?? []) as Array<{
+    variant_id: string;
+    option_value_id: string;
+  }>) {
     const k = String(row.variant_id);
-    valuesByVariant.set(k, [...(valuesByVariant.get(k) ?? []), String(row.option_value_id)]);
+    valuesByVariant.set(k, [
+      ...(valuesByVariant.get(k) ?? []),
+      String(row.option_value_id),
+    ]);
   }
 
   // Canonical rank for each option value: option order (outer) then the value's
@@ -181,7 +270,10 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
   // option edit fails to match an existing variant and drops its id.
   const valueRank = new Map<string, number>();
   for (const [oi, o] of (options ?? []).entries()) {
-    const vals = ((o as Record<string, unknown>).product_option_value as Array<{ id: string; position?: number }> | undefined) ?? [];
+    const vals =
+      ((o as Record<string, unknown>).product_option_value as
+        | Array<{ id: string; position?: number }>
+        | undefined) ?? [];
     vals
       .slice()
       .sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0))
@@ -200,7 +292,13 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
     options: (options ?? []).map((o: Record<string, unknown>) => ({
       id: String(o.id),
       name: String(o.name),
-      values: ((o.product_option_value as Array<{ id: string; value: string; position?: number }>) ?? [])
+      values: (
+        (o.product_option_value as Array<{
+          id: string;
+          value: string;
+          position?: number;
+        }>) ?? []
+      )
         .slice()
         .sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0))
         .map((v) => ({ id: String(v.id), value: String(v.value) })),
@@ -212,7 +310,8 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
         sku: (v.sku as string | null) ?? null,
         title: String(v.title),
         retailPriceCents: (v.retail_price_cents as number | null) ?? null,
-        compareAtPriceCents: (v.compare_at_price_cents as number | null) ?? null,
+        compareAtPriceCents:
+          (v.compare_at_price_cents as number | null) ?? null,
         unitCostCents: (v.unit_cost_cents as number | null) ?? null,
         inventoryTracked: (v.inventory_tracked as boolean | null) ?? null,
         inventoryOnHand: Number(v.inventory_on_hand ?? 0),
@@ -230,11 +329,46 @@ export async function getProduct(shopId: string, productId: string): Promise<Pro
       };
     }),
     media: (media ?? []).map((m: Record<string, unknown>) => ({
-      id: String(m.id), storagePath: String(m.storage_path), alt: (m.alt as string | null) ?? null,
-      position: Number(m.position ?? 0), isPrimary: Boolean(m.is_primary),
+      id: String(m.id),
+      storagePath: String(m.storage_path),
+      alt: (m.alt as string | null) ?? null,
+      position: Number(m.position ?? 0),
+      isPrimary: Boolean(m.is_primary),
     })),
-    collectionIds: (pc ?? []).map((r: { collection_id: string }) => String(r.collection_id)),
+    collectionIds: (pc ?? []).map((r: { collection_id: string }) =>
+      String(r.collection_id),
+    ),
     updatedAt: String(p.updated_at),
+  };
+}
+
+/** Resolve either owned bucket media or an imported/rehosted public image. */
+export async function getProductPrimaryMediaSource(
+  shopId: string,
+  productId: string,
+): Promise<{ storagePath: string | null; externalUrl: string | null }> {
+  const sb = getSupabase();
+  const { data: product, error: productError } = await sb
+    .from("product_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("id", productId)
+    .maybeSingle();
+  if (productError) throw productError;
+  if (!product) return { storagePath: null, externalUrl: null };
+
+  const { data, error } = await sb
+    .from("product_media")
+    .select("storage_path, external_url")
+    .eq("product_id", productId)
+    .order("is_primary", { ascending: false })
+    .order("position")
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return {
+    storagePath: data?.storage_path ? String(data.storage_path) : null,
+    externalUrl: data?.external_url ? String(data.external_url) : null,
   };
 }
 
@@ -256,11 +390,19 @@ async function writeOptions(
 ): Promise<Array<Map<string, string>>> {
   const perOption: Array<Map<string, string>> = [];
   for (const [i, opt] of options.entries()) {
-    const { data: o, error: oErr } = await sb.from("product_option").insert({ product_id: productId, name: opt.name, position: i }).select("id").single();
+    const { data: o, error: oErr } = await sb
+      .from("product_option")
+      .insert({ product_id: productId, name: opt.name, position: i })
+      .select("id")
+      .single();
     if (oErr) throw oErr;
     const valueIdByLabel = new Map<string, string>();
     for (const [j, val] of opt.values.entries()) {
-      const { data: ov, error: ovErr } = await sb.from("product_option_value").insert({ option_id: o.id, value: val, position: j }).select("id").single();
+      const { data: ov, error: ovErr } = await sb
+        .from("product_option_value")
+        .insert({ option_id: o.id, value: val, position: j })
+        .select("id")
+        .single();
       if (ovErr) throw ovErr;
       valueIdByLabel.set(val, String(ov.id));
     }
@@ -286,10 +428,18 @@ function variantLinks(
 // Without this a stale id throws an FK 500 (partial write), a duplicate id throws a
 // PK 500, and a foreign id would cross-tenant-attach this shop's product to another
 // shop's collection (and leak its title into sku_dim via the projection).
-async function ownedCollectionIds(sb: Supa, shopId: string, ids: string[] | undefined): Promise<string[]> {
+async function ownedCollectionIds(
+  sb: Supa,
+  shopId: string,
+  ids: string[] | undefined,
+): Promise<string[]> {
   const unique = [...new Set(ids ?? [])];
   if (!unique.length) return [];
-  const { data, error } = await sb.from("collection_dim").select("id").eq("shop_id", shopId).in("id", unique);
+  const { data, error } = await sb
+    .from("collection_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .in("id", unique);
   if (error) throw error;
   return (data ?? []).map((r: { id: string }) => String(r.id));
 }
@@ -309,18 +459,28 @@ function trackedForNewVariant(v: VariantInput): boolean {
 
 // A newly-inserted variant's starting stock, applied to the inventory ledger only
 // AFTER sku_dim is projected (inventory_level_fact.sku_id has an FK to sku_dim.id).
-interface StockSeed { variantId: string; onHand: number }
+interface StockSeed {
+  variantId: string;
+  onHand: number;
+}
 
 // Back each new variant's starting stock with a real ledger balance so the
 // cannot-oversell engine can reserve against it — a "live" product with an
 // unbacked inventory_on_hand can't actually be sold. seedInitialStock no-ops when
 // stock is 0. Must run only after projectProductToSkuDim, or the level-fact write
 // fails the sku_id FK.
-async function applyStockSeeds(shopId: string, seeds: StockSeed[]): Promise<void> {
+async function applyStockSeeds(
+  shopId: string,
+  seeds: StockSeed[],
+): Promise<void> {
   for (const s of seeds) await seedInitialStock(shopId, s.variantId, s.onHand);
 }
 
-async function writeProductChildren(shopId: string, productId: string, input: ProductInput): Promise<StockSeed[]> {
+async function writeProductChildren(
+  shopId: string,
+  productId: string,
+  input: ProductInput,
+): Promise<StockSeed[]> {
   const sb = getSupabase();
   const perOption = await writeOptions(sb, productId, input.options ?? []);
   const seeds: StockSeed[] = [];
@@ -330,31 +490,45 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
     const { data: variant, error: vErr } = await sb
       .from("variant_dim")
       .insert({
-        shop_id: shopId, product_id: productId, sku: v.sku ?? null, title: v.title ?? "Default",
-        retail_price_cents: v.retailPriceCents ?? null, compare_at_price_cents: v.compareAtPriceCents ?? null,
+        shop_id: shopId,
+        product_id: productId,
+        sku: v.sku ?? null,
+        title: v.title ?? "Default",
+        retail_price_cents: v.retailPriceCents ?? null,
+        compare_at_price_cents: v.compareAtPriceCents ?? null,
         unit_cost_cents: v.unitCostCents ?? null,
-        inventory_policy: v.inventoryPolicy ?? null, inventory_tracked: trackedForNewVariant(v),
-        inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
+        inventory_policy: v.inventoryPolicy ?? null,
+        inventory_tracked: trackedForNewVariant(v),
+        inventory_on_hand: v.inventoryOnHand ?? 0,
+        position: i,
       })
       .select("id")
       .single();
     if (vErr) throw vErr;
     const variantId = String(variant.id);
     // Persist shipping dimensions + requirements alongside the variant row.
-    const { error: shErr } = await sb.from("variant_shipping").upsert({
-      variant_id: variantId, shop_id: shopId,
-      weight_grams: v.weightGrams ?? 0,
-      length_mm: v.lengthMm ?? null, width_mm: v.widthMm ?? null, height_mm: v.heightMm ?? null,
-      requires_shipping: v.requiresShipping ?? true,
-      restricted_countries: v.restrictedCountries ?? [],
-      handling_days: v.handlingDays ?? 0,
-      signature_required: v.signatureRequired ?? false,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "variant_id" });
+    const { error: shErr } = await sb.from("variant_shipping").upsert(
+      {
+        variant_id: variantId,
+        shop_id: shopId,
+        weight_grams: v.weightGrams ?? 0,
+        length_mm: v.lengthMm ?? null,
+        width_mm: v.widthMm ?? null,
+        height_mm: v.heightMm ?? null,
+        requires_shipping: v.requiresShipping ?? true,
+        restricted_countries: v.restrictedCountries ?? [],
+        handling_days: v.handlingDays ?? 0,
+        signature_required: v.signatureRequired ?? false,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "variant_id" },
+    );
     if (shErr) throw shErr;
     const links = variantLinks(variantId, v.optionValues, perOption);
     if (links.length) {
-      const { error: lErr } = await sb.from("variant_option_value").insert(links);
+      const { error: lErr } = await sb
+        .from("variant_option_value")
+        .insert(links);
       if (lErr) throw lErr;
     }
     // Defer backing the variant's starting stock with a real ledger balance:
@@ -365,9 +539,18 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
   }
 
   // Collections — only the shop's own (filters out stale/duplicate/foreign ids).
-  const collectionIds = await ownedCollectionIds(sb, shopId, input.collectionIds);
+  const collectionIds = await ownedCollectionIds(
+    sb,
+    shopId,
+    input.collectionIds,
+  );
   if (collectionIds.length) {
-    const { error: cErr } = await sb.from("product_collection").insert(collectionIds.map((collection_id) => ({ product_id: productId, collection_id })));
+    const { error: cErr } = await sb.from("product_collection").insert(
+      collectionIds.map((collection_id) => ({
+        product_id: productId,
+        collection_id,
+      })),
+    );
     if (cErr) throw cErr;
   }
 
@@ -377,7 +560,10 @@ async function writeProductChildren(shopId: string, productId: string, input: Pr
 // Writes the full product graph, then projects sku_dim. Supabase has no client
 // transaction, so writes are ordered parent->child; a failure throws and the
 // route surfaces it (no projection runs on a failed write).
-export async function createProduct(shopId: string, input: ProductInput): Promise<{ id: string }> {
+export async function createProduct(
+  shopId: string,
+  input: ProductInput,
+): Promise<{ id: string }> {
   // NewProductFlow has no SEO fields. Reject a crafted create payload before
   // the first write: applying seo_page after the product graph would create a
   // partial-success 500 on transient SEO failure and invite a duplicate retry.
@@ -399,13 +585,21 @@ export async function createProduct(shopId: string, input: ProductInput): Promis
     const { data: prod, error: pErr } = await sb
       .from("product_dim")
       .insert({
-        shop_id: shopId, handle: input.handle ?? productHandle(input.title), title: input.title, status: input.status,
-        vendor: input.vendor ?? null, category: input.category ?? null, description: input.description ?? null,
+        shop_id: shopId,
+        handle: input.handle ?? productHandle(input.title),
+        title: input.title,
+        status: input.status,
+        vendor: input.vendor ?? null,
+        category: input.category ?? null,
+        description: input.description ?? null,
         tags: input.tags ?? [],
       })
       .select("id")
       .single();
-    if (!pErr) { productId = String(prod.id); break; }
+    if (!pErr) {
+      productId = String(prod.id);
+      break;
+    }
     const duplicate = (pErr as { code?: string }).code === "23505";
     if (duplicate && input.handle) {
       throw new CalderynError({
@@ -430,7 +624,11 @@ export async function createProduct(shopId: string, input: ProductInput): Promis
 // sku_dim via the id==id invariant), so they are RECONCILED BY ID — never wiped
 // and re-inserted (that would mint new ids, orphan past orders, and break the
 // projection). Media is managed separately (Task 5) so it survives an edit.
-export async function updateProduct(shopId: string, productId: string, input: ProductInput): Promise<void> {
+export async function updateProduct(
+  shopId: string,
+  productId: string,
+  input: ProductInput,
+): Promise<void> {
   const sb = getSupabase();
   // Handle edits need the CURRENT handle first: a change must leave a redirect
   // row behind so the old storefront URL keeps working. Read it before the
@@ -456,11 +654,21 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
   // or reserved units would silently wipe live stock and orphan held
   // reservations. Refuse the edit and tell the merchant to clear that stock
   // first (a block leaves the whole product untouched).
-  const keepIds = input.variants.map((v) => v.id).filter((id): id is string => Boolean(id));
-  const removedSel = sb.from("variant_dim").select("id").eq("shop_id", shopId).eq("product_id", productId);
-  const { data: removedRows, error: remErr } = keepIds.length ? await removedSel.notIn("id", keepIds) : await removedSel;
+  const keepIds = input.variants
+    .map((v) => v.id)
+    .filter((id): id is string => Boolean(id));
+  const removedSel = sb
+    .from("variant_dim")
+    .select("id")
+    .eq("shop_id", shopId)
+    .eq("product_id", productId);
+  const { data: removedRows, error: remErr } = keepIds.length
+    ? await removedSel.notIn("id", keepIds)
+    : await removedSel;
   if (remErr) throw remErr;
-  const removedIds = (removedRows ?? []).map((r: Record<string, unknown>) => String(r.id));
+  const removedIds = (removedRows ?? []).map((r: Record<string, unknown>) =>
+    String(r.id),
+  );
   if (removedIds.length) {
     const { data: balances, error: balErr } = await sb
       .from("inventory_balance")
@@ -469,7 +677,8 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       .in("variant_id", removedIds);
     if (balErr) throw balErr;
     const hasLiveStock = (balances ?? []).some(
-      (b: Record<string, unknown>) => Number(b.on_hand ?? 0) > 0 || Number(b.reserved ?? 0) > 0,
+      (b: Record<string, unknown>) =>
+        Number(b.on_hand ?? 0) > 0 || Number(b.reserved ?? 0) > 0,
     );
     if (hasLiveStock) {
       throw new CalderynError({
@@ -506,11 +715,17 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
   const parentUpdate = sb
     .from("product_dim")
     .update({
-      title: input.title, status: input.status, vendor: input.vendor ?? null, category: input.category ?? null,
-      description: input.description ?? null, tags: input.tags ?? [], updated_at: new Date().toISOString(),
+      title: input.title,
+      status: input.status,
+      vendor: input.vendor ?? null,
+      category: input.category ?? null,
+      description: input.description ?? null,
+      tags: input.tags ?? [],
+      updated_at: new Date().toISOString(),
       ...(rename ? { handle: rename.to } : {}),
     })
-    .eq("shop_id", shopId).eq("id", productId);
+    .eq("shop_id", shopId)
+    .eq("id", productId);
   const { data: updated, error } = rename
     ? await parentUpdate.eq("handle", rename.from).select("id")
     : await parentUpdate.select("id");
@@ -532,7 +747,8 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       throw new CalderynError({
         code: "editing_conflict",
         status: 409,
-        message: "This product's address was just changed in another session. Reload and try again.",
+        message:
+          "This product's address was just changed in another session. Reload and try again.",
       });
     }
     notFound();
@@ -558,7 +774,9 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
 
   // Variants: delete only the ones the merchant removed; keep the rest by id.
   const baseDel = sb.from("variant_dim").delete().eq("product_id", productId);
-  const { error: delErr } = keepIds.length ? await baseDel.notIn("id", keepIds) : await baseDel;
+  const { error: delErr } = keepIds.length
+    ? await baseDel.notIn("id", keepIds)
+    : await baseDel;
   if (delErr) throw delErr;
 
   const seeds: StockSeed[] = [];
@@ -569,9 +787,14 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
     // edit and break the stockout-pause autopilot precondition. Omitting it preserves
     // the stored value on update; a brand-new variant defaults to null.
     const fields = {
-      sku: v.sku ?? null, title: v.title ?? "Default", retail_price_cents: v.retailPriceCents ?? null,
-      compare_at_price_cents: v.compareAtPriceCents ?? null, unit_cost_cents: v.unitCostCents ?? null,
-      inventory_tracked: v.inventoryTracked ?? null, inventory_on_hand: v.inventoryOnHand ?? 0, position: i,
+      sku: v.sku ?? null,
+      title: v.title ?? "Default",
+      retail_price_cents: v.retailPriceCents ?? null,
+      compare_at_price_cents: v.compareAtPriceCents ?? null,
+      unit_cost_cents: v.unitCostCents ?? null,
+      inventory_tracked: v.inventoryTracked ?? null,
+      inventory_on_hand: v.inventoryOnHand ?? 0,
+      position: i,
     };
     let variantId = v.id ?? null;
     if (variantId) {
@@ -580,7 +803,13 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       // crafted variants[].id belonging to ANOTHER shop would no-op here and then
       // have its option-value links (variant_option_value has no shop column)
       // deleted + rewritten below — a cross-tenant write. Skip any unmatched id.
-      const { data: upd, error: uErr } = await sb.from("variant_dim").update(fields).eq("shop_id", shopId).eq("product_id", productId).eq("id", variantId).select("id");
+      const { data: upd, error: uErr } = await sb
+        .from("variant_dim")
+        .update(fields)
+        .eq("shop_id", shopId)
+        .eq("product_id", productId)
+        .eq("id", variantId)
+        .select("id");
       if (uErr) throw uErr;
       if (!upd?.length) continue;
     } else {
@@ -589,7 +818,12 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       // flag on the update branch above but would wrongly leave a new one untracked).
       const { data: ins, error: iErr } = await sb
         .from("variant_dim")
-        .insert({ shop_id: shopId, product_id: productId, ...fields, inventory_tracked: trackedForNewVariant(v) })
+        .insert({
+          shop_id: shopId,
+          product_id: productId,
+          ...fields,
+          inventory_tracked: trackedForNewVariant(v),
+        })
         .select("id")
         .single();
       if (iErr) throw iErr;
@@ -602,27 +836,47 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
       seeds.push({ variantId, onHand: v.inventoryOnHand ?? 0 });
     }
     // Persist shipping dimensions + requirements for this variant (update path).
-    const { error: shErr } = await sb.from("variant_shipping").upsert({
-      variant_id: variantId, shop_id: shopId,
-      weight_grams: v.weightGrams ?? 0,
-      length_mm: v.lengthMm ?? null, width_mm: v.widthMm ?? null, height_mm: v.heightMm ?? null,
-      requires_shipping: v.requiresShipping ?? true,
-      restricted_countries: v.restrictedCountries ?? [],
-      handling_days: v.handlingDays ?? 0,
-      signature_required: v.signatureRequired ?? false,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "variant_id" });
+    const { error: shErr } = await sb.from("variant_shipping").upsert(
+      {
+        variant_id: variantId,
+        shop_id: shopId,
+        weight_grams: v.weightGrams ?? 0,
+        length_mm: v.lengthMm ?? null,
+        width_mm: v.widthMm ?? null,
+        height_mm: v.heightMm ?? null,
+        requires_shipping: v.requiresShipping ?? true,
+        restricted_countries: v.restrictedCountries ?? [],
+        handling_days: v.handlingDays ?? 0,
+        signature_required: v.signatureRequired ?? false,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "variant_id" },
+    );
     if (shErr) throw shErr;
     // Rebuild this variant's option-value links (option-value ids changed above).
     await sb.from("variant_option_value").delete().eq("variant_id", variantId);
     const links = variantLinks(variantId, v.optionValues, perOption);
-    if (links.length) { const { error: lErr } = await sb.from("variant_option_value").insert(links); if (lErr) throw lErr; }
+    if (links.length) {
+      const { error: lErr } = await sb
+        .from("variant_option_value")
+        .insert(links);
+      if (lErr) throw lErr;
+    }
   }
 
   // Collections — only the shop's own (filters out stale/duplicate/foreign ids).
-  const collectionIds = await ownedCollectionIds(sb, shopId, input.collectionIds);
+  const collectionIds = await ownedCollectionIds(
+    sb,
+    shopId,
+    input.collectionIds,
+  );
   if (collectionIds.length) {
-    const { error: cErr } = await sb.from("product_collection").insert(collectionIds.map((collection_id) => ({ product_id: productId, collection_id })));
+    const { error: cErr } = await sb.from("product_collection").insert(
+      collectionIds.map((collection_id) => ({
+        product_id: productId,
+        collection_id,
+      })),
+    );
     if (cErr) throw cErr;
   }
 
@@ -633,9 +887,18 @@ export async function updateProduct(shopId: string, productId: string, input: Pr
   if (input.seo) await applySeoOverrideInput(shopId, productId, input.seo);
 }
 
-export async function setProductStatus(shopId: string, productId: string, status: ProductStatus): Promise<void> {
+export async function setProductStatus(
+  shopId: string,
+  productId: string,
+  status: ProductStatus,
+): Promise<void> {
   const sb = getSupabase();
-  const { data: updated, error } = await sb.from("product_dim").update({ status, updated_at: new Date().toISOString() }).eq("shop_id", shopId).eq("id", productId).select("id");
+  const { data: updated, error } = await sb
+    .from("product_dim")
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("shop_id", shopId)
+    .eq("id", productId)
+    .select("id");
   if (error) throw error;
   if (!updated?.length) notFound();
   await projectProductToSkuDim(productId);
@@ -643,11 +906,21 @@ export async function setProductStatus(shopId: string, productId: string, status
 
 export async function listCollections(
   shopId: string,
-): Promise<Array<{ id: string; title: string; handle: string; productCount: number }>> {
+): Promise<
+  Array<{ id: string; title: string; handle: string; productCount: number }>
+> {
   const sb = getSupabase();
-  const { data, error } = await sb.from("collection_dim").select("id, title, handle").eq("shop_id", shopId).order("title");
+  const { data, error } = await sb
+    .from("collection_dim")
+    .select("id, title, handle")
+    .eq("shop_id", shopId)
+    .order("title");
   if (error) throw error;
-  const rows = (data ?? []).map((c: Record<string, unknown>) => ({ id: String(c.id), title: String(c.title), handle: String(c.handle) }));
+  const rows = (data ?? []).map((c: Record<string, unknown>) => ({
+    id: String(c.id),
+    title: String(c.title),
+    handle: String(c.handle),
+  }));
 
   // Membership counts folded from a paged select over this page's collection
   // ids — never a per-collection query (N+1 on every Collections paint).
@@ -660,7 +933,10 @@ export async function listCollections(
       const { data: memberships, error: mErr } = await sb
         .from("product_collection")
         .select("collection_id")
-        .in("collection_id", rows.map((r) => r.id))
+        .in(
+          "collection_id",
+          rows.map((r) => r.id),
+        )
         .order("collection_id")
         .order("product_id")
         .range(from, from + PAGE - 1);
@@ -678,7 +954,11 @@ export async function listCollections(
 
 // Shop-scoped existence check shared by every membership/rename/delete path:
 // a foreign or missing collection id is a clean 404, never a cross-tenant write.
-async function requireOwnedCollection(sb: Supa, shopId: string, collectionId: string): Promise<void> {
+async function requireOwnedCollection(
+  sb: Supa,
+  shopId: string,
+  collectionId: string,
+): Promise<void> {
   const { data, error } = await sb
     .from("collection_dim")
     .select("id")
@@ -686,11 +966,20 @@ async function requireOwnedCollection(sb: Supa, shopId: string, collectionId: st
     .eq("id", collectionId)
     .maybeSingle();
   if (error) throw error;
-  if (!data) throw new CalderynError({ code: "collection_not_found", status: 404, message: "collection not found" });
+  if (!data)
+    throw new CalderynError({
+      code: "collection_not_found",
+      status: 404,
+      message: "collection not found",
+    });
 }
 
 /** Rename only — the handle stays unchanged so storefront links keep working. */
-export async function updateCollection(shopId: string, collectionId: string, title: string): Promise<void> {
+export async function updateCollection(
+  shopId: string,
+  collectionId: string,
+  title: string,
+): Promise<void> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("collection_dim")
@@ -699,17 +988,32 @@ export async function updateCollection(shopId: string, collectionId: string, tit
     .eq("id", collectionId)
     .select("id");
   if (error) throw error;
-  if (!data?.length) throw new CalderynError({ code: "collection_not_found", status: 404, message: "collection not found" });
+  if (!data?.length)
+    throw new CalderynError({
+      code: "collection_not_found",
+      status: 404,
+      message: "collection not found",
+    });
 }
 
 /** Delete a collection: memberships first (no FK orphans), then the row itself.
  *  Products are untouched — they simply leave the collection. */
-export async function deleteCollection(shopId: string, collectionId: string): Promise<void> {
+export async function deleteCollection(
+  shopId: string,
+  collectionId: string,
+): Promise<void> {
   const sb = getSupabase();
   await requireOwnedCollection(sb, shopId, collectionId);
-  const { error: mErr } = await sb.from("product_collection").delete().eq("collection_id", collectionId);
+  const { error: mErr } = await sb
+    .from("product_collection")
+    .delete()
+    .eq("collection_id", collectionId);
   if (mErr) throw mErr;
-  const { error } = await sb.from("collection_dim").delete().eq("shop_id", shopId).eq("id", collectionId);
+  const { error } = await sb
+    .from("collection_dim")
+    .delete()
+    .eq("shop_id", shopId)
+    .eq("id", collectionId);
   if (error) throw error;
 }
 
@@ -718,7 +1022,14 @@ export async function deleteCollection(shopId: string, collectionId: string): Pr
 export async function listCollectionProducts(
   shopId: string,
   collectionId: string,
-): Promise<Array<{ id: string; title: string; status: ProductStatus; primaryImagePath: string | null }>> {
+): Promise<
+  Array<{
+    id: string;
+    title: string;
+    status: ProductStatus;
+    primaryImagePath: string | null;
+  }>
+> {
   const sb = getSupabase();
   await requireOwnedCollection(sb, shopId, collectionId);
   // Paged: PostgREST clamps every response at 1000 rows, so a single select
@@ -759,7 +1070,8 @@ export async function listCollectionProducts(
       .eq("is_primary", true)
       .not("storage_path", "is", null);
     if (medErr) throw medErr;
-    for (const m of media ?? []) mediaByProduct.set(String(m.product_id), String(m.storage_path));
+    for (const m of media ?? [])
+      mediaByProduct.set(String(m.product_id), String(m.storage_path));
   }
 
   return (products ?? []).map((p: Record<string, unknown>) => ({
@@ -773,7 +1085,11 @@ export async function listCollectionProducts(
 // Both membership writes verify ownership on BOTH sides — collection and
 // product — before touching product_collection, so a guessed foreign id can
 // neither attach to nor detach from another shop's data.
-async function requireOwnedProduct(sb: Supa, shopId: string, productId: string): Promise<void> {
+async function requireOwnedProduct(
+  sb: Supa,
+  shopId: string,
+  productId: string,
+): Promise<void> {
   const { data, error } = await sb
     .from("product_dim")
     .select("id")
@@ -781,10 +1097,19 @@ async function requireOwnedProduct(sb: Supa, shopId: string, productId: string):
     .eq("id", productId)
     .maybeSingle();
   if (error) throw error;
-  if (!data) throw new CalderynError({ code: "product_not_found", status: 404, message: "product not found" });
+  if (!data)
+    throw new CalderynError({
+      code: "product_not_found",
+      status: 404,
+      message: "product not found",
+    });
 }
 
-export async function addProductToCollection(shopId: string, collectionId: string, productId: string): Promise<void> {
+export async function addProductToCollection(
+  shopId: string,
+  collectionId: string,
+  productId: string,
+): Promise<void> {
   const sb = getSupabase();
   await requireOwnedCollection(sb, shopId, collectionId);
   await requireOwnedProduct(sb, shopId, productId);
@@ -798,7 +1123,11 @@ export async function addProductToCollection(shopId: string, collectionId: strin
   if (error) throw error;
 }
 
-export async function removeProductFromCollection(shopId: string, collectionId: string, productId: string): Promise<void> {
+export async function removeProductFromCollection(
+  shopId: string,
+  collectionId: string,
+  productId: string,
+): Promise<void> {
   const sb = getSupabase();
   await requireOwnedCollection(sb, shopId, collectionId);
   await requireOwnedProduct(sb, shopId, productId);
@@ -810,19 +1139,32 @@ export async function removeProductFromCollection(shopId: string, collectionId: 
   if (error) throw error;
 }
 
-export async function createCollection(shopId: string, title: string): Promise<{ id: string }> {
+export async function createCollection(
+  shopId: string,
+  title: string,
+): Promise<{ id: string }> {
   const sb = getSupabase();
   const base = collectionHandle(title);
   // Distinct titles can slugify to the same handle (e.g. "Summer Sale" and
   // "summer sale!"), which collides with unique(shop_id, handle). Retry with a
   // random suffix on 23505 (mirroring productHandle) instead of an opaque 500.
   for (let attempt = 0; attempt < 3; attempt++) {
-    const handle = attempt === 0 ? base : `${base}-${randomBytes(3).toString("hex")}`;
-    const { data, error } = await sb.from("collection_dim").insert({ shop_id: shopId, title: title.trim(), handle }).select("id").single();
+    const handle =
+      attempt === 0 ? base : `${base}-${randomBytes(3).toString("hex")}`;
+    const { data, error } = await sb
+      .from("collection_dim")
+      .insert({ shop_id: shopId, title: title.trim(), handle })
+      .select("id")
+      .single();
     if (!error) return { id: String(data.id) };
-    if ((error as { code?: string }).code !== "23505" || attempt === 2) throw error;
+    if ((error as { code?: string }).code !== "23505" || attempt === 2)
+      throw error;
   }
-  throw new CalderynError({ code: "handle_conflict", status: 409, message: "could not allocate a unique collection handle" });
+  throw new CalderynError({
+    code: "handle_conflict",
+    status: 409,
+    message: "could not allocate a unique collection handle",
+  });
 }
 
 export async function setVariantPrice(
@@ -839,11 +1181,15 @@ export async function setVariantPrice(
     .maybeSingle();
   if (error) throw error;
   if (!v) throw new Error(`variant ${variantId} not found for shop`);
-  const priorPriceCents = v.retail_price_cents == null ? null : Number(v.retail_price_cents);
+  const priorPriceCents =
+    v.retail_price_cents == null ? null : Number(v.retail_price_cents);
 
   const { error: upErr } = await sb
     .from("variant_dim")
-    .update({ retail_price_cents: priceCents, updated_at: new Date().toISOString() })
+    .update({
+      retail_price_cents: priceCents,
+      updated_at: new Date().toISOString(),
+    })
     .eq("shop_id", shopId)
     .eq("id", variantId);
   if (upErr) throw upErr;

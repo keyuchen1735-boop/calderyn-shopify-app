@@ -23,6 +23,7 @@ export function PlatformIcon({ platform, size = 16, title }: Props) {
 
   switch (platform) {
     case "Meta":
+    case "Facebook":
       // Facebook "f" mark in Meta blue — Meta Ads ships from Facebook/Instagram
       // surfaces, and the "f" is the most instantly-recognised glyph in the family.
       return (
@@ -32,6 +33,24 @@ export function PlatformIcon({ platform, size = 16, title }: Props) {
             fill="#1877F2"
             d="M24 12c0-6.627-5.373-12-12-12S0 5.373 0 12c0 5.99 4.388 10.954 10.125 11.854V15.469H7.078V12h3.047V9.356c0-3.007 1.792-4.668 4.533-4.668 1.313 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874V12h3.328l-.532 3.469h-2.796v8.385C19.612 22.954 24 17.99 24 12z"
           />
+        </svg>
+      );
+    case "Instagram":
+      return (
+        <svg {...common}>
+          <title>{label}</title>
+          <defs>
+            <radialGradient id="instagram-mark" cx="30%" cy="105%" r="135%">
+              <stop offset="0" stopColor="#FFD600" />
+              <stop offset=".38" stopColor="#FF7A00" />
+              <stop offset=".68" stopColor="#FF0169" />
+              <stop offset="1" stopColor="#D300C5" />
+            </radialGradient>
+          </defs>
+          <rect width="24" height="24" rx="6.5" fill="url(#instagram-mark)" />
+          <rect x="5.1" y="5.1" width="13.8" height="13.8" rx="4.2" fill="none" stroke="white" strokeWidth="1.8" />
+          <circle cx="12" cy="12" r="3.25" fill="none" stroke="white" strokeWidth="1.8" />
+          <circle cx="17.15" cy="6.95" r="1.05" fill="white" />
         </svg>
       );
     case "Google":
@@ -48,10 +67,22 @@ export function PlatformIcon({ platform, size = 16, title }: Props) {
     case "TikTok":
       // TikTok musical note — uses currentColor so it stays legible in both the
       // light and dark dashboard themes (parent sets the resolved text colour).
-      // The cyan/magenta brand-stack version is too noisy at 16px.
+      // Offset brand layers add depth now that the shared mark renders at 18px.
       return (
         <svg {...common}>
           <title>{label}</title>
+          <path
+            fill="#25F4EE"
+            opacity="0.95"
+            transform="translate(-0.7 0.5)"
+            d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5.8 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"
+          />
+          <path
+            fill="#FE2C55"
+            opacity="0.9"
+            transform="translate(0.65 -0.15)"
+            d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5.8 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"
+          />
           <path
             fill="currentColor"
             d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5.8 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z"

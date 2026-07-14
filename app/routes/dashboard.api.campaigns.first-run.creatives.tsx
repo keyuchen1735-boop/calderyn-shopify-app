@@ -1,31 +1,56 @@
 // app/routes/dashboard.api.campaigns.first-run.creatives.tsx
-// First-campaign wizard, step 3: generate up to 3 ad-copy variants from a
-// chosen catalog product. Builds a synthetic "original" CreativeInput from the
-// product (buildProductCreative), scores it, and runs it through the SAME
-// generate -> re-score gate as the per-ad Regenerate action
-// (dashboard.api.campaigns.$id.regenerate.tsx) so results can't drift from it.
-// No API key / quota -> { available: false, variants: [] }, never an error:
-// the wizard falls back to manual copy editing seeded from buildProductCreative.
+// First-campaign wizard, step 3: generate up to three complete ad directions
+// from a catalog product. Copy and visual providers share one scored brief. The
+// product's signed primary image is the visual model's reference, and generated
+// outputs are quota-reserved and persisted before being returned to the browser.
+// Missing image credentials/quota returns an honest unavailable result.
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
+import {
+  dashboardJson,
+  jsonError,
+  requireSameOrigin,
+} from "~/lib/dashboard/http.server";
 import { DEFAULT_SPEND_CENTS } from "~/lib/screener/types";
-import { getProduct } from "~/lib/catalog/catalog.server";
+import {
+  getProduct,
+  getProductPrimaryMediaSource,
+} from "~/lib/catalog/catalog.server";
 import { signMediaPath } from "~/lib/catalog/sign-media.server";
 import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 import { formatMoney } from "~/lib/storefront/money";
 import { buildProductCreative } from "~/lib/screener/product-creative.server";
 import { gateScoreDeps } from "~/lib/screener/score-one.server";
 import { pickGenerator } from "~/lib/screener/pick-generator.server";
-import { generateImprovements } from "~/lib/screener/generate.server";
+import { buildGenerateRequest } from "~/lib/screener/generate.server";
 import { calibrate } from "~/lib/screener/calibrate.server";
+import {
+  combineFirstRunDirections,
+  generateFirstRunImages,
+} from "~/lib/screener/first-run-creatives.server";
 import type { ScoreCard } from "~/lib/screener/types";
+import { isUuid } from "~/lib/ids";
+import {
+  completeFirstRunGeneration,
+  markFirstRunGenerationStarted,
+  releaseFirstRunGeneration,
+  reserveFirstRunGeneration,
+} from "~/lib/screener/first-run-generation.server";
+import { persistExternalImage } from "~/lib/assets/persist.server";
+import { getSupabase } from "~/lib/supabase.server";
+import {
+  geminiImageClient,
+  imageGenerator as createImageGenerator,
+} from "~/lib/screener/image-generator.server";
 
 interface CreativeVariantDTO {
   headline: string;
   primaryText: string;
   cta: string;
   rationale: string;
+  imageUrl: string | null;
+  imageGenerated: boolean;
+  score: number | null;
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -39,87 +64,312 @@ export async function action({ request }: ActionFunctionArgs) {
   } catch {
     return jsonError(422, "invalid_json");
   }
-  const productId = typeof body.productId === "string" ? body.productId.trim() : "";
-  if (!productId) return jsonError(422, "invalid_request", "productId is required");
+  const productId =
+    typeof body.productId === "string" ? body.productId.trim() : "";
+  const runId = typeof body.runId === "string" ? body.runId.trim() : "";
+  const attempt = Number(body.attempt);
+  if (!isUuid(productId))
+    return jsonError(422, "invalid_product_id", "productId must be a uuid");
+  if (!isUuid(runId))
+    return jsonError(422, "invalid_run_id", "runId must be a uuid");
+  if (!Number.isInteger(attempt) || attempt < 1 || attempt > 3) {
+    return jsonError(422, "invalid_attempt", "attempt must be 1, 2, or 3");
+  }
 
   return dashboardJson(async () => {
     // getShopStorefrontOrigin only needs shopId — no reason to wait on
     // getProduct before starting it.
-    const [product, origin] = await Promise.all([
+    const [product, origin, primaryMediaSource] = await Promise.all([
       getProduct(session.shopId, productId),
       getShopStorefrontOrigin(session.shopId),
+      getProductPrimaryMediaSource(session.shopId, productId),
     ]);
     if (!product) throw jsonError(404, "not_found");
 
-    const primaryMedia =
-      product.media.find((m) => m.isPrimary) ?? product.media[0] ?? null;
-    const imageUrl = primaryMedia ? await signMediaPath(primaryMedia.storagePath) : null;
-
-    const productUrl = origin
-      ? `${origin}/storefront/products/${product.handle}`
-      : `/storefront/products/${product.handle}`;
-
-    const priceCents = product.variants[0]?.retailPriceCents ?? null;
-    const price = typeof priceCents === "number" ? formatMoney(priceCents, "usd") : null;
-
-    const original = buildProductCreative({
-      title: product.title,
-      description: product.description,
-      imageUrl,
-      productUrl,
-      price,
-    });
-
-    // The copy generator itself is always-on (no key check in its available()),
-    // unlike the image generator, so the "no key / not configured" gate for this
-    // wizard step has to happen here rather than via generator.available().
-    // destinationUrl/imageUrl are returned alongside the copy either way — the
-    // wizard's Meta-create step (Task 13) needs the SAME product page link and
-    // signed image the creative was scored against, and re-deriving them
-    // client-side is impossible (storefront origin resolution is server-only).
-    if (!process.env.ANTHROPIC_API_KEY) {
-      return { available: false, variants: [] as CreativeVariantDTO[], destinationUrl: productUrl, imageUrl };
+    const reservation = await reserveFirstRunGeneration(
+      session.shopId,
+      runId,
+      productId,
+      attempt,
+    );
+    if (!reservation.ok) {
+      if (reservation.reason === "daily_limit") {
+        throw jsonError(
+          429,
+          "creative_generation_daily_limit",
+          "Creative generation is at its daily limit for this store. Try again tomorrow.",
+        );
+      }
+      throw jsonError(
+        409,
+        "creative_generation_in_progress",
+        "That creative set is still being generated. Try again in a moment.",
+      );
     }
-
-    // Same dep wiring as dashboard.api.campaigns.$id.regenerate.tsx: one
-    // gateScoreDeps call seeds calibration + the scorer, pickGenerator("copy")
-    // selects the always-on copy generator, generateImprovements runs the
-    // generate -> re-score gate.
-    const { calib, scoreOne, claudeDeps } = await gateScoreDeps(session.shopId, DEFAULT_SPEND_CENTS);
-    const generator = pickGenerator("copy", claudeDeps);
-
-    const scored = await scoreOne(original);
-    const { outcomes, grade, confidence } = calibrate(scored.metrics, calib, DEFAULT_SPEND_CENTS);
-    const originalScorecard: ScoreCard = {
-      composite: scored.composite,
-      grade,
-      confidence,
-      summary: scored.summary,
-      metrics: scored.metrics,
-      outcomes,
-      tips: [],
+    if (reservation.kind === "replay") return reservation.result;
+    let keepReservation = false;
+    let terminalFallback: Record<string, unknown> | null = null;
+    const finish = async <T extends Record<string, unknown>>(response: T) => {
+      if (keepReservation) {
+        await completeFirstRunGeneration(
+          session.shopId,
+          reservation.id,
+          response,
+        );
+      }
+      return response;
     };
 
-    const result = await generateImprovements(
-      {
+    try {
+      const sourceImageUrl = primaryMediaSource.storagePath
+        ? await signMediaPath(primaryMediaSource.storagePath)
+        : primaryMediaSource.externalUrl;
+      let imageUrl: string | null = null;
+      if (sourceImageUrl) {
+        // Drafts can be resumed long after a private product-media signature
+        // expires. Mirror the chosen product reference once per wizard run so
+        // every fallback creative, saved draft, and Meta launch keeps a stable
+        // owned URL. Regenerations reuse the existing mirror.
+        const referenceKind = `campaign-reference:${runId}:${productId}`;
+        const { data: existingReference, error: referenceError } =
+          await getSupabase()
+            .from("asset_dim")
+            .select("public_url")
+            .eq("shop_id", session.shopId)
+            .eq("kind", referenceKind)
+            .eq("source", "mirrored")
+            .limit(1)
+            .maybeSingle();
+        if (referenceError) throw referenceError;
+        if (existingReference?.public_url) {
+          imageUrl = String(existingReference.public_url);
+        } else {
+          const mirrored = await persistExternalImage(
+            session.shopId,
+            sourceImageUrl,
+            referenceKind,
+            "mirrored",
+          );
+          imageUrl = mirrored.persisted ? mirrored.url : null;
+        }
+      }
+
+      const productUrl = origin
+        ? `${origin}/storefront/products/${product.handle}`
+        : new URL(
+            `/storefront/products/${product.handle}`,
+            request.url,
+          ).toString();
+
+      const priceCents = product.variants[0]?.retailPriceCents ?? null;
+      const price =
+        typeof priceCents === "number" ? formatMoney(priceCents, "usd") : null;
+
+      const original = buildProductCreative({
+        title: product.title,
+        description: product.description,
+        imageUrl: sourceImageUrl,
+        productUrl,
+        price,
+      });
+      const fallback = {
+        headline: original.headline,
+        primaryText: original.primaryText,
+        cta: original.cta,
+      };
+      terminalFallback = {
+        available: false,
+        variants: [] as CreativeVariantDTO[],
+        destinationUrl: productUrl,
+        imageUrl,
+        fallback,
+        regenerationsLeft: reservation.regenerationsLeft,
+      };
+
+      // Image generation is independent from Anthropic. If scoring/copy is not
+      // configured, still produce the three product-grounded visual directions
+      // and label their scores honestly as unavailable.
+      if (!process.env.ANTHROPIC_API_KEY) {
+        const imageOnlyRequest = {
+          input: original,
+          weakMetrics: [],
+          tips: [],
+          styleRefs: [],
+          count: 3,
+        };
+        const generator = createImageGenerator({
+          generateImage: geminiImageClient(),
+        });
+        if (generator.available()) {
+          await markFirstRunGenerationStarted(
+            session.shopId,
+            reservation.id,
+            terminalFallback,
+          );
+          keepReservation = true;
+        }
+        const imageResult = await generateFirstRunImages({
+          shop: session.shopId,
+          count: 3,
+          generator,
+          request: imageOnlyRequest,
+        });
+        keepReservation ||= imageResult.providerAttempted;
+        if (imageResult.candidates.length === 3) {
+          return finish({
+            available: true,
+            variants: imageResult.candidates.map((candidate, index) => ({
+              headline: original.headline,
+              primaryText: original.primaryText,
+              cta: original.cta,
+              rationale: `Product-grounded visual direction ${index + 1}`,
+              imageUrl: candidate.input.imageUrl,
+              imageGenerated: true,
+              score: null,
+            })),
+            destinationUrl: productUrl,
+            imageUrl,
+            fallback,
+            regenerationsLeft: reservation.regenerationsLeft,
+          });
+        }
+        return finish({
+          available: false,
+          variants: [] as CreativeVariantDTO[],
+          destinationUrl: productUrl,
+          imageUrl,
+          fallback,
+          regenerationsLeft: keepReservation
+            ? reservation.regenerationsLeft
+            : Math.min(2, reservation.regenerationsLeft + 1),
+        });
+      }
+
+      const { calib, scoreOne, claudeDeps } = await gateScoreDeps(
+        session.shopId,
+        DEFAULT_SPEND_CENTS,
+      );
+      const copyGenerator = pickGenerator("copy", claudeDeps);
+      const imageGenerator = pickGenerator("image", claudeDeps);
+
+      await markFirstRunGenerationStarted(
+        session.shopId,
+        reservation.id,
+        terminalFallback,
+      );
+      keepReservation = true;
+      const scored = await scoreOne(original);
+      const { outcomes, grade, confidence } = calibrate(
+        scored.metrics,
+        calib,
+        DEFAULT_SPEND_CENTS,
+      );
+      const originalScorecard: ScoreCard = {
+        composite: scored.composite,
+        grade,
+        confidence,
+        summary: scored.summary,
+        metrics: scored.metrics,
+        outcomes,
+        tips: [],
+      };
+
+      const generationRequest = buildGenerateRequest({
         original,
         originalScorecard,
         styleRefs: calib.topAdNames,
         count: 3,
-      },
-      { generator, scoreOne },
-    );
+      });
+      const [copyCandidates, imageResult] = await Promise.all([
+        copyGenerator.generate(generationRequest),
+        generateFirstRunImages({
+          shop: session.shopId,
+          count: 3,
+          generator: imageGenerator,
+          request: generationRequest,
+        }),
+      ]);
+      keepReservation ||=
+        imageResult.providerAttempted || copyCandidates.length > 0;
+      if (imageResult.candidates.length !== 3) {
+        return finish({
+          available: false,
+          variants: [] as CreativeVariantDTO[],
+          destinationUrl: productUrl,
+          imageUrl,
+          fallback,
+          regenerationsLeft: keepReservation
+            ? reservation.regenerationsLeft
+            : Math.min(2, reservation.regenerationsLeft + 1),
+        });
+      }
+      const candidates = combineFirstRunDirections(
+        original,
+        copyCandidates,
+        imageResult.candidates,
+        3,
+      );
+      if (candidates.length === 0) {
+        return finish({
+          available: false,
+          variants: [] as CreativeVariantDTO[],
+          destinationUrl: productUrl,
+          imageUrl,
+          fallback,
+          regenerationsLeft: Math.min(2, reservation.regenerationsLeft + 1),
+        });
+      }
 
-    if (!result.available) {
-      return { available: false, variants: [] as CreativeVariantDTO[], destinationUrl: productUrl, imageUrl };
+      const variants: CreativeVariantDTO[] = await Promise.all(
+        candidates.map(async (candidate) => {
+          let score: number | null = null;
+          try {
+            score = (await scoreOne(candidate.input)).composite;
+          } catch {
+            // The visual is already generated and durably stored. A transient
+            // scoring failure must not collapse the required three choices.
+          }
+          return {
+            headline: candidate.input.headline,
+            primaryText: candidate.input.primaryText,
+            cta: candidate.input.cta,
+            rationale: candidate.rationale,
+            imageUrl: candidate.input.imageUrl,
+            imageGenerated: candidate.imageGenerated,
+            score,
+          };
+        }),
+      );
+      variants.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+
+      if (variants.length === 0) {
+        return finish({
+          available: false,
+          variants: [] as CreativeVariantDTO[],
+          destinationUrl: productUrl,
+          imageUrl,
+          fallback,
+          regenerationsLeft: Math.min(2, reservation.regenerationsLeft + 1),
+        });
+      }
+      keepReservation = true;
+      return finish({
+        available: true,
+        variants,
+        destinationUrl: productUrl,
+        imageUrl,
+        fallback,
+        regenerationsLeft: reservation.regenerationsLeft,
+      });
+    } catch (error) {
+      if (keepReservation && terminalFallback) {
+        return finish(terminalFallback);
+      }
+      throw error;
+    } finally {
+      if (!keepReservation) {
+        await releaseFirstRunGeneration(session.shopId, reservation.id);
+      }
     }
-
-    const variants: CreativeVariantDTO[] = result.variants.slice(0, 3).map((v) => ({
-      headline: v.input.headline,
-      primaryText: v.input.primaryText,
-      cta: v.input.cta,
-      rationale: v.rationale,
-    }));
-    return { available: true, variants, destinationUrl: productUrl, imageUrl };
   });
 }

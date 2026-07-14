@@ -34,6 +34,38 @@ export interface GateDeps {
   scoreOne: (input: CreativeInput) => Promise<{ composite: number; summary: string; metrics: MetricScore[] }>;
 }
 
+export interface BuildGenerateRequestArgs {
+  original: CreativeInput;
+  originalScorecard: ScoreCard;
+  count?: number;
+  styleRefs?: string[];
+  extraDirection?: string;
+}
+
+/**
+ * Build the shared provider request once so multi-part flows (copy + image)
+ * target the exact same weak dimensions, tips, references, and product input as
+ * the standard re-score gate.
+ */
+export function buildGenerateRequest(args: BuildGenerateRequestArgs): GenerateRequest {
+  const weakMetrics = args.originalScorecard.metrics
+    .filter((m) => m.score < 65)
+    .sort((a, b) => a.score - b.score)
+    .map((m) => ({ label: m.label, score: m.score, reasoning: m.reasoning }));
+
+  return {
+    input: args.original,
+    weakMetrics,
+    tips: args.originalScorecard.tips.map((t) => {
+      const detail = normalizeTip(t);
+      return detail.detail ? `${detail.title} — ${detail.detail}` : detail.title;
+    }),
+    styleRefs: args.styleRefs ?? [],
+    count: args.count ?? 3,
+    extraDirection: args.extraDirection,
+  };
+}
+
 export async function generateImprovements(
   args: {
     original: CreativeInput;
@@ -55,25 +87,7 @@ export async function generateImprovements(
   if (!deps.generator.available()) {
     return { variants: [], allScored: [], generated: 0, discarded: 0, available: false };
   }
-  const weakMetrics = args.originalScorecard.metrics
-    .filter((m) => m.score < 65)
-    .sort((a, b) => a.score - b.score)
-    .map((m) => ({ label: m.label, score: m.score, reasoning: m.reasoning }));
-
-  const candidates = await deps.generator.generate({
-    input: args.original,
-    weakMetrics,
-    tips: args.originalScorecard.tips.map((t) => {
-      // Feed the generator the full fix (title + detail), not just the scannable
-      // title — normalizeTip now splits the action line off, so the title alone
-      // would drop the product-specific specifics the generator needs.
-      const d = normalizeTip(t);
-      return d.detail ? `${d.title} — ${d.detail}` : d.title;
-    }),
-    styleRefs: args.styleRefs ?? [],
-    count: args.count ?? 3,
-    extraDirection: args.extraDirection,
-  });
+  const candidates = await deps.generator.generate(buildGenerateRequest(args));
 
   const baseline = args.originalScorecard.composite;
   // allSettled, not all: one flaky re-score must not discard every other variant.

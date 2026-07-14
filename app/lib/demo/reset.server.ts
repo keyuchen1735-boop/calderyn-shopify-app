@@ -62,6 +62,8 @@ export const SHOWCASE_WIPE_ORDER = [
   "campaign_direction_reason",
   "purchase_order_draft",
   "creative_screen_run",
+  "campaign_wizard_generation_attempt",
+  "campaign_wizard_runs",
   "campaign_draft",
   // real purchase orders (demo shops execute PO actions for real) — FK-safe
   // order: lines → headers → suppliers, and all three BEFORE the catalog

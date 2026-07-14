@@ -86,6 +86,21 @@ describe("createFirstCampaign", () => {
     expect(pausedWrites.map((c) => c.path)).toEqual(["/act_1/campaigns"]);
   });
 
+  it.each(["facebook", "instagram"] as const)(
+    "restricts delivery to the selected %s publisher platform",
+    async (publisherPlatform) => {
+      const { conn, calls } = wiredClient();
+
+      await createFirstCampaign(conn, { ...BASE_INPUT, publisherPlatform }, NO_RETRY);
+
+      const adSetCall = calls.find((c) => c.path === "/act_1/adsets");
+      expect(JSON.parse(adSetCall?.body.targeting ?? "{}")).toEqual({
+        geo_locations: { countries: ["US"] },
+        publisher_platforms: [publisherPlatform],
+      });
+    },
+  );
+
   it("(b) ad-set failure deletes the campaign and rethrows the original error", async () => {
     const { conn, calls } = wiredClient((path) => {
       if (path === "/act_1/adsets") return { error: { message: "invalid targeting", code: 100 } };
