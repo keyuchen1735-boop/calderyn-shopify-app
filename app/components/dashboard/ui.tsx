@@ -526,6 +526,14 @@ export function Sparkline({
   stroke?: string;
   refLine?: number | null;
 }) {
+  // Needs at least two points to draw a line: a single point divides by
+  // (length - 1) === 0 (NaN coordinates), and an empty series makes the
+  // end-dot read pts[-1] and throw. Callers gate on the raw series length,
+  // but a derived series (e.g. ROAS filtered to spend-bearing days) can be
+  // shorter, so guard here in the primitive.
+  if (data.length < 2) {
+    return <svg width={width} height={height} className="overflow-visible" />;
+  }
   const min = Math.min(...data),
     max = Math.max(...data);
   const range = max - min || 1;
