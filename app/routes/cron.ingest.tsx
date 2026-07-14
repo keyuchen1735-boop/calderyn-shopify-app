@@ -62,6 +62,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     ownedTransformError: null as string | null,
     attributionErrors: [] as string[],
     shipCostErrors: [] as string[],
+    // A failed driver query (the shop lists Phases 1-4 iterate) yields null and
+    // would otherwise silently skip whole phases for every shop with no trace.
+    driverErrors: [] as string[],
     phaseMs: {} as Record<string, number>,
   };
 
@@ -78,12 +81,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 
   // Phase 1: backfill pending shops (bounded)
-  const { data: pending } = await sb
+  const { data: pending, error: pendingErr } = await sb
     .from("shop_integrations")
     .select("shop_id, shops!inner(shop_domain)")
     .eq("kind", "shopify")
     .eq("sync_status", "pending")
     .limit(MAX_BACKFILL_SHOPS);
+  if (pendingErr) {
+    summary.driverErrors.push(`pending: ${stringifyError(pendingErr)}`);
+    console.error("[cron.ingest] pending-shops query failed", pendingErr);
+  }
   for (const row of pending ?? []) {
     const domain = (row as unknown as { shops: { shop_domain: string } }).shops
       .shop_domain;
@@ -98,11 +105,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Existing shops predate the inventory-policy columns. Incrementally refresh
   // up to five catalogs per tick until every SKU has Shopify's safety settings.
-  const { data: activeIntegrations } = await sb
+  const { data: activeIntegrations, error: activeErr } = await sb
     .from("shop_integrations")
     .select("shop_id, shops!inner(shop_domain)")
     .eq("kind", "shopify")
     .in("sync_status", ["ready", "live"]);
+  if (activeErr) {
+    // This list drives inventory-settings sync AND attribution reconcile AND
+    // ship-cost resolution below — a swallowed failure starves all three.
+    summary.driverErrors.push(`active_integrations: ${stringifyError(activeErr)}`);
+    console.error("[cron.ingest] active-integrations query failed", activeErr);
+  }
   for (const row of (activeIntegrations ?? []).slice(0, MAX_BACKFILL_SHOPS)) {
     const shopId = String(row.shop_id);
     const domain = (row as unknown as { shops?: { shop_domain?: string } })
