@@ -21,8 +21,6 @@ import {
   type StudioExperimentState,
   type StudioExperimentKind,
   type StudioSection,
-  type StudioPolicy,
-  type StudioPolicyId,
 } from "~/lib/storebuilder/studio-types";
 import type { StoreDesignRequest, StoreDesignResolution } from "~/lib/storefront-bundle/types";
 import type { PreviewEditContext, StorefrontEditReceipt, StorefrontEditStage } from "~/lib/storefront-edit/types";
@@ -42,8 +40,6 @@ export type {
   StudioExperimentReport,
   StudioExperimentState,
   StudioSection,
-  StudioPolicy,
-  StudioPolicyId,
 };
 
 export async function fetchStudio(): Promise<StudioState> {
@@ -150,22 +146,6 @@ export async function saveStudioHero(hero: StudioHero): Promise<StudioHero> {
     subhead: hero.subhead,
   });
   return data.hero;
-}
-
-export async function saveStudioPolicy(
-  policy: Pick<StudioPolicy, "id" | "title" | "body">,
-): Promise<StudioPolicy> {
-  const data = await apiSend<{ policy: StudioPolicy }>("POST", "/dashboard/api/store", {
-    action: "policy-save",
-    policyId: policy.id,
-    title: policy.title,
-    body: policy.body,
-  });
-  return data.policy;
-}
-
-export async function deleteStudioPolicy(policyId: StudioPolicyId): Promise<void> {
-  await apiSend("POST", "/dashboard/api/store", { action: "policy-delete", policyId });
 }
 
 /** Set the brand palette's primary/accent color (#rrggbb). */

@@ -66,7 +66,11 @@ describe("dashboard store design resolver endpoint", () => {
       },
     });
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ kind: "custom", catalogFingerprint: "sha256:server" });
+    expect(await response.json()).toMatchObject({
+      kind: "recipe",
+      templateId: "custom-bench",
+      catalogFingerprint: "sha256:server",
+    });
     expect(evidenceMock).toHaveBeenCalledWith("shop-1");
   });
 

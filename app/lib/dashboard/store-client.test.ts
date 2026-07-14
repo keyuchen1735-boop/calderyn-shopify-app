@@ -12,8 +12,6 @@ import {
   resolveStudioDesign,
   editStudioStorefront,
   undoStudioStorefrontEdit,
-  deleteStudioPolicy,
-  saveStudioPolicy,
   StudioStreamError,
 } from "./store-client";
 import { DashboardApiError } from "./client";
@@ -90,22 +88,6 @@ describe("runtime-1 prompt editing client", () => {
     await undoStudioStorefrontEdit({ targetVersionId: "v1", expectedDraftVersionId: "v2" });
     expect(apiSend).toHaveBeenCalledWith("POST", "/dashboard/api/store", {
       action: "undo-edit", targetVersionId: "v1", expectedDraftVersionId: "v2",
-    });
-  });
-});
-
-describe("store policy client", () => {
-  it("sends policy saves and deletes through the authenticated Store API", async () => {
-    apiSend.mockResolvedValueOnce({ policy: { id: "privacy" } });
-    await saveStudioPolicy({ id: "privacy", title: "Privacy", body: "How we use order data." });
-    expect(apiSend).toHaveBeenLastCalledWith("POST", "/dashboard/api/store", {
-      action: "policy-save", policyId: "privacy", title: "Privacy", body: "How we use order data.",
-    });
-
-    apiSend.mockResolvedValueOnce({ deletedPolicyId: "privacy" });
-    await deleteStudioPolicy("privacy");
-    expect(apiSend).toHaveBeenLastCalledWith("POST", "/dashboard/api/store", {
-      action: "policy-delete", policyId: "privacy",
     });
   });
 });

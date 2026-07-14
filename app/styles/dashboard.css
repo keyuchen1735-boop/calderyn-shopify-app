@@ -1947,12 +1947,11 @@
 }
 .cd-screen-storefront { padding: 0 !important; max-width: none !important; height: 100%; }
 /* Layout: a 340px chat rail beside a chromeless stage (top bar + canvas) that
-   sits directly on the app background; the preview sheet and the composer are
-   the only cards. */
+   sits directly on the app background; the composer is the only card. */
 .cd-studio { display: flex; flex: 1; min-height: 540px; position: relative; }
 
 /* ---- chat rail ---- */
-.cd-rail { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-right: 0.5px solid var(--hairline-strong); }
+.cd-rail { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-left: 0.5px solid var(--hairline-strong); }
 .cd-rail-head { display: flex; align-items: center; gap: 9px; padding: 20px 20px 14px; flex: 0 0 auto; }
 .cd-rail-mark { width: 18px; height: 18px; flex-shrink: 0; display: block; }
 .cd-rail-head b { font-size: calc(14px * var(--type-scale)); font-weight: 650; letter-spacing: -0.012em; color: var(--text-1); }
@@ -2017,7 +2016,7 @@
    pill row; buttons inside bar popovers (experiment Ship/Stop) stay compact. */
 .cd-studio-bar > .cd-btn,
 .cd-studio-bar .cd-page-pick > .cd-btn { height: 32px; padding: 0 16px; font-size: calc(12.5px * var(--type-scale)); white-space: nowrap; }
-.cd-stage-page { flex: 1; min-height: 0; padding: 4px 28px 24px; display: flex; position: relative; }
+.cd-stage-page { flex: 1; min-height: 0; display: flex; position: relative; }
 
 .cd-pill-url { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 14px; border-radius: 999px; background: var(--card-solid); box-shadow: var(--shadow-card); color: var(--text-2); font-size: calc(12.5px * var(--type-scale)); font-weight: 600; min-width: 0; border: 0; cursor: pointer; font-family: inherit; }
 .cd-pill-url:hover { color: var(--text-1); }
@@ -2059,8 +2058,8 @@
 .cd-dev-seg button[data-active="1"] { background: var(--accent); color: var(--on-accent); }
 
 /* ---- canvas: sandboxed storefront preview + markup + publish warning ---- */
-.cd-canvas-frame-wrap { background: var(--card-solid); border-radius: 14px; box-shadow: var(--shadow-pop); overflow: hidden; display: flex; flex-direction: column; width: 100%; max-width: 920px; margin: 0 auto; position: relative; transition: max-width 0.35s cubic-bezier(0.32, 0.72, 0, 1); }
-.cd-canvas-frame-wrap[data-device="mobile"] { max-width: 396px; }
+.cd-canvas-frame-wrap { background: var(--card-solid); overflow: hidden; display: flex; flex-direction: column; width: 100%; max-width: none; position: relative; transition: max-width 0.35s cubic-bezier(0.32, 0.72, 0, 1); }
+.cd-canvas-frame-wrap[data-device="mobile"] { max-width: 396px; margin: 0 auto; border-radius: 14px; box-shadow: var(--shadow-pop); }
 /* Live storefront preview: a server-rendered iframe of the draft doc. Fills
    the stage so it reads like a browser preview and scrolls internally. */
 .cd-canvas-frame { display: block; width: 100%; flex: 1; min-height: 320px; border: 0; background: #fff; }
@@ -2740,60 +2739,6 @@
 }
 .cd-modal-dialog { width: 100%; }
 
-/* Store Studio policy editor: one compact merchant-authored surface. Policies
-   stay visibly sparse until the merchant adds copy; no generic legal text is
-   implied by the UI. */
-.cd-policy-editor-overlay { z-index: 90; }
-.cd-policy-editor {
-  width: min(820px, 100%); max-height: min(680px, calc(100vh - 32px));
-  overflow: hidden; display: flex; flex-direction: column;
-  background: var(--card-solid); border: 0.5px solid var(--hairline-strong);
-  border-radius: 16px; box-shadow: var(--shadow-pop);
-}
-.cd-policy-editor-head {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
-  padding: 18px 20px; border-bottom: 0.5px solid var(--hairline-strong);
-}
-.cd-policy-editor-head h2 { margin: 0; color: var(--text-1); font-size: calc(18px * var(--type-scale)); letter-spacing: -0.02em; }
-.cd-policy-editor-head p { margin: 4px 0 0; color: var(--text-3); font-size: calc(12.5px * var(--type-scale)); }
-.cd-policy-close {
-  width: 30px; height: 30px; border: 0; border-radius: 8px; cursor: pointer;
-  background: transparent; color: var(--text-2); font: 22px/1 inherit;
-}
-.cd-policy-close:hover:not(:disabled) { background: var(--gray-bg); color: var(--text-1); }
-.cd-policy-editor-body { min-height: 0; display: grid; grid-template-columns: 180px minmax(0, 1fr); }
-.cd-policy-tabs {
-  display: flex; flex-direction: column; gap: 4px; padding: 14px;
-  border-right: 0.5px solid var(--hairline-strong); background: var(--gray-bg);
-}
-.cd-policy-tabs button {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  padding: 9px 10px; border: 0; border-radius: 9px; cursor: pointer;
-  background: transparent; color: var(--text-2); font: inherit; text-align: left;
-}
-.cd-policy-tabs button:hover, .cd-policy-tabs button[data-active="1"] { background: var(--card-solid); color: var(--text-1); }
-.cd-policy-tabs button[data-active="1"] { box-shadow: 0 0 0 0.5px var(--hairline-strong); }
-.cd-policy-tabs button span { font-size: calc(13px * var(--type-scale)); font-weight: 600; }
-.cd-policy-tabs button small { color: var(--text-3); font-size: calc(11px * var(--type-scale)); }
-.cd-policy-form { min-width: 0; min-height: 470px; display: flex; flex-direction: column; gap: 14px; padding: 18px 20px; }
-.cd-policy-text-field { min-height: 0; flex: 1; }
-.cd-policy-textarea { min-height: 290px; height: 100%; line-height: 1.55; }
-.cd-policy-form-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.cd-policy-feedback { min-height: 18px; color: var(--green); font-size: calc(12px * var(--type-scale)); }
-.cd-policy-feedback [data-error="1"] { color: var(--red); }
-.cd-policy-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-.cd-policy-confirm { color: var(--text-2); font-size: calc(12px * var(--type-scale)); }
-
-@media (max-width: 620px) {
-  .cd-policy-editor-body { grid-template-columns: 1fr; }
-  .cd-policy-tabs { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 0.5px solid var(--hairline-strong); }
-  .cd-policy-tabs button { min-width: 105px; }
-  .cd-policy-form { min-height: 430px; padding: 16px; }
-  .cd-policy-textarea { min-height: 230px; }
-  .cd-policy-form-foot { align-items: flex-start; flex-direction: column; }
-  .cd-policy-actions { width: 100%; flex-wrap: wrap; justify-content: flex-end; }
-}
-
 /* ============ phone-width layout (≤767px) ============ */
 /* Customer detail: content column beside a 300px meta rail on wide screens,
    one stacked column once the rail can no longer fit beside real content
@@ -2831,7 +2776,7 @@
   .cd-stage-page { padding: 4px 14px 18px; }
   .cd-rail {
     order: 2; width: 100%; flex: 0 0 44vh;
-    border-right: 0; border-top: 0.5px solid var(--hairline-strong);
+    border-left: 0; border-top: 0.5px solid var(--hairline-strong);
     padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
   }
   .cd-build-float { width: auto; left: 14px; right: 14px; }
