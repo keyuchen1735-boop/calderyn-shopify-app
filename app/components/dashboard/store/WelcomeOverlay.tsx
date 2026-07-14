@@ -10,8 +10,14 @@ import { reduced } from "../hero/hero-motion";
 import { Btn } from "../ui";
 import { CDIcon } from "../icons";
 import type { ImportRunVM } from "~/lib/dashboard/client";
-import type { StudioVibe } from "~/lib/dashboard/store-client";
-import { recommendStoreTemplates, templateGenerationBrief } from "~/lib/storebuilder/templates";
+import { resolveStudioDesign } from "~/lib/dashboard/store-client";
+import { STORE_TEMPLATE_REGISTRY } from "~/lib/storefront-bundle/registry";
+import type {
+  StoreDesignMode,
+  StoreDesignRequest,
+  StoreDesignResolution,
+  StoreTemplateId,
+} from "~/lib/storefront-bundle/types";
 import { buildStep, importStepRows, welcomeSubline, type BuildPhase, type WelcomeBranch } from "../screens/store-logic";
 import BuildStepsCard from "./BuildStepsCard";
 
@@ -24,7 +30,7 @@ export default function WelcomeOverlay({
   buildPhase,
   productCount,
   onBuildPlain,
-  onBuildWithVibe,
+  onBuildDesign,
   onAddProduct,
 }: {
   authBase?: string;
@@ -33,12 +39,15 @@ export default function WelcomeOverlay({
   buildPhase: BuildPhase | null;
   productCount: number;
   onBuildPlain: () => void;
-  onBuildWithVibe: (vibe: StudioVibe, brief?: string) => void;
+  onBuildDesign: (request: StoreDesignRequest, recommendation?: StoreDesignResolution) => void;
   onAddProduct: (line: string) => void;
 }) {
   const [stage, setStage] = useState<Stage>("choice");
   const [productLine, setProductLine] = useState("");
   const [templatePrompt, setTemplatePrompt] = useState("");
+  const [designMode, setDesignMode] = useState<StoreDesignMode>("auto");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<StoreTemplateId | null>(null);
+  const [recommendation, setRecommendation] = useState<StoreDesignResolution | undefined>();
   const rootRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const textRef = useRef<SVGTextElement>(null);
@@ -143,7 +152,43 @@ export default function WelcomeOverlay({
   const dashboardLoginHref = authBase ? `${authBase.replace(/\/+$/, "")}/dashboard/login` : "/dashboard/login";
 
   const subline = welcomeSubline({ branch, buildPhase, productCount });
-  const recommendedTemplates = recommendStoreTemplates(templatePrompt);
+  useEffect(() => {
+    if (stage !== "styles" || designMode !== "auto") return;
+    let active = true;
+    const timer = setTimeout(() => {
+      void resolveStudioDesign({ prompt: templatePrompt, mode: "auto" })
+        .then((result) => {
+          if (active) setRecommendation(result);
+        })
+        .catch(() => {
+          if (active) setRecommendation(undefined);
+        });
+    }, 250);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [designMode, stage, templatePrompt]);
+
+  const recommendedTemplateId = recommendation?.kind === "recipe" ? recommendation.templateId : null;
+  const recommendedTemplates = [...STORE_TEMPLATE_REGISTRY.templates].sort((left, right) => {
+    if (left.id === recommendedTemplateId) return -1;
+    if (right.id === recommendedTemplateId) return 1;
+    return left.name.localeCompare(right.name);
+  });
+
+  const submitDesign = () => {
+    const prompt = templatePrompt.trim();
+    if (designMode === "recipe" && selectedTemplateId) {
+      onBuildDesign({ prompt, mode: "recipe", templateId: selectedTemplateId });
+      return;
+    }
+    if (designMode === "custom") {
+      if (prompt) onBuildDesign({ prompt, mode: "custom" });
+      return;
+    }
+    onBuildDesign({ prompt, mode: "auto" }, recommendation);
+  };
 
   return (
     <div className="cd-welcome" data-stage={stage} ref={rootRef}>
@@ -219,19 +264,21 @@ export default function WelcomeOverlay({
                   />
                 </label>
                 <div className="cd-welcome-cards">
-                  {recommendedTemplates.map((template, index) => (
+                  {recommendedTemplates.map((template) => (
                     <button
                       key={template.id}
                       type="button"
                       className="cd-welcome-card"
                       data-welcome-item=""
-                      onClick={() =>
-                        onBuildWithVibe(template.vibe, templateGenerationBrief(template, templatePrompt))
-                      }
+                      aria-pressed={designMode === "recipe" && selectedTemplateId === template.id}
+                      onClick={() => {
+                        setDesignMode("recipe");
+                        setSelectedTemplateId(template.id);
+                      }}
                     >
                       <span className="cd-template-preview">
                         <img src={template.previewSrc} alt="" />
-                        {index === 0 && templatePrompt.trim() && <span>Best match</span>}
+                        {template.id === recommendedTemplateId && <span>Best match</span>}
                       </span>
                       <span className="cd-template-meta">
                         <strong>{template.name}</strong>
@@ -255,11 +302,50 @@ export default function WelcomeOverlay({
                     data-welcome-item=""
                     onClick={() => {
                       const template = recommendedTemplates[Math.floor(Math.random() * recommendedTemplates.length)];
-                      onBuildWithVibe(template.vibe, templateGenerationBrief(template, templatePrompt));
+                      setDesignMode("recipe");
+                      setSelectedTemplateId(template.id);
                     }}
                   >
                     Surprise me
                   </button>
+                  <button
+                    type="button"
+                    className="cd-chip"
+                    data-welcome-item=""
+                    aria-pressed={designMode === "auto"}
+                    onClick={() => {
+                      setDesignMode("auto");
+                      setSelectedTemplateId(null);
+                    }}
+                  >
+                    Use recommendation
+                  </button>
+                  <button
+                    type="button"
+                    className="cd-chip"
+                    data-welcome-item=""
+                    aria-pressed={designMode === "custom"}
+                    onClick={() => {
+                      setDesignMode("custom");
+                      setSelectedTemplateId(null);
+                    }}
+                  >
+                    Create something original
+                  </button>
+                  <Btn
+                    kind="primary"
+                    data-welcome-item=""
+                    disabled={(designMode === "recipe" && !selectedTemplateId) || (designMode === "custom" && !templatePrompt.trim())}
+                    onClick={submitDesign}
+                  >
+                    {designMode === "custom"
+                      ? "Create original store"
+                      : designMode === "recipe" && selectedTemplateId
+                        ? `Build ${STORE_TEMPLATE_REGISTRY.templates.find((template) => template.id === selectedTemplateId)?.name ?? "selected recipe"}`
+                        : recommendedTemplateId
+                          ? `Build ${STORE_TEMPLATE_REGISTRY.templates.find((template) => template.id === recommendedTemplateId)?.name ?? "recommended store"}`
+                          : "Build recommended store"}
+                  </Btn>
                 </div>
               </div>
             )}

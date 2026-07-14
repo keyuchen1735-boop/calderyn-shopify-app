@@ -4,6 +4,8 @@ import { apiGet, apiSend, apiSendForm, DashboardApiError, saveProduct, uploadPro
 import {
   parseBuildEvent,
   type BuildStage,
+  type Runtime1BuildStage,
+  type StudioBundleBuildReceipt,
   type StudioState,
   type StudioSettings,
   type StudioHero,
@@ -20,6 +22,7 @@ import {
   type StudioExperimentKind,
   type StudioSection,
 } from "~/lib/storebuilder/studio-types";
+import type { StoreDesignRequest, StoreDesignResolution } from "~/lib/storefront-bundle/types";
 
 export type {
   StudioState,
@@ -40,6 +43,11 @@ export type {
 
 export async function fetchStudio(): Promise<StudioState> {
   return apiGet<StudioState>("/dashboard/api/store");
+}
+
+/** Resolve prompt + current server-side catalog evidence without changing the store. */
+export async function resolveStudioDesign(request: StoreDesignRequest): Promise<StoreDesignResolution> {
+  return apiSend<StoreDesignResolution>("POST", "/dashboard/api/store/resolve", request);
 }
 
 /** Persist the home hero copy (headline + subhead) into the draft doc. */
@@ -182,6 +190,85 @@ export class StudioStreamError extends Error {
   }
 }
 
+/**
+ * Runtime-1 build stream. The server reruns routing against fresh catalog
+ * evidence; its routing event is authoritative and installation is terminal.
+ */
+export async function buildStudioStoreStream(
+  designRequest: StoreDesignRequest,
+  onStage: (stage: Runtime1BuildStage, event: ReturnType<typeof parseBuildEvent>) => void,
+  recommendedResolution?: StoreDesignResolution,
+): Promise<StudioBundleBuildReceipt> {
+  let res: Response;
+  try {
+    res = await fetch("/dashboard/api/store/generate", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        ...(typeof location !== "undefined" ? { Origin: location.origin } : {}),
+      },
+      body: JSON.stringify({ designRequest, ...(recommendedResolution ? { recommendedResolution } : {}) }),
+    });
+  } catch (err) {
+    throw new StudioStreamError(err instanceof Error ? err.message : "stream request failed");
+  }
+  if (!res.ok) {
+    let code = "storefront_build_failed";
+    let message = "Storefront build failed.";
+    try {
+      const body = (await res.json()) as { error?: string; message?: string };
+      if (typeof body.error === "string") code = body.error;
+      if (typeof body.message === "string") message = body.message;
+    } catch {
+      // Keep the stable generic mapping.
+    }
+    throw new DashboardApiError(res.status, code, message);
+  }
+  if (!res.body) throw new StudioStreamError("response had no stream body");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const handleLine = (line: string): StudioBundleBuildReceipt | undefined => {
+    const event = parseBuildEvent(line);
+    if (!event) return undefined;
+    if (event.stage === "installed") return event.receipt;
+    if (event.stage === "error") throw new DashboardApiError(502, "storefront_build_failed", event.message);
+    if (["routing", "applying_recipe", "compiling", "validating", "proofing"].includes(event.stage)) {
+      onStage(event.stage as Runtime1BuildStage, event);
+    }
+    return undefined;
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        const receipt = handleLine(line);
+        if (receipt) {
+          reader.cancel().catch(() => {});
+          return receipt;
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof DashboardApiError) throw err;
+    throw new StudioStreamError(err instanceof Error ? err.message : "stream read failed");
+  }
+  const rest = buffer.trim();
+  if (rest) {
+    const receipt = handleLine(rest);
+    if (receipt) return receipt;
+  }
+  throw new StudioStreamError("stream ended without an installed storefront");
+}
+
 /** Streaming twin of generateStudioStore: POSTs to the NDJSON endpoint, forwards
  *  each real build stage to `onStage`, resolves with the final receipt. */
 export async function generateStudioStoreStream(
@@ -225,6 +312,7 @@ export async function generateStudioStoreStream(
     if (!ev) return undefined; // tolerate unknown lines (forward compatibility)
     if (ev.stage === "done") return ev.receipt;
     if (ev.stage === "error") throw new DashboardApiError(502, "generation_failed", ev.message);
+    if (ev.stage === "installed") return undefined;
     onStage(ev.stage);
     return undefined;
   };

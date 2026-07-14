@@ -5,10 +5,11 @@ import type * as HttpServer from "~/lib/dashboard/http.server";
 import { action } from "../dashboard.api.store.generate";
 import { CalderynError } from "~/lib/calderyn.server";
 
-const { sessionMock, assertGenMock, generateMock } = vi.hoisted(() => ({
+const { sessionMock, assertGenMock, generateMock, buildMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   assertGenMock: vi.fn(),
   generateMock: vi.fn(),
+  buildMock: vi.fn(),
 }));
 
 vi.mock("~/lib/calderyn.server", () => ({
@@ -30,6 +31,14 @@ vi.mock("~/lib/dashboard/http.server", async (orig) => {
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sessionMock }));
 vi.mock("~/lib/storegen/guard.server", () => ({ assertCanGenerate: assertGenMock }));
 vi.mock("~/lib/storegen/generate.server", () => ({ generateStore: generateMock }));
+vi.mock("~/lib/storefront-bundle/build.server", () => ({
+  buildStorefrontDesign: buildMock,
+  StorefrontBuildError: class StorefrontBuildError extends Error {
+    constructor(public code: string, message: string, public status: number) {
+      super(message);
+    }
+  },
+}));
 vi.mock("~/lib/ai-quota.server", () => ({ quotaTrusted: () => true }));
 
 const post = (body: unknown) =>
@@ -49,9 +58,66 @@ beforeEach(() => {
   sessionMock.mockReset().mockResolvedValue({ shopId: "s1", userId: "u1" });
   assertGenMock.mockReset().mockResolvedValue(undefined);
   generateMock.mockReset();
+  buildMock.mockReset();
 });
 
 describe("dashboard.api.store.generate streaming action", () => {
+  it("routes runtime-1 design requests without invoking the legacy generator or its AI quota", async () => {
+    const frozen = {
+      kind: "recipe",
+      templateId: "commons-index",
+      templateVersion: 1,
+      selectionKind: "niche_match",
+      routingVersion: 1,
+      registryVersion: 1,
+      catalogFingerprint: "sha256:fresh",
+      score: 12,
+      runnerUpScore: 0,
+      margin: 12,
+      confidenceBand: "high",
+      breakdown: [],
+      reasons: ["refill match"],
+    };
+    buildMock.mockImplementation(async (input: { onEvent?: (event: unknown) => void }) => {
+      input.onEvent?.({ stage: "routing", resolution: frozen, recommendationChanged: false });
+      input.onEvent?.({ stage: "applying_recipe", templateId: "commons-index", templateVersion: 1 });
+      input.onEvent?.({ stage: "compiling" });
+      input.onEvent?.({ stage: "validating" });
+      input.onEvent?.({ stage: "proofing" });
+      const receipt = { runtime: 1, versionId: "version-1", status: "draft", resolution: frozen };
+      input.onEvent?.({ stage: "installed", receipt });
+      return receipt;
+    });
+
+    const res = await post({
+      designRequest: { prompt: "Build a sustainable refill shop", mode: "auto" },
+      recommendedResolution: { ...frozen, catalogFingerprint: "sha256:stale" },
+    });
+    const events = await lines(res);
+
+    expect(events.map((event) => event.stage)).toEqual([
+      "routing", "applying_recipe", "compiling", "validating", "proofing", "installed",
+    ]);
+    expect(events[0].resolution).toEqual(frozen);
+    expect(buildMock).toHaveBeenCalledWith(expect.objectContaining({
+      shopId: "s1",
+      actorId: "u1",
+      request: { prompt: "Build a sustainable refill shop", mode: "auto" },
+      recommendedResolution: expect.objectContaining({ catalogFingerprint: "sha256:stale" }),
+      onEvent: expect.any(Function),
+    }));
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(assertGenMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid runtime-1 design contract before opening a stream", async () => {
+    const res = await post({ designRequest: { prompt: "", mode: "recipe" } });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "invalid_design_request" });
+    expect(buildMock).not.toHaveBeenCalled();
+    expect(generateMock).not.toHaveBeenCalled();
+  });
+
   it("streams each real stage as NDJSON, ending with the receipt", async () => {
     generateMock.mockImplementation(async (input: { onStage?: (s: string) => void }) => {
       input.onStage?.("brand");

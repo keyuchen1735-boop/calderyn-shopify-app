@@ -68,7 +68,7 @@ describe("Shopify connect links from dashboard screens", () => {
         buildPhase: null,
         productCount: 0,
         onBuildPlain: () => {},
-        onBuildWithVibe: () => {},
+        onBuildDesign: () => {},
         onAddProduct: () => {},
       }),
     );

@@ -21,6 +21,7 @@ const {
   generateMock,
   createProductMock,
   uploadMediaMock,
+  publishMock,
 } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   assertGenMock: vi.fn(),
@@ -30,6 +31,7 @@ const {
   generateMock: vi.fn(),
   createProductMock: vi.fn(),
   uploadMediaMock: vi.fn(),
+  publishMock: vi.fn(),
 }));
 
 vi.mock("~/lib/calderyn.server", () => ({
@@ -66,7 +68,7 @@ vi.mock("~/lib/storebuilder/studio.server", () => ({
   saveStudioHero: vi.fn(),
   saveStudioAccent: vi.fn(),
   saveStudioVibe: vi.fn(),
-  publishStudioStore: vi.fn(),
+  publishStudioStore: publishMock,
 }));
 vi.mock("~/lib/experiments/store-experiment.server", () => ({
   decideExperiment: vi.fn(),
@@ -77,7 +79,7 @@ const SHOP = "11111111-1111-1111-1111-111111111111";
 const URL = "https://test.example.com/dashboard/api/store";
 
 beforeEach(() => {
-  for (const m of [sessionMock, assertGenMock, prechecksMock, designerQuotaMock, classifyMock, generateMock, createProductMock, uploadMediaMock]) {
+  for (const m of [sessionMock, assertGenMock, prechecksMock, designerQuotaMock, classifyMock, generateMock, createProductMock, uploadMediaMock, publishMock]) {
     m.mockReset();
   }
   sessionMock.mockResolvedValue({ shopId: SHOP, userId: null, accountCreatedAt: null });
@@ -87,6 +89,7 @@ beforeEach(() => {
   generateMock.mockResolvedValue({ runId: "run-1", status: "draft", tokenCost: 0, docs: {} });
   createProductMock.mockResolvedValue({ id: "prod-1" });
   uploadMediaMock.mockResolvedValue({ id: "media-1", storagePath: "p" });
+  publishMock.mockResolvedValue(undefined);
 });
 
 function pngFile(name: string, bytes = 16): File {
@@ -111,6 +114,17 @@ async function postMultipart(fields: {
 }
 
 describe("dashboard.api.store multipart generate", () => {
+  it("passes the authenticated actor into the runtime-aware atomic publish seam", async () => {
+    const request = new Request(URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "publish" }),
+    });
+    const response = (await action({ request } as ActionFunctionArgs)) as Response;
+    expect(response.status).toBe(200);
+    expect(publishMock).toHaveBeenCalledWith(SHOP, null);
+  });
+
   it("rejects an oversize image with 422 before any model spend", async () => {
     const big = new File([new Uint8Array(3_932_161)], "big.png", { type: "image/png" });
     const res = await postMultipart({ brief: "hi", images: [big] });

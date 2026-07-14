@@ -345,7 +345,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
     case "publish": {
       return dashboardJson(async () => {
-        await publishStudioStore(session.shopId);
+        await publishStudioStore(session.shopId, session.userId);
         return { publishedAt: new Date().toISOString() };
       });
     }

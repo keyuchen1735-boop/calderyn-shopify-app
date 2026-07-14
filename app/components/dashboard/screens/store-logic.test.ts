@@ -29,6 +29,16 @@ describe("parseBuildEvent", () => {
 });
 
 describe("buildSteps", () => {
+  it("renders the five runtime-1 install stages without mixing in legacy generator copy", () => {
+    const routing = buildSteps({ kind: "running", stage: "routing" });
+    expect(routing).toHaveLength(5);
+    expect(routing.map((row) => row.dot)).toEqual(["run", "wait", "wait", "wait", "wait"]);
+    expect(routing[0].title).toMatch(/match|rout|recommend/i);
+    const proofing = buildSteps({ kind: "running", stage: "proofing" });
+    expect(proofing.map((row) => row.dot)).toEqual(["done", "done", "done", "done", "run"]);
+    expect(proofing.map((row) => row.title).join(" ")).not.toMatch(/brand kit/i);
+  });
+
   it("renders the three real stages with run/done/wait dots as the build advances", () => {
     const atBrand = buildSteps({ kind: "running", stage: "brand" });
     expect(atBrand.map((r) => r.dot)).toEqual(["run", "wait", "wait"]);

@@ -2,20 +2,29 @@
 // titled from the filename) OR travel with the prompt to the multipart generate
 // endpoint — the two client paths this suite covers.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { addProductFromImage, generateStudioStoreStream, generateStudioStoreWithImages, productTitleFromFilename, StudioStreamError } from "./store-client";
+import {
+  addProductFromImage,
+  buildStudioStoreStream,
+  generateStudioStoreStream,
+  generateStudioStoreWithImages,
+  productTitleFromFilename,
+  resolveStudioDesign,
+  StudioStreamError,
+} from "./store-client";
 import { DashboardApiError } from "./client";
 
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // client mock still applies even though it is written below them.
-const { saveProduct, uploadProductImage, apiSendForm } = vi.hoisted(() => ({
+const { saveProduct, uploadProductImage, apiSend, apiSendForm } = vi.hoisted(() => ({
   saveProduct: vi.fn(),
   uploadProductImage: vi.fn(),
+  apiSend: vi.fn(),
   apiSendForm: vi.fn(),
 }));
 
 vi.mock("./client", () => ({
   apiGet: vi.fn(),
-  apiSend: vi.fn(),
+  apiSend,
   apiSendForm,
   saveProduct,
   uploadProductImage,
@@ -27,6 +36,30 @@ beforeEach(() => {
   saveProduct.mockResolvedValue({ id: "prod-1" });
   uploadProductImage.mockResolvedValue({ id: "media-1", url: "https://x/img.jpg" });
   apiSendForm.mockResolvedValue({ runId: "run-1", status: "draft" });
+  apiSend.mockResolvedValue({
+    kind: "recipe",
+    templateId: "commons-index",
+    templateVersion: 1,
+    selectionKind: "niche_match",
+    routingVersion: 1,
+    registryVersion: 1,
+    catalogFingerprint: "sha256:catalog",
+    score: 12,
+    runnerUpScore: 0,
+    margin: 12,
+    confidenceBand: "high",
+    breakdown: [],
+    reasons: ["refill match"],
+  });
+});
+
+describe("runtime-1 design routing client", () => {
+  it("requests a server-authoritative recommendation with the versioned design contract", async () => {
+    const request = { prompt: "Build a sustainable refill shop", mode: "auto" as const };
+    const result = await resolveStudioDesign(request);
+    expect(apiSend).toHaveBeenCalledWith("POST", "/dashboard/api/store/resolve", request);
+    expect(result).toMatchObject({ kind: "recipe", templateId: "commons-index" });
+  });
 });
 
 describe("addProductFromImage", () => {
@@ -118,6 +151,28 @@ const ndjsonResponse = (lines: string[], status = 200) => {
 };
 
 describe("generateStudioStoreStream", () => {
+  it("sends a runtime-1 design request, forwards its frozen stages, and resolves on installed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
+      '{"stage":"routing","resolution":{"kind":"recipe","templateId":"commons-index","templateVersion":1,"selectionKind":"niche_match","routingVersion":1,"registryVersion":1,"catalogFingerprint":"sha256:fresh","score":12,"runnerUpScore":0,"margin":12,"confidenceBand":"high","breakdown":[],"reasons":[]},"recommendationChanged":true,"recommendationChangeReason":"Your catalog changed"}',
+      '{"stage":"applying_recipe","templateId":"commons-index","templateVersion":1}',
+      '{"stage":"compiling"}',
+      '{"stage":"validating"}',
+      '{"stage":"proofing"}',
+      '{"stage":"installed","receipt":{"runtime":1,"versionId":"version-1","status":"draft","resolution":{"kind":"recipe","templateId":"commons-index","templateVersion":1,"selectionKind":"niche_match","routingVersion":1,"registryVersion":1,"catalogFingerprint":"sha256:fresh","score":12,"runnerUpScore":0,"margin":12,"confidenceBand":"high","breakdown":[],"reasons":[]}}}',
+    ])));
+    const stages: string[] = [];
+    const request = { prompt: "refill shop", mode: "auto" as const };
+    const recommendation = await resolveStudioDesign(request);
+    const receipt = await buildStudioStoreStream(request, (stage) => stages.push(stage), recommendation);
+
+    expect(stages).toEqual(["routing", "applying_recipe", "compiling", "validating", "proofing"]);
+    expect(receipt).toMatchObject({ runtime: 1, versionId: "version-1", status: "draft" });
+    const fetchMock = vi.mocked(fetch);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({ designRequest: request, recommendedResolution: recommendation });
+    vi.unstubAllGlobals();
+  });
+
   it("forwards each stage in order and resolves the final receipt", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
       '{"stage":"brand"}',

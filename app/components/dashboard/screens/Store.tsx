@@ -17,11 +17,9 @@ import {
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
   addProductFromImage,
-  generateStudioStoreStream,
-  StudioStreamError,
+  buildStudioStoreStream,
   decideStoreExperiment,
   fetchStudio,
-  generateStudioStore,
   generateStudioStoreWithImages,
   publishStudioStore,
   saveStudioHero,
@@ -39,6 +37,7 @@ import {
   type StudioState,
   type StudioVibe,
 } from "~/lib/dashboard/store-client";
+import type { StoreDesignRequest, StoreDesignResolution } from "~/lib/storefront-bundle/types";
 import {
   decideWelcomeBranch,
   isDeterministicChatIntent,
@@ -327,11 +326,11 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: donePhase } : x)));
     const base =
       status === "failed"
-        ? // Honest failure (rule 12): the AI designer was unreachable, so this
+          ? // Honest failure (rule 12): the AI designer was unreachable, so this
           // is a deterministic starter layout, not the prompted design.
           "The AI designer is unavailable right now, so I used a starter layout instead of your prompt. Add Anthropic credits and try Build again."
         : opts?.firstBuild
-          ? "Here's your first draft: home, product and collection pages, built from your catalog. Tell me what to change, or publish when it feels right."
+          ? "Here's your first draft: home, collection, product, search, cart and checkout, all bound to your catalog. Tell me what to change, or publish when it feels right."
           : "Done, it's in the preview. Tell me what to change next, or publish when it's ready.";
     const reply = [base, ...(opts?.extraLines ?? [])].join(" ");
     const actions: ChatAction[] | undefined =
@@ -345,7 +344,10 @@ export default function Store({ app }: { app: DashboardCtx }) {
     pushMsg({ id: newId(), kind: "ai-text", text: reply, actions });
   };
 
-  const runBuild = async (brief: string, opts?: { firstBuild?: boolean }) => {
+  const runBuild = async (
+    design: string | StoreDesignRequest,
+    opts?: { firstBuild?: boolean; recommendation?: StoreDesignResolution },
+  ) => {
     if (buildingRef.current) return;
     buildingRef.current = true;
     const runningPhase: BuildPhase = { kind: "running" };
@@ -361,33 +363,27 @@ export default function Store({ app }: { app: DashboardCtx }) {
       setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase } : x)));
     };
     try {
-      let receipt: StudioGenerateReceipt;
-      try {
-        receipt = await generateStudioStoreStream(brief.trim(), designModelRef.current, setStage);
-      } catch (err) {
-        // Transport/parse trouble only — guard refusals and generation failures
-        // arrive as DashboardApiError and must NOT retry (a fallback re-bills).
-        if (!(err instanceof StudioStreamError)) throw err;
-        receipt = await generateStudioStore(brief.trim(), designModelRef.current);
-      }
+      const request: StoreDesignRequest = typeof design === "string"
+        ? { prompt: design.trim(), mode: "auto" }
+        : design;
+      let recommendationChangeReason: string | undefined;
+      await buildStudioStoreStream(
+        request,
+        (stage, event) => {
+          setStage(stage);
+          if (event?.stage === "routing" && event.recommendationChanged) {
+            recommendationChangeReason = event.recommendationChangeReason;
+          }
+        },
+        opts?.recommendation,
+      );
       // Re-pull the whole studio state — generation rewrites brand settings,
       // drafts and the generation audit row — then reload the preview.
       await refresh();
       reloadPreview();
       if (!aliveRef.current) return;
-      // The generate paths only ever return a terminal generation status
-      // (draft/no_products/failed). The multipart-only intent statuses can't
-      // arrive here, but handle them honestly instead of coercing to "draft".
-      if (receipt.status === "needs_intent" || receipt.status === "products_added") {
-        failBuild(workingId, "That didn't produce a design. Try Build again.");
-        return;
-      }
-      const v = receipt.verification;
-      const extraLines =
-        v && v.checkedLinks > 0
-          ? [v.fixedLinks > 0 ? `Checked ${v.checkedLinks} links, fixed ${v.fixedLinks} dead one${v.fixedLinks === 1 ? "" : "s"}.` : `All ${v.checkedLinks} links verified.`]
-          : [];
-      settleGeneration(workingId, receipt.status, { firstBuild: opts?.firstBuild, extraLines });
+      const extraLines = recommendationChangeReason ? [recommendationChangeReason] : [];
+      settleGeneration(workingId, "draft", { firstBuild: opts?.firstBuild, extraLines });
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";
@@ -808,18 +804,10 @@ export default function Store({ app }: { app: DashboardCtx }) {
   };
 
   // --- welcome overlay actions --------------------------------------------------
-  const onWelcomeBuildPlain = () => void runBuild("", { firstBuild: true });
+  const onWelcomeBuildPlain = () => void runBuild({ prompt: "", mode: "auto" }, { firstBuild: true });
 
-  const onWelcomeBuildWithVibe = async (vibe: StudioVibe, brief = "") => {
-    try {
-      await setStudioVibe(vibe);
-    } catch (err) {
-      // A failed vibe pre-set isn't fatal — the build still runs, just against
-      // whatever vibe is currently stored. Say so and keep going.
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't set that look. Building anyway.";
-      toast(msg, "warn", "critical");
-    }
-    void runBuild(brief, { firstBuild: true });
+  const onWelcomeBuildDesign = (request: StoreDesignRequest, recommendation?: StoreDesignResolution) => {
+    void runBuild(request, { firstBuild: true, recommendation });
   };
 
   const onWelcomeAddProduct = async (line: string) => {
@@ -846,7 +834,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
           : `Draft product "${parsed.title}" created.`,
       );
       await refresh();
-      void runBuild("", { firstBuild: true });
+      void runBuild({ prompt: "", mode: "auto" }, { firstBuild: true });
     } catch (err) {
       const msg = err instanceof DashboardApiError ? err.message : "Couldn't create that product.";
       toast(msg, "warn", "critical");
@@ -1149,7 +1137,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
             buildPhase={buildPhase}
             productCount={data.productCount}
             onBuildPlain={onWelcomeBuildPlain}
-            onBuildWithVibe={onWelcomeBuildWithVibe}
+            onBuildDesign={onWelcomeBuildDesign}
             onAddProduct={(line) => void onWelcomeAddProduct(line)}
           />
         )}
