@@ -98,7 +98,7 @@ function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext):
   }
   const style = ownerDocument.createElement("style");
   style.nonce = ownerDocument.querySelector<HTMLStyleElement>("style[nonce]")?.nonce ?? "";
-  style.textContent = `:host{display:block;min-width:44px;min-height:44px;font:inherit;color:${foreground}}div{display:flex;align-items:center;gap:.5rem}button,select,input{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:.2rem;background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
+  style.textContent = `:host{display:block;min-width:44px;min-height:44px;font:inherit;color:${foreground}}:host([hidden]){display:none!important}div{display:flex;align-items:center;gap:.5rem}button,select,input{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:.2rem;background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
   return style;
 }
 
