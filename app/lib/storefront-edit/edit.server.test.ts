@@ -262,6 +262,52 @@ describe("editStorefrontByPrompt", () => {
     expect(deps.editDraft).toHaveBeenCalledTimes(1);
   });
 
+  it("repairs compiled-only repeat metadata returned as replacement source", async () => {
+    const bundle = baseBundle();
+    const repeatRoot = bundle.routes.collection.tree[0];
+    if (repeatRoot.kind !== "element" || !repeatRoot.repeat || repeatRoot.children[0]?.kind !== "element") {
+      throw new Error("fixture repeat");
+    }
+    const repeatedChild = repeatRoot.children[0];
+    const deps = dependencies(bundle);
+    const hash = (node: unknown) => `sha256:${createHash("sha256").update(JSON.stringify(node)).digest("hex")}`;
+    vi.mocked(deps.compileStructuralPatch)
+      .mockResolvedValueOnce({
+        operations: [{
+          kind: "replaceRegion", routeId: "collection", targetId: repeatedChild.id, expected: hash(repeatedChild),
+          source: { html: "<article>New card</article>", css: "" },
+        }],
+        provider: { kind: "ai_patch", provider: "anthropic", model: "test" },
+      })
+      .mockResolvedValueOnce({
+        operations: [{
+          kind: "replaceRegion", routeId: "collection", targetId: repeatRoot.id, expected: hash(repeatRoot),
+          source: { html: `<main data-cd-repeat-id="${repeatRoot.repeat.scopeId}"><article>New card</article></main>`, css: "" },
+        }],
+        provider: { kind: "ai_patch", provider: "anthropic", model: "test" },
+      })
+      .mockResolvedValueOnce({
+        operations: [{
+          kind: "replaceTextChildren", routeId: "collection", targetId: repeatRoot.id,
+          value: "A redesigned product grid", expected: hash(repeatRoot),
+        }],
+        provider: { kind: "ai_patch", provider: "anthropic", model: "test" },
+      });
+
+    await editStorefrontByPrompt({
+      shopId: SHOP, actorId: ACTOR, prompt: "Redesign the product cards", expectedDraftVersionId: BASE,
+    }, deps);
+
+    expect(deps.compileStructuralPatch).toHaveBeenCalledTimes(3);
+    expect(deps.compileStructuralPatch).toHaveBeenLastCalledWith(expect.objectContaining({
+      context: { routeId: "collection", regionId: repeatRoot.id },
+      repair: expect.objectContaining({
+        staticDiagnostics: [expect.objectContaining({ code: "patch_source_invalid", message: expect.stringContaining("data-cd-repeat-id") })],
+      }),
+    }));
+    expect(deps.editDraft).toHaveBeenCalledTimes(1);
+  });
+
   it("clones verified logical asset references before validating an edited custom version", async () => {
     const custom = baseBundle();
     custom.assets.entries = [{ key: "hero", contentHash: "b".repeat(64), mediaType: "image/webp", byteSize: 84 }];
