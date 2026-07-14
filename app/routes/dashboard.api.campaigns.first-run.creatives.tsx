@@ -55,9 +55,19 @@ export async function action({ request }: ActionFunctionArgs) {
       product.media.find((m) => m.isPrimary) ?? product.media[0] ?? null;
     const imageUrl = primaryMedia ? await signMediaPath(primaryMedia.storagePath) : null;
 
-    const productUrl = origin
-      ? `${origin}/storefront/products/${product.handle}`
-      : `/storefront/products/${product.handle}`;
+    // A campaign needs an absolute, live product page to send ad traffic to.
+    // getShopStorefrontOrigin returns "" for a shop with no published storefront
+    // (no org_slug yet); building a relative URL from that would be handed back
+    // as destinationUrl and rejected by the Meta-create step's `new URL()` with a
+    // misleading "invalid destinationUrl" 422. Refuse honestly here instead.
+    if (!origin) {
+      throw jsonError(
+        422,
+        "no_storefront",
+        "Publish your storefront first — your product needs a live page before you can send ad traffic to it.",
+      );
+    }
+    const productUrl = `${origin}/storefront/products/${product.handle}`;
 
     const priceCents = product.variants[0]?.retailPriceCents ?? null;
     const price = typeof priceCents === "number" ? formatMoney(priceCents, "usd") : null;
@@ -100,15 +110,25 @@ export async function action({ request }: ActionFunctionArgs) {
       tips: [],
     };
 
-    const result = await generateImprovements(
-      {
-        original,
-        originalScorecard,
-        styleRefs: calib.topAdNames,
-        count: 3,
-      },
-      { generator, scoreOne },
-    );
+    // A runtime generation failure (quota/429/overloaded/network) must degrade to
+    // the same manual-copy fallback as the no-key branch — never a hard 500
+    // mid-wizard. generateImprovements makes the (unguarded) Anthropic call, so
+    // catch here and surface `available: false` rather than letting it propagate.
+    let result: Awaited<ReturnType<typeof generateImprovements>>;
+    try {
+      result = await generateImprovements(
+        {
+          original,
+          originalScorecard,
+          styleRefs: calib.topAdNames,
+          count: 3,
+        },
+        { generator, scoreOne },
+      );
+    } catch (err) {
+      console.error("[first-run/creatives] copy generation failed", err);
+      return { available: false, variants: [] as CreativeVariantDTO[], destinationUrl: productUrl, imageUrl };
+    }
 
     if (!result.available) {
       return { available: false, variants: [] as CreativeVariantDTO[], destinationUrl: productUrl, imageUrl };
