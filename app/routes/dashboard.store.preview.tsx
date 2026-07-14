@@ -278,7 +278,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export function previewCompilerId(target: Element): string | null {
   const selected = target.closest<HTMLElement>("[data-cd-compiler-id]");
-  const compilerId = selected?.dataset.cdCompilerId;
+  const repeatOwner = selected?.closest<HTMLElement>("[data-cd-repeat-owner][data-cd-compiler-id]");
+  const compilerId = repeatOwner?.dataset.cdCompilerId ?? selected?.dataset.cdCompilerId;
   return typeof compilerId === "string" && /^[a-zA-Z0-9_-]{1,120}$/.test(compilerId) ? compilerId : null;
 }
 

@@ -288,6 +288,7 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
   props.id = context.instanceSuffix ? `${node.id}-${context.instanceSuffix}` : node.id;
   props["data-cd-compiler-id"] = node.id;
   if (context.instanceSuffix) props["data-cd-instance"] = context.instanceSuffix;
+  if (node.repeat && context.instanceSuffix) props["data-cd-repeat-owner"] = "true";
   if (node.routeTarget) props.href = targetHref(node.routeTarget, context);
 
   const nodeBindings = context.bindings.get(node.id) ?? [];

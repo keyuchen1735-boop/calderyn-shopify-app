@@ -315,7 +315,7 @@ describe("dashboard.api.store multipart generate", () => {
     expect(undoEditMock).toHaveBeenCalledWith(expect.objectContaining({ shopId: SHOP, actorId: null }));
   });
 
-  it("returns the honest custom-writer disabled response for prompt edits", async () => {
+  it("streams the honest custom-writer disabled response for prompt edits", async () => {
     editMock.mockRejectedValueOnce(new StorefrontEditError(
       "storefront_custom_build_disabled",
       "Original AI storefront generation is not available right now. Your current draft was not changed.",
@@ -331,9 +331,12 @@ describe("dashboard.api.store multipart generate", () => {
 
     const response = await action({ request } as ActionFunctionArgs);
 
-    expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({
-      error: "storefront_custom_build_disabled",
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/x-ndjson");
+    expect(JSON.parse((await response.text()).trim())).toEqual({
+      stage: "error",
+      code: "storefront_custom_build_disabled",
+      status: 503,
       message: "Original AI storefront generation is not available right now. Your current draft was not changed.",
     });
     expect(undoEditMock).not.toHaveBeenCalled();
@@ -364,7 +367,7 @@ describe("dashboard.api.store multipart generate", () => {
     expect(editMock).not.toHaveBeenCalled();
   });
 
-  it("returns the stable 409 edit conflict contract", async () => {
+  it("streams the stable edit conflict contract", async () => {
     editMock.mockRejectedValueOnce(new StorefrontEditError("storefront_edit_conflict", "The draft changed", 409));
     const request = new Request(URL, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -374,8 +377,10 @@ describe("dashboard.api.store multipart generate", () => {
       }),
     });
     const response = await action({ request } as ActionFunctionArgs);
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: "storefront_edit_conflict" });
+    expect(response.status).toBe(200);
+    expect(JSON.parse((await response.text()).trim())).toMatchObject({
+      stage: "error", code: "storefront_edit_conflict", status: 409,
+    });
   });
   it("passes the authenticated actor into the runtime-aware atomic publish seam", async () => {
     const request = new Request(URL, {

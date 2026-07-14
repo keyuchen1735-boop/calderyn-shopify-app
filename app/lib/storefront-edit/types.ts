@@ -99,6 +99,14 @@ export interface StorefrontEditReceipt {
   undo: { targetVersionId: string; expectedDraftVersionId: string };
 }
 
+export type StorefrontEditStage = "compiling" | "validating" | "proofing" | "installing";
+
+export type StorefrontEditEvent =
+  | { stage: StorefrontEditStage }
+  | { stage: "installed"; receipt: StorefrontEditReceipt }
+  | { stage: "start_over"; receipt: { status: "start_over"; mode: "custom" } }
+  | { stage: "error"; code: string; status: number; message: string };
+
 export interface RecipeDerivation {
   templateId: StoreTemplateId;
   templateVersion: number;

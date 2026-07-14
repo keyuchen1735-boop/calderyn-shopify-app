@@ -32,7 +32,7 @@ import {
   StorefrontEditError,
   undoStorefrontEdit,
 } from "~/lib/storefront-edit/edit.server";
-import type { PreviewEditContext } from "~/lib/storefront-edit/types";
+import type { PreviewEditContext, StorefrontEditEvent } from "~/lib/storefront-edit/types";
 import {
   buildStorefrontDesign,
   prepareStorefrontDesignBuild,
@@ -100,6 +100,33 @@ async function editResponse(run: () => Promise<unknown>): Promise<Response> {
     console.error("[dashboard.api.store] storefront edit failed", error);
     return jsonError(500, "storefront_edit_failed", "The storefront edit failed. Your draft was not changed.");
   }
+}
+
+function editStreamResponse(run: (send: (event: StorefrontEditEvent) => void) => Promise<unknown>): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: StorefrontEditEvent) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      try {
+        const result = await run(send);
+        if (result && typeof result === "object" && (result as { status?: unknown }).status === "start_over") {
+          send({ stage: "start_over", receipt: result as { status: "start_over"; mode: "custom" } });
+        }
+      } catch (error) {
+        if (error instanceof StorefrontEditError) {
+          send({ stage: "error", code: error.code, status: error.status, message: error.message });
+        } else {
+          console.error("[dashboard.api.store] storefront edit failed", error);
+          send({ stage: "error", code: "storefront_edit_failed", status: 500, message: "The storefront edit failed. Your draft was not changed." });
+        }
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }
 
 async function releaseResponse(run: () => Promise<unknown>): Promise<Response> {
@@ -440,12 +467,13 @@ export async function action({ request }: ActionFunctionArgs) {
       if (!prompt || prompt.length > EDIT_PROMPT_MAX) return jsonError(422, "invalid_edit_prompt", "Keep the edit prompt under 2,000 characters.");
       if (!isUuid(expectedDraftVersionId)) return jsonError(422, "invalid_draft_version");
       if (context === null) return jsonError(422, "invalid_edit_context");
-      return editResponse(() => editStorefrontByPrompt({
+      return editStreamResponse((onEvent) => editStorefrontByPrompt({
         shopId: session.shopId,
         actorId: session.userId,
         prompt,
         expectedDraftVersionId,
         trusted: quotaTrusted(session),
+        onEvent,
         ...(context ? { context } : {}),
       }));
     }

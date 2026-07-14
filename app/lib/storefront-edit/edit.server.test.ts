@@ -181,6 +181,42 @@ describe("editStorefrontByPrompt", () => {
     );
   });
 
+  it("targets the repeat owner when a selected product-card region cannot be structurally replaced", async () => {
+    const bundle = baseBundle();
+    const repeatRoot = bundle.routes.collection.tree[0];
+    if (repeatRoot.kind !== "element" || !repeatRoot.repeat || repeatRoot.children[0]?.kind !== "element") {
+      throw new Error("fixture repeat");
+    }
+    const repeatedChild = repeatRoot.children[0];
+    const deps = dependencies(bundle);
+    vi.mocked(deps.compileStructuralPatch).mockResolvedValue({
+      operations: [{
+        kind: "replaceTextChildren",
+        routeId: "collection",
+        targetId: repeatRoot.id,
+        value: "A redesigned product grid",
+        expected: `sha256:${createHash("sha256").update(JSON.stringify(repeatRoot)).digest("hex")}`,
+      }],
+      provider: { kind: "ai_patch", provider: "anthropic", model: "test" },
+    });
+    const stages: string[] = [];
+
+    await editStorefrontByPrompt({
+      shopId: SHOP,
+      actorId: ACTOR,
+      prompt: "Redesign this product card layout",
+      expectedDraftVersionId: BASE,
+      context: { routeId: "collection", regionId: repeatedChild.id },
+      onEvent: (event) => stages.push(event.stage),
+    }, deps);
+
+    expect(deps.compileStructuralPatch).toHaveBeenCalledWith(expect.objectContaining({
+      context: { routeId: "collection", regionId: repeatRoot.id },
+    }));
+    expect(stages).toEqual(["compiling", "validating", "proofing", "installing", "installed"]);
+    expect(deps.editDraft).toHaveBeenCalledTimes(1);
+  });
+
   it("clones verified logical asset references before validating an edited custom version", async () => {
     const custom = baseBundle();
     custom.assets.entries = [{ key: "hero", contentHash: "b".repeat(64), mediaType: "image/webp", byteSize: 84 }];
