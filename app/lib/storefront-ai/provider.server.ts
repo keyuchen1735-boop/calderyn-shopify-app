@@ -1,0 +1,65 @@
+import { assistantModel, getAnthropic } from "~/lib/assistant/anthropic.server";
+import type { StorefrontAiProvider, StructuredModelRequest, StructuredModelResponse } from "./contracts";
+
+const RESULT_TOOL = "storefront_compiler_result";
+
+interface AnthropicLike {
+  messages: {
+    create(input: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<{
+      content: Array<Record<string, unknown>>;
+      usage?: { input_tokens?: number; output_tokens?: number };
+    }>;
+  };
+}
+
+export class StructuredOutputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StructuredOutputError";
+  }
+}
+
+export interface AnthropicStructuredProviderOptions {
+  client?: AnthropicLike;
+  model?: string;
+  maxTokens?: number;
+}
+
+export function createAnthropicStructuredProvider(
+  options: AnthropicStructuredProviderOptions = {},
+): StorefrontAiProvider {
+  const client = options.client ?? (getAnthropic() as unknown as AnthropicLike);
+  const model = options.model ?? assistantModel();
+  return {
+    async complete(request: StructuredModelRequest): Promise<StructuredModelResponse> {
+      if (request.signal?.aborted) throw new DOMException("Generation cancelled", "AbortError");
+      const response = await client.messages.create({
+        model,
+        max_tokens: options.maxTokens ?? 12_000,
+        system: request.system,
+        messages: [{ role: "user", content: request.prompt }],
+        tools: [{
+          name: RESULT_TOOL,
+          description: `Schema-only result for storefront operation ${request.operation}`,
+          input_schema: request.schema,
+        }],
+        tool_choice: { type: "tool", name: RESULT_TOOL, disable_parallel_tool_use: true },
+      }, { signal: request.signal });
+      const blocks = response.content ?? [];
+      const matching = blocks.filter((block) => block.type === "tool_use" && block.name === RESULT_TOOL);
+      if (matching.length !== 1 || blocks.length !== 1) {
+        throw new StructuredOutputError("The model must return exactly one forced schema tool result and no prose");
+      }
+      if (!("input" in matching[0])) throw new StructuredOutputError("The structured tool result has no input payload");
+      return {
+        value: matching[0].input,
+        usage: {
+          inputTokens: Math.max(0, Number(response.usage?.input_tokens ?? 0)),
+          outputTokens: Math.max(0, Number(response.usage?.output_tokens ?? 0)),
+        },
+        provider: "anthropic",
+        model,
+      };
+    },
+  };
+}
