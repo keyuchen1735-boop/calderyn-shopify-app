@@ -40,9 +40,9 @@ describe("assembleStorefrontContext", () => {
       },
     }, { maxProducts: 4, maxCollections: 4, maxPromptChars: 200 });
 
-    expect(context.collections.map((item) => item.id)).toEqual(["c1", "c2"]);
+    expect(context.collections.map((item) => item.id)).toEqual(["collection-001", "collection-002"]);
     expect(context.products).toHaveLength(4);
-    expect(context.products.some((item) => item.collectionIds?.includes("c2"))).toBe(true);
+    expect(context.products.some((item) => item.collectionIds?.includes("collection-002"))).toBe(true);
     expect(JSON.stringify(context)).not.toMatch(/supplierCost|privateNotes|never expose/);
     expect(context.store.name).toBe("Northline");
     expect(context.prompt).toContain("<script>");
@@ -63,5 +63,71 @@ describe("assembleStorefrontContext", () => {
     const input = { shopId: "11111111-1111-4111-8111-111111111111", prompt: "Original", referenceImages: [] };
     expect((await assembleStorefrontContext(input, makeSource(false))).fingerprint)
       .toBe((await assembleStorefrontContext(input, makeSource(true))).fingerprint);
+  });
+
+  it("replaces database identifiers and storage paths with bounded generation references", async () => {
+    const productId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const collectionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const storageKey = "11111111-1111-4111-8111-111111111111/storefront/private/hero.webp";
+    const context = await assembleStorefrontContext({ shopId: "11111111-1111-4111-8111-111111111111", prompt: "Original" }, {
+      getStore: async () => ({ name: "Store", logoAssetKey: storageKey, publicBrandAssetKeys: [storageKey] }),
+      listCollections: async () => [{ id: collectionId, handle: "lighting", title: "Lighting", productCount: 1 }],
+      listProducts: async () => [{
+        id: productId,
+        handle: "arc-lamp",
+        title: "Arc Lamp",
+        productType: "Lamp",
+        tags: [],
+        optionNames: [],
+        priceMin: 100,
+        priceMax: 100,
+        currency: "USD",
+        availability: "available",
+        collectionIds: [collectionId],
+        images: [{ assetKey: storageKey, aspectRatio: 1 }],
+      }],
+      listReusableAssets: async () => [{ assetKey: storageKey, mediaType: "image/webp", width: 100, height: 100 }],
+    });
+
+    const serialized = JSON.stringify(context);
+    expect(serialized).not.toContain(productId);
+    expect(serialized).not.toContain(collectionId);
+    expect(serialized).not.toContain(storageKey);
+    expect(context.products[0]).toMatchObject({ id: "product-001", collectionIds: ["collection-001"] });
+    expect(context.products[0].images[0].assetKey).toBe("catalog-image-001");
+    expect(context.store.logoAssetKey).toBe("brand-asset-001");
+  });
+
+  it("retains the opaque reference mapping only in the server assembly result", async () => {
+    const module = await import("./context.server");
+    expect(typeof module.assembleStorefrontContextWithReferences).toBe("function");
+    if (typeof module.assembleStorefrontContextWithReferences !== "function") return;
+    const rawId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const assembly = await module.assembleStorefrontContextWithReferences({
+      shopId: "11111111-1111-4111-8111-111111111111",
+      prompt: "Original",
+    }, {
+      getStore: async () => ({ name: "Store", logoAssetKey: null, publicBrandAssetKeys: [] }),
+      listCollections: async () => [],
+      listProducts: async () => [{
+        id: rawId,
+        handle: "arc-lamp",
+        title: "Arc Lamp",
+        productType: null,
+        tags: [],
+        optionNames: [],
+        priceMin: 100,
+        priceMax: 100,
+        currency: "USD",
+        availability: "available",
+        collectionIds: [],
+        images: [],
+      }],
+      listReusableAssets: async () => [],
+    });
+
+    expect(assembly.context.products[0].id).toBe("product-001");
+    expect(assembly.references.products["product-001"]).toEqual({ id: rawId, handle: "arc-lamp" });
+    expect(JSON.stringify(assembly.context)).not.toContain(rawId);
   });
 });

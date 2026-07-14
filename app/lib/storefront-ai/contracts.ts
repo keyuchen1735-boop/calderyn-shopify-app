@@ -1,4 +1,4 @@
-import type { AssetManifest, AssetManifestEntry, StorefrontBundleV1, StorefrontRouteId, StoreTemplateId } from "../storefront-bundle/types";
+import type { AssetManifest, AssetManifestEntry, StoreDesignResolution, StorefrontBundleV1, StorefrontRouteId, StoreTemplateId } from "../storefront-bundle/types";
 import type { CompiledBundleResult, RouteSource, StorefrontBundleSourceV1 } from "../storefront-compiler/compile";
 
 export const STOREFRONT_AI_CONTRACT_VERSION = 1 as const;
@@ -88,7 +88,7 @@ export interface RouteExpansion {
   assetRequests?: AssetRequest[];
 }
 
-export type ProviderOperation = "concept" | "repairConcept" | "judge" | "expand" | "repairRoute";
+export type ProviderOperation = "concept" | "repairConcept" | "judge" | "expand" | "repairRoute" | "patch";
 
 export interface StructuredModelRequest {
   operation: ProviderOperation;
@@ -198,11 +198,14 @@ export interface GenerationCheckpoint {
 
 export interface GenerationAudit {
   contractVersion: 1;
+  promptContractVersion: 1;
   generationId: string;
   shopId: string;
   rawPrompt: string;
   promptHash: string;
   contextFingerprint: string;
+  contextSnapshot: MerchantStorefrontContext;
+  routingResolution: StoreDesignResolution | null;
   providerCalls: Array<{ operation: ProviderOperation; provider: string; model: string; usage: ModelUsage }>;
   candidateCount: number;
   rejectedCandidates: Array<{ candidateId: string; reason: string }>;
@@ -248,7 +251,11 @@ export interface GenerateDependencies {
     provider: StorefrontAiProvider;
     signal?: AbortSignal;
   }): Promise<RouteRepair>;
-  installValidatedBundle(input: InstallValidatedBundleInput): Promise<{ versionId: string; installedDraftVersionId: string }>;
+  installValidatedBundle(input: InstallValidatedBundleInput): Promise<{
+    versionId: string;
+    installedDraftVersionId: string;
+    artifactHash: string;
+  }>;
   checkpoint(event: GenerationCheckpoint): Promise<void>;
   now(): number;
   randomId(): string;
@@ -261,6 +268,7 @@ export interface GenerateOriginalStorefrontInput {
   expectedDraftVersionId: string | null;
   actorId: string | null;
   trusted: boolean;
+  routingResolution?: StoreDesignResolution;
   signal?: AbortSignal;
   budget?: GenerationBudgetOverride;
 }

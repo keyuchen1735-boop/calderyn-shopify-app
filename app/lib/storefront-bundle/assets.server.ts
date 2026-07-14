@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { MAX_IMAGE_BYTES, SHOP_ASSETS_BUCKET, sniffImageMime } from "~/lib/assets/persist.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { assertStorefrontWriteAllowed, StorefrontReleaseError } from "./release.server";
+import type { AssetManifest } from "./types";
 
 const HASH_RE = /^[a-f0-9]{64}$/i;
 const EXTENSION: Record<string, string> = {
@@ -101,13 +102,75 @@ export async function persistStorefrontAssetBytes(input: PersistStorefrontAssetB
   return { assetKey, contentHash, mediaType, byteSize: input.bytes.byteLength };
 }
 
-export async function attachVerifiedStorefrontAsset(input: { shopId: string; bundleId: string; assetKey: string }): Promise<void> {
+export async function attachVerifiedStorefrontAsset(input: {
+  shopId: string;
+  bundleId: string;
+  logicalKey: string;
+  assetKey: string;
+}): Promise<void> {
   await assertStorefrontWriteAllowed(input.shopId);
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(input.logicalKey)) {
+    throw new StorefrontReleaseError("invalid_storefront_asset_logical_key", "Asset logical key is invalid", 422);
+  }
   await assetRpc("attach_storefront_bundle_asset", {
     p_shop_id: input.shopId,
     p_bundle_id: input.bundleId,
+    p_logical_key: input.logicalKey,
     p_asset_key: input.assetKey,
   });
+}
+
+const STOREFRONT_ASSET_URL_TTL_SECONDS = 60 * 60;
+
+export async function resolveVerifiedStorefrontAssetUrls(input: {
+  shopId: string;
+  bundleId: string;
+  manifest: AssetManifest;
+}): Promise<Readonly<Record<string, string>>> {
+  if (input.manifest.entries.length === 0) return {};
+  const manifest = new Map(input.manifest.entries.map((entry) => [entry.key, entry]));
+  const client = getSupabase();
+  const references = await client
+    .from("storefront_bundle_asset")
+    .select("logical_key, asset_key, status, storefront_asset_object!inner(content_hash, media_type, byte_size, state)")
+    .eq("shop_id", input.shopId)
+    .eq("bundle_id", input.bundleId)
+    .in("logical_key", [...manifest.keys()]);
+  if (references.error) {
+    throw new StorefrontReleaseError("storefront_asset_read_failed", references.error.message, 500, references.error);
+  }
+  const objectKeys = new Map<string, string>();
+  for (const row of references.data ?? []) {
+    const logicalKey = typeof row.logical_key === "string" ? row.logical_key : "";
+    const assetKey = typeof row.asset_key === "string" ? row.asset_key : "";
+    const metadataValue = row.storefront_asset_object;
+    const metadata = Array.isArray(metadataValue) ? metadataValue[0] : metadataValue;
+    const expected = manifest.get(logicalKey);
+    if (!expected || !assetKey || !metadata || typeof metadata !== "object") continue;
+    const record = metadata as Record<string, unknown>;
+    if ((row.status !== "verified" && row.status !== "locked") || record.state !== "verified" ||
+      record.content_hash !== expected.contentHash || record.media_type !== expected.mediaType ||
+      Number(record.byte_size) !== expected.byteSize) continue;
+    objectKeys.set(logicalKey, assetKey);
+  }
+  if (objectKeys.size !== manifest.size) {
+    throw new StorefrontReleaseError("storefront_asset_manifest_mismatch", "Custom storefront assets are incomplete", 500);
+  }
+  const signed = await client.storage.from(SHOP_ASSETS_BUCKET)
+    .createSignedUrls([...objectKeys.values()], STOREFRONT_ASSET_URL_TTL_SECONDS);
+  if (signed.error) {
+    throw new StorefrontReleaseError("storefront_asset_sign_failed", signed.error.message, 503, signed.error);
+  }
+  const signedByPath = new Map((signed.data ?? []).flatMap((row) =>
+    row?.path && row.signedUrl ? [[row.path, row.signedUrl] as const] : []));
+  const urls = Object.fromEntries([...objectKeys].flatMap(([logicalKey, assetKey]) => {
+    const url = signedByPath.get(assetKey);
+    return url ? [[logicalKey, url]] : [];
+  }));
+  if (Object.keys(urls).length !== manifest.size) {
+    throw new StorefrontReleaseError("storefront_asset_sign_failed", "Custom storefront asset signing was incomplete", 503);
+  }
+  return urls;
 }
 
 export async function beginStorefrontAssetGarbageCollection(input: { shopId: string; assetKey: string }): Promise<number | null> {

@@ -15,6 +15,7 @@ const migration = (name: string) =>
 const RELEASES = migration("20260713140000_storefront_bundle_releases.sql");
 const ASSETS = migration("20260713141000_storefront_bundle_assets.sql");
 const FUNCTIONS = migration("20260713142000_storefront_bundle_functions.sql");
+const CUSTOM_ASSET_KEYS = migration("20260713210000_storefront_custom_asset_logical_keys.sql");
 const SQL = `${RELEASES}\n${ASSETS}\n${FUNCTIONS}`;
 
 describe("storefront bundle persistence migrations", () => {
@@ -149,5 +150,14 @@ describe("storefront bundle persistence migrations", () => {
     expect(FUNCTIONS).toMatch(/storefront_asset_key/);
     expect(FUNCTIONS).toMatch(/storefront_asset_key_mismatch/);
     expect(FUNCTIONS).toMatch(/verify_storefront_asset_gc/);
+  });
+
+  it("maps compiler logical asset keys to exact verified custom objects", () => {
+    expect(CUSTOM_ASSET_KEYS).toMatch(/add column logical_key text/);
+    expect(CUSTOM_ASSET_KEYS).toMatch(/unique \(shop_id, bundle_id, logical_key\)/);
+    expect(CUSTOM_ASSET_KEYS).toMatch(/p_logical_key text/);
+    expect(CUSTOM_ASSET_KEYS).toMatch(/ref\.logical_key = entry ->> 'key'/);
+    expect(CUSTOM_ASSET_KEYS).toMatch(/asset\.asset_key = ref\.asset_key/);
+    expect(CUSTOM_ASSET_KEYS).toMatch(/asset\.content_hash = entry ->> 'contenthash'/);
   });
 });

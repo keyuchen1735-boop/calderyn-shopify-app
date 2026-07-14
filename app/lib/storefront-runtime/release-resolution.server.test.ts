@@ -90,6 +90,31 @@ describe("storefront release resolution", () => {
     expect(catalog.getProduct).toHaveBeenCalledWith(SHOP, "missing");
   });
 
+  it("loads only verified logical custom asset URLs into presentation data", async () => {
+    const sourceBundle = structuredClone(VALID_BUNDLE_SOURCE);
+    sourceBundle.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
+    const bundle = compileBundle(sourceBundle).bundle;
+    const live = {
+      ...version("live-assets", 1, "2026-07-02T00:00:00Z"),
+      artifact: { sourceKind: "custom" as const, bundle },
+    };
+    const assetUrlLoader = vi.fn(async () => ({ hero: "https://assets.example.test/signed-hero" }));
+    const result = await resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "home" },
+      reader: reader(live, []),
+      bundleReadEnabled: true,
+      assetUrlLoader,
+      dataDependencies: {
+        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+      },
+    });
+
+    expect(assetUrlLoader).toHaveBeenCalledWith({ shopId: SHOP, bundleId: "live-assets", manifest: bundle.assets });
+    expect(result?.data.storefrontAssetUrls).toEqual({ hero: "https://assets.example.test/signed-hero" });
+  });
+
   it("memoizes the immutable release by Request so parent and child consume one pointer read", async () => {
     const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
     const live = {

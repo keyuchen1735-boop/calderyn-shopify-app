@@ -147,11 +147,13 @@ function assetUrlsForBundle(
 ): ReadonlyMap<string, string> {
   const urls = new Map<string, string>();
   for (const asset of bundle.assets.entries) {
-    if (asset.mediaType !== "image/webp") continue;
     if (bundle.source.kind === "recipe") {
-      urls.set(asset.key, `/storefront-recipes/${bundle.source.templateId}/${asset.key}.webp`);
+      if (asset.mediaType === "image/webp") {
+        urls.set(asset.key, `/storefront-recipes/${bundle.source.templateId}/${asset.key}.webp`);
+      }
       continue;
     }
+    if (!new Set(["image/avif", "image/webp", "image/png", "image/jpeg"]).has(asset.mediaType)) continue;
     const resolved = safeAssetUrl(customAssetUrls?.[asset.key]);
     if (resolved) urls.set(asset.key, resolved);
   }
@@ -435,7 +437,7 @@ export function isRuntime1RenderData(value: unknown): value is {
 
 /** Render the immutable shell and selected route from the same resolved bundle object. */
 export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, checkoutContent, customAssetUrls }: RenderStorefrontSurfaceInput): ReactElement {
-  const assetUrls = assetUrlsForBundle(bundle, customAssetUrls);
+  const assetUrls = assetUrlsForBundle(bundle, customAssetUrls ?? data.storefrontAssetUrls);
   let routeResult: ReactElement;
   if (routeId === "checkout") {
     routeResult = (

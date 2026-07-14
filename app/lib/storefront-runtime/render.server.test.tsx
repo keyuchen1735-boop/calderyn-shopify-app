@@ -165,6 +165,22 @@ describe("compiled-node server renderer", () => {
     expect(unsafe).not.toContain("ghost.webp");
   });
 
+  it("uses server-resolved custom asset URLs carried by runtime presentation data", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/png", byteSize: 42 }];
+    source.routes.home.html = `<main><img data-cd-asset="hero" alt="Merchant campaign" width="1200" height="800"></main>`;
+    const bundle = compileBundle(source).bundle;
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle,
+      routeId: "home",
+      data: { ...data, storefrontAssetUrls: { hero: "https://assets.example.test/signed-hero" } },
+      nonce: "asset-nonce",
+      mode: "public",
+    }));
+
+    expect(html).toContain('src="https://assets.example.test/signed-hero"');
+  });
+
   it("renders shell and route artifacts from one immutable bundle with identical compiled keys", () => {
     const compiled = compileBundle(VALID_BUNDLE_SOURCE).bundle;
     const bundle: StorefrontBundleV1 = {

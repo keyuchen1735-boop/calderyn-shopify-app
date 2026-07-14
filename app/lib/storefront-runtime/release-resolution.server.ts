@@ -1,4 +1,5 @@
 import type { DataRequirement, StorefrontBundleV1, StorefrontRouteId } from "~/lib/storefront-bundle/types";
+import { resolveVerifiedStorefrontAssetUrls } from "~/lib/storefront-bundle/assets.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
 import { isStorefrontBundleReadEnabled } from "./csp.server";
@@ -280,6 +281,12 @@ export interface Runtime1RouteData {
   data: PublicPresentationData;
 }
 
+export type StorefrontAssetUrlLoader = (input: {
+  shopId: string;
+  bundleId: string;
+  manifest: StorefrontBundleV1["assets"];
+}) => Promise<Readonly<Record<string, string>>>;
+
 function routeRequirements(bundle: StorefrontBundleV1, route: PublicRouteContext): DataRequirement[] {
   const routeId = routeIdForPublicContext(route);
   const artifact = bundle.routes[routeId];
@@ -302,6 +309,7 @@ export async function resolveRuntime1Route(input: {
   bundleReadEnabled?: boolean;
   reader?: StorefrontReleaseReader;
   dataDependencies?: PublicDataDependencies;
+  assetUrlLoader?: StorefrontAssetUrlLoader;
 }): Promise<Runtime1RouteData | null> {
   if (!(input.bundleReadEnabled ?? isStorefrontBundleReadEnabled())) return null;
   if (!isUuid(input.shopId)) return null;
@@ -315,24 +323,34 @@ export async function resolveRuntime1VersionRoute(input: {
   route: PublicRouteContext;
   version: StorefrontVersionRecord;
   dataDependencies?: PublicDataDependencies;
+  assetUrlLoader?: StorefrontAssetUrlLoader;
 }): Promise<Runtime1RouteData | null> {
   const bundle = input.version.runtimeVersion === 1 && input.version.artifact.sourceKind !== "legacy"
     ? input.version.artifact.bundle
     : null;
   if (!bundle) return null;
   const routeId = routeIdForPublicContext(input.route);
-  const data = await resolvePublicData({
-    shopId: input.shopId,
-    route: input.route,
-    requiredData: routeRequirements(bundle, input.route),
-  }, input.dataDependencies);
+  const [data, storefrontAssetUrls] = await Promise.all([
+    resolvePublicData({
+      shopId: input.shopId,
+      route: input.route,
+      requiredData: routeRequirements(bundle, input.route),
+    }, input.dataDependencies),
+    bundle.source.kind === "custom" && bundle.assets.entries.length > 0
+      ? (input.assetUrlLoader ?? resolveVerifiedStorefrontAssetUrls)({
+          shopId: input.shopId,
+          bundleId: input.version.id,
+          manifest: bundle.assets,
+        })
+      : Promise.resolve({}),
+  ]);
   return {
     runtime: 1,
     bundleId: input.version.id,
     artifactHash: input.version.artifactHash,
     routeId,
     bundle,
-    data,
+    data: Object.keys(storefrontAssetUrls).length > 0 ? { ...data, storefrontAssetUrls } : data,
   };
 }
 

@@ -42,9 +42,13 @@ describe("storefront bundle asset repository", () => {
     const assetKey = storefrontAssetKey(SHOP, "a".repeat(64), "image/png");
     await expect(recordVerifiedStorefrontAsset({ shopId: SHOP, contentHash: "a".repeat(64), mediaType: "image/png", byteSize: 123 }))
       .resolves.toBe(assetKey);
-    await attachVerifiedStorefrontAsset({ shopId: SHOP, bundleId: BUNDLE, assetKey });
+    await attachVerifiedStorefrontAsset({ shopId: SHOP, bundleId: BUNDLE, logicalKey: "hero", assetKey });
     expect(rpc).toHaveBeenNthCalledWith(1, "record_storefront_verified_asset", expect.objectContaining({ p_asset_key: assetKey, p_byte_size: 123 }));
-    expect(rpc).toHaveBeenNthCalledWith(2, "attach_storefront_bundle_asset", expect.objectContaining({ p_bundle_id: BUNDLE, p_asset_key: assetKey }));
+    expect(rpc).toHaveBeenNthCalledWith(2, "attach_storefront_bundle_asset", expect.objectContaining({
+      p_bundle_id: BUNDLE,
+      p_logical_key: "hero",
+      p_asset_key: assetKey,
+    }));
   });
 
   it("rejects any caller-supplied key that disagrees with the derived immutable key", async () => {

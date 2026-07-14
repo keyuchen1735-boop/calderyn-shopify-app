@@ -68,6 +68,7 @@ export interface PublicCart {
 
 export interface PublicPresentationData {
   store: { name: string; logo: string | null };
+  storefrontAssetUrls?: Readonly<Record<string, string>>;
   policyLinks: Array<{ id: string; title: string; href: string }>;
   product: PublicProduct | null;
   collection: PublicCollection | null;

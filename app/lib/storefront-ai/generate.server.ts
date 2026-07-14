@@ -31,6 +31,7 @@ import { expandWinningConcept, expandedBundleSource } from "./expand.server";
 import { rankConcepts } from "./judge.server";
 import { createAnthropicStructuredProvider } from "./provider.server";
 import { proveAndRepairBundle, repairRouteWithProvider } from "./proof.server";
+import { STOREFRONT_AI_PROMPT_VERSION } from "./prompts";
 
 const DEFAULT_BUDGET: GenerationBudget = {
   maxCandidates: 3,
@@ -66,7 +67,10 @@ class BudgetMeter {
   }
 
   check(): void {
-    if (this.signal?.aborted) throw new DOMException("Generation cancelled", "AbortError");
+    if (this.signal?.aborted) {
+      if (this.signal.reason instanceof Error) throw this.signal.reason;
+      throw new DOMException("Generation cancelled", "AbortError");
+    }
     this.usage.wallMs = Math.max(0, this.now() - this.startedAt);
     if (this.usage.wallMs > this.limits.maxWallMs) throw new GenerationBudgetError("maxWallMs");
   }
@@ -137,9 +141,21 @@ async function defaultProduceAsset(input: Parameters<GenerateDependencies["produ
   };
 }
 
-async function defaultInstallValidatedBundle(input: InstallValidatedBundleInput): Promise<{ versionId: string; installedDraftVersionId: string }> {
-  const artifact = input.bundle as unknown as Record<string, unknown>;
+async function defaultInstallValidatedBundle(input: InstallValidatedBundleInput): Promise<{
+  versionId: string;
+  installedDraftVersionId: string;
+  artifactHash: string;
+}> {
+  const artifact = { sourceKind: "custom", bundle: input.bundle } as unknown as Record<string, unknown>;
   const assetManifest = input.bundle.assets as unknown as Record<string, unknown>;
+  const databaseArtifactHash = await hashStorefrontArtifact({
+    schemaVersion: input.bundle.schemaVersion,
+    runtimeVersion: input.bundle.runtimeVersion,
+    validationProfileVersion: input.bundle.validationProfileVersion,
+    artifact,
+    assetManifest,
+  });
+  input.audit.finalArtifactHash = databaseArtifactHash;
   const versionId = await createStorefrontBundleVersion({
     shopId: input.shopId,
     sourceKind: "custom",
@@ -154,15 +170,13 @@ async function defaultInstallValidatedBundle(input: InstallValidatedBundleInput)
     resolution: { kind: "custom_compiler", audit: input.audit },
   });
   for (const asset of input.persistedAssets) {
-    await attachVerifiedStorefrontAsset({ shopId: input.shopId, bundleId: versionId, assetKey: asset.assetKey });
+    await attachVerifiedStorefrontAsset({
+      shopId: input.shopId,
+      bundleId: versionId,
+      logicalKey: asset.logicalKey,
+      assetKey: asset.assetKey,
+    });
   }
-  const databaseArtifactHash = await hashStorefrontArtifact({
-    schemaVersion: input.bundle.schemaVersion,
-    runtimeVersion: input.bundle.runtimeVersion,
-    validationProfileVersion: input.bundle.validationProfileVersion,
-    artifact,
-    assetManifest,
-  });
   await validateStorefrontBundleVersion({
     shopId: input.shopId,
     versionId,
@@ -175,7 +189,7 @@ async function defaultInstallValidatedBundle(input: InstallValidatedBundleInput)
     expectedDraftVersionId: input.expectedDraftVersionId,
     actorId: input.actorId,
   });
-  return { versionId, installedDraftVersionId };
+  return { versionId, installedDraftVersionId, artifactHash: databaseArtifactHash };
 }
 
 export function createDefaultGenerateDependencies(): GenerateDependencies {
@@ -229,7 +243,15 @@ export async function generateOriginalStorefront(
 
   const generationId = deps.randomId();
   const startedAt = deps.now();
-  const meter = new BudgetMeter(input.budget, startedAt, deps.now, input.signal);
+  const pipelineController = new AbortController();
+  const meter = new BudgetMeter(input.budget, startedAt, deps.now, pipelineController.signal);
+  const forwardAbort = () => pipelineController.abort(input.signal?.reason ?? new DOMException("Generation cancelled", "AbortError"));
+  if (input.signal?.aborted) forwardAbort();
+  else input.signal?.addEventListener("abort", forwardAbort, { once: true });
+  const wallTimer = setTimeout(() => {
+    pipelineController.abort(new GenerationBudgetError("maxWallMs"));
+  }, meter.limits.maxWallMs);
+  const pipelineSignal = pipelineController.signal;
   const providerCalls: GenerationAudit["providerCalls"] = [];
   const rejectedCandidates: GenerationAudit["rejectedCandidates"] = [];
   const candidateScores: GenerationAudit["candidateScores"] = [];
@@ -243,6 +265,7 @@ export async function generateOriginalStorefront(
     },
   };
   let contextFingerprint = "";
+  let contextSnapshot: GenerationAudit["contextSnapshot"] | undefined;
   let promptHash = `sha256:${createHash("sha256").update(input.prompt.trim()).digest("hex")}`;
 
   const checkpoint = async (stage: GenerationCheckpoint["stage"], detail?: Record<string, unknown>) => {
@@ -251,11 +274,14 @@ export async function generateOriginalStorefront(
 
   const partialAudit = (message?: string): Partial<GenerationAudit> => ({
     contractVersion: 1,
+    promptContractVersion: STOREFRONT_AI_PROMPT_VERSION,
     generationId,
     shopId: input.shopId,
     rawPrompt: input.prompt,
     promptHash,
     contextFingerprint,
+    ...(contextSnapshot ? { contextSnapshot } : {}),
+    routingResolution: input.routingResolution ?? null,
     providerCalls,
     candidateCount: meter.usage.candidates,
     rejectedCandidates: message ? [...rejectedCandidates, { candidateId: "pipeline", reason: message }] : rejectedCandidates,
@@ -269,6 +295,7 @@ export async function generateOriginalStorefront(
     await deps.preflight({ shopId: input.shopId, prompt: input.prompt, trusted: input.trusted });
     meter.check();
     const context = await deps.assembleContext({ shopId: input.shopId, prompt: input.prompt, referenceImages: input.referenceImages });
+    contextSnapshot = context;
     contextFingerprint = context.fingerprint;
     promptHash = context.promptHash;
     await checkpoint("context", { fingerprint: context.fingerprint });
@@ -278,7 +305,7 @@ export async function generateOriginalStorefront(
       context,
       provider: meteredProvider,
       compileConcept: deps.compileConcept,
-      signal: input.signal,
+      signal: pipelineSignal,
     });
     meter.repair(explored.repairs);
     rejectedCandidates.push(...explored.rejected.map((item) => ({ candidateId: item.candidateId, reason: item.reason })));
@@ -290,7 +317,7 @@ export async function generateOriginalStorefront(
       context,
       provider: meteredProvider,
       render: deps.renderConcept,
-      signal: input.signal,
+      signal: pipelineSignal,
     });
     for (const judgment of ranked.accepted) candidateScores.push({
       candidateId: judgment.candidate.candidate.candidateId,
@@ -313,14 +340,14 @@ export async function generateOriginalStorefront(
     for (const judgment of ranked.accepted) {
       const winner = judgment.candidate;
       try {
-        const expansion = await expandWinningConcept({ winner, context, provider: meteredProvider, signal: input.signal });
+        const expansion = await expandWinningConcept({ winner, context, provider: meteredProvider, signal: pipelineSignal });
         await checkpoint("expanding", { candidateId: winner.candidate.candidateId });
         const requests = mergeAssetRequests(winner.candidate.assetRequests, expansion.assetRequests ?? []);
         const assets: MaterializedAssetResult = await materializeOwnedAssets({
           shopId: input.shopId,
           requests,
-          signal: input.signal,
-          produce: (request) => deps.produceAsset({ shopId: input.shopId, request, context, signal: input.signal }),
+          signal: pipelineSignal,
+          produce: (request) => deps.produceAsset({ shopId: input.shopId, request, context, signal: pipelineSignal }),
           persist: deps.persistAsset,
           onImage: () => meter.image(),
         });
@@ -329,9 +356,9 @@ export async function generateOriginalStorefront(
         const proven = await proveAndRepairBundle({
           source,
           compile: deps.compileBundle,
-          proof: (compiled) => deps.browserProof({ bundle: compiled.bundle, context, signal: input.signal }),
+          proof: (compiled) => deps.browserProof({ bundle: compiled.bundle, context, signal: pipelineSignal }),
           repair: ({ routeId, regionId, diagnostic, source: current }) => deps.repairRoute({
-            routeId, regionId, diagnostic, source: current, context, provider: meteredProvider, signal: input.signal,
+            routeId, regionId, diagnostic, source: current, context, provider: meteredProvider, signal: pipelineSignal,
           }),
           maxRepairs: Math.min(2, Math.max(0, meter.limits.maxRepairs - meter.usage.repairs)),
           onProof: (report) => meter.browser(report.browserMs),
@@ -341,11 +368,14 @@ export async function generateOriginalStorefront(
         const artifactHash = `sha256:${proven.compiled.hash}`;
         const audit: GenerationAudit = {
           contractVersion: 1,
+          promptContractVersion: STOREFRONT_AI_PROMPT_VERSION,
           generationId,
           shopId: input.shopId,
           rawPrompt: input.prompt,
           promptHash,
           contextFingerprint,
+          contextSnapshot: context,
+          routingResolution: input.routingResolution ?? null,
           providerCalls,
           candidateCount: meter.usage.candidates,
           rejectedCandidates,
@@ -374,16 +404,26 @@ export async function generateOriginalStorefront(
           audit,
         });
         audit.installedVersionId = installed.versionId;
-        await checkpoint("installed", { versionId: installed.versionId, artifactHash });
-        return { status: "installed", versionId: installed.versionId, bundle: proven.compiled.bundle, artifactHash, audit };
+        audit.finalArtifactHash = installed.artifactHash;
+        await checkpoint("installed", { versionId: installed.versionId, artifactHash: installed.artifactHash });
+        return {
+          status: "installed",
+          versionId: installed.versionId,
+          bundle: proven.compiled.bundle,
+          artifactHash: installed.artifactHash,
+          audit,
+        };
       } catch (error) {
-        if (isAbort(error, input.signal) || error instanceof GenerationBudgetError) throw error;
+        if (isAbort(error, pipelineSignal) || error instanceof GenerationBudgetError) throw error;
         rejectedCandidates.push({ candidateId: winner.candidate.candidateId, reason: error instanceof Error ? error.message : String(error) });
       }
     }
     throw new Error("Every valid concept failed route expansion, assets, compiler, or browser proof");
   } catch (error) {
-    if (isAbort(error, input.signal)) {
+    const budgetError = error instanceof GenerationBudgetError
+      ? error
+      : pipelineSignal.reason instanceof GenerationBudgetError ? pipelineSignal.reason : null;
+    if (isAbort(error, pipelineSignal) && !budgetError) {
       await deps.checkpoint({ generationId, stage: "cancelled", at: deps.now(), usage: { ...meter.usage } }).catch(() => undefined);
       return { status: "cancelled", code: "generation_cancelled", audit: partialAudit() };
     }
@@ -391,9 +431,12 @@ export async function generateOriginalStorefront(
     await deps.checkpoint({ generationId, stage: "failed", at: deps.now(), usage: { ...meter.usage }, detail: { message } }).catch(() => undefined);
     return {
       status: "failed",
-      code: error instanceof GenerationBudgetError ? "generation_budget_exceeded" : "generation_failed",
+      code: budgetError ? "generation_budget_exceeded" : "generation_failed",
       message,
       audit: partialAudit(message),
     };
+  } finally {
+    clearTimeout(wallTimer);
+    input.signal?.removeEventListener("abort", forwardAbort);
   }
 }

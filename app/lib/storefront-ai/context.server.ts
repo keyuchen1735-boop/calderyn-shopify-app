@@ -34,6 +34,17 @@ export interface StorefrontContextSource {
   listReusableAssets(shopId: string, limit: number): Promise<MerchantStorefrontContext["reusableAssets"]>;
 }
 
+export interface StorefrontContextReferences {
+  products: Record<string, { id: string; handle: string }>;
+  collections: Record<string, { id: string; handle: string }>;
+  assets: Record<string, string>;
+}
+
+export interface StorefrontContextAssembly {
+  context: MerchantStorefrontContext;
+  references: StorefrontContextReferences;
+}
+
 function cleanText(value: unknown, max = 240): string {
   return String(value ?? "")
     .normalize("NFKC")
@@ -47,6 +58,10 @@ function stableUnique(values: readonly string[], max: number): string[] {
   return [...new Set(values.map((value) => cleanText(value, 120)).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b))
     .slice(0, max);
+}
+
+function opaqueRef(prefix: string, index: number): string {
+  return `${prefix}-${String(index + 1).padStart(3, "0")}`;
 }
 
 function safeOwnedKey(value: unknown): string | null {
@@ -198,11 +213,11 @@ const databaseContextSource: StorefrontContextSource = {
   },
 };
 
-export async function assembleStorefrontContext(
+export async function assembleStorefrontContextWithReferences(
   input: ContextAssemblyInput,
   source: StorefrontContextSource = databaseContextSource,
   overrides: Partial<ContextLimits> = {},
-): Promise<MerchantStorefrontContext> {
+): Promise<StorefrontContextAssembly> {
   const limits = { ...DEFAULT_LIMITS, ...overrides };
   const prompt = cleanText(input.prompt, limits.maxPromptChars);
   if (!prompt) throw new Error("A custom storefront prompt is required");
@@ -212,57 +227,100 @@ export async function assembleStorefrontContext(
     source.listProducts(input.shopId, Math.max(limits.maxProducts * 4, limits.maxProducts)),
     source.listReusableAssets(input.shopId, limits.maxReusableAssets),
   ]);
-  const collections = rawCollections.slice()
+  const references: StorefrontContextReferences = { products: {}, collections: {}, assets: {} };
+  const selectedCollections = rawCollections.slice()
     .sort((a, b) => a.id.localeCompare(b.id))
-    .slice(0, limits.maxCollections)
-    .map((item) => ({ id: cleanText(item.id, 120), handle: cleanText(item.handle, 160), title: cleanText(item.title, 240), productCount: finiteNonNegative(item.productCount) }));
-  const products = selectProductsWithCollectionCoverage(rawProducts, collections, limits.maxProducts).map((item) => ({
-    id: cleanText(item.id, 120),
+    .slice(0, limits.maxCollections);
+  const collectionRefs = new Map(selectedCollections.map((item, index) => [item.id, opaqueRef("collection", index)]));
+  const collections = selectedCollections.map((item, index) => ({
+    id: opaqueRef("collection", index),
     handle: cleanText(item.handle, 160),
     title: cleanText(item.title, 240),
-    productType: item.productType == null ? null : cleanText(item.productType, 120),
-    tags: stableUnique(item.tags, limits.maxTagsPerProduct),
-    optionNames: stableUnique(item.optionNames, limits.maxOptionsPerProduct),
-    priceMin: finiteNonNegative(item.priceMin),
-    priceMax: Math.max(finiteNonNegative(item.priceMin), finiteNonNegative(item.priceMax)),
-    currency: cleanText(item.currency, 8).toUpperCase() || "USD",
-    availability: item.availability,
-    collectionIds: stableUnique(item.collectionIds ?? [], limits.maxCollections),
-    images: item.images.slice(0, limits.maxImagesPerProduct).flatMap((image) => {
-      const assetKey = safeOwnedKey(image.assetKey);
-      if (!assetKey) return [];
-      return [{ assetKey, aspectRatio: image.aspectRatio != null && Number.isFinite(image.aspectRatio) ? image.aspectRatio : null }];
-    }),
+    productCount: finiteNonNegative(item.productCount),
   }));
+  for (const [index, item] of selectedCollections.entries()) {
+    references.collections[opaqueRef("collection", index)] = { id: item.id, handle: item.handle };
+  }
+  let imageIndex = 0;
+  const products = selectProductsWithCollectionCoverage(rawProducts, selectedCollections, limits.maxProducts).map((item, index) => {
+    const productRef = opaqueRef("product", index);
+    references.products[productRef] = { id: item.id, handle: item.handle };
+    return {
+      id: productRef,
+      handle: cleanText(item.handle, 160),
+      title: cleanText(item.title, 240),
+      productType: item.productType == null ? null : cleanText(item.productType, 120),
+      tags: stableUnique(item.tags, limits.maxTagsPerProduct),
+      optionNames: stableUnique(item.optionNames, limits.maxOptionsPerProduct),
+      priceMin: finiteNonNegative(item.priceMin),
+      priceMax: Math.max(finiteNonNegative(item.priceMin), finiteNonNegative(item.priceMax)),
+      currency: cleanText(item.currency, 8).toUpperCase() || "USD",
+      availability: item.availability,
+      collectionIds: stableUnique(item.collectionIds ?? [], limits.maxCollections)
+        .flatMap((id) => collectionRefs.get(id) ?? []),
+      images: item.images.slice(0, limits.maxImagesPerProduct).flatMap((image) => {
+        const assetKey = safeOwnedKey(image.assetKey);
+        if (!assetKey) return [];
+        const ref = opaqueRef("catalog-image", imageIndex);
+        imageIndex += 1;
+        references.assets[ref] = assetKey;
+        return [{
+          assetKey: ref,
+          aspectRatio: image.aspectRatio != null && Number.isFinite(image.aspectRatio) ? image.aspectRatio : null,
+        }];
+      }),
+    };
+  });
   const storeLogo = safeOwnedKey(rawStore.logoAssetKey);
+  const brandKeys = stableUnique([
+    ...(storeLogo ? [storeLogo] : []),
+    ...rawStore.publicBrandAssetKeys.flatMap((key) => safeOwnedKey(key) ?? []),
+  ], 16);
+  const brandRefs = new Map(brandKeys.map((key, index) => [key, opaqueRef("brand-asset", index)]));
+  for (const [key, ref] of brandRefs) references.assets[ref] = key;
   const contextWithoutFingerprint: Omit<MerchantStorefrontContext, "fingerprint"> = {
     version: 1,
     prompt,
     promptHash: `sha256:${createHash("sha256").update(prompt).digest("hex")}`,
-    referenceImages: (input.referenceImages ?? []).slice(0, 4).flatMap((image) => {
+    referenceImages: (input.referenceImages ?? []).slice(0, 4).flatMap((image, index) => {
       const assetKey = safeOwnedKey(image.assetKey);
-      return assetKey ? [{ assetKey, mediaType: image.mediaType }] : [];
+      if (!assetKey) return [];
+      const ref = opaqueRef("reference-image", index);
+      references.assets[ref] = assetKey;
+      return [{ assetKey: ref, mediaType: image.mediaType }];
     }),
     store: {
       name: cleanText(rawStore.name, 120) || "Store",
-      logoAssetKey: storeLogo,
-      publicBrandAssetKeys: stableUnique(rawStore.publicBrandAssetKeys.flatMap((key) => safeOwnedKey(key) ?? []), 16),
+      logoAssetKey: storeLogo ? brandRefs.get(storeLogo) ?? null : null,
+      publicBrandAssetKeys: brandKeys.map((key) => brandRefs.get(key)!),
     },
     collections,
     products,
-    reusableAssets: rawAssets.slice(0, limits.maxReusableAssets).flatMap((asset) => {
+    reusableAssets: rawAssets.slice(0, limits.maxReusableAssets).flatMap((asset, index) => {
       const assetKey = safeOwnedKey(asset.assetKey);
-      return assetKey ? [{
-        assetKey,
+      if (!assetKey) return [];
+      const ref = opaqueRef("reusable-asset", index);
+      references.assets[ref] = assetKey;
+      return [{
+        assetKey: ref,
         mediaType: cleanText(asset.mediaType, 80),
         width: asset.width == null ? null : finiteNonNegative(asset.width),
         height: asset.height == null ? null : finiteNonNegative(asset.height),
-      }] : [];
+      }];
     }),
     recipeNoveltySignatures: recipeSignatures(),
   };
-  return {
+  const context = {
     ...contextWithoutFingerprint,
     fingerprint: `sha256:${createHash("sha256").update(JSON.stringify(stableValue(contextWithoutFingerprint))).digest("hex")}`,
   };
+  return { context, references };
+}
+
+export async function assembleStorefrontContext(
+  input: ContextAssemblyInput,
+  source: StorefrontContextSource = databaseContextSource,
+  overrides: Partial<ContextLimits> = {},
+): Promise<MerchantStorefrontContext> {
+  return (await assembleStorefrontContextWithReferences(input, source, overrides)).context;
 }

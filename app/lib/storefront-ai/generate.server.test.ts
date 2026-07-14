@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { compileBundle } from "../storefront-compiler/compile";
 import { createConcept, createContext, createExpansion, PASSING_JUDGE_SCORES, TEST_SHOP_ID, TEST_VERSION_ID } from "./__fixtures__/deterministic";
-import type { GenerateDependencies, GenerationCheckpoint, StorefrontAiProvider } from "./contracts";
+import type { GenerateDependencies, GenerationCheckpoint, StorefrontAiProvider, StructuredModelResponse } from "./contracts";
 import { generateOriginalStorefront } from "./generate.server";
 
 function passingDependencies(overrides: Partial<GenerateDependencies> = {}): GenerateDependencies {
@@ -28,7 +28,11 @@ function passingDependencies(overrides: Partial<GenerateDependencies> = {}): Gen
     compileBundle,
     browserProof: vi.fn(async () => ({ ok: true, diagnostics: [], screenshots: ["desktop.webp", "mobile.webp"], browserMs: 12 })),
     repairRoute: vi.fn(),
-    installValidatedBundle: vi.fn(async () => ({ versionId: TEST_VERSION_ID, installedDraftVersionId: TEST_VERSION_ID })),
+    installValidatedBundle: vi.fn(async () => ({
+      versionId: TEST_VERSION_ID,
+      installedDraftVersionId: TEST_VERSION_ID,
+      artifactHash: `sha256:${"f".repeat(64)}`,
+    })),
     checkpoint: vi.fn(async (_event: GenerationCheckpoint) => undefined),
     now: (() => { let value = 1_000; return () => value += 10; })(),
     randomId: () => "gen-deterministic",
@@ -54,10 +58,31 @@ describe("generateOriginalStorefront", () => {
   });
 
   it("compiles, proves, audits, and CAS-installs one complete winning bundle", async () => {
-    const installValidatedBundle = vi.fn(async (input) => ({ versionId: TEST_VERSION_ID, installedDraftVersionId: TEST_VERSION_ID, input }));
+    const installValidatedBundle = vi.fn(async (input) => ({
+      versionId: TEST_VERSION_ID,
+      installedDraftVersionId: TEST_VERSION_ID,
+      artifactHash: `sha256:${"f".repeat(64)}`,
+      input,
+    }));
     const checkpoint = vi.fn(async (_event: GenerationCheckpoint) => undefined);
     const deps = passingDependencies({ installValidatedBundle, checkpoint });
-    const result = await generateOriginalStorefront({ shopId: TEST_SHOP_ID, prompt: "make it original", expectedDraftVersionId: null, actorId: "actor-1", trusted: true }, deps);
+    const routingResolution = {
+      kind: "custom" as const,
+      reason: "explicit_custom" as const,
+      routingVersion: 1,
+      registryVersion: 1,
+      catalogFingerprint: "sha256:test-context",
+      breakdown: [],
+      reasons: ["Original design requested"],
+    };
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "make it original",
+      expectedDraftVersionId: null,
+      actorId: "actor-1",
+      trusted: true,
+      routingResolution,
+    }, deps);
 
     expect(result.status).toBe("installed");
     if (result.status !== "installed") throw new Error("expected install");
@@ -68,10 +93,13 @@ describe("generateOriginalStorefront", () => {
       shopId: TEST_SHOP_ID,
       expectedDraftVersionId: null,
       bundle: result.bundle,
-      artifactHash: result.artifactHash,
+      artifactHash: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
       audit: expect.objectContaining({
         generationId: "gen-deterministic",
         contextFingerprint: "sha256:test-context",
+        contextSnapshot: createContext(),
+        promptContractVersion: 1,
+        routingResolution,
         candidateCount: 3,
         routeValidation: expect.objectContaining({ ok: true }),
         finalArtifactHash: result.artifactHash,
@@ -133,6 +161,29 @@ describe("generateOriginalStorefront", () => {
     }, budgetDeps);
     expect(budgetResult).toMatchObject({ status: "failed", code: "generation_budget_exceeded" });
     expect(budgetDeps.installValidatedBundle).not.toHaveBeenCalled();
+  });
+
+  it("actively aborts a hung provider call at the wall-time budget", async () => {
+    const deps = passingDependencies({ now: () => Date.now() });
+    deps.provider.complete = vi.fn((request) => new Promise<StructuredModelResponse>((_resolve, reject) => {
+      request.signal?.addEventListener("abort", () => reject(request.signal?.reason), { once: true });
+    }));
+    const generation = generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "original",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+      budget: { maxWallMs: 5 },
+    }, deps);
+    const result = await Promise.race([
+      generation,
+      new Promise<"test_timeout">((resolve) => setTimeout(() => resolve("test_timeout"), 100)),
+    ]);
+
+    expect(result).not.toBe("test_timeout");
+    expect(result).toMatchObject({ status: "failed", code: "generation_budget_exceeded" });
+    expect(deps.installValidatedBundle).not.toHaveBeenCalled();
   });
 
   it("has no import or call path to legacy generateStore", () => {
