@@ -47,7 +47,7 @@ export interface RecipeConfig<TTemplateId extends StoreTemplateId = StoreTemplat
   assets: AssetManifest;
 }
 
-export interface DefinedRecipe<TTemplateId extends StoreTemplateId> extends CompiledBundleResult {
+export interface DefinedRecipe<TTemplateId extends StoreTemplateId = StoreTemplateId> extends CompiledBundleResult {
   config: RecipeConfig<TTemplateId>;
 }
 
