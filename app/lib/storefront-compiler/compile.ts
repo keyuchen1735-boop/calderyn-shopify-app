@@ -104,7 +104,7 @@ function deriveRouteContract(
   if (rootScope === "cart") requireData({ kind: "cart" });
   for (const slot of html.trustedSlots) {
     if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") requireData({ kind: "cart" });
-    else requireData({ kind: "currentProduct" });
+    else if (namespace === "product" && !slot.scopeId) requireData({ kind: "currentProduct" });
   }
 
   const capabilities = new Set<RuntimeCapability>();

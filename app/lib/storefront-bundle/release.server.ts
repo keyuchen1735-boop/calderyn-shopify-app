@@ -2,6 +2,7 @@ import { hasRunningExperiment } from "~/lib/experiments/store-experiment.server"
 import { isUuid } from "~/lib/ids";
 import { getSupabase } from "~/lib/supabase.server";
 import { editAuditRpcParams, type StorefrontEditAuditInput } from "./edit-audit.server";
+import { validateCompiledBundle } from "~/lib/storefront-compiler/validate";
 
 export type StorefrontBundleSourceKind = "legacy" | "recipe" | "custom";
 export type StorefrontBundleStatus = "candidate" | "validated" | "failed";
@@ -241,8 +242,44 @@ export interface PublishStorefrontReleaseInput {
   actorId?: string | null;
 }
 
+async function assertDraftPassesCurrentValidation(shopId: string, versionId: string): Promise<void> {
+  const result = await getSupabase()
+    .from("storefront_bundle_version")
+    .select("runtime_version, status, bundle_json")
+    .eq("shop_id", shopId)
+    .eq("id", versionId)
+    .maybeSingle();
+  if (result.error) {
+    throw new StorefrontReleaseError(
+      "storefront_bundle_revalidation_failed",
+      "The storefront draft could not be checked before publishing.",
+      500,
+      result.error,
+    );
+  }
+  const row = result.data as {
+    runtime_version?: unknown;
+    status?: unknown;
+    bundle_json?: { bundle?: unknown } | null;
+  } | null;
+  if (!row) {
+    throw new StorefrontReleaseError("storefront_publish_conflict", "The storefront draft no longer exists.", 409);
+  }
+  if (row.runtime_version !== 1) return;
+  const report = validateCompiledBundle(row.bundle_json?.bundle);
+  if (row.status !== "validated" || !report.ok) {
+    throw new StorefrontReleaseError(
+      "storefront_bundle_revalidation_failed",
+      "This storefront draft was created with an older validation profile. Rebuild it before publishing.",
+      422,
+      report.diagnostics,
+    );
+  }
+}
+
 export async function publishStorefrontRelease(input: PublishStorefrontReleaseInput): Promise<string> {
   await assertStorefrontWriteAllowed(input.shopId);
+  await assertDraftPassesCurrentValidation(input.shopId, input.expectedDraftVersionId);
   const legacyPayload = input.expectedPublishedVersionId === null
     ? await (await import("./legacy.server")).prepareLegacyCapturePayload(input.shopId)
     : null;
