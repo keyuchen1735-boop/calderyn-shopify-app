@@ -181,7 +181,9 @@ export async function fetchOrderDestinationsByIds(
       id: string;
       shippingAddress: {
         city: string | null;
+        province: string | null;
         provinceCode: string | null;
+        country: string | null;
         countryCodeV2: string | null;
       } | null;
     } | null>;
@@ -192,20 +194,24 @@ export async function fetchOrderDestinationsByIds(
       nodes(ids: $ids) {
         ... on Order {
           id
-          shippingAddress { city provinceCode countryCodeV2 }
+          shippingAddress { city province provinceCode country countryCodeV2 }
         }
       }
     }`,
     { ids },
   );
 
+  // Match mapOrder's fallback: provinceCode/countryCodeV2 are null for locales
+  // Shopify doesn't ISO-code, which still carry a free-text province/country
+  // name. Without the fallback the repair stamps checked_at and permanently
+  // loses region data that fresh ingest would have captured.
   return data.nodes.flatMap((order) =>
     order
       ? [{
           id: order.id,
           city: order.shippingAddress?.city ?? null,
-          region: order.shippingAddress?.provinceCode ?? null,
-          country: order.shippingAddress?.countryCodeV2 ?? null,
+          region: order.shippingAddress?.provinceCode ?? order.shippingAddress?.province ?? null,
+          country: order.shippingAddress?.countryCodeV2 ?? order.shippingAddress?.country ?? null,
         }]
       : [],
   );

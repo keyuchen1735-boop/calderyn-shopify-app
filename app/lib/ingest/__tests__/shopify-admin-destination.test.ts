@@ -42,8 +42,36 @@ describe("fetchOrderDestinationsByIds", () => {
     });
     expect(query).toContain("nodes(ids: $ids)");
     expect(query).toContain("... on Order");
-    expect(query).toContain("shippingAddress { city provinceCode countryCodeV2 }");
+    expect(query).toContain("shippingAddress { city province provinceCode country countryCodeV2 }");
     expect(query).not.toMatch(/address1|address2|zip|phone|name|email|lineItems|totalPrice/i);
+  });
+
+  it("falls back to province/country names when Shopify has no ISO codes", async () => {
+    graphql.mockResolvedValue({
+      json: async () => ({
+        data: {
+          nodes: [
+            {
+              id: "gid://shopify/Order/7",
+              shippingAddress: {
+                city: "Kyoto",
+                province: "Kyoto Prefecture",
+                provinceCode: null,
+                country: "Japan",
+                countryCodeV2: null,
+              },
+            },
+          ],
+        },
+      }),
+    });
+
+    const { fetchOrderDestinationsByIds } = await import("../shopify-admin.server");
+    const orders = await fetchOrderDestinationsByIds("one.myshopify.com", ["gid://shopify/Order/7"]);
+
+    expect(orders).toEqual([
+      { id: "gid://shopify/Order/7", city: "Kyoto", region: "Kyoto Prefecture", country: "Japan" },
+    ]);
   });
 
   it("rejects ID batches outside the production bound", async () => {
