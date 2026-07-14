@@ -78,9 +78,9 @@ export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOp
     screenshots: Awaited<ReturnType<typeof proveStorefrontBundle>>["screenshotManifest"];
   }> = [];
   const bundles = [
-    ...STOREFRONT_RECIPES.map((recipe) => ({ id: recipe.config.templateId, bundle: recipe.bundle, baseline: true, assetTemplateId: undefined })),
-    { id: "representative-custom", bundle: compileBundle(customFixtureSource()).bundle, baseline: false, assetTemplateId: "diagnostic-deck" },
-    { id: "representative-edit", bundle: compileBundle(editedFixtureSource()).bundle, baseline: false, assetTemplateId: STOREFRONT_RECIPES[0].config.templateId },
+    ...STOREFRONT_RECIPES.map((recipe) => ({ id: recipe.config.templateId, bundle: recipe.bundle, baseline: true, assetTemplateId: undefined, context: storefrontProofContext() })),
+    { id: "representative-custom", bundle: compileBundle(customFixtureSource()).bundle, baseline: false, assetTemplateId: "diagnostic-deck", context: storefrontProofContext() },
+    { id: "representative-edit", bundle: compileBundle(editedFixtureSource()).bundle, baseline: false, assetTemplateId: STOREFRONT_RECIPES[0].config.templateId, context: storefrontProofContext(27) },
   ].filter((entry) => !options.filter || entry.id === options.filter);
   for (const [bundleIndex, entry] of bundles.entries()) {
       options.onProgress?.(`[${bundleIndex + 1}/${bundles.length}] proving ${entry.id}`);
@@ -93,7 +93,7 @@ export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOp
         : undefined;
       const result = await proveStorefrontBundle({
         bundle: entry.bundle,
-        context: storefrontProofContext(),
+        context: entry.context,
         persistedAssets,
         ...(entry.baseline ? {
           artifacts: {

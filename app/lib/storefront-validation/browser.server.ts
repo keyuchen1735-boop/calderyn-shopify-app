@@ -722,17 +722,10 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       requestFailures.push(...currentFailures);
       consoleErrors.push(...currentConsole);
 
+      // Keep the visual artifact sequence stable; the deterministic keyboard
+      // entry assertion runs after screenshots so proof focus does not become
+      // a visual regression.
       await page.keyboard.press("Tab");
-      const focus = await page.evaluate(() => {
-        let active = document.activeElement as HTMLElement | null;
-        if (active?.shadowRoot?.activeElement instanceof HTMLElement) active = active.shadowRoot.activeElement;
-        if (!active || active === document.body) return { ok: false, outline: false };
-        const style = getComputedStyle(active);
-        return { ok: true, outline: style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) > 0 };
-      });
-      if (!focus.ok) addDiagnostic(diagnostics, routeId, viewport.name, "keyboard.focus", "Tab did not move focus to an interactive control");
-      else if (!focus.outline) addDiagnostic(diagnostics, routeId, viewport.name, "focus.visible", "Keyboard focus has no visible outline");
-
       await page.evaluate(() => scrollTo(0, 0));
       const image = Buffer.from(await page.screenshot({ type: "webp", quality: 90, fullPage: false }));
       assertActive();
@@ -761,7 +754,35 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
         await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 1 });
         await mkdir(resolve(input.artifacts.previewFile, ".."), { recursive: true });
         await writeFile(input.artifacts.previewFile, Buffer.from(await page.screenshot({ type: "webp", quality: 90, fullPage: false })));
+        await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
       }
+
+      // Commerce exercise intentionally clicks every trusted control. Reset
+      // that synthetic pointer focus before proving keyboard entry; otherwise
+      // Tab can start at the final shadow control, wrap to <body>, and report a
+      // route-dependent false failure when merchant product counts change.
+      await page.evaluate(() => {
+        const active = document.activeElement as HTMLElement | null;
+        const nested = active?.shadowRoot?.activeElement;
+        if (nested instanceof HTMLElement) nested.blur();
+        active?.blur();
+        scrollTo(0, 0);
+        document.body.setAttribute("tabindex", "-1");
+        document.body.focus({ preventScroll: true });
+        document.body.removeAttribute("tabindex");
+      });
+      await page.keyboard.press("Tab");
+      const focus = await page.evaluate(({ expectedWidth, expectedHeight }) => {
+        const viewportMatches = innerWidth === expectedWidth && innerHeight === expectedHeight;
+        let active = document.activeElement as HTMLElement | null;
+        if (active?.shadowRoot?.activeElement instanceof HTMLElement) active = active.shadowRoot.activeElement;
+        if (!active || active === document.body) return { ok: false, outline: false, viewportMatches };
+        const style = getComputedStyle(active);
+        return { ok: true, outline: style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) > 0, viewportMatches };
+      }, { expectedWidth: viewport.width, expectedHeight: viewport.height });
+      if (!focus.viewportMatches) addDiagnostic(diagnostics, routeId, viewport.name, "proof.viewport", "Keyboard proof ran at the wrong viewport");
+      if (!focus.ok) addDiagnostic(diagnostics, routeId, viewport.name, "keyboard.focus", "Tab did not move focus to an interactive control");
+      else if (!focus.outline) addDiagnostic(diagnostics, routeId, viewport.name, "focus.visible", "Keyboard focus has no visible outline");
       input.onProgress?.({ routeId, viewport: viewport.name, completed: caseIndex + 1, total: proofCases.length });
     }
   } finally {

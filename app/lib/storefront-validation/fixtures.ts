@@ -103,15 +103,15 @@ export function createStorefrontProofData(routeId: StorefrontRouteId): PublicPre
   };
 }
 
-export function storefrontProofContext(): MerchantStorefrontContext {
+export function storefrontProofContext(productCount = 5): MerchantStorefrontContext {
   return {
     version: 1,
     prompt: "Create an original product-first storefront for Northline Supply & Studio",
     promptHash: "sha256:storefront-browser-proof",
     referenceImages: [],
     store: { name: "Northline Supply & Studio", logoAssetKey: null, publicBrandAssetKeys: [] },
-    collections: [{ id: "collection-001", handle: "proof-collection", title: "Objects for Everyday Rituals", productCount: 5 }],
-    products: [0, 1, 2, 3, 4].map((index) => ({
+    collections: [{ id: "collection-001", handle: "proof-collection", title: "Objects for Everyday Rituals", productCount }],
+    products: Array.from({ length: productCount }, (_, index) => ({
       id: `product-${String(index + 1).padStart(3, "0")}`,
       handle: `proof-product-${index + 1}`,
       title: product(index).title,
