@@ -1,15 +1,15 @@
-import { defineRecipe, type RecipeConfig } from "../factory";
+import { defineRecipe, prependRecipeLandmark, type RecipeConfig } from "../factory";
 import { COMMONS_INDEX_ASSETS } from "./assets";
 
 const shell = {
   html: `<header class="commons-shell"><a class="commons-brand" data-cd-route="home"><span class="niche-icon niche-icon--commons" aria-hidden="true">&#8634;</span><span data-cd-text="store.name"></span><b>The Commons Index</b></a><nav class="index-nav"><a data-cd-route="collection">Materials</a><a data-cd-route="search">Index search</a><a data-cd-route="account">Member account</a><a data-cd-route="cart">Basket <span data-cd-text="cart.count"></span></a></nav><aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="forest acid paper"></aside></header><footer class="commons-footer"><span data-cd-text="store.name"></span><nav data-cd-policy-links></nav></footer>`,
-  css: `.commons-brand { color:var(--forest); font-family:var(--font-display); font-size:1.6rem; text-decoration:none } .commons-brand b { display:block; font-family:var(--font-body); font-size:.7rem; text-transform:uppercase } .index-nav { display:flex; gap:1.5rem } .index-nav a { color:var(--forest); font-family:var(--font-body) } .commons-footer span { font-family:var(--font-display); font-weight:700 }`,
+  css: `.commons-brand { color:var(--forest); font-family:var(--font-display); font-size:1.6rem; text-decoration:none } .commons-brand b { display:block; font-family:var(--font-body); font-size:.7rem; text-transform:uppercase } .index-nav { display:flex; gap:1.5rem } .index-nav a { color:var(--forest); font-family:var(--font-body) } .commons-footer span { font-family:var(--font-display); font-weight:700 } @media(max-width:720px){.index-nav{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}.index-nav a{border-bottom:1px solid var(--line);padding:.5rem 0}}`,
   requiredData: [], requiredCapabilities: [],
 };
 
 const home = {
   html: `<main class="commons-home"><section class="atlas-intro"><aside class="cycle-key"><h2>Material cycle</h2><ol><li>Source</li><li>Make</li><li>Use</li><li>Return</li></ol></aside><figure class="ledger-hero"><img data-cd-asset="hero" alt="Goods and materials documented by the cooperative"><figcaption><h1>Useful things, fully accounted for.</h1><p class="durable-copy">A cooperative index of materials, makers, live availability, and what happens after use.</p><a data-cd-route="collection">Open the living catalog</a></figcaption></figure></section><section class="records" data-cd-repeat="featured.products"><article data-cd-key="product.id"><small>Open record</small><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p data-cd-money="product.price"></p><p data-cd-text="product.availability"></p><a data-cd-route="product" data-cd-param-handle="product.handle">Read provenance</a><aside data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="forest acid paper"></aside></article></section><section id="loop-record" class="loop-record" data-cd-state-id="loop-open" data-cd-state-type="boolean" data-cd-state-initial="false" data-cd-bind-state="loop-open" data-cd-bind-property="expanded"><h2>Refill, return, repeat.</h2><button value="toggle" data-cd-on="click" data-cd-action="accordion.toggle" data-cd-target="loop-record">Trace the refill loop</button><dl><dt>Container</dt><dd>Returned to the merchant</dd><dt>Cleaning</dt><dd>Recorded by the cooperative</dd><dt>Next use</dt><dd>Reintroduced to live stock</dd></dl></section><button data-cd-on="click" data-cd-action="scroll.to" data-cd-target="loop-record">Go to refill record</button></main>`,
-  css: `.atlas-intro { display:grid; grid-template-columns:16rem 1fr; min-height:42rem } .cycle-key { border-right:1px solid var(--line); padding:2rem } .cycle-key ol { border-left:1px dashed var(--forest); display:grid; gap:3rem; padding:2rem } .ledger-hero img { height:34rem; object-fit:cover; width:100% } .ledger-hero h1 { font-family:var(--font-display); font-size:clamp(3.7rem,8vw,8rem); line-height:.86; max-width:9ch } .records img { aspect-ratio:4 / 5; object-fit:cover; width:100% } .records h2 { font-family:var(--font-display) } .loop-record h2 { font-family:var(--font-display); font-size:clamp(3rem,6vw,6rem) } .loop-record dl { display:grid; grid-template-columns:1fr 2fr; opacity:.55 } .loop-record[aria-expanded="true"] dl { opacity:1; border-left:4px solid var(--acid) } @media(max-width:760px){ .atlas-intro { grid-template-columns:1fr } .cycle-key { border-right:0 } }`,
+  css: `.atlas-intro { display:grid; grid-template-columns:16rem 1fr; min-height:42rem } .cycle-key { align-self:start;border-right:1px solid var(--line);padding:2rem;position:sticky;top:1rem } .cycle-key ol { border-left:1px dashed var(--forest); display:grid; gap:3rem; padding:2rem } .ledger-hero img { height:34rem; object-fit:cover; width:100% } .ledger-hero h1 { font-family:var(--font-display); font-size:clamp(3.7rem,8vw,8rem); line-height:.86; max-width:9ch } .records img { aspect-ratio:4 / 5; object-fit:cover; width:100% } .records h2 { font-family:var(--font-display) } .loop-record { scroll-margin-top:2rem } .loop-record h2 { font-family:var(--font-display); font-size:clamp(3rem,6vw,6rem) } .loop-record dl { display:grid; grid-template-columns:1fr 2fr; opacity:.55 } .loop-record[aria-expanded="true"] dl { opacity:1; border-left:4px solid var(--acid) } @media(max-width:760px){ .atlas-intro { grid-template-columns:1fr } .cycle-key { border-right:0;position:static } } @media(prefers-reduced-motion:reduce){.cycle-key{position:static}}`,
   requiredData: [], requiredCapabilities: [],
 };
 
@@ -43,7 +43,7 @@ const checkout = {
   layout: { columnMode: "summaryFirst" as const, sectionOrder: ["summary", "contact", "shipping", "delivery", "consent", "payment"], spacingTokenId: "space-ledger", surfaceTokenIds: ["paper", "forest", "acid"] },
 } satisfies RecipeConfig<"commons-index">["surfaces"]["checkout"]["source"];
 
-export const COMMONS_INDEX_RECIPE = defineRecipe({
+const config = {
   templateId: "commons-index", templateVersion: 1,
   concept: { name: "Commons Index", rationale: "A cooperative ledger makes sourcing and circular use part of browsing.", noveltySignature: ["civic atlas rail", "provenance records", "refill loop trace"] },
   designSystem: { displayFontId: "fraunces", bodyFontId: "atkinson-hyperlegible", tokens: { paper: "#f1efe3", forest: "#17352a", acid: "#d9ff3f", signal: "#f0522d", line: "#8f9883" }, breakpoints: { mobile: 760, wide: 1160 }, iconStyle: "civic index marks and material provenance stamps", motionStyle: "indexed ledger expansion with deliberate refill tracing", globalCss: `.durable-copy { overflow-wrap: anywhere }` },
@@ -54,9 +54,11 @@ export const COMMONS_INDEX_RECIPE = defineRecipe({
     collection: { signature: "evidence filters feeding a provenance record directory", source: collection },
     product: { signature: "documented product record with material lifecycle and edition controls", source: product },
     search: { signature: "maker and material query desk rendered as a ranked civic index", source: search },
-    cart: { signature: "shared purchase ledger with authoritative line and total islands", source: cart },
+    cart: { signature: "shared purchase ledger with authoritative line and total islands", source: prependRecipeLandmark(cart, `<section class="ledger-key"><small>Shared order record</small></section>`) },
     checkout: { signature: "summary-first cooperative checkout framed by claim continuity", source: checkout },
   }, assets: COMMONS_INDEX_ASSETS,
-} satisfies RecipeConfig<"commons-index">);
+} satisfies RecipeConfig<"commons-index">;
+
+export const COMMONS_INDEX_RECIPE = defineRecipe(config);
 
 export const COMMONS_INDEX_BUNDLE = COMMONS_INDEX_RECIPE.bundle;

@@ -2,6 +2,24 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { createRuntimeAdapters, type RuntimeFetcher } from "./storefront-hydrator";
+import type { PublicPresentationData } from "./public-data.server";
+
+const quickViewData: PublicPresentationData = {
+  store: { name: "Test store", logo: null },
+  policyLinks: [],
+  product: null,
+  collection: null,
+  featuredProducts: [{
+    id: "p1", handle: "field-kit", title: "Field kit", description: "A complete kit.",
+    primaryImage: null, images: [], options: [{ name: "Size", values: ["Small", "Large"] }],
+    variants: [
+      { id: "v1", title: "Small", price: { cents: 2500, currency: "USD" }, compareAtPrice: null, availability: "In stock", available: true },
+      { id: "v2", title: "Large", price: { cents: 3000, currency: "USD" }, compareAtPrice: null, availability: "In stock", available: true },
+    ],
+    price: { cents: 2500, currency: "USD" }, compareAtPrice: null, availability: "In stock",
+  }],
+  relatedProducts: [], search: null, cart: null, notFound: null,
+};
 
 describe("runtime-1 route adapters", () => {
   it("retains a bounded input query for a separate search submit control", () => {
@@ -64,5 +82,38 @@ describe("runtime-1 route adapters", () => {
       expect(init?.body).toBeInstanceOf(FormData);
       expect((init?.body as FormData).get("intent")).toBe("remove");
     });
+  });
+
+  it("mounts quick view as an accessible variant-and-add commerce interaction", async () => {
+    const fetcher = vi.fn<RuntimeFetcher>(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const adapters = createRuntimeAdapters({
+      mode: "public", data: quickViewData, fetcher, refresh: vi.fn(),
+    });
+    const host = document.createElement("div");
+    const shadowRoot = host.attachShadow({ mode: "open" });
+    adapters.commerce?.mount({
+      host,
+      shadowRoot,
+      authorityKey: "product:p1",
+      slot: { id: "cd-home-slot-1", kind: "quickViewCommerce", scopeId: "cd-home-scope-1", hostSize: "inline", themeTokenIds: [] },
+      bridge: (intent) => adapters.commerce?.dispatch({ authorityKey: "product:p1", slotKind: "quickViewCommerce", intent }),
+    });
+
+    const region = shadowRoot.querySelector<HTMLElement>("[role='group']");
+    const select = shadowRoot.querySelector<HTMLSelectElement>("select");
+    const button = shadowRoot.querySelector<HTMLButtonElement>("button");
+    expect(region?.getAttribute("aria-label")).toContain("Field kit");
+    expect(select?.getAttribute("aria-label")).toContain("Field kit");
+    expect([...select!.options].map((option) => option.textContent)).toEqual(["Small", "Large"]);
+    expect(button?.textContent).toMatch(/add/i);
+
+    select!.value = "v2";
+    select!.dispatchEvent(new Event("change"));
+    button!.click();
+
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledWith("/storefront/api/cart/add", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ variantId: "v2", quantity: 1 }),
+    })));
   });
 });

@@ -1,4 +1,4 @@
-import { defineRecipe, type RecipeConfig } from "../factory";
+import { defineRecipe, prependRecipeLandmark, type RecipeConfig } from "../factory";
 import { DIAGNOSTIC_DECK_ASSETS } from "./assets";
 
 const config = {
@@ -14,11 +14,11 @@ const config = {
   surfaces: {
     shell: { signature: "system-status header with command navigation and exact-unit reservation drawer", source: {
       html: `<header class="terminal-shell"><span class="niche-icon niche-icon--diagnostic" aria-hidden="true">&#9635;</span><a class="terminal-title" data-cd-route="home" data-cd-text="store.name">Diagnostic Deck</a><nav aria-label="Device exchange"><a data-cd-route="collection">Inventory</a><a data-cd-route="search">Query</a><a data-cd-route="account">Account</a><a data-cd-route="cart">Reserved <span data-cd-text="cart.count"></span></a></nav><span class="diagnostic-label">Systems operational</span></header><aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="paper ink green"></aside><footer data-cd-policy-links></footer>`,
-      css: `.terminal-shell nav{display:flex;gap:.75rem}.terminal-shell nav a{border:1px solid var(--rule);padding:.7rem}.terminal-title{font-size:1.6rem}.diagnostic-label{font-size:.62rem;color:var(--green)}`, requiredData: [], requiredCapabilities: [],
+      css: `.terminal-shell nav{display:flex;gap:.75rem}.terminal-shell nav a{border:1px solid var(--rule);padding:.7rem}.terminal-title{font-size:1.6rem}.diagnostic-label{font-size:.62rem;color:var(--green)}@media(max-width:720px){.terminal-shell{display:grid;gap:.55rem}.terminal-shell nav{max-width:100%;overflow-x:auto}.terminal-shell nav a{min-width:max-content}.diagnostic-label{order:-1}}`, requiredData: [], requiredCapabilities: [],
     } },
     home: { signature: "scan-target hero joined to three diagnostic readouts and an exact-unit evidence deck", source: {
       html: `<main><section class="scan-hero"><figure><img data-cd-asset="hero" alt="Refurbished computer on a diagnostic inspection bench" width="1600" height="1200"></figure><div class="scan-copy resilient-copy"><small class="diagnostic-label">Grade diagnostic</small><h1 class="terminal-title">Known condition. Zero guesswork.</h1><p>Every exact unit carries inspection, battery, port, repair, and warranty evidence.</p><a data-cd-route="collection">Open live inventory</a></div></section><section class="readout-bank"><div class="readout-cell"><b>36-point</b><span>Bench test</span></div><div class="readout-cell"><b>Exact-unit</b><span>Photography</span></div><div class="readout-cell"><b>12-month</b><span>Warranty evidence</span></div></section><section data-cd-repeat="featured.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="520" height="680"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Open passport</a><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div></article></section><p class="bench-empty resilient-copy">0 matching records. Adjust the diagnostic query.</p></main>`,
-      css: `.scan-hero{display:grid;grid-template-columns:1.15fr .85fr;min-height:72dvh;border-bottom:1px solid var(--ink)}.scan-hero figure{margin:0}.scan-hero img{display:block;width:100%;height:72dvh;object-fit:cover;filter:grayscale(.25) contrast(1.08)}.scan-copy{align-self:center;padding:clamp(2rem,5vw,5rem)}.scan-copy h1{font-size:clamp(4rem,8vw,8rem)}.readout-bank{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid var(--ink)}.readout-cell{padding:1.5rem}.scan-copy,.bench-empty,.resilient-copy{overflow-wrap:anywhere}.bench-empty{padding:2rem}@media(max-width:850px){.scan-hero{grid-template-columns:1fr}.scan-hero img{height:46dvh}.readout-bank{grid-template-columns:1fr}}`, requiredData: [], requiredCapabilities: [],
+      css: `.scan-hero{display:grid;grid-template-columns:1.15fr .85fr;min-height:72dvh;border-bottom:1px solid var(--ink)}.scan-hero figure{margin:0}.scan-hero img{display:block;width:100%;height:72dvh;object-fit:cover;filter:grayscale(.25) contrast(1.08)}.scan-copy{align-self:center;padding:clamp(2rem,5vw,5rem)}.scan-copy h1{font-size:clamp(4rem,8vw,8rem)}.readout-bank{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid var(--ink);overflow-x:auto;scroll-snap-type:x mandatory}.readout-cell{padding:1.5rem;scroll-snap-align:start}.scan-copy,.bench-empty,.resilient-copy{overflow-wrap:anywhere}.bench-empty{padding:2rem}@media(max-width:850px){.scan-hero{grid-template-columns:1fr}.scan-hero img{height:46dvh}.readout-bank{grid-auto-flow:column;grid-auto-columns:80%;grid-template-columns:none}}@media(prefers-reduced-motion:reduce){.readout-bank{scroll-snap-type:none}}`, requiredData: [], requiredCapabilities: [],
     } },
     collection: { signature: "sticky diagnostic column headers over expandable exact-unit passport records", source: {
       html: `<main><header class="matrix-head resilient-copy"><small class="diagnostic-label">Bench inventory</small><h1 class="terminal-title" data-cd-text="collection.title"></h1><p data-cd-text="collection.description"></p><b data-cd-text="collection.productCount"></b></header><nav class="matrix-filters"><button value="laptop" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Laptop</button><button value="grade-a" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Grade A</button><button value="title_asc" data-cd-on="click" data-cd-action="collection.sort">Battery health</button></nav><section data-cd-repeat="collection.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="320" height="240"><h2 data-cd-text="product.title"></h2><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><button value="toggle" data-cd-on="click" data-cd-action="accordion.toggle" data-cd-target="passport">Expand evidence</button><section id="passport" data-cd-state-id="passport-open" data-cd-state-type="boolean" data-cd-state-initial="false" data-cd-bind-state="passport-open" data-cd-bind-property="expanded"><p data-cd-text="product.description"></p><a data-cd-route="product" data-cd-param-handle="product.handle">Open exact unit</a></section><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div></article></section><p class="zero-records resilient-copy">0 matching records. Clear a grade or device filter.</p><p class="sold-record">Sold out exact units remain in the archive as condition references.</p></main>`,
@@ -44,5 +44,20 @@ const config = {
   }, assets: DIAGNOSTIC_DECK_ASSETS,
 } satisfies RecipeConfig<"diagnostic-deck">;
 
-export const DIAGNOSTIC_DECK_RECIPE = defineRecipe(config);
+const distinguishedConfig = {
+  ...config,
+  surfaces: {
+    ...config.surfaces,
+    product: {
+      ...config.surfaces.product,
+      source: prependRecipeLandmark(config.surfaces.product.source, `<nav class="passport-sections" aria-label="Device passport"><span>Unit</span><span>Condition</span><span>Warranty</span></nav>`),
+    },
+    cart: {
+      ...config.surfaces.cart,
+      source: prependRecipeLandmark(config.surfaces.cart.source, `<aside class="reservation-status"><small>Exact units held for checkout</small></aside>`),
+    },
+  },
+};
+
+export const DIAGNOSTIC_DECK_RECIPE = defineRecipe(distinguishedConfig);
 export const DIAGNOSTIC_DECK_BUNDLE = DIAGNOSTIC_DECK_RECIPE.bundle;

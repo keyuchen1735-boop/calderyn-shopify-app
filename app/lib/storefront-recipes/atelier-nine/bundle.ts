@@ -71,6 +71,8 @@ const homeCss = `
 .atelier-home-index { display:grid; grid-template-columns:minmax(11rem,.55fr) minmax(0,2.45fr); border-bottom:1px solid #161615 }
 .atelier-home-index-title { padding:1.25rem 1.5rem 1.25rem 0; font-size:1.1rem }
 .atelier-home-card { display:inline-block; width:min(24%,22rem); vertical-align:top; border-left:1px solid #aaa49b }
+.atelier-home-index { overflow-x:auto; scroll-snap-type:x proximity }
+.atelier-home-card { scroll-snap-align:start }
 .atelier-home-card-title { display:block; padding:.8rem .8rem .2rem; font-family:var(--font-display); font-size:.82rem; text-transform:uppercase }
 .atelier-home-card-image { aspect-ratio:4 / 5 }
 .atelier-home-card .atelier-price { display:block; padding:0 .8rem 1rem }
@@ -84,6 +86,7 @@ const homeCss = `
   .atelier-home-figure, .atelier-home-image { min-height:65vw }
   .atelier-home-card { width:50% }
 }
+@media (prefers-reduced-motion:reduce) { .atelier-home-index { scroll-snap-type:none } }
 `;
 
 const collectionHtml = `
@@ -337,7 +340,7 @@ const config = {
       source: {
         ...routeDefaults,
         html: `<header class="atelier-nav"><span class="niche-icon niche-icon--atelier" aria-hidden="true">&#8599;</span><a class="atelier-wordmark atelier-link" data-cd-route="home" data-cd-text="store.name"></a><nav class="atelier-nav-links" aria-label="Primary"><a class="atelier-link" data-cd-route="collection">Collection</a><a class="atelier-link" data-cd-route="search">Search</a><a class="atelier-link" data-cd-route="account">Account</a><a class="atelier-link" data-cd-route="cart">Bag <span data-cd-text="cart.count"></span></a></nav></header><div data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div><footer class="atelier-nav-links"><a class="atelier-link" data-cd-route="policy" data-cd-param-policy-id="shipping">Shipping</a><a class="atelier-link" data-cd-route="policy" data-cd-param-policy-id="refund">Returns</a><div data-cd-policy-links></div></footer>`,
-        css: `.atelier-nav, .atelier-nav-links { padding-left:max(1rem,calc((100% - 96rem)/2)); padding-right:max(1rem,calc((100% - 96rem)/2)) }`,
+        css: `.atelier-nav, .atelier-nav-links { padding-left:max(1rem,calc((100% - 96rem)/2)); padding-right:max(1rem,calc((100% - 96rem)/2)) } @media(max-width:720px){.atelier-nav{align-items:start;display:grid;gap:.75rem}.atelier-nav-links{display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem}.atelier-nav-links a{border-top:1px solid var(--line);padding-top:.45rem}}`,
       },
     },
     home: { signature: "offset cover story beside owned full-height fashion photography", source: { ...routeDefaults, html: homeHtml, css: homeCss } },

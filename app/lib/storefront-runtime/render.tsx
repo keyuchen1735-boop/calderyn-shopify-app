@@ -383,7 +383,7 @@ export function renderStorefrontRoute(input: RenderStorefrontRouteInput): {
   return {
     status: 200,
     element: (
-      <div data-cd-bundle-route={input.routeId}>
+      <div data-cd-bundle={input.routeId} data-cd-bundle-route={input.routeId}>
         {input.artifact.css ? <style nonce={input.nonce} data-cd-bundle-style={input.routeId}>{input.artifact.css}</style> : null}
         {renderTree(input.artifact.tree, input.artifact.bindings, input.artifact.trustedSlots, input.data)}
       </div>
@@ -403,7 +403,7 @@ export function renderCheckoutRoute({ artifact, data, nonce, platformContent, as
   return (
     <Fragment>
       {artifact.decorativeCss ? <style nonce={nonce} data-cd-bundle-style="checkout">{artifact.decorativeCss}</style> : null}
-      <div data-cd-checkout-decoration>
+      <div data-cd-bundle="checkout" data-cd-checkout-decoration>
         {renderTree(artifact.decorativeTree, artifact.bindings, [], data, "public", assetUrls)}
       </div>
       <CheckoutIslands layout={artifact.layout}>{platformContent}</CheckoutIslands>
@@ -441,7 +441,7 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
   let routeResult: ReactElement;
   if (routeId === "checkout") {
     routeResult = (
-      <div data-cd-bundle-route="checkout">
+      <div data-cd-bundle="checkout" data-cd-bundle-route="checkout">
         {renderCheckoutRoute({
           artifact: bundle.routes.checkout,
           data,
@@ -454,17 +454,17 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
   } else {
     const route: RouteArtifact = bundle.routes[routeId];
     routeResult = (
-      <div data-cd-bundle-route={routeId}>
+      <div data-cd-bundle={routeId} data-cd-bundle-route={routeId}>
         {route.css ? <style nonce={nonce} data-cd-bundle-style={routeId}>{route.css}</style> : null}
         {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls)}
       </div>
     );
   }
   return (
-    <div data-cd-bundle-runtime="1" data-cd-bundle-source={bundle.source.kind}>
+    <div data-cd-bundle="global" data-cd-bundle-runtime="1" data-cd-bundle-source={bundle.source.kind}>
       <style nonce={nonce} data-cd-bundle-style="tokens">{storefrontDesignSystemCss(bundle.designSystem)}</style>
       {bundle.designSystem.globalCss ? <style nonce={nonce} data-cd-bundle-style="global">{bundle.designSystem.globalCss}</style> : null}
-      <div data-cd-bundle-shell={routeId}>
+      <div data-cd-bundle="shell" data-cd-bundle-shell={routeId}>
         {bundle.shell.css ? <style nonce={nonce} data-cd-bundle-style="shell">{bundle.shell.css}</style> : null}
         {renderTree(bundle.shell.tree, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls)}
       </div>

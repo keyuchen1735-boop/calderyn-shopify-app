@@ -214,6 +214,9 @@ describe("compiled-node server renderer", () => {
 
     expect(publicHtml).toContain('data-cd-bundle-shell="home"');
     expect(publicHtml).toContain('data-cd-bundle-route="home"');
+    expect(publicHtml).toContain('data-cd-bundle="shell"');
+    expect(publicHtml).toContain('data-cd-bundle="home"');
+    expect(publicHtml).toContain('data-cd-bundle="global"');
     expect(publicHtml).toContain('nonce="same-request-nonce"');
     expect(previewHtml.match(/id="cd-[^"]+"/g)).toEqual(publicHtml.match(/id="cd-[^"]+"/g));
     expect(previewHtml).toContain("/dashboard/store/preview?route=home");
@@ -340,6 +343,7 @@ describe("compiled-node server renderer", () => {
     expect(html).not.toContain("dangerouslySetInnerHTML");
     expect(html).toContain('<style nonce="route-nonce"');
     expect(html).toContain(".title{color:red}");
+    expect(html).toContain('data-cd-bundle="home"');
   });
 
   it("returns a platform-owned 404 instead of rendering a generated missing-record route", () => {
@@ -399,5 +403,6 @@ describe("compiled-node server renderer", () => {
     expect(html).toMatch(/data-cd-checkout-decoration[\s\S]*<\/div><div data-cd-checkout-islands/);
     expect(html).toContain('data-cd-checkout-section="payment"');
     expect(html).toContain('<style nonce="checkout-nonce"');
+    expect(html).toContain('data-cd-bundle="checkout"');
   });
 });

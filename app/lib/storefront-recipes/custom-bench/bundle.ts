@@ -21,6 +21,7 @@ const shell = {
     .workshop-nav { display: flex; gap: 1.4rem; font-family: var(--font-body); font-size: .72rem; text-transform: uppercase }
     .workshop-nav a { color: var(--ink); text-decoration: none }
     .workshop-footer span { font-family: var(--font-display); font-weight: 700 }
+    @media(max-width:720px){.workshop-nav{max-width:100%;overflow-x:auto;padding-bottom:.45rem}.workshop-nav a{min-width:max-content}}
   `,
   requiredData: [],
   requiredCapabilities: [],
@@ -68,6 +69,8 @@ const home = {
     .configurator[data-cd-class-token="approve"] { border-top: 5px double var(--ink) }
     .specimen-grid { display: grid; grid-template-columns: repeat(4, 1fr) }
     .specimen-grid img { aspect-ratio: 4 / 5; object-fit: cover; width: 100% }
+    .configurator { scroll-margin-top:2rem }
+    @media(prefers-reduced-motion:reduce){.configurator{scroll-margin-top:0}}
     .specimen-grid h3 { font-family: var(--font-display); text-transform: uppercase }
     @media (max-width: 760px) { .bench-hero { grid-template-columns: 1fr; min-height: 0 } .step-rail { grid-template-columns: 1fr } .specimen-grid { grid-template-columns: 1fr 1fr } }
   `,
@@ -195,7 +198,7 @@ export const CUSTOM_BENCH_RECIPE = defineRecipe({
   designSystem: {
     displayFontId: "space-grotesk",
     bodyFontId: "ibm-plex-mono",
-    tokens: { paper: "#eee9dd", ink: "#11100e", cobalt: "#2148ff", signal: "#ed4b33", rule: "#746f65" },
+    tokens: { paper: "#eee9dd", ink: "#11100e", cobalt: "#2148ff", signal: "#b83a29", rule: "#746f65" },
     breakpoints: { mobile: 760, wide: 1180 },
     iconStyle: "square workshop glyphs and dimension-line indicators",
     motionStyle: "guided proof steps with restrained horizontal specimen rails",

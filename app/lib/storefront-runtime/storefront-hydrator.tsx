@@ -65,6 +65,16 @@ export function createRuntimeAdapters(input: {
   const refresh = input.refresh ?? (() => globalThis.window?.location.reload());
   const locationAssign = input.locationAssign ?? ((href: string) => globalThis.window?.location.assign(href));
   let selectedVariant = input.data?.product?.variants.find((entry) => entry.available) ?? null;
+  const productById = (productId: string) => {
+    const products = [
+      input.data?.product,
+      ...(input.data?.featuredProducts ?? []),
+      ...(input.data?.collection?.products ?? []),
+      ...(input.data?.search?.results ?? []),
+      ...(input.data?.relatedProducts ?? []),
+    ];
+    return products.find((product) => product?.id === productId) ?? null;
+  };
   let pendingSearchQuery: string | null = null;
   const dispatch = (intent: CommerceIntent) => {
     if (intent.type === "variant.select") return;
@@ -120,6 +130,45 @@ export function createRuntimeAdapters(input: {
     },
     commerce: {
       mount({ shadowRoot, slot, authorityKey, bridge }) {
+        if (slot.kind === "quickViewCommerce") {
+          const productId = authorityKey.startsWith("product:") ? authorityKey.slice("product:".length) : "";
+          const product = productById(productId);
+          const ownerDocument = shadowRoot.ownerDocument;
+          const group = ownerDocument.createElement("div");
+          group.setAttribute("role", "group");
+          group.setAttribute("aria-label", product ? `Buy ${product.title}` : "Product purchase options");
+          const style = ownerDocument.createElement("style");
+          style.textContent = ":host{display:block}div{display:flex;align-items:center;gap:.5rem}select,button{min-height:2.75rem;font:inherit}select{min-width:0;max-width:100%;padding:.55rem}button{cursor:pointer;padding:.55rem .9rem}button:disabled{cursor:not-allowed;opacity:.55}";
+          const availableVariants = product?.variants.filter((variant) => variant.available) ?? [];
+          const select = ownerDocument.createElement("select");
+          select.setAttribute("aria-label", product ? `Choose an option for ${product.title}` : "Choose an option");
+          for (const variant of availableVariants) {
+            const option = ownerDocument.createElement("option");
+            option.value = variant.id;
+            option.textContent = variant.title;
+            select.append(option);
+          }
+          let quickVariant: (typeof availableVariants)[number] | null = availableVariants[0] ?? null;
+          select.disabled = availableVariants.length < 2;
+          select.onchange = () => {
+            quickVariant = availableVariants.find((variant) => variant.id === select.value) ?? null;
+            if (product && quickVariant) bridge({
+              type: "variant.select", productId: product.id, variantId: quickVariant.id,
+            });
+          };
+          const button = ownerDocument.createElement("button");
+          button.type = "button";
+          button.textContent = quickVariant ? "Add to cart" : "Sold out";
+          button.disabled = !quickVariant;
+          button.onclick = () => {
+            if (product && quickVariant) bridge({
+              type: "cart.add", productId: product.id, variantId: quickVariant.id, quantity: 1,
+            });
+          };
+          group.append(select, button);
+          shadowRoot.append(style, group);
+          return;
+        }
         if (slot.kind === "variantPicker") {
           const select = document.createElement("select");
           select.setAttribute("aria-label", "Choose an option");

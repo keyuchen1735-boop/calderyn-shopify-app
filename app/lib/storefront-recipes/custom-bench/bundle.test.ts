@@ -3,6 +3,16 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CUSTOM_BENCH_RECIPE } from "./bundle";
 
+function contrastRatio(foreground: string, background: string): number {
+  const luminance = (hex: string) => {
+    const channels = hex.slice(1).match(/.{2}/g)!.map((value) => Number.parseInt(value, 16) / 255)
+      .map((value) => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4);
+    return .2126 * channels[0]! + .7152 * channels[1]! + .0722 * channels[2]!;
+  };
+  const values = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (values[0]! + .05) / (values[1]! + .05);
+}
+
 describe("Custom Bench storefront recipe", () => {
   it("compiles the workshop configurator across the full commerce contract", () => {
     const { bundle, config, report } = CUSTOM_BENCH_RECIPE;
@@ -17,6 +27,7 @@ describe("Custom Bench storefront recipe", () => {
     });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
     expect(bundle.designSystem).toMatchObject({ displayFontId: "space-grotesk", bodyFontId: "ibm-plex-mono" });
+    expect(contrastRatio(bundle.designSystem.tokens.signal!, "#ffffff")).toBeGreaterThanOrEqual(4.5);
     expect(bundle.assets.entries).toEqual([
       expect.objectContaining({ key: "hero", mediaType: "image/webp", byteSize: 132568 }),
     ]);

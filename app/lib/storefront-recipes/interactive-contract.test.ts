@@ -14,6 +14,12 @@ function sourceNode(route: RouteArtifact, sourceId: string) {
   return elements(route.tree).find((node) => node.id === sourceId);
 }
 
+function topology(nodes: readonly CompiledNode[], depth = 0): string {
+  return nodes.flatMap((node) => node.kind === "text"
+    ? []
+    : [`${depth}:${node.tag}`, topology(node.children, depth + 1)]).join("|");
+}
+
 describe("interactive storefront recipe contracts", () => {
   it("keeps home commerce slots scoped to real repeated products", () => {
     for (const recipe of STOREFRONT_RECIPES) {
@@ -103,5 +109,32 @@ describe("interactive storefront recipe contracts", () => {
         }
       }
     }
+  });
+
+  it("ships a narrow-width navigation treatment for every recipe shell", () => {
+    for (const recipe of STOREFRONT_RECIPES) {
+      expect(recipe.bundle.shell.css, `${recipe.config.templateId} responsive shell`).toMatch(/@media\s*\(max-width:/);
+    }
+  });
+
+  it("renders each declared scroll system as visible behavior with reduced-motion parity", () => {
+    for (const recipe of STOREFRONT_RECIPES) {
+      const home = recipe.bundle.routes.home;
+      expect(home.css, `${recipe.config.templateId} visible scroll behavior`).toMatch(
+        /scroll-snap-type|scroll-behavior|scroll-margin|position:sticky|position: sticky/,
+      );
+      expect(home.css, `${recipe.config.templateId} reduced motion`).toMatch(/prefers-reduced-motion:reduce/);
+    }
+  });
+
+  it("keeps buyer route topologies materially distinct across all eleven stores", () => {
+    for (const routeId of ["product", "search", "cart"] as const) {
+      const fingerprints = STOREFRONT_RECIPES.map((recipe) => topology(recipe.bundle.routes[routeId].tree));
+      expect(new Set(fingerprints).size, `${routeId} topology count`).toBe(STOREFRONT_RECIPES.length);
+    }
+    const checkoutFingerprints = STOREFRONT_RECIPES.map((recipe) =>
+      `${topology(recipe.bundle.routes.checkout.decorativeTree)}|${recipe.bundle.routes.checkout.layout.columnMode}|${recipe.bundle.routes.checkout.layout.sectionOrder.join(",")}`,
+    );
+    expect(new Set(checkoutFingerprints).size, "checkout topology count").toBe(STOREFRONT_RECIPES.length);
   });
 });

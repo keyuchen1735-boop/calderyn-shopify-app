@@ -55,7 +55,7 @@ const config = {
           <footer data-cd-policy-links></footer>
         `,
         css: `
-          .room-brand{font-size:1.4rem;font-weight:700}.room-nav{display:flex;gap:1.25rem}.room-nav a{color:var(--ink);font-size:.72rem;text-transform:uppercase}
+          .room-brand{font-size:1.4rem;font-weight:700}.room-nav{display:flex;gap:1.25rem}.room-nav a{color:var(--ink);font-size:.72rem;text-transform:uppercase}@media(max-width:720px){.room-masthead{display:grid;gap:.7rem}.room-nav{display:flex;flex-wrap:wrap;gap:.35rem}.room-nav a{background:var(--chalk);border:1px solid var(--line);padding:.45rem .6rem}}
         `,
         requiredData: [],
         requiredCapabilities: [],

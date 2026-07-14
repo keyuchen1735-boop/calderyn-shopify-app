@@ -1,4 +1,4 @@
-import { defineRecipe, type RecipeConfig } from "../factory";
+import { defineRecipe, prependRecipeLandmark, wrapRecipeComposition, type RecipeConfig } from "../factory";
 import { RITUAL_ALMANAC_ASSETS } from "./assets";
 
 const config = {
@@ -14,11 +14,11 @@ const config = {
   surfaces: {
     shell: { signature: "quiet almanac masthead with moment index, pantry search, and case drawer", source: {
       html: `<header class="almanac-shell"><span class="niche-icon niche-icon--ritual" aria-hidden="true">&#9788;</span><a class="almanac-title" data-cd-route="home" data-cd-text="store.name">Ritual Almanac</a><nav aria-label="Almanac navigation"><a data-cd-route="collection">Pantry</a><a data-cd-route="home">By moment</a><a data-cd-route="search">Search</a><a data-cd-route="account">Account</a><a data-cd-route="cart">Case <span data-cd-text="cart.count"></span></a></nav></header><aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="milk moss plum"></aside><footer data-cd-policy-links></footer>`,
-      css: `.almanac-shell nav{display:flex;gap:1.25rem}.almanac-shell nav a{font-size:.7rem;text-transform:uppercase}.almanac-title{font-size:1.8rem}`, requiredData: [], requiredCapabilities: [],
+      css: `.almanac-shell nav{display:flex;gap:1.25rem}.almanac-shell nav a{font-size:.7rem;text-transform:uppercase}.almanac-title{font-size:1.8rem}@media(max-width:720px){.almanac-shell{display:grid;gap:1rem}.almanac-shell nav{display:flex;flex-wrap:wrap;gap:.35rem}.almanac-shell nav a{border:1px solid var(--moss);border-radius:999px;padding:.45rem .65rem}}`, requiredData: [], requiredCapabilities: [],
     } },
     home: { signature: "arched editorial hero opening into a time-wheel chapter and flavor-story provisions", source: {
       html: `<main><section class="ritual-hero"><div class="ritual-copy resilient-copy"><small class="ritual-mark">Daily provisions</small><h1 class="almanac-title">Good things at the right hour.</h1><p>Functional drinks and pantry staples mapped to the natural shape of a day.</p><a data-cd-route="collection">Open the pantry</a></div><figure class="ritual-image"><img data-cd-asset="hero" alt="Specialty beverages and ingredients arranged for a daily ritual" width="1600" height="1200"></figure></section><section class="time-chapter"><nav class="time-wheel" aria-label="Ritual time"><button value="wake" data-cd-on="click" data-cd-action="tabs.select" data-cd-target="moment">Wake</button><button value="focus" data-cd-on="click" data-cd-action="tabs.select" data-cd-target="moment">Focus</button><button value="recover" data-cd-on="click" data-cd-action="tabs.select" data-cd-target="moment">Recover</button><button value="unwind" data-cd-on="click" data-cd-action="tabs.select" data-cd-target="moment">Unwind</button></nav><article id="moment" class="moment-copy resilient-copy"><small class="ritual-mark">Wake ritual</small><h2 class="almanac-title">Begin bright, not rushed.</h2><p>Choose the hour first, then find the flavor and format that belongs there.</p></article></section><section data-cd-repeat="featured.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="600" height="760"><h2 data-cd-text="product.title"></h2><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Read ritual entry</a><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div></article></section><p class="pantry-empty resilient-copy">No provisions match this ritual. Browse another hour or flavor chapter.</p></main>`,
-      css: `.ritual-hero{display:grid;grid-template-columns:1fr 1fr;min-height:75dvh}.ritual-copy{align-self:center;padding:clamp(2rem,7vw,7rem)}.ritual-copy h1{font-size:clamp(4rem,9vw,9rem);max-width:8ch}.ritual-image{margin:1.25rem;overflow:hidden;border-radius:50% 50% 10px 10px}.ritual-image img{display:block;width:100%;height:72dvh;object-fit:cover}.time-chapter{display:grid;grid-template-columns:.7fr 1.3fr;gap:5vw;padding:clamp(2rem,7vw,7rem);background:var(--paper)}.time-wheel{display:grid;grid-template-columns:1fr 1fr;align-content:center;gap:.75rem}.time-wheel button{padding:1rem;border:1px solid var(--moss);border-radius:999px;background:var(--milk)}.moment-copy h2{font-size:clamp(3.5rem,7vw,7rem)}.moment-copy[data-cd-active-value]{border-left:4px solid var(--plum);padding-left:1.5rem}.ritual-copy,.moment-copy,.pantry-empty,.resilient-copy{overflow-wrap:anywhere}.pantry-empty{padding:2rem}@media(max-width:820px){.ritual-hero,.time-chapter{grid-template-columns:1fr}.ritual-image img{height:52dvh}}`, requiredData: [], requiredCapabilities: [],
+      css: `.ritual-hero{display:grid;grid-template-columns:1fr 1fr;min-height:75dvh}.ritual-copy{align-self:center;padding:clamp(2rem,7vw,7rem)}.ritual-copy h1{font-size:clamp(4rem,9vw,9rem);max-width:8ch}.ritual-image{margin:1.25rem;overflow:hidden;border-radius:50% 50% 10px 10px}.ritual-image img{display:block;width:100%;height:72dvh;object-fit:cover}.time-chapter{display:grid;grid-template-columns:.7fr 1.3fr;gap:5vw;padding:clamp(2rem,7vw,7rem);background:var(--paper);scroll-margin-top:2rem}.time-wheel{align-content:center;align-self:start;display:grid;grid-template-columns:1fr 1fr;gap:.75rem;position:sticky;top:1rem}.time-wheel button{padding:1rem;border:1px solid var(--moss);border-radius:999px;background:var(--milk)}.moment-copy h2{font-size:clamp(3.5rem,7vw,7rem)}.moment-copy[data-cd-active-value]{border-left:4px solid var(--plum);padding-left:1.5rem}.ritual-copy,.moment-copy,.pantry-empty,.resilient-copy{overflow-wrap:anywhere}.pantry-empty{padding:2rem}@media(max-width:820px){.ritual-hero,.time-chapter{grid-template-columns:1fr}.ritual-image img{height:52dvh}.time-wheel{position:static}}@media(prefers-reduced-motion:reduce){.time-wheel{position:static}}`, requiredData: [], requiredCapabilities: [],
     } },
     collection: { signature: "chapter-frontispiece collection with pill facets and arched ritual-entry catalog", source: {
       html: `<main><header class="chapter-front resilient-copy"><small class="ritual-mark">The live pantry</small><h1 class="almanac-title" data-cd-text="collection.title"></h1><p data-cd-text="collection.description"></p><b data-cd-text="collection.productCount"></b></header><nav class="chapter-filters"><button value="wake" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Wake</button><button value="focus" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Focus</button><button value="unwind" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Unwind</button><button value="relevance" data-cd-on="click" data-cd-action="collection.sort">Almanac order</button></nav><section data-cd-repeat="collection.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="620" height="760"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Open entry</a><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div></article></section><p class="chapter-empty resilient-copy">No provisions match this ritual. Clear a moment filter.</p><p class="sold-entry">Sold out provisions stay in the almanac for flavor reference.</p></main>`,
@@ -44,5 +44,28 @@ const config = {
   }, assets: RITUAL_ALMANAC_ASSETS,
 } satisfies RecipeConfig<"ritual-almanac">;
 
-export const RITUAL_ALMANAC_RECIPE = defineRecipe(config);
+const distinguishedConfig = {
+  ...config,
+  surfaces: {
+    ...config.surfaces,
+    product: {
+      ...config.surfaces.product,
+      source: prependRecipeLandmark(config.surfaces.product.source, `<nav class="entry-index" aria-label="Ritual entry"><span>Hour</span><span>Flavor</span><span>Cadence</span></nav>`),
+    },
+    search: {
+      ...config.surfaces.search,
+      source: prependRecipeLandmark(config.surfaces.search.source, `<nav class="pantry-index" aria-label="Pantry search index"><span>Moment</span><span>Flavor</span></nav>`),
+    },
+    cart: {
+      ...config.surfaces.cart,
+      source: prependRecipeLandmark(config.surfaces.cart.source, `<ol class="case-sequence"><li>Pantry case</li><li>Cadence</li></ol>`),
+    },
+    checkout: {
+      ...config.surfaces.checkout,
+      source: wrapRecipeComposition(config.surfaces.checkout.source, "article", "checkout-almanac-spread"),
+    },
+  },
+};
+
+export const RITUAL_ALMANAC_RECIPE = defineRecipe(distinguishedConfig);
 export const RITUAL_ALMANAC_BUNDLE = RITUAL_ALMANAC_RECIPE.bundle;

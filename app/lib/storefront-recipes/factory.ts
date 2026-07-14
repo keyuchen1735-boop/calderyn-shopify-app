@@ -51,6 +51,28 @@ export interface DefinedRecipe<TTemplateId extends StoreTemplateId = StoreTempla
   config: RecipeConfig<TTemplateId>;
 }
 
+/** Adds a recipe-owned semantic landmark immediately inside a route root. */
+export function prependRecipeLandmark<TSource extends { html: string }>(
+  source: TSource,
+  landmarkHtml: string,
+): TSource {
+  const rootEnd = source.html.indexOf(">");
+  if (rootEnd < 0) throw new Error("Recipe route markup requires a root element");
+  return {
+    ...source,
+    html: `${source.html.slice(0, rootEnd + 1)}${landmarkHtml}${source.html.slice(rootEnd + 1)}`,
+  };
+}
+
+/** Wraps checkout decoration in a recipe-owned semantic composition region. */
+export function wrapRecipeComposition<TSource extends { html: string }>(
+  source: TSource,
+  wrapper: "section" | "article" | "aside" | "nav",
+  className: string,
+): TSource {
+  return { ...source, html: `<${wrapper} class="${className}">${source.html}</${wrapper}>` };
+}
+
 const SURFACE_IDS = ["shell", "home", "collection", "product", "search", "cart", "checkout"] as const;
 
 function assertArchetypeMatchesRegistry(config: RecipeConfig): void {
