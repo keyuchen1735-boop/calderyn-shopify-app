@@ -41,4 +41,10 @@ describe("storefront runtime cache policy", () => {
       .toBe(`storefront-shop-${shopId}`);
     expect(() => storefrontTenantCacheTag("not-a-shop")).toThrow("UUID shop id");
   });
+
+  it("keeps the demo shell cacheable without assigning it a tenant purge tag", () => {
+    const headers = storefrontCacheHeaders({ routeId: "home", personalized: false, shopId: "demo-shop" });
+    expect(headers.get("Cache-Control")).toBe("public, max-age=0, s-maxage=300, stale-while-revalidate=60");
+    expect(headers.has("Vercel-Cache-Tag")).toBe(false);
+  });
 });

@@ -76,6 +76,7 @@ describe("storefront release resolution", () => {
       dataDependencies: {
         catalog,
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
       },
     });
 
@@ -109,6 +110,7 @@ describe("storefront release resolution", () => {
       dataDependencies: {
         catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
       },
     });
 
@@ -140,6 +142,7 @@ describe("storefront release resolution", () => {
       dataDependencies: {
         catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
       },
     });
 
@@ -173,6 +176,7 @@ describe("storefront release resolution", () => {
       dataDependencies: {
         catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
       },
     });
 
@@ -203,6 +207,7 @@ describe("storefront release resolution", () => {
       dataDependencies: {
         catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
       },
     });
 
@@ -233,6 +238,7 @@ describe("storefront release resolution", () => {
       dataDependencies: {
         catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
       },
     })).resolves.toMatchObject({ runtime: 1, bundleId: "live-request" });
     expect(source.readPublished).toHaveBeenCalledTimes(1);

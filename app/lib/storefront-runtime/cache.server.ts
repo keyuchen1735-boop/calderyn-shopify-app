@@ -1,4 +1,5 @@
 import type { StorefrontRouteId } from "~/lib/storefront-bundle/types";
+import { isUuid } from "~/lib/ids";
 
 export interface StorefrontCacheKeyInput {
   host: string;
@@ -53,7 +54,9 @@ export function storefrontCacheHeaders(input: {
   if (publicBrowse) {
     headers.set("Cache-Control", "public, max-age=0, s-maxage=300, stale-while-revalidate=60");
     headers.set("Vary", "Host, Accept-Encoding");
-    if (input.shopId) headers.set("Vercel-Cache-Tag", storefrontTenantCacheTag(input.shopId));
+    if (input.shopId && isUuid(input.shopId)) {
+      headers.set("Vercel-Cache-Tag", storefrontTenantCacheTag(input.shopId));
+    }
   } else {
     headers.set("Cache-Control", "private, no-store");
     headers.set("Vary", "Host, Cookie, Authorization");
