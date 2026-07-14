@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { CURATED_FONT_IDS } from "../storefront-bundle/types";
 import { compileBundle } from "../storefront-compiler/compile";
 import { createConcept, createContext, createExpansion, PASSING_JUDGE_SCORES, TEST_SHOP_ID, TEST_VERSION_ID } from "./__fixtures__/deterministic";
 import type { GenerateDependencies, GenerationCheckpoint, StorefrontAiProvider, StructuredModelResponse } from "./contracts";
@@ -160,6 +161,38 @@ describe("generateOriginalStorefront", () => {
     expect(result.status).toBe("installed");
     if (result.status !== "installed") throw new Error("expected install");
     expect(result.bundle.routes.product.html).toContain("data-cd-trusted-slot-id");
+  });
+
+  it("installs when the provider follows the curated-font source contract", async () => {
+    const deps = passingDependencies();
+    const baseComplete = deps.provider.complete;
+    deps.provider.complete = vi.fn(async (request) => {
+      const response = await baseComplete(request);
+      if (request.operation !== "concept" && request.operation !== "repairConcept") return response;
+      if (CURATED_FONT_IDS.every((fontId) => request.system.includes(fontId))) return response;
+      const concept = structuredClone(response.value as ReturnType<typeof createConcept>);
+      return {
+        ...response,
+        value: {
+          ...concept,
+          designSystem: {
+            ...concept.designSystem,
+            displayFontId: "unlisted-display-font",
+            bodyFontId: "unlisted-body-font",
+          },
+        },
+      };
+    });
+
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "Create an original product-first shop",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+    }, deps);
+
+    expect(result.status).toBe("installed");
   });
 
   it("installs only content-addressed owned asset references and records their provenance", async () => {
