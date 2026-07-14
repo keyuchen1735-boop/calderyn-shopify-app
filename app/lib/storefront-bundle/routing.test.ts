@@ -75,7 +75,7 @@ describe("deterministic store design resolver", () => {
     );
     expect(unicode).toMatchObject({ kind: "recipe", templateId: "soft-chemistry" });
     const substring = resolveStoreDesign({ prompt: "My therapist sells restore kits", mode: "auto" }, evidence(), STORE_TEMPLATE_REGISTRY);
-    expect(substring.kind).toBe("custom");
+    expect(substring).toMatchObject({ kind: "recipe", templateId: "custom-bench" });
   });
 
   it("does not treat narrative originality or compounded no-template gaps as explicit custom intent", () => {
@@ -85,7 +85,7 @@ describe("deterministic store design resolver", () => {
         evidence(),
         STORE_TEMPLATE_REGISTRY,
       ),
-    ).toMatchObject({ kind: "custom", reason: "low_confidence" });
+    ).toMatchObject({ kind: "recipe", templateId: "custom-bench" });
     expect(
       resolveStoreDesign(
         { prompt: "Avoid ever choosing to use any kind of template for my clean skincare store", mode: "auto" },
@@ -143,7 +143,7 @@ describe("deterministic store design resolver", () => {
     ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
   });
 
-  it("keeps focus constructions positive so multiple named recipes stay ambiguous", () => {
+  it("keeps focus constructions positive while choosing one first-build recipe", () => {
     for (const prompt of [
       "Not only Atelier but Soft Chemistry",
       "Not just Atelier or Soft Chemistry",
@@ -151,11 +151,16 @@ describe("deterministic store design resolver", () => {
       "Not exclusively Atelier, maybe Soft Chemistry",
       "Not simply Atelier but Soft Chemistry",
     ]) {
-      expect(resolveStoreDesign({ prompt, mode: "auto" }, evidence(), STORE_TEMPLATE_REGISTRY)).toMatchObject({
-        kind: "custom",
-        reason: "ambiguous_recipe_names",
-      });
+      expect(resolveStoreDesign({ prompt, mode: "auto" }, evidence(), STORE_TEMPLATE_REGISTRY).kind).toBe("recipe");
     }
+  });
+
+  it("chooses one recipe when a first auto prompt names multiple recipes", () => {
+    expect(resolveStoreDesign(
+      { prompt: "Try Atelier Grid or Soft Chemistry", mode: "auto" },
+      evidence(),
+      STORE_TEMPLATE_REGISTRY,
+    ).kind).toBe("recipe");
   });
 
   it("scores longest non-overlapping phrases once and excludes their prompt terms", () => {
@@ -178,22 +183,29 @@ describe("deterministic store design resolver", () => {
       collectionTitles: ["pet wellness"],
     });
     expect(resolveStoreDesign({ prompt: "Make me a store", mode: "auto" }, catalogOnly, STORE_TEMPLATE_REGISTRY)).toMatchObject({
-      kind: "custom",
-      reason: "low_confidence",
+      kind: "recipe",
+      templateId: "companion-field-guide",
     });
     const tie = resolveStoreDesign(
       { prompt: "clean skincare pet health", mode: "auto" },
       evidence(),
       STORE_TEMPLATE_REGISTRY,
     );
-    expect(tie).toMatchObject({ kind: "custom", reason: "low_confidence" });
+    expect(tie).toMatchObject({ kind: "recipe", templateId: "soft-chemistry" });
+  });
+
+  it("always gives a first auto prompt a complete recipe instead of the slow custom compiler", () => {
+    expect(resolveStoreDesign({ prompt: "Make me a store", mode: "auto" }, evidence(), STORE_TEMPLATE_REGISTRY)).toMatchObject({
+      kind: "recipe",
+      templateId: "custom-bench",
+    });
   });
 
   it("requires empty-prompt catalog evidence from two independent fields", () => {
     const oneField = evidence({ productTags: ["pet supplement", "dog health", "cat wellness", "pet care"] });
     expect(resolveStoreDesign({ prompt: "", mode: "auto" }, oneField, STORE_TEMPLATE_REGISTRY)).toMatchObject({
-      kind: "custom",
-      reason: "low_confidence",
+      kind: "recipe",
+      templateId: "companion-field-guide",
     });
     const twoFields = evidence({ productTypes: ["pet supplement", "dog health"], collectionTitles: ["pet wellness", "pet care"] });
     expect(resolveStoreDesign({ prompt: "", mode: "auto" }, twoFields, STORE_TEMPLATE_REGISTRY)).toMatchObject({

@@ -4,6 +4,13 @@ import type { StorefrontCatalog } from "../catalog";
 import { getCatalog } from "../catalog.server";
 import { fixtureCatalog } from "../catalog.stub.server";
 
+const { applyAssetOverrides } = vi.hoisted(() => ({
+  applyAssetOverrides: vi.fn(async (_shopId: string, products: Array<Record<string, unknown>>) =>
+    products.map((product) => ({ ...product, images: [{ url: "/generated.webp", alt: "Generated" }] }))),
+}));
+
+vi.mock("~/lib/storegen/imagery/asset.server", () => ({ applyAssetOverrides }));
+
 vi.mock("../catalog.owned.server", () => ({
   ownedCatalog: {
     listProducts: vi.fn(async (shopId: string) => [{ handle: `owned-for-${shopId}` }]),
@@ -33,6 +40,12 @@ describe("getCatalog", () => {
   it("routes a real (uuid) tenant to the owned catalog", async () => {
     const products = await getCatalog().listProducts(UUID_SHOP);
     expect(products[0].handle).toBe(`owned-for-${UUID_SHOP}`);
+  });
+
+  it("does not expose generated draft imagery through the public catalog before publish", async () => {
+    applyAssetOverrides.mockClear();
+    await getCatalog().listProducts(UUID_SHOP);
+    expect(applyAssetOverrides).not.toHaveBeenCalled();
   });
 
   it("routes bounded collection lookups through the same tenant seam", async () => {

@@ -21,6 +21,7 @@ export interface HiggsfieldPhotoshootOpts {
   title: string;
   description: string;
   referenceImageUrl: string | null;
+  signal?: AbortSignal;
 }
 
 export async function runHiggsfieldProductPhotoshoot(opts: HiggsfieldPhotoshootOpts): Promise<string> {
@@ -32,45 +33,60 @@ export async function runHiggsfieldProductPhotoshoot(opts: HiggsfieldPhotoshootO
     );
   }
   const auth = `Key ${key}:${secret}`;
+  const timeoutMs = 45_000;
+  const deadline = Date.now() + timeoutMs;
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(opts.signal?.reason);
+  if (opts.signal?.aborted) forwardAbort();
+  else opts.signal?.addEventListener("abort", forwardAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  const body: Record<string, unknown> = {
-    mode: opts.mode,
-    product_title: opts.title,
-    product_description: opts.description,
-  };
-  if (opts.referenceImageUrl) body.image_url = opts.referenceImageUrl;
+  try {
+    const body: Record<string, unknown> = {
+      mode: opts.mode,
+      product_title: opts.title,
+      product_description: opts.description,
+    };
+    if (opts.referenceImageUrl) body.image_url = opts.referenceImageUrl;
 
-  const submitRes = await fetch(`${HF_BASE}${PHOTOSHOOT_PATH}`, {
-    method: "POST",
-    headers: { Authorization: auth, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!submitRes.ok) {
-    const text = await submitRes.text().catch(() => submitRes.statusText);
-    throw new Error(`Higgsfield photoshoot request failed (${submitRes.status}): ${text}`);
-  }
-  const submitted = (await submitRes.json()) as { request_id?: string; id?: string };
-  const requestId = submitted.request_id ?? submitted.id;
-  if (!requestId) throw new Error("Higgsfield photoshoot did not return a request id");
-
-  // Poll the platform-wide async status path until terminal or timeout (90 s, 3 s interval).
-  const deadline = Date.now() + 90_000;
-  for (;;) {
-    const statusRes = await fetch(`${HF_BASE}/requests/${requestId}/status`, {
-      method: "GET",
-      headers: { Authorization: auth },
+    const submitRes = await fetch(`${HF_BASE}${PHOTOSHOOT_PATH}`, {
+      method: "POST",
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
     });
-    if (statusRes.ok) {
-      const status = (await statusRes.json()) as { status?: string; images?: Array<{ url?: string }> };
-      const state = String(status.status ?? "").toLowerCase();
-      if (state === "completed") {
-        const url = status.images?.find((i) => typeof i.url === "string")?.url;
-        if (url) return url;
-        throw new Error("Higgsfield photoshoot completed without an image url");
-      }
-      if (TERMINAL.has(state)) throw new Error(`Higgsfield photoshoot ${state}`);
+    if (!submitRes.ok) {
+      const text = await submitRes.text().catch(() => submitRes.statusText);
+      throw new Error(`Higgsfield photoshoot request failed (${submitRes.status}): ${text}`);
     }
-    if (Date.now() >= deadline) throw new Error(`Higgsfield photoshoot ${requestId} timed out after 90 s`);
-    await sleep(3_000);
+    const submitted = (await submitRes.json()) as { request_id?: string; id?: string };
+    const requestId = submitted.request_id ?? submitted.id;
+    if (!requestId) throw new Error("Higgsfield photoshoot did not return a request id");
+
+    for (;;) {
+      const statusRes = await fetch(`${HF_BASE}/requests/${requestId}/status`, {
+        method: "GET",
+        headers: { Authorization: auth },
+        signal: controller.signal,
+      });
+      if (statusRes.ok) {
+        const status = (await statusRes.json()) as { status?: string; images?: Array<{ url?: string }> };
+        const state = String(status.status ?? "").toLowerCase();
+        if (state === "completed") {
+          const url = status.images?.find((i) => typeof i.url === "string")?.url;
+          if (url) return url;
+          throw new Error("Higgsfield photoshoot completed without an image url");
+        }
+        if (TERMINAL.has(state)) throw new Error(`Higgsfield photoshoot ${state}`);
+      }
+      if (Date.now() >= deadline) throw new Error(`Higgsfield photoshoot timed out after ${timeoutMs / 1_000} s`);
+      await sleep(3_000);
+    }
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(opts.signal?.aborted ? "Higgsfield photoshoot cancelled" : `Higgsfield photoshoot timed out after ${timeoutMs / 1_000} s`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    opts.signal?.removeEventListener("abort", forwardAbort);
   }
 }

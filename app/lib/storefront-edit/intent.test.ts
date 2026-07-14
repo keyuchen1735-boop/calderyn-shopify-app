@@ -23,6 +23,9 @@ describe("parseEditIntent", () => {
 
   it("requires an explicit reset phrase before leaving edit mode", () => {
     expect(parseEditIntent("Make a completely new store from scratch")).toEqual({ kind: "startOver" });
+    expect(parseEditIntent("Redesign the entire store from scratch")).toEqual({ kind: "startOver" });
+    expect(parseEditIntent("Create an entirely original storefront with no template")).toEqual({ kind: "startOver" });
+    expect(parseEditIntent("Don't redesign the entire store").kind).toBe("structural");
     expect(parseEditIntent("Make the hero completely new").kind).toBe("structural");
   });
 

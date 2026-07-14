@@ -302,10 +302,6 @@ export function resolveStoreDesign(
   if (hasExplicitCustomIntent(request.prompt)) {
     return custom("explicit_custom", registry, evidence, breakdown, ["Prompt explicitly requests an original design"]);
   }
-  if (nameHits.length > 1) {
-    return custom("ambiguous_recipe_names", registry, evidence, breakdown, ["Prompt names more than one recipe"]);
-  }
-
   const ranked = breakdown
     .map((entry, index) => ({ entry, index }))
     .sort((a, b) => b.entry.score - a.entry.score || a.index - b.index);
@@ -332,16 +328,25 @@ export function resolveStoreDesign(
   }
 
   const promptIsEmpty = normalizeRoutingText(request.prompt).length === 0;
-  if (promptIsEmpty) {
-    const fields = new Set(winner.catalogTermHits.map((hit) => hit.field));
-    if (winner.score < MIN_CATALOG_SCORE || margin < MIN_MARGIN || fields.size < 2) {
-      return custom("low_confidence", registry, evidence, breakdown, ["Catalog evidence is not specific enough"]);
-    }
-  } else {
-    const promptStrongSignal = winner.strongPhraseHits.length > 0 || winner.promptTermHits.length >= 2 || winner.aliasHits.length > 0;
-    if (winner.score < MIN_PROMPT_SCORE || margin < MIN_MARGIN || !promptStrongSignal) {
-      return custom("low_confidence", registry, evidence, breakdown, ["Prompt does not confidently match one recipe"]);
-    }
+  const catalogFields = new Set(winner.catalogTermHits.map((hit) => hit.field));
+  const promptStrongSignal = winner.strongPhraseHits.length > 0 || winner.promptTermHits.length >= 2 || winner.aliasHits.length > 0;
+  const lowConfidence = promptIsEmpty
+    ? winner.score < MIN_CATALOG_SCORE || margin < MIN_MARGIN || catalogFields.size < 2
+    : winner.score < MIN_PROMPT_SCORE || margin < MIN_MARGIN || !promptStrongSignal;
+  if (lowConfidence) {
+    return {
+      kind: "recipe",
+      templateId: template.id,
+      templateVersion: template.activeVersion,
+      selectionKind: "niche_match",
+      ...metadata(registry, evidence),
+      score: winner.score,
+      runnerUpScore,
+      margin,
+      confidenceBand: null,
+      breakdown,
+      reasons: [`Using the closest complete recipe for ${template.niche}`],
+    };
   }
 
   const promptReason = winner.strongPhraseHits.length

@@ -514,7 +514,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
       if (result.status === "start_over") {
         setMessages((messages) => messages.filter((message) => message.id !== thinkId));
         setChatBusyBoth(false);
-        await runBuild({ prompt: text, mode: "auto" });
+        await runBuild({ prompt: text, mode: result.mode });
         return;
       }
       await refresh();

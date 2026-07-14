@@ -1,7 +1,7 @@
 // app/lib/storegen/imagery/asset.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StoreProduct } from "~/lib/storefront/catalog";
-import { enhanceListing, applyAssetOverrides } from "./asset.server";
+import { enhanceListing, applyAssetOverrides, generateMissingListingImages } from "./asset.server";
 
 const { fromMock, providerMock, persistMock } = vi.hoisted(() => ({ fromMock: vi.fn(), providerMock: vi.fn(), persistMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
@@ -21,8 +21,10 @@ describe("enhanceListing", () => {
     persistMock.mockResolvedValue({ persisted: true, url: "https://owned.cdn/a.png", assetId: "a1", storageKey: "k" });
     const upsert = vi.fn().mockResolvedValue({ error: null });
     fromMock.mockReturnValue({ upsert });
-    const out = await enhanceListing(realShop, product("1", null));
-    expect(persistMock).toHaveBeenCalledWith(realShop, "https://higgs.cdn/ephemeral.png", "generated", "generated");
+    const signal = new AbortController().signal;
+    const out = await enhanceListing(realShop, product("1", null), { signal });
+    expect(providerMock).toHaveBeenCalledWith(expect.objectContaining({ signal }));
+    expect(persistMock).toHaveBeenCalledWith(realShop, "https://higgs.cdn/ephemeral.png", "generated", "generated", { signal });
     expect(out.status).toBe("ready");
     expect(out.url).toBe("https://owned.cdn/a.png");
     expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ shop_id: realShop, product_id: "1", url: "https://owned.cdn/a.png", status: "ready" }), { onConflict: "shop_id,product_id,source" });
@@ -45,6 +47,17 @@ describe("enhanceListing", () => {
     expect(persistMock).not.toHaveBeenCalled();
     expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }), expect.anything());
   });
+  it("does not write an asset after the first-preview imagery deadline", async () => {
+    const controller = new AbortController();
+    providerMock.mockResolvedValue({ url: "https://higgs.cdn/ephemeral.png" });
+    persistMock.mockImplementation(async () => {
+      controller.abort();
+      return { persisted: false, url: "https://higgs.cdn/ephemeral.png", error: "cancelled" };
+    });
+    const out = await enhanceListing(realShop, product("1", null), { signal: controller.signal });
+    expect(out.status).toBe("failed");
+    expect(fromMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("applyAssetOverrides", () => {
@@ -65,5 +78,14 @@ describe("applyAssetOverrides", () => {
     fromMock.mockReturnValue({ select: () => ({ eq }) });
     const out = await applyAssetOverrides(realShop, [product("1", null)]);
     expect(out[0].images).toEqual([{ url: "https://img/new.png", alt: "P1" }]);
+  });
+});
+
+describe("generateMissingListingImages", () => {
+  it("generates the first recipe's product imagery only when the catalog has none", async () => {
+    const enhance = vi.fn(async (_shopId: string, item: StoreProduct) => ({ productId: item.id, status: "ready" as const, url: `/generated/${item.id}.webp` }));
+    const result = await generateMissingListingImages(realShop, [product("1", null), product("2", null)], enhance);
+    expect(result).toBe(2);
+    expect(enhance).toHaveBeenCalledTimes(2);
   });
 });

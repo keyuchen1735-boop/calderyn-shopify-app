@@ -59,7 +59,7 @@ export async function editStudioStorefront(input: {
   prompt: string;
   expectedDraftVersionId: string;
   context?: PreviewEditContext;
-}): Promise<StorefrontEditReceipt | { status: "start_over" }> {
+}): Promise<StorefrontEditReceipt | { status: "start_over"; mode: "custom" }> {
   return apiSend("POST", "/dashboard/api/store", { action: "edit", ...input });
 }
 

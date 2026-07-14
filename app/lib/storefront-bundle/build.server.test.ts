@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StoreDesignResolution, StorefrontBundleV1 } from "./types";
+import { resolveStoreDesign } from "./routing";
+import { STORE_TEMPLATE_REGISTRY } from "./registry";
 import {
   StorefrontBuildError,
   buildStorefrontDesign,
@@ -58,6 +60,7 @@ function dependencies(overrides: Partial<StorefrontBuildDependencies> = {}): Sto
     readPointers: vi.fn().mockResolvedValue({ draftVersionId: PRIOR_DRAFT, publishedVersionId: null }),
     createVersion: vi.fn().mockResolvedValue(VERSION),
     installDraft: vi.fn().mockResolvedValue(VERSION),
+    prepareRecipeImages: vi.fn().mockResolvedValue({ required: 2, ready: 2 }),
     customBuildEnabled: () => true,
     reserveCustomBuild: vi.fn().mockResolvedValue("quota-reservation-1"),
     generateCustom: vi.fn().mockResolvedValue({
@@ -101,6 +104,7 @@ describe("runtime-1 storefront build", () => {
     expect(receipt).toEqual({ runtime: 1, versionId: VERSION, status: "draft", resolution: resolution() });
     expect(deps.resolveDesign).toHaveBeenCalledWith(request, evidence());
     expect(deps.loadRecipe).toHaveBeenCalledWith("commons-index", 1);
+    expect(deps.prepareRecipeImages).toHaveBeenCalledWith(SHOP, expect.any(AbortSignal));
     expect(deps.createVersion).toHaveBeenCalledWith(expect.objectContaining({
       shopId: SHOP,
       sourceKind: "recipe",
@@ -131,6 +135,7 @@ describe("runtime-1 storefront build", () => {
       source: { kind: "recipe" as const, templateId: "atelier-nine" as const, templateVersion: 1 },
     };
     const deps = dependencies({
+      readPointers: vi.fn().mockResolvedValue({ draftVersionId: null, publishedVersionId: null }),
       resolveDesign: vi.fn().mockReturnValue(manual),
       loadRecipe: vi.fn().mockResolvedValue({
         bundle: atelierBundle,
@@ -143,6 +148,40 @@ describe("runtime-1 storefront build", () => {
 
     expect(deps.resolveDesign).toHaveBeenCalledWith(request, evidence());
     expect(deps.loadRecipe).toHaveBeenCalledWith("atelier-nine", 1);
+  });
+
+  it("forces a first custom request through recipe matching until a draft exists", async () => {
+    const deps = dependencies({
+      readPointers: vi.fn().mockResolvedValue({ draftVersionId: null, publishedVersionId: null }),
+    });
+
+    await buildStorefrontDesign({
+      shopId: SHOP,
+      request: { prompt: "Create something completely new", mode: "custom" },
+      recipeBuildEnabled: true,
+    }, deps);
+
+    expect(deps.resolveDesign).toHaveBeenCalledWith(
+      { prompt: "Create something completely new", mode: "auto" },
+      evidence(),
+    );
+    expect(deps.generateCustom).not.toHaveBeenCalled();
+  });
+
+  it("keeps explicit from-scratch language on the first build out of the custom compiler", async () => {
+    const deps = dependencies({
+      readPointers: vi.fn().mockResolvedValue({ draftVersionId: null, publishedVersionId: null }),
+      resolveDesign: (request, currentEvidence) => resolveStoreDesign(request, currentEvidence, STORE_TEMPLATE_REGISTRY),
+    });
+
+    const receipt = await buildStorefrontDesign({
+      shopId: SHOP,
+      request: { prompt: "Create a completely new store from scratch", mode: "custom" },
+      recipeBuildEnabled: true,
+    }, deps);
+
+    expect(receipt.resolution.kind).toBe("recipe");
+    expect(deps.generateCustom).not.toHaveBeenCalled();
   });
 
   it("explains when fresh catalog evidence changes the earlier recommendation", async () => {
@@ -190,6 +229,17 @@ describe("runtime-1 storefront build", () => {
     }, invalid)).rejects.toMatchObject({ code: "storefront_recipe_invalid", status: 500 });
     expect(invalid.createVersion).not.toHaveBeenCalled();
     expect(invalid.installDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not install an image-less first recipe when required generation fails", async () => {
+    const deps = dependencies({ prepareRecipeImages: vi.fn().mockResolvedValue({ required: 2, ready: 0 }) });
+    await expect(buildStorefrontDesign({
+      shopId: SHOP,
+      request: { prompt: "refills", mode: "auto" },
+      recipeBuildEnabled: true,
+    }, deps)).rejects.toMatchObject({ code: "storefront_recipe_imagery_failed", status: 502 });
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.installDraft).not.toHaveBeenCalled();
   });
 
   it("preflights build switches and write conflicts before any streamed build work", async () => {
