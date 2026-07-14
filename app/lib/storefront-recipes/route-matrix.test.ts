@@ -63,9 +63,11 @@ describe("storefront recipe route matrix", () => {
       expect(slotKinds(bundle.shell)).toContain("cartDrawer");
 
       expect(bundle.routes.home.requiredData.some((plan) => plan.kind === "featuredProducts")).toBe(true);
+      expect(bundle.routes.home.requiredData).not.toContainEqual({ kind: "currentProduct" });
       expect(dataPaths(bundle.routes.home)).toEqual(expect.arrayContaining(["product.title", "product.price"]));
 
       expect(bundle.routes.collection.requiredData).toContainEqual({ kind: "currentCollection" });
+      expect(bundle.routes.collection.requiredData).not.toContainEqual({ kind: "currentProduct" });
       expect(dataPaths(bundle.routes.collection)).toEqual(expect.arrayContaining([
         "collection.title", "product.title", "product.price", "product.availability",
       ]));
@@ -81,12 +83,14 @@ describe("storefront recipe route matrix", () => {
       expect(slotKinds(bundle.routes.product)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
 
       expect(bundle.routes.search.requiredData.some((plan) => plan.kind === "searchResults")).toBe(true);
+      expect(bundle.routes.search.requiredData).not.toContainEqual({ kind: "currentProduct" });
       expect(bundle.routes.search.interactions.transitions.map((transition) => transition.action.type)).toEqual(
         expect.arrayContaining(["search.submit", "search.clear"]),
       );
       expect(dataPaths(bundle.routes.search)).toEqual(expect.arrayContaining(["search.query", "product.title", "product.price"]));
 
       expect(bundle.routes.cart.requiredData).toContainEqual({ kind: "cart" });
+      expect(bundle.routes.cart.requiredData).not.toContainEqual({ kind: "currentProduct" });
       expect(dataPaths(bundle.routes.cart)).toEqual(expect.arrayContaining([
         "cartLine.title", "cartLine.quantity", "cartLine.total",
       ]));

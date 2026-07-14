@@ -63,6 +63,50 @@ describe("validation profile v1", () => {
     expect(validateCompiledBundle(bundle).diagnostics.map((item) => item.code)).toContain("slot.scope");
   });
 
+  it("rejects an unscoped product-commerce slot outside the product route", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><div data-cd-slot="addToCart" data-cd-host-size="block"></div></main>`;
+    source.routes.home.css = "";
+    const result = compileBundle(source);
+
+    expect(result.bundle.routes.home.requiredData).not.toContainEqual({ kind: "currentProduct" });
+    expect(result.report.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "slot.route_scope", path: expect.stringContaining("routes.home.trustedSlots") }),
+    ]));
+  });
+
+  it("allows repeated quick commerce but rejects repeated product-page controls on browse routes", () => {
+    const quickView = structuredClone(VALID_BUNDLE_SOURCE);
+    quickView.routes.home.html = `<main data-cd-repeat="featured.products"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id"></div></main>`;
+    quickView.routes.home.css = "";
+    const quickResult = compileBundle(quickView);
+    expect(quickResult.report.ok).toBe(true);
+    expect(quickResult.bundle.routes.home.requiredData).toEqual([{ kind: "featuredProducts", limit: 12 }]);
+
+    const scopedAdd = structuredClone(VALID_BUNDLE_SOURCE);
+    scopedAdd.routes.home.html = `<main data-cd-repeat="featured.products"><div data-cd-key="product.id" data-cd-slot="addToCart" data-cd-product="product.id"></div></main>`;
+    scopedAdd.routes.home.css = "";
+    expect(compileBundle(scopedAdd).report.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "slot.route_scope", path: expect.stringContaining("routes.home.trustedSlots") }),
+    ]));
+  });
+
+  it("rejects globally-backed product and cart controls when nested in repeat scopes", () => {
+    const scopedProductControl = structuredClone(VALID_BUNDLE_SOURCE);
+    scopedProductControl.routes.product.html = `<main data-cd-repeat="product.variants"><div data-cd-key="variant.id" data-cd-slot="addToCart"></div></main>`;
+    scopedProductControl.routes.product.css = "";
+    expect(compileBundle(scopedProductControl).report.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "slot.route_scope", path: expect.stringContaining("routes.product.trustedSlots") }),
+    ]));
+
+    const scopedCartControl = structuredClone(VALID_BUNDLE_SOURCE);
+    scopedCartControl.routes.cart.html = `<main data-cd-repeat="cart.lines"><div data-cd-key="cartLine.id" data-cd-slot="cartSummary"></div></main>`;
+    scopedCartControl.routes.cart.css = "";
+    expect(compileBundle(scopedCartControl).report.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "slot.route_scope", path: expect.stringContaining("routes.cart.trustedSlots") }),
+    ]));
+  });
+
   it("rejects unknown and malformed deserialized input without throwing", () => {
     expect(validateCompiledBundle(null).ok).toBe(false);
     expect(validateCompiledBundle({}).ok).toBe(false);

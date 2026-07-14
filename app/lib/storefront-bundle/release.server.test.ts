@@ -8,14 +8,18 @@ import {
   validateStorefrontBundleVersion,
 } from "./release.server";
 import type { StorefrontReleaseError } from "./release.server";
+import { compileBundle } from "~/lib/storefront-compiler/compile";
+import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 
-const { rpc, hasRunningExperiment, prepareLegacyCapturePayload } = vi.hoisted(() => ({
+const { rpc, from, versionResult, hasRunningExperiment, prepareLegacyCapturePayload } = vi.hoisted(() => ({
   rpc: vi.fn(),
+  from: vi.fn(),
+  versionResult: { current: { data: null as unknown, error: null as unknown } },
   hasRunningExperiment: vi.fn(),
   prepareLegacyCapturePayload: vi.fn(),
 }));
 
-vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ rpc }) }));
+vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ rpc, from }) }));
 vi.mock("~/lib/experiments/store-experiment.server", () => ({ hasRunningExperiment }));
 vi.mock("./legacy.server", () => ({ prepareLegacyCapturePayload }));
 
@@ -37,6 +41,19 @@ beforeEach(() => {
     data: name === "hash_storefront_artifact" ? `sha256:${"a".repeat(64)}` : VERSION,
     error: null,
   }));
+  const chain: Record<string, unknown> = {};
+  chain.select = () => chain;
+  chain.eq = () => chain;
+  chain.maybeSingle = () => Promise.resolve(versionResult.current);
+  from.mockReturnValue(chain);
+  versionResult.current = {
+    data: {
+      runtime_version: 1,
+      status: "validated",
+      bundle_json: { sourceKind: "custom", bundle: compileBundle(structuredClone(VALID_BUNDLE_SOURCE)).bundle },
+    },
+    error: null,
+  };
 });
 
 describe("storefront bundle release repository", () => {
@@ -126,6 +143,22 @@ describe("storefront bundle release repository", () => {
       p_target_version_id: BASE,
       p_expected_published_version_id: VERSION,
     }));
+  });
+
+  it("refuses to publish a previously validated runtime-1 artifact that fails the current profile", async () => {
+    const bundle = compileBundle(structuredClone(VALID_BUNDLE_SOURCE)).bundle;
+    bundle.routes.home.requiredData.push({ kind: "currentProduct" });
+    versionResult.current = {
+      data: { runtime_version: 1, status: "validated", bundle_json: { sourceKind: "custom", bundle } },
+      error: null,
+    };
+
+    await expect(publishStorefrontRelease({
+      shopId: SHOP,
+      expectedDraftVersionId: VERSION,
+      expectedPublishedVersionId: BASE,
+    })).rejects.toMatchObject({ code: "storefront_bundle_revalidation_failed", status: 422 });
+    expect(rpc).not.toHaveBeenCalledWith("publish_storefront_release", expect.anything());
   });
 
   it("passes a validated legacy candidate into the single first-publish transaction", async () => {

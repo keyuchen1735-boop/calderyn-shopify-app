@@ -658,7 +658,7 @@ function deriveContract(
   if ([...tree.elements.values()].some((node) => node.attributes["data-cd-platform-content"] === "policyLinks")) addData({ kind: "policyLinks" });
   for (const slot of slots) {
     if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") addData({ kind: "cart" });
-    else addData({ kind: "currentProduct" });
+    else if (namespace === "product" && !slot.scopeId) addData({ kind: "currentProduct" });
   }
   const dataOrder: readonly DataRequirement["kind"][] = ["storeIdentity", "policyLinks", "currentProduct", "currentCollection", "cart", "featuredProducts", "relatedProducts", "searchResults"];
   const capabilities = new Set<RuntimeCapability>();
@@ -712,6 +712,21 @@ function validateRoute(value: unknown, namespace: string, path: string, add: Add
     if (element.tag === "button" && !interactions.transitions.some((transition) => transition.sourceId === element.id)) add("tree.inert_control", `${path}.tree.${element.id}`, "Compiled button is inert");
   }
   const slots = parseSlots(input.trustedSlots, `${path}.trustedSlots`, tree, add);
+  for (const [index, slot] of slots.entries()) {
+    let validContext = true;
+    if (slot.kind === "variantPicker" || slot.kind === "addToCart") {
+      validContext = namespace === "product" && !slot.scopeId;
+    } else if (slot.kind === "quickViewCommerce") {
+      validContext = slot.scopeId ? tree.scopes.get(slot.scopeId)?.kind === "product" : namespace === "product";
+    } else if (slot.kind === "cartSummary" || slot.kind === "cartDrawer") {
+      validContext = !slot.scopeId;
+    }
+    if (!validContext) add(
+      "slot.route_scope",
+      `${path}.trustedSlots[${index}]`,
+      "Trusted commerce slot is incompatible with its route or repeat scope",
+    );
+  }
   try {
     const cssReport = validateCompiledCss(css, { namespace, protectedNodes: tree.protectedNodes });
     if (cssReport.ruleCount > validationLimitsV1.maxCssRulesPerRoute) add("route.css_rule_limit", `${path}.css`, "Route exceeds CSS rule limit");
