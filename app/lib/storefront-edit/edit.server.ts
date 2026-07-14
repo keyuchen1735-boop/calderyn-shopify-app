@@ -532,9 +532,28 @@ export async function editStorefrontByPrompt(
     let repairAttempted = false;
     const attemptAudits: EditAttemptAudit[] = [];
     for (;;) {
-      applied = intent.kind === "deterministic"
-        ? applyDeterministicStorefrontEdit(base.bundle, compiledPatch.operations)
-        : applyStorefrontPatch(base.bundle, compiledPatch.operations);
+      try {
+        applied = intent.kind === "deterministic"
+          ? applyDeterministicStorefrontEdit(base.bundle, compiledPatch.operations)
+          : applyStorefrontPatch(base.bundle, compiledPatch.operations);
+      } catch (error) {
+        const replacement = compiledPatch.operations.find((operation) => operation.kind === "replaceRegion");
+        const repeatContext = replacement
+          ? safeStructuralContext(base.bundle, { routeId: replacement.routeId, regionId: replacement.targetId })
+          : undefined;
+        if (intent.kind === "structural" && error instanceof StorefrontPatchError && error.code === "patch_scope_invalid" &&
+            !repairAttempted && replacement && repeatContext && repeatContext.regionId !== replacement.targetId) {
+          repairAttempted = true;
+          compiledPatch = await dependencies.compileStructuralPatch({
+            prompt: input.prompt,
+            context: repeatContext,
+            bundle: base.bundle,
+            repair: { attempt: 1, scope: repeatContext },
+          });
+          continue;
+        }
+        throw error;
+      }
       if (JSON.stringify(applied.bundle) === JSON.stringify(base.bundle)) {
         throw new StorefrontEditError("storefront_edit_no_change", "That request did not change the storefront.", 422);
       }

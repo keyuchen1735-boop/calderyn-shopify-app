@@ -217,6 +217,51 @@ describe("editStorefrontByPrompt", () => {
     expect(deps.editDraft).toHaveBeenCalledTimes(1);
   });
 
+  it("recompiles an unscoped repeated-child replacement against its repeat owner", async () => {
+    const bundle = baseBundle();
+    const repeatRoot = bundle.routes.collection.tree[0];
+    if (repeatRoot.kind !== "element" || !repeatRoot.repeat || repeatRoot.children[0]?.kind !== "element") {
+      throw new Error("fixture repeat");
+    }
+    const repeatedChild = repeatRoot.children[0];
+    const deps = dependencies(bundle);
+    vi.mocked(deps.compileStructuralPatch)
+      .mockResolvedValueOnce({
+        operations: [{
+          kind: "replaceRegion",
+          routeId: "collection",
+          targetId: repeatedChild.id,
+          expected: `sha256:${createHash("sha256").update(JSON.stringify(repeatedChild)).digest("hex")}`,
+          source: { html: "<article>New card</article>", css: "" },
+        }],
+        provider: { kind: "ai_patch", provider: "anthropic", model: "test" },
+      })
+      .mockResolvedValueOnce({
+        operations: [{
+          kind: "replaceTextChildren",
+          routeId: "collection",
+          targetId: repeatRoot.id,
+          value: "A redesigned product grid",
+          expected: `sha256:${createHash("sha256").update(JSON.stringify(repeatRoot)).digest("hex")}`,
+        }],
+        provider: { kind: "ai_patch", provider: "anthropic", model: "test" },
+      });
+
+    await editStorefrontByPrompt({
+      shopId: SHOP,
+      actorId: ACTOR,
+      prompt: "Redesign the product cards",
+      expectedDraftVersionId: BASE,
+    }, deps);
+
+    expect(deps.compileStructuralPatch).toHaveBeenCalledTimes(2);
+    expect(deps.compileStructuralPatch).toHaveBeenLastCalledWith(expect.objectContaining({
+      context: { routeId: "collection", regionId: repeatRoot.id },
+      repair: expect.objectContaining({ scope: { routeId: "collection", regionId: repeatRoot.id } }),
+    }));
+    expect(deps.editDraft).toHaveBeenCalledTimes(1);
+  });
+
   it("clones verified logical asset references before validating an edited custom version", async () => {
     const custom = baseBundle();
     custom.assets.entries = [{ key: "hero", contentHash: "b".repeat(64), mediaType: "image/webp", byteSize: 84 }];
