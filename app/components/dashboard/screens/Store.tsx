@@ -1074,6 +1074,20 @@ export default function Store({ app }: { app: DashboardCtx }) {
   return (
     <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
       <div className="cd-studio">
+        <ChatRail
+          messages={messages}
+          prompt={prompt}
+          onPromptChange={setPrompt}
+          onSend={onComposerSend}
+          busy={chatBusy || building}
+          attaching={attaching}
+          onAttachFiles={onAttachFiles}
+          attachments={attachments.map((a) => ({ id: a.id, url: a.url, name: a.file.name }))}
+          onRemoveAttachment={onRemoveAttachment}
+          model={designModel}
+          onModelChange={setDesignModelBoth}
+        />
+
         <div className="cd-stage">
           {promptCanvas ? (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1213,20 +1227,6 @@ export default function Store({ app }: { app: DashboardCtx }) {
             </>
           )}
         </div>
-
-        <ChatRail
-          messages={messages}
-          prompt={prompt}
-          onPromptChange={setPrompt}
-          onSend={onComposerSend}
-          busy={chatBusy || building}
-          attaching={attaching}
-          onAttachFiles={onAttachFiles}
-          attachments={attachments.map((a) => ({ id: a.id, url: a.url, name: a.file.name }))}
-          onRemoveAttachment={onRemoveAttachment}
-          model={designModel}
-          onModelChange={setDesignModelBoth}
-        />
 
         {welcomeVisible && (
           <WelcomeOverlay

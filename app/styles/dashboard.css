@@ -4370,7 +4370,7 @@
 .cd-studio { display: flex; flex: 1; min-height: 540px; position: relative; }
 
 /* ---- chat rail ---- */
-.cd-rail { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-left: 0.5px solid var(--hairline-strong); }
+.cd-rail { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-right: 0.5px solid var(--hairline-strong); }
 .cd-rail-head { display: flex; align-items: center; gap: 9px; padding: 20px 20px 14px; flex: 0 0 auto; }
 .cd-rail-mark { width: 18px; height: 18px; flex-shrink: 0; display: block; }
 .cd-rail-head b { font-size: calc(14px * var(--type-scale)); font-weight: 650; letter-spacing: -0.012em; color: var(--text-1); }
@@ -5336,7 +5336,7 @@
   .cd-stage-page { padding: 4px 14px 18px; }
   .cd-rail {
     order: 2; width: 100%; flex: 0 0 44vh;
-    border-left: 0; border-top: 0.5px solid var(--hairline-strong);
+    border-right: 0; border-top: 0.5px solid var(--hairline-strong);
     padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
   }
   .cd-build-float { width: auto; left: 14px; right: 14px; }
