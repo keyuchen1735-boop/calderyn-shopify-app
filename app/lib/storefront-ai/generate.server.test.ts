@@ -163,31 +163,42 @@ describe("generateOriginalStorefront", () => {
     expect(result.bundle.routes.product.html).toContain("data-cd-trusted-slot-id");
   });
 
-  it("installs when the provider follows the curated-font source contract", async () => {
+  it("installs when the provider follows the bounded concept source contract", async () => {
     const deps = passingDependencies();
     const baseComplete = deps.provider.complete;
     deps.provider.complete = vi.fn(async (request) => {
       const response = await baseComplete(request);
       if (request.operation !== "concept" && request.operation !== "repairConcept") return response;
-      const fontFields = (request.schema as {
-        properties: { designSystem: { properties: {
+      const schemaFields = (request.schema as {
+        properties: {
+          designSystem: { properties: {
           displayFontId: { enum?: readonly string[] };
           bodyFontId: { enum?: readonly string[] };
-        } } };
-      }).properties.designSystem.properties;
+          } };
+          assetRequests: { maxItems?: number };
+        };
+      }).properties;
+      const fontFields = schemaFields.designSystem.properties;
       const expectedFontIds = JSON.stringify(CURATED_FONT_IDS);
-      if (JSON.stringify(fontFields.displayFontId.enum) === expectedFontIds &&
-          JSON.stringify(fontFields.bodyFontId.enum) === expectedFontIds) return response;
+      const constrainsFonts = JSON.stringify(fontFields.displayFontId.enum) === expectedFontIds &&
+        JSON.stringify(fontFields.bodyFontId.enum) === expectedFontIds;
+      const boundsAssets = schemaFields.assetRequests.maxItems === 8;
+      if (constrainsFonts && boundsAssets) return response;
       const concept = structuredClone(response.value as ReturnType<typeof createConcept>);
       return {
         ...response,
         value: {
           ...concept,
-          designSystem: {
+          designSystem: constrainsFonts ? concept.designSystem : {
             ...concept.designSystem,
             displayFontId: "unlisted-display-font",
             bodyFontId: "unlisted-body-font",
           },
+          assetRequests: boundsAssets ? concept.assetRequests : Array.from({ length: 9 }, (_, index) => ({
+            key: `asset-${index}`,
+            purpose: `Generated asset ${index}`,
+            required: false,
+          })),
         },
       };
     });

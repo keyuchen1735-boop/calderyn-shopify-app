@@ -55,7 +55,7 @@ export const CONCEPT_SCHEMA: Record<string, unknown> = {
     },
     shell: routeSourceSchema,
     home: routeSourceSchema,
-    assetRequests: { type: "array", items: assetRequestSchema },
+    assetRequests: { type: "array", maxItems: 8, items: assetRequestSchema },
   },
 };
 
