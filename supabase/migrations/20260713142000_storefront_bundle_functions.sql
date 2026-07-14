@@ -144,7 +144,14 @@ begin
   from public.storefront_bundle_asset
   where shop_id = p_shop_id and bundle_id = p_version_id;
 
-  if v_reference_count <> v_manifest_count or exists (
+  -- Recipe media ships with the application and is verified against its
+  -- checked-in manifest during build. It must never be confused with a
+  -- merchant-owned asset object or participate in shop asset GC.
+  if v_version.source_kind = 'recipe' then
+    if v_reference_count <> 0 then
+      raise exception using errcode = '23514', message = 'asset_manifest_mismatch: recipe static asset has shop reference';
+    end if;
+  elsif v_reference_count <> v_manifest_count or exists (
     select 1
     from jsonb_array_elements(v_version.asset_manifest -> 'entries') entry
     left join public.storefront_bundle_asset ref
@@ -203,7 +210,9 @@ begin
   if p_artifact_hash is distinct from v_computed_hash then
     raise exception using errcode = '22000', message = 'storefront_artifact_hash_mismatch';
   end if;
-  if p_status = 'validated' and jsonb_array_length(p_asset_manifest -> 'entries') <> 0 then
+  if p_status = 'validated'
+    and p_source_kind <> 'recipe'
+    and jsonb_array_length(p_asset_manifest -> 'entries') <> 0 then
     raise exception using errcode = '55000', message = 'validated_bundle_assets_require_candidate_flow';
   end if;
   insert into public.storefront_bundle_version (

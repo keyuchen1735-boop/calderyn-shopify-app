@@ -75,6 +75,16 @@ describe("storefront bundle persistence migrations", () => {
     expect(FUNCTIONS).toMatch(/not exists[^;]+storefront_bundle_asset/);
   });
 
+  it("keeps deploy-time recipe media separate from shop-owned custom asset objects", () => {
+    const createVersion = FUNCTIONS.match(/function public\.create_storefront_bundle_version[\s\S]+?\$\$;/)?.[0] ?? "";
+    const assertInstallable = FUNCTIONS.match(/function public\.storefront_assert_installable[\s\S]+?\$\$;/)?.[0] ?? "";
+
+    expect(createVersion).toMatch(/p_source_kind <> 'recipe'/);
+    expect(assertInstallable).toMatch(/v_version\.source_kind = 'recipe'/);
+    expect(assertInstallable).toMatch(/v_reference_count <> 0/);
+    expect(assertInstallable).toMatch(/elsif v_reference_count <> v_manifest_count/);
+  });
+
   it("captures legacy once, stores replayable edit metadata, and rejects running experiments", () => {
     expect(FUNCTIONS).toMatch(/legacy_capture/);
     expect(FUNCTIONS).toMatch(/runtime_version[^;]+0/);
