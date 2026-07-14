@@ -47,7 +47,7 @@ function wiredClient(overridePost?: (path: string, body: Record<string, string>)
 type MetaResponseLike = { id?: string; error?: { message: string; code?: number } } | Record<string, unknown>;
 
 describe("createFirstCampaign", () => {
-  it("(a) happy path: posts campaign, ad set, then creative+ad, all PAUSED, and returns all three ids", async () => {
+  it("(a) happy path: posts campaign PAUSED, ad set + ad ACTIVE, and returns all three ids", async () => {
     const { conn, calls } = wiredClient();
 
     const res = await createFirstCampaign(conn, BASE_INPUT, NO_RETRY);
@@ -69,7 +69,7 @@ describe("createFirstCampaign", () => {
     expect(adSetCall?.body.billing_event).toBe("IMPRESSIONS");
     expect(adSetCall?.body.optimization_goal).toBe("LINK_CLICKS");
     expect(adSetCall?.body.bid_strategy).toBe("LOWEST_COST_WITHOUT_CAP");
-    expect(adSetCall?.body.status).toBe("PAUSED");
+    expect(adSetCall?.body.status).toBe("ACTIVE");
     expect(adSetCall?.body.name).toBe("Summer Sale Launch — Ad set");
     const targeting = JSON.parse(adSetCall?.body.targeting ?? "{}");
     expect(targeting).toEqual({ geo_locations: { countries: ["US"] } });
@@ -77,12 +77,13 @@ describe("createFirstCampaign", () => {
     // Creative + ad flowed through createPausedAd with the new ad set id.
     const adCall = calls.find((c) => c.path === "/as_1/ads");
     expect(adCall?.body.adset_id).toBe("as_1");
-    expect(adCall?.body.status).toBe("PAUSED");
+    expect(adCall?.body.status).toBe("ACTIVE");
 
-    // Every write that carries a status is PAUSED, never anything else.
-    for (const call of calls) {
-      if ("status" in call.body) expect(call.body.status).toBe("PAUSED");
-    }
+    // The campaign is the single on/off gate: it is the only object created
+    // PAUSED, while the ad set and ad are created ACTIVE so turning the campaign
+    // on delivers the whole funnel.
+    const pausedWrites = calls.filter((c) => "status" in c.body && c.body.status === "PAUSED");
+    expect(pausedWrites.map((c) => c.path)).toEqual(["/act_1/campaigns"]);
   });
 
   it("(b) ad-set failure deletes the campaign and rethrows the original error", async () => {

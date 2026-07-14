@@ -1,5 +1,8 @@
 // Create the merchant's first campaign on Meta: campaign -> ad set -> creative
-// + ad, ALL PAUSED so nothing spends until the merchant turns it on. Writes go
+// + ad. The campaign is created PAUSED as the single on/off gate (a paused
+// campaign gates all delivery, so nothing spends until the merchant turns it
+// on); the ad set and ad are created ACTIVE so that resuming the campaign
+// brings the whole funnel live in one flip. Writes go
 // through the retriable-aware `check` + `withRetry` so brief throttles back
 // off and Meta-permanent errors (token/permission) fail terminally. If the ad
 // set or the ad fails after the campaign was created, we roll back by
@@ -65,9 +68,11 @@ export class RollbackFailedError extends Error {
 
 /**
  * Build the merchant's first campaign: POST campaign, then ad set, then
- * (via createPausedAd) the creative + ad. Everything is created PAUSED. If
- * the ad set or ad step fails, the campaign is deleted before the original
- * error is rethrown — we never leave a partial funnel live on the account.
+ * (via createPausedAd) the creative + ad. The campaign is created PAUSED as the
+ * single on/off gate; the ad set and ad are created ACTIVE so turning the
+ * campaign on delivers the whole funnel. If the ad set or ad step fails, the
+ * campaign is deleted before the original error is rethrown — we never leave a
+ * partial funnel live on the account.
  *
  * `onCampaignCreated` (when given) is awaited with the new campaign id right
  * after the campaign POST resolves and BEFORE the ad-set step — the caller's
@@ -125,7 +130,7 @@ export async function createFirstCampaign(
             billing_event: "IMPRESSIONS",
             optimization_goal: "LINK_CLICKS",
             bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-            status: "PAUSED",
+            status: "ACTIVE",
             targeting: JSON.stringify({ geo_locations: { countries: [input.countryCode] } }),
           }),
           "ad set create",
@@ -135,7 +140,7 @@ export async function createFirstCampaign(
     const adSetId = String((adSetRes as { id?: unknown }).id ?? "");
     if (!adSetId) throw new Error("Meta did not return an ad set id");
 
-    const { adId } = await createPausedAd(client, { adAccountId, adSetId, creative: input.creative });
+    const { adId } = await createPausedAd(client, { adAccountId, adSetId, creative: input.creative, status: "ACTIVE" });
 
     return { campaignId, adSetId, adId };
   } catch (err) {

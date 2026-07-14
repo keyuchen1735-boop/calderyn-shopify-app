@@ -60,15 +60,17 @@ async function resolvePageId(client: MetaClient, adAccountId: string): Promise<s
 }
 
 /**
- * Create a paused draft ad: POST /{adAccountId}/adcreatives, then
- * POST /{adSetId}/ads with status PAUSED. Returns the new ad id for undo.
- * Signature matches the locked contract: (client, { adAccountId, adSetId, creative }).
+ * Create a draft ad: POST /{adAccountId}/adcreatives, then POST /{adSetId}/ads.
+ * The ad's status is caller-controlled via `args.status` and defaults to PAUSED
+ * (the push-creative-draft path relies on that default). Returns the new ad id
+ * for undo. Signature matches the locked contract:
+ * (client, { adAccountId, adSetId, creative }), with `status` an optional add-on.
  */
 export async function createPausedAd(
   client: MetaClient,
-  args: { adAccountId: string; adSetId: string; creative: CreativeInput },
+  args: { adAccountId: string; adSetId: string; creative: CreativeInput; status?: "ACTIVE" | "PAUSED" },
 ): Promise<{ adId: string }> {
-  const { adAccountId, adSetId, creative } = args;
+  const { adAccountId, adSetId, creative, status = "PAUSED" } = args;
   const pageId = await resolvePageId(client, adAccountId);
   const cta = creative.cta || "SHOP_NOW";
 
@@ -102,7 +104,7 @@ export async function createPausedAd(
           name: creative.headline || "Calderyn draft ad",
           adset_id: adSetId,
           creative: JSON.stringify({ creative_id: creativeId }),
-          status: "PAUSED",
+          status,
         }),
         "ad create",
       ),
