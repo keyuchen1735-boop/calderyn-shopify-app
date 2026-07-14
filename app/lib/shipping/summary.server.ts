@@ -4,10 +4,19 @@
 // threaded by shop_id, shaped into DTOs — Supabase rows never leak to the client.
 import { getSupabase } from "~/lib/supabase.server";
 import { buildFallbackOptions } from "~/lib/ship-cost/adapters/easypost-rate.server";
-import type { Address, NormalizedRateOption, RateRequest } from "~/lib/ship-cost/adapters/rate-quote";
+import type {
+  Address,
+  NormalizedRateOption,
+  RateRequest,
+} from "~/lib/ship-cost/adapters/rate-quote";
 import { DEFAULT_HANDLING_DAYS } from "./delivery-window";
+import { loadShippingRoutes30d } from "./routes.server";
 import { loadShipRules, type ShipRulesDto } from "./rules.server";
-import { buildFlatRateOptions, loadFlatRates, type FlatRateRow } from "./flat-rate.server";
+import {
+  buildFlatRateOptions,
+  loadFlatRates,
+  type FlatRateRow,
+} from "./flat-rate.server";
 import type {
   CarrierServiceDto,
   Quotes30dSummary,
@@ -15,6 +24,7 @@ import type {
   RateSourceKindView,
   ShipCoverage,
   ShipOriginDto,
+  ShipRulesDtoView,
   ShippingSummary,
 } from "./summary-types";
 
@@ -109,7 +119,9 @@ async function loadOrigin(shopId: string): Promise<ShipOriginDto | null> {
   };
 }
 
-async function loadCarrierService(shopId: string): Promise<CarrierServiceDto | null> {
+async function loadCarrierService(
+  shopId: string,
+): Promise<CarrierServiceDto | null> {
   // Never select callback_url here: it embeds the callback token — the sole
   // authenticator of the public rates endpoint — and must not reach a browser.
   const { data, error } = await getSupabase()
@@ -118,7 +130,9 @@ async function loadCarrierService(shopId: string): Promise<CarrierServiceDto | n
     .eq("shop_id", shopId)
     .maybeSingle();
   if (error) {
-    throw new Error(`ship_carrier_service_registration read failed: ${error.message}`);
+    throw new Error(
+      `ship_carrier_service_registration read failed: ${error.message}`,
+    );
   }
   if (!data) return null;
   return { active: Boolean(data.active) };
@@ -166,7 +180,8 @@ async function loadQuotes30d(shopId: string): Promise<Quotes30dSummary> {
     .gte("created_at", since)
     .order("created_at", { ascending: false })
     .limit(QUOTE_SAMPLE_LIMIT);
-  if (error) throw new Error(`commerce_quote_fact read failed: ${error.message}`);
+  if (error)
+    throw new Error(`commerce_quote_fact read failed: ${error.message}`);
   const rows = data ?? [];
   const total = count ?? rows.length;
   if (rows.length === 0) {
@@ -223,7 +238,13 @@ async function loadQuotes30d(shopId: string): Promise<Quotes30dSummary> {
     avgPromise = e === l ? `${e} days` : `${e}–${l} days`;
   }
 
-  return { count: total, avgShippingCents, fallbackSharePct, lowConfidenceSharePct, avgPromise };
+  return {
+    count: total,
+    avgShippingCents,
+    fallbackSharePct,
+    lowConfidenceSharePct,
+    avgPromise,
+  };
 }
 
 /** Whether a live carrier credential is stored (existence only — never decrypts).
@@ -234,11 +255,15 @@ export async function carrierConnected(shopId: string): Promise<boolean> {
     .select("shop_id", { count: "exact", head: true })
     .eq("shop_id", shopId)
     .eq("kind", "easypost_ship");
-  if (error) throw new Error(`integration_credentials read failed: ${error.message}`);
+  if (error)
+    throw new Error(`integration_credentials read failed: ${error.message}`);
   return (count ?? 0) > 0;
 }
 
-function optionToCardRow(o: NormalizedRateOption, handlingDays: number): RateCardRow {
+function optionToCardRow(
+  o: NormalizedRateOption,
+  handlingDays: number,
+): RateCardRow {
   return {
     service: o.serviceName,
     carrier: o.carrier,
@@ -260,23 +285,41 @@ export function buildFlatRateCard(
     origin: placeholderAddress(originCountry),
     destination: placeholderAddress(originCountry),
     parcels: [
-      { lengthIn: 0, widthIn: 0, heightIn: 0, weightOz: RATE_CARD_SAMPLE_WEIGHT_GRAMS * G_TO_OZ },
+      {
+        lengthIn: 0,
+        widthIn: 0,
+        heightIn: 0,
+        weightOz: RATE_CARD_SAMPLE_WEIGHT_GRAMS * G_TO_OZ,
+      },
     ],
   };
-  return buildFlatRateOptions(rows, req).map((o) => optionToCardRow(o, handlingDays));
+  return buildFlatRateOptions(rows, req).map((o) =>
+    optionToCardRow(o, handlingDays),
+  );
 }
 
-export async function loadShippingSummary(shopId: string): Promise<ShippingSummary> {
-  const [origin, carrierService, coverage, quotes30d, rules, flatRates, hasCarrier] =
-    await Promise.all([
-      loadOrigin(shopId),
-      loadCarrierService(shopId),
-      loadCoverage(shopId),
-      loadQuotes30d(shopId),
-      loadShipRules(shopId),
-      loadFlatRates(shopId),
-      carrierConnected(shopId),
-    ]);
+export async function loadShippingSummary(
+  shopId: string,
+): Promise<ShippingSummary> {
+  const [
+    origin,
+    carrierService,
+    coverage,
+    quotes30d,
+    routes30d,
+    rules,
+    flatRates,
+    hasCarrier,
+  ] = await Promise.all([
+    loadOrigin(shopId),
+    loadCarrierService(shopId),
+    loadCoverage(shopId),
+    loadQuotes30d(shopId),
+    loadShippingRoutes30d(shopId),
+    loadShipRules(shopId),
+    loadFlatRates(shopId),
+    carrierConnected(shopId),
+  ]);
   const rateSourceKind: RateSourceKindView = hasCarrier
     ? "carrier"
     : flatRates.length > 0
@@ -294,6 +337,7 @@ export async function loadShippingSummary(shopId: string): Promise<ShippingSumma
         ? buildFlatRateCard(flatRates, originCountry, rules.handlingDays)
         : buildRateCard(originCountry),
     quotes30d,
+    routes30d,
     rules: toRulesView(rules),
     flatRates: flatRates.map((r) => ({
       id: r.id,
@@ -308,7 +352,7 @@ export async function loadShippingSummary(shopId: string): Promise<ShippingSumma
   };
 }
 
-function toRulesView(rules: ShipRulesDto): ShippingSummary["rules"] {
+function toRulesView(rules: ShipRulesDto): ShipRulesDtoView {
   return {
     markupPct: rules.markupPct,
     handlingCents: rules.handlingCents,

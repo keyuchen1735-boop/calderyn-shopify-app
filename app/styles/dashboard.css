@@ -75,23 +75,23 @@
 
   /* ============ layout ============ */
   .cd-sidebar {
-    width: 230px; flex-shrink: 0; display: flex; flex-direction: column;
+    width: 220px; flex-shrink: 0; display: flex; flex-direction: column;
     background: linear-gradient(
       180deg,
       color-mix(in oklch, var(--accent) 12%, transparent),
       transparent 46%
     );
-    padding: 20px 14px 16px;
-    gap: 22px;
+    padding: 14px 12px 12px;
+    gap: 12px;
   }
-  .cd-side-brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px; cursor: pointer; }
-  .cd-logo { width: 34px; height: 34px; display: block; flex-shrink: 0; }
+  .cd-side-brand { display: flex; align-items: center; gap: 9px; padding: 1px 8px; cursor: pointer; }
+  .cd-logo { width: 32px; height: 32px; display: block; flex-shrink: 0; }
   .cd-brand-name { font-size: calc(15px * var(--type-scale)); font-weight: 650; letter-spacing: -0.015em; }
   .cd-brand-sub { font-size: 11px; color: var(--text-3); margin-top: 1px; letter-spacing: -0.002em; }
   .cd-side-nav { display: flex; flex-direction: column; gap: 1px; flex: 1; }
   .cd-nav-item {
-    display: flex; align-items: center; gap: 11px;
-    padding: calc(7.5px * var(--density)) 10px; border: none; background: none;
+    display: flex; align-items: center; gap: 10px;
+    padding: calc(6px * var(--density)) 10px; border: none; background: none;
     border-radius: 8px; cursor: pointer;
     font-size: calc(13.5px * var(--type-scale)); font-weight: 480; color: var(--text-1);
     letter-spacing: -0.008em;
@@ -107,7 +107,7 @@
     background: var(--red); color: #fff; font-size: 11px; font-weight: 600;
     display: inline-flex; align-items: center; justify-content: center; padding: 0 5px;
   }
-  .cd-side-foot { display: flex; flex-direction: column; gap: 8px; }
+  .cd-side-foot { display: flex; flex-direction: column; gap: 4px; }
   .cd-side-foot .cd-live-row { padding: 0 10px; }
   .cd-live-row { display: flex; align-items: center; gap: 8px; font-size: calc(12.5px * var(--type-scale)); color: var(--text-2); font-weight: 500; }
 
@@ -166,17 +166,6 @@
   .cd-reveal--inline { border-top: 1px solid var(--hairline); border-bottom: 1px solid var(--hairline); }
   .cd-reveal--inline .cd-reveal-trigger { padding: 8px 2px; }
   .cd-reveal--inline .cd-reveal-inner { padding: 6px 2px 12px; }
-  .cd-reveal--receipt { width: 100%; }
-  .cd-reveal--receipt .cd-reveal-trigger {
-    width: fit-content; min-height: 0; padding: 3px 8px; gap: 4px; border-radius: 999px;
-    background: var(--green-bg); color: var(--green);
-    font-size: calc(11.5px * var(--type-scale)); font-weight: 570;
-  }
-  .cd-reveal--receipt .cd-reveal-trigger:hover { background: color-mix(in oklch, var(--green) 17%, transparent); }
-  .cd-reveal--receipt .cd-reveal-chev { width: 13px; height: 13px; flex-basis: 13px; }
-  .cd-reveal--receipt .cd-reveal-label { color: inherit; font-size: inherit; font-weight: inherit; }
-  .cd-reveal--receipt .cd-reveal-inner { padding-top: 6px; }
-
   /* ============ grids ============ */
   .cd-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: calc(14px * var(--density)); }
   .cd-grid-main { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: calc(18px * var(--density)); align-items: start; }
@@ -1042,6 +1031,37 @@
     border: none; cursor: pointer; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: calc(12px * var(--type-scale)); line-height: 1;
   }
 
+  /* ============ contact-us ============ */
+  .cd-contact-fab {
+    position: fixed; right: 20px; bottom: 20px; z-index: 45;
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 14px;
+    border: 0.5px solid var(--hairline-strong); border-radius: 999px;
+    background: var(--card-solid); color: var(--text-1);
+    font: inherit; font-size: calc(12.5px * var(--type-scale)); font-weight: 600;
+    box-shadow: var(--shadow-pop); cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .cd-contact-fab:hover { transform: translateY(-1px); }
+  .cd-contact-fab:active { transform: translateY(0); }
+  /* Above the assistant drawer (70) so an open draft never silently vanishes
+     behind it; below the bug-report overlay (80). */
+  .cd-contact-panel {
+    position: fixed; right: 20px; bottom: 66px; z-index: 75;
+    width: 340px; max-width: calc(100vw - 32px);
+    display: flex; flex-direction: column; overflow: hidden;
+    background: var(--card-solid);
+    border: 0.5px solid var(--hairline-strong); border-radius: var(--radius);
+    box-shadow: var(--shadow-pop);
+  }
+  .cd-contact-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+  .cd-contact-foot { display: flex; justify-content: flex-end; padding: 0 16px 14px; }
+  @media (max-width: 767px) {
+    /* Clear the fixed bottom tab bar on phones. */
+    .cd-contact-fab { right: 14px; bottom: calc(66px + env(safe-area-inset-bottom, 0px)); }
+    .cd-contact-panel { right: 14px; bottom: calc(112px + env(safe-area-inset-bottom, 0px)); }
+  }
+
 /* Claude connector install guide (Settings → Claude connector) */
 .cd-mcp { display: flex; flex-direction: column; gap: 16px; }
 .cd-mcp-hero {
@@ -1646,11 +1666,11 @@
 .cd-root.cd-dark { --live: #5B9BFA; --gauge-dim: rgba(255,255,255,0.14); --gauge-track: rgba(255,255,255,0.08); --gauge-knob: #FFFFFF; }
 
 /* ---- sidebar groups ---- */
-.cd-nav-group { font-size: 10.5px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); padding: 12px 10px 4px; }
+.cd-nav-group { font-size: 10.5px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); padding: 8px 10px 3px; }
 .cd-nav-later { margin-left: auto; font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); background: var(--gray-bg); padding: 1.5px 6px; border-radius: 999px; }
 .cd-act-dot { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 var(--live); animation: cd-act 1.8s ease infinite; flex-shrink: 0; }
 @keyframes cd-act { 0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--live) 60%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
-.cd-ask-btn { display: flex; align-items: center; gap: 9px; margin: 2px 0 4px; padding: 10px 12px; border: none; cursor: pointer; font-family: inherit; text-align: left; width: 100%; border-radius: 11px; background: var(--gray-bg); box-shadow: inset 0 0 0 0.5px var(--hairline-strong); color: var(--text-1); font-size: calc(13.5px * var(--type-scale)); font-weight: 600; letter-spacing: -0.008em; transition: transform 0.13s ease, opacity 0.15s ease; }
+.cd-ask-btn { display: flex; align-items: center; gap: 9px; margin: 0 0 2px; padding: 8px 10px; border: none; cursor: pointer; font-family: inherit; text-align: left; width: 100%; border-radius: 10px; background: var(--gray-bg); box-shadow: inset 0 0 0 0.5px var(--hairline-strong); color: var(--text-1); font-size: calc(13.5px * var(--type-scale)); font-weight: 600; letter-spacing: -0.008em; transition: transform 0.13s ease, opacity 0.15s ease; }
 .cd-ask-btn:hover { transform: translateY(-1px); opacity: 0.94; }
 .cd-nav-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; margin: 0 -4px; padding: 0 4px; }
 .cd-nav-scroll::-webkit-scrollbar { width: 0; }
@@ -1660,8 +1680,8 @@
 .cd-apswitch[data-on="1"] i { left: 16px; }
 
 /* ---- account chip ---- */
-.cd-acct-wrap { position: relative; margin-top: 10px; padding: 10px 8px 0; border-top: 0.5px solid var(--hairline); }
-.cd-acct { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 7px 8px; border: 0; background: transparent; border-radius: 10px; cursor: pointer; font: inherit; }
+.cd-acct-wrap { position: relative; margin-top: 6px; padding: 6px 8px 0; border-top: 0.5px solid var(--hairline); }
+.cd-acct { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 5px 6px; border: 0; background: transparent; border-radius: 9px; cursor: pointer; font: inherit; }
 .cd-acct:hover { background: var(--gray-bg); }
 .cd-acct-av { width: 30px; height: 30px; border-radius: 50%; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; font-size: 11.5px; font-weight: 650; background: color-mix(in oklch, var(--live) 20%, transparent); color: var(--live); box-shadow: inset 0 0 0 0.5px var(--hairline-strong); }
 .cd-acct-body { min-width: 0; flex: 1; display: flex; flex-direction: column; }
@@ -1687,10 +1707,10 @@
 }
 .cd-nav-parent[data-expanded="1"] .cd-nav-caret { transform: rotate(0deg); opacity: 1; }
 .cd-nav-parent[data-active="1"] .cd-nav-caret { color: var(--accent); }
-.cd-subnav { display: flex; flex-direction: column; padding-left: 19px; margin: 1px 0 5px; }
+.cd-subnav { display: flex; flex-direction: column; padding-left: 19px; margin: 0 0 3px; }
 .cd-subnav-item {
   position: relative; display: flex; align-items: center;
-  padding: calc(6px * var(--density)) 10px calc(6px * var(--density)) 22px;
+  padding: calc(5px * var(--density)) 10px calc(5px * var(--density)) 22px;
   border: 0; background: none; border-radius: 8px; cursor: pointer;
   font-family: inherit; text-align: left;
   font-size: calc(12.75px * var(--type-scale)); font-weight: 460;
@@ -2723,7 +2743,7 @@
 /* ============ phone-width layout (≤767px) ============ */
 /* Customer detail: content column beside a 300px meta rail on wide screens,
    one stacked column once the rail can no longer fit beside real content
-   (1100px matches .cd-grid-main — the 230px nav rail eats into anything less). */
+   (1100px matches .cd-grid-main — the 220px nav rail eats into anything less). */
 .cd-cust-detail { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: calc(18px * var(--density)); align-items: start; }
 @media (max-width: 1100px) { .cd-cust-detail { grid-template-columns: 1fr; } }
 
@@ -2795,7 +2815,6 @@
   background: var(--card);
 }
 .cd-npf-prompt > .cd-input { flex: 1 1 180px; }
-.cd-npf-receipts { display: flex; flex-wrap: wrap; gap: 6px; }
 .cd-npf-combo-summary {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   width: 100%; padding: 10px 12px; border: 1px dashed var(--hairline-strong);

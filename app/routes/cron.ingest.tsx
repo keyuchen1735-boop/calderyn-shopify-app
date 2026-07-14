@@ -1,7 +1,11 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { getSupabase } from "~/lib/supabase.server";
-import { backfillShop, syncProductInventorySettings } from "~/lib/ingest/backfill.server";
+import {
+  backfillShop,
+  syncProductInventorySettings,
+} from "~/lib/ingest/backfill.server";
+import { repairOrderDestinationsForIntegration } from "~/lib/ingest/destination-repair.server";
 import { transformPendingWebhooks } from "~/lib/ingest/transform.server";
 import { transformPendingOwnedEvents } from "~/lib/ingest/owned/transform.server";
 import { reconcileAttributedRevenue } from "~/lib/attribution/revenue.server";
@@ -9,6 +13,7 @@ import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
+const MAX_DESTINATION_REPAIR_SHOPS = 5;
 
 // Stringify an unknown thrown value usefully. A raw Supabase/PostgREST error is a
 // plain object `{ message, details, hint, code }` (NOT an Error), so `String(err)`
@@ -18,8 +23,11 @@ function stringifyError(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === "object") {
     const e = err as { message?: unknown; details?: unknown; code?: unknown };
-    const parts = [e.message, e.details, e.code != null && `code=${e.code}`]
-      .filter((p) => typeof p === "string" && p.length > 0);
+    const parts = [
+      e.message,
+      e.details,
+      e.code != null && `code=${e.code}`,
+    ].filter((p) => typeof p === "string" && p.length > 0);
     if (parts.length) return parts.join(" ");
     try {
       return JSON.stringify(err);
@@ -31,7 +39,12 @@ function stringifyError(err: unknown): string {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  if (!isAuthorizedCron(request.headers.get("authorization"), process.env.CRON_SECRET)) {
+  if (
+    !isAuthorizedCron(
+      request.headers.get("authorization"),
+      process.env.CRON_SECRET,
+    )
+  ) {
     return new Response("Unauthorized", { status: 401 });
   }
 
@@ -41,6 +54,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     backfillErrors: [] as string[],
     inventorySettingsSynced: [] as string[],
     inventorySettingsErrors: [] as string[],
+    destinationRepair: { shops: 0, scanned: 0, updated: 0, checked: 0 },
+    destinationRepairErrors: [] as string[],
     transform: { processed: 0, facts: 0, dlq: 0 },
     transformError: null as string | null,
     ownedTransform: { processed: 0, facts: 0, dlq: 0 },
@@ -70,7 +85,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .eq("sync_status", "pending")
     .limit(MAX_BACKFILL_SHOPS);
   for (const row of pending ?? []) {
-    const domain = (row as unknown as { shops: { shop_domain: string } }).shops.shop_domain;
+    const domain = (row as unknown as { shops: { shop_domain: string } }).shops
+      .shop_domain;
     try {
       await backfillShop(domain);
       summary.backfilled.push(domain);
@@ -89,7 +105,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .in("sync_status", ["ready", "live"]);
   for (const row of (activeIntegrations ?? []).slice(0, MAX_BACKFILL_SHOPS)) {
     const shopId = String(row.shop_id);
-    const domain = (row as unknown as { shops?: { shop_domain?: string } }).shops?.shop_domain;
+    const domain = (row as unknown as { shops?: { shop_domain?: string } })
+      .shops?.shop_domain;
     if (!domain) continue;
     const { data: missing, error: missingErr } = await sb
       .from("sku_dim")
@@ -111,6 +128,50 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
   mark("inventory_settings");
 
+  // Claim and stamp a bounded batch atomically before any Shopify API work.
+  // Fresh claims are leased, so overlapping cron/manual invocations drain
+  // different tenants and an interrupted worker cannot monopolize the queue.
+  const { data: repairIntegrations, error: repairSelectError } = await sb.rpc(
+    "claim_order_destination_repairs",
+    { p_limit: MAX_DESTINATION_REPAIR_SHOPS },
+  );
+  if (repairSelectError) {
+    summary.destinationRepairErrors.push(
+      `selection: ${stringifyError(repairSelectError)}`,
+    );
+  } else {
+    for (const row of repairIntegrations ?? []) {
+      const shopId = String(row.shop_id);
+      const claim = row as unknown as {
+        shop_id: string;
+        shop_domain: string;
+        claimed_at: string;
+      };
+      const domain = claim.shop_domain;
+      if (!domain || !claim.claimed_at) continue;
+      try {
+        const repaired = await repairOrderDestinationsForIntegration(
+          { shopId, shopDomain: domain, claimedAt: claim.claimed_at },
+          sb,
+        );
+        summary.destinationRepair.shops += 1;
+        summary.destinationRepair.scanned += repaired.scanned;
+        summary.destinationRepair.updated += repaired.updated;
+        summary.destinationRepair.checked += repaired.checked;
+      } catch (err) {
+        summary.destinationRepairErrors.push(
+          `${domain}: ${stringifyError(err)}`,
+        );
+        console.error(
+          "[cron.ingest] destination repair failed for shop",
+          shopId,
+          err,
+        );
+      }
+    }
+  }
+  mark("destination_repair");
+
   // Phase 2: transform queued webhooks (isolated so a transform-query failure
   // doesn't abort the response).
   try {
@@ -126,7 +187,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     summary.ownedTransform = await transformPendingOwnedEvents();
   } catch (err) {
-    summary.ownedTransformError = err instanceof Error ? err.message : String(err);
+    summary.ownedTransformError =
+      err instanceof Error ? err.message : String(err);
     console.error("[cron.ingest] owned transform phase failed", err);
   }
   mark("owned_transform");
@@ -138,14 +200,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // sets it; nothing promotes a Shopify integration to "live"), so gating on
   // "live" alone matched zero real shops and silently skipped BOTH attribution
   // reconcile (Phase 3) and ship-cost resolution (Phase 4). Include "ready".
-  const activeShops = (activeIntegrations ?? []).map((row) => ({ shop_id: row.shop_id }));
+  const activeShops = (activeIntegrations ?? []).map((row) => ({
+    shop_id: row.shop_id,
+  }));
   for (const row of activeShops ?? []) {
     const shopId = (row as { shop_id: string }).shop_id;
     try {
       await reconcileAttributedRevenue(shopId, sb);
     } catch (err) {
       summary.attributionErrors.push(`${shopId}: ${stringifyError(err)}`);
-      console.error("[cron.ingest] attribution reconcile failed for shop", shopId, err);
+      console.error(
+        "[cron.ingest] attribution reconcile failed for shop",
+        shopId,
+        err,
+      );
     }
   }
   mark("attribution");
@@ -160,7 +228,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       });
     } catch (err) {
       summary.shipCostErrors.push(`${shopId}: ${stringifyError(err)}`);
-      console.error("[cron.ingest] ship-cost resolution failed for shop", shopId, err);
+      console.error(
+        "[cron.ingest] ship-cost resolution failed for shop",
+        shopId,
+        err,
+      );
     }
   }
   mark("ship_cost");

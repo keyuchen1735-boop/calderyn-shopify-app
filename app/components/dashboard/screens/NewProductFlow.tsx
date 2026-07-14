@@ -256,7 +256,6 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
   const [prompt, setPrompt] = useState("");
   const [drafting, setDrafting] = useState(false);
   const [photos, setPhotos] = useState<PhotoDraft[]>([]);
-  const [receipts, setReceipts] = useState<{ id: string; text: string }[]>([]);
   const [saving, setSaving] = useState(false);
 
   const [title, setTitle] = useState("");
@@ -484,10 +483,6 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
     at(t, () => {
       setDrafting(false);
       if (o.fresh) setStep("basics");
-      setReceipts((r) => [
-        ...r,
-        ...plan.summaries.map((text, i) => ({ id: `${r.length}-${i}-${text}`, text })),
-      ]);
       const last = plan.summaries[plan.summaries.length - 1] ?? "Applied your change";
       app.toast(`${last} — updated.`, "sparkle");
     });
@@ -685,18 +680,10 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
   const sizeValues = sizeOpt ? sizeOpt.values.split(",").map((s) => s.trim()).filter(Boolean) : [];
   const priceText = Number(price) > 0 ? `$${Number(price).toFixed(2)}` : "$0.00";
   const stepIdx = STEP_ORDER.findIndex((s) => s.id === step);
-  const visibleReceipts = receipts.slice(-4);
   const organizeMeta = organizeSummary(vendor, tags, sel);
   // The tenant's real storefront listing URL — real org_slug + /storefront path,
   // so the previewed link resolves to the live store (not a re-derived slug).
   const listingUrl = storefrontListingUrl(app.orgSlug, app.storeLabel, title);
-
-  const readiness = [
-    { label: "Title", done: Boolean(title.trim()) },
-    { label: "Price", done: Number(price) > 0 || Object.values(cells).some((c) => Number(c.price) > 0) },
-    { label: "Photo", done: photos.length > 0 },
-    { label: "Shipping", done: !physical || shippingDone },
-  ];
 
   const shimmerBar = (
     <span
@@ -901,36 +888,6 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
             </Btn>
             {drafting && shimmerBar}
           </div>
-        )}
-        {step !== "describe" && visibleReceipts.length === 1 && (
-          <div className="cd-npf-receipts">
-            {visibleReceipts.map((r) => (
-              <span key={r.id} className="cd-badge" style={{ background: "var(--green-bg)", color: "var(--green)" }}>
-                <CDIcon name="check" size={12} strokeWidth={2} />
-                {r.text}
-              </span>
-            ))}
-          </div>
-        )}
-        {step !== "describe" && visibleReceipts.length > 1 && (
-          <Reveal
-            className="cd-reveal--receipt"
-            label={
-              <>
-                <CDIcon name="check" size={12} strokeWidth={2} />
-                {visibleReceipts.length} changes
-              </>
-            }
-          >
-            <div className="cd-npf-receipts">
-              {visibleReceipts.map((r) => (
-                <span key={r.id} className="cd-badge" style={{ background: "var(--green-bg)", color: "var(--green)" }}>
-                  <CDIcon name="check" size={12} strokeWidth={2} />
-                  {r.text}
-                </span>
-              ))}
-            </div>
-          </Reveal>
         )}
         {step !== "describe" && photoRow}
 
@@ -1153,22 +1110,6 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                 value={previewView}
                 onChange={(v) => setPreviewView(v as "page" | "grid")}
               />
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {readiness.map((r) => (
-                  <span
-                    key={r.label}
-                    className="cd-badge"
-                    style={{
-                      background: r.done ? "var(--green-bg)" : "transparent",
-                      color: r.done ? "var(--green)" : "var(--text-3)",
-                      border: r.done ? "0" : "1px solid var(--hairline-strong)",
-                    }}
-                  >
-                    {r.done && <CDIcon name="check" size={12} strokeWidth={2} />}
-                    {r.label}
-                  </span>
-                ))}
-              </div>
             </div>
 
             {previewView === "page" ? (
