@@ -41,6 +41,7 @@ interface RenderContext {
   instancePath: readonly string[];
   instanceSuffix?: string;
   mode: "public" | "preview";
+  assetUrls: ReadonlyMap<string, string>;
 }
 
 const PATHS: Record<StorefrontRouteId | "account" | "policy", string> = {
@@ -122,6 +123,34 @@ function formatBinding(binding: CompiledBinding, value: unknown): string | null 
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
     ? String(value)
     : null;
+}
+
+function safeAssetUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  if (value.startsWith("/") && !value.startsWith("//")) return value;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function assetUrlsForBundle(
+  bundle: StorefrontBundleV1,
+  customAssetUrls: Readonly<Record<string, string>> | undefined,
+): ReadonlyMap<string, string> {
+  const urls = new Map<string, string>();
+  for (const asset of bundle.assets.entries) {
+    if (asset.mediaType !== "image/webp") continue;
+    if (bundle.source.kind === "recipe") {
+      urls.set(asset.key, `/storefront-recipes/${bundle.source.templateId}/${asset.key}.webp`);
+      continue;
+    }
+    const resolved = safeAssetUrl(customAssetUrls?.[asset.key]);
+    if (resolved) urls.set(asset.key, resolved);
+  }
+  return urls;
 }
 
 function reactAttributeName(name: string): string {
@@ -236,6 +265,11 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
 
   const props: Record<string, unknown> = { key };
   for (const [name, value] of Object.entries(node.attributes)) props[reactAttributeName(name)] = value;
+  const assetKey = node.attributes["data-cd-asset-key"];
+  if ((node.tag === "img" || node.tag === "source") && assetKey) {
+    const assetUrl = context.assetUrls.get(assetKey);
+    if (assetUrl) props.src = assetUrl;
+  }
   props.id = context.instanceSuffix ? `${node.id}-${context.instanceSuffix}` : node.id;
   if (context.instanceSuffix) props["data-cd-instance"] = context.instanceSuffix;
   if (node.routeTarget) props.href = targetHref(node.routeTarget, context);
@@ -273,6 +307,7 @@ function contextFor(
   trustedSlots: readonly TrustedSlotManifest[],
   data: PublicPresentationData,
   mode: "public" | "preview" = "public",
+  assetUrls: ReadonlyMap<string, string> = new Map(),
 ): RenderContext {
   const bindings = new Map<string, CompiledBinding[]>();
   for (const binding of treeBindings) {
@@ -288,6 +323,7 @@ function contextFor(
     currentScopeId: "root",
     instancePath: [],
     mode,
+    assetUrls,
   };
 }
 
@@ -297,8 +333,9 @@ function renderTree(
   trustedSlots: readonly TrustedSlotManifest[],
   data: PublicPresentationData,
   mode: "public" | "preview" = "public",
+  assetUrls: ReadonlyMap<string, string> = new Map(),
 ): ReactNode[] {
-  const context = contextFor(bindings, trustedSlots, data, mode);
+  const context = contextFor(bindings, trustedSlots, data, mode, assetUrls);
   return tree.map((node, index) => renderNode(node, context, `node-${index}`));
 }
 
@@ -341,14 +378,15 @@ export interface RenderCheckoutRouteInput {
   data: PublicPresentationData;
   nonce: string;
   platformContent?: ReactNode;
+  assetUrls?: ReadonlyMap<string, string>;
 }
 
-export function renderCheckoutRoute({ artifact, data, nonce, platformContent }: RenderCheckoutRouteInput): ReactElement {
+export function renderCheckoutRoute({ artifact, data, nonce, platformContent, assetUrls }: RenderCheckoutRouteInput): ReactElement {
   return (
     <Fragment>
       {artifact.decorativeCss ? <style nonce={nonce} data-cd-bundle-style="checkout">{artifact.decorativeCss}</style> : null}
       <div data-cd-checkout-decoration>
-        {renderTree(artifact.decorativeTree, artifact.bindings, [], data)}
+        {renderTree(artifact.decorativeTree, artifact.bindings, [], data, "public", assetUrls)}
       </div>
       <CheckoutIslands layout={artifact.layout}>{platformContent}</CheckoutIslands>
     </Fragment>
@@ -362,6 +400,7 @@ export interface RenderStorefrontSurfaceInput {
   nonce: string;
   mode: "public" | "preview";
   checkoutContent?: ReactNode;
+  customAssetUrls?: Readonly<Record<string, string>>;
 }
 
 export function isRuntime1RenderData(value: unknown): value is {
@@ -379,7 +418,8 @@ export function isRuntime1RenderData(value: unknown): value is {
 }
 
 /** Render the immutable shell and selected route from the same resolved bundle object. */
-export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, checkoutContent }: RenderStorefrontSurfaceInput): ReactElement {
+export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, checkoutContent, customAssetUrls }: RenderStorefrontSurfaceInput): ReactElement {
+  const assetUrls = assetUrlsForBundle(bundle, customAssetUrls);
   let routeResult: ReactElement;
   if (routeId === "checkout") {
     routeResult = (
@@ -388,6 +428,7 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
           artifact: bundle.routes.checkout,
           data,
           nonce,
+          assetUrls,
           platformContent: checkoutContent ?? (mode === "preview" ? <p data-cd-preview-checkout="simulated">Checkout simulation</p> : undefined),
         })}
       </div>
@@ -397,7 +438,7 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
     routeResult = (
       <div data-cd-bundle-route={routeId}>
         {route.css ? <style nonce={nonce} data-cd-bundle-style={routeId}>{route.css}</style> : null}
-        {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode)}
+        {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls)}
       </div>
     );
   }
@@ -406,7 +447,7 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
       {bundle.designSystem.globalCss ? <style nonce={nonce} data-cd-bundle-style="global">{bundle.designSystem.globalCss}</style> : null}
       <div data-cd-bundle-shell={routeId}>
         {bundle.shell.css ? <style nonce={nonce} data-cd-bundle-style="shell">{bundle.shell.css}</style> : null}
-        {renderTree(bundle.shell.tree, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode)}
+        {renderTree(bundle.shell.tree, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls)}
       </div>
       {routeResult}
     </div>

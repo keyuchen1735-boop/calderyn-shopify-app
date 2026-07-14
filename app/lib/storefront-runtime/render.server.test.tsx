@@ -70,6 +70,45 @@ function artifact(overrides: Partial<RouteArtifact> = {}): RouteArtifact {
 }
 
 describe("compiled-node server renderer", () => {
+  it("resolves declared recipe image keys only inside the owned recipe asset directory", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
+    source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
+    source.routes.home.html = `<main><img data-cd-asset="hero" alt="Editorial look" width="1800" height="1200"></main>`;
+    const bundle = compileBundle(source).bundle;
+
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "asset-nonce", mode: "public",
+    }));
+
+    expect(html).toContain('src="/storefront-recipes/atelier-nine/hero.webp"');
+    expect(html).toContain('data-cd-asset-key="hero"');
+  });
+
+  it("keeps custom assets fail-closed unless the caller supplies a separately verified URL", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
+    source.routes.home.html = `<main><img data-cd-asset="hero" alt="Merchant campaign" width="1200" height="800"></main>`;
+    const bundle = compileBundle(source).bundle;
+    const scriptUrl = ["java", "script:alert(1)"].join("");
+    const closed = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "asset-nonce", mode: "public",
+    }));
+    const resolved = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "asset-nonce", mode: "public",
+      customAssetUrls: { hero: "https://cdn.example.test/verified/hero.webp" },
+    }));
+    const unsafe = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "asset-nonce", mode: "public",
+      customAssetUrls: { hero: scriptUrl, ghost: "https://cdn.example.test/ghost.webp" },
+    }));
+
+    expect(closed).not.toContain("<img src=");
+    expect(resolved).toContain('src="https://cdn.example.test/verified/hero.webp"');
+    expect(unsafe).not.toContain(scriptUrl);
+    expect(unsafe).not.toContain("ghost.webp");
+  });
+
   it("renders shell and route artifacts from one immutable bundle with identical compiled keys", () => {
     const compiled = compileBundle(VALID_BUNDLE_SOURCE).bundle;
     const bundle: StorefrontBundleV1 = {
