@@ -169,7 +169,15 @@ describe("generateOriginalStorefront", () => {
     deps.provider.complete = vi.fn(async (request) => {
       const response = await baseComplete(request);
       if (request.operation !== "concept" && request.operation !== "repairConcept") return response;
-      if (CURATED_FONT_IDS.every((fontId) => request.system.includes(fontId))) return response;
+      const fontFields = (request.schema as {
+        properties: { designSystem: { properties: {
+          displayFontId: { enum?: readonly string[] };
+          bodyFontId: { enum?: readonly string[] };
+        } } };
+      }).properties.designSystem.properties;
+      const expectedFontIds = JSON.stringify(CURATED_FONT_IDS);
+      if (JSON.stringify(fontFields.displayFontId.enum) === expectedFontIds &&
+          JSON.stringify(fontFields.bodyFontId.enum) === expectedFontIds) return response;
       const concept = structuredClone(response.value as ReturnType<typeof createConcept>);
       return {
         ...response,
