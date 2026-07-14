@@ -33,6 +33,12 @@ describe("binding and repeat scopes", () => {
     expect(result.bindings).toContainEqual(expect.objectContaining({
       ref: { kind: "data", scopeId: "root", path: "cart.count" },
     }));
+    expect(compileHtml(`<span data-cd-text="cart.count"></span>`, {
+      namespace: "cart",
+      rootScopeKind: "cart",
+    }).bindings).toContainEqual(expect.objectContaining({
+      ref: { kind: "data", scopeId: "root", path: "cart.count" },
+    }));
     expect(() => compileHtml(`<span data-cd-money="cart.total"></span>`, {
       namespace: "shell",
       rootScopeKind: "store",

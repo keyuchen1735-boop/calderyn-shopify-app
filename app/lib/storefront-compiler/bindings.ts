@@ -60,7 +60,7 @@ function pathOwner(path: PublicBindingPath): BindingScopeKind {
 export function isPathVisible(path: PublicBindingPath, scope: BindingScope): boolean {
   const owner = pathOwner(path);
   if (owner === "store") return scope.id === "root";
-  if (path === "cart.count") return scope.id === "root" && scope.kind === "store";
+  if (path === "cart.count" && scope.kind === "store") return scope.id === "root";
   if (owner === "product" && scope.kind === "image") return true;
   return owner === scope.kind;
 }
