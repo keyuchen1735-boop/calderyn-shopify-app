@@ -1,7 +1,7 @@
 // app/lib/assets/persist.server.ts
 //
 // Owned asset storage (#9). Captures an ephemeral third-party image URL
-// (Higgsfield/Meta output, Shopify CDN) into Calderyn's own PUBLIC Storage
+// (generated output, Shopify CDN) into Calderyn's own PUBLIC Storage
 // bucket and returns a stable, CDN-fronted owned URL, recording the asset in
 // asset_dim. The public URL is served straight off Supabase's CDN — no signing.
 //
@@ -263,10 +263,23 @@ export interface PersistOpts {
   signal?: AbortSignal;
 }
 
+function decodeDataImage(url: string, maxBytes: number): { bytes: Uint8Array; mediaType: SniffedMime } | null {
+  const match = /^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/s.exec(url);
+  if (!match) return null;
+  if (match[2].length > Math.ceil(maxBytes / 3) * 4) throw new AssetError("too_large");
+  const bytes = new Uint8Array(Buffer.from(match[2], "base64"));
+  if (bytes.byteLength > maxBytes) throw new AssetError("too_large");
+  const mediaType = sniffImageMime(bytes);
+  if (!mediaType || mediaType !== match[1]) throw new AssetError("unrecognized_image");
+  return { bytes, mediaType };
+}
+
 export async function fetchExternalImageBytes(
   url: string,
   opts: PersistOpts = {},
 ): Promise<{ bytes: Uint8Array; mediaType: SniffedMime }> {
+  const inline = decodeDataImage(url, opts.maxBytes ?? MAX_IMAGE_BYTES);
+  if (inline) return inline;
   const bytes = await fetchImageBytes(
     url,
     opts.fetchImpl ?? defaultFetch,
@@ -292,6 +305,11 @@ export async function persistExternalImage(
   opts: PersistOpts = {},
 ): Promise<PersistOutcome> {
   try {
+    const inline = decodeDataImage(url, opts.maxBytes ?? MAX_IMAGE_BYTES);
+    if (inline) {
+      const stored = await storeImageBytes(shopId, inline.bytes, { kind, source, mime: inline.mediaType });
+      return { persisted: true, url: stored.publicUrl, assetId: stored.assetId, storageKey: stored.storageKey };
+    }
     if (!isFetchableUrl(url)) {
       return keep(url, "blocked_url", { shopId, source });
     }

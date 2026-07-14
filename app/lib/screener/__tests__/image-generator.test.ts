@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { imageGenerator, type GenerateImageFn } from "../higgsfield.server";
+import { imageGenerator, type GenerateImageFn } from "../image-generator.server";
 import type { GenerateRequest } from "../generate.server";
 import type { CreativeInput } from "../types";
 
@@ -23,7 +23,7 @@ const REQ: GenerateRequest = {
   count: 2,
 };
 
-const KEYS = ["HIGGSFIELD_API_KEY", "HIGGSFIELD_API_SECRET"] as const;
+const KEYS = ["GEMINI_API_KEY"] as const;
 let saved: Record<string, string | undefined>;
 beforeEach(() => {
   saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
@@ -41,12 +41,10 @@ describe("imageGenerator", () => {
     expect(imageGenerator({ generateImage: vi.fn() }).mode).toBe("image");
   });
 
-  it("available() requires BOTH the api key and the secret", () => {
+  it("available() requires the Gemini API key", () => {
     const gen = imageGenerator({ generateImage: vi.fn() });
     expect(gen.available()).toBe(false);
-    process.env.HIGGSFIELD_API_KEY = "k";
-    expect(gen.available()).toBe(false);
-    process.env.HIGGSFIELD_API_SECRET = "s";
+    process.env.GEMINI_API_KEY = "k";
     expect(gen.available()).toBe(true);
   });
 

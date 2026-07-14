@@ -83,7 +83,7 @@ export default function BuilderPreview() {
         </p>
       ) : null}
       {enhanceError ? (
-        <p className="cd-builder-preview__error">Image generation failed for that listing — check Higgsfield configuration.</p>
+        <p className="cd-builder-preview__error">Image generation failed for that listing — check Gemini configuration.</p>
       ) : null}
       {!any ? <p>No draft yet — generate your store first.</p> : null}
       {panes.map(([label, pane]) =>

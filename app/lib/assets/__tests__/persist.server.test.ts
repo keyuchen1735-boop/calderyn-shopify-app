@@ -132,7 +132,7 @@ describe("storeImageBytes", () => {
 describe("persistExternalImage", () => {
   it("can fetch bounded verified bytes without creating an intermediate asset row", async () => {
     const fetchImpl: AssetFetch = vi.fn().mockResolvedValue(okResponse(PNG));
-    await expect(fetchExternalImageBytes("https://higgs.cdn/x.png", { fetchImpl })).resolves.toEqual({
+    await expect(fetchExternalImageBytes("https://provider.cdn/x.png", { fetchImpl })).resolves.toEqual({
       bytes: PNG,
       mediaType: "image/png",
     });
@@ -145,17 +145,30 @@ describe("persistExternalImage", () => {
     const fetchImpl: AssetFetch = (_url, init) => new Promise<never>((_resolve, reject) => {
       init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
     });
-    const pending = fetchExternalImageBytes("https://higgs.cdn/x.png", { fetchImpl, signal: controller.signal });
+    const pending = fetchExternalImageBytes("https://provider.cdn/x.png", { fetchImpl, signal: controller.signal });
     controller.abort(new DOMException("cancelled", "AbortError"));
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("fetches, sniffs, stores, and returns the owned url", async () => {
     const fetchImpl: AssetFetch = vi.fn().mockResolvedValue(okResponse(PNG));
-    const out = await persistExternalImage(SHOP, "https://higgs.cdn/x.png", "generated", "generated", { fetchImpl });
+    const out = await persistExternalImage(SHOP, "https://provider.cdn/x.png", "generated", "generated", { fetchImpl });
     expect(out.persisted).toBe(true);
     if (out.persisted) expect(out.url).toContain("/public/shop-assets/");
     expect(uploadMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores bounded Gemini inline image bytes without a network fetch", async () => {
+    const fetchImpl: AssetFetch = vi.fn();
+    const out = await persistExternalImage(SHOP, `data:image/png;base64,${Buffer.from(PNG).toString("base64")}`, "generated", "generated", { fetchImpl });
+    expect(out.persisted).toBe(true);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(uploadMock).toHaveBeenCalledWith(expect.any(String), PNG, expect.objectContaining({ contentType: "image/png" }));
+  });
+  it("rejects oversized inline image data before storage", async () => {
+    const out = await persistExternalImage(SHOP, `data:image/png;base64,${Buffer.from(PNG).toString("base64")}`, "generated", "generated", { maxBytes: 1 });
+    expect(out.persisted).toBe(false);
+    expect(uploadMock).not.toHaveBeenCalled();
   });
 
   it("refuses a private-host url without fetching (SSRF) and keeps the original url", async () => {
@@ -172,15 +185,15 @@ describe("persistExternalImage", () => {
       headers: { get: (n: string) => (n.toLowerCase() === "location" ? "http://169.254.169.254/" : null) },
       body: null,
     });
-    const out = await persistExternalImage(SHOP, "https://higgs.cdn/x.png", "generated", "generated", { fetchImpl });
+    const out = await persistExternalImage(SHOP, "https://provider.cdn/x.png", "generated", "generated", { fetchImpl });
     expect(out.persisted).toBe(false);
-    if (!out.persisted) expect(out.url).toBe("https://higgs.cdn/x.png");
+    if (!out.persisted) expect(out.url).toBe("https://provider.cdn/x.png");
     expect(uploadMock).not.toHaveBeenCalled();
   });
 
   it("rejects a body over the byte cap declared by content-length (keeps original url)", async () => {
     const fetchImpl: AssetFetch = vi.fn().mockResolvedValue(okResponse(PNG, 999_999_999));
-    const out = await persistExternalImage(SHOP, "https://higgs.cdn/x.png", "generated", "generated", { fetchImpl, maxBytes: 100 });
+    const out = await persistExternalImage(SHOP, "https://provider.cdn/x.png", "generated", "generated", { fetchImpl, maxBytes: 100 });
     expect(out.persisted).toBe(false);
     expect(uploadMock).not.toHaveBeenCalled();
   });
@@ -193,15 +206,15 @@ describe("persistExternalImage", () => {
       headers: { get: () => null },
       body: chunkedStream([big, big, big]),
     });
-    const out = await persistExternalImage(SHOP, "https://higgs.cdn/x.png", "generated", "generated", { fetchImpl, maxBytes: 100 });
+    const out = await persistExternalImage(SHOP, "https://provider.cdn/x.png", "generated", "generated", { fetchImpl, maxBytes: 100 });
     expect(out.persisted).toBe(false);
     if (!out.persisted) expect(out.error).toContain("bytes");
   });
 
   it("keeps the original url when the bytes are not a recognized image", async () => {
     const fetchImpl: AssetFetch = vi.fn().mockResolvedValue(okResponse(new Uint8Array([1, 2, 3, 4])));
-    const out = await persistExternalImage(SHOP, "https://higgs.cdn/x.bin", "generated", "generated", { fetchImpl });
-    expect(out).toMatchObject({ persisted: false, url: "https://higgs.cdn/x.bin", error: "unrecognized_image" });
+    const out = await persistExternalImage(SHOP, "https://provider.cdn/x.bin", "generated", "generated", { fetchImpl });
+    expect(out).toMatchObject({ persisted: false, url: "https://provider.cdn/x.bin", error: "unrecognized_image" });
   });
 });
 

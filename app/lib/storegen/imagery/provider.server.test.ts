@@ -8,7 +8,7 @@ describe("ImageProvider seam", () => {
     const out = await fake.generateListingImage({ productTitle: "Widget", productDescription: "", sourceImageUrl: null, mode: "product_shot" });
     expect(out.url).toBe("https://img/x.png");
   });
-  it("getImageProvider returns the higgsfield provider by default", () => {
-    expect(getImageProvider().name).toBe("higgsfield");
+  it("getImageProvider returns the gemini provider by default", () => {
+    expect(getImageProvider().name).toBe("gemini");
   });
 });

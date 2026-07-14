@@ -17,29 +17,29 @@ beforeEach(() => { fromMock.mockReset(); providerMock.mockReset(); persistMock.m
 
 describe("enhanceListing", () => {
   it("persists the ephemeral generated image and upserts the OWNED url (rule 12: durable)", async () => {
-    providerMock.mockResolvedValue({ url: "https://higgs.cdn/ephemeral.png" });
+    providerMock.mockResolvedValue({ url: "data:image/png;base64,aW1hZ2U=" });
     persistMock.mockResolvedValue({ persisted: true, url: "https://owned.cdn/a.png", assetId: "a1", storageKey: "k" });
     const upsert = vi.fn().mockResolvedValue({ error: null });
     fromMock.mockReturnValue({ upsert });
     const signal = new AbortController().signal;
     const out = await enhanceListing(realShop, product("1", null), { signal });
     expect(providerMock).toHaveBeenCalledWith(expect.objectContaining({ signal }));
-    expect(persistMock).toHaveBeenCalledWith(realShop, "https://higgs.cdn/ephemeral.png", "generated", "generated", { signal });
+    expect(persistMock).toHaveBeenCalledWith(realShop, "data:image/png;base64,aW1hZ2U=", "generated", "generated", { signal });
     expect(out.status).toBe("ready");
     expect(out.url).toBe("https://owned.cdn/a.png");
     expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ shop_id: realShop, product_id: "1", url: "https://owned.cdn/a.png", status: "ready" }), { onConflict: "shop_id,product_id,source" });
   });
-  it("on persistence failure keeps the ephemeral url and stays ready (never drops the image)", async () => {
-    providerMock.mockResolvedValue({ url: "https://higgs.cdn/ephemeral.png" });
-    persistMock.mockResolvedValue({ persisted: false, url: "https://higgs.cdn/ephemeral.png", error: "fetch_failed" });
+  it("fails closed when Gemini inline-image persistence fails", async () => {
+    providerMock.mockResolvedValue({ url: "data:image/png;base64,aW1hZ2U=" });
+    persistMock.mockResolvedValue({ persisted: false, url: "data:image/png;base64,aW1hZ2U=", error: "fetch_failed" });
     const upsert = vi.fn().mockResolvedValue({ error: null });
     fromMock.mockReturnValue({ upsert });
     const out = await enhanceListing(realShop, product("1", null));
-    expect(out.status).toBe("ready");
-    expect(out.url).toBe("https://higgs.cdn/ephemeral.png");
+    expect(out.status).toBe("failed");
+    expect(out.url).toBeNull();
   });
   it("on provider failure records a failed asset and keeps the source image (rule 12)", async () => {
-    providerMock.mockRejectedValue(new Error("higgs down"));
+    providerMock.mockRejectedValue(new Error("gemini down"));
     const upsert = vi.fn().mockResolvedValue({ error: null });
     fromMock.mockReturnValue({ upsert });
     const out = await enhanceListing(realShop, product("1", "/src.jpg"));
@@ -49,10 +49,10 @@ describe("enhanceListing", () => {
   });
   it("does not write an asset after the first-preview imagery deadline", async () => {
     const controller = new AbortController();
-    providerMock.mockResolvedValue({ url: "https://higgs.cdn/ephemeral.png" });
+    providerMock.mockResolvedValue({ url: "data:image/png;base64,aW1hZ2U=" });
     persistMock.mockImplementation(async () => {
       controller.abort();
-      return { persisted: false, url: "https://higgs.cdn/ephemeral.png", error: "cancelled" };
+      return { persisted: false, url: "data:image/png;base64,aW1hZ2U=", error: "cancelled" };
     });
     const out = await enhanceListing(realShop, product("1", null), { signal: controller.signal });
     expect(out.status).toBe("failed");
@@ -78,6 +78,15 @@ describe("applyAssetOverrides", () => {
     fromMock.mockReturnValue({ select: () => ({ eq }) });
     const out = await applyAssetOverrides(realShop, [product("1", null)]);
     expect(out[0].images).toEqual([{ url: "https://img/new.png", alt: "P1" }]);
+  });
+  it("prefers the newest ready generated asset when legacy rows remain", async () => {
+    const eq = vi.fn().mockResolvedValue({ data: [
+      { product_id: "1", url: "https://img/old.png", status: "ready", created_at: "2026-01-01" },
+      { product_id: "1", url: "https://img/new.png", status: "ready", created_at: "2026-07-14" },
+    ], error: null });
+    fromMock.mockReturnValue({ select: () => ({ eq }) });
+    const out = await applyAssetOverrides(realShop, [product("1", null)]);
+    expect(out[0].images[0].url).toBe("https://img/new.png");
   });
 });
 

@@ -1,8 +1,8 @@
 // app/lib/storegen/imagery/provider.server.ts
 // The single imagery seam (design "single imagery-source seam"). Everything that needs a
 // generated listing image goes through ImageProvider, so blocks/editor/storefront never care
-// about the backend. Higgsfield is the default impl; Bloom can swap in later behind this.
-import { higgsfieldProvider } from "./higgsfield.server";
+// about the backend.
+import { generateGeminiImages } from "./gemini.server";
 
 export interface ListingImageRequest {
   productTitle: string;
@@ -17,6 +17,15 @@ export interface ImageProvider {
 }
 
 export function getImageProvider(): ImageProvider {
-  // ponytail: single provider for now; a Bloom impl swaps in by replacing this module.
-  return higgsfieldProvider;
+  return {
+    name: "gemini",
+    async generateListingImage(req) {
+      const [url] = await generateGeminiImages({
+        prompt: `Create a clean ecommerce ${req.mode === "product_shot" ? "product photo" : "lifestyle image"} for ${req.productTitle}. ${req.productDescription}`,
+        referenceImageUrl: req.sourceImageUrl,
+        signal: req.signal,
+      });
+      return { url };
+    },
+  };
 }

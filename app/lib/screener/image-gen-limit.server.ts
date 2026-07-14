@@ -1,5 +1,5 @@
 // app/lib/screener/image-gen-limit.server.ts
-// Cost guardrails for the shared Higgsfield account: a per-shop and a global
+// Cost guardrails for image generation: a per-shop and a global
 // daily cap on image generations. The limit DECISION is pure (testable); the
 // counting + reservation hit Supabase. Copy generation is unaffected.
 import { getSupabase, resolveShopId } from "../supabase.server";

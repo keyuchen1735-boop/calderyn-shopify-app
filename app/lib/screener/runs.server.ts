@@ -59,7 +59,7 @@ export async function completeRun(shop: string, id: string, scorecard: ScoreCard
 export async function saveVariants(shop: string, id: string, variants: Variant[]): Promise<CreativeScreenRun> {
   const sb = getSupabase();
   const shopId = await resolveShopId(shop);
-  // Image-mode variants carry an EPHEMERAL Higgsfield URL. The variant is stored
+  // Image-mode variants carry generated image data. The variant is stored
   // now but reviewed and "Push to Meta"'d by the merchant LATER — Meta only
   // downloads the picture URL at push time — so the ephemeral url can expire
   // before it is used, breaking the deferred push. Capture generated images into
@@ -83,9 +83,10 @@ async function persistVariantImages(shopId: string, variants: Variant[]): Promis
   return Promise.all(
     variants.map(async (v) => {
       const src = v.input.imageUrl;
-      if (v.mode !== "image" || !src || !isFetchableUrl(src)) return v;
-      const { url } = await persistExternalImage(shopId, src, "generated", "generated");
-      return url === src ? v : { ...v, input: { ...v.input, imageUrl: url } };
+      if (v.mode !== "image" || !src || (!isFetchableUrl(src) && !src.startsWith("data:image/"))) return v;
+      const persisted = await persistExternalImage(shopId, src, "generated", "generated");
+      if (!persisted.persisted && src.startsWith("data:image/")) throw new Error("Generated image persistence failed");
+      return persisted.url === src ? v : { ...v, input: { ...v.input, imageUrl: persisted.url } };
     }),
   );
 }
