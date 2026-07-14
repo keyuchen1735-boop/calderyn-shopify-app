@@ -49,7 +49,7 @@ export const CONCEPT_SCHEMA: Record<string, unknown> = {
       type: "object", additionalProperties: false,
       required: ["displayFontId", "bodyFontId", "tokens", "breakpoints", "iconStyle", "motionStyle", "globalCss"],
       properties: {
-        displayFontId: { type: "string" }, bodyFontId: { type: "string" }, tokens: { type: "object" }, breakpoints: { type: "object" },
+        displayFontId: { type: "string", enum: CURATED_FONT_IDS }, bodyFontId: { type: "string", enum: CURATED_FONT_IDS }, tokens: { type: "object" }, breakpoints: { type: "object" },
         iconStyle: { type: "string" }, motionStyle: { type: "string" }, globalCss: { type: "string" },
       },
     },
