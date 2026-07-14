@@ -5,6 +5,7 @@ import {
   isFetchableUrl,
   storeImageBytes,
   persistExternalImage,
+  fetchExternalImageBytes,
   mirrorShopifyImage,
   type AssetFetch,
 } from "../persist.server";
@@ -129,6 +130,26 @@ describe("storeImageBytes", () => {
 });
 
 describe("persistExternalImage", () => {
+  it("can fetch bounded verified bytes without creating an intermediate asset row", async () => {
+    const fetchImpl: AssetFetch = vi.fn().mockResolvedValue(okResponse(PNG));
+    await expect(fetchExternalImageBytes("https://higgs.cdn/x.png", { fetchImpl })).resolves.toEqual({
+      bytes: PNG,
+      mediaType: "image/png",
+    });
+    expect(uploadMock).not.toHaveBeenCalled();
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it("propagates caller cancellation into the remote image fetch", async () => {
+    const controller = new AbortController();
+    const fetchImpl: AssetFetch = (_url, init) => new Promise<never>((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+    });
+    const pending = fetchExternalImageBytes("https://higgs.cdn/x.png", { fetchImpl, signal: controller.signal });
+    controller.abort(new DOMException("cancelled", "AbortError"));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("fetches, sniffs, stores, and returns the owned url", async () => {
     const fetchImpl: AssetFetch = vi.fn().mockResolvedValue(okResponse(PNG));
     const out = await persistExternalImage(SHOP, "https://higgs.cdn/x.png", "generated", "generated", { fetchImpl });

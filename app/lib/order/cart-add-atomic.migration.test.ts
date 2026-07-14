@@ -1,0 +1,28 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const path = "supabase/migrations/20260713143000_storefront_cart_add_atomic.sql";
+
+describe("cart_add_line_atomic migration", () => {
+  it("locks an active shop-owned cart and atomically upserts a capped quantity", () => {
+    const sql = readFileSync(path, "utf8").toLowerCase();
+    expect(sql).toContain("create or replace function public.cart_add_line_atomic");
+    expect(sql).toContain("state = 'cart'");
+    expect(sql).toContain("for update");
+    expect(sql).toContain("on conflict (shop_id, cart_id, variant_id)");
+    expect(sql).toMatch(/least\s*\(\s*999\s*,\s*public\.cart_line\.quantity\s*\+/);
+  });
+
+  it("preserves the first snapshot and exposes the function only to service_role", () => {
+    const sql = readFileSync(path, "utf8").toLowerCase();
+    const conflictUpdate = sql.split("do update set", 2)[1]?.split("returning", 1)[0] ?? "";
+    expect(conflictUpdate).not.toContain("unit_price_cents =");
+    expect(conflictUpdate).not.toContain("currency =");
+    expect(conflictUpdate).not.toContain("title_snapshot =");
+    expect(sql).toContain("security definer set search_path = ''");
+    expect(sql).toContain("revoke all on function public.cart_add_line_atomic");
+    expect(sql).toContain("from public, anon, authenticated");
+    expect(sql).toContain("grant execute on function public.cart_add_line_atomic");
+    expect(sql).toContain("to service_role");
+  });
+});

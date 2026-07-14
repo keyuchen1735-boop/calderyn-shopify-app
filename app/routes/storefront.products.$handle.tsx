@@ -1,5 +1,5 @@
 // app/routes/storefront.products.$handle.tsx
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction, MetaDescriptor } from "@remix-run/node";
+import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs, MetaFunction, MetaDescriptor } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
@@ -24,12 +24,46 @@ import { storefrontWeatherCondition } from "~/lib/storefront/weather-serve.serve
 import { renderBlocks } from "~/lib/storebuilder/render";
 import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import type { Block } from "~/lib/storebuilder/types";
+import { randomBytes } from "node:crypto";
+import { hasRuntime1Storefront, resolveRuntime1Route } from "~/lib/storefront-runtime/release-resolution.server";
+import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-runtime/render";
+import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
+import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
+import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Product" }];
+export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
+
+async function redirectRenamedProductHandle(request: Request, shopId: string, handle: string): Promise<void> {
+  let currentHandle: string | null = null;
+  try {
+    currentHandle = await resolveHandleRedirect(shopId, handle);
+  } catch (err) {
+    console.error(`[storefront] handle-redirect lookup failed for shop ${shopId}:`, err);
+  }
+  if (!currentHandle) return;
+  const url = new URL(request.url);
+  throw redirect(`/storefront/products/${encodeURIComponent(currentHandle)}${url.search}`, {
+    status: 301,
+    headers: { "Cache-Control": "public, max-age=300" },
+  });
+}
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
   const shopId = await resolveStorefrontShop(request);
+  const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "product", handle } });
+  if (runtime1) {
+    if (runtime1.data.notFound) {
+      await redirectRenamedProductHandle(request, shopId, handle);
+      throw new Response(null, { status: 404 });
+    }
+    const nonce = randomBytes(18).toString("base64url");
+    const headers = storefrontCacheHeaders({ routeId: "product", personalized: false, shopId });
+    markStorefrontBundleRendered(headers, nonce);
+    const title = runtime1.data.product?.title ?? "Product";
+    return json({ ...runtime1, nonce, seoMeta: [{ title }] }, { headers });
+  }
   const catalog = getCatalog();
   const product = await catalog.getProduct(shopId, handle);
   if (!product) {
@@ -37,22 +71,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     // the old link (and anything indexed) working. Permanent by design: search
     // engines should transfer the old URL's standing to the new one. A lookup
     // failure must not 500 a public page that was heading to a 404 anyway.
-    let currentHandle: string | null = null;
-    try {
-      currentHandle = await resolveHandleRedirect(shopId, handle);
-    } catch (err) {
-      console.error(`[storefront] handle-redirect lookup failed for shop ${shopId}:`, err);
-    }
-    if (currentHandle) {
-      // Preserve the query string, and bound how long browsers may cache the
-      // 301 — heuristically-forever caching would make a rename-undo an
-      // unfixable client-side redirect loop.
-      const url = new URL(request.url);
-      throw redirect(`/storefront/products/${encodeURIComponent(currentHandle)}${url.search}`, {
-        status: 301,
-        headers: { "Cache-Control": "public, max-age=300" },
-      });
-    }
+    await redirectRenamedProductHandle(request, shopId, handle);
     throw new Response(null, { status: 404 });
   }
   // Render the published PDP TEMPLATE bound to this product record. No doc → legacy PDP markup.
@@ -119,9 +138,12 @@ export async function action({ request }: ActionFunctionArgs) {
   // and persist its id in the Set-Cookie carried back with the redirect. The
   // experiment lookup is independent of the cookie read (checkout surface: every
   // running test measures its cart_add step), so the two resolve concurrently.
+  const runtime1 = await hasRuntime1Storefront({ shopId, request });
   const [cookieCartId, served] = await Promise.all([
     readCartId(request),
-    resolveServedExperiment(shopId, request, "checkout"),
+    runtime1
+      ? Promise.resolve({ experimentId: null, variantKey: null })
+      : resolveServedExperiment(shopId, request, "checkout"),
   ]);
   let cartId = cookieCartId;
   const headers = new Headers();
@@ -159,9 +181,15 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function StorefrontProduct() {
-  const { product, doc, data, record, demo, unavailable } = useLoaderData<typeof loader>();
+  const loaded = useLoaderData<typeof loader>();
+  const runtime1 = isRuntime1RenderData(loaded);
+  const initialVariantId = runtime1 ? "" : loaded.product.variants[0]?.id ?? "";
+  const [selectedVariantId, setSelectedVariantId] = useState(initialVariantId);
+  if (runtime1) {
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "product", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="product" data={loaded.data} mode="public" /></>;
+  }
+  const { product, doc, data, record, demo, unavailable } = loaded;
   const firstVariantId = product.variants[0]?.id ?? "";
-  const [selectedVariantId, setSelectedVariantId] = useState(firstVariantId);
 
   // NOTE: a published template renders its own addToCart block even for the demo
   // shell (the template testbed) — the action's DEMO_SHOP_ID guard keeps that

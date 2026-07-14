@@ -1,4 +1,5 @@
 import { PassThrough } from "stream";
+import { randomBytes } from "crypto";
 import { renderToPipeableStream } from "react-dom/server";
 import { RemixServer } from "@remix-run/react";
 import {
@@ -7,6 +8,12 @@ import {
 } from "@remix-run/node";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
+import {
+  buildStorefrontCsp,
+  resolveStorefrontBundleNonce,
+  resolveStorefrontCspSurface,
+  stripStorefrontRendererHeader,
+} from "./lib/storefront-runtime/csp.server";
 
 export const streamTimeout = 5000;
 
@@ -46,7 +53,7 @@ const HARDENING_DIRECTIVES = [
 //  - Non-embedded surfaces (dashboard, storefront, oauth, marketing): Shopify
 //    sets no CSP, so framing is locked down with X-Frame-Options: DENY and a
 //    frame-ancestors 'none' CSP to defeat clickjacking on those pages.
-export function applySecurityHeaders(headers: Headers, pathname?: string): void {
+export function applySecurityHeaders(headers: Headers, pathname?: string, storefrontNonce?: string): void {
   // Server is deleted for completeness, but Vercel re-adds it at the edge, so
   // do not rely on its absence. X-Powered-By stays suppressed.
   headers.delete("Server");
@@ -81,6 +88,20 @@ export function applySecurityHeaders(headers: Headers, pathname?: string): void 
     !headers.has("Cache-Control")
   ) {
     headers.set("Cache-Control", "no-store");
+  }
+
+  const storefrontSurface = pathname === undefined ? null : resolveStorefrontCspSurface(headers, pathname);
+  stripStorefrontRendererHeader(headers);
+  if (storefrontSurface && storefrontNonce) {
+    headers.set(
+      "Content-Security-Policy",
+      buildStorefrontCsp({
+        nonce: storefrontNonce,
+        surface: storefrontSurface,
+        supabaseUrl: process.env.SUPABASE_URL,
+        ownedMediaOrigin: process.env.STOREFRONT_OWNED_MEDIA_ORIGIN,
+      }),
+    );
   }
 
   const csp = headers.get("Content-Security-Policy");
@@ -136,8 +157,12 @@ export default async function handleRequest(
   responseHeaders: Headers,
   remixContext: EntryContext,
 ) {
+  const pathname = new URL(request.url).pathname;
+  const storefrontNonce = resolveStorefrontCspSurface(responseHeaders, pathname)
+    ? resolveStorefrontBundleNonce(responseHeaders) ?? randomBytes(18).toString("base64url")
+    : undefined;
   addDocumentResponseHeaders(request, responseHeaders);
-  applySecurityHeaders(responseHeaders, new URL(request.url).pathname);
+  applySecurityHeaders(responseHeaders, pathname, storefrontNonce);
   const userAgent = request.headers.get("user-agent");
   const callbackName = isbot(userAgent ?? "")
     ? "onAllReady"
@@ -149,8 +174,10 @@ export default async function handleRequest(
         context={remixContext}
         url={request.url}
         abortDelay={streamTimeout + 1000}
+        nonce={storefrontNonce}
       />,
       {
+        nonce: storefrontNonce,
         [callbackName]: () => {
           const body = new PassThrough();
           const stream = createReadableStreamFromReadable(body);

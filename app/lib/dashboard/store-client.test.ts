@@ -2,24 +2,39 @@
 // titled from the filename) OR travel with the prompt to the multipart generate
 // endpoint — the two client paths this suite covers.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { addProductFromImage, generateStudioStoreStream, generateStudioStoreWithImages, productTitleFromFilename, StudioStreamError } from "./store-client";
+import {
+  addProductFromImage,
+  buildStudioStoreStream,
+  generateStudioStoreStream,
+  generateStudioStoreWithImages,
+  productTitleFromFilename,
+  resolveStudioDesign,
+  editStudioStorefront,
+  undoStudioStorefrontEdit,
+  deleteStudioPolicy,
+  saveStudioPolicy,
+  StudioStreamError,
+} from "./store-client";
 import { DashboardApiError } from "./client";
 
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // client mock still applies even though it is written below them.
-const { saveProduct, uploadProductImage, apiSendForm } = vi.hoisted(() => ({
+const { saveProduct, uploadProductImage, apiSend, apiSendForm } = vi.hoisted(() => ({
   saveProduct: vi.fn(),
   uploadProductImage: vi.fn(),
+  apiSend: vi.fn(),
   apiSendForm: vi.fn(),
 }));
 
 vi.mock("./client", () => ({
   apiGet: vi.fn(),
-  apiSend: vi.fn(),
+  apiSend,
   apiSendForm,
   saveProduct,
   uploadProductImage,
-  DashboardApiError: class extends Error {},
+  DashboardApiError: class extends Error {
+    constructor(public status: number, public code: string, message: string) { super(message); }
+  },
 }));
 
 beforeEach(() => {
@@ -27,6 +42,71 @@ beforeEach(() => {
   saveProduct.mockResolvedValue({ id: "prod-1" });
   uploadProductImage.mockResolvedValue({ id: "media-1", url: "https://x/img.jpg" });
   apiSendForm.mockResolvedValue({ runId: "run-1", status: "draft" });
+  apiSend.mockResolvedValue({
+    kind: "recipe",
+    templateId: "commons-index",
+    templateVersion: 1,
+    selectionKind: "niche_match",
+    routingVersion: 1,
+    registryVersion: 1,
+    catalogFingerprint: "sha256:catalog",
+    score: 12,
+    runnerUpScore: 0,
+    margin: 12,
+    confidenceBand: "high",
+    breakdown: [],
+    reasons: ["refill match"],
+  });
+});
+
+describe("runtime-1 design routing client", () => {
+  it("requests a server-authoritative recommendation with the versioned design contract", async () => {
+    const request = { prompt: "Build a sustainable refill shop", mode: "auto" as const };
+    const result = await resolveStudioDesign(request);
+    expect(apiSend).toHaveBeenCalledWith("POST", "/dashboard/api/store/resolve", request);
+    expect(result).toMatchObject({ kind: "recipe", templateId: "commons-index" });
+  });
+});
+
+describe("runtime-1 prompt editing client", () => {
+  it("sends the expected draft pointer and optional compiler-issued preview context", async () => {
+    apiSend.mockResolvedValueOnce({ status: "installed", versionId: "v2" });
+    await editStudioStorefront({
+      prompt: "Make this title shorter",
+      expectedDraftVersionId: "v1",
+      context: { routeId: "home", regionId: "cd-home-n2" },
+    });
+    expect(apiSend).toHaveBeenCalledWith("POST", "/dashboard/api/store", {
+      action: "edit",
+      prompt: "Make this title shorter",
+      expectedDraftVersionId: "v1",
+      context: { routeId: "home", regionId: "cd-home-n2" },
+    });
+  });
+
+  it("sends an undo as a CAS operation", async () => {
+    apiSend.mockResolvedValueOnce({ status: "installed", versionId: "v1", undoneVersionId: "v2" });
+    await undoStudioStorefrontEdit({ targetVersionId: "v1", expectedDraftVersionId: "v2" });
+    expect(apiSend).toHaveBeenCalledWith("POST", "/dashboard/api/store", {
+      action: "undo-edit", targetVersionId: "v1", expectedDraftVersionId: "v2",
+    });
+  });
+});
+
+describe("store policy client", () => {
+  it("sends policy saves and deletes through the authenticated Store API", async () => {
+    apiSend.mockResolvedValueOnce({ policy: { id: "privacy" } });
+    await saveStudioPolicy({ id: "privacy", title: "Privacy", body: "How we use order data." });
+    expect(apiSend).toHaveBeenLastCalledWith("POST", "/dashboard/api/store", {
+      action: "policy-save", policyId: "privacy", title: "Privacy", body: "How we use order data.",
+    });
+
+    apiSend.mockResolvedValueOnce({ deletedPolicyId: "privacy" });
+    await deleteStudioPolicy("privacy");
+    expect(apiSend).toHaveBeenLastCalledWith("POST", "/dashboard/api/store", {
+      action: "policy-delete", policyId: "privacy",
+    });
+  });
 });
 
 describe("addProductFromImage", () => {
@@ -118,18 +198,54 @@ const ndjsonResponse = (lines: string[], status = 200) => {
 };
 
 describe("generateStudioStoreStream", () => {
-  it("forwards each stage in order and resolves the final receipt", async () => {
+  it("sends a runtime-1 design request, forwards its frozen stages, and resolves on installed", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
-      '{"stage":"brand"}',
-      '{"stage":"designing"}',
-      '{"stage":"checking"}',
-      '{"stage":"done","receipt":{"runId":"r1","status":"draft","verification":{"checkedLinks":4,"fixedLinks":0,"externalLinks":0,"strippedMotion":0,"warnings":[]}}}',
+      '{"stage":"routing","resolution":{"kind":"recipe","templateId":"commons-index","templateVersion":1,"selectionKind":"niche_match","routingVersion":1,"registryVersion":1,"catalogFingerprint":"sha256:fresh","score":12,"runnerUpScore":0,"margin":12,"confidenceBand":"high","breakdown":[],"reasons":[]},"recommendationChanged":true,"recommendationChangeReason":"Your catalog changed"}',
+      '{"stage":"applying_recipe","templateId":"commons-index","templateVersion":1}',
+      '{"stage":"compiling"}',
+      '{"stage":"validating"}',
+      '{"stage":"proofing"}',
+      '{"stage":"installed","receipt":{"runtime":1,"versionId":"version-1","status":"draft","resolution":{"kind":"recipe","templateId":"commons-index","templateVersion":1,"selectionKind":"niche_match","routingVersion":1,"registryVersion":1,"catalogFingerprint":"sha256:fresh","score":12,"runnerUpScore":0,"margin":12,"confidenceBand":"high","breakdown":[],"reasons":[]}}}',
+    ])));
+    const stages: string[] = [];
+    const request = { prompt: "refill shop", mode: "auto" as const };
+    const recommendation = await resolveStudioDesign(request);
+    const receipt = await buildStudioStoreStream(request, (stage) => stages.push(stage), recommendation);
+
+    expect(stages).toEqual(["routing", "applying_recipe", "compiling", "validating", "proofing"]);
+    expect(receipt).toMatchObject({ runtime: 1, versionId: "version-1", status: "draft" });
+    const fetchMock = vi.mocked(fetch);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({ designRequest: request, recommendedResolution: recommendation });
+    vi.unstubAllGlobals();
+  });
+
+  it("preserves custom generation stages and stable in-band conflict codes", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
+      '{"stage":"routing","resolution":{"kind":"custom","reason":"explicit_custom","routingVersion":1,"registryVersion":1,"catalogFingerprint":"sha256:fresh","breakdown":[],"reasons":[]},"recommendationChanged":false}',
+      '{"stage":"generating_original"}',
+      '{"stage":"error","code":"storefront_draft_conflict","status":409,"message":"The draft changed. Try again."}',
+    ])));
+    const stages: string[] = [];
+    await expect(buildStudioStoreStream(
+      { prompt: "Create something completely new", mode: "custom" },
+      (stage) => stages.push(stage),
+    )).rejects.toMatchObject({ status: 409, code: "storefront_draft_conflict" });
+    expect(stages).toEqual(["routing", "generating_original"]);
+  });
+
+  it("keeps the old helper compatible by routing it through the runtime-1 build stream", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
+      '{"stage":"routing","resolution":{"kind":"recipe","templateId":"commons-index","templateVersion":1,"selectionKind":"niche_match","routingVersion":1,"registryVersion":1,"catalogFingerprint":"sha256:fresh","score":12,"runnerUpScore":0,"margin":12,"confidenceBand":"high","breakdown":[],"reasons":[]},"recommendationChanged":false}',
+      '{"stage":"applying_recipe","templateId":"commons-index","templateVersion":1}',
+      '{"stage":"installed","receipt":{"runtime":1,"versionId":"version-1","status":"draft","resolution":{"kind":"recipe","templateId":"commons-index","templateVersion":1,"selectionKind":"niche_match","routingVersion":1,"registryVersion":1,"catalogFingerprint":"sha256:fresh","score":12,"runnerUpScore":0,"margin":12,"confidenceBand":"high","breakdown":[],"reasons":[]}}}',
     ])));
     const stages: string[] = [];
     const receipt = await generateStudioStoreStream("a brief", "sonnet", (s) => stages.push(s));
-    expect(stages).toEqual(["brand", "designing", "checking"]);
-    expect(receipt.runId).toBe("r1");
-    expect(receipt.verification?.checkedLinks).toBe(4);
+    expect(stages).toEqual(["routing", "applying_recipe"]);
+    expect(receipt).toEqual({ runId: "version-1", status: "draft" });
+    const init = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({ designRequest: { prompt: "a brief", mode: "auto" } });
     vi.unstubAllGlobals();
   });
 

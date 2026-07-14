@@ -14,6 +14,12 @@ import { expireOverdueExperiment, hasRunningExperiment, latestStudioExperiment }
 import { injectMissingFunctionalBlocks } from "~/lib/storegen/sanitize";
 import { regenerateHomeSection } from "~/lib/storegen/generate.server";
 import { splitTopLevelSections } from "~/lib/storegen/hybrid";
+import {
+  isStorefrontBundlePublishEnabled,
+  readStorefrontReleaseState,
+} from "~/lib/storefront-bundle/build.server";
+import { publishStorefrontRelease } from "~/lib/storefront-bundle/release.server";
+import { loadStorefrontPolicies } from "~/lib/storefront/policies.server";
 import { loadDraftDoc, loadPublishedDoc, saveDraft, publishDoc } from "./page-document.server";
 import { defaultHomeDocument } from "./default-doc";
 import { validateDocument, type ValidIds } from "./validate";
@@ -324,7 +330,7 @@ async function shopOrgSlug(shopId: string): Promise<string | null> {
 
 export async function loadStudioState(shopId: string): Promise<StudioState> {
   const catalog = getCatalog();
-  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug, experiment] =
+  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug, experiment, release, policies] =
     await Promise.all([
       getStoreSettings(shopId),
       loadDraftDoc(shopId, "home"),
@@ -335,6 +341,15 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
       draftProductCount(shopId),
       shopOrgSlug(shopId),
       latestStudioExperiment(shopId),
+      UUID_RE.test(shopId)
+        ? readStorefrontReleaseState(shopId)
+        : Promise.resolve({
+            draftVersionId: null,
+            publishedVersionId: null,
+            draftRuntimeVersion: null,
+            publishedRuntimeVersion: null,
+          }),
+      UUID_RE.test(shopId) ? loadStorefrontPolicies(shopId) : Promise.resolve([]),
     ]);
 
   const doc = draft ?? published;
@@ -360,11 +375,18 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     productCount: products.length,
     draftProductCount: draftCount,
     checkoutReady: canCharge,
-    hasDraft: draft != null,
-    hasPublished: published != null,
+    hasDraft: draft != null || release.draftVersionId != null,
+    hasPublished: published != null || release.publishedVersionId != null,
+    release: {
+      draftVersionId: release.draftVersionId,
+      publishedVersionId: release.publishedVersionId,
+      draftRuntime: release.draftRuntimeVersion === 1 ? 1 : 0,
+      publishedRuntime: release.publishedRuntimeVersion === 1 ? 1 : 0,
+    },
     generation,
     orgSlug,
     sections: doc ? sectionsFromDoc(doc) : [],
+    policies,
     // The public storefront resolves tenants by Host, so on the dashboard
     // origin the fixed app path renders the demo shell — the real tenant URL
     // needs the org_slug subdomain. tenantDomain keeps the host provably
@@ -456,7 +478,7 @@ export async function saveStudioVibe(shopId: string, vibe: StudioVibe): Promise<
  *  validating each draft first (page-document.server.ts caller obligation).
  *  Publishing is never gated: with nothing drafted, the default home doc is
  *  seeded as the draft and published, so the storefront always goes live. */
-export async function publishStudioStore(shopId: string): Promise<void> {
+export async function publishStudioStore(shopId: string, actorId?: string | null): Promise<void> {
   // Demo/fixture shops can't persist page documents (saveDraft throws a raw
   // Error for non-uuid ids) — refuse cleanly instead of 500ing.
   if (!UUID_RE.test(shopId)) {
@@ -475,6 +497,30 @@ export async function publishStudioStore(shopId: string): Promise<void> {
       code: "experiment_running",
       status: 409,
       message: "An experiment is running on your store. Decide it before publishing.",
+    });
+  }
+  const release = await readStorefrontReleaseState(shopId);
+  if (release.draftRuntimeVersion === 1 && release.draftVersionId) {
+    if (!isStorefrontBundlePublishEnabled()) {
+      throw new CalderynError({
+        code: "storefront_bundle_publish_disabled",
+        status: 503,
+        message: "Publishing the new storefront runtime is temporarily disabled. Your draft is unchanged.",
+      });
+    }
+    await publishStorefrontRelease({
+      shopId,
+      expectedDraftVersionId: release.draftVersionId,
+      expectedPublishedVersionId: release.publishedVersionId,
+      actorId: actorId ?? null,
+    });
+    return;
+  }
+  if (release.draftRuntimeVersion !== null && release.draftRuntimeVersion !== 0) {
+    throw new CalderynError({
+      code: "unsupported_storefront_runtime",
+      status: 503,
+      message: "This storefront draft needs a newer publisher. Your live store is unchanged.",
     });
   }
   const valid = await catalogValidIds(shopId);

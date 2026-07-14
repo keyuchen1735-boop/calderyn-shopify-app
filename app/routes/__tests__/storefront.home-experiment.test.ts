@@ -8,6 +8,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
 import StorefrontHome, { loader } from "../storefront._index";
+import { requireLegacyLoaderData } from "./storefront-runtime-test-data";
 
 // vi.hoisted refs are wired before module eval (vitest hoists vi.mock to top of file at
 // transform time), so the import order above is safe — mocks are applied before execution.
@@ -17,6 +18,7 @@ const {
   resolveServedMock,
   trackStorefrontEventMock,
   ensureVisitorSessionMock,
+  resolveRuntime1RouteMock,
   loaderDataRef,
 } = vi.hoisted(() => ({
   getCatalogMock: vi.fn(),
@@ -24,6 +26,7 @@ const {
   resolveServedMock: vi.fn(),
   trackStorefrontEventMock: vi.fn(),
   ensureVisitorSessionMock: vi.fn(),
+  resolveRuntime1RouteMock: vi.fn(),
   loaderDataRef: { current: null as unknown },
 }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
@@ -36,6 +39,9 @@ vi.mock("~/lib/storefront/events.server", () => ({
 }));
 vi.mock("~/lib/storefront/visitor-cookie.server", () => ({
   ensureVisitorSession: ensureVisitorSessionMock,
+}));
+vi.mock("~/lib/storefront-runtime/release-resolution.server", () => ({
+  resolveRuntime1Route: resolveRuntime1RouteMock,
 }));
 vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current }));
 
@@ -81,6 +87,7 @@ beforeEach(() => {
   trackStorefrontEventMock.mockResolvedValue(new Headers());
   ensureVisitorSessionMock.mockResolvedValue({ visitorId: "vid-1", sessionId: "sid-1", isReturning: true, headers: new Headers() });
   resolveServedMock.mockResolvedValue(NOT_SERVED);
+  resolveRuntime1RouteMock.mockResolvedValue(null);
   loaderDataRef.current = null;
 });
 
@@ -88,10 +95,33 @@ const req = () => new Request("https://demo.calderyncompany.com/storefront");
 
 async function runLoader() {
   const res = await loader({ request: req(), params: {}, context: {} } as never);
-  return res.json();
+  return requireLegacyLoaderData(await res.json());
 }
 
 describe("home A/B serving", () => {
+  it("bypasses the legacy experiment and visitor path for one resolved runtime-1 bundle", async () => {
+    resolveRuntime1RouteMock.mockResolvedValue({
+      runtime: 1,
+      bundleId: "bundle-1",
+      artifactHash: "sha256:bundle",
+      routeId: "home",
+      bundle: { source: { kind: "custom" } },
+      data: { store: { name: "Acme", logo: null } },
+    });
+
+    const response = await loader({ request: req(), params: {}, context: {} } as never);
+    const result: unknown = await response.json();
+    expect(result).toBeTruthy();
+    if (!result || typeof result !== "object" || !("nonce" in result)) throw new Error("runtime-1 payload missing nonce");
+    expect(result).toMatchObject({ runtime: 1, bundleId: "bundle-1", routeId: "home" });
+    expect(result.nonce).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+    expect(response.headers.get("X-Calderyn-Storefront-Renderer")).toBe("bundle-v1");
+    expect(response.headers.get("X-Calderyn-Storefront-Nonce")).toBe(result.nonce);
+    expect(resolveServedMock).not.toHaveBeenCalled();
+    expect(ensureVisitorSessionMock).not.toHaveBeenCalled();
+    expect(loadPublishedMock).not.toHaveBeenCalled();
+  });
+
   it("arm b: swaps the published doc for the challenger and stamps exposure", async () => {
     resolveServedMock.mockResolvedValue({ experiment: RUNNING_EXPERIMENT, experimentId: "exp-1", variantKey: "b" });
 

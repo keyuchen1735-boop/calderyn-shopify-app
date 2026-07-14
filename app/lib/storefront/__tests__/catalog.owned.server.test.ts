@@ -8,10 +8,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Records the .eq() filters applied to each table so we can assert scoping.
 const eqCalls: Record<string, Array<[string, unknown]>> = {};
+const ilikeCalls: Record<string, Array<[string, string]>> = {};
 // Canned rows per table for a query that resolves to a list.
 let tableRows: Record<string, unknown[]> = {};
 // Canned single-row result per table (for maybeSingle()).
 let tableSingle: Record<string, unknown> = {};
+let tableCount: Record<string, number> = {};
 
 function builder(table: string) {
   const b: Record<string, unknown> = {};
@@ -22,12 +24,18 @@ function builder(table: string) {
       (eqCalls[table] ??= []).push([col, val]);
       return b;
     },
+    ilike: (col: string, val: string) => {
+      (ilikeCalls[table] ??= []).push([col, val]);
+      return b;
+    },
     in: chain,
     order: chain,
     limit: chain,
     range: chain,
     maybeSingle: () => Promise.resolve({ data: tableSingle[table] ?? null, error: null }),
-    then: (resolve: (v: unknown) => unknown) => Promise.resolve({ data: tableRows[table] ?? [], error: null }).then(resolve),
+    then: (resolve: (v: unknown) => unknown) => Promise.resolve({
+      data: tableRows[table] ?? [], error: null, count: tableCount[table] ?? null,
+    }).then(resolve),
   });
   return b;
 }
@@ -39,11 +47,19 @@ vi.mock("~/lib/catalog/sign-media.server", () => ({
 
 beforeEach(() => {
   for (const k of Object.keys(eqCalls)) delete eqCalls[k];
+  for (const k of Object.keys(ilikeCalls)) delete ilikeCalls[k];
   tableRows = {};
   tableSingle = {};
+  tableCount = {};
 });
 
 describe("ownedCatalog.listProducts", () => {
+  it("escapes SQL wildcard characters so public search treats them literally", async () => {
+    tableRows = { product_dim: [], variant_dim: [], product_media: [], product_collection: [] };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    await ownedCatalog.listProducts("shop-1", { query: String.raw`50%_off\\sale` });
+    expect(ilikeCalls.product_dim).toContainEqual(["title", String.raw`%50\%\_off\\\\sale%`]);
+  });
   it("scopes products to the shop and to active status", async () => {
     tableRows = { product_dim: [], variant_dim: [], product_media: [], product_collection: [] };
     const { ownedCatalog } = await import("../catalog.owned.server");
@@ -184,6 +200,26 @@ describe("ownedCatalog.getProduct", () => {
   });
 });
 
+describe("ownedCatalog.getVariantById", () => {
+  it("looks up the variant and active owning product directly within the resolved shop", async () => {
+    tableSingle = {
+      variant_dim: {
+        id: "v1", product_id: "p1", sku: "S", title: "Small", retail_price_cents: 1999,
+        currency: "USD", inventory_tracked: false, inventory_on_hand: 0,
+      },
+      product_dim: { id: "p1", handle: "tee", title: "Tee", description: "Soft" },
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const resolved = await ownedCatalog.getVariantById?.("shop-1", "v1");
+    expect(resolved?.product.title).toBe("Tee");
+    expect(resolved?.variant.priceCents).toBe(1999);
+    expect(eqCalls.variant_dim).toContainEqual(["shop_id", "shop-1"]);
+    expect(eqCalls.variant_dim).toContainEqual(["id", "v1"]);
+    expect(eqCalls.product_dim).toContainEqual(["shop_id", "shop-1"]);
+    expect(eqCalls.product_dim).toContainEqual(["status", "active"]);
+  });
+});
+
 describe("ownedCatalog.listCollections", () => {
   it("returns shop-scoped {handle,title}", async () => {
     tableRows = { collection_dim: [{ handle: "apparel", title: "Apparel" }] };
@@ -191,5 +227,24 @@ describe("ownedCatalog.listCollections", () => {
     const out = await ownedCatalog.listCollections("shop-1");
     expect(out).toEqual([{ handle: "apparel", title: "Apparel" }]);
     expect(eqCalls.collection_dim).toContainEqual(["shop_id", "shop-1"]);
+  });
+});
+
+describe("ownedCatalog.getCollection", () => {
+  it("performs one shop-scoped handle lookup and returns an accurate active-product count", async () => {
+    tableSingle = {
+      collection_dim: { id: "c1", handle: "apparel", title: "Apparel", description: "Wear it" },
+    };
+    tableCount = { product_collection: 37 };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const collection = await ownedCatalog.getCollection!("shop-1", "apparel");
+    expect(collection).toEqual({
+      id: "c1", handle: "apparel", title: "Apparel", description: "Wear it", productCount: 37,
+    });
+    expect(eqCalls.collection_dim).toContainEqual(["shop_id", "shop-1"]);
+    expect(eqCalls.collection_dim).toContainEqual(["handle", "apparel"]);
+    expect(eqCalls.product_collection).toContainEqual(["collection_id", "c1"]);
+    expect(eqCalls.product_collection).toContainEqual(["product_dim.shop_id", "shop-1"]);
+    expect(eqCalls.product_collection).toContainEqual(["product_dim.status", "active"]);
   });
 });

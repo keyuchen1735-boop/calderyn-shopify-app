@@ -8,7 +8,7 @@ import { publishStudioStore, loadStudioState, saveStudioVibe, sectionsFromDoc, m
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // mocks still apply even though they are written below them (imports-first
 // satisfies the import/first rule).
-const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock, storegenMock } =
+const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock, storegenMock, bundleBuildMock, releaseMock, policiesMock } =
   vi.hoisted(() => ({
     storegenMock: { regenerateHomeSection: vi.fn() },
     fromMock: vi.fn(),
@@ -36,6 +36,12 @@ const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experime
       expireOverdueExperiment: vi.fn(async () => undefined),
     },
     settingsMock: { getStoreSettings: vi.fn(), saveStoreSettings: vi.fn() },
+    bundleBuildMock: {
+      readStorefrontReleaseState: vi.fn(),
+      isStorefrontBundlePublishEnabled: vi.fn(),
+    },
+    releaseMock: { publishStorefrontRelease: vi.fn() },
+    policiesMock: { loadStorefrontPolicies: vi.fn() },
   }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
@@ -45,6 +51,9 @@ vi.mock("~/lib/payments/connect.server", () => connectMock);
 vi.mock("~/lib/catalog/catalog.server", () => ({ listProducts: adminListProducts }));
 vi.mock("~/lib/experiments/store-experiment.server", () => experimentsMock);
 vi.mock("~/lib/storegen/generate.server", () => storegenMock);
+vi.mock("~/lib/storefront-bundle/build.server", () => bundleBuildMock);
+vi.mock("~/lib/storefront-bundle/release.server", () => releaseMock);
+vi.mock("~/lib/storefront/policies.server", () => policiesMock);
 vi.mock("~/lib/storefront/settings.server", () => ({
   DEFAULT_PALETTE: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
   getStoreSettings: settingsMock.getStoreSettings,
@@ -78,6 +87,15 @@ beforeEach(() => {
     vibe: "minimal",
   });
   settingsMock.saveStoreSettings.mockResolvedValue(undefined);
+  bundleBuildMock.readStorefrontReleaseState.mockResolvedValue({
+    draftVersionId: null,
+    publishedVersionId: null,
+    draftRuntimeVersion: null,
+    publishedRuntimeVersion: null,
+  });
+  bundleBuildMock.isStorefrontBundlePublishEnabled.mockReturnValue(false);
+  releaseMock.publishStorefrontRelease.mockResolvedValue("33333333-3333-3333-3333-333333333333");
+  policiesMock.loadStorefrontPolicies.mockResolvedValue([]);
   for (const key of Object.keys(tableResults)) delete tableResults[key];
   upserts.length = 0;
   fromMock.mockImplementation((table: string) => {
@@ -97,6 +115,44 @@ beforeEach(() => {
 });
 
 describe("publishStudioStore (gateless)", () => {
+  it("atomically publishes an active runtime-1 draft when bundle publishing is enabled", async () => {
+    bundleBuildMock.readStorefrontReleaseState.mockResolvedValue({
+      draftVersionId: "33333333-3333-3333-3333-333333333333",
+      publishedVersionId: "44444444-4444-4444-4444-444444444444",
+      draftRuntimeVersion: 1,
+      publishedRuntimeVersion: 1,
+    });
+    bundleBuildMock.isStorefrontBundlePublishEnabled.mockReturnValue(true);
+
+    await publishStudioStore(shop, "22222222-2222-2222-2222-222222222222");
+
+    expect(releaseMock.publishStorefrontRelease).toHaveBeenCalledWith({
+      shopId: shop,
+      expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
+      expectedPublishedVersionId: "44444444-4444-4444-4444-444444444444",
+      actorId: "22222222-2222-2222-2222-222222222222",
+    });
+    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
+    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
+  });
+
+  it("never falls back to per-page publishing when a runtime-1 draft exists but its publish flag is disabled", async () => {
+    bundleBuildMock.readStorefrontReleaseState.mockResolvedValue({
+      draftVersionId: "33333333-3333-3333-3333-333333333333",
+      publishedVersionId: null,
+      draftRuntimeVersion: 1,
+      publishedRuntimeVersion: null,
+    });
+
+    await expect(publishStudioStore(shop)).rejects.toMatchObject({
+      code: "storefront_bundle_publish_disabled",
+      status: 503,
+    });
+    expect(releaseMock.publishStorefrontRelease).not.toHaveBeenCalled();
+    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
+    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
+  });
+
   it("publishes the default home doc when no draft exists instead of throwing", async () => {
     await expect(publishStudioStore(shop)).resolves.toBeUndefined();
     // The seeded draft is the default home document (has a hero block).
@@ -130,6 +186,43 @@ describe("publishStudioStore (gateless)", () => {
 });
 
 describe("loadStudioState readiness", () => {
+  it("exposes only the merchant policies that actually exist", async () => {
+    policiesMock.loadStorefrontPolicies.mockResolvedValueOnce([{
+      id: "terms",
+      title: "Purchase terms",
+      body: "Payment is due at checkout.",
+      updatedAt: "2026-07-14T12:00:00.000Z",
+    }]);
+
+    const state = await loadStudioState(shop);
+
+    expect(policiesMock.loadStorefrontPolicies).toHaveBeenCalledWith(shop);
+    expect(state.policies).toEqual([{
+      id: "terms",
+      title: "Purchase terms",
+      body: "Payment is due at checkout.",
+      updatedAt: "2026-07-14T12:00:00.000Z",
+    }]);
+  });
+
+  it("counts immutable runtime-1 draft and published pointers in the Studio state", async () => {
+    bundleBuildMock.readStorefrontReleaseState.mockResolvedValue({
+      draftVersionId: "33333333-3333-3333-3333-333333333333",
+      publishedVersionId: "44444444-4444-4444-4444-444444444444",
+      draftRuntimeVersion: 1,
+      publishedRuntimeVersion: 1,
+    });
+    const state = await loadStudioState(shop);
+    expect(state.hasDraft).toBe(true);
+    expect(state.hasPublished).toBe(true);
+    expect(state.release).toEqual({
+      draftVersionId: "33333333-3333-3333-3333-333333333333",
+      publishedVersionId: "44444444-4444-4444-4444-444444444444",
+      draftRuntime: 1,
+      publishedRuntime: 1,
+    });
+  });
+
   it("reports zero products and checkout not ready for a fresh shop", async () => {
     const state = await loadStudioState(shop);
     expect(state.productCount).toBe(0);

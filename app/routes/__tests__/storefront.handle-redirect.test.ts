@@ -4,14 +4,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { loader } from "../storefront.products.$handle";
 
-const { getCatalogMock, getProductMock, resolveRedirectMock } = vi.hoisted(() => ({
+const { getCatalogMock, getProductMock, resolveRedirectMock, resolveRuntime1RouteMock } = vi.hoisted(() => ({
   getCatalogMock: vi.fn(),
   getProductMock: vi.fn(),
   resolveRedirectMock: vi.fn(),
+  resolveRuntime1RouteMock: vi.fn(),
 }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storefront/handle-redirect.server", () => ({
   resolveHandleRedirect: (...a: unknown[]) => resolveRedirectMock(...a),
+}));
+vi.mock("~/lib/storefront-runtime/release-resolution.server", () => ({
+  resolveRuntime1Route: (...a: unknown[]) => resolveRuntime1RouteMock(...a),
+  hasRuntime1Storefront: vi.fn(async () => false),
 }));
 
 beforeEach(() => {
@@ -19,6 +24,7 @@ beforeEach(() => {
   getProductMock.mockResolvedValue(null);
   getCatalogMock.mockReturnValue({ getProduct: getProductMock });
   resolveRedirectMock.mockResolvedValue(null);
+  resolveRuntime1RouteMock.mockResolvedValue(null);
 });
 
 const args = (handle: string) =>
@@ -67,6 +73,25 @@ describe("PDP handle redirect", () => {
     }
     expect(caught?.status).toBe(301);
     expect(caught?.headers.get("Location")).toBe("/storefront/products/new-handle?utm_source=mail&v=2");
+  });
+
+  it("runs the same renamed-handle 301 before a runtime-1 product miss becomes a 404", async () => {
+    resolveRuntime1RouteMock.mockResolvedValue({ runtime: 1, data: { notFound: { kind: "product", handle: "old-handle" } } });
+    resolveRedirectMock.mockResolvedValue("new-handle");
+    let caught: Response | null = null;
+    try {
+      await loader({
+        request: new Request("https://demo.calderyncompany.com/storefront/products/old-handle?utm_source=mail"),
+        params: { handle: "old-handle" },
+        context: {},
+      } as never);
+    } catch (error) {
+      if (error instanceof Response) caught = error;
+      else throw error;
+    }
+    expect(caught?.status).toBe(301);
+    expect(caught?.headers.get("Location")).toBe("/storefront/products/new-handle?utm_source=mail");
+    expect(caught?.headers.get("Cache-Control")).toBe("public, max-age=300");
   });
 
   it("404s when no redirect row exists", async () => {

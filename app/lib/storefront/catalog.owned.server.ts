@@ -105,7 +105,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   const ids = products.map((p) => String(p.id));
   if (!ids.length) return [];
 
-  const [{ data: variants, error: vErr }, { data: media, error: mErr }, { data: pc, error: pcErr }] =
+  const [{ data: variants, error: vErr }, { data: media, error: mErr }, { data: pc, error: pcErr }, { data: options, error: oErr }] =
     await Promise.all([
       sb
         .from("variant_dim")
@@ -119,10 +119,16 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
         .in("product_id", ids)
         .order("position"),
       sb.from("product_collection").select("product_id, collection_id").in("product_id", ids),
+      sb
+        .from("product_option")
+        .select("product_id, name, position, product_option_value(value, position)")
+        .in("product_id", ids)
+        .order("position"),
     ]);
   if (vErr) throw vErr;
   if (mErr) throw mErr;
   if (pcErr) throw pcErr;
+  if (oErr) throw oErr;
 
   // Resolve collection ids -> handles, scoped to the shop so a foreign id can't
   // surface another tenant's collection handle.
@@ -176,6 +182,15 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     if (handle) pushInto(handlesByProduct, String(r.product_id), handle);
   }
 
+  const optionsByProduct = new Map<string, Array<{ name: string; values: string[] }>>();
+  for (const option of (options ?? []) as Row[]) {
+    const values = ((option.product_option_value as Row[] | null) ?? [])
+      .slice()
+      .sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0))
+      .map((value) => String(value.value));
+    pushInto(optionsByProduct, String(option.product_id), { name: String(option.name), values });
+  }
+
   return products.map((p): StoreProduct => {
     const id = String(p.id);
     return {
@@ -185,6 +200,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
       description: (p.description as string | null) ?? "",
       images: imagesByProduct.get(id) ?? [],
       variants: variantsByProduct.get(id) ?? [],
+      options: optionsByProduct.get(id) ?? [],
       collections: handlesByProduct.get(id) ?? [],
       category: (p.category as string | null) ?? null,
       tags: (p.tags as string[] | null) ?? [],
@@ -228,7 +244,15 @@ export const ownedCatalog: StorefrontCatalog = {
       .eq("shop_id", shopId)
       .eq("status", "active");
     if (restrictToIds) q = q.in("id", restrictToIds);
-    const { data: products, error } = await q.order("title").limit(MAX_STOREFRONT_PRODUCTS);
+    if (opts?.query) {
+      const literal = opts.query
+        .replaceAll("\\", "\\\\")
+        .replaceAll("%", "\\%")
+        .replaceAll("_", "\\_");
+      q = q.ilike("title", `%${literal}%`);
+    }
+    const limit = Math.min(Math.max(opts?.limit ?? MAX_STOREFRONT_PRODUCTS, 0), MAX_STOREFRONT_PRODUCTS);
+    const { data: products, error } = await q.order("title").limit(limit);
     if (error) throw error;
     // Ordering is stable/alphabetical here; visitor-specific weather boosting is
     // applied at the render layer (resolveRenderData) where the shopper's request
@@ -251,13 +275,84 @@ export const ownedCatalog: StorefrontCatalog = {
     return product ?? null;
   },
 
+  async getVariantById(shopId, variantId) {
+    const sb = getSupabase();
+    const variantResult = await sb
+      .from("variant_dim")
+      .select("id, product_id, sku, title, retail_price_cents, compare_at_price_cents, currency, inventory_tracked, inventory_on_hand")
+      .eq("shop_id", shopId)
+      .eq("id", variantId)
+      .maybeSingle();
+    if (variantResult.error) throw variantResult.error;
+    if (!variantResult.data) return null;
+
+    const variantRow = variantResult.data as Row;
+    const productResult = await sb
+      .from("product_dim")
+      .select("id, handle, title, description, category, tags")
+      .eq("shop_id", shopId)
+      .eq("id", String(variantRow.product_id))
+      .eq("status", "active")
+      .maybeSingle();
+    if (productResult.error) throw productResult.error;
+    if (!productResult.data) return null;
+
+    const sellable = await sellableByVariant(sb, shopId, [variantId]);
+    const productRow = productResult.data as Row;
+    const variant = toVariant(variantRow, sellable.get(variantId));
+    const product: StoreProduct = {
+      id: String(productRow.id),
+      handle: String(productRow.handle),
+      title: String(productRow.title),
+      description: (productRow.description as string | null) ?? "",
+      images: [],
+      variants: [variant],
+      collections: [],
+      category: (productRow.category as string | null) ?? null,
+      tags: (productRow.tags as string[] | null) ?? [],
+    };
+    return { product, variant };
+  },
+
+  async getCollection(shopId, handle) {
+    const client = getSupabase();
+    const collectionResult = await client
+      .from("collection_dim")
+      .select("id, handle, title, description")
+      .eq("shop_id", shopId)
+      .eq("handle", handle)
+      .maybeSingle();
+    if (collectionResult.error) throw collectionResult.error;
+    if (!collectionResult.data) return null;
+    const collection = collectionResult.data as Row;
+    const countResult = await client
+      .from("product_collection")
+      .select("product_dim!inner(id)", { count: "exact", head: true })
+      .eq("collection_id", String(collection.id))
+      .eq("product_dim.shop_id", shopId)
+      .eq("product_dim.status", "active");
+    if (countResult.error) throw countResult.error;
+    return {
+      id: String(collection.id),
+      handle: String(collection.handle),
+      title: String(collection.title),
+      description: (collection.description as string | null) ?? "",
+      productCount: countResult.count ?? 0,
+    };
+  },
+
   async listCollections(shopId) {
     const { data, error } = await getSupabase()
       .from("collection_dim")
-      .select("handle, title")
+      .select("id, handle, title, description")
       .eq("shop_id", shopId)
       .order("title");
     if (error) throw error;
-    return (data ?? []).map((c: Row): StoreCollection => ({ handle: String(c.handle), title: String(c.title) }));
+    return (data ?? []).map((c: Row): StoreCollection => ({
+      handle: String(c.handle),
+      title: String(c.title),
+      ...(c.id == null ? {} : { id: String(c.id) }),
+      ...(c.description == null ? {} : { description: String(c.description) }),
+    }));
   },
 };

@@ -84,13 +84,22 @@ async function resolveVariant(
   shopId: string,
   variantId: string,
 ): Promise<{ product: StoreProduct; variant: StoreVariant } | null> {
-  const products = await getCatalog().listProducts(shopId);
+  const catalog = getCatalog();
+  if (catalog.getVariantById) return catalog.getVariantById(shopId, variantId);
+  const products = await catalog.listProducts(shopId);
   for (const product of products) {
     for (const variant of product.variants) {
       if (variant.id === variantId) return { product, variant };
     }
   }
   return null;
+}
+
+export class CartLineNotFoundError extends Error {
+  constructor(lineId: string) {
+    super(`cart line ${lineId} was not found in the active cart`);
+    this.name = "CartLineNotFoundError";
+  }
 }
 
 /** Create an empty cart (state='cart', no buyer yet). */
@@ -148,45 +157,19 @@ export async function addCartLine(
     throw new VariantUnavailableError(variantId, "unavailable");
   }
 
-  const sb = getSupabase();
-  const existing = await sb
-    .from("cart_line")
-    .select(LINE_COLS)
-    .eq("shop_id", shopId)
-    .eq("cart_id", cartId)
-    .eq("variant_id", variantId)
-    .maybeSingle();
-  if (existing.error) throw existing.error;
-
-  if (existing.data) {
-    const line = mapLine(existing.data as Record<string, unknown>);
-    const bumped = await sb
-      .from("cart_line")
-      .update({ quantity: Math.min(line.quantity + quantity, MAX_LINE_QUANTITY) }) // keep original price/currency snapshot
-      .eq("shop_id", shopId)
-      .eq("id", line.id)
-      .select(LINE_COLS)
-      .single();
-    if (bumped.error) throw bumped.error;
-    if (!bumped.data) throw new Error("cart_line update returned no row");
-    return { ...mapLine(bumped.data as Record<string, unknown>), productId: resolved.product.id };
-  }
-
-  const { data, error } = await sb
-    .from("cart_line")
-    .insert({
-      shop_id: shopId,
-      cart_id: cartId,
-      variant_id: variantId,
-      quantity,
-      unit_price_cents: resolved.variant.priceCents, // SNAPSHOT
-      currency: resolved.variant.currency.toLowerCase(), // SNAPSHOT
-      title_snapshot: snapshotTitle(resolved.product, resolved.variant), // SNAPSHOT
-    })
-    .select(LINE_COLS)
-    .single();
+  const { data, error } = await getSupabase().rpc("cart_add_line_atomic", {
+    p_shop_id: shopId,
+    p_cart_id: cartId,
+    p_variant_id: variantId,
+    p_quantity: quantity,
+    p_unit_price_cents: resolved.variant.priceCents,
+    p_currency: resolved.variant.currency.toLowerCase(),
+    p_title_snapshot: snapshotTitle(resolved.product, resolved.variant),
+  });
   if (error) throw error;
-  if (!data) throw new Error("cart_line insert returned no row");
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("cart_add_line_atomic returned no row");
+  }
   return { ...mapLine(data as Record<string, unknown>), productId: resolved.product.id };
 }
 
@@ -217,6 +200,49 @@ export async function priceCart(shopId: string, cartId: string): Promise<PricedC
   }
   const currency = currencies.values().next().value ?? "usd";
   return { cartId, lines, subtotalCents, currency };
+}
+
+/** Set an absolute line quantity while preserving the add-time price snapshot. */
+export async function setCartLineQuantity(
+  shopId: string,
+  cartId: string,
+  lineId: string,
+  quantity: number,
+): Promise<CartLine> {
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_LINE_QUANTITY) {
+    throw new Error(`quantity must be an integer from 1 to ${MAX_LINE_QUANTITY}`);
+  }
+  if (!shopId) throw new Error("shopId is required");
+  assertPersistableShop(shopId);
+  if (!cartId) throw new Error("cartId is required");
+  if (!lineId) throw new Error("lineId is required");
+
+  const sb = getSupabase();
+  const existing = await sb
+    .from("cart_line")
+    .select(LINE_COLS)
+    .eq("shop_id", shopId)
+    .eq("cart_id", cartId)
+    .eq("id", lineId)
+    .maybeSingle();
+  if (existing.error) throw existing.error;
+  if (!existing.data) throw new CartLineNotFoundError(lineId);
+  const line = mapLine(existing.data as Record<string, unknown>);
+  const resolved = await resolveVariant(shopId, line.variantId);
+  if (!resolved) throw new VariantUnavailableError(line.variantId, "not_found");
+  if (!resolved.variant.available) throw new VariantUnavailableError(line.variantId, "unavailable");
+
+  const updated = await sb
+    .from("cart_line")
+    .update({ quantity })
+    .eq("shop_id", shopId)
+    .eq("cart_id", cartId)
+    .eq("id", lineId)
+    .select(LINE_COLS)
+    .single();
+  if (updated.error) throw updated.error;
+  if (!updated.data) throw new CartLineNotFoundError(lineId);
+  return mapLine(updated.data as Record<string, unknown>);
 }
 
 /**

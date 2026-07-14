@@ -1,5 +1,5 @@
 // app/routes/storefront.collections.$handle.tsx
-import type { LoaderFunctionArgs, MetaFunction, MetaDescriptor } from "@remix-run/node";
+import type { HeadersFunction, LoaderFunctionArgs, MetaFunction, MetaDescriptor } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { getCatalog } from "~/lib/storefront/catalog.server";
@@ -15,12 +15,39 @@ import { resolveRenderData } from "~/lib/storebuilder/resolve-data.server";
 import { storefrontWeatherCondition } from "~/lib/storefront/weather-serve.server";
 import { renderBlocks } from "~/lib/storebuilder/render";
 import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
+import { randomBytes } from "node:crypto";
+import { hasRuntime1Storefront, resolveRuntime1Route } from "~/lib/storefront-runtime/release-resolution.server";
+import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-runtime/render";
+import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
+import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
+import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
+import { InvalidSearchRequestError, parseStorefrontCollectionParams } from "~/lib/storefront/search.server";
+import { storefrontError } from "~/lib/storefront/cart-api.server";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Collection" }];
+export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
   const shopId = await resolveStorefrontShop(request);
+  let runtime1: Awaited<ReturnType<typeof resolveRuntime1Route>> = null;
+  if (await hasRuntime1Storefront({ shopId, request })) {
+    try {
+      const searchInput = parseStorefrontCollectionParams(new URL(request.url).searchParams, handle);
+      runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "collection", handle, searchInput } });
+    } catch (error) {
+      if (error instanceof InvalidSearchRequestError) throw storefrontError(422, "invalid_search_request");
+      throw error;
+    }
+  }
+  if (runtime1) {
+    if (runtime1.data.notFound) throw new Response(null, { status: 404 });
+    const nonce = randomBytes(18).toString("base64url");
+    const headers = storefrontCacheHeaders({ routeId: "collection", personalized: false, shopId });
+    markStorefrontBundleRendered(headers, nonce);
+    const title = runtime1.data.collection?.title ?? "Collection";
+    return json({ ...runtime1, nonce, seoMeta: [{ title }] }, { headers });
+  }
   const catalog = getCatalog();
   // Manual shop_id scoping: shopId is the first arg of every read.
   const [collections, products] = await Promise.all([
@@ -66,7 +93,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 }
 
 export default function StorefrontCollection() {
-  const { title, products, doc, data, record } = useLoaderData<typeof loader>();
+  const loaded = useLoaderData<typeof loader>();
+  if (isRuntime1RenderData(loaded)) {
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "collection", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="collection" data={loaded.data} mode="public" /></>;
+  }
+  const { title, products, doc, data, record } = loaded;
   if (doc && data) {
     return <div className="cd-store__collection">{renderBlocks(doc, { data, record })}</div>;
   }

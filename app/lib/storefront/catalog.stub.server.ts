@@ -69,12 +69,29 @@ const PRODUCTS: StoreProduct[] = [
 // owned impl MUST .eq('shop_id', shopId) on every query.
 export const fixtureCatalog: StorefrontCatalog = {
   async listProducts(_shopId, opts) {
-    if (opts?.ids) return PRODUCTS.filter((p) => opts.ids!.includes(p.id));
-    if (!opts?.collection) return PRODUCTS;
-    return PRODUCTS.filter((p) => p.collections.includes(opts.collection!));
+    let products = opts?.ids ? PRODUCTS.filter((p) => opts.ids!.includes(p.id)) : PRODUCTS;
+    if (opts?.collection) products = products.filter((p) => p.collections.includes(opts.collection!));
+    if (opts?.query) {
+      const query = opts.query.toLocaleLowerCase();
+      products = products.filter((p) => `${p.title} ${p.description}`.toLocaleLowerCase().includes(query));
+    }
+    return products.slice(0, opts?.limit);
   },
   async getProduct(_shopId, handle) {
     return PRODUCTS.find((p) => p.handle === handle) ?? null;
+  },
+  async getVariantById(_shopId, variantId) {
+    for (const product of PRODUCTS) {
+      const variant = product.variants.find((entry) => entry.id === variantId);
+      if (variant) return { product, variant };
+    }
+    return null;
+  },
+  async getCollection(_shopId, handle) {
+    const collection = COLLECTIONS.find((entry) => entry.handle === handle);
+    return collection
+      ? { ...collection, productCount: PRODUCTS.filter((product) => product.collections.includes(handle)).length }
+      : null;
   },
   async listCollections(_shopId) {
     return COLLECTIONS;

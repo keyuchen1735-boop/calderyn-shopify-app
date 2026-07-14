@@ -3,7 +3,7 @@
 // payment. PII is posted to OUR action (server) over the form; CARD DATA goes only to Stripe.js
 // (the Payment Element), never to our server. The loader exposes only the Stripe PUBLISHABLE key
 // — the secret stays server-side (lib/payments/stripe.server.ts).
-import type { ActionFunctionArgs, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
 import { useState } from "react";
@@ -32,6 +32,12 @@ import { getBuyerSession } from "~/lib/buyer/session.server";
 import { defaultShippingAddress, getBuyerEmail } from "~/lib/buyer/account.server";
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
+import { randomBytes } from "node:crypto";
+import { hasRuntime1Storefront, resolveRuntime1Route } from "~/lib/storefront-runtime/release-resolution.server";
+import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-runtime/render";
+import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
+import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
+import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 
 interface CheckoutPrefill {
   email: string;
@@ -88,6 +94,7 @@ async function checkoutExperimentAttribution(
   shopId: string,
   request: Request,
 ): Promise<Record<string, string>> {
+  if (await hasRuntime1Storefront({ shopId, request })) return {};
   const served = await resolveServedExperiment(shopId, request, "checkout");
   if (!served.experimentId || !served.variantKey) return {};
   return { experiment_id: served.experimentId, variant_key: served.variantKey };
@@ -155,9 +162,11 @@ export const meta: MetaFunction = ({ matches }) => {
     { name: "robots", content: "noindex" },
   ];
 };
+export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
+  const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "checkout" } });
   // Demo shell is browse-only — no cart can exist for it (see storefront.cart.tsx).
   if (shopId === DEMO_SHOP_ID) return redirect("/storefront/cart");
   const cartId = await readCartId(request);
@@ -169,7 +178,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // cart pricing instead of adding latency in front of it.
   const [priced, served] = await Promise.all([
     priceCart(shopId, cartId),
-    resolveServedExperiment(shopId, request, "checkout"),
+    runtime1
+      ? Promise.resolve({ experimentId: null, variantKey: null })
+      : resolveServedExperiment(shopId, request, "checkout"),
   ]);
   if (priced.lines.length === 0) return redirect("/storefront/cart");
 
@@ -214,8 +225,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   // Pre-address view: only the subtotal is known here. Shipping + tax are quoted in the action
   // once the buyer's address is captured (createCheckout), and the real total is returned then.
-  return json(
-    {
+  const payload = {
       publishableKey,
       paymentsReady,
       origin: new URL(request.url).origin,
@@ -230,9 +240,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
         subtotalCents: priced.subtotalCents,
         currency: priced.currency,
       },
-    },
-    { headers: track },
-  );
+    };
+  if (runtime1) {
+    const nonce = randomBytes(18).toString("base64url");
+    const cacheHeaders = storefrontCacheHeaders({ routeId: "checkout", personalized: true });
+    cacheHeaders.forEach((value, key) => track.set(key, value));
+    markStorefrontBundleRendered(track, nonce);
+    return json({ ...payload, ...runtime1, nonce }, { headers: track });
+  }
+  return json(payload, { headers: track });
 }
 
 function str(form: FormData, key: string): string {
@@ -596,8 +612,36 @@ function fmtReady(earliest: string | null): string | null {
   return eTxt ? `Ready ${eTxt}` : null;
 }
 
+interface CheckoutPlatformData {
+  publishableKey: string | null;
+  paymentsReady: boolean;
+  origin: string;
+  prefill: CheckoutPrefill | null;
+  summary: {
+    lines: Array<{ id: string; title: string; quantity: number; unitPriceCents: number }>;
+    subtotalCents: number;
+    currency: string;
+  };
+}
+
 export default function StorefrontCheckout() {
-  const { publishableKey, paymentsReady, origin, summary, prefill } = useLoaderData<typeof loader>();
+  const loaded = useLoaderData<typeof loader>();
+  if (isRuntime1RenderData(loaded)) {
+    const surface = renderStorefrontSurface({
+      bundle: loaded.bundle,
+      routeId: "checkout",
+      data: loaded.data,
+      nonce: loaded.nonce,
+      mode: "public",
+      checkoutContent: <CheckoutPlatform loaded={loaded} />,
+    });
+    return <>{surface}<StorefrontHydrator bundle={loaded.bundle} routeId="checkout" data={loaded.data} mode="public" /></>;
+  }
+  return <CheckoutPlatform loaded={loaded} />;
+}
+
+function CheckoutPlatform({ loaded }: { loaded: CheckoutPlatformData }) {
+  const { publishableKey, paymentsReady, origin, summary, prefill } = loaded;
   const fetcher = useFetcher<typeof action>();
   const [stripePromise] = useState(() => (publishableKey ? loadStripe(publishableKey) : null));
   // Buyer stepped back to edit the address after seeing options; cleared again on submit.

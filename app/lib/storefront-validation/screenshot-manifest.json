@@ -1,0 +1,1292 @@
+{
+  "schemaVersion": 1,
+  "validationProfileVersion": 1,
+  "viewports": [
+    "390x844",
+    "768x1024",
+    "1440x1000"
+  ],
+  "recipes": [
+    {
+      "id": "custom-bench",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "4c1d463c09e63da163242482eefc6d52bba53b6486a6647428fb013c82456021",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "232ca464fd9e91eb887867e828f69168528e89d255018b740397d5bf680e5ee7",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "e35f2da8d4c0aea4bdb08fee4c5bb91ce66d62d67d422890287d77aa9089fe1d",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "00919b8c38760117a41c198861298f9ddc7457015cc42c08e57d1bfa55d951eb"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "0773e3d6d0ddecef7938ea8b6fe9ceb01ac6985eb1b736cbbfa20ce56678d060"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "edf6cafaef9091330534618300d77c212f918fde0a9c425e94aee559818c6a17"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "ec1416590073802df2f0371286cb9b63f6a616659596b38249f43142ab2d0fb1"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "027d010d6f2ac1a61919fc9fc6a3b215fc10a2544895daf00b9450f9c306a624"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "70cadc6eee4c7d05a85c05346b17bd2e71c602f038813bfc5d90aa03a1d4f166"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "15b41c38d73c7be63757dc6a5b4053379edadccc9cf6e0509e3a57bc2de5d7c7"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "ec087aa72431c62db39166df2733b41474bf88383ff69899f0c0d81a0d44f3d9"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "b458443804ba8d49745e8526c9762ef789a8e4bdfec42e4069ae105ef0046877"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "78a02f85234e736dec12af9a2fbc9332310d043274d89f78c24673733e88f45b"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "d496703834f1ba77cf1d0d300bc43c1e23c07d876bfb7537567815f729bad44f"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "c069f9c052438e0401a4b01407bd53f641192dd11159f035fc16f6811ca7604c"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "96c2cbf948f2ad85a8d9cdd133120ca7e828abd4f315ec573c818f79919475eb"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "d7a8dc597dbad54a80e8755b192e1b35e12dfec341c5904a02189ad5319ed59f"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "0c8193523c8761c11ea1097927635e0796a98a15b3af074837172e3973958767"
+        }
+      ]
+    },
+    {
+      "id": "commons-index",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "5c07fc97138b6b6c9c70a50caa64a8f952cc76031f0c52050c0c9a430c6f63a1",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "b3bead027b5afb55a30cdde4bc5a50fa2e21a74e8c660e2346d36c685621a3bc",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "8bf60855a206fcfaad6b861ebb8919b385eaf09bd758ad8458479e79e7eb3c8a",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "e57d1e3c4b7927d2de1c9581fee3fec74b380d258ad04ec84a90be3fe49eeda3"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "3d6be281d250c11bf65c0d4e92a52c1f4d52772194abb160ad378c3c3ea9f140"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "11b7441cc092d5b251179faf634437dd8bd60bb5796f71f6eeb7a822a8e867b4"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "7545c9b3d73f7e76e186fac4d04315d6871e19fb01d08f59d53d2d3dbfa3ea0a"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "974e04d17a50d26ccc45b5094168ca38f5c3647e385da92c73f70ce02e546551"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "39381c7a39a1a2d8dfd4661181509f5f92243a0c724674498f8067fbd3d0d3b6"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "f9f4cb5b8895e9c212d56c1d18dffbb04140ab0aa8d7038280825dc1bf0cea3b"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "647cb0bcf0674865fd016326da31fd039f9a80f2c288be4fb47f416a644234e1"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "8db96341bed7b124ff8edbdd31823aab4bbaab227f80bf791042e13de575110e"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "5ec38c8846e6beca770ad5fccfda2ba2704e4b435926334e291997e9c3dacac6"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "508230fab2303b3ca4b78aa9dceb2cbad67137d8b522826e4112b8b72e5ee399"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "8e3bd9e8ed6a4f1e97d208b4a081df8b0442310f4f413b4d7a73aeaf960f99f1"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "014de751e831ff71112edf627397afc6569ba250af605fa04d9017a43977402f"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "e43389581b5f49d3d6f46ff5f381c84774ace67d311f2099204dadee2bf5aa94"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "77eb922afa6de9618ce2d84d06a9575a8058df9dc73bc55e560a13abcf50b974"
+        }
+      ]
+    },
+    {
+      "id": "soft-chemistry",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "02ea33bdd8d55d49cb34eeaff072b0045786c8b6cc990fca5c4304c9930bd39a",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "af195ac28b8bcad7fb95d50a4ade51b46ce30f31ed8e559d876ce2fe98131072",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "a99e4bd3f8feae34d6cb1d4c046bbf061ed0bacdaf2636e3b88bc924c527517c",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "52be1e231e845b163038ca1e49ce7a671bbfb3afee412c94f3f3b9a349805560"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "c803347b265e932eee3ee28eb7187f10b8f5bdced536c7032b7dea0074ca4ff0"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "1f326103f88832d72e739af80c90de3620cfedcc672840bc677b872c3556f77f"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "bce97add04105762aaea3c0acd73ad0b75563004e2b37886f6ff468a62238df8"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "0f005249589f28092d26f25b2f6257c40e44d7f505bf9eaa5a5d5fdc50a861a1"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "ca1f0a12677b794696e00a0cea87de5e61f8446e5c165104e29d0b0009688630"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "acf1f969fbf67a9a6d1f0c0f8d783da6bbdd56e9d06c03c444e5270e602efc9f"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "ffc7e61dc3571c9bbd8d745b6c82973030aa87fae8ec6387a871613362fa7b82"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "77916c15c8808b38a7a56b125f0ee66e82959738a495a1690ef8f13755224443"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "0f47b37de0880ac4c785b0e4a9bbf419f8ff8fe2b189ff6162c0a5f881b0f08a"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "542942e1b57acdc5209ef0293f859e7e13480530885d6e200bdf7141cf0c592a"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "94919c1c4c42de0f824f510b154271702bca839a5e892a2ceb5925d7bcb0d09e"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "692d6ae2e955d4322c8b14da188bd1e3e078be3f9d038941696b2f2416468cf6"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "447b99577446905af7722970fe111d76d942f94e16c16577e9ab049fcf317617"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "b831a611f8da38ba42649bff71c65eb28836b8e437119ddd293f7440ee82a557"
+        }
+      ]
+    },
+    {
+      "id": "companion-field-guide",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "b1e9d01f66b67fcce4525a1ef20896726c3a53f268d3f0776857dd9a0b2131c2",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "e853d855e3b6a045d79fb869cdd9e15cb4ba573adc8380dfd6081d92e557ba89",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "89ac0e0cc6cb3b126d63076df38da376751dc00876e02c4649c50c73f83a06b0",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "315c85fdc00b73dc57ece25be6d1dc210b9017fffd58dac4e4a4cad75ad76461"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "2045ac0ec2a9594171eecb6830aeb30c5a4caf7f4c28373450a77fd174f9c4e6"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "283561e7a5f066c0652dd3f6ab9dde6d7451ba48b11d1c4f7022860d8043a067"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "e46d4d9d06ae844def1f1821df8da741a7d13e3d1212ace34e3435cdcaffb0f9"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "2b12c3c2ba7df1dfa4a0cf54ff3ecdd17b26a73773108cee550c0e8c851655c9"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "c80124b80f57421eefccfae5db673668a0a24f9dd1e7a48b09e68378a457c905"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "3317e1c39b320aa77b1b8f98f93bffea5e8f08bcba6c2ea47f1fb648edddc2fc"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "ad54b69dc955552d50c71e6199bfa3d0eedc4396894e3dae0ae04188be196bff"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "5fb63f9c417adc16ef6e4e48111140c5644b4e0fb9f8de1e22f6d0bf76234822"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "5c87b3fb1716e90e5c9f794b30b3625abcf33ea72dc442a558a89e69d1142234"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "5db5c6d8f2debd5ebd36c5603b1588c6489f6a21fa112e77fc7cc8195d1ecb58"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "1e86b539895b413961cb5fa7a22d225ddd2a5252e1a4570e84c616afd189f21c"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "1ed43e2bde773e5947427753ae39fda61d3b5a54b13fb65c6f93b678afec660b"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "c85e78c23420d9e2f235571af88bdeec91f2998c902bee7476238225e3532e9c"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "9b8ec314c905bc71dabb871b8c22a375b80d2df58ec461061ef2fddf902da377"
+        }
+      ]
+    },
+    {
+      "id": "daily-protocol",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "6c13531dd1894fab68e7b9bb12d19ee12eb6822fe0fdf0238946ec37858929cd",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "57c4ee032cc929252f75105b585b71b5d5eccb849aeaac3037b75ff6d07180a4",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "7c65e8aeb6793dc044a6cac64803fbfa5b8722c7f68bde8977aa66a60a829b9a",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "eeae37cc3030b764968b43ef7639597a856b3059ff8ca0308a9332bdf7d0b181"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "d4e93aec055d6c7fa7ef94ac11eca415b7429a770c6f742d061e08cb8f3d9f77"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "69f81d56d9a19bbd46e9d7cd91c20cc6e40786cb2402e385725a2f299c4b79ea"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "7cdcc99a58041639fdf326a9999300cc83bca24c8bdba847c8a2315f67239fd4"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "54bb7dc4d591a17c4a8d07d85ed062ab71624d5696dd6760a485a7c06315e133"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "6e4556940bbc68373b2542537a94982e643f2d1c9d34ae82c4252278fb2d9f93"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "bfa52d116efde8c0da0235ddde9be17389522401d3b1e28f7af7331524a9580d"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "d8bb6a65b642ea2af87d9f1c2b01fe89a57d8131c41f792b9cbfb88e520476c1"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "5d30740305a6c76b1a9748b18a8cecb5987fd9ab20e14e5ba74a07b6ea69950b"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "c809db5c4a34d35e7d7c11da5c204cd5f51162bb0a9842d9fca450a47d69c16e"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "67a1ab6474e96994969ba5c688ee4763687a1cf75fc7667321fca1f2acd304b5"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "54b1f9b85042517fe65b0329cbc61608ef3458a4fb3ca61a5a905e0c15391f55"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "d9342f2f66f812ca66616dbc17aaeafa5ffeb408752e8ff29228f95923854f7c"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "c44ae1b29bd0649513512373045cbc6a7ac4f9cd76bc2ca1e03cbd8565730be3"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "2a19d0d7f7043770eb566c031e5a76b21115096e3f5457f6446855ef00ab1c5e"
+        }
+      ]
+    },
+    {
+      "id": "room-modes",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "71916d94c49f6fdd72cd8f3227e9cf19b0c6934cf8c340147f53edb74632d03f",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "bdc599c9fb9697ad76de59620bc2f1da14c9582635c1cc32eb3902b0c3d52f88",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "e7ca0bbc826bea873ede7973ae302644ea7c3da7c1f1621221748992fb570a1d",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "7ca80f96290e49273ac264d06542cbd7ff6ddb0d3395f39fad19cfc801ee5165"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "1713895a9e7635155bb18855da4d2c235ef0439b7c577b7a91212a981340b944"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "e37425e36d7bd66f8886ec786a172a353f715b461a28151b42706240c13e8c22"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "7a76f5bcf3dd055368a179d1df9df8a28db096f79db87dd4bb2879983184d0d5"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "031880787fb754bcb2053215e698a48118053ca5d9b3d5a58a6d05a172c1c9a5"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "ca7582300dfb9879d33b7f267e83430e6123b44b4174ded488c2b08159b58c5c"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "2aa27d119232426d8e030ddb55b29c2d8b12cad9e88f3dd5b225e99c3a77b055"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "1aa22157777a008f7a0de0ed3b817515947c9c429e9641bbc7f572f89e768a09"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "627970412c99c56e10efd05c34c377f9e598dbd2c1197922c713a69ae9ba7fa9"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "fb4bedc39afef1909dd0489a4e10df73b49c359741fe98e26633705080442587"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "49abfbbb6983c83a9b9bebeaf4db8e89c90f02a8e82a9671e403ecf01e136352"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "4c1d88dd26d807441f570fbf1d657b368360387c019d53cad7405c6146766f33"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "c949fcb43dfde5066ff1b2a92268d089bce81d529f04ba41c69f876e75afe50e"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "12467e03b1d4b4505d62dc8a95a5379722e34664110001e3a8b31bb897f2e023"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "51e55522945f95627d68e74226a57a11afc0b1866b4d4b9bd631ee85d4820119"
+        }
+      ]
+    },
+    {
+      "id": "rep-rest",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "ef5e004464791a4ce10e02f5b46d1790066ba4038fcec87d4d6eaa910284cc77",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "3f428c366df3b618c460a70291bc0d1250f41cbee69e3f49c73b2ccd1dc21758",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "c61d71c2ee80606ada8917636d101d803494e77d9ebbf9c9ae4ff437fae85fca",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "c38c07199f4f97dffbe10bc932c3e18df297d25d1afafa3793997cf50fbaabfb"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "d5ac7152e23ed12d2848f0c7a3e022dbaf4860b35d47ddab90d32ee222c0f84e"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "24b4eb06b9399dee6ecbd66cfd5a4c9970437b8c1820265edb26b578f5dd4b21"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "e85ea9431068f1cc2ccb493ce4a0c59ef37acb36924a6636613fcff93e65bb39"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "227b0c1e87a8476f23cd1d8330272aa3eee64937c3723600b42ed5402c03fb29"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "8ac89c64ab1f4357aae9246328507189399df99eb580fe45475ae6bd08312268"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "9421dbef1320cd161df4333ec5f0bda0e407f63b257178d6a8ababc68e67fd56"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "9806b002d1ec39a5740f21ee46ad39667ccad3d0a96fcb246616964e41433289"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "5548b973476dc3dadffa1c9d4e882314c790ee6a250f6ba4a5822202d51910b3"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "a3100902d7e3df5088afd7d2c39304e9e70aba6f0f7425111bb4a14791b9957d"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "6868ce47d41cd8aceba680a5b06f0e6ee065d110b2ecf31f1cababc21fc69f10"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "02e7e24a1e57a2253cbd03ea5fbafc72ea995bab881432ab4bf02a90e7bd1726"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "c2dcfd6376ade8f56c012a552aa2e47f5d722e47d7d03569759aaad15e956507"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "0b985434fa0c78271daedbd902a873d4eb5b3658fb4a4e22da8c6dfa019e9f09"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "ef67c9ba2f42decf4c7d01103ad9de62c27f8d2bb3455a2dd8c51b32aa7f856d"
+        }
+      ]
+    },
+    {
+      "id": "diagnostic-deck",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "220aa2523aa7c6c3d9b32ed9850c5841db39ccdc05a2febd97d851d178a28dfa",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "e18e332296cdcccbfc6d716df0fc52d4a63d2740ae2fffb1dc5ac95c79ac6ffe",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "9f332b3510aafc92c157c77b42c559c93eb83f9c49c93e419675c1238570dc15",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "d479dc46aadb6ce6f243e96f1d6bdf1655fc85e8c3c22e8a5c82e15b5cea7533"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "783bef4a3ab09d3085f91ec33c882b4acc1f1c4ee543f853569794492d3b4edc"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "3430d1a2151746a7ae18d5b348bba7173fd6492af283eb25e548590d93c1cb27"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "e90f601962fbcf10b9ffd873c9bee7d2878d4911ffb1f37bb1b2176d8a989ced"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "eebd7c4c9af7356f6011bbafb053ea4652ebad42f149c0b08649538fdef6b9fd"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "10646edf231fc9bbd9c862b219f5cb3a7836c353a1b4b4336452e9543bb20ad6"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "c4e95a63bd206a37441f0504dca44353edb613856af6a810cb93f7343e0238c8"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "9a973cf459eb4f6da4235d33bceb7ef116f6c5b395f184a53474bd1faa000629"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "4891ac7d6cdcefb32c448cc50fad3dd362f34b7a8b6e6b59c381270737e144c2"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "cc2c31cbb5e5792b5fdbb92a1e78aa094efc04b9b023f1bcbc61d9274b16e3d8"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "32a86e39b76a9e8d8dfe4426cab67ecc4372a5ae7941f063ed0e1eaca5f021e4"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "0b99a26685fe18948d26cf04904dd6e29c56572b6b7441ceae1562d49bb4bd4e"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "71f5eaa26a25f9de0a77a68d1d6d0059b785b8241ca80ebee6304132b15eac3c"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "9c1a6f1ab215197114bc1086686cea68673babad60b26d14277ee70addd428e8"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "b8486fadc09eae824be03a106ee3294571e181a8cff323b3da9c3da154380bf4"
+        }
+      ]
+    },
+    {
+      "id": "ritual-almanac",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "8feffe0546405b1e5bc2b1f3e406ebacc3113f9eff68d521e5f6898af70de9b1",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "e54b073eac33be2d744a2f47e6b4122d298f5bf21ef1e465f1ba8bab9e46a9ff",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "4f603732de2804ff8c440871a7f4375733cf2dbebe218bccc470284b2463b6db",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "bfcac7b4151efce5458f16a1e86e94f9e023a641b0235ae11713aad00f1e234c"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "a8bd02b7b2ce03d1e777d42feb9ad9a8d56365616973f0caa7b7bcc2718452f7"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "bbd3f24412b16b42ee3c61463fc8d94ca0cb2d4d753b4b56a4b6d497fdf7ca57"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "5168e100c832f6f5717070f2aa5dd6d3ae6c63838b8d0b7209e49f1737e11c4d"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "dd755e0512b34d1efc67d41a0474fb237046153b8a9c28062506751f2992d307"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "9eef5dd9160c24198ff2b5dbcee9c20fe3057d7bb9d4725eab174675f1769aa4"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "2d951b04db6d034f14b1b0b10862210e6ea58da13df147507b5d807a583e6683"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "4284efc3042e34de84dff75b849d8f80f2436e5d7133a6d0e05d5efb767ce5dd"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "9407fb2bd85b8e9ac6f295afa9561b388f615c5a58664bcef1c285a4dbb8fa77"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "dcf1c2e3c541847ec090e0b0b1e9756399b35704cbf61d9a2a8485b98bebfb03"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "4186acfc70b1e1db0ab396f18735768ebc2cfb49d90adbf4862bb74ecad7ff02"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "dac7ff4c4d6b508dae19dc9e4f23d284938aabb8b9850b28aad9d0f565d6f5b5"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "41310d8ee6ed7d638fcc9a58c99acb9bc69b7c9fe7d08462d2561b2876672ae7"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "d155e3a71141fb7c1a4471881e7a3e0c9ecd8a2248182d796a5b9946aba8e694"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "005cd57fa6cc848538dfbac6d84078d04f5cd0d1b12b07059da0c426aa3527f1"
+        }
+      ]
+    },
+    {
+      "id": "broadcast-patch-bay",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "3cf2c3c0b8eb4575ada389c923f6530c16cb6f71ffa132a2a2f93781e9bf443f",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "f22e05614f87dc9680d588df6e1074f9152dd4256f3aaa1e63a33e6faed48f42",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "59039bc628a227271dd0d8155b762ae4bc039caa3b522fa9b697cbd7590fcc3a",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "921ff0dce5ddbedd1626aacec22025a5aee516ed83a7671bd430304c86a2af0d"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "5130accfe40ece5f481c9cfde879185aaba8e1d1eaec18a4b1d493d9b967cb21"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "9cf724eb080f1d836eda02f4d8a226288e676c12b60f04a2ffa37a1fcb078185"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "3904520a7e00fa05d19a3d0cdf178af1a999ab0f3581aa908ceedf164c71d457"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "ee4553f3e048f48e0b781075652ff6ac1ff8a2e2d7be534b1f8261babc5ae3e7"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "cba2f3ca4bdd41e36b96b3ab83511150f9347b7a18bd7273bfde873e14f43dad"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "c45faa295e3b77cafbcb0d6acb303738657d6301a6f18d4d27f5a132129e50c9"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "8f8af14d3d68adf5e305d787517fae752d0ab012abde8aa715e93eff030bd486"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "a80f9b513195b3bb5257f47b8fdc43b158d92b1ce3994545e6649e20990365c3"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "92a442d983abcf733d5ae5b3ae31d3acddec730ff91e0b6d5556e8fc3d0f5acc"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "ee9df8353b08e1a5185de7943c31a624b0f16292ebb69e30656e570445b012df"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "e1bd4c44208a51f1ab2d027370c3020215425be8da0b57ed235cd50789840fa0"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "b504c648ce0cb7ce3f0760f49ed0471ffed463b992e1584bdcb032f08145d0bd"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "bebffc930f43f7f234acd6435d2942d89d6b45e8dcd55512d5a52c2931034235"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "156d94e34c2725d594e81003e216575f26f2f4b3e13d965174e7dc2fe77d89a7"
+        }
+      ]
+    },
+    {
+      "id": "atelier-nine",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "1f545963dd8283cc9d9fa97960f5825c63e69698f878d31941af2d018f8437ae",
+          "baseline": "public/storefront-recipes/atelier-nine/baselines/v1-mobile.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "fb57a7966a38377a95c28ce484dbb340847a456b5972494194b1216c71cb81a2",
+          "baseline": "public/storefront-recipes/atelier-nine/baselines/v1-tablet.webp"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "9f0b6594de12e5d5f793052fc5571d7354a0ca8e65994d2a28a686593f62e15c",
+          "baseline": "public/storefront-recipes/atelier-nine/baselines/v1-desktop.webp"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "e5fe2546404253457920f7268222f8efb7d490b2d06a0c42ad8f9ae510f12fd8"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "e0bf622b80310fff0f7acf668614814dc1eb2023db7abdc1b4a21c752b98117d"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "7c00ffcab1c6e57265e773fa0fe22d8f42b3098d38a65ce4d221e59069897221"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "017795e5d0024de8702eefe438cc588f51d83d55042667364c3b63ecbb703cd9"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "0ae713449226a036147d66a8e72a3d810884e6987004e0eedbab67fd5c0e9a8e"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "d1bebbff02ae4ec8523370907244f6ba0d9a965ed4700960609a5db2dcfd43b2"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "c7d284fd4a4a0b901b81c35bb922abedfd7e8d328c76587de4b5e7b8ce2ee061"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "2944637ba68f207385b0e05d82f73e3e8da1f05985adafbbbce883951df65505"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "8f355be16861a939ff3688f136619f7177b8203d19b534f5c1a0f74a34d50771"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "d4d04256618e64323c11a22a5572ebfd036c27389baa25f68e1891a525fe8e0f"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "a4fbd31d612ed8e59906a5c6e04bfa02d4d55f975a759f71e33a49ac9ee3864b"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "bc087f105f7b86a808a59dc2adb947c36fa0e526af8c2fd71407d137d40d5791"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "cec2475a0edf5f832b4c645c768d1042818be24c569e2986d67b9743a5f79735"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "6b6a5b6968e99094a49dc515146699f8e512eee56c7ec5dab01fcf8cb891fa32"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "1ffc49b995c9353702a2918ec394669e12a5fcbbaeddb4979d069bcbdbd42b76"
+        }
+      ]
+    },
+    {
+      "id": "representative-custom",
+      "sourceKind": "custom",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "220aa2523aa7c6c3d9b32ed9850c5841db39ccdc05a2febd97d851d178a28dfa"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "e18e332296cdcccbfc6d716df0fc52d4a63d2740ae2fffb1dc5ac95c79ac6ffe"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "9f332b3510aafc92c157c77b42c559c93eb83f9c49c93e419675c1238570dc15"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "d479dc46aadb6ce6f243e96f1d6bdf1655fc85e8c3c22e8a5c82e15b5cea7533"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "289a98b818beee412737c153ca654bbac16c8613787c19e511fe64eaaf2dba9b"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "3430d1a2151746a7ae18d5b348bba7173fd6492af283eb25e548590d93c1cb27"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "e90f601962fbcf10b9ffd873c9bee7d2878d4911ffb1f37bb1b2176d8a989ced"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "eebd7c4c9af7356f6011bbafb053ea4652ebad42f149c0b08649538fdef6b9fd"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "10646edf231fc9bbd9c862b219f5cb3a7836c353a1b4b4336452e9543bb20ad6"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "c4e95a63bd206a37441f0504dca44353edb613856af6a810cb93f7343e0238c8"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "9a973cf459eb4f6da4235d33bceb7ef116f6c5b395f184a53474bd1faa000629"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "4891ac7d6cdcefb32c448cc50fad3dd362f34b7a8b6e6b59c381270737e144c2"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "cc2c31cbb5e5792b5fdbb92a1e78aa094efc04b9b023f1bcbc61d9274b16e3d8"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "32a86e39b76a9e8d8dfe4426cab67ecc4372a5ae7941f063ed0e1eaca5f021e4"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "0b99a26685fe18948d26cf04904dd6e29c56572b6b7441ceae1562d49bb4bd4e"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "71f5eaa26a25f9de0a77a68d1d6d0059b785b8241ca80ebee6304132b15eac3c"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "9c1a6f1ab215197114bc1086686cea68673babad60b26d14277ee70addd428e8"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "b8486fadc09eae824be03a106ee3294571e181a8cff323b3da9c3da154380bf4"
+        }
+      ]
+    },
+    {
+      "id": "representative-edit",
+      "sourceKind": "custom",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "dcd4460b1213992e072185c9e571b041bef172cff1213229c6f126483e2f7d29"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "f82165a8ac210d626f1a87dfab3802470fd6cd43358b1b0dd2af71cc74fd1334"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "0a88fb51c470b3afd1699f4a074e2b1447bb3c15ae4e2fcae6e3c26976e5fcee"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "c1975250dda934d5ce1b79bbe2f92d0475c204d491b6b87b374575cd79ad3bf5"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "caae42d37da2cd24ae9f3a1058f5cc8300b61c67e01deec60cbf941b7079a308"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "17b98e8085bcd36a82e45e90a54fa53223697e7479291e6c53f4a068833236d4"
+        },
+        {
+          "routeId": "product",
+          "viewport": "mobile",
+          "sha256": "d52452b5290efb7805d7e8d9810f78129db959966cacdf58464bcdedb4ce3a7a"
+        },
+        {
+          "routeId": "product",
+          "viewport": "tablet",
+          "sha256": "b8fdadc5624b6419e179b2b9a87a90ab1a619589a0f4d9018b7f2a4f52af34f1"
+        },
+        {
+          "routeId": "product",
+          "viewport": "desktop",
+          "sha256": "12ed1a63c0ea22533fac5b04613292d8ab4e883717acbc0720963a76b1121c1f"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "4dc071f0206f3e0a3765833f39ea685e266526527051cb3af3d4eb0462c53dab"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "5b34ea200fa345304ce4120030d0988829b131756d8f7e3ccb20b269e613780e"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "64c6653380a63ff81a6a9c5c54b329f4ea44a64ba06e35d8643f94936cee7b4f"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "ee5b7ad27334e28bfa42f56b5fb8cc1bf8a4a059494fae5a28bc8f699a6acbaf"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "c0921340fdeedd2af8f13439d3f96ea4e5c5d578c13f0e436fc000450121a486"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "bd74b455b01bc704adabc21c8195a297eea2b3614045be6a09be727c11962c97"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "2bc9df21192d3f5b7bfb8202e9a3ff7c06134b37240b67471803e99493baad7b"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "1afe37f78b0afd7186bcb64064bbe1a8f6bc5bd8fa7f43939515c12740e10276"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "830363619f78b2b9ef5cf1dd9145ea5fc9b95a74868c72079adc142df616d2c0"
+        }
+      ]
+    }
+  ]
+}

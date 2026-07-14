@@ -3,12 +3,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import type * as HttpServer from "~/lib/dashboard/http.server";
 import { action } from "../dashboard.api.store.generate";
-import { CalderynError } from "~/lib/calderyn.server";
+import { StorefrontBuildError } from "~/lib/storefront-bundle/build.server";
 
-const { sessionMock, assertGenMock, generateMock } = vi.hoisted(() => ({
+const { sessionMock, buildMock, prepareMock, rateLimitMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
-  assertGenMock: vi.fn(),
-  generateMock: vi.fn(),
+  buildMock: vi.fn(),
+  prepareMock: vi.fn(),
+  rateLimitMock: vi.fn(),
 }));
 
 vi.mock("~/lib/calderyn.server", () => ({
@@ -25,12 +26,24 @@ vi.mock("~/lib/calderyn.server", () => ({
 }));
 vi.mock("~/lib/dashboard/http.server", async (orig) => {
   const actual = await orig<typeof HttpServer>();
-  return { ...actual, requireSameOrigin: vi.fn() };
+  return { ...actual, requireSameOrigin: vi.fn(), rateLimit: rateLimitMock };
 });
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sessionMock }));
-vi.mock("~/lib/storegen/guard.server", () => ({ assertCanGenerate: assertGenMock }));
-vi.mock("~/lib/storegen/generate.server", () => ({ generateStore: generateMock }));
+vi.mock("~/lib/storefront-bundle/build.server", () => ({
+  buildStorefrontDesign: buildMock,
+  prepareStorefrontDesignBuild: prepareMock,
+  StorefrontBuildError: class StorefrontBuildError extends Error {
+    constructor(public code: string, message: string, public status: number) {
+      super(message);
+    }
+  },
+}));
 vi.mock("~/lib/ai-quota.server", () => ({ quotaTrusted: () => true }));
+vi.mock("~/lib/storefront-bundle/release.server", () => ({
+  StorefrontReleaseError: class StorefrontReleaseError extends Error {
+    constructor(public code: string, message: string, public status: number) { super(message); }
+  },
+}));
 
 const post = (body: unknown) =>
   action({
@@ -47,62 +60,100 @@ const lines = async (res: Response) => (await res.text()).trim().split("\n").map
 
 beforeEach(() => {
   sessionMock.mockReset().mockResolvedValue({ shopId: "s1", userId: "u1" });
-  assertGenMock.mockReset().mockResolvedValue(undefined);
-  generateMock.mockReset();
+  buildMock.mockReset();
+  prepareMock.mockReset().mockResolvedValue({ evidence: {}, resolution: { kind: "recipe" }, pointers: { draftVersionId: null, publishedVersionId: null } });
+  rateLimitMock.mockReset().mockResolvedValue(true);
 });
 
 describe("dashboard.api.store.generate streaming action", () => {
-  it("streams each real stage as NDJSON, ending with the receipt", async () => {
-    generateMock.mockImplementation(async (input: { onStage?: (s: string) => void }) => {
-      input.onStage?.("brand");
-      input.onStage?.("designing");
-      input.onStage?.("checking");
-      return {
-        runId: "r1",
-        status: "draft",
-        tokenCost: 5,
-        docs: {},
-        verification: { checkedLinks: 3, fixedLinks: 1, externalLinks: 0, strippedMotion: 0, warnings: [] },
-      };
+  it("routes runtime-1 design requests without invoking the legacy generator or its AI quota", async () => {
+    const frozen = {
+      kind: "recipe",
+      templateId: "commons-index",
+      templateVersion: 1,
+      selectionKind: "niche_match",
+      routingVersion: 1,
+      registryVersion: 1,
+      catalogFingerprint: "sha256:fresh",
+      score: 12,
+      runnerUpScore: 0,
+      margin: 12,
+      confidenceBand: "high",
+      breakdown: [],
+      reasons: ["refill match"],
+    };
+    buildMock.mockImplementation(async (input: { onEvent?: (event: unknown) => void }) => {
+      input.onEvent?.({ stage: "routing", resolution: frozen, recommendationChanged: false });
+      input.onEvent?.({ stage: "applying_recipe", templateId: "commons-index", templateVersion: 1 });
+      input.onEvent?.({ stage: "compiling" });
+      input.onEvent?.({ stage: "validating" });
+      input.onEvent?.({ stage: "proofing" });
+      const receipt = { runtime: 1, versionId: "version-1", status: "draft", resolution: frozen };
+      input.onEvent?.({ stage: "installed", receipt });
+      return receipt;
     });
-    const res = await post({ brief: "medical devices" });
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("ndjson");
+
+    const res = await post({
+      designRequest: { prompt: "Build a sustainable refill shop", mode: "auto" },
+      recommendedResolution: { ...frozen, catalogFingerprint: "sha256:stale" },
+    });
     const events = await lines(res);
-    expect(events.map((e) => e.stage)).toEqual(["brand", "designing", "checking", "done"]);
-    expect(events[3].receipt).toEqual({
-      runId: "r1",
-      status: "draft",
-      verification: { checkedLinks: 3, fixedLinks: 1, externalLinks: 0, strippedMotion: 0, warnings: [] },
-    });
+
+    expect(events.map((event) => event.stage)).toEqual([
+      "routing", "applying_recipe", "compiling", "validating", "proofing", "installed",
+    ]);
+    expect(events[0].resolution).toEqual(frozen);
+    expect(buildMock).toHaveBeenCalledWith(expect.objectContaining({
+      shopId: "s1",
+      actorId: "u1",
+      request: { prompt: "Build a sustainable refill shop", mode: "auto" },
+      recommendedResolution: expect.objectContaining({ catalogFingerprint: "sha256:stale" }),
+      onEvent: expect.any(Function),
+    }));
+    expect(prepareMock).toHaveBeenCalledWith(expect.objectContaining({ shopId: "s1" }));
   });
 
-  it("rejects with plain JSON before any generation when the guard refuses", async () => {
-    assertGenMock.mockRejectedValue(new CalderynError({ code: "rate_limited", status: 429, message: "slow down" }));
-    const res = await post({ brief: "x" });
+  it("rejects an invalid runtime-1 design contract before opening a stream", async () => {
+    const res = await post({ designRequest: { prompt: "", mode: "recipe" } });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: "invalid_design_request" });
+    expect(buildMock).not.toHaveBeenCalled();
+    expect(prepareMock).not.toHaveBeenCalled();
+  });
+
+  it("returns preflight write and flag failures before opening a stream", async () => {
+    prepareMock.mockRejectedValueOnce(new StorefrontBuildError("experiment_running", "Finish the test first.", 409));
+    const res = await post({ designRequest: { prompt: "Build a sustainable refill shop", mode: "auto" } });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "experiment_running", message: "Finish the test first." });
+    expect(buildMock).not.toHaveBeenCalled();
+  });
+
+  it("applies a bounded per-shop recipe build rate limit before routing or AI quota billing", async () => {
+    rateLimitMock.mockResolvedValueOnce(false);
+    const res = await post({ designRequest: { prompt: "refills", mode: "auto" } });
     expect(res.status).toBe(429);
     expect((await res.json()).error).toBe("rate_limited");
-    expect(generateMock).not.toHaveBeenCalled();
+    expect(rateLimitMock).toHaveBeenCalledWith("storefront-build:s1", 10, 60_000);
+    expect(prepareMock).not.toHaveBeenCalled();
+    expect(buildMock).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid model with 422 before generating", async () => {
-    const res = await post({ brief: "x", model: "gpt" });
+    const res = await post({ designRequest: { prompt: "x", mode: "gpt" } });
     expect(res.status).toBe(422);
-    expect(generateMock).not.toHaveBeenCalled();
+    expect(buildMock).not.toHaveBeenCalled();
   });
 
-  it("reports a mid-run failure as an in-band error line, never a dead stream", async () => {
-    generateMock.mockImplementation(async (input: { onStage?: (s: string) => void }) => {
-      input.onStage?.("brand");
-      throw new Error("api down");
+  it("preserves a post-stream release conflict as an in-band code and status", async () => {
+    buildMock.mockImplementation(async (input: { onEvent?: (event: unknown) => void }) => {
+      input.onEvent?.({ stage: "routing", resolution: { kind: "recipe" }, recommendationChanged: false });
+      throw new StorefrontBuildError("storefront_draft_conflict", "The draft changed. Try again.", 409);
     });
-    const res = await post({ brief: "x" });
+    const res = await post({ designRequest: { prompt: "refills", mode: "auto" } });
     const events = await lines(res);
-    expect(events[0]).toEqual({ stage: "brand" });
+    expect(events[0].stage).toBe("routing");
     const last = events[events.length - 1];
-    expect(last.stage).toBe("error");
-    expect(typeof last.message).toBe("string");
-    // upstream detail is not leaked verbatim to the browser
-    expect(last.message).not.toContain("api down");
+    expect(last).toEqual({ stage: "error", code: "storefront_draft_conflict", status: 409, message: "The draft changed. Try again." });
   });
 });

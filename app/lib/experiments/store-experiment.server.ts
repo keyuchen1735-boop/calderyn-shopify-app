@@ -12,8 +12,8 @@ import { isUuid } from "~/lib/ids";
 import { peekVisitorId } from "~/lib/storefront/visitor-cookie.server";
 import { readPaged } from "~/lib/db/read-paged.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
-import { getStoreSettings, saveStoreSettings } from "~/lib/storefront/settings.server";
-import { loadPublishedDoc, saveDraft, publishDoc } from "~/lib/storebuilder/page-document.server";
+import { getStoreSettings } from "~/lib/storefront/settings.server";
+import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { sanitizeDocHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { validateDocument, type ValidIds } from "~/lib/storebuilder/validate";
 import { generateChallengerHome } from "~/lib/storegen/generate.server";
@@ -374,21 +374,15 @@ export async function startExperiment(
   const challenger = await buildChallenger(shopId, spec.kind, published);
   const name = spec.name?.trim() || challenger.name;
 
-  const { data, error } = await sb
-    .from("store_experiment")
-    .insert({
-      shop_id: shopId,
-      page_key: pageKey,
-      name,
-      why: challenger.why,
-      // variant_doc reaches the public storefront (arm B) without passing through saveDraft, so
-      // enforce the same rawHtml sanitization here rather than relying on it being cloned from an
-      // already-sanitized published doc.
-      variant_doc: sanitizeDocHtml(challenger.doc),
-      variant_settings: challenger.settings,
-    })
-    .select("id, page_key, name, why, state, started_at, decided_at")
-    .single();
+  const { data, error } = await sb.rpc("start_store_experiment", {
+    p_shop_id: shopId,
+    p_page_key: pageKey,
+    p_name: name,
+    p_why: challenger.why,
+    // The shared-lock RPC is the commit point. Sanitize before crossing it.
+    p_variant_doc: sanitizeDocHtml(challenger.doc),
+    p_variant_settings: challenger.settings,
+  });
   if (error) {
     // 23505 = the store_experiment_one_running index caught a racing start.
     if ((error as { code?: string }).code === "23505") {
@@ -404,6 +398,13 @@ export async function startExperiment(
         code: "migration_pending",
         status: 503,
         message: "Product-page tests aren't enabled on this database yet. Try again shortly.",
+      });
+    }
+    if (String(error.message).includes("bundle_storefront_active")) {
+      throw new CalderynError({
+        code: "bundle_storefront_active",
+        status: 409,
+        message: "Legacy experiments are unavailable after a bundle storefront is installed.",
       });
     }
     throw error;
@@ -779,17 +780,19 @@ export async function decideExperiment(
     decision === "ship" ? "decided_ship" : decision === "keep" ? "decided_keep" : "stopped";
   const decidedAt = new Date().toISOString();
 
-  // The .eq("state","running")-guarded flip is the concurrency lock: a racing
-  // decide matches zero rows here and never double-applies the variant.
-  const { data: flipped, error: flipError } = await sb
-    .from("store_experiment")
-    .update({ state, decided_at: decidedAt })
-    .eq("shop_id", shopId)
-    .eq("id", experimentId)
-    .eq("state", "running")
-    .select("id");
+  let validatedVariantDoc: BlockDocument | null = null;
+  if (decision === "ship" && !shapeVariantSettings(row.variant_settings)?.vibe) {
+    const valid = await catalogValidIds(shopId);
+    validatedVariantDoc = validateDocument(row.variant_doc as BlockDocument, valid).doc;
+  }
+  const { data: flipped, error: flipError } = await sb.rpc("transition_store_experiment", {
+    p_shop_id: shopId,
+    p_experiment_id: experimentId,
+    p_state: state,
+    p_validated_variant_doc: validatedVariantDoc,
+  });
   if (flipError) throw flipError;
-  if (!flipped || flipped.length === 0) {
+  if (!flipped) {
     throw new CalderynError({
       code: "experiment_not_running",
       status: 409,
@@ -799,75 +802,9 @@ export async function decideExperiment(
   runningCache.delete(shopId);
   invalidateReportCache(shopId);
 
-  if (decision === "ship") {
-    try {
-      await applyVariant(shopId, {
-        pageKey: shapePageKey(row.page_key),
-        variantDoc: row.variant_doc as BlockDocument,
-        variantSettings: shapeVariantSettings(row.variant_settings),
-      });
-    } catch (applyErr) {
-      // The flip-first order above is only the keep/ship race lock; the spec's
-      // real order is apply-then-decide. If the apply fails (catalog read,
-      // saveDraft/publishDoc, settings upsert), revert the row to running so
-      // the merchant can ship again — otherwise the experiment is permanently
-      // decided_ship while the champion stays live, and every retry 409s.
-      const { error: revertError } = await sb
-        .from("store_experiment")
-        .update({ state: "running", decided_at: null })
-        .eq("shop_id", shopId)
-        .eq("id", experimentId)
-        .eq("state", state);
-      if (revertError) {
-        // Best-effort: a failed revert (e.g. a racing start already owns the
-        // one-running slot) leaves the row decided_ship — log loudly so an
-        // operator can see the unapplied win instead of it vanishing.
-        console.error(
-          `[store-experiment] ship apply failed AND revert failed for ${experimentId}; row left decided_ship with champion live`,
-          revertError,
-        );
-      }
-      runningCache.delete(shopId);
-      throw applyErr;
-    }
-  }
-
   const exp = shapeStudioExperiment({ ...row, state, decided_at: decidedAt });
   exp.report = await reportOrNull(shopId, exp);
   return exp;
-}
-
-async function applyVariant(
-  shopId: string,
-  variant: { pageKey: StudioExperimentPage; variantDoc: BlockDocument; variantSettings: { vibe?: StudioVibe } | null },
-): Promise<void> {
-  if (variant.variantSettings?.vibe) {
-    await saveVibe(shopId, variant.variantSettings.vibe);
-    return;
-  }
-  // Doc challenger (headline / ai_page / pdp_copy): its doc becomes the new published page.
-  // validateDocument before publishDoc is a page-document caller obligation.
-  const valid = await catalogValidIds(shopId);
-  const { doc: clean } = validateDocument(variant.variantDoc, valid);
-  await saveDraft(shopId, variant.pageKey, clean);
-  await publishDoc(shopId, variant.pageKey);
-}
-
-// ---------------------------------------------------------------------------
-// Shared row/settings helpers.
-
-// Vibe persists through the StoreSettings contract (settings.server.ts owns
-// the store_settings row shape); the re-save keeps the other brand fields as
-// currently stored.
-async function saveVibe(shopId: string, vibe: StudioVibe): Promise<void> {
-  const settings = await getStoreSettings(shopId);
-  await saveStoreSettings(shopId, {
-    storeName: settings.storeName,
-    palette: settings.palette,
-    logoUrl: settings.logoUrl,
-    voiceTagline: settings.voiceTagline,
-    vibe,
-  });
 }
 
 async function catalogValidIds(shopId: string): Promise<ValidIds> {

@@ -9,16 +9,21 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import StorefrontLayout, { loader } from "../storefront";
 
-const { resolveServedMock, loaderDataRef } = vi.hoisted(() => ({
+const { resolveServedMock, hasRuntime1Mock, loaderDataRef } = vi.hoisted(() => ({
   resolveServedMock: vi.fn(),
+  hasRuntime1Mock: vi.fn(),
   loaderDataRef: { current: null as unknown },
 }));
 vi.mock("~/lib/experiments/store-experiment.server", () => ({
   resolveServedExperiment: resolveServedMock,
 }));
+vi.mock("~/lib/storefront-runtime/release-resolution.server", () => ({
+  hasRuntime1Storefront: hasRuntime1Mock,
+}));
 vi.mock("@remix-run/react", () => ({
   useLoaderData: () => loaderDataRef.current,
   Outlet: () => null,
+  useMatches: () => [],
 }));
 
 const RUNNING_EXPERIMENT = { id: "exp-1", pageKey: "home" as const, variantSettings: { vibe: "bold" as const } };
@@ -27,6 +32,7 @@ const NOT_SERVED = { experiment: null, experimentId: null, variantKey: null };
 beforeEach(() => {
   vi.clearAllMocks();
   resolveServedMock.mockResolvedValue(NOT_SERVED);
+  hasRuntime1Mock.mockResolvedValue(false);
   loaderDataRef.current = null;
 });
 
@@ -37,6 +43,14 @@ async function runLoader() {
 }
 
 describe("storefront layout experiment vibe", () => {
+  it("does not resolve or expose a legacy layout experiment for a bundle storefront", async () => {
+    hasRuntime1Mock.mockResolvedValue(true);
+    const data = await runLoader();
+    expect(data.experimentVibe).toBeNull();
+    expect(data.collections).toEqual([]);
+    expect(resolveServedMock).not.toHaveBeenCalled();
+  });
+
   it("arm b: the layout loader surfaces the challenger vibe from the shared resolver", async () => {
     resolveServedMock.mockResolvedValue({ experiment: RUNNING_EXPERIMENT, experimentId: "exp-1", variantKey: "b" });
     const data = await runLoader();

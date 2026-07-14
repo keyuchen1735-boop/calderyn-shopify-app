@@ -2,6 +2,7 @@
 // Plain DTOs for the Store studio surface, shared by the /dashboard/api/store
 // route (server) and the dashboard SPA client. No server imports — this module
 // must stay safe to pull into the browser bundle.
+import type { StoreDesignResolution } from "~/lib/storefront-bundle/types";
 
 /** Mirrors the store_settings.vibe check constraint — the design pack the
  *  storefront CSS keys off ([data-vibe]). */
@@ -117,6 +118,17 @@ export interface StudioSection {
   title: string;
 }
 
+export type StudioPolicyId = "privacy" | "terms" | "refund" | "shipping";
+
+/** Merchant-authored legal copy only. Missing policies stay missing instead of
+ * being populated with generic text that may not match the merchant's store. */
+export interface StudioPolicy {
+  id: StudioPolicyId;
+  title: string;
+  body: string;
+  updatedAt: string;
+}
+
 export interface StudioState {
   settings: StudioSettings;
   /** From the draft home doc's hero block (published as fallback); null when
@@ -132,6 +144,13 @@ export interface StudioState {
   checkoutReady: boolean;
   hasDraft: boolean;
   hasPublished: boolean;
+  /** Immutable bundle pointers alongside runtime-0 page-document compatibility. */
+  release: {
+    draftVersionId: string | null;
+    publishedVersionId: string | null;
+    draftRuntime: 0 | 1;
+    publishedRuntime: 0 | 1;
+  };
   /** Latest store_generation row, or null when the shop has never generated. */
   generation: StudioGeneration | null;
   /** shops.org_slug — null for domain-keyed Shopify tenants and the demo shop. */
@@ -145,6 +164,8 @@ export interface StudioState {
   /** Editable sections of the home draft (published as fallback), in page order.
    *  Empty when no doc exists yet. */
   sections: StudioSection[];
+  /** Persisted merchant policies. Sparse by design: no fabricated legal copy. */
+  policies: StudioPolicy[];
 }
 
 /** Merchant-facing design-model choice for a generation run. The client only
@@ -222,14 +243,42 @@ export interface StudioGenerateReceipt {
 
 /** Real generation stages, streamed by the server as they happen (mirrors
  *  generate.server.ts BuildStage — a server-only module clients can't import). */
-export type BuildStage = "brand" | "designing" | "checking";
-export const BUILD_STAGES: readonly BuildStage[] = ["brand", "designing", "checking"];
+export type LegacyBuildStage = "brand" | "designing" | "checking";
+export type Runtime1BuildStage = "routing" | "applying_recipe" | "generating_original" | "compiling" | "validating" | "proofing";
+export type BuildStage = LegacyBuildStage | Runtime1BuildStage;
+export const BUILD_STAGES: readonly BuildStage[] = [
+  "brand",
+  "designing",
+  "checking",
+  "routing",
+  "applying_recipe",
+  "compiling",
+  "validating",
+  "proofing",
+];
+
+export interface StudioBundleBuildReceipt {
+  runtime: 1;
+  versionId: string;
+  status: "draft";
+  resolution: StoreDesignResolution;
+}
 
 /** One NDJSON line from the streaming generate endpoint. */
 export type BuildEvent =
-  | { stage: BuildStage }
+  | { stage: LegacyBuildStage }
+  | {
+      stage: "routing";
+      resolution: StoreDesignResolution;
+      recommendationChanged: boolean;
+      recommendationChangeReason?: string;
+    }
+  | { stage: "applying_recipe"; templateId: string; templateVersion: number }
+  | { stage: "generating_original" }
+  | { stage: "compiling" | "validating" | "proofing" }
+  | { stage: "installed"; receipt: StudioBundleBuildReceipt }
   | { stage: "done"; receipt: StudioGenerateReceipt }
-  | { stage: "error"; message: string };
+  | { stage: "error"; message: string; code?: string; status?: number };
 
 /** Strict parse of one stream line — junk, unknown stages and malformed terminal
  *  lines are null (callers treat an unparseable stream as a failed stream). */
@@ -241,11 +290,41 @@ export function parseBuildEvent(line: string): BuildEvent | null {
     return null;
   }
   if (typeof v !== "object" || v === null) return null;
-  const o = v as { stage?: unknown; receipt?: unknown; message?: unknown };
-  if ((BUILD_STAGES as readonly unknown[]).includes(o.stage)) return { stage: o.stage as BuildStage };
+  const o = v as Record<string, unknown>;
+  if (["brand", "designing", "checking", "compiling", "validating", "proofing"].includes(String(o.stage))) {
+    return { stage: o.stage as LegacyBuildStage | "compiling" | "validating" | "proofing" };
+  }
+  if (
+    o.stage === "routing" &&
+    typeof o.resolution === "object" && o.resolution !== null &&
+    typeof o.recommendationChanged === "boolean"
+  ) {
+    return {
+      stage: "routing",
+      resolution: o.resolution as StoreDesignResolution,
+      recommendationChanged: o.recommendationChanged,
+      ...(typeof o.recommendationChangeReason === "string"
+        ? { recommendationChangeReason: o.recommendationChangeReason }
+        : {}),
+    };
+  }
+  if (o.stage === "applying_recipe" && typeof o.templateId === "string" && typeof o.templateVersion === "number") {
+    return { stage: "applying_recipe", templateId: o.templateId, templateVersion: o.templateVersion };
+  }
+  if (o.stage === "generating_original") return { stage: "generating_original" };
+  if (o.stage === "installed" && typeof o.receipt === "object" && o.receipt !== null) {
+    return { stage: "installed", receipt: o.receipt as StudioBundleBuildReceipt };
+  }
   if (o.stage === "done" && typeof o.receipt === "object" && o.receipt !== null) {
     return { stage: "done", receipt: o.receipt as StudioGenerateReceipt };
   }
-  if (o.stage === "error" && typeof o.message === "string") return { stage: "error", message: o.message };
+  if (o.stage === "error" && typeof o.message === "string") {
+    return {
+      stage: "error",
+      message: o.message,
+      ...(typeof o.code === "string" ? { code: o.code } : {}),
+      ...(typeof o.status === "number" && Number.isInteger(o.status) ? { status: o.status } : {}),
+    };
+  }
   return null;
 }

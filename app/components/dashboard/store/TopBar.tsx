@@ -133,6 +133,7 @@ const TopBar = forwardRef<
     onDeviceChange: (device: Device) => void;
     markupOn: boolean;
     onToggleMarkup: () => void;
+    onEditPolicies: () => void;
     onPublish: () => void;
     publishing: boolean;
   }
@@ -151,6 +152,7 @@ const TopBar = forwardRef<
     onDeviceChange,
     markupOn,
     onToggleMarkup,
+    onEditPolicies,
     onPublish,
     publishing,
   },
@@ -275,6 +277,9 @@ const TopBar = forwardRef<
 
       <Btn kind={markupOn ? "primary" : "secondary"} icon="pencil" onClick={onToggleMarkup}>
         {markupOn ? "Cancel" : "Mark up"}
+      </Btn>
+      <Btn kind="secondary" onClick={onEditPolicies}>
+        Policies
       </Btn>
       <Btn kind="primary" onClick={onPublish} disabled={publishing || building}>
         {publishing ? "Publishing…" : "Publish"}

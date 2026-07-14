@@ -7,8 +7,14 @@
 export interface StorefrontCatalog {
   /** opts.ids restricts to explicit product ids (curated grids) — implementations must
    *  scope the id read to the shop and skip the full-catalog fetch. */
-  listProducts(shopId: string, opts?: { collection?: string; ids?: string[] }): Promise<StoreProduct[]>;
+  listProducts(shopId: string, opts?: { collection?: string; ids?: string[]; limit?: number; query?: string }): Promise<StoreProduct[]>;
   getProduct(shopId: string, handle: string): Promise<StoreProduct | null>;
+  /** Direct commerce lookup that is not constrained by the presentation catalog cap. */
+  getVariantById?(
+    shopId: string,
+    variantId: string,
+  ): Promise<{ product: StoreProduct; variant: StoreVariant } | null>;
+  getCollection?(shopId: string, handle: string): Promise<StoreCollection | null>;
   listCollections(shopId: string): Promise<StoreCollection[]>;
 }
 
@@ -19,6 +25,7 @@ export interface StoreProduct {
   description: string;
   images: { url: string; alt: string | null }[];
   variants: StoreVariant[];
+  options?: Array<{ name: string; values: string[] }>;
   collections: string[]; // collection handles
   category?: string | null;
   tags?: string[];
@@ -37,6 +44,9 @@ export interface StoreVariant {
 }
 
 export interface StoreCollection {
+  id?: string;
   handle: string;
   title: string;
+  description?: string;
+  productCount?: number;
 }

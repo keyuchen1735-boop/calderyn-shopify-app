@@ -1,7 +1,7 @@
 // Pure logic for the Store studio screen (kept out of Store.tsx so it is
 // testable without rendering — same pattern as dashboard-layout.ts).
 import type { Screen } from "../context";
-import { BUILD_STAGES, STUDIO_IMAGE_MEDIA_TYPES, type BuildStage, type StudioVibe, type StudioExperimentKind } from "~/lib/storebuilder/studio-types";
+import { STUDIO_IMAGE_MEDIA_TYPES, type BuildStage, type StudioVibe, type StudioExperimentKind } from "~/lib/storebuilder/studio-types";
 export { parseBuildEvent, type BuildEvent, type BuildStage } from "~/lib/storebuilder/studio-types";
 
 export interface StoreReadiness {
@@ -22,6 +22,16 @@ export interface MissingPiece {
   screen: Screen;
 }
 
+/** Legacy section controls mutate runtime-0 page documents and must never be
+ * shown beside an immutable runtime-1 bundle preview. */
+export function showLegacySectionsPanel(input: {
+  page: string;
+  building: boolean;
+  draftRuntime: 0 | 1;
+}): boolean {
+  return input.page === "home" && !input.building && input.draftRuntime === 0;
+}
+
 export type BuildPhase =
   | { kind: "running"; stage?: BuildStage }
   | { kind: "done"; status: "draft" | "no_products" | "failed" }
@@ -34,10 +44,23 @@ export interface BuildStepView {
   sub: string;
 }
 
-const STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
+const LEGACY_STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
   { stage: "brand", title: "Reading your catalog", sub: "Naming the brand and picking its palette." },
   { stage: "designing", title: "Designing your pages", sub: "Home, collection and product pages." },
   { stage: "checking", title: "Verifying links & layout", sub: "Every link checked against your catalog." },
+];
+
+const RUNTIME1_STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
+  { stage: "routing", title: "Matching your store", sub: "Using your prompt and current catalog to choose the right design path." },
+  { stage: "applying_recipe", title: "Applying the complete recipe", sub: "Preparing home, collection, product, search, cart and checkout." },
+  { stage: "compiling", title: "Compiling safe interactions", sub: "Binding the design to your live products and trusted commerce controls." },
+  { stage: "validating", title: "Validating every route", sub: "Checking the bundle against the storefront runtime contract." },
+  { stage: "proofing", title: "Proofing the storefront", sub: "Confirming the approved recipe and ecommerce surfaces before install." },
+];
+
+const CUSTOM_STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
+  { stage: "routing", title: "Matching your store", sub: "Confirming that your brief calls for an original design path." },
+  { stage: "generating_original", title: "Creating an original direction", sub: "Exploring concepts, imagery and complete commerce routes from your brief." },
 ];
 
 /** Multi-row live progress for the streaming build: each row is a REAL stage the
@@ -45,8 +68,13 @@ const STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
  *  phases, this collapses to the single legacy row. */
 export function buildSteps(phase: BuildPhase): BuildStepView[] {
   if (phase.kind !== "running" || !phase.stage) return [buildStep(phase)];
-  const at = BUILD_STAGES.indexOf(phase.stage);
-  return STAGE_ROWS.map((r, i) => ({
+  const rows = phase.stage === "generating_original"
+    ? CUSTOM_STAGE_ROWS
+    : RUNTIME1_STAGE_ROWS.some((row) => row.stage === phase.stage)
+      ? RUNTIME1_STAGE_ROWS
+    : LEGACY_STAGE_ROWS;
+  const at = rows.findIndex((row) => row.stage === phase.stage);
+  return rows.map((r, i) => ({
     dot: i < at ? "done" : i === at ? "run" : "wait",
     title: r.title,
     sub: r.sub,

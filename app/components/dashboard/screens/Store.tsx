@@ -17,14 +17,15 @@ import {
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import {
   addProductFromImage,
-  generateStudioStoreStream,
-  StudioStreamError,
+  buildStudioStoreStream,
   decideStoreExperiment,
+  editStudioStorefront,
   fetchStudio,
-  generateStudioStore,
   generateStudioStoreWithImages,
   publishStudioStore,
   saveStudioHero,
+  saveStudioPolicy,
+  deleteStudioPolicy,
   setStudioAccent,
   setStudioVibe,
   startStoreExperiment,
@@ -37,8 +38,13 @@ import {
   type StudioGenerateReceipt,
   type StudioHero,
   type StudioState,
+  type StudioPolicy,
+  type StudioPolicyId,
   type StudioVibe,
+  undoStudioStorefrontEdit,
 } from "~/lib/dashboard/store-client";
+import type { StoreDesignRequest, StoreDesignResolution } from "~/lib/storefront-bundle/types";
+import type { PreviewEditContext } from "~/lib/storefront-edit/types";
 import {
   decideWelcomeBranch,
   isDeterministicChatIntent,
@@ -47,6 +53,7 @@ import {
   parseProductLine,
   planStagedAttachments,
   shouldShowWelcome,
+  showLegacySectionsPanel,
   showPromptCanvas,
   type BuildPhase,
   type BuildStage,
@@ -59,6 +66,7 @@ import type { DashboardCtx } from "../context";
 import ChatRail from "../store/ChatRail";
 import TopBar, { type Device } from "../store/TopBar";
 import WelcomeOverlay from "../store/WelcomeOverlay";
+import StorePoliciesEditor from "../store/StorePoliciesEditor";
 import { confettiFrom } from "../store/confetti";
 import type { ChatAction, ChatMsg } from "../store/chat-types";
 import type { PageKey } from "~/lib/storebuilder/types";
@@ -164,7 +172,19 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const reloadPreview = useCallback(() => setPreviewVersion((v) => v + 1), []);
   const [page, setPage] = useState<PageKey>("home");
   const [device, setDevice] = useState<Device>("desktop");
+  const [previewEditContext, setPreviewEditContext] = useState<PreviewEditContext | undefined>();
   const badgeRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const receivePreviewRegion = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || !event.data || event.data.type !== "storefront-preview-region") return;
+      const { routeId, regionId } = event.data as { routeId?: unknown; regionId?: unknown };
+      if (typeof routeId !== "string" || typeof regionId !== "string" || !/^[a-zA-Z0-9_-]{1,120}$/.test(regionId)) return;
+      if (!["home", "collection", "product", "search", "cart", "checkout"].includes(routeId)) return;
+      setPreviewEditContext({ routeId: routeId as PreviewEditContext["routeId"], regionId });
+    };
+    window.addEventListener("message", receivePreviewRegion);
+    return () => window.removeEventListener("message", receivePreviewRegion);
+  }, []);
 
   // --- markup (session-only strokes + note -> chat message) -----------------
   const [markupOn, setMarkupOn] = useState(false);
@@ -184,6 +204,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setPublishing(v);
   };
   const [confirmingPublish, setConfirmingPublish] = useState(false);
+  const [policiesOpen, setPoliciesOpen] = useState(false);
 
   // --- experiments --------------------------------------------------------------
   const [decidingExperiment, setDecidingExperiment] = useState(false);
@@ -327,11 +348,11 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: donePhase } : x)));
     const base =
       status === "failed"
-        ? // Honest failure (rule 12): the AI designer was unreachable, so this
+          ? // Honest failure (rule 12): the AI designer was unreachable, so this
           // is a deterministic starter layout, not the prompted design.
           "The AI designer is unavailable right now, so I used a starter layout instead of your prompt. Add Anthropic credits and try Build again."
         : opts?.firstBuild
-          ? "Here's your first draft: home, product and collection pages, built from your catalog. Tell me what to change, or publish when it feels right."
+          ? "Here's your first draft: home, collection, product, search, cart and checkout, all bound to your catalog. Tell me what to change, or publish when it feels right."
           : "Done, it's in the preview. Tell me what to change next, or publish when it's ready.";
     const reply = [base, ...(opts?.extraLines ?? [])].join(" ");
     const actions: ChatAction[] | undefined =
@@ -345,7 +366,10 @@ export default function Store({ app }: { app: DashboardCtx }) {
     pushMsg({ id: newId(), kind: "ai-text", text: reply, actions });
   };
 
-  const runBuild = async (brief: string, opts?: { firstBuild?: boolean }) => {
+  const runBuild = async (
+    design: string | StoreDesignRequest,
+    opts?: { firstBuild?: boolean; recommendation?: StoreDesignResolution },
+  ) => {
     if (buildingRef.current) return;
     buildingRef.current = true;
     const runningPhase: BuildPhase = { kind: "running" };
@@ -361,33 +385,27 @@ export default function Store({ app }: { app: DashboardCtx }) {
       setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase } : x)));
     };
     try {
-      let receipt: StudioGenerateReceipt;
-      try {
-        receipt = await generateStudioStoreStream(brief.trim(), designModelRef.current, setStage);
-      } catch (err) {
-        // Transport/parse trouble only — guard refusals and generation failures
-        // arrive as DashboardApiError and must NOT retry (a fallback re-bills).
-        if (!(err instanceof StudioStreamError)) throw err;
-        receipt = await generateStudioStore(brief.trim(), designModelRef.current);
-      }
+      const request: StoreDesignRequest = typeof design === "string"
+        ? { prompt: design.trim(), mode: "auto" }
+        : design;
+      let recommendationChangeReason: string | undefined;
+      await buildStudioStoreStream(
+        request,
+        (stage, event) => {
+          setStage(stage);
+          if (event?.stage === "routing" && event.recommendationChanged) {
+            recommendationChangeReason = event.recommendationChangeReason;
+          }
+        },
+        opts?.recommendation,
+      );
       // Re-pull the whole studio state — generation rewrites brand settings,
       // drafts and the generation audit row — then reload the preview.
       await refresh();
       reloadPreview();
       if (!aliveRef.current) return;
-      // The generate paths only ever return a terminal generation status
-      // (draft/no_products/failed). The multipart-only intent statuses can't
-      // arrive here, but handle them honestly instead of coercing to "draft".
-      if (receipt.status === "needs_intent" || receipt.status === "products_added") {
-        failBuild(workingId, "That didn't produce a design. Try Build again.");
-        return;
-      }
-      const v = receipt.verification;
-      const extraLines =
-        v && v.checkedLinks > 0
-          ? [v.fixedLinks > 0 ? `Checked ${v.checkedLinks} links, fixed ${v.fixedLinks} dead one${v.fixedLinks === 1 ? "" : "s"}.` : `All ${v.checkedLinks} links verified.`]
-          : [];
-      settleGeneration(workingId, receipt.status, { firstBuild: opts?.firstBuild, extraLines });
+      const extraLines = recommendationChangeReason ? [recommendationChangeReason] : [];
+      settleGeneration(workingId, "draft", { firstBuild: opts?.firstBuild, extraLines });
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";
@@ -468,6 +486,61 @@ export default function Store({ app }: { app: DashboardCtx }) {
     }
   };
 
+  const runBundleUndo = async (undo: { targetVersionId: string; expectedDraftVersionId: string }) => {
+    if (chatBusyRef.current || buildingRef.current) return;
+    setChatBusyBoth(true);
+    try {
+      await undoStudioStorefrontEdit(undo);
+      await refresh();
+      reloadPreview();
+      if (aliveRef.current) pushMsg({ id: newId(), kind: "ai-text", text: "Undone. The previous complete storefront version is back in preview." });
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't undo that storefront change.";
+      toast(msg, "warn", "critical");
+    } finally {
+      if (aliveRef.current) setChatBusyBoth(false);
+    }
+  };
+
+  const runRuntime1Edit = async (text: string, context?: PreviewEditContext) => {
+    const expectedDraftVersionId = data?.release.draftVersionId;
+    if (!expectedDraftVersionId || chatBusyRef.current || buildingRef.current) return;
+    setChatBusyBoth(true);
+    const thinkId = newId();
+    pushMsg({ id: thinkId, kind: "ai-thinking" });
+    try {
+      const result = await editStudioStorefront({ prompt: text, expectedDraftVersionId, ...(context ? { context } : {}) });
+      if (result.status === "start_over") {
+        setMessages((messages) => messages.filter((message) => message.id !== thinkId));
+        setChatBusyBoth(false);
+        await runBuild({ prompt: text, mode: "auto" });
+        return;
+      }
+      await refresh();
+      reloadPreview();
+      if (!aliveRef.current) return;
+      const routeSummary = result.changedScope.routes.length > 0
+        ? ` Updated ${result.changedScope.routes.join(", ")}.`
+        : " Updated the store-wide design system.";
+      const provenance = result.detachedFromRecipe
+        ? " This version is now a custom-derived design; the rest of the store was preserved."
+        : " The recipe remains linked, so its safe overrides are still editable.";
+      setMessages((messages) => messages.map((message) => message.id === thinkId ? {
+        id: thinkId,
+        kind: "ai-text",
+        text: `Done.${routeSummary}${provenance}`,
+        actions: [{ label: "Undo", onClick: () => void runBundleUndo(result.undo) }],
+      } : message));
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that storefront change.";
+      setMessages((messages) => messages.map((message) => message.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : message));
+    } finally {
+      if (aliveRef.current) setChatBusyBoth(false);
+    }
+  };
+
   const runExperiment = async (expKind: StudioExperimentKind) => {
     if (chatBusyRef.current) return;
     setChatBusyBoth(true);
@@ -498,6 +571,17 @@ export default function Store({ app }: { app: DashboardCtx }) {
   };
 
   const runChatIntent = (intent: ChatIntent) => {
+    if (data?.release.draftRuntime === 1 && data.release.draftVersionId && intent.kind !== "experiment") {
+      const instruction = intent.kind === "vibe"
+        ? `Make the storefront ${intent.vibe}`
+        : intent.kind === "accent"
+          ? `Make the accent ${intent.color}`
+          : intent.kind === "hero"
+            ? `Change the home headline to "${intent.headline}"`
+            : intent.brief;
+      void runRuntime1Edit(instruction);
+      return;
+    }
     if (isDeterministicChatIntent(intent)) {
       void runDeterministic(intent);
     } else if (intent.kind === "experiment") {
@@ -516,6 +600,10 @@ export default function Store({ app }: { app: DashboardCtx }) {
       if (!text) return;
       setPrompt("");
       pushMsg({ id: newId(), kind: "user-text", text });
+      if (data?.release.draftRuntime === 1 && data.release.draftVersionId) {
+        void runRuntime1Edit(text, /\b(?:this|that|selected|here)\b/i.test(text) ? previewEditContext : undefined);
+        return;
+      }
       runChatIntent(parseChatIntent(text));
       return;
     }
@@ -559,6 +647,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const onPageChange = (p: PageKey) => {
     if (markupOn) exitMarkup(); // stroke coords are relative to the frame; a page swap invalidates them
     setPage(p);
+    setPreviewEditContext(undefined);
   };
   const onDeviceChange = (d: Device) => {
     if (markupOn) exitMarkup();
@@ -591,6 +680,10 @@ export default function Store({ app }: { app: DashboardCtx }) {
     const intent = parseChatIntent(note, "note");
     pushMsg({ id: newId(), kind: "user-text", text: `[Marked up the ${pageLabel} page] ${note}` });
     exitMarkup();
+    if (data?.release.draftRuntime === 1 && data.release.draftVersionId) {
+      void runRuntime1Edit(note, previewEditContext);
+      return;
+    }
     if (isDeterministicChatIntent(intent)) {
       void runDeterministic(intent, { pageLabel });
     } else {
@@ -808,18 +901,10 @@ export default function Store({ app }: { app: DashboardCtx }) {
   };
 
   // --- welcome overlay actions --------------------------------------------------
-  const onWelcomeBuildPlain = () => void runBuild("", { firstBuild: true });
+  const onWelcomeBuildPlain = () => void runBuild({ prompt: "", mode: "auto" }, { firstBuild: true });
 
-  const onWelcomeBuildWithVibe = async (vibe: StudioVibe) => {
-    try {
-      await setStudioVibe(vibe);
-    } catch (err) {
-      // A failed vibe pre-set isn't fatal — the build still runs, just against
-      // whatever vibe is currently stored. Say so and keep going.
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't set that look. Building anyway.";
-      toast(msg, "warn", "critical");
-    }
-    void runBuild("", { firstBuild: true });
+  const onWelcomeBuildDesign = (request: StoreDesignRequest, recommendation?: StoreDesignResolution) => {
+    void runBuild(request, { firstBuild: true, recommendation });
   };
 
   const onWelcomeAddProduct = async (line: string) => {
@@ -846,7 +931,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
           : `Draft product "${parsed.title}" created.`,
       );
       await refresh();
-      void runBuild("", { firstBuild: true });
+      void runBuild({ prompt: "", mode: "auto" }, { firstBuild: true });
     } catch (err) {
       const msg = err instanceof DashboardApiError ? err.message : "Couldn't create that product.";
       toast(msg, "warn", "critical");
@@ -898,6 +983,20 @@ export default function Store({ app }: { app: DashboardCtx }) {
       return;
     }
     void runPublish();
+  };
+
+  const onPolicySave = async (policy: Pick<StudioPolicy, "id" | "title" | "body">) => {
+    await saveStudioPolicy(policy);
+    await refresh();
+    reloadPreview();
+    toast("Store policy saved");
+  };
+
+  const onPolicyDelete = async (policyId: StudioPolicyId) => {
+    await deleteStudioPolicy(policyId);
+    await refresh();
+    reloadPreview();
+    toast("Store policy removed");
   };
 
   const onDecideExperiment = async (decision: "ship" | "keep" | "stop") => {
@@ -1027,6 +1126,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
             onDeviceChange={onDeviceChange}
             markupOn={markupOn}
             onToggleMarkup={onToggleMarkup}
+            onEditPolicies={() => setPoliciesOpen(true)}
             onPublish={onPublishClick}
             publishing={publishing}
           />
@@ -1040,7 +1140,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
                 src={previewSrc}
                 sandbox="allow-same-origin allow-scripts allow-popups"
               />
-              {page === "home" && !building && (
+              {showLegacySectionsPanel({ page, building, draftRuntime: data.release.draftRuntime }) && (
                 <SectionsPanel
                   sections={data.sections ?? []}
                   busyId={sectionBusyId}
@@ -1149,8 +1249,16 @@ export default function Store({ app }: { app: DashboardCtx }) {
             buildPhase={buildPhase}
             productCount={data.productCount}
             onBuildPlain={onWelcomeBuildPlain}
-            onBuildWithVibe={(vibe) => void onWelcomeBuildWithVibe(vibe)}
+            onBuildDesign={onWelcomeBuildDesign}
             onAddProduct={(line) => void onWelcomeAddProduct(line)}
+          />
+        )}
+        {policiesOpen && (
+          <StorePoliciesEditor
+            policies={data.policies ?? []}
+            onSave={onPolicySave}
+            onDelete={onPolicyDelete}
+            onClose={() => setPoliciesOpen(false)}
           />
         )}
       </div>

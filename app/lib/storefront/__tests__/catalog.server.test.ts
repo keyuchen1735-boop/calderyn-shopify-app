@@ -9,6 +9,11 @@ vi.mock("../catalog.owned.server", () => ({
     listProducts: vi.fn(async (shopId: string) => [{ handle: `owned-for-${shopId}` }]),
     getProduct: vi.fn(async () => null),
     listCollections: vi.fn(async () => [{ handle: "owned", title: "Owned" }]),
+    getCollection: vi.fn(async (_shopId: string, handle: string) => ({
+      handle,
+      title: "Owned collection",
+      productCount: 37,
+    })),
   },
 }));
 
@@ -28,6 +33,14 @@ describe("getCatalog", () => {
   it("routes a real (uuid) tenant to the owned catalog", async () => {
     const products = await getCatalog().listProducts(UUID_SHOP);
     expect(products[0].handle).toBe(`owned-for-${UUID_SHOP}`);
+  });
+
+  it("routes bounded collection lookups through the same tenant seam", async () => {
+    const collection = await getCatalog().getCollection?.(UUID_SHOP, "apparel");
+    const { ownedCatalog } = await import("../catalog.owned.server");
+
+    expect(ownedCatalog.getCollection).toHaveBeenCalledWith(UUID_SHOP, "apparel");
+    expect(collection).toMatchObject({ handle: "apparel", productCount: 37 });
   });
 
   it("routes exactly the demo sentinel to the in-memory stub, never the uuid-keyed DB", async () => {
