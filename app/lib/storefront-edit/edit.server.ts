@@ -530,6 +530,7 @@ export async function editStorefrontByPrompt(
     let proofContext: MerchantStorefrontContext | null = null;
     let proofAssets: MaterializedAssetResult["proofAssets"] | null = null;
     let repairAttempted = false;
+    let repeatScopeAdjusted = false;
     const attemptAudits: EditAttemptAudit[] = [];
     for (;;) {
       try {
@@ -542,13 +543,28 @@ export async function editStorefrontByPrompt(
           ? safeStructuralContext(base.bundle, { routeId: replacement.routeId, regionId: replacement.targetId })
           : undefined;
         if (intent.kind === "structural" && error instanceof StorefrontPatchError && error.code === "patch_scope_invalid" &&
-            !repairAttempted && replacement && repeatContext && repeatContext.regionId !== replacement.targetId) {
-          repairAttempted = true;
+            !repeatScopeAdjusted && replacement && repeatContext && repeatContext.regionId !== replacement.targetId) {
+          repeatScopeAdjusted = true;
           compiledPatch = await dependencies.compileStructuralPatch({
             prompt: input.prompt,
             context: repeatContext,
             bundle: base.bundle,
             repair: { attempt: 1, scope: repeatContext },
+          });
+          continue;
+        }
+        if (intent.kind === "structural" && error instanceof StorefrontPatchError && error.code === "patch_source_invalid" &&
+            !repairAttempted && replacement && repeatContext) {
+          repairAttempted = true;
+          compiledPatch = await dependencies.compileStructuralPatch({
+            prompt: input.prompt,
+            context: repeatContext,
+            bundle: base.bundle,
+            repair: {
+              attempt: 1,
+              scope: repeatContext,
+              staticDiagnostics: [{ code: error.code, path: "source.html", message: error.message }],
+            },
           });
           continue;
         }
