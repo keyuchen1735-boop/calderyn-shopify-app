@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -17,6 +17,11 @@ const ASSETS = migration("20260713141000_storefront_bundle_assets.sql");
 const FUNCTIONS = migration("20260713142000_storefront_bundle_functions.sql");
 const CUSTOM_ASSET_KEYS = migration("20260713210000_storefront_custom_asset_logical_keys.sql");
 const GENERATION_RUNS = migration("20260713230000_storefront_generation_runs_and_atomic_install.sql");
+const ACTOR_FOREIGN_KEYS_NAME = readdirSync(path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../supabase/migrations",
+)).find((name) => name.endsWith("_storefront_actor_foreign_keys.sql"));
+const ACTOR_FOREIGN_KEYS = ACTOR_FOREIGN_KEYS_NAME ? migration(ACTOR_FOREIGN_KEYS_NAME) : "";
 const EDIT_ASSET_PROVENANCE_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../../supabase/migrations/20260713220000_storefront_edit_asset_provenance.sql",
@@ -27,6 +32,14 @@ const EDIT_ASSET_PROVENANCE = existsSync(EDIT_ASSET_PROVENANCE_PATH)
 const SQL = `${RELEASES}\n${ASSETS}\n${FUNCTIONS}`;
 
 describe("storefront bundle persistence migrations", () => {
+  it("links storefront audit actors to first-party users", () => {
+    for (const table of ["storefront_release_history", "storefront_bundle_edit"]) {
+      expect(ACTOR_FOREIGN_KEYS).toMatch(new RegExp(
+        `alter table public\\.${table}[^;]+foreign key \\(actor_id\\)[^;]+references public\\.users\\(id\\)`,
+      ));
+    }
+  });
+
   it("creates the complete release, asset, and edit-audit model with RLS and browser-role revokes", () => {
     for (const table of [
       "storefront_bundle_version",
