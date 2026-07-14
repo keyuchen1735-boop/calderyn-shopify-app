@@ -20,6 +20,7 @@ export function TrustedSlotHost({ slot, instanceId, compilerId, authorityKey }: 
       data-cd-theme-tokens={slot.themeTokenIds.join(" ")}
       data-cd-shadow-mode="closed"
       data-cd-instance={instance}
+      hidden={slot.kind === "cartDrawer"}
     />
   );
 }

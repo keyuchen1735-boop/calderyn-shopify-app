@@ -22,6 +22,19 @@ describe("platform-owned commerce hosts", () => {
     expect(html).not.toContain("dangerouslySetInnerHTML");
   });
 
+  it("keeps cart drawers closed until the platform opens them", () => {
+    const slot: TrustedSlotManifest = {
+      id: "cd-shell-slot-1",
+      kind: "cartDrawer",
+      hostSize: "panel",
+      themeTokenIds: ["ink"],
+    };
+    const html = renderToStaticMarkup(<TrustedSlotHost slot={slot} instanceId={slot.id} compilerId={slot.id} authorityKey="cart:preview" />);
+
+    expect(html).toContain('data-cd-trusted-slot="cartDrawer"');
+    expect(html).toContain(' hidden=""');
+  });
+
   it("issues unique repeated host IDs bound to each public record", () => {
     const data: PublicPresentationData = {
       store: { name: "Store", logo: null }, policyLinks: [], product: null, collection: null,

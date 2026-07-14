@@ -1,15 +1,38 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { RouteArtifact } from "~/lib/storefront-bundle/types";
 import { ATELIER_GRID_ASSETS } from "./assets";
 import { ATELIER_GRID_BUNDLE, ATELIER_GRID_RECIPE } from "./bundle";
 
 const ROUTES = ["home", "collection", "product", "search", "cart"] as const;
+const CANONICAL_HTML = readFileSync(path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../../public/atelier-grid/index.html",
+), "utf8");
 
 function bindingPaths(route: RouteArtifact): string[] {
   return route.bindings.flatMap((binding) => binding.ref.kind === "data" ? [binding.ref.path] : []);
 }
 
 describe("Atelier Grid recipe contract", () => {
+  it("preserves the canonical storefront composition while products stay merchant-bound", () => {
+    const recipeHtml = `${ATELIER_GRID_RECIPE.config.surfaces.shell.source.html}\n${ATELIER_GRID_RECIPE.config.surfaces.home.source.html}`;
+    const recipeCss = `${ATELIER_GRID_RECIPE.config.designSystem.globalCss}\n${ATELIER_GRID_RECIPE.config.surfaces.home.source.css}`;
+    for (const className of [
+      "announcement", "header-row", "hero-lower", "edition", "catalog-side",
+      "catalog-main", "product-grid", "manifesto-copy", "manifesto-index", "shipping-bar",
+    ]) {
+      expect(CANONICAL_HTML).toMatch(new RegExp(`class="[^"]*\\b${className}\\b`));
+      expect(recipeHtml).toContain(className);
+      expect(recipeCss).toContain(`.${className}`);
+    }
+    expect(ATELIER_GRID_RECIPE.config.surfaces.shell.source.html).not.toContain("<footer");
+    expect(ATELIER_GRID_RECIPE.config.surfaces.home.source.html).toContain("<footer");
+    expect(ATELIER_GRID_RECIPE.config.surfaces.shell.source.html).toContain('data-cd-slot="cartDrawer"');
+  });
+
   it("compiles the approved asymmetric editorial identity through validation profile v1", () => {
     expect(ATELIER_GRID_RECIPE.report).toMatchObject({ ok: true, profileVersion: 1 });
     expect(ATELIER_GRID_BUNDLE.source).toEqual({ kind: "recipe", templateId: "atelier-nine", templateVersion: 1 });

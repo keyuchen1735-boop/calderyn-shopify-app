@@ -378,6 +378,7 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
       .filter((element) => !sources.has(element.id.replace(/-i-[a-z0-9]+$/, "")))
       .map((element) => element.id || element.outerHTML.slice(0, 120));
     const protectedFailures = [...document.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")].flatMap((host) => {
+      if (host.dataset.cdTrustedSlot === "cartDrawer" && host.hidden && !visible(host)) return [];
       host.scrollIntoView({ block: "center" });
       const rect = host.getBoundingClientRect();
       const x = Math.min(innerWidth - 1, Math.max(0, rect.left + Math.min(rect.width / 2, 20)));
@@ -386,6 +387,7 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
       return visible(host) && hit && (hit === host || host.contains(hit)) ? [] : [host.id || host.dataset.cdTrustedSlot || "trusted-slot"];
     });
     const commerceFailures = [...document.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")].flatMap((host) => {
+      if (host.dataset.cdTrustedSlot === "cartDrawer" && host.hidden && !visible(host)) return [];
       const controls = [...(host.shadowRoot?.querySelectorAll<HTMLElement>("button,input,select") ?? [])];
       if (!host.shadowRoot) return [`${host.id || host.dataset.cdTrustedSlot}:closed-or-missing-root`];
       if (controls.length === 0) return [`${host.id || host.dataset.cdTrustedSlot}:missing-control`];
@@ -655,6 +657,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       const commerceExerciseFailures = await page.evaluate(() => {
         const failures: string[] = [];
         for (const host of document.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")) {
+          if (host.dataset.cdTrustedSlot === "cartDrawer" && host.hidden) continue;
           const control = host.shadowRoot?.querySelector<HTMLElement>("button,select,input");
           if (!control) {
             failures.push(`${host.id || host.dataset.cdTrustedSlot}:missing-control`);

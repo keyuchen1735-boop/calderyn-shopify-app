@@ -8,10 +8,15 @@ const routeDefaults: Pick<RouteSource, "requiredData" | "requiredCapabilities"> 
 };
 
 const globalCss = `
-.atelier-wordmark { color:#161615; font-family:var(--font-display); font-size:1.8rem; font-weight:800; letter-spacing:-.025em; text-transform:uppercase }
-.atelier-nav { display:flex; align-items:center; gap:1.75rem; min-height:4.25rem; border-bottom:1px solid #161615 }
-.atelier-nav-links { display:flex; align-items:center; gap:1.35rem; margin-left:auto; font-family:var(--font-display); font-size:.78rem; letter-spacing:.08em; text-transform:uppercase }
-.atelier-link { color:#161615; text-decoration:none }
+.atelier-shell { width:min(calc(100% - 32px),1540px); margin-inline:auto }
+.announcement { display:flex; justify-content:space-between; padding:8px 16px; color:#fff; background:#d63821; font-size:11px; font-weight:700; text-transform:uppercase }
+.atelier-site-header { position:sticky; top:0; z-index:20; background:#f4f1eb; border-bottom:1px solid #101010 }
+.header-row { display:grid; grid-template-columns:250px 1fr 250px; align-items:center; height:67px }
+.atelier-wordmark { color:#101010; font-family:var(--font-display); font-size:27px; font-weight:900; text-transform:uppercase }
+.atelier-nav-links,.atelier-utility { display:flex; align-items:center; gap:34px; font-family:var(--font-display); font-size:12px; text-transform:uppercase }
+.atelier-nav-links { justify-content:center }
+.atelier-utility { justify-content:flex-end; gap:22px }
+.atelier-link { color:#101010; text-decoration:none }
 .atelier-link:hover { color:#d63821 }
 .atelier-heading { margin:0; color:#161615; font-family:var(--font-display); font-weight:800; letter-spacing:-.035em; line-height:.88; text-transform:uppercase }
 .atelier-serif { color:#34322f; font-family:var(--font-body); line-height:1.45 }
@@ -20,73 +25,117 @@ const globalCss = `
 .atelier-rule { border-bottom:1px solid #2a2927 }
 .atelier-action { display:inline-flex; align-items:center; gap:.8rem; color:#d63821; font-family:var(--font-display); font-weight:700; letter-spacing:.08em; text-decoration:none; text-transform:uppercase }
 .atelier-action:active { transform:translateY(1px) }
+.atelier-footer { display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:50px; padding:48px 0 72px }
+.atelier-footer h3 { margin:0 0 16px; font-size:12px; text-transform:uppercase }
+.atelier-footer p,.atelier-footer a { color:#6e6b66; font-size:12px; line-height:1.8 }
+.newsletter { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid #101010; color:#6e6b66 }
+.shipping-bar { display:flex; justify-content:space-between; padding:11px 16px; color:#fff; background:#d63821; font-size:10px; text-transform:uppercase }
 @media (max-width:760px) {
-  .atelier-nav { flex-wrap:wrap; min-height:3.75rem; padding:.65rem 0 }
-  .atelier-nav-links { width:100%; gap:1rem; margin-left:0; overflow-x:auto }
+  .atelier-shell { width:min(calc(100% - 20px),1540px) }
+  .announcement span:last-child { display:none }
+  .header-row { display:flex; flex-wrap:wrap; width:calc(100vw - 20px); height:auto; min-height:58px; padding:8px 0 }
+  .atelier-wordmark { font-size:22px }
+  .atelier-nav-links { order:3; width:100%; gap:18px; overflow-x:auto; padding:7px 0 2px }
+  .atelier-utility { margin-left:auto }
+  .atelier-utility .atelier-link:not(:last-child) { display:none }
+  .atelier-footer { grid-template-columns:1fr; gap:28px; padding:40px 0 }
+  .shipping-bar { display:block; text-align:center }
+  .shipping-bar span:last-child { display:none }
 }
 `;
 
 const homeHtml = `
-<main>
-  <section class="atelier-home-hero">
-    <div class="atelier-home-copy">
-      <p class="atelier-home-store" data-cd-text="store.name"></p>
-      <h1 class="atelier-heading atelier-home-title">Summer Assembly</h1>
-      <p class="atelier-serif atelier-home-intro">Uncompromising pieces, considered in form and fabric.</p>
-      <a class="atelier-action" data-cd-route="collection">Shop the collection <span>→</span></a>
+<main id="top">
+  <section class="atelier-shell hero" aria-labelledby="hero-title">
+    <div class="hero-copy">
+      <h1 class="hero-title" id="hero-title"><span>Summer</span><span>Assembly</span></h1>
+      <div class="hero-lower">
+        <div class="edition"><b>01</b><i></i><b>03</b></div>
+        <div class="hero-intro"><p>Uncompromising pieces, considered in form and fabric.</p><a class="arrow-link" data-cd-route="collection">Shop collection <span>→</span></a></div>
+      </div>
     </div>
-    <figure class="atelier-home-figure">
-      <img class="atelier-media atelier-home-image" data-cd-asset="hero" alt="A monochrome tailored look from the summer assembly" width="1800" height="1200" decoding="async">
-      <figcaption class="atelier-home-caption">Cut with clarity. Built for repeat wear.</figcaption>
-    </figure>
+    <div class="hero-media"><img data-cd-asset="hero" alt="Model wearing the black Assembly shirt dress" width="1800" height="1200"><div class="hero-note">The Assembly Dress<br>Japanese cotton poplin<br>Edition of 120</div></div>
   </section>
-  <section class="atelier-home-index">
-    <h2 class="atelier-heading atelier-home-index-title">The current edit</h2>
-    <article class="atelier-home-card" data-cd-repeat="featured.products">
-      <a class="atelier-link" data-cd-key="product.id" data-cd-route="product" data-cd-param-handle="product.handle">
-        <img class="atelier-media atelier-home-card-image" data-cd-src="product.primaryImage" data-cd-alt="product.title" width="800" height="1000" loading="lazy">
-        <span class="atelier-home-card-title" data-cd-text="product.title"></span>
-        <span class="atelier-price" data-cd-money="product.price"></span>
-      </a>
-    </article>
+  <section class="atelier-shell catalog" aria-labelledby="catalog-title">
+    <aside class="catalog-side" tabindex="0"><h2 id="catalog-title">Summer collection</h2><div class="category-list"><span>New arrivals <small>04</small></span><span>Dresses <small>01</small></span><span>Tops <small>02</small></span><span>Outerwear <small>01</small></span></div></aside>
+    <div class="catalog-main">
+      <div class="catalog-head"><h2>New arrivals</h2><span>Featured</span></div>
+      <div class="product-grid">
+        <article class="product" data-cd-repeat="featured.products">
+          <a class="atelier-link" data-cd-key="product.id" data-cd-route="product" data-cd-param-handle="product.handle">
+            <div class="product-media"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="800" height="1000" loading="lazy"><span class="product-badge">Edition</span></div>
+            <div class="product-info"><span data-cd-text="product.title"></span><span class="atelier-price" data-cd-money="product.price"></span></div>
+          </a>
+        </article>
+      </div>
+    </div>
   </section>
-  <section data-cd-repeat="featured.products">
-    <div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div>
+  <section data-cd-repeat="featured.products"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div></section>
+  <section class="atelier-shell manifesto">
+    <div class="manifesto-copy"><span class="manifesto-kicker">The Atelier Standard</span><h2>Designed slowly. Worn without ceremony.</h2><p>Every piece begins with proportion: a shoulder line, a clean fall, a pocket placed exactly where the hand expects it. We use materials selected for movement, longevity, and a life beyond one season.</p><a class="arrow-link" data-cd-route="collection">Read our process <span>→</span></a></div>
+    <div class="manifesto-index"><div><strong>09</strong><span>Pieces / one complete wardrobe</span></div></div>
   </section>
-  <section class="atelier-home-manifesto">
-    <h2 class="atelier-serif atelier-home-manifesto-title">Designed slowly. Worn without ceremony.</h2>
-    <p class="atelier-home-manifesto-copy">A concise wardrobe begins with proportion, movement, and materials selected for a life beyond one season.</p>
-  </section>
-</main>`;
+</main>
+<footer class="atelier-shell atelier-footer"><div><h3 data-cd-text="store.name"></h3><p>A concise wardrobe for deliberate living.<br>Designed in Toronto. Made with specialist ateliers.</p></div><div><h3>Customer care</h3><div class="atelier-policy-links" data-cd-policy-links></div></div><div><h3>Private notes</h3><p>New editions, studio notes, and first access.</p><div class="newsletter"><span>Email address</span><span>→</span></div></div></footer>
+<div class="shipping-bar"><span>Complimentary shipping on all orders over $300</span><span>Shipping &nbsp; Returns &nbsp; Contact &nbsp; Terms &nbsp; Privacy</span></div>`;
 
 const homeCss = `
-.atelier-home-hero { display:grid; grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr); min-height:42rem; border-bottom:1px solid #161615 }
-.atelier-home-copy { display:flex; flex-direction:column; justify-content:space-between; padding:2rem 2.5rem 2rem 0 }
-.atelier-home-store { margin:0; color:#d63821; font-family:var(--font-display); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase }
-.atelier-home-title { max-width:6ch; font-size:clamp(4.5rem,9vw,9rem) }
-.atelier-home-intro { max-width:21ch; margin:0; font-size:1.18rem }
-.atelier-home-figure { position:relative; min-height:42rem; margin:0; overflow:hidden }
-.atelier-home-image { height:100%; min-height:42rem }
-.atelier-home-caption { position:absolute; right:0; bottom:0; max-width:13rem; padding:.8rem; color:#f5f1e9; background:#161615; font-family:var(--font-display); font-size:.68rem; letter-spacing:.08em; text-transform:uppercase }
-.atelier-home-index { display:grid; grid-template-columns:minmax(11rem,.55fr) minmax(0,2.45fr); border-bottom:1px solid #161615 }
-.atelier-home-index-title { padding:1.25rem 1.5rem 1.25rem 0; font-size:1.1rem }
-.atelier-home-card { display:inline-block; width:min(24%,22rem); vertical-align:top; border-left:1px solid #aaa49b }
-.atelier-home-index { overflow-x:auto; scroll-snap-type:x proximity }
-.atelier-home-card { scroll-snap-align:start }
-.atelier-home-card-title { display:block; padding:.8rem .8rem .2rem; font-family:var(--font-display); font-size:.82rem; text-transform:uppercase }
-.atelier-home-card-image { aspect-ratio:4 / 5 }
-.atelier-home-card .atelier-price { display:block; padding:0 .8rem 1rem }
-.atelier-home-manifesto { display:grid; grid-template-columns:1.35fr .65fr; min-height:24rem; background:#b52d1c }
-.atelier-home-manifesto-title { max-width:11ch; margin:0; padding:3rem; color:#f5f1e9; font-size:clamp(2.5rem,5vw,4.5rem); font-weight:400 }
-.atelier-home-manifesto-copy { align-self:end; margin:0; padding:3rem; color:#f5f1e9; font-family:var(--font-display); line-height:1.5 }
+.hero { display:grid; grid-template-columns:49% 51%; min-height:680px; border-bottom:1px solid #101010 }
+.hero-copy { display:grid; grid-template-rows:1fr auto; overflow:hidden; padding:30px 18px 18px 0 }
+.hero-title { width:137%; margin:0; font-family:var(--font-display); font-size:144px; font-weight:900; line-height:.78; text-transform:uppercase; transform:scaleX(.73); transform-origin:top left }
+.hero-title span { display:block }
+.hero-lower { display:grid; grid-template-columns:1fr 230px; gap:24px; align-items:end }
+.edition { display:flex; align-items:center; gap:12px; font-size:11px }
+.edition i { width:140px; height:1px; background:#101010 }
+.hero-intro p { max-width:22ch; margin:0 0 24px; font-family:var(--font-body); font-size:18px; line-height:1.25 }
+.arrow-link { display:inline-flex; align-items:center; gap:18px; padding-bottom:5px; color:#d63821; border-bottom:1px solid currentColor; font-weight:750; font-size:12px; text-decoration:none; text-transform:uppercase }
+.hero-media { position:relative; min-height:680px; overflow:hidden }
+.hero-media img { width:100%; height:100%; object-fit:cover; object-position:58% center }
+.hero-note { position:absolute; right:18px; bottom:18px; width:166px; padding:10px; color:#fff; background:#101010; font-size:10px; line-height:1.45; text-transform:uppercase }
+.catalog { display:grid; grid-template-columns:255px minmax(0,1fr); border-bottom:1px solid #101010 }
+.catalog-side { padding:18px 28px 28px 0; border-right:1px solid #101010 }
+.catalog-side h2,.catalog-head h2 { margin:0; font-size:12px; text-transform:uppercase }
+.catalog-side h2 { margin-bottom:28px }
+.category-list { display:grid }
+.category-list span { display:flex; justify-content:space-between; padding:12px 0; border-bottom:1px solid #aaa49b; font-size:12px; text-transform:uppercase }
+.category-list span:first-child { color:#d63821; border-top:1px solid #aaa49b; font-weight:750 }
+.category-list small { color:#6e6b66 }
+.catalog-main { min-width:0 }
+.catalog-head { display:flex; align-items:center; justify-content:space-between; height:58px; padding:0 16px; border-bottom:1px solid #101010; font-size:10px; text-transform:uppercase }
+.product-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)) }
+.product { min-width:0; border-right:1px solid #aaa49b }
+.product-media { position:relative; width:100%; aspect-ratio:4 / 5; overflow:hidden; background:#ebe6de }
+.product-media img { width:100%; height:100%; object-fit:cover }
+.product-badge { position:absolute; top:10px; left:10px; padding:5px 7px; color:#fff; background:#101010; font-size:9px; text-transform:uppercase }
+.product-info { display:grid; grid-template-columns:1fr auto; gap:7px 14px; padding:12px 10px 18px; font-size:11px; text-transform:uppercase }
+.manifesto { display:grid; grid-template-columns:1.25fr .75fr; min-height:430px; border-bottom:1px solid #101010 }
+.manifesto-copy { padding:56px 7vw 62px 0; border-right:1px solid #101010 }
+.manifesto-kicker { color:#d63821; font-size:11px; text-transform:uppercase }
+.manifesto h2 { max-width:10ch; margin:24px 0 32px; font-family:var(--font-body); font-size:44px; line-height:1.04; font-weight:400 }
+.manifesto p { max-width:54ch; color:#6e6b66; line-height:1.7 }
+.manifesto-index { display:grid; place-items:center; color:#fff; background:#d63821 }
+.manifesto-index strong { font-family:var(--font-display); font-size:128px; line-height:1 }
+.manifesto-index span { display:block; margin-top:10px; text-align:center; text-transform:uppercase; font-size:11px }
+@media (max-width:1120px) { .hero-title{font-size:104px}.hero,.hero-media{min-height:600px}.product-grid{grid-template-columns:repeat(2,1fr)} }
 @media (max-width:760px) {
-  .atelier-home-hero, .atelier-home-index, .atelier-home-manifesto { grid-template-columns:1fr }
-  .atelier-home-copy { min-height:28rem; padding:1.5rem 0 }
-  .atelier-home-title { font-size:4.5rem }
-  .atelier-home-figure, .atelier-home-image { min-height:65vw }
-  .atelier-home-card { width:50% }
+  .hero { grid-template-columns:1fr; min-height:0 }
+  .hero-copy { min-height:450px; padding:25px 0 18px }
+  .hero-title { width:128%; font-size:66px; line-height:.82; transform:scaleX(.78) }
+  .hero-lower { grid-template-columns:1fr }
+  .hero-intro p { margin:0; font-size:15px }
+  .hero-media { min-height:72vw }
+  .catalog { grid-template-columns:1fr }
+  .catalog-side { padding:18px 0; border-right:0; border-bottom:1px solid #101010; overflow-x:auto }
+  .category-list { display:flex; width:max-content; gap:18px }
+  .category-list span { gap:8px; border:0 }
+  .catalog-head { padding-inline:0 }
+  .product-grid { grid-template-columns:repeat(2,1fr) }
+  .product-info { grid-template-columns:1fr }
+  .manifesto { grid-template-columns:1fr }
+  .manifesto-copy { padding:42px 0; border-right:0 }
+  .manifesto h2 { font-size:34px }
+  .manifesto-index { min-height:280px }
 }
-@media (prefers-reduced-motion:reduce) { .atelier-home-index { scroll-snap-type:none } }
 `;
 
 const collectionHtml = `
@@ -288,7 +337,8 @@ const checkoutCss = `
 .atelier-checkout-story { display:grid; grid-template-columns:2fr 1fr; gap:32px; padding:48px 0; border-bottom-width:1px; border-style:solid; border-color:#aaa49b }
 .atelier-checkout-title { margin:0; color:#161615; font-family:var(--font-display); font-size:64px; font-weight:800; line-height:48px }
 .atelier-checkout-copy { margin:0; color:#5c5953; font-family:var(--font-body); font-size:18px; line-height:28px }
-.atelier-checkout-policies { margin-top:24px }
+.atelier-checkout-policies { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:24px }
+.atelier-checkout-policies a { color:#5c5953; font-size:12px; text-decoration:none }
 @media (max-width:760px) {
   .atelier-checkout-head { display:block }
   .atelier-checkout-note { margin-top:16px; text-align:left }
@@ -336,11 +386,11 @@ const config = {
   },
   surfaces: {
     shell: {
-      signature: "single-line issue masthead above a separate trusted cart surface",
+      signature: "canonical announcement and masthead before the route composition",
       source: {
         ...routeDefaults,
-        html: `<header class="atelier-nav"><span class="niche-icon niche-icon--atelier" aria-hidden="true">&#8599;</span><a class="atelier-wordmark atelier-link" data-cd-route="home" data-cd-text="store.name"></a><nav class="atelier-nav-links" aria-label="Primary"><a class="atelier-link" data-cd-route="collection">Collection</a><a class="atelier-link" data-cd-route="search">Search</a><a class="atelier-link" data-cd-route="account">Account</a><a class="atelier-link" data-cd-route="cart">Bag <span data-cd-text="cart.count"></span></a></nav></header><div data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div><footer class="atelier-nav-links"><a class="atelier-link" data-cd-route="policy" data-cd-param-policy-id="shipping">Shipping</a><a class="atelier-link" data-cd-route="policy" data-cd-param-policy-id="refund">Returns</a><div class="atelier-policy-links" data-cd-policy-links></div></footer>`,
-        css: `.atelier-nav, .atelier-nav-links { padding-left:max(1rem,calc((100% - 96rem)/2)); padding-right:max(1rem,calc((100% - 96rem)/2)) }.atelier-policy-links{display:flex;flex-wrap:wrap;gap:1rem}.atelier-policy-links a{color:var(--ink);text-decoration:none} @media(max-width:720px){.atelier-nav{align-items:start;display:grid;gap:.75rem}.atelier-nav-links{display:grid;grid-template-columns:repeat(2,1fr);gap:.5rem}.atelier-nav-links a{border-top:1px solid var(--line);padding-top:.45rem}}`,
+        html: `<div class="announcement"><span>Complimentary shipping on all orders over $300</span><span>Edition 03 / Summer 2026</span></div><header class="atelier-site-header"><div class="atelier-shell header-row"><a class="atelier-wordmark atelier-link" data-cd-route="home" data-cd-text="store.name"></a><nav class="atelier-nav-links" aria-label="Primary"><a class="atelier-link" data-cd-route="collection">Shop</a><a class="atelier-link" data-cd-route="collection">Collections</a><a class="atelier-link" data-cd-route="home">About</a><a class="atelier-link" data-cd-route="search">Journal</a></nav><div class="atelier-utility"><a class="atelier-link" data-cd-route="search">Search</a><a class="atelier-link" data-cd-route="account">Account</a><a class="atelier-link" data-cd-route="cart">Bag (<span data-cd-text="cart.count"></span>)</a></div></div></header><div data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div>`,
+        css: `.atelier-policy-links{display:flex;flex-wrap:wrap;gap:1rem}.atelier-policy-links a{color:var(--ink);text-decoration:none}`,
       },
     },
     home: { signature: "offset cover story beside owned full-height fashion photography", source: { ...routeDefaults, html: homeHtml, css: homeCss } },
