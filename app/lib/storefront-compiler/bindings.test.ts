@@ -24,6 +24,21 @@ describe("binding and repeat scopes", () => {
     ).toThrow(/scope/i);
   });
 
+  it("allows the public cart count in the root store shell without exposing cart lines", () => {
+    const result = compileHtml(`<a data-cd-route="cart">Bag <span data-cd-text="cart.count"></span></a>`, {
+      namespace: "shell",
+      rootScopeKind: "store",
+    });
+
+    expect(result.bindings).toContainEqual(expect.objectContaining({
+      ref: { kind: "data", scopeId: "root", path: "cart.count" },
+    }));
+    expect(() => compileHtml(`<span data-cd-money="cart.total"></span>`, {
+      namespace: "shell",
+      rootScopeKind: "store",
+    })).toThrow(/scope/i);
+  });
+
   it("rejects unresolved and private binding paths", () => {
     expect(() =>
       compileHtml(`<section data-cd-text="product.shop_id"></section>`, { namespace: "product" }),
