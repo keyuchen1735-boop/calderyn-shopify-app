@@ -4,6 +4,7 @@ import type {
   JudgeScores,
   MerchantStorefrontContext,
   NoveltySignature,
+  ConceptRenderEvidence,
   StorefrontAiProvider,
   StructuredModelResponse,
 } from "./contracts";
@@ -64,7 +65,7 @@ export interface RankConceptsInput {
   candidates: ExploredConcept[];
   context: MerchantStorefrontContext;
   provider: StorefrontAiProvider;
-  render(input: { candidate: ExploredConcept; context: MerchantStorefrontContext }): Promise<{ desktop: string; mobile: string }>;
+  render(input: { candidate: ExploredConcept; context: MerchantStorefrontContext; signal?: AbortSignal }): Promise<ConceptRenderEvidence>;
   signal?: AbortSignal;
   onModelCall?: (operation: "judge", response: StructuredModelResponse) => void;
 }
@@ -76,15 +77,16 @@ export interface RankConceptsResult {
 
 export async function rankConcepts(input: RankConceptsInput): Promise<RankConceptsResult> {
   const results = await Promise.all(input.candidates.map(async (candidate) => {
-    const novelty = calculateNovelty(candidate.candidate.concept.noveltySignature, input.context.recipeNoveltySignatures);
+    const novelty = calculateNovelty(candidate.structuralSignature, input.context.recipeNoveltySignatures);
     if (!novelty.passed) return { rejected: { candidate, reason: `novelty gate failed (${novelty.score})` } };
     try {
-      const renders = await input.render({ candidate, context: input.context });
+      const renders = await input.render({ candidate, context: input.context, signal: input.signal });
       const response = await input.provider.complete({
         operation: "judge",
         system: COMPILER_SYSTEM_PROMPT,
-        prompt: judgePrompt(candidate, input.context, renders),
+        prompt: judgePrompt(candidate, input.context),
         schema: JUDGE_SCHEMA,
+        images: [renders.desktop, renders.mobile],
         signal: input.signal,
       });
       input.onModelCall?.("judge", response);

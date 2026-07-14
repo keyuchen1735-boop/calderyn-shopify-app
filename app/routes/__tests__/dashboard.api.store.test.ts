@@ -30,6 +30,7 @@ const {
   buildMock,
   prepareBuildMock,
   persistAssetMock,
+  cleanupAssetMock,
   rateLimitMock,
 } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
@@ -45,6 +46,7 @@ const {
   buildMock: vi.fn(),
   prepareBuildMock: vi.fn(),
   persistAssetMock: vi.fn(),
+  cleanupAssetMock: vi.fn(),
   rateLimitMock: vi.fn(),
 }));
 
@@ -101,7 +103,10 @@ vi.mock("~/lib/storefront-bundle/build.server", () => ({
     constructor(public code: string, message: string, public status: number) { super(message); }
   },
 }));
-vi.mock("~/lib/storefront-bundle/assets.server", () => ({ persistStorefrontAssetBytes: persistAssetMock }));
+vi.mock("~/lib/storefront-bundle/assets.server", () => ({
+  persistStorefrontAssetBytes: persistAssetMock,
+  garbageCollectUnreferencedStorefrontAsset: cleanupAssetMock,
+}));
 vi.mock("~/lib/storefront-bundle/release.server", () => ({
   StorefrontReleaseError: class StorefrontReleaseError extends Error {
     constructor(public code: string, message: string, public status: number) { super(message); }
@@ -112,7 +117,7 @@ const SHOP = "11111111-1111-1111-1111-111111111111";
 const URL = "https://test.example.com/dashboard/api/store";
 
 beforeEach(() => {
-  for (const m of [sessionMock, prechecksMock, designerQuotaMock, classifyMock, createProductMock, uploadMediaMock, publishMock, editMock, undoEditMock, releaseStateMock, buildMock, prepareBuildMock, persistAssetMock, rateLimitMock]) {
+  for (const m of [sessionMock, prechecksMock, designerQuotaMock, classifyMock, createProductMock, uploadMediaMock, publishMock, editMock, undoEditMock, releaseStateMock, buildMock, prepareBuildMock, persistAssetMock, cleanupAssetMock, rateLimitMock]) {
     m.mockReset();
   }
   sessionMock.mockResolvedValue({ shopId: SHOP, userId: null, accountCreatedAt: null });
@@ -127,11 +132,16 @@ beforeEach(() => {
   prepareBuildMock.mockResolvedValue({ evidence: {}, resolution: { kind: "custom" }, pointers: { draftVersionId: null, publishedVersionId: null } });
   buildMock.mockResolvedValue({ runtime: 1, versionId: "55555555-5555-5555-5555-555555555555", status: "draft", resolution: { kind: "custom" } });
   persistAssetMock.mockResolvedValue({ assetKey: `${SHOP}/storefront/sha256/asset.png`, contentHash: "a".repeat(64), mediaType: "image/png", byteSize: 16 });
+  cleanupAssetMock.mockResolvedValue(undefined);
   rateLimitMock.mockResolvedValue(true);
 });
 
 function pngFile(name: string, bytes = 16): File {
   return new File([new Uint8Array(bytes)], name, { type: "image/png" });
+}
+
+function gifFile(name: string, bytes = 16): File {
+  return new File([new Uint8Array(bytes)], name, { type: "image/gif" });
 }
 
 async function postMultipart(fields: {
@@ -341,11 +351,51 @@ describe("dashboard.api.store multipart generate", () => {
     expect(createProductMock).not.toHaveBeenCalled();
     // Generation is certain here, so the daily designer slot IS consumed.
     expect(persistAssetMock).toHaveBeenCalledWith({ shopId: SHOP, bytes: expect.any(Uint8Array) });
+    expect(cleanupAssetMock).toHaveBeenCalledWith({
+      shopId: SHOP,
+      assetKey: `${SHOP}/storefront/sha256/asset.png`,
+    });
     expect(buildMock).toHaveBeenCalledWith(expect.objectContaining({
       shopId: SHOP,
       request: { prompt: "match this vibe", mode: "custom" },
       referenceImages: [{ assetKey: `${SHOP}/storefront/sha256/asset.png`, mediaType: "image/png" }],
     }));
+  });
+
+  it("rejects GIF design references before persistence or quota reservation", async () => {
+    const response = await postMultipart({ brief: "match this", intent: "reference", images: [gifFile("mood.gif")] });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "unsupported_reference_image" });
+    expect(prepareBuildMock).not.toHaveBeenCalled();
+    expect(persistAssetMock).not.toHaveBeenCalled();
+    expect(cleanupAssetMock).not.toHaveBeenCalled();
+  });
+
+  it("garbage-collects reference-only assets when generation fails", async () => {
+    buildMock.mockRejectedValueOnce(new Error("provider down"));
+    const response = await postMultipart({ brief: "match this", intent: "reference", images: [pngFile("mood.png")] });
+    expect(response.status).toBe(502);
+    expect(cleanupAssetMock).toHaveBeenCalledWith({
+      shopId: SHOP,
+      assetKey: `${SHOP}/storefront/sha256/asset.png`,
+    });
+  });
+
+  it("garbage-collects earlier reference assets when a later persistence fails", async () => {
+    persistAssetMock
+      .mockResolvedValueOnce({ assetKey: `${SHOP}/storefront/sha256/first.png`, contentHash: "a".repeat(64), mediaType: "image/png", byteSize: 16 })
+      .mockRejectedValueOnce(new Error("storage unavailable"));
+    const response = await postMultipart({
+      brief: "match these",
+      intent: "reference",
+      images: [pngFile("one.png"), pngFile("two.png")],
+    });
+    expect(response.status).toBe(500);
+    expect(cleanupAssetMock).toHaveBeenCalledWith({
+      shopId: SHOP,
+      assetKey: `${SHOP}/storefront/sha256/first.png`,
+    });
+    expect(buildMock).not.toHaveBeenCalled();
   });
 
   it("returns a truthful preflight flag refusal before persisting a reference asset", async () => {

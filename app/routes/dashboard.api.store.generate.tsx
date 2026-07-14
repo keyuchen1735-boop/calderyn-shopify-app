@@ -70,7 +70,11 @@ export async function action({ request }: ActionFunctionArgs) {
 
   let prepared;
   try {
-    prepared = await prepareStorefrontDesignBuild({ shopId: session.shopId, request: parsed.value });
+    prepared = await prepareStorefrontDesignBuild({
+      shopId: session.shopId,
+      request: parsed.value,
+      trusted: quotaTrusted(session),
+    });
   } catch (error) {
     const failure = buildFailure(error);
     return jsonError(failure.status, failure.code, failure.message);

@@ -2,6 +2,8 @@ import { assistantModel, getAnthropic } from "~/lib/assistant/anthropic.server";
 import type { StorefrontAiProvider, StructuredModelRequest, StructuredModelResponse } from "./contracts";
 
 const RESULT_TOOL = "storefront_compiler_result";
+const MAX_IMAGE_EVIDENCE_BYTES = 5 * 1024 * 1024;
+const MAX_IMAGE_EVIDENCE_COUNT = 8;
 
 interface AnthropicLike {
   messages: {
@@ -33,11 +35,32 @@ export function createAnthropicStructuredProvider(
   return {
     async complete(request: StructuredModelRequest): Promise<StructuredModelResponse> {
       if (request.signal?.aborted) throw new DOMException("Generation cancelled", "AbortError");
+      const images = request.images ?? [];
+      if (images.length > MAX_IMAGE_EVIDENCE_COUNT || images.some((image) =>
+        !/^[A-Za-z0-9_-]{1,80}$/.test(image.key) || image.bytes.byteLength === 0 ||
+        image.bytes.byteLength > MAX_IMAGE_EVIDENCE_BYTES
+      )) throw new StructuredOutputError("Image evidence is invalid or exceeds its bounded limit");
+      const content = images.length === 0
+        ? request.prompt
+        : [
+            { type: "text", text: request.prompt },
+            ...images.flatMap((image) => [
+              { type: "text", text: `IMAGE_REF:${image.key}` },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: image.mediaType,
+                  data: Buffer.from(image.bytes).toString("base64"),
+                },
+              },
+            ]),
+          ];
       const response = await client.messages.create({
         model,
         max_tokens: options.maxTokens ?? 12_000,
         system: request.system,
-        messages: [{ role: "user", content: request.prompt }],
+        messages: [{ role: "user", content }],
         tools: [{
           name: RESULT_TOOL,
           description: `Schema-only result for storefront operation ${request.operation}`,

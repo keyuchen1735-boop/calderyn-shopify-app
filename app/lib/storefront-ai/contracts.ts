@@ -73,6 +73,7 @@ export interface ConceptCandidateSource {
 export interface CompiledConcept {
   candidate: ConceptCandidateSource;
   compiledFingerprint: string;
+  structuralSignature: NoveltySignature;
 }
 
 export interface ExploredConcept extends CompiledConcept {
@@ -95,7 +96,14 @@ export interface StructuredModelRequest {
   system: string;
   prompt: string;
   schema: Record<string, unknown>;
+  images?: VisualEvidenceImage[];
   signal?: AbortSignal;
+}
+
+export interface VisualEvidenceImage {
+  key: string;
+  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/avif";
+  bytes: Uint8Array;
 }
 
 export interface ModelUsage {
@@ -164,6 +172,7 @@ export interface PersistedOwnedAsset extends Omit<AssetManifestEntry, "key"> {
 export interface MaterializedAssetResult {
   manifest: AssetManifest;
   persisted: Array<PersistedOwnedAsset & { logicalKey: string; provenance: string }>;
+  proofAssets: Array<AssetManifestEntry & { logicalKey: string; bytes: Uint8Array }>;
 }
 
 export interface GenerationBudget {
@@ -190,8 +199,11 @@ export type GenerationStage = "context" | "concepts" | "judging" | "expanding" |
 
 export interface GenerationCheckpoint {
   generationId: string;
+  shopId: string;
   stage: GenerationStage;
   at: number;
+  promptHash: string;
+  contextFingerprint?: string;
   usage: GenerationUsage;
   detail?: Record<string, unknown>;
 }
@@ -233,15 +245,27 @@ export interface InstallValidatedBundleInput {
 
 export interface GenerateDependencies {
   enabled(): boolean;
-  preflight(input: { shopId: string; prompt: string; trusted: boolean }): Promise<void>;
+  preflight(input: { shopId: string; prompt: string; trusted: boolean; reservationToken?: string }): Promise<void>;
   assembleContext(input: ContextAssemblyInput): Promise<MerchantStorefrontContext>;
+  loadReferenceImages(input: {
+    shopId: string;
+    references: MerchantReferenceImage[];
+    context: MerchantStorefrontContext;
+    signal?: AbortSignal;
+  }): Promise<VisualEvidenceImage[]>;
   provider: StorefrontAiProvider;
   compileConcept(candidate: ConceptCandidateSource): CompiledConcept;
-  renderConcept(input: { candidate: ExploredConcept; context: MerchantStorefrontContext }): Promise<{ desktop: string; mobile: string }>;
+  renderConcept(input: { candidate: ExploredConcept; context: MerchantStorefrontContext; signal?: AbortSignal }): Promise<ConceptRenderEvidence>;
   produceAsset(input: { shopId: string; request: AssetRequest; context: MerchantStorefrontContext; signal?: AbortSignal }): Promise<ProducedAsset | null>;
-  persistAsset(input: { shopId: string; bytes: Uint8Array }): Promise<PersistedOwnedAsset>;
+  persistAsset(input: { shopId: string; bytes: Uint8Array; signal?: AbortSignal }): Promise<PersistedOwnedAsset>;
+  cleanupAsset(input: { shopId: string; assetKey: string; signal?: AbortSignal }): Promise<void>;
   compileBundle(source: StorefrontBundleSourceV1): CompiledBundleResult;
-  browserProof(input: { bundle: StorefrontBundleV1; context: MerchantStorefrontContext; signal?: AbortSignal }): Promise<BrowserProofReport>;
+  browserProof(input: {
+    bundle: StorefrontBundleV1;
+    context: MerchantStorefrontContext;
+    persistedAssets: MaterializedAssetResult["proofAssets"];
+    signal?: AbortSignal;
+  }): Promise<BrowserProofReport>;
   repairRoute(input: {
     routeId: StorefrontRouteId;
     regionId?: string;
@@ -251,7 +275,7 @@ export interface GenerateDependencies {
     provider: StorefrontAiProvider;
     signal?: AbortSignal;
   }): Promise<RouteRepair>;
-  installValidatedBundle(input: InstallValidatedBundleInput): Promise<{
+  installValidatedBundle(input: InstallValidatedBundleInput & { signal?: AbortSignal }): Promise<{
     versionId: string;
     installedDraftVersionId: string;
     artifactHash: string;
@@ -261,6 +285,11 @@ export interface GenerateDependencies {
   randomId(): string;
 }
 
+export interface ConceptRenderEvidence {
+  desktop: VisualEvidenceImage;
+  mobile: VisualEvidenceImage;
+}
+
 export interface GenerateOriginalStorefrontInput {
   shopId: string;
   prompt: string;
@@ -268,6 +297,7 @@ export interface GenerateOriginalStorefrontInput {
   expectedDraftVersionId: string | null;
   actorId: string | null;
   trusted: boolean;
+  quotaReservationToken?: string;
   routingResolution?: StoreDesignResolution;
   signal?: AbortSignal;
   budget?: GenerationBudgetOverride;

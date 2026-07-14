@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
-import { STORE_TEMPLATE_REGISTRY } from "../storefront-bundle/registry";
+import { STOREFRONT_RECIPES } from "../storefront-recipes";
 import type { StoreTemplateId } from "../storefront-bundle/types";
 import type { ContextAssemblyInput, MerchantStorefrontContext, NoveltySignature } from "./contracts";
+import { structuralSignatureFromBundle } from "./structure";
 
 const DEFAULT_LIMITS: ContextLimits = {
   maxPromptChars: 4_000,
@@ -76,21 +77,10 @@ function finiteNonNegative(value: unknown): number {
 }
 
 function recipeSignatures(): Array<{ templateId: StoreTemplateId; signature: NoveltySignature }> {
-  return STORE_TEMPLATE_REGISTRY.templates.map((template) => {
-    const version = template.versions.find((item) => item.templateVersion === template.activeVersion) ?? template.versions[0];
-    const home = version.routeBlueprints.home;
-    const shell = version.routeBlueprints.shell;
-    return {
-      templateId: template.id,
-      signature: {
-        layoutTopology: home.compositionFamily,
-        typeTreatment: `${home.displayFontId}/${home.bodyFontId}`,
-        sectionSequence: home.cardTopology,
-        navigationModel: `${shell.compositionFamily}/${home.scrollModel}`,
-        interactionStyle: [...home.iconRules, ...home.signatureInteractions].join("/").slice(0, 500),
-      },
-    };
-  });
+  return STOREFRONT_RECIPES.map((recipe) => ({
+    templateId: recipe.config.templateId,
+    signature: structuralSignatureFromBundle(recipe.bundle),
+  }));
 }
 
 function selectProductsWithCollectionCoverage(

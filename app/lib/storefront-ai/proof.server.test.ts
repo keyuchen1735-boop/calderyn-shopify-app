@@ -14,7 +14,31 @@ describe("materializeOwnedAssets", () => {
     });
     expect(result.manifest.entries).toEqual([{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 3 }]);
     expect(result.persisted[0]).toMatchObject({ logicalKey: "hero", assetKey: "owned/sha256/abc.webp", provenance: "generated:fixture" });
+    expect(result.proofAssets).toEqual([expect.objectContaining({
+      logicalKey: "hero",
+      bytes: new Uint8Array([1, 2, 3]),
+      contentHash: "a".repeat(64),
+      mediaType: "image/webp",
+      byteSize: 3,
+    })]);
     expect(JSON.stringify(result.manifest)).not.toContain("http");
+  });
+
+  it("reports each successful persistence before a later materialization failure", async () => {
+    const persisted: string[] = [];
+    await expect(materializeOwnedAssets({
+      shopId: "11111111-1111-4111-8111-111111111111",
+      requests: [
+        { key: "hero", purpose: "hero", required: true },
+        { key: "detail", purpose: "detail", required: true },
+      ],
+      produce: async (request) => request.key === "hero"
+        ? { bytes: new Uint8Array([1, 2, 3]), provenance: "generated:fixture" }
+        : null,
+      persist: async () => ({ assetKey: "owned/sha256/abc.webp", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 3 }),
+      onPersisted: (asset) => { persisted.push(asset.assetKey); },
+    })).rejects.toThrow(/required asset/i);
+    expect(persisted).toEqual(["owned/sha256/abc.webp"]);
   });
 
   it("fails a required asset instead of installing a dangling reference", async () => {

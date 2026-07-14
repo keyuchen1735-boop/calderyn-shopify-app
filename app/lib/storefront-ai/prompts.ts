@@ -145,12 +145,9 @@ ${dataBlock(context)}`;
 export function judgePrompt(
   candidate: ExploredConcept,
   context: MerchantStorefrontContext,
-  renders: { desktop: string; mobile: string },
 ): string {
-  return `Score candidate ${candidate.candidate.concept.name} from 0-100 on every required dimension. Fail ecommerce ambiguity, weak product prominence, or recipe convergence.
+  return `Score candidate ${candidate.candidate.concept.name} from 0-100 on every required dimension using the attached real Chromium desktop and mobile screenshots. Fail ecommerce ambiguity, weak product prominence, or recipe convergence.
 COMPILED_FINGERPRINT:${candidate.compiledFingerprint}
-DESKTOP_RENDER:${renders.desktop.slice(0, 30_000)}
-MOBILE_RENDER:${renders.mobile.slice(0, 30_000)}
 ${dataBlock({ prompt: context.prompt, products: context.products, collections: context.collections, recipeNoveltySignatures: context.recipeNoveltySignatures })}`;
 }
 

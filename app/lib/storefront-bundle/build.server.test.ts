@@ -59,6 +59,7 @@ function dependencies(overrides: Partial<StorefrontBuildDependencies> = {}): Sto
     createVersion: vi.fn().mockResolvedValue(VERSION),
     installDraft: vi.fn().mockResolvedValue(VERSION),
     customBuildEnabled: () => true,
+    reserveCustomBuild: vi.fn().mockResolvedValue("quota-reservation-1"),
     generateCustom: vi.fn().mockResolvedValue({
       status: "installed",
       versionId: VERSION,
@@ -256,7 +257,9 @@ describe("runtime-1 storefront build", () => {
       prompt: "Create something completely new",
       expectedDraftVersionId: PRIOR_DRAFT,
       routingResolution: customResolution,
+      quotaReservationToken: "quota-reservation-1",
     }));
+    expect(customDeps.reserveCustomBuild).toHaveBeenCalledTimes(1);
     expect(customDeps.loadRecipe).not.toHaveBeenCalled();
     expect(customDeps.createVersion).not.toHaveBeenCalled();
     expect(events.map((event) => event.stage)).toEqual(["routing", "generating_original", "installed"]);

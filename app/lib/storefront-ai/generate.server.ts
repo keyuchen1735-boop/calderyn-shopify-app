@@ -1,17 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
-import { persistExternalImage } from "~/lib/assets/persist.server";
+import { MAX_IMAGE_BYTES, SHOP_ASSETS_BUCKET, fetchExternalImageBytes, sniffImageMime } from "~/lib/assets/persist.server";
 import { getSupabase } from "~/lib/supabase.server";
-import { assertCanGenerate } from "~/lib/storegen/guard.server";
+import { assertCanGenerate, consumeGenerateQuotaReservation } from "~/lib/storegen/guard.server";
 import { getImageProvider } from "~/lib/storegen/imagery/provider.server";
-import { attachVerifiedStorefrontAsset, persistStorefrontAssetBytes } from "../storefront-bundle/assets.server";
 import {
-  createStorefrontBundleVersion,
+  garbageCollectUnreferencedStorefrontAsset,
+  persistStorefrontAssetBytes,
+} from "../storefront-bundle/assets.server";
+import {
   hashStorefrontArtifact,
-  installStorefrontDraft,
-  validateStorefrontBundleVersion,
+  installGeneratedStorefrontBundle,
 } from "../storefront-bundle/release.server";
 import { compileBundle } from "../storefront-compiler/compile";
 import { materializeOwnedAssets } from "./assets.server";
+import { persistGenerationCheckpoint } from "./checkpoint.server";
 import { compileConceptCandidate, exploreConcepts, renderConceptWithMerchantData } from "./concepts.server";
 import { assembleStorefrontContext } from "./context.server";
 import type {
@@ -131,17 +133,46 @@ async function defaultProduceAsset(input: Parameters<GenerateDependencies["produ
     sourceImageUrl: null,
     mode: "lifestyle_scene",
   });
-  const captured = await persistExternalImage(input.shopId, generated.url, "storefront-editorial", "generated");
-  if (!captured.persisted) return null;
-  const downloaded = await getSupabase().storage.from("shop-assets").download(captured.storageKey);
-  if (downloaded.error || !downloaded.data) return null;
+  const fetched = await fetchExternalImageBytes(generated.url, { maxBytes: MAX_IMAGE_BYTES, signal: input.signal });
+  if (fetched.mediaType === "image/gif") return null;
   return {
-    bytes: new Uint8Array(await downloaded.data.arrayBuffer()),
-    provenance: `${imageProvider.name}:generated:${captured.assetId}`,
+    bytes: fetched.bytes,
+    provenance: `${imageProvider.name}:generated`,
   };
 }
 
-async function defaultInstallValidatedBundle(input: InstallValidatedBundleInput): Promise<{
+function raceAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason ?? new DOMException("Generation cancelled", "AbortError"));
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("Generation cancelled", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+
+async function defaultLoadReferenceImages(input: Parameters<GenerateDependencies["loadReferenceImages"]>[0]) {
+  if (input.references.length > 4 || input.context.referenceImages.length !== input.references.length) {
+    throw new Error("Reference image set is invalid or exceeds its bounded limit");
+  }
+  const storage = getSupabase().storage.from(SHOP_ASSETS_BUCKET);
+  return Promise.all(input.references.map(async (reference, index) => {
+    if (/^(?:https?:)?\/\//i.test(reference.assetKey) || reference.assetKey.includes("..")) {
+      throw new Error("Reference image must be an owned storage key");
+    }
+    const downloaded = await raceAbort(storage.download(reference.assetKey), input.signal);
+    if (downloaded.error || !downloaded.data) throw new Error("Reference image bytes are unavailable");
+    const bytes = new Uint8Array(await raceAbort(downloaded.data.arrayBuffer(), input.signal));
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_IMAGE_BYTES || sniffImageMime(bytes) !== reference.mediaType) {
+      throw new Error("Reference image bytes failed bounded media verification");
+    }
+    const opaque = input.context.referenceImages[index];
+    if (!opaque || !/^reference-image-[0-9]{3}$/.test(opaque.assetKey)) throw new Error("Reference image mapping is invalid");
+    return { key: opaque.assetKey, mediaType: reference.mediaType, bytes };
+  }));
+}
+
+async function defaultInstallValidatedBundle(input: InstallValidatedBundleInput & { signal?: AbortSignal }): Promise<{
   versionId: string;
   installedDraftVersionId: string;
   artifactHash: string;
@@ -154,42 +185,31 @@ async function defaultInstallValidatedBundle(input: InstallValidatedBundleInput)
     validationProfileVersion: input.bundle.validationProfileVersion,
     artifact,
     assetManifest,
+    signal: input.signal,
   });
   input.audit.finalArtifactHash = databaseArtifactHash;
-  const versionId = await createStorefrontBundleVersion({
+  const installed = await installGeneratedStorefrontBundle({
     shopId: input.shopId,
-    sourceKind: "custom",
-    status: "candidate",
+    expectedDraftVersionId: input.expectedDraftVersionId,
+    actorId: input.actorId,
     schemaVersion: input.bundle.schemaVersion,
     runtimeVersion: input.bundle.runtimeVersion,
     validationProfileVersion: input.bundle.validationProfileVersion,
     artifact,
     assetManifest,
-    validationReport: null,
+    validationReport: { valid: true, ...input.validationReport, compilerArtifactHash: input.artifactHash },
     generationPrompt: input.prompt,
-    resolution: { kind: "custom_compiler", audit: input.audit },
-  });
-  for (const asset of input.persistedAssets) {
-    await attachVerifiedStorefrontAsset({
-      shopId: input.shopId,
-      bundleId: versionId,
+    resolution: {
+      kind: "custom_compiler",
+      audit: { ...input.audit, rawPrompt: undefined, contextSnapshot: undefined },
+    },
+    assetReferences: input.persistedAssets.map((asset) => ({
       logicalKey: asset.logicalKey,
       assetKey: asset.assetKey,
-    });
-  }
-  await validateStorefrontBundleVersion({
-    shopId: input.shopId,
-    versionId,
-    artifactHash: databaseArtifactHash,
-    validationReport: { ...input.validationReport, compilerArtifactHash: input.artifactHash },
+    })),
+    signal: input.signal,
   });
-  const installedDraftVersionId = await installStorefrontDraft({
-    shopId: input.shopId,
-    versionId,
-    expectedDraftVersionId: input.expectedDraftVersionId,
-    actorId: input.actorId,
-  });
-  return { versionId, installedDraftVersionId, artifactHash: databaseArtifactHash };
+  return { ...installed, artifactHash: databaseArtifactHash };
 }
 
 export function createDefaultGenerateDependencies(): GenerateDependencies {
@@ -199,21 +219,34 @@ export function createDefaultGenerateDependencies(): GenerateDependencies {
   };
   return {
     enabled: () => process.env.STOREFRONT_CUSTOM_BUILD === "1",
-    preflight: ({ shopId, prompt, trusted }) => assertCanGenerate(shopId, prompt, { trusted }),
+    preflight: async ({ shopId, prompt, trusted, reservationToken }) => {
+      if (reservationToken) consumeGenerateQuotaReservation({ token: reservationToken, shopId, prompt });
+      else await assertCanGenerate(shopId, prompt, { trusted });
+    },
     assembleContext: (input) => assembleStorefrontContext(input),
+    loadReferenceImages: defaultLoadReferenceImages,
     provider,
     compileConcept: compileConceptCandidate,
     renderConcept: renderConceptWithMerchantData,
     produceAsset: defaultProduceAsset,
-    persistAsset: ({ shopId, bytes }) => persistStorefrontAssetBytes({ shopId, bytes }),
+    persistAsset: ({ shopId, bytes, signal }) => raceAbort(persistStorefrontAssetBytes({ shopId, bytes, signal }), signal),
+    cleanupAsset: ({ shopId, assetKey, signal }) => raceAbort(
+      garbageCollectUnreferencedStorefrontAsset({ shopId, assetKey }),
+      signal,
+    ),
     compileBundle,
     browserProof: async (input) => {
-      if (!browserProofAdapter) throw new Error("Storefront custom build browser proof is unavailable");
-      return browserProofAdapter(input);
+      if (!browserProofAdapter) {
+        const { storefrontAiBrowserProof } = await import("../storefront-validation/browser.server");
+        registerStorefrontAiBrowserProof(storefrontAiBrowserProof);
+      }
+      const adapter = browserProofAdapter;
+      if (!adapter) throw new Error("Storefront custom build browser proof is unavailable");
+      return adapter(input);
     },
     repairRoute: (input) => repairRouteWithProvider(input),
     installValidatedBundle: defaultInstallValidatedBundle,
-    checkpoint: async () => undefined,
+    checkpoint: persistGenerationCheckpoint,
     now: () => Date.now(),
     randomId: () => randomUUID(),
   };
@@ -255,10 +288,17 @@ export async function generateOriginalStorefront(
   const providerCalls: GenerationAudit["providerCalls"] = [];
   const rejectedCandidates: GenerationAudit["rejectedCandidates"] = [];
   const candidateScores: GenerationAudit["candidateScores"] = [];
+  let referenceImageEvidence: Awaited<ReturnType<GenerateDependencies["loadReferenceImages"]>> = [];
   const meteredProvider: StorefrontAiProvider = {
     async complete(request) {
       meter.check();
-      const response = await deps.provider.complete(request);
+      const response = await raceAbort(deps.provider.complete({
+        ...request,
+        signal: pipelineSignal,
+        ...((request.operation === "concept" || request.operation === "repairConcept") && referenceImageEvidence.length
+          ? { images: referenceImageEvidence }
+          : {}),
+      }), pipelineSignal);
       meter.model(response.usage);
       providerCalls.push({ operation: request.operation, provider: response.provider, model: response.model, usage: response.usage });
       return response;
@@ -269,7 +309,16 @@ export async function generateOriginalStorefront(
   let promptHash = `sha256:${createHash("sha256").update(input.prompt.trim()).digest("hex")}`;
 
   const checkpoint = async (stage: GenerationCheckpoint["stage"], detail?: Record<string, unknown>) => {
-    await deps.checkpoint({ generationId, stage, at: deps.now(), usage: meter.snapshot(), detail });
+    await raceAbort(deps.checkpoint({
+      generationId,
+      shopId: input.shopId,
+      stage,
+      at: deps.now(),
+      promptHash,
+      ...(contextFingerprint ? { contextFingerprint } : {}),
+      usage: meter.snapshot(),
+      detail,
+    }), pipelineSignal);
   };
 
   const partialAudit = (message?: string): Partial<GenerationAudit> => ({
@@ -292,12 +341,23 @@ export async function generateOriginalStorefront(
   });
 
   try {
-    await deps.preflight({ shopId: input.shopId, prompt: input.prompt, trusted: input.trusted });
+    await raceAbort(deps.preflight({
+      shopId: input.shopId,
+      prompt: input.prompt,
+      trusted: input.trusted,
+      ...(input.quotaReservationToken ? { reservationToken: input.quotaReservationToken } : {}),
+    }), pipelineSignal);
     meter.check();
-    const context = await deps.assembleContext({ shopId: input.shopId, prompt: input.prompt, referenceImages: input.referenceImages });
+    const context = await raceAbort(deps.assembleContext({ shopId: input.shopId, prompt: input.prompt, referenceImages: input.referenceImages }), pipelineSignal);
     contextSnapshot = context;
     contextFingerprint = context.fingerprint;
     promptHash = context.promptHash;
+    referenceImageEvidence = await raceAbort(deps.loadReferenceImages({
+      shopId: input.shopId,
+      references: input.referenceImages ?? [],
+      context,
+      signal: pipelineSignal,
+    }), pipelineSignal);
     await checkpoint("context", { fingerprint: context.fingerprint });
 
     meter.candidates(3);
@@ -316,7 +376,7 @@ export async function generateOriginalStorefront(
       candidates: explored.candidates,
       context,
       provider: meteredProvider,
-      render: deps.renderConcept,
+      render: (renderInput) => raceAbort(deps.renderConcept({ ...renderInput, signal: pipelineSignal }), pipelineSignal),
       signal: pipelineSignal,
     });
     for (const judgment of ranked.accepted) candidateScores.push({
@@ -339,6 +399,7 @@ export async function generateOriginalStorefront(
 
     for (const judgment of ranked.accepted) {
       const winner = judgment.candidate;
+      const candidatePersisted: MaterializedAssetResult["persisted"] = [];
       try {
         const expansion = await expandWinningConcept({ winner, context, provider: meteredProvider, signal: pipelineSignal });
         await checkpoint("expanding", { candidateId: winner.candidate.candidateId });
@@ -347,19 +408,25 @@ export async function generateOriginalStorefront(
           shopId: input.shopId,
           requests,
           signal: pipelineSignal,
-          produce: (request) => deps.produceAsset({ shopId: input.shopId, request, context, signal: pipelineSignal }),
-          persist: deps.persistAsset,
+          produce: (request) => raceAbort(deps.produceAsset({ shopId: input.shopId, request, context, signal: pipelineSignal }), pipelineSignal),
+          persist: (persistInput) => raceAbort(deps.persistAsset({ ...persistInput, signal: pipelineSignal }), pipelineSignal),
           onImage: () => meter.image(),
+          onPersisted: (asset) => { candidatePersisted.push(asset); },
         });
         await checkpoint("assets", { candidateId: winner.candidate.candidateId, assets: assets.persisted.length });
         const source = expandedBundleSource({ generationId, promptHash, winner, expansion, assets: assets.manifest });
         const proven = await proveAndRepairBundle({
           source,
           compile: deps.compileBundle,
-          proof: (compiled) => deps.browserProof({ bundle: compiled.bundle, context, signal: pipelineSignal }),
-          repair: ({ routeId, regionId, diagnostic, source: current }) => deps.repairRoute({
+          proof: (compiled) => raceAbort(deps.browserProof({
+            bundle: compiled.bundle,
+            context,
+            persistedAssets: assets.proofAssets,
+            signal: pipelineSignal,
+          }), pipelineSignal),
+          repair: ({ routeId, regionId, diagnostic, source: current }) => raceAbort(deps.repairRoute({
             routeId, regionId, diagnostic, source: current, context, provider: meteredProvider, signal: pipelineSignal,
-          }),
+          }), pipelineSignal),
           maxRepairs: Math.min(2, Math.max(0, meter.limits.maxRepairs - meter.usage.repairs)),
           onProof: (report) => meter.browser(report.browserMs),
           onRepair: () => meter.repair(),
@@ -392,7 +459,7 @@ export async function generateOriginalStorefront(
           usage: meter.snapshot(),
           finalArtifactHash: artifactHash,
         };
-        const installed = await deps.installValidatedBundle({
+        const installed = await raceAbort(deps.installValidatedBundle({
           shopId: input.shopId,
           expectedDraftVersionId: input.expectedDraftVersionId,
           actorId: input.actorId,
@@ -402,7 +469,8 @@ export async function generateOriginalStorefront(
           validationReport: { compiler: proven.compiled.report, browser: proven.proof },
           persistedAssets: assets.persisted,
           audit,
-        });
+          signal: pipelineSignal,
+        }), pipelineSignal);
         audit.installedVersionId = installed.versionId;
         audit.finalArtifactHash = installed.artifactHash;
         await checkpoint("installed", { versionId: installed.versionId, artifactHash: installed.artifactHash });
@@ -414,7 +482,16 @@ export async function generateOriginalStorefront(
           audit,
         };
       } catch (error) {
-        if (isAbort(error, pipelineSignal) || error instanceof GenerationBudgetError) throw error;
+        const fatal = isAbort(error, pipelineSignal) || error instanceof GenerationBudgetError;
+        const cleanupSignal = fatal ? AbortSignal.timeout(10_000) : pipelineSignal;
+        const cleanup = await Promise.allSettled(candidatePersisted.map((asset) => deps.cleanupAsset({
+          shopId: input.shopId,
+          assetKey: asset.assetKey,
+          signal: cleanupSignal,
+        })));
+        const cleanupFailures = cleanup.filter((result) => result.status === "rejected");
+        if (cleanupFailures.length) throw new Error(`Failed to garbage-collect ${cleanupFailures.length} rejected storefront asset(s)`);
+        if (fatal) throw error;
         rejectedCandidates.push({ candidateId: winner.candidate.candidateId, reason: error instanceof Error ? error.message : String(error) });
       }
     }
@@ -424,11 +501,17 @@ export async function generateOriginalStorefront(
       ? error
       : pipelineSignal.reason instanceof GenerationBudgetError ? pipelineSignal.reason : null;
     if (isAbort(error, pipelineSignal) && !budgetError) {
-      await deps.checkpoint({ generationId, stage: "cancelled", at: deps.now(), usage: { ...meter.usage } }).catch(() => undefined);
+      await deps.checkpoint({
+        generationId, shopId: input.shopId, stage: "cancelled", at: deps.now(), promptHash,
+        ...(contextFingerprint ? { contextFingerprint } : {}), usage: { ...meter.usage },
+      }).catch(() => undefined);
       return { status: "cancelled", code: "generation_cancelled", audit: partialAudit() };
     }
     const message = error instanceof Error ? error.message : String(error);
-    await deps.checkpoint({ generationId, stage: "failed", at: deps.now(), usage: { ...meter.usage }, detail: { message } }).catch(() => undefined);
+    await deps.checkpoint({
+      generationId, shopId: input.shopId, stage: "failed", at: deps.now(), promptHash,
+      ...(contextFingerprint ? { contextFingerprint } : {}), usage: { ...meter.usage }, detail: { message },
+    }).catch(() => undefined);
     return {
       status: "failed",
       code: budgetError ? "generation_budget_exceeded" : "generation_failed",

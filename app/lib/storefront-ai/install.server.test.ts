@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { compileBundle } from "../storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "../storefront-compiler/__fixtures__/valid-bundle";
+import type { InstallGeneratedStorefrontBundleInput } from "../storefront-bundle/release.server";
 import { createDefaultGenerateDependencies } from "./generate.server";
 import type { GenerationAudit } from "./contracts";
 import { createContext } from "./__fixtures__/deterministic";
@@ -11,6 +12,10 @@ const calls = vi.hoisted(() => ({
   hashArtifact: vi.fn(async () => `sha256:${"b".repeat(64)}`),
   validateVersion: vi.fn(async () => "22222222-2222-4222-8222-222222222222"),
   installDraft: vi.fn(async () => "22222222-2222-4222-8222-222222222222"),
+  atomicInstall: vi.fn(async (_input: InstallGeneratedStorefrontBundleInput) => ({
+    versionId: "22222222-2222-4222-8222-222222222222",
+    installedDraftVersionId: "22222222-2222-4222-8222-222222222222",
+  })),
 }));
 
 vi.mock("../storefront-bundle/release.server", () => ({
@@ -18,6 +23,7 @@ vi.mock("../storefront-bundle/release.server", () => ({
   hashStorefrontArtifact: calls.hashArtifact,
   validateStorefrontBundleVersion: calls.validateVersion,
   installStorefrontDraft: calls.installDraft,
+  installGeneratedStorefrontBundle: calls.atomicInstall,
 }));
 vi.mock("../storefront-bundle/assets.server", () => ({
   attachVerifiedStorefrontAsset: calls.attachAsset,
@@ -70,17 +76,25 @@ describe("generated storefront installation", () => {
       audit,
     });
 
-    expect(calls.createVersion).toHaveBeenCalledWith(expect.objectContaining({
-      sourceKind: "custom",
+    expect(calls.atomicInstall).toHaveBeenCalledWith(expect.objectContaining({
+      shopId: audit.shopId,
+      expectedDraftVersionId: null,
       artifact: { sourceKind: "custom", bundle },
+      assetReferences: [expect.objectContaining({
+        logicalKey: "hero",
+        assetKey: expect.stringContaining("/storefront/sha256/"),
+      })],
       resolution: expect.objectContaining({
         audit: expect.objectContaining({ finalArtifactHash: `sha256:${"b".repeat(64)}` }),
       }),
     }));
-    expect(calls.attachAsset).toHaveBeenCalledWith(expect.objectContaining({
-      logicalKey: "hero",
-      assetKey: expect.stringContaining("/storefront/sha256/"),
-    }));
+    const installPayload = calls.atomicInstall.mock.calls[0][0];
+    expect(JSON.stringify(installPayload.resolution)).not.toContain(audit.rawPrompt);
+    expect(JSON.stringify(installPayload.resolution)).not.toContain("Arc Lamp");
+    expect(calls.createVersion).not.toHaveBeenCalled();
+    expect(calls.attachAsset).not.toHaveBeenCalled();
+    expect(calls.validateVersion).not.toHaveBeenCalled();
+    expect(calls.installDraft).not.toHaveBeenCalled();
     expect(installed.artifactHash).toBe(`sha256:${"b".repeat(64)}`);
   });
 });

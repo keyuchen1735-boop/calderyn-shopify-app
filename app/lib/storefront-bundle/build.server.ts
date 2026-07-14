@@ -2,6 +2,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import type { BundleValidationReport } from "~/lib/storefront-compiler/validate";
 import type { DefinedRecipe } from "~/lib/storefront-recipes/factory";
 import { generateOriginalStorefront } from "~/lib/storefront-ai/generate.server";
+import { reserveGenerateQuota } from "~/lib/storegen/guard.server";
 import type {
   GenerateOriginalStorefrontInput,
   GenerateOriginalStorefrontResult,
@@ -79,6 +80,7 @@ export interface StorefrontBuildDependencies {
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
   installDraft(input: InstallStorefrontDraftInput): Promise<string>;
   customBuildEnabled(): boolean;
+  reserveCustomBuild(input: { shopId: string; prompt: string; trusted: boolean }): Promise<string>;
   generateCustom(input: GenerateOriginalStorefrontInput): Promise<GenerateOriginalStorefrontResult>;
 }
 
@@ -196,6 +198,7 @@ const defaultDependencies: StorefrontBuildDependencies = {
   createVersion: createStorefrontBundleVersion,
   installDraft: installStorefrontDraft,
   customBuildEnabled: isStorefrontCustomBuildEnabled,
+  reserveCustomBuild: ({ shopId, prompt, trusted }) => reserveGenerateQuota(shopId, prompt, { trusted }),
   generateCustom: (input) => generateOriginalStorefront(input),
 };
 
@@ -216,13 +219,14 @@ export interface PreparedStorefrontDesignBuild {
   evidence: CatalogRoutingEvidence;
   resolution: StoreDesignResolution;
   pointers: StorefrontReleasePointers;
+  customQuotaReservationToken?: string;
 }
 
 /** Resolve and reject every switch/write guard before a streaming response is
  * committed. The returned decision is then consumed by buildStorefrontDesign,
  * so routing is frozen once rather than recomputed across the stream boundary. */
 export async function prepareStorefrontDesignBuild(
-  input: Pick<StorefrontBuildInput, "shopId" | "request" | "recipeBuildEnabled" | "customBuildEnabled">,
+  input: Pick<StorefrontBuildInput, "shopId" | "request" | "recipeBuildEnabled" | "customBuildEnabled" | "trusted">,
   dependencies: StorefrontBuildDependencies = defaultDependencies,
 ): Promise<PreparedStorefrontDesignBuild> {
   const evidence = await dependencies.buildEvidence(input.shopId);
@@ -243,7 +247,10 @@ export async function prepareStorefrontDesignBuild(
   }
   await dependencies.assertWriteAllowed(input.shopId);
   const pointers = await dependencies.readPointers(input.shopId);
-  return { evidence, resolution, pointers };
+  const customQuotaReservationToken = resolution.kind === "custom"
+    ? await dependencies.reserveCustomBuild({ shopId: input.shopId, prompt: input.request.prompt, trusted: input.trusted ?? false })
+    : undefined;
+  return { evidence, resolution, pointers, ...(customQuotaReservationToken ? { customQuotaReservationToken } : {}) };
 }
 
 async function emit(
@@ -264,7 +271,7 @@ export async function buildStorefrontDesign(
   dependencies: StorefrontBuildDependencies = defaultDependencies,
 ): Promise<StorefrontBuildReceipt> {
   const prepared = input.prepared ?? await prepareStorefrontDesignBuild(input, dependencies);
-  const { evidence, resolution: frozenResolution, pointers } = prepared;
+  const { evidence, resolution: frozenResolution, pointers, customQuotaReservationToken } = prepared;
   const recommendationChanged = input.recommendedResolution
     ? input.recommendedResolution.catalogFingerprint !== frozenResolution.catalogFingerprint
     : false;
@@ -286,6 +293,7 @@ export async function buildStorefrontDesign(
       actorId: input.actorId ?? null,
       trusted: input.trusted ?? false,
       routingResolution: frozenResolution,
+      ...(customQuotaReservationToken ? { quotaReservationToken: customQuotaReservationToken } : {}),
       ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
     });
     if (generated.status === "disabled") {

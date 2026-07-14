@@ -723,12 +723,12 @@ function validateRoute(value: unknown, namespace: string, path: string, add: Add
   return tree;
 }
 
-function validateCheckout(value: unknown, add: AddDiagnostic): void {
+function validateCheckout(value: unknown, add: AddDiagnostic): TreeContext {
   const path = "routes.checkout";
   const input = record(value);
   if (!input) {
     add("route.missing", path, "Compiled checkout route is missing");
-    return;
+    return parseTree([], `${path}.decorativeTree`, "checkout", add, true, "store");
   }
   const html = typeof input.decorativeHtml === "string" ? input.decorativeHtml : "";
   const css = typeof input.decorativeCss === "string" ? input.decorativeCss : "";
@@ -761,6 +761,29 @@ function validateCheckout(value: unknown, add: AddDiagnostic): void {
   if (bindings.some((binding) => binding.ref.kind === "data" && binding.ref.path.startsWith("store."))) expectedData.push({ kind: "storeIdentity" });
   if ([...tree.elements.values()].some((node) => node.attributes["data-cd-platform-content"] === "policyLinks")) expectedData.push({ kind: "policyLinks" });
   if (safeJson(input.requiredData) !== JSON.stringify(expectedData)) add("data.plan_mismatch", `${path}.requiredData`, "Checkout data plan does not match decoration");
+  return tree;
+}
+
+function validateAssetReferenceSet(bundle: UnknownRecord, trees: readonly TreeContext[], add: AddDiagnostic): void {
+  const assets = record(bundle.assets);
+  if (!assets || !Array.isArray(assets.entries)) return;
+  const manifestKeys = new Set(assets.entries.flatMap((entry) => {
+    const item = record(entry);
+    return typeof item?.key === "string" ? [item.key] : [];
+  }));
+  const referencedKeys = new Set<string>();
+  for (const tree of trees) {
+    for (const element of tree.elements.values()) {
+      const key = element.attributes["data-cd-asset-key"];
+      if (key) referencedKeys.add(key);
+    }
+  }
+  for (const key of [...referencedKeys].sort(compareCodeUnits)) {
+    if (!manifestKeys.has(key)) add("asset.reference_missing", `assets.references.${key}`, "Compiled asset reference is absent from the manifest");
+  }
+  for (const key of [...manifestKeys].sort(compareCodeUnits)) {
+    if (!referencedKeys.has(key)) add("asset.manifest_unused", `assets.entries.${key}`, "Asset manifest key is not referenced by compiled markup");
+  }
 }
 
 function validateBundleEnvelope(bundle: UnknownRecord, add: AddDiagnostic): void {
@@ -825,13 +848,19 @@ export function validateCompiledBundle(value: unknown): BundleValidationReport {
   else {
     validateBundleEnvelope(bundle, add);
     const protectedNodes: ProtectedCssNode[] = [];
-    protectedNodes.push(...validateRoute(bundle.shell, "shell", "shell", add).protectedNodes);
+    const trees: TreeContext[] = [];
+    const shell = validateRoute(bundle.shell, "shell", "shell", add);
+    trees.push(shell);
+    protectedNodes.push(...shell.protectedNodes);
     const routes = record(bundle.routes);
     if (!routes) add("bundle.routes", "routes", "Bundle routes must be an object");
     for (const routeId of ["home", "collection", "product", "search", "cart"] as const) {
-      protectedNodes.push(...validateRoute(routes?.[routeId], routeId, `routes.${routeId}`, add).protectedNodes);
+      const tree = validateRoute(routes?.[routeId], routeId, `routes.${routeId}`, add);
+      trees.push(tree);
+      protectedNodes.push(...tree.protectedNodes);
     }
-    validateCheckout(routes?.checkout, add);
+    trees.push(validateCheckout(routes?.checkout, add));
+    validateAssetReferenceSet(bundle, trees, add);
     validateGlobalCss(bundle.designSystem, protectedNodes, add);
     const serialized = safeJson(value);
     if (!serialized) add("bundle.serialization", "bundle", "Bundle is not serializable");

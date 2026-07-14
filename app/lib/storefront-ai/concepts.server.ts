@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
 import { renderToStaticMarkup } from "react-dom/server";
+import { launchChromium } from "../browser/chromium.server";
 import { isCuratedFontId } from "../storefront-bundle/types";
 import { isCompilerIdentifier } from "../storefront-compiler/assets";
 import { assertSafeDesignTokenValue, compileCss } from "../storefront-compiler/css";
 import { compileHtml } from "../storefront-compiler/html";
 import type { RouteSource } from "../storefront-compiler/compile";
+import { storefrontDesignSystemCss } from "../storefront-runtime/curated-fonts";
 import { renderStorefrontRoute } from "../storefront-runtime/render";
 import type { PublicPresentationData, PublicProduct } from "../storefront-runtime/public-data.server";
 import type {
   CompiledConcept,
+  ConceptRenderEvidence,
   ConceptCandidateSource,
   ConceptStrategy,
   ExploredConcept,
@@ -17,6 +20,7 @@ import type {
   StructuredModelResponse,
 } from "./contracts";
 import { CONCEPT_SCHEMA, COMPILER_SYSTEM_PROMPT, conceptPrompt, conceptRepairPrompt } from "./prompts";
+import { structuralSignatureFromConcept } from "./structure";
 
 export interface ExploreConceptsInput {
   context: MerchantStorefrontContext;
@@ -149,13 +153,48 @@ export function compileConceptCandidate(candidate: ConceptCandidateSource): Comp
     css: [shellCss.css, homeCss.css, globalCss.css],
     designSystem: candidate.designSystem,
   })).digest("hex")}`;
-  return { candidate, compiledFingerprint };
+  return {
+    candidate,
+    compiledFingerprint,
+    structuralSignature: structuralSignatureFromConcept({
+      displayFontId: candidate.designSystem.displayFontId,
+      bodyFontId: candidate.designSystem.bodyFontId,
+      tokens: candidate.designSystem.tokens,
+      globalCss: globalCss.css,
+      shell: {
+        tree: shellHtml.tree,
+        css: shellCss.css,
+        interactions: shellHtml.interactions,
+        trustedSlots: shellHtml.trustedSlots,
+      },
+      home: {
+        tree: homeHtml.tree,
+        css: homeCss.css,
+        interactions: homeHtml.interactions,
+        trustedSlots: homeHtml.trustedSlots,
+      },
+    }),
+  };
+}
+
+/** Produces the same closed design-system CSS used by the public runtime plus
+ * compiler-scoped global CSS for the two concept surfaces shown to the judge. */
+export function compileConceptJudgeDesignCss(candidate: ConceptCandidateSource): string {
+  const shell = compileHtml(candidate.shell.html, { namespace: "shell", rootScopeKind: "store" });
+  const home = compileHtml(candidate.home.html, { namespace: "home", rootScopeKind: "store" });
+  const globalCss = compileCss(candidate.designSystem.globalCss, {
+    namespace: "global",
+    protectedNodes: [...shell.protectedCssNodes, ...home.protectedCssNodes],
+    protectedSourceIds: [...shell.protectedSourceIds, ...home.protectedSourceIds],
+  }).css;
+  return `${storefrontDesignSystemCss(candidate.designSystem)}${globalCss}`;
 }
 
 function presentationProduct(product: MerchantStorefrontContext["products"][number]): PublicProduct {
   const price = product.priceMin > 0 ? { cents: product.priceMin, currency: product.currency } : null;
   const available = product.availability !== "sold_out";
-  const images = product.images.map((image) => ({ url: `/__owned_asset__/${encodeURIComponent(image.assetKey)}`, alt: product.title }));
+  const imageSvg = encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900"><rect width="1200" height="900" fill="#d8d3c7"/><circle cx="820" cy="330" r="220" fill="#786f63"/><path d="M100 780L430 220l320 560z" fill="#31353a"/></svg>`);
+  const images = product.images.map(() => ({ url: `data:image/svg+xml,${imageSvg}`, alt: product.title }));
   return {
     id: product.id,
     handle: product.handle,
@@ -183,7 +222,8 @@ function presentationProduct(product: MerchantStorefrontContext["products"][numb
 export async function renderConceptWithMerchantData(input: {
   candidate: ExploredConcept;
   context: MerchantStorefrontContext;
-}): Promise<{ desktop: string; mobile: string }> {
+  signal?: AbortSignal;
+}): Promise<ConceptRenderEvidence> {
   const { candidate, context } = input;
   const shell = compileHtml(candidate.candidate.shell.html, { namespace: "shell", rootScopeKind: "store" });
   const home = compileHtml(candidate.candidate.home.html, { namespace: "home", rootScopeKind: "store" });
@@ -218,13 +258,30 @@ export async function renderConceptWithMerchantData(input: {
     interactions: compiled.interactions,
     trustedSlots: compiled.trustedSlots,
   });
-  const shellMarkup = renderToStaticMarkup(renderStorefrontRoute({ routeId: "home", artifact: artifact(shell, candidate.candidate.shell.css), data, nonce: "judge" }).element);
-  const homeMarkup = renderToStaticMarkup(renderStorefrontRoute({ routeId: "home", artifact: artifact(home, candidate.candidate.home.css), data, nonce: "judge" }).element);
-  const document = `${shellMarkup}${homeMarkup}`;
-  return {
-    desktop: `<viewport width="1440" height="1000">${document}</viewport>`,
-    mobile: `<viewport width="390" height="844">${document}</viewport>`,
-  };
+  const shellMarkup = renderToStaticMarkup(renderStorefrontRoute({ routeId: "home", artifact: artifact(shell, compileCss(candidate.candidate.shell.css, { namespace: "shell", protectedNodes: shell.protectedCssNodes, protectedSourceIds: shell.protectedSourceIds }).css), data, nonce: "judge" }).element);
+  const homeMarkup = renderToStaticMarkup(renderStorefrontRoute({ routeId: "home", artifact: artifact(home, compileCss(candidate.candidate.home.css, { namespace: "home", protectedNodes: home.protectedCssNodes, protectedSourceIds: home.protectedSourceIds }).css), data, nonce: "judge" }).element);
+  const designCss = compileConceptJudgeDesignCss(candidate.candidate);
+  const document = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style nonce="judge">html,body{margin:0;min-height:100%;overflow-x:hidden}${designCss}</style></head><body><div data-cd-bundle="global" data-cd-bundle-runtime="1" data-cd-bundle-source="custom">${shellMarkup}${homeMarkup}</div></body></html>`;
+  if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("Generation cancelled", "AbortError");
+  const browser = await launchChromium({ width: 1440, height: 1000 });
+  const abort = () => { void browser.close(); };
+  input.signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(document, { waitUntil: "domcontentloaded", timeout: 20_000 });
+    await page.setViewport({ width: 1440, height: 1000 });
+    const desktop = new Uint8Array(await page.screenshot({ type: "webp", fullPage: true }));
+    await page.setViewport({ width: 390, height: 844 });
+    const mobile = new Uint8Array(await page.screenshot({ type: "webp", fullPage: true }));
+    if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("Generation cancelled", "AbortError");
+    return {
+      desktop: { key: "judge-desktop", mediaType: "image/webp", bytes: desktop },
+      mobile: { key: "judge-mobile", mediaType: "image/webp", bytes: mobile },
+    };
+  } finally {
+    input.signal?.removeEventListener("abort", abort);
+    await browser.close().catch(() => undefined);
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -292,12 +349,12 @@ export async function exploreConcepts(input: ExploreConceptsInput): Promise<Expl
   const signatures = new Set<string>();
   for (const result of results) {
     if (!result.candidate) continue;
-    const signature = JSON.stringify(result.candidate.candidate.concept.noveltySignature);
+    const signature = JSON.stringify(result.candidate.structuralSignature);
     if (signatures.has(signature)) {
       duplicateRejections.push({
         strategy: result.candidate.strategy,
         candidateId: result.candidate.candidate.candidateId,
-        reason: "Concept duplicated another candidate's structural signature",
+        reason: "Concept duplicated another candidate's compiled structure",
       });
     } else {
       signatures.add(signature);

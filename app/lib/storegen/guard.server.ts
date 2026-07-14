@@ -8,6 +8,7 @@ import { CalderynError } from "~/lib/calderyn.server";
 import { rateLimit } from "~/lib/dashboard/http.server";
 import { expireOverdueExperiment, hasRunningExperiment } from "~/lib/experiments/store-experiment.server";
 import { checkAiQuota } from "~/lib/ai-quota.server";
+import { createHash, randomUUID } from "node:crypto";
 
 // A brief is a short prompt, not a document; the cap bounds LLM input spend
 // (the brief is interpolated into several generation prompts per run).
@@ -83,4 +84,52 @@ export async function assertCanGenerate(
 ): Promise<void> {
   await assertGeneratePrechecks(shopId, brief);
   await assertDesignerQuota(shopId, opts);
+}
+
+interface GenerateQuotaReservation {
+  shopId: string;
+  promptHash: string;
+  expiresAt: number;
+}
+
+const reservationStore = globalThis as typeof globalThis & {
+  __storefrontGenerateQuotaReservations?: Map<string, GenerateQuotaReservation>;
+};
+const reservations = reservationStore.__storefrontGenerateQuotaReservations ??= new Map();
+const RESERVATION_TTL_MS = 15 * 60_000;
+
+function promptHash(prompt: string | undefined): string {
+  return createHash("sha256").update(prompt ?? "").digest("hex");
+}
+
+/** Consume the paid quota before a streaming response is opened and return a
+ * one-use capability carried only inside the server-side prepared build. */
+export async function reserveGenerateQuota(
+  shopId: string,
+  prompt: string | undefined,
+  opts: { trusted: boolean },
+): Promise<string> {
+  await assertCanGenerate(shopId, prompt, opts);
+  const now = Date.now();
+  for (const [token, reservation] of reservations) if (reservation.expiresAt <= now) reservations.delete(token);
+  const token = randomUUID();
+  reservations.set(token, { shopId, promptHash: promptHash(prompt), expiresAt: now + RESERVATION_TTL_MS });
+  return token;
+}
+
+export function consumeGenerateQuotaReservation(input: {
+  token: string;
+  shopId: string;
+  prompt: string | undefined;
+}): void {
+  const reservation = reservations.get(input.token);
+  reservations.delete(input.token);
+  if (!reservation || reservation.expiresAt <= Date.now() || reservation.shopId !== input.shopId ||
+    reservation.promptHash !== promptHash(input.prompt)) {
+    throw new CalderynError({
+      code: "invalid_quota_reservation",
+      status: 409,
+      message: "This storefront generation reservation expired. Start the build again.",
+    });
+  }
 }

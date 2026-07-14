@@ -97,6 +97,19 @@ describe("storefront bundle asset repository", () => {
     expect(remove).toHaveBeenCalledWith([expect.stringContaining("/storefront/sha256/")]);
   });
 
+  it("removes newly uploaded bytes when cancellation wins before metadata verification", async () => {
+    const controller = new AbortController();
+    upload.mockImplementationOnce(async () => {
+      controller.abort(new DOMException("cancelled", "AbortError"));
+      return { error: null };
+    });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await expect(persistStorefrontAssetBytes({ shopId: SHOP, bytes: png, signal: controller.signal }))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(remove).toHaveBeenCalledWith([expect.stringContaining("/storefront/sha256/")]);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it("propagates the generation token from begin-GC into the final deletion CAS", async () => {
     rpc.mockResolvedValueOnce({ data: 7, error: null }).mockResolvedValueOnce({ data: true, error: null });
     const generation = await beginStorefrontAssetGarbageCollection({ shopId: SHOP, assetKey: "key" });

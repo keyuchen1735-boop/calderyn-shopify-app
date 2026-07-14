@@ -182,6 +182,27 @@ describe("validation profile v1", () => {
     expect(codes).toContain("asset.entry");
   });
 
+  it("requires compiled asset references and manifest logical keys to match exactly", () => {
+    const missing = structuredClone(VALID_BUNDLE_SOURCE);
+    missing.routes.home.html = `<main><img data-cd-asset="hero" alt="Editorial hero"></main>`;
+    expect(compileBundle(missing).report.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "asset.reference_missing", path: expect.stringContaining("hero") }),
+    ]));
+
+    const unused = structuredClone(VALID_BUNDLE_SOURCE);
+    unused.assets.entries = [{ key: "unused", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 3 }];
+    expect(compileBundle(unused).report.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "asset.manifest_unused", path: "assets.entries.unused" }),
+    ]));
+
+    const exact = structuredClone(VALID_BUNDLE_SOURCE);
+    exact.routes.home.html = `<main><img data-cd-asset="hero" alt="Editorial hero"></main>`;
+    exact.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 3 }];
+    expect(compileBundle(exact).report.diagnostics.map((item) => item.code)).not.toEqual(
+      expect.arrayContaining(["asset.reference_missing", "asset.manifest_unused"]),
+    );
+  });
+
   it("accepts compiler-generated route targets bound to their owning element scope", () => {
     expect(validateCompiledBundle(compileRouteTargetScopeFixture()).ok).toBe(true);
   });

@@ -40,7 +40,10 @@ import {
   StorefrontBuildError,
   type PreparedStorefrontDesignBuild,
 } from "~/lib/storefront-bundle/build.server";
-import { persistStorefrontAssetBytes } from "~/lib/storefront-bundle/assets.server";
+import {
+  garbageCollectUnreferencedStorefrontAsset,
+  persistStorefrontAssetBytes,
+} from "~/lib/storefront-bundle/assets.server";
 import { StorefrontReleaseError } from "~/lib/storefront-bundle/release.server";
 import type { MerchantReferenceImage } from "~/lib/storefront-ai/contracts";
 
@@ -181,7 +184,7 @@ async function runStorefrontBuild(
 ): Promise<{ versionId: string }> {
   try {
     const request = { prompt, mode } as const;
-    const prepared = preparedInput ?? await prepareRuntimeBuild(session.shopId, request);
+    const prepared = preparedInput ?? await prepareRuntimeBuild(session.shopId, request, quotaTrusted(session));
     const receipt = await buildStorefrontDesign({
       shopId: session.shopId,
       actorId: session.userId,
@@ -208,12 +211,13 @@ async function runStorefrontBuild(
 async function prepareRuntimeBuild(
   shopId: string,
   request: { prompt: string; mode: "auto" | "custom" },
+  trusted: boolean,
 ): Promise<PreparedStorefrontDesignBuild> {
   if (!(await rateLimit(`storefront-build:${shopId}`, 10, 60_000))) {
     throw new CalderynError({ code: "rate_limited", status: 429, message: "Too many storefront builds. Please wait a moment." });
   }
   try {
-    return await prepareStorefrontDesignBuild({ shopId, request });
+    return await prepareStorefrontDesignBuild({ shopId, request, trusted });
   } catch (error) {
     if (error instanceof StorefrontBuildError || error instanceof StorefrontReleaseError) {
       throw new CalderynError({ code: error.code, status: error.status, message: error.message });
@@ -314,15 +318,26 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
     if (!intent) return { status: "needs_intent" } satisfies StudioGenerateReceipt;
 
     const customPrompt = brief ?? "Use the attached images as the design reference.";
+    if (intent.useAsReference && images.some((image) => !REFERENCE_MEDIA_TYPES.has(image.contentType))) {
+      throw new CalderynError({
+        code: "unsupported_reference_image",
+        status: 422,
+        message: "Design references must be PNG, JPEG, WebP or AVIF images.",
+      });
+    }
     // Freeze switches and write permission before persisting reference assets
     // or creating catalog drafts. The builder consumes this exact decision.
     const prepared = intent.useAsReference
-      ? await prepareRuntimeBuild(session.shopId, { prompt: customPrompt, mode: "custom" })
+      ? await prepareRuntimeBuild(session.shopId, { prompt: customPrompt, mode: "custom" }, quotaTrusted(session))
       : undefined;
 
-    const referenceImages: MerchantReferenceImage[] = intent.useAsReference
-      ? await Promise.all(images.map(async (image) => {
+    const referenceAssetKeys: string[] = [];
+    try {
+      const referenceImages: MerchantReferenceImage[] = [];
+      if (intent.useAsReference) {
+        for (const image of images) {
           const persisted = await persistStorefrontAssetBytes({ shopId: session.shopId, bytes: image.bytes });
+          referenceAssetKeys.push(persisted.assetKey);
           if (!REFERENCE_MEDIA_TYPES.has(persisted.mediaType)) {
             throw new CalderynError({
               code: "unsupported_reference_image",
@@ -330,19 +345,19 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
               message: "Design references must be PNG, JPEG, WebP or AVIF images.",
             });
           }
-          return { assetKey: persisted.assetKey, mediaType: persisted.mediaType as MerchantReferenceImage["mediaType"] };
-        }))
-      : [];
+          referenceImages.push({ assetKey: persisted.assetKey, mediaType: persisted.mediaType as MerchantReferenceImage["mediaType"] });
+        }
+      }
 
     // Create products FIRST (draft rows), THEN generate — the generator re-reads
     // the catalog, so the new drafts land in the snapshot it designs around.
     // In PARALLEL (distinct rows, no contention) and contained per item (the
     // helper never throws), so every attached image gets a receipt entry.
-    const products: StudioAddedProduct[] = intent.addAsProducts
+      const products: StudioAddedProduct[] = intent.addAsProducts
       ? await Promise.all(images.map((img) => createDraftProductFromImage(session.shopId, img)))
       : [];
 
-    if (intent.useAsReference) {
+      if (intent.useAsReference) {
       let result: { versionId: string };
       try {
         result = await runStorefrontBuild(session, customPrompt, "custom", referenceImages, prepared);
@@ -365,7 +380,13 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
     }
 
     // Products only — no generation ran, no designer quota touched.
-    return { status: "products_added", intent, products } satisfies StudioGenerateReceipt;
+      return { status: "products_added", intent, products } satisfies StudioGenerateReceipt;
+    } finally {
+      await Promise.all(referenceAssetKeys.map((assetKey) => garbageCollectUnreferencedStorefrontAsset({
+        shopId: session.shopId,
+        assetKey,
+      })));
+    }
   });
 }
 

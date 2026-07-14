@@ -16,6 +16,7 @@ const RELEASES = migration("20260713140000_storefront_bundle_releases.sql");
 const ASSETS = migration("20260713141000_storefront_bundle_assets.sql");
 const FUNCTIONS = migration("20260713142000_storefront_bundle_functions.sql");
 const CUSTOM_ASSET_KEYS = migration("20260713210000_storefront_custom_asset_logical_keys.sql");
+const GENERATION_RUNS = migration("20260713230000_storefront_generation_runs_and_atomic_install.sql");
 const EDIT_ASSET_PROVENANCE_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../../supabase/migrations/20260713220000_storefront_edit_asset_provenance.sql",
@@ -185,5 +186,21 @@ describe("storefront bundle persistence migrations", () => {
     expect(installable).toMatch(/storefront_bundle_recipe_asset/);
     expect(installable).toMatch(/storefront_recipe_asset_registry/);
     expect(installable).toMatch(/asset_manifest_mismatch/);
+  });
+
+  it("stores redacted generation checkpoints and atomically installs generated bundles", () => {
+    expect(GENERATION_RUNS).toMatch(/create table public\.storefront_generation_run/);
+    expect(GENERATION_RUNS).toMatch(/prompt_hash text not null/);
+    expect(GENERATION_RUNS).not.toMatch(/raw_prompt|context_snapshot|provider_response/);
+    expect(GENERATION_RUNS).toMatch(/alter table public\.storefront_generation_run enable row level security/);
+    const atomic = GENERATION_RUNS.match(/function public\.install_generated_storefront_bundle[\s\S]+?\$\$;/)?.[0] ?? "";
+    for (const operation of [
+      "create_storefront_bundle_version",
+      "attach_storefront_bundle_asset",
+      "validate_storefront_bundle_version",
+      "install_storefront_draft",
+    ]) expect(atomic).toContain(operation);
+    expect(GENERATION_RUNS).toMatch(/revoke all on function public\.install_generated_storefront_bundle[^;]+from public, anon, authenticated/);
+    expect(GENERATION_RUNS).toMatch(/grant execute on function public\.install_generated_storefront_bundle[^;]+to service_role/);
   });
 });

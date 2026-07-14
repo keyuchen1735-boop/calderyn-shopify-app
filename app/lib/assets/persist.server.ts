@@ -166,17 +166,22 @@ async function fetchImageBytes(
   fetchImpl: AssetFetch,
   maxBytes: number,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     if (!isFetchableUrl(current)) throw new AssetError("blocked_url", `refused to fetch ${current}`);
     const ac = new AbortController();
+    const forwardAbort = () => ac.abort(signal?.reason ?? new DOMException("Asset fetch cancelled", "AbortError"));
+    if (signal?.aborted) forwardAbort();
+    else signal?.addEventListener("abort", forwardAbort, { once: true });
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     let res: AssetFetchResponse;
     try {
       res = await fetchImpl(current, { redirect: "manual", signal: ac.signal });
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener("abort", forwardAbort);
     }
     if (res.status >= 300 && res.status < 400) {
       const loc = res.headers.get("location");
@@ -255,6 +260,23 @@ export interface PersistOpts {
   fetchImpl?: AssetFetch;
   maxBytes?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export async function fetchExternalImageBytes(
+  url: string,
+  opts: PersistOpts = {},
+): Promise<{ bytes: Uint8Array; mediaType: SniffedMime }> {
+  const bytes = await fetchImageBytes(
+    url,
+    opts.fetchImpl ?? defaultFetch,
+    opts.maxBytes ?? MAX_IMAGE_BYTES,
+    opts.timeoutMs ?? FETCH_TIMEOUT_MS,
+    opts.signal,
+  );
+  const mediaType = sniffImageMime(bytes);
+  if (!mediaType) throw new AssetError("unrecognized_image");
+  return { bytes, mediaType };
 }
 
 /**

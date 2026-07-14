@@ -66,6 +66,12 @@ export function createContext(): MerchantStorefrontContext {
 export function createConcept(index = 0): ConceptCandidateSource {
   const base = structuredClone(VALID_BUNDLE_SOURCE);
   const signature = DISTINCT_SIGNATURES[index % DISTINCT_SIGNATURES.length];
+  const topology = index % DISTINCT_SIGNATURES.length;
+  base.routes.home.html = topology === 0
+    ? `<main><h1 data-cd-text="store.name"></h1></main>`
+    : topology === 1
+      ? `<main><aside><p>Chapter index</p></aside><section><h1 data-cd-text="store.name"></h1></section></main>`
+      : `<main><nav><p>Zone map</p></nav><article><header><h1 data-cd-text="store.name"></h1></header></article></main>`;
   return {
     candidateId: `concept-${index + 1}`,
     concept: {

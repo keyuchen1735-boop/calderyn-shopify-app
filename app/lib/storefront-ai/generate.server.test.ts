@@ -5,6 +5,7 @@ import { compileBundle } from "../storefront-compiler/compile";
 import { createConcept, createContext, createExpansion, PASSING_JUDGE_SCORES, TEST_SHOP_ID, TEST_VERSION_ID } from "./__fixtures__/deterministic";
 import type { GenerateDependencies, GenerationCheckpoint, StorefrontAiProvider, StructuredModelResponse } from "./contracts";
 import { generateOriginalStorefront } from "./generate.server";
+import { compileConceptCandidate } from "./concepts.server";
 
 function passingDependencies(overrides: Partial<GenerateDependencies> = {}): GenerateDependencies {
   const provider: StorefrontAiProvider = {
@@ -20,11 +21,16 @@ function passingDependencies(overrides: Partial<GenerateDependencies> = {}): Gen
     enabled: () => true,
     preflight: vi.fn(async () => undefined),
     assembleContext: vi.fn(async () => createContext()),
+    loadReferenceImages: vi.fn(async () => []),
     provider,
-    compileConcept: (candidate) => ({ candidate, compiledFingerprint: candidate.candidateId }),
-    renderConcept: vi.fn(async () => ({ desktop: "desktop", mobile: "mobile" })),
+    compileConcept: compileConceptCandidate,
+    renderConcept: vi.fn(async () => ({
+      desktop: { key: "judge-desktop", mediaType: "image/webp" as const, bytes: new Uint8Array([1]) },
+      mobile: { key: "judge-mobile", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
+    })),
     produceAsset: vi.fn(async () => null),
     persistAsset: vi.fn(),
+    cleanupAsset: vi.fn(async () => undefined),
     compileBundle,
     browserProof: vi.fn(async () => ({ ok: true, diagnostics: [], screenshots: ["desktop.webp", "mobile.webp"], browserMs: 12 })),
     repairRoute: vi.fn(),
@@ -55,6 +61,21 @@ describe("generateOriginalStorefront", () => {
     expect(result).toEqual({ status: "disabled", code: "storefront_custom_build_disabled" });
     expect(deps.preflight).not.toHaveBeenCalled();
     expect(deps.provider.complete).not.toHaveBeenCalled();
+  });
+
+  it("consumes an existing pre-stream quota reservation without reserving again", async () => {
+    const deps = passingDependencies();
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "original",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+      quotaReservationToken: "quota-reservation-1",
+    }, deps);
+    expect(result.status).toBe("installed");
+    expect(deps.preflight).toHaveBeenCalledOnce();
+    expect(deps.preflight).toHaveBeenCalledWith(expect.objectContaining({ reservationToken: "quota-reservation-1" }));
   });
 
   it("compiles, proves, audits, and CAS-installs one complete winning bundle", async () => {
@@ -106,6 +127,10 @@ describe("generateOriginalStorefront", () => {
       }),
     }));
     expect(checkpoint.mock.calls.map(([event]) => event.stage)).toEqual(expect.arrayContaining(["context", "concepts", "judging", "expanding", "proofing", "installed"]));
+    expect(checkpoint.mock.calls.every(([event]) =>
+      event.shopId === TEST_SHOP_ID && event.promptHash === createContext().promptHash &&
+      !JSON.stringify(event.detail ?? {}).includes("make it original")
+    )).toBe(true);
   });
 
   it("installs only content-addressed owned asset references and records their provenance", async () => {
@@ -116,7 +141,14 @@ describe("generateOriginalStorefront", () => {
       if (request.operation !== "concept" && request.operation !== "repairConcept") return response;
       return {
         ...response,
-        value: { ...(response.value as object), assetRequests: [{ key: "hero", purpose: "original editorial hero", required: true }] },
+        value: {
+          ...(response.value as object),
+          home: {
+            ...(response.value as { home: object }).home,
+            html: `<main><h1 data-cd-text="store.name"></h1><img data-cd-asset="hero" alt="Editorial hero"></main>`,
+          },
+          assetRequests: [{ key: "hero", purpose: "original editorial hero", required: true }],
+        },
       };
     });
     deps.produceAsset = vi.fn(async () => ({ bytes: new Uint8Array([1, 2, 3]), provenance: "fixture:generated" }));
@@ -130,6 +162,68 @@ describe("generateOriginalStorefront", () => {
       assetCount: 1,
       assetProvenance: [{ logicalKey: "hero", assetKey: "owned/sha256/hero.webp", contentHash: "a".repeat(64), provenance: "fixture:generated" }],
     });
+    expect(deps.cleanupAsset).not.toHaveBeenCalled();
+  });
+
+  it("garbage-collects partially persisted assets when materialization later fails", async () => {
+    const deps = passingDependencies();
+    const baseComplete = deps.provider.complete;
+    deps.provider.complete = vi.fn(async (request) => {
+      const response = await baseComplete(request);
+      if (request.operation !== "concept" && request.operation !== "repairConcept") return response;
+      return {
+        ...response,
+        value: {
+          ...(response.value as object),
+          home: {
+            ...(response.value as { home: object }).home,
+            html: `<main><h1 data-cd-text="store.name"></h1><img data-cd-asset="hero" alt="Hero"><img data-cd-asset="detail" alt="Detail"></main>`,
+          },
+          assetRequests: [
+            { key: "hero", purpose: "hero", required: true },
+            { key: "detail", purpose: "detail", required: true },
+          ],
+        },
+      };
+    });
+    deps.produceAsset = vi.fn(async ({ request }) => request.key === "hero"
+      ? { bytes: new Uint8Array([1, 2, 3]), provenance: "fixture" }
+      : null);
+    deps.persistAsset = vi.fn(async () => ({ assetKey: "owned/sha256/hero.webp", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 3 }));
+
+    const result = await generateOriginalStorefront({ shopId: TEST_SHOP_ID, prompt: "original", expectedDraftVersionId: null, actorId: null, trusted: true }, deps);
+    expect(result.status).toBe("failed");
+    expect(deps.cleanupAsset).toHaveBeenCalledTimes(1);
+    expect(deps.cleanupAsset).toHaveBeenCalledWith(expect.objectContaining({ shopId: TEST_SHOP_ID, assetKey: "owned/sha256/hero.webp" }));
+    expect(deps.installValidatedBundle).not.toHaveBeenCalled();
+  });
+
+  it("loads bounded reference bytes and sends them to concept calls under opaque keys", async () => {
+    const context = createContext();
+    context.referenceImages = [{ assetKey: "reference-image-001", mediaType: "image/webp" }];
+    const deps = passingDependencies({
+      assembleContext: vi.fn(async () => context),
+      loadReferenceImages: vi.fn(async () => [{
+        key: "reference-image-001",
+        mediaType: "image/webp" as const,
+        bytes: new Uint8Array([1, 2, 3]),
+      }]),
+    });
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "original",
+      referenceImages: [{ assetKey: "private/storage/reference.webp", mediaType: "image/webp" }],
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+    }, deps);
+    expect(result.status).toBe("installed");
+    const conceptRequests = vi.mocked(deps.provider.complete).mock.calls
+      .map(([request]) => request)
+      .filter((request) => request.operation === "concept");
+    expect(conceptRequests).toHaveLength(3);
+    expect(conceptRequests.every((request) => request.images?.[0]?.key === "reference-image-001")).toBe(true);
+    expect(JSON.stringify(conceptRequests)).not.toContain("private/storage");
   });
 
   it("leaves the draft unchanged when every concept fails", async () => {
@@ -184,6 +278,59 @@ describe("generateOriginalStorefront", () => {
     expect(result).not.toBe("test_timeout");
     expect(result).toMatchObject({ status: "failed", code: "generation_budget_exceeded" });
     expect(deps.installValidatedBundle).not.toHaveBeenCalled();
+  });
+
+  it("races the wall-time abort through a browser adapter that ignores its signal", async () => {
+    const deps = passingDependencies({
+      now: () => Date.now(),
+      browserProof: vi.fn(() => new Promise<never>(() => undefined)),
+    });
+    const generation = generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "original",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+      budget: { maxWallMs: 5 },
+    }, deps);
+    const result = await Promise.race([
+      generation,
+      new Promise<"test_timeout">((resolve) => setTimeout(() => resolve("test_timeout"), 100)),
+    ]);
+    expect(result).not.toBe("test_timeout");
+    expect(result).toMatchObject({ status: "failed", code: "generation_budget_exceeded" });
+  });
+
+  it("garbage-collects persisted candidate assets after a wall-time abort", async () => {
+    const deps = passingDependencies({
+      now: () => Date.now(),
+      browserProof: vi.fn(() => new Promise<never>(() => undefined)),
+    });
+    const baseComplete = deps.provider.complete;
+    deps.provider.complete = vi.fn(async (request) => {
+      const response = await baseComplete(request);
+      if (request.operation !== "concept" && request.operation !== "repairConcept") return response;
+      return {
+        ...response,
+        value: {
+          ...(response.value as object),
+          home: { ...(response.value as { home: object }).home, html: `<main><h1 data-cd-text="store.name"></h1><img data-cd-asset="hero" alt="Hero"></main>` },
+          assetRequests: [{ key: "hero", purpose: "hero", required: true }],
+        },
+      };
+    });
+    deps.produceAsset = vi.fn(async () => ({ bytes: new Uint8Array([1, 2, 3]), provenance: "fixture" }));
+    deps.persistAsset = vi.fn(async () => ({ assetKey: "owned/sha256/hero.webp", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 3 }));
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "original",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+      budget: { maxWallMs: 5 },
+    }, deps);
+    expect(result).toMatchObject({ status: "failed", code: "generation_budget_exceeded" });
+    expect(deps.cleanupAsset).toHaveBeenCalledWith(expect.objectContaining({ assetKey: "owned/sha256/hero.webp" }));
   });
 
   it("has no import or call path to legacy generateStore", () => {
