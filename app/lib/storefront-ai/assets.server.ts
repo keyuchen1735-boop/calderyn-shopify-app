@@ -2,7 +2,7 @@ import { isCompilerIdentifier } from "../storefront-compiler/assets";
 import type { AssetRequest, MaterializedAssetResult, PersistedOwnedAsset, ProducedAsset } from "./contracts";
 
 const HASH = /^[a-f0-9]{64}$/i;
-const OWNED_MEDIA = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/gif", "image/svg+xml"]);
+const OWNED_MEDIA = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"]);
 
 export interface MaterializeOwnedAssetsInput {
   shopId: string;

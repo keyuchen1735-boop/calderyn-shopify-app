@@ -263,8 +263,13 @@ export async function renderConceptWithMerchantData(input: {
   const designCss = compileConceptJudgeDesignCss(candidate.candidate);
   const document = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style nonce="judge">html,body{margin:0;min-height:100%;overflow-x:hidden}${designCss}</style></head><body><div data-cd-bundle="global" data-cd-bundle-runtime="1" data-cd-bundle-source="custom">${shellMarkup}${homeMarkup}</div></body></html>`;
   if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("Generation cancelled", "AbortError");
+  const browserStartedAt = Date.now();
   const browser = await launchChromium({ width: 1440, height: 1000 });
-  const abort = () => { void browser.close(); };
+  if (input.signal?.aborted) {
+    await browser.close().catch(() => undefined);
+    throw input.signal.reason ?? new DOMException("Generation cancelled", "AbortError");
+  }
+  const abort = () => { void browser.close().catch(() => undefined); };
   input.signal?.addEventListener("abort", abort, { once: true });
   try {
     const page = await browser.newPage();
@@ -277,6 +282,7 @@ export async function renderConceptWithMerchantData(input: {
     return {
       desktop: { key: "judge-desktop", mediaType: "image/webp", bytes: desktop },
       mobile: { key: "judge-mobile", mediaType: "image/webp", bytes: mobile },
+      browserMs: Math.max(0, Date.now() - browserStartedAt),
     };
   } finally {
     input.signal?.removeEventListener("abort", abort);

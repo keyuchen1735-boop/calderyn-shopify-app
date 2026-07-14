@@ -44,6 +44,8 @@ const config = {
   }, assets: RITUAL_ALMANAC_ASSETS,
 } satisfies RecipeConfig<"ritual-almanac">;
 
+config.surfaces.shell.source.css += `.almanac-shell{display:flex;align-items:center;gap:1.25rem;min-height:4rem;padding:.75rem 1rem;background:var(--milk);color:var(--ink);border-bottom:1px solid var(--moss)}.almanac-shell nav{margin-left:auto}.almanac-shell a{color:var(--ink);text-decoration:none}.almanac-shell~footer{display:flex;flex-wrap:wrap;gap:1rem;padding:1rem;background:var(--paper);color:var(--ink)}.almanac-shell~footer a{color:var(--ink);text-decoration:none}@media(max-width:720px){.almanac-shell{grid-template-columns:1fr}.almanac-shell nav{margin-left:0}}`;
+
 const distinguishedConfig = {
   ...config,
   surfaces: {

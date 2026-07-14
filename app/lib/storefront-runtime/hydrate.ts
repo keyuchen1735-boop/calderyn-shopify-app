@@ -159,6 +159,7 @@ function validateArtifact(
     }
     slotIds.add(slot.id);
     const hosts = localElements(root, slot.id);
+    if (hosts.length === 0 && slot.scopeId && slot.scopeId !== "root") continue;
     if (hosts.length === 0 || hosts.some((host) => host.dataset.cdTrustedSlot !== slot.kind)) {
       throw new RuntimeManifestError("Trusted slot host is unresolved or mismatched");
     }
@@ -298,6 +299,7 @@ function mountCommerce(
   if (!commerce) throw new RuntimeManifestError("Commerce capability requires a trusted adapter");
   const reset = (ownerDocument: Document): HTMLStyleElement => {
     const style = ownerDocument.createElement("style");
+    style.nonce = ownerDocument.querySelector<HTMLStyleElement>("style[nonce]")?.nonce ?? "";
     style.textContent = ":host{box-sizing:border-box;contain:content}*,*::before,*::after{box-sizing:border-box}";
     return style;
   };

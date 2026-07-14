@@ -110,6 +110,7 @@ describe("novelty and visual judging", () => {
     const render = vi.fn(async ({ context: received }) => ({
       desktop: { key: `judge-desktop-${received.products[0].title.length}`, mediaType: "image/webp" as const, bytes: new Uint8Array([1]) },
       mobile: { key: "judge-mobile", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
+      browserMs: 12,
     }));
     const provider: StorefrontAiProvider = {
       complete: vi.fn(async (request) => ({

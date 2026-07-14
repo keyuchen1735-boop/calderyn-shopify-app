@@ -27,6 +27,8 @@ const shell = {
   requiredCapabilities: [],
 };
 
+shell.css += `.workshop-footer{display:flex;justify-content:space-between;gap:1rem;padding:1rem;border-top:1px solid var(--line)}.workshop-footer nav{display:flex;flex-wrap:wrap;gap:1rem}.workshop-footer a{color:var(--ink);text-decoration:none}`;
+
 const home = {
   html: `
     <main class="bench-home">

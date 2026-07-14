@@ -44,6 +44,9 @@ const config = {
   }, assets: REP_REST_ASSETS,
 } satisfies RecipeConfig<"rep-rest">;
 
+config.surfaces.home.source.css += `.training-copy a{color:var(--cream)}.recovery-copy{color:var(--ink)}`;
+config.surfaces.shell.source.css += `.performance-bar{display:flex;align-items:center;gap:1rem;min-height:4rem;padding:.75rem 1rem;background:var(--ink);color:var(--cream);border-bottom:1px solid var(--acid)}.performance-bar nav{margin-left:auto}.performance-bar a{color:var(--cream);text-decoration:none}.performance-bar~footer{display:flex;flex-wrap:wrap;gap:1rem;padding:1rem;background:var(--cream);color:var(--ink)}.performance-bar~footer a{color:var(--ink);text-decoration:none}@media(max-width:720px){.performance-bar{grid-template-columns:1fr}.performance-bar nav{margin-left:0}.performance-bar nav a{color:var(--ink)}}`;
+
 const distinguishedConfig = {
   ...config,
   surfaces: {

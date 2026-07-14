@@ -55,7 +55,7 @@ const config = {
           <footer data-cd-policy-links></footer>
         `,
         css: `
-          .room-brand{font-size:1.4rem;font-weight:700}.room-nav{display:flex;gap:1.25rem}.room-nav a{color:var(--ink);font-size:.72rem;text-transform:uppercase}@media(max-width:720px){.room-masthead{display:grid;gap:.7rem}.room-nav{display:flex;flex-wrap:wrap;gap:.35rem}.room-nav a{background:var(--chalk);border:1px solid var(--line);padding:.45rem .6rem}}
+          .room-masthead{display:flex;align-items:center;gap:1rem;min-height:4rem;padding:.75rem 1rem;border-bottom:1px solid var(--line);background:var(--chalk)}.room-brand{color:var(--ink);font-size:1.4rem;font-weight:700;text-decoration:none}.room-nav{display:flex;gap:1.25rem;margin-left:auto}.room-nav a{color:var(--ink);font-size:.72rem;text-decoration:none;text-transform:uppercase}.room-masthead~footer{display:flex;flex-wrap:wrap;gap:1rem;padding:1rem;border-top:1px solid var(--line)}.room-masthead~footer a{color:var(--ink);text-decoration:none}@media(max-width:720px){.room-masthead{display:grid;gap:.7rem}.room-nav{display:flex;flex-wrap:wrap;gap:.35rem;margin-left:0}.room-nav a{background:var(--chalk);border:1px solid var(--line);padding:.45rem .6rem}}
         `,
         requiredData: [],
         requiredCapabilities: [],
@@ -95,7 +95,7 @@ const config = {
         `,
         css: `
           .scene-hero{display:grid;grid-template-columns:1.25fr .75fr;min-height:78dvh;background:var(--smoke);color:var(--chalk)}
-          .scene-image{margin:0;min-width:0}.scene-image img{display:block;width:100%;height:78dvh;object-fit:cover}.scene-copy{align-self:end;padding:clamp(1.5rem,5vw,5rem)}
+          .scene-image{margin:0;min-width:0}.scene-image img{display:block;width:100%;height:78dvh;object-fit:cover}.scene-copy{align-self:end;padding:clamp(1.5rem,5vw,5rem)}.scene-copy a{color:var(--chalk)}
           .scene-copy h1{font-size:clamp(3.7rem,8vw,8.5rem);max-width:7ch}.mode-rail{display:flex;gap:.5rem;padding:1rem;overflow:auto;background:var(--chalk)}
           .mode-rail button{border:1px solid var(--line);background:transparent;padding:.75rem 1.1rem}.mode-rail span{padding:.75rem;color:var(--smoke)}
           .room-state[data-cd-class-token="living"] .scene-copy{border-right:6px solid var(--amber)}.room-state[data-cd-class-token="studio"] .scene-copy{border-right:6px solid var(--blue)}.room-state[data-cd-class-token="sleep"] .scene-copy{border-right:6px solid var(--violet)}

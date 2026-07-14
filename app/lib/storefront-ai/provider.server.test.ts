@@ -69,4 +69,17 @@ describe("createAnthropicStructuredProvider", () => {
     })).rejects.toThrow(/image evidence/i);
     expect(create).not.toHaveBeenCalled();
   });
+
+  it("rejects AVIF evidence that the owned-byte verifier cannot sniff", async () => {
+    const create = vi.fn();
+    const provider = createAnthropicStructuredProvider({ client: { messages: { create } }, model: "test-model" });
+    await expect(provider.complete({
+      operation: "concept",
+      system: "system",
+      prompt: "prompt",
+      schema: { type: "object" },
+      images: [{ key: "reference-image-001", mediaType: "image/avif", bytes: new Uint8Array([1]) }],
+    } as never)).rejects.toThrow(/image evidence/i);
+    expect(create).not.toHaveBeenCalled();
+  });
 });

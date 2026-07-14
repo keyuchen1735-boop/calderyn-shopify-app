@@ -1,8 +1,13 @@
 // app/lib/sourcing/discover.server.ts
 import { getSupabase } from "~/lib/supabase.server";
 import { createProduct } from "~/lib/catalog/catalog.server";
-import { generateStore } from "~/lib/storegen/generate.server";
-import { assertCanGenerate } from "~/lib/storegen/guard.server";
+import { rateLimit } from "~/lib/dashboard/http.server";
+import {
+  buildStorefrontDesign,
+  prepareStorefrontDesignBuild,
+  StorefrontBuildError,
+} from "~/lib/storefront-bundle/build.server";
+import { StorefrontReleaseError } from "~/lib/storefront-bundle/release.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import type { ProductInput } from "~/lib/catalog/types";
 import { suggestedRetailCents } from "./ingest.server";
@@ -76,9 +81,9 @@ export async function listDiscoverFeed(limit = 40): Promise<DiscoverFeedItem[]> 
   });
 }
 
-/** Pick: write owned product + media + link, then generate a draft store. The auto-build goes
- *  through the same generate guard as every other entry point (mid-test refusal, burst limit,
- *  daily designer quota) — a refusal skips the rebuild but never fails the pick itself. */
+/** Pick: write owned product + media + link, then route the refreshed catalog
+ * through the runtime-1 recipe/original compiler. A refused build never rolls
+ * back the product the merchant already picked. */
 export async function pickProduct(
   shopId: string,
   sourceProductId: string,
@@ -147,18 +152,25 @@ export async function pickProduct(
   });
   if (lErr) throw lErr;
 
-  // 4. Auto-build a draft store from the now-non-empty catalog — unless the shared generate
-  // guard refuses (running experiment would have both its arms rewritten mid-flight; quota and
-  // burst limits must not be dodgeable through Discover). The product is already picked either
-  // way; only the rebuild is skipped, with the reason surfaced to the caller.
+  // 4. Auto-build a runtime-1 draft from the now-non-empty catalog. Preflight
+  // freezes flags, experiment/write guards, release pointers and any custom AI
+  // quota before mutation; Discover has the same per-shop runtime-1 burst cap.
+  if (!(await rateLimit(`storefront-build:${shopId}`, 10, 60_000))) {
+    return { productId, storeRunId: null, storeBuildSkipped: "rate_limited" };
+  }
+  const request = { prompt: "", mode: "auto" } as const;
   try {
-    await assertCanGenerate(shopId, undefined, { trusted: opts.trusted });
+    const prepared = await prepareStorefrontDesignBuild({ shopId, request, trusted: opts.trusted });
+    const receipt = await buildStorefrontDesign({ shopId, request, trusted: opts.trusted, prepared });
+    return { productId, storeRunId: receipt.versionId };
   } catch (err) {
-    if (err instanceof CalderynError) {
+    if (
+      err instanceof StorefrontBuildError ||
+      err instanceof StorefrontReleaseError ||
+      err instanceof CalderynError
+    ) {
       return { productId, storeRunId: null, storeBuildSkipped: err.code };
     }
     throw err;
   }
-  const gen = await generateStore({ shopId, mode: "catalog" });
-  return { productId, storeRunId: gen.runId };
 }

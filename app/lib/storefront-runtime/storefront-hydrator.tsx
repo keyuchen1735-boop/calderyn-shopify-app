@@ -3,7 +3,7 @@ import type { StorefrontBundleV1, StorefrontRouteId } from "~/lib/storefront-bun
 import type { PublicPresentationData } from "./public-data.server";
 import { hydrateStorefront } from "./hydrate";
 import type { StorefrontRuntimeHandle } from "./hydrate";
-import type { CommerceIntent, ResolvedRouteTarget, RuntimeAdapters } from "./actions";
+import type { CommerceIntent, CommerceMountContext, ResolvedRouteTarget, RuntimeAdapters } from "./actions";
 
 type RuntimeMode = "public" | "preview";
 export type RuntimeFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -52,6 +52,54 @@ function previewCommerceBody(intent: CommerceIntent): FormData | null {
   else if (intent.type === "checkout.start") body.set("intent", "checkout");
   else return null;
   return body;
+}
+
+function rgb(value: string): [number, number, number] | null {
+  const hex = value.trim().match(/^#([\da-f]{3}|[\da-f]{6})$/i)?.[1];
+  if (hex) {
+    const expanded = hex.length === 3 ? [...hex].map((part) => `${part}${part}`).join("") : hex;
+    return [Number.parseInt(expanded.slice(0, 2), 16), Number.parseInt(expanded.slice(2, 4), 16), Number.parseInt(expanded.slice(4, 6), 16)];
+  }
+  const match = value.match(/^rgba?\(\s*(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)/i);
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+}
+
+function relativeLuminance([red, green, blue]: [number, number, number]): number {
+  const linear = (channel: number) => {
+    const normalized = channel / 255;
+    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
+}
+
+function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext): HTMLStyleElement {
+  const ownerDocument = host.ownerDocument;
+  const computedHost = ownerDocument.defaultView?.getComputedStyle(host);
+  const colors = slot.themeTokenIds.flatMap((tokenId) => {
+    const color = computedHost?.getPropertyValue(`--${tokenId}`).trim() ?? "";
+    return rgb(color) ? [color] : [];
+  });
+  let surface = "rgb(20, 22, 19)";
+  let foreground = "rgb(255, 255, 255)";
+  let bestContrast = 0;
+  for (const left of colors) {
+    for (const right of colors) {
+      const leftRgb = rgb(left);
+      const rightRgb = rgb(right);
+      if (!leftRgb || !rightRgb) continue;
+      const leftLuminance = relativeLuminance(leftRgb);
+      const rightLuminance = relativeLuminance(rightRgb);
+      const contrast = (Math.max(leftLuminance, rightLuminance) + 0.05) / (Math.min(leftLuminance, rightLuminance) + 0.05);
+      if (contrast > bestContrast) {
+        bestContrast = contrast;
+        [surface, foreground] = leftLuminance < rightLuminance ? [left, right] : [right, left];
+      }
+    }
+  }
+  const style = ownerDocument.createElement("style");
+  style.nonce = ownerDocument.querySelector<HTMLStyleElement>("style[nonce]")?.nonce ?? "";
+  style.textContent = `:host{display:block;min-width:44px;min-height:44px;font:inherit;color:${foreground}}div{display:flex;align-items:center;gap:.5rem}button,select,input{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:.2rem;background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
+  return style;
 }
 
 export function createRuntimeAdapters(input: {
@@ -129,7 +177,9 @@ export function createRuntimeAdapters(input: {
       locationAssign(`${url.pathname}${url.search}`);
     },
     commerce: {
-      mount({ shadowRoot, slot, authorityKey, bridge }) {
+      mount(context) {
+        const { shadowRoot, slot, authorityKey, bridge } = context;
+        shadowRoot.append(trustedCommerceStyle(context));
         if (slot.kind === "quickViewCommerce") {
           const productId = authorityKey.startsWith("product:") ? authorityKey.slice("product:".length) : "";
           const product = productById(productId);
@@ -137,8 +187,6 @@ export function createRuntimeAdapters(input: {
           const group = ownerDocument.createElement("div");
           group.setAttribute("role", "group");
           group.setAttribute("aria-label", product ? `Buy ${product.title}` : "Product purchase options");
-          const style = ownerDocument.createElement("style");
-          style.textContent = ":host{display:block}div{display:flex;align-items:center;gap:.5rem}select,button{min-height:2.75rem;font:inherit}select{min-width:0;max-width:100%;padding:.55rem}button{cursor:pointer;padding:.55rem .9rem}button:disabled{cursor:not-allowed;opacity:.55}";
           const availableVariants = product?.variants.filter((variant) => variant.available) ?? [];
           const select = ownerDocument.createElement("select");
           select.setAttribute("aria-label", product ? `Choose an option for ${product.title}` : "Choose an option");
@@ -166,7 +214,7 @@ export function createRuntimeAdapters(input: {
             });
           };
           group.append(select, button);
-          shadowRoot.append(style, group);
+          shadowRoot.append(group);
           return;
         }
         if (slot.kind === "variantPicker") {
@@ -215,7 +263,8 @@ export function createRuntimeAdapters(input: {
           });
         } else if (slot.kind === "cartSummary" || slot.kind === "cartDrawer") {
           button.textContent = "Checkout";
-          button.onclick = () => bridge({ type: "checkout.start", cartId: input.data?.cart?.id ?? "preview" });
+          const cartId = authorityKey.startsWith("cart:") ? authorityKey.slice("cart:".length) : input.data?.cart?.id ?? "preview";
+          button.onclick = () => bridge({ type: "checkout.start", cartId });
         } else {
           button.textContent = "View options";
         }

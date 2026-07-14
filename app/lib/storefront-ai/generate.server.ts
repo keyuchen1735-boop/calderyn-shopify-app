@@ -376,7 +376,11 @@ export async function generateOriginalStorefront(
       candidates: explored.candidates,
       context,
       provider: meteredProvider,
-      render: (renderInput) => raceAbort(deps.renderConcept({ ...renderInput, signal: pipelineSignal }), pipelineSignal),
+      render: async (renderInput) => {
+        const rendered = await raceAbort(deps.renderConcept({ ...renderInput, signal: pipelineSignal }), pipelineSignal);
+        meter.browser(rendered.browserMs);
+        return rendered;
+      },
       signal: pipelineSignal,
     });
     for (const judgment of ranked.accepted) candidateScores.push({

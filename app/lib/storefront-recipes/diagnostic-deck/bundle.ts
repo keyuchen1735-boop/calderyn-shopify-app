@@ -44,6 +44,16 @@ const config = {
   }, assets: DIAGNOSTIC_DECK_ASSETS,
 } satisfies RecipeConfig<"diagnostic-deck">;
 
+config.surfaces.shell.source.css += `.terminal-shell{display:grid;grid-template-columns:auto minmax(10rem,1fr) auto auto;align-items:center;gap:1rem;min-height:4rem;padding:.75rem 1rem;background:var(--ink);color:var(--paper);border-bottom:1px solid var(--green)}.terminal-shell a{color:var(--paper);text-decoration:none}.terminal-shell nav a:hover{background:var(--green);color:var(--ink)}.terminal-shell~footer{display:flex;flex-wrap:wrap;gap:1rem;padding:1rem;background:var(--panel);color:var(--paper)}.terminal-shell~footer a{color:var(--paper);text-decoration:none}@media(max-width:720px){.terminal-shell{grid-template-columns:1fr}.terminal-shell nav{padding-bottom:.25rem}}`;
+config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
+  `class="readout-bank"`,
+  `class="readout-bank" tabindex="0" aria-label="Diagnostic readouts"`,
+);
+config.surfaces.collection.source.html = config.surfaces.collection.source.html
+  .replace(`data-cd-state-initial="false"`, `data-cd-state-initial="true"`)
+  .replace(`data-cd-bind-property="expanded"`, `data-cd-bind-property="hidden"`);
+config.surfaces.collection.source.css += `#passport:not([hidden]){opacity:1;border-left:4px solid var(--green)}`;
+
 const distinguishedConfig = {
   ...config,
   surfaces: {

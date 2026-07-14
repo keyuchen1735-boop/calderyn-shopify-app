@@ -6,7 +6,7 @@ const config = {
   concept: { name: "Broadcast Patch Bay", rationale: "A modular creator storefront that routes the catalog as an input-to-output signal chain.", noveltySignature: ["signal-patch-bay", "rig-mode-routing", "compatibility-modules"] },
   designSystem: {
     displayFontId: "space-grotesk", bodyFontId: "ibm-plex-mono",
-    tokens: { black: "#0b0d12", panel: "#151923", panel2: "#202634", white: "#eff3f8", muted: "#8993a3", blue: "#2d6bff", amber: "#ffb31a", signal: "#4df3b5", red: "#ff5362", "rack-gap": "18px" },
+    tokens: { black: "#0b0d12", panel: "#151923", panel2: "#202634", white: "#eff3f8", muted: "#8993a3", blue: "#2453d4", amber: "#ffb31a", signal: "#4df3b5", red: "#ff5362", "rack-gap": "18px" },
     breakpoints: { compact: 850, wide: 1300 }, iconStyle: "signal-path glyphs and compatibility-port marks", motionStyle: "modular patch transitions with reduced-motion static routing",
     globalCss: `.broadcast-title{font-family:var(--font-display);font-weight:700;letter-spacing:-.06em;line-height:.84;text-transform:uppercase}.channel-label{font-family:var(--font-body);font-size:.64rem;letter-spacing:.16em;text-transform:uppercase;color:var(--signal)}`,
   },
@@ -43,6 +43,9 @@ const config = {
     } },
   }, assets: BROADCAST_PATCH_BAY_ASSETS,
 } satisfies RecipeConfig<"broadcast-patch-bay">;
+
+config.surfaces.shell.source.css += `.patch-shell{display:grid;grid-template-columns:auto auto minmax(12rem,1fr) auto;align-items:center;gap:1rem;min-height:4.5rem;padding:.75rem 1rem;background:var(--black);color:var(--white);border-bottom:1px solid var(--signal)}.patch-shell a{text-decoration:none}.patch-shell~footer{display:flex;flex-wrap:wrap;gap:1rem;padding:1rem;background:var(--panel);color:var(--white)}.patch-shell~footer a{color:var(--white);text-decoration:none}@media(max-width:720px){.patch-shell{grid-template-columns:auto 1fr}}`;
+config.surfaces.home.source.css += `.signal-copy a{color:var(--signal)}`;
 
 const distinguishedConfig = {
   ...config,

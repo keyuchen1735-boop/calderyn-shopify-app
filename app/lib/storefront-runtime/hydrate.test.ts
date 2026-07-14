@@ -368,6 +368,30 @@ describe("declarative storefront hydration", () => {
     expect(mount).toHaveBeenCalledTimes(2);
   });
 
+  it("allows a repeated trusted slot to have no host when the repeated data set is empty", () => {
+    document.body.innerHTML = `<main id="root"></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const mount = vi.fn();
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({
+        requiredCapabilities: ["commerce"],
+        interactions: { version: 1, state: [], bindings: [], transitions: [] },
+        trustedSlots: [{
+          id: "cd-home-slot-1",
+          kind: "quickViewCommerce",
+          scopeId: "cd-home-scope-1",
+          hostSize: "panel",
+          themeTokenIds: ["ink", "paper"],
+        }],
+      }),
+      adapters: { commerce: { mount, dispatch: vi.fn() } },
+    });
+
+    expect(runtime.hydrated).toBe(true);
+    expect(mount).not.toHaveBeenCalled();
+  });
+
   it("keeps repeated state, bindings, and scroll targets inside the current compiler instance", () => {
     document.body.innerHTML = `<main id="root">
       <div data-cd-instance="i-parent-a-child-same"><button id="cd-home-toggle-i-parent-a-child-same" data-cd-instance="i-parent-a-child-same">One</button><aside id="cd-home-drawer-i-parent-a-child-same" data-cd-instance="i-parent-a-child-same"></aside><div id="cd-home-scroll-i-parent-a-child-same" data-cd-instance="i-parent-a-child-same"></div></div>

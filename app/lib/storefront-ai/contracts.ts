@@ -3,7 +3,9 @@ import type { CompiledBundleResult, RouteSource, StorefrontBundleSourceV1 } from
 
 export const STOREFRONT_AI_CONTRACT_VERSION = 1 as const;
 export const CONCEPT_STRATEGIES = ["asymmetric-commerce", "narrative-utility", "spatial-catalog"] as const;
+export const STOREFRONT_REFERENCE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
 export type ConceptStrategy = (typeof CONCEPT_STRATEGIES)[number];
+export type StorefrontReferenceMediaType = (typeof STOREFRONT_REFERENCE_MEDIA_TYPES)[number];
 
 export interface NoveltySignature {
   layoutTopology: string;
@@ -15,7 +17,7 @@ export interface NoveltySignature {
 
 export interface MerchantReferenceImage {
   assetKey: string;
-  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/avif";
+  mediaType: StorefrontReferenceMediaType;
 }
 
 export interface MerchantStorefrontContext {
@@ -102,7 +104,7 @@ export interface StructuredModelRequest {
 
 export interface VisualEvidenceImage {
   key: string;
-  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/avif";
+  mediaType: StorefrontReferenceMediaType;
   bytes: Uint8Array;
 }
 
@@ -288,6 +290,7 @@ export interface GenerateDependencies {
 export interface ConceptRenderEvidence {
   desktop: VisualEvidenceImage;
   mobile: VisualEvidenceImage;
+  browserMs: number;
 }
 
 export interface GenerateOriginalStorefrontInput {

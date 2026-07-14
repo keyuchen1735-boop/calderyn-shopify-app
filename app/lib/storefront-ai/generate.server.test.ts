@@ -27,6 +27,7 @@ function passingDependencies(overrides: Partial<GenerateDependencies> = {}): Gen
     renderConcept: vi.fn(async () => ({
       desktop: { key: "judge-desktop", mediaType: "image/webp" as const, bytes: new Uint8Array([1]) },
       mobile: { key: "judge-mobile", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
+      browserMs: 12,
     })),
     produceAsset: vi.fn(async () => null),
     persistAsset: vi.fn(),
@@ -255,6 +256,29 @@ describe("generateOriginalStorefront", () => {
     }, budgetDeps);
     expect(budgetResult).toMatchObject({ status: "failed", code: "generation_budget_exceeded" });
     expect(budgetDeps.installValidatedBundle).not.toHaveBeenCalled();
+  });
+
+  it("meters all three concept renders into the browser budget before install", async () => {
+    const renderConcept = vi.fn(async () => ({
+      desktop: { key: "judge-desktop", mediaType: "image/webp" as const, bytes: new Uint8Array([1]) },
+      mobile: { key: "judge-mobile", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
+      browserMs: 20,
+    }));
+    const deps = passingDependencies({ renderConcept });
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "original",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+      budget: { maxBrowserMs: 59 },
+    }, deps);
+
+    expect(renderConcept).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ status: "failed", code: "generation_budget_exceeded" });
+    if (result.status !== "failed") throw new Error("expected browser budget failure");
+    expect(result.audit?.usage?.browserMs).toBe(60);
+    expect(deps.installValidatedBundle).not.toHaveBeenCalled();
   });
 
   it("actively aborts a hung provider call at the wall-time budget", async () => {

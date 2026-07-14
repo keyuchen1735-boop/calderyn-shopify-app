@@ -45,7 +45,10 @@ import {
   persistStorefrontAssetBytes,
 } from "~/lib/storefront-bundle/assets.server";
 import { StorefrontReleaseError } from "~/lib/storefront-bundle/release.server";
-import type { MerchantReferenceImage } from "~/lib/storefront-ai/contracts";
+import {
+  STOREFRONT_REFERENCE_MEDIA_TYPES,
+  type MerchantReferenceImage,
+} from "~/lib/storefront-ai/contracts";
 
 // Store studio read model: brand settings, home hero copy, preview products,
 // draft/published flags, and the latest generation run.
@@ -117,7 +120,7 @@ const MAX_IMAGE_BYTES = 3_932_160;
 const MAX_IMAGES = 4;
 // Shared with the composer's staging screen (studio-types.ts) — one allowlist.
 const IMAGE_MEDIA_TYPES: ReadonlySet<string> = new Set(STUDIO_IMAGE_MEDIA_TYPES);
-const REFERENCE_MEDIA_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
+const REFERENCE_MEDIA_TYPES: ReadonlySet<string> = new Set(STOREFRONT_REFERENCE_MEDIA_TYPES);
 
 // Explicit intent override the needs_intent quick-reply resubmits: the merchant
 // already told us what to do, so map the choice straight to a decision and SKIP
@@ -322,7 +325,7 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
       throw new CalderynError({
         code: "unsupported_reference_image",
         status: 422,
-        message: "Design references must be PNG, JPEG, WebP or AVIF images.",
+        message: "Design references must be PNG, JPEG or WebP images.",
       });
     }
     // Freeze switches and write permission before persisting reference assets
@@ -342,7 +345,7 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
             throw new CalderynError({
               code: "unsupported_reference_image",
               status: 422,
-              message: "Design references must be PNG, JPEG, WebP or AVIF images.",
+              message: "Design references must be PNG, JPEG or WebP images.",
             });
           }
           referenceImages.push({ assetKey: persisted.assetKey, mediaType: persisted.mediaType as MerchantReferenceImage["mediaType"] });

@@ -1,9 +1,15 @@
 import { assistantModel, getAnthropic } from "~/lib/assistant/anthropic.server";
-import type { StorefrontAiProvider, StructuredModelRequest, StructuredModelResponse } from "./contracts";
+import {
+  STOREFRONT_REFERENCE_MEDIA_TYPES,
+  type StorefrontAiProvider,
+  type StructuredModelRequest,
+  type StructuredModelResponse,
+} from "./contracts";
 
 const RESULT_TOOL = "storefront_compiler_result";
 const MAX_IMAGE_EVIDENCE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGE_EVIDENCE_COUNT = 8;
+const IMAGE_EVIDENCE_MEDIA_TYPES: ReadonlySet<string> = new Set(STOREFRONT_REFERENCE_MEDIA_TYPES);
 
 interface AnthropicLike {
   messages: {
@@ -38,7 +44,7 @@ export function createAnthropicStructuredProvider(
       const images = request.images ?? [];
       if (images.length > MAX_IMAGE_EVIDENCE_COUNT || images.some((image) =>
         !/^[A-Za-z0-9_-]{1,80}$/.test(image.key) || image.bytes.byteLength === 0 ||
-        image.bytes.byteLength > MAX_IMAGE_EVIDENCE_BYTES
+        image.bytes.byteLength > MAX_IMAGE_EVIDENCE_BYTES || !IMAGE_EVIDENCE_MEDIA_TYPES.has(image.mediaType)
       )) throw new StructuredOutputError("Image evidence is invalid or exceeds its bounded limit");
       const content = images.length === 0
         ? request.prompt
