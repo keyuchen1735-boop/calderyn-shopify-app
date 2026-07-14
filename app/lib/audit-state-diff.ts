@@ -69,6 +69,7 @@ export function stateDiff(actionKind: string, preState: unknown, postState: unkn
     case "pause_campaign":
     case "resume_campaign":
     case "reduce_campaign_budget":
+    case "increase_campaign_budget":
     case "update_campaign_budget":
       push("Status", str(pre, "status"), str(post, "status"));
       push("Daily budget", money(num(pre, "daily_budget_cents")), money(num(post, "daily_budget_cents")));
