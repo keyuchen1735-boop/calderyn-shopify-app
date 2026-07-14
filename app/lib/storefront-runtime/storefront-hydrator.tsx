@@ -65,6 +65,7 @@ export function createRuntimeAdapters(input: {
   const refresh = input.refresh ?? (() => globalThis.window?.location.reload());
   const locationAssign = input.locationAssign ?? ((href: string) => globalThis.window?.location.assign(href));
   let selectedVariant = input.data?.product?.variants.find((entry) => entry.available) ?? null;
+  let pendingSearchQuery: string | null = null;
   const dispatch = (intent: CommerceIntent) => {
     if (intent.type === "variant.select") return;
     if (input.mode === "preview") {
@@ -90,8 +91,14 @@ export function createRuntimeAdapters(input: {
       if (href !== "#") locationAssign(href);
     },
     search(intent) {
-      if (intent.type === "update") return;
-      const query = intent.type === "clear" ? "" : String(intent.query ?? "").slice(0, 200);
+      if (intent.type === "update") {
+        pendingSearchQuery = String(intent.query ?? "").slice(0, 200);
+        return;
+      }
+      if (intent.type === "clear") pendingSearchQuery = null;
+      const query = intent.type === "clear"
+        ? ""
+        : pendingSearchQuery ?? String(intent.query ?? "").slice(0, 200);
       locationAssign(hrefFor({ routeId: "search", params: { query } }, input.mode));
     },
     collection(intent) {

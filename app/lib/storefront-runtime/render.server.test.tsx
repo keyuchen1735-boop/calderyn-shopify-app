@@ -1,7 +1,10 @@
 import { createElement } from "react";
+import { existsSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { RouteArtifact, StorefrontBundleV1 } from "~/lib/storefront-bundle/types";
+import { CURATED_FONT_IDS } from "~/lib/storefront-bundle/types";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 import {
@@ -70,6 +73,59 @@ function artifact(overrides: Partial<RouteArtifact> = {}): RouteArtifact {
 }
 
 describe("compiled-node server renderer", () => {
+  it("emits validated design tokens and every curated self-hosted font beneath the bundle root", () => {
+    const expectedFamilies: Record<(typeof CURATED_FONT_IDS)[number], string> = {
+      "archivo-narrow": "CD Archivo Narrow",
+      "atkinson-hyperlegible": "CD Atkinson Hyperlegible",
+      fraunces: "CD Fraunces",
+      "ibm-plex-mono": "CD IBM Plex Mono",
+      inter: "CD Inter",
+      "roboto-slab": "CD Roboto Slab",
+      "source-serif-4": "CD Source Serif 4",
+      "space-grotesk": "CD Space Grotesk",
+    };
+
+    for (const fontId of CURATED_FONT_IDS) {
+      const source = structuredClone(VALID_BUNDLE_SOURCE);
+      source.designSystem.displayFontId = fontId;
+      source.designSystem.bodyFontId = fontId;
+      source.designSystem.tokens = { ink: "#123456", rhythm: "clamp(1rem, 2vw, 2rem)" };
+      const html = renderToStaticMarkup(renderStorefrontSurface({
+        bundle: compileBundle(source).bundle,
+        routeId: "home",
+        data,
+        nonce: "font-nonce",
+        mode: "public",
+      }));
+      const fontPath = resolve(process.cwd(), `public/storefront-fonts/${fontId}-latin.woff2`);
+
+      expect(html).toContain('data-cd-bundle-style="tokens"');
+      expect(html).toContain("--ink:#123456");
+      expect(html).toContain("--rhythm:clamp(1rem, 2vw, 2rem)");
+      expect(html).toContain(`--font-display:${expectedFamilies[fontId]}`);
+      expect(html).toContain(`--font-body:${expectedFamilies[fontId]}`);
+      expect(html).toContain(`/storefront-fonts/${fontId}-latin.woff2`);
+      expect(html).not.toContain("fonts.googleapis.com");
+      expect(html).not.toContain("fonts.gstatic.com");
+      expect(existsSync(fontPath)).toBe(true);
+      expect(existsSync(fontPath) ? statSync(fontPath).size : 0).toBeGreaterThan(1_000);
+    }
+  });
+
+  it("fails closed when a mutated bundle contains an unsafe design token", () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    bundle.designSystem.tokens.ink = `red; background-image:url(https://evil.example/pixel)`;
+
+    expect(() => renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "token-nonce", mode: "public",
+    }))).toThrow(/token|unsafe|forbidden/i);
+
+    bundle.designSystem.tokens.ink = String.raw`u\72l("https://evil.example/pixel")`;
+    expect(() => renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "token-nonce", mode: "public",
+    }))).toThrow(/token|unsafe|forbidden/i);
+  });
+
   it("resolves declared recipe image keys only inside the owned recipe asset directory", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
@@ -146,6 +202,60 @@ describe("compiled-node server renderer", () => {
     expect(previewHtml.match(/id="cd-[^"]+"/g)).toEqual(publicHtml.match(/id="cd-[^"]+"/g));
     expect(previewHtml).toContain("/dashboard/store/preview?route=home");
     expect(publicHtml).toContain('href="/storefront"');
+  });
+
+  it("resolves each product.images repeat binding to that media item's URL and alt text", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.product.html = `<main><div data-cd-repeat="product.images"><img data-cd-key="product.primaryImage" data-cd-src="product.primaryImage" data-cd-alt="product.title"></div></main>`;
+    const bundle = compileBundle(source).bundle;
+    const product = {
+      ...publicProduct,
+      primaryImage: { url: "https://cdn.example.test/primary.webp", alt: "Primary view" },
+      images: [
+        { url: "https://cdn.example.test/front.webp", alt: "Front view" },
+        { url: "https://cdn.example.test/back.webp", alt: "Back view" },
+      ],
+    };
+
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "product", data: { ...data, product }, nonce: "media-nonce", mode: "public",
+    }));
+
+    expect(html).toContain('src="https://cdn.example.test/front.webp"');
+    expect(html).toContain('alt="Front view"');
+    expect(html).toContain('src="https://cdn.example.test/back.webp"');
+    expect(html).toContain('alt="Back view"');
+    expect(html).not.toContain("primary.webp");
+  });
+
+  it("expands policy placeholders into allowlisted platform routes and ignores supplied URLs", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><footer data-cd-policy-links><span>Generated content is replaced</span></footer></main>`;
+    const bundle = compileBundle(source).bundle;
+    const scriptProtocol = ["java", "script:"].join("");
+    const policyData: PublicPresentationData = {
+      ...data,
+      policyLinks: [
+        { id: "privacy", title: "Privacy policy", href: `${scriptProtocol}alert(1)` },
+        { id: "shipping", title: "Shipping policy", href: "https://attacker.example/redirect" },
+        { id: "admin", title: "Admin", href: "/admin" },
+      ],
+    };
+
+    const publicHtml = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data: policyData, nonce: "policy-nonce", mode: "public",
+    }));
+    const previewHtml = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data: policyData, nonce: "policy-nonce", mode: "preview",
+    }));
+
+    expect(publicHtml).toContain('<a href="/storefront/policies/privacy">Privacy policy</a>');
+    expect(publicHtml).toContain('<a href="/storefront/policies/shipping">Shipping policy</a>');
+    expect(publicHtml).not.toContain(scriptProtocol);
+    expect(publicHtml).not.toContain("attacker.example");
+    expect(publicHtml).not.toContain("Admin");
+    expect(publicHtml).not.toContain("Generated content is replaced");
+    expect(previewHtml).toContain('<a href="#">Privacy policy</a>');
   });
 
   it("composes deterministic collision-resistant instance IDs across nested repeats", () => {

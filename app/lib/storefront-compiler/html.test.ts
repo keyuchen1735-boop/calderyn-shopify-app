@@ -35,6 +35,34 @@ describe("compileHtml", () => {
     expect(result.html).not.toContain("data-cd-target=");
   });
 
+  it("allows bounded standalone catalog-search inputs and stable control values", () => {
+    const result = compileHtml(
+      `<input type="search" name="q" placeholder="Search products" value="room-mode" aria-label="Search catalog"><button value="featured" data-cd-on="click" data-cd-action="collection.sort">Featured</button>`,
+      { namespace: "search", rootScopeKind: "search" },
+    );
+
+    expect(result.html).toContain('<input aria-label="Search catalog"');
+    expect(result.html).toContain('name="q"');
+    expect(result.html).toContain('placeholder="Search products"');
+    expect(result.html).toContain('type="search"');
+    expect(result.html).toContain('value="room-mode"');
+    expect(result.interactions.transitions).toEqual([
+      expect.objectContaining({ action: expect.objectContaining({ type: "collection.sort" }) }),
+    ]);
+    expect(result.html).toContain('value="featured"');
+  });
+
+  it.each([
+    `<input type="password">`,
+    `<input type="hidden">`,
+    `<input type="search" placeholder="${"x".repeat(161)}">`,
+    `<input type="search" value="${"x".repeat(121)}">`,
+    `<input type="search" name="not a safe name">`,
+    `<div value="machine-value"></div>`,
+  ])("rejects unsafe or out-of-bounds static input/control attributes: %s", (source) => {
+    expect(() => compileHtml(source, { namespace: "search", rootScopeKind: "search" })).toThrow(CompilerError);
+  });
+
   it("rejects duplicate IDs", () => {
     expect(() => compileHtml(`<div id="same"></div><p id="same"></p>`, { namespace: "x" })).toThrow(
       /duplicate id/i,

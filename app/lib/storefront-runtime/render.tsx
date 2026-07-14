@@ -13,6 +13,7 @@ import type {
 } from "~/lib/storefront-bundle/types";
 import { isAllowedCompiledTag } from "~/lib/storefront-compiler/html";
 import { CheckoutIslands } from "./checkout-islands";
+import { storefrontDesignSystemCss } from "./curated-fonts";
 import type {
   PublicCart,
   PublicMedia,
@@ -82,6 +83,10 @@ function objectValue(value: unknown, field: string): unknown {
 
 function scopedValue(scope: ScopeValue | undefined, path: string): unknown {
   if (!scope) return null;
+  if ("url" in scope && "alt" in scope) {
+    if (path === "product.primaryImage" || path === "product.title") return scope;
+    return null;
+  }
   const [, field = ""] = path.split(".", 2);
   return objectValue(scope, field);
 }
@@ -275,7 +280,18 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
   if (node.routeTarget) props.href = targetHref(node.routeTarget, context);
 
   const nodeBindings = context.bindings.get(node.id) ?? [];
-  let children: ReactNode[] = node.children.map((child, index) => renderNode(child, context, `${key}-${index}`));
+  let children: ReactNode[];
+  if (node.attributes["data-cd-platform-content"] === "policyLinks") {
+    const policyIds = new Set(["privacy", "terms", "refund", "shipping"]);
+    children = context.data.policyLinks.flatMap((policy, index) => {
+      const title = policy.title.trim();
+      if (!policyIds.has(policy.id) || title.length === 0 || title.length > 120) return [];
+      const href = context.mode === "preview" ? "#" : `${PATHS.policy}/${policy.id}`;
+      return [createElement("a", { key: `${key}-policy-${policy.id}-${index}`, href }, title)];
+    });
+  } else {
+    children = node.children.map((child, index) => renderNode(child, context, `${key}-${index}`));
+  }
   for (const binding of nodeBindings) {
     const formatted = formatBinding(binding, resolveRef(binding.ref, context));
     if (binding.kind === "text" || binding.kind === "money") children = formatted === null ? [] : [formatted];
@@ -444,6 +460,7 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
   }
   return (
     <div data-cd-bundle-runtime="1" data-cd-bundle-source={bundle.source.kind}>
+      <style nonce={nonce} data-cd-bundle-style="tokens">{storefrontDesignSystemCss(bundle.designSystem)}</style>
       {bundle.designSystem.globalCss ? <style nonce={nonce} data-cd-bundle-style="global">{bundle.designSystem.globalCss}</style> : null}
       <div data-cd-bundle-shell={routeId}>
         {bundle.shell.css ? <style nonce={nonce} data-cd-bundle-style="shell">{bundle.shell.css}</style> : null}

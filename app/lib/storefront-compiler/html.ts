@@ -26,7 +26,7 @@ const ALLOWED_TAGS = new Set([
   "a", "abbr", "address", "article", "aside", "b", "blockquote", "br", "button", "cite", "code",
   "dd", "details", "dfn", "div", "dl", "dt", "em", "figcaption", "figure", "footer", "h1", "h2",
   "h3", "h4", "h5", "h6", "header", "hr", "i", "img", "kbd", "li", "main", "mark", "nav", "ol",
-  "p", "picture", "pre", "q", "s", "section", "small", "source", "span", "strong", "sub", "summary",
+  "p", "picture", "pre", "q", "s", "section", "small", "source", "span", "strong", "sub", "summary", "input",
   "sup", "time", "u", "ul",
 ]);
 
@@ -34,7 +34,7 @@ export function isAllowedCompiledTag(value: unknown): value is string {
   return typeof value === "string" && ALLOWED_TAGS.has(value);
 }
 
-const VOID_TAGS = new Set(["br", "hr", "img", "source"]);
+const VOID_TAGS = new Set(["br", "hr", "img", "source", "input"]);
 const STATIC_ATTRIBUTES = new Set([
   "class", "title", "role", "tabindex", "alt", "width", "height", "loading", "decoding", "open", "href", "for",
 ]);
@@ -126,12 +126,35 @@ function isTextNode(node: DefaultTreeAdapterTypes.ChildNode): node is DefaultTre
   return node.nodeName === "#text" && "value" in node;
 }
 
-function assertAllowedAttribute(name: string, value: string): void {
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+}
+
+function assertAllowedAttribute(name: string, value: string, tagName: string): void {
   if (name.startsWith("on")) {
     throw new CompilerError("html.event_handler", `Event-handler attribute ${JSON.stringify(name)} is forbidden`);
   }
   if (name === "style") {
     throw new CompilerError("html.inline_style", "Inline style attributes are forbidden");
+  }
+  if (name === "type") {
+    if (tagName === "input" && (value === "search" || value === "text")) return;
+    throw new CompilerError("html.control_type", `Unsupported ${tagName} type ${JSON.stringify(value)}`);
+  }
+  if (name === "name") {
+    if (tagName === "input" && isSafeIdentifier(value)) return;
+    throw new CompilerError("html.control_attribute", `Invalid ${tagName} name`);
+  }
+  if (name === "placeholder") {
+    if (tagName === "input" && value.length <= 160 && !hasControlCharacter(value)) return;
+    throw new CompilerError("html.control_attribute", `Invalid ${tagName} placeholder`);
+  }
+  if (name === "value") {
+    if ((tagName === "input" || tagName === "button") && value.length <= 120 && !hasControlCharacter(value)) return;
+    throw new CompilerError("html.control_attribute", `Invalid ${tagName} value`);
   }
   if (name === "href" && value.startsWith("#") && isSafeIdentifier(value.slice(1))) return;
   if (name === "href" || name === "src" || name === "srcset" || name === "action" || name === "formaction") {
@@ -227,10 +250,10 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
     if (!ALLOWED_TAGS.has(node.tagName)) {
       throw new CompilerError("html.tag", `Tag <${node.tagName}> is forbidden`);
     }
-    if (options.checkoutDecorative && (node.tagName === "button" || node.tagName === "details" || node.tagName === "summary")) {
+    if (options.checkoutDecorative && (node.tagName === "button" || node.tagName === "details" || node.tagName === "summary" || node.tagName === "input")) {
       throw new CompilerError("checkout.control", `Interactive checkout tag <${node.tagName}> is forbidden`);
     }
-    for (const attribute of node.attrs) assertAllowedAttribute(attribute.name, attribute.value);
+    for (const attribute of node.attrs) assertAllowedAttribute(attribute.name, attribute.value, node.tagName);
     const id = attributesOf(node).get("id");
     const slotKind = attributesOf(node).get("data-cd-slot");
     const slotId = slotKind === undefined ? undefined : `cd-${options.namespace}-slot-${++slotIdentityCounter}`;

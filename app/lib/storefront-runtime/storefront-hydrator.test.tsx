@@ -4,6 +4,30 @@ import { describe, expect, it, vi } from "vitest";
 import { createRuntimeAdapters, type RuntimeFetcher } from "./storefront-hydrator";
 
 describe("runtime-1 route adapters", () => {
+  it("retains a bounded input query for a separate search submit control", () => {
+    const assign = vi.fn();
+    const adapters = createRuntimeAdapters({ mode: "public", locationAssign: assign });
+    const typed = "x".repeat(240);
+
+    adapters.search?.({ type: "update", query: typed });
+    adapters.search?.({ type: "submit", query: "submit-button-value" });
+
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith(`/storefront/search?q=${"x".repeat(200)}`);
+  });
+
+  it("resets the pending search query when search is cleared", () => {
+    const assign = vi.fn();
+    const adapters = createRuntimeAdapters({ mode: "public", locationAssign: assign });
+
+    adapters.search?.({ type: "update", query: "stale" });
+    adapters.search?.({ type: "clear" });
+    adapters.search?.({ type: "submit", query: "fresh" });
+
+    expect(assign).toHaveBeenNthCalledWith(1, "/storefront/search?q=");
+    expect(assign).toHaveBeenNthCalledWith(2, "/storefront/search?q=fresh");
+  });
+
   it("drops a stale collection cursor when sort changes its Task 6 fingerprint", () => {
     window.history.replaceState({}, "", "/storefront/collections/featured?cursor=stale&sort=title_asc");
     const assign = vi.fn();

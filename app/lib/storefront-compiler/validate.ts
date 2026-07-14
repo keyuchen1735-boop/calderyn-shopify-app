@@ -64,6 +64,7 @@ const SLOT_KINDS = new Set<TrustedSlotManifest["kind"]>([
 const HOST_SIZES = new Set<TrustedSlotManifest["hostSize"]>(["inline", "block", "panel", "page"]);
 const COMPILED_ATTRIBUTES = new Set([
   "class", "title", "role", "tabindex", "alt", "width", "height", "loading", "decoding", "open", "href", "for",
+  "type", "name", "placeholder", "value",
   "data-cd-repeat-id", "data-cd-bind-text", "data-cd-bind-money", "data-cd-bind-src", "data-cd-bind-alt",
   "data-cd-route-target", "data-cd-trusted-slot-id", "data-cd-platform-content", "data-cd-asset-key",
 ]);
@@ -94,6 +95,21 @@ function isIdentifier(value: unknown): value is string {
     const code = character.charCodeAt(0);
     if (!((code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || character === "-" || character === "_")) return false;
   }
+  return true;
+}
+
+function hasControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+}
+
+function validControlAttribute(tag: unknown, name: string, value: string): boolean {
+  if (name === "type") return tag === "input" && (value === "search" || value === "text");
+  if (name === "name") return tag === "input" && isIdentifier(value) && value.length <= 80;
+  if (name === "placeholder") return tag === "input" && value.length <= 160 && !hasControlCharacter(value);
+  if (name === "value") return (tag === "input" || tag === "button") && value.length <= 120 && !hasControlCharacter(value);
   return true;
 }
 
@@ -229,7 +245,7 @@ function parseTree(
       if (context.ids.has(elementId)) add("tree.duplicate_id", `${currentPath}.id`, `Duplicate compiled ID ${elementId}`);
       context.ids.add(elementId);
       if (!isAllowedCompiledTag(input.tag)) add("tree.tag", `${currentPath}.tag`, "Compiled tag is not allowlisted");
-      if (checkout && (input.tag === "button" || input.tag === "details" || input.tag === "summary")) {
+      if (checkout && (input.tag === "button" || input.tag === "details" || input.tag === "summary" || input.tag === "input")) {
         add("checkout.control", `${currentPath}.tag`, "Checkout decoration contains an interactive control");
       }
       const attrsInput = record(input.attributes);
@@ -244,6 +260,10 @@ function parseTree(
           const allowed = COMPILED_ATTRIBUTES.has(name) || name.startsWith("aria-");
           if (!allowed || name.startsWith("on") || name === "style" || name === "src" || name === "srcset") {
             add("tree.attribute", `${currentPath}.attributes.${name}`, "Compiled attribute is not allowlisted");
+            continue;
+          }
+          if (!validControlAttribute(input.tag, name, attributeValue)) {
+            add("tree.control_attribute", `${currentPath}.attributes.${name}`, "Compiled control attribute is unsafe or out of bounds");
             continue;
           }
           attributes[name] = attributeValue;

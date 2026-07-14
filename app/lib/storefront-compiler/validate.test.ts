@@ -31,6 +31,27 @@ function flattenElements(nodes: readonly CompiledNode[]): CompiledElementNode[] 
 }
 
 describe("validation profile v1", () => {
+  it("accepts compiled bounded search inputs and static machine values", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.search.html = `<main><input type="search" name="q" placeholder="Search products" value="initial" data-cd-on="input" data-cd-action="search.update"><button value="submit" data-cd-on="click" data-cd-action="search.submit">Search</button></main>`;
+
+    expect(compileBundle(source).report).toMatchObject({ ok: true, diagnostics: [] });
+  });
+
+  it("rejects forged persisted control attributes", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.search.html = `<main><input type="search" name="q"></main>`;
+    const bundle = compileBundle(source).bundle;
+    const input = flattenElements(bundle.routes.search.tree).find((node) => node.tag === "input");
+    if (!input) throw new Error("input fixture is missing");
+    input.attributes.type = "password";
+    input.attributes.value = "x".repeat(121);
+
+    expect(validateCompiledBundle(bundle).diagnostics.map((item) => item.code)).toEqual(
+      expect.arrayContaining(["tree.control_attribute"]),
+    );
+  });
+
   it("rejects persisted cart-line controls whose exact repeat scope was removed", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.routes.cart.html = `<main data-cd-repeat="cart.lines"><div data-cd-key="cartLine.id" data-cd-slot="cartLineControls"></div></main>`;
