@@ -3,6 +3,8 @@ import type { BundleValidationReport } from "~/lib/storefront-compiler/validate"
 import type { DefinedRecipe } from "~/lib/storefront-recipes/factory";
 import { generateOriginalStorefront } from "~/lib/storefront-ai/generate.server";
 import { reserveGenerateQuota } from "~/lib/storegen/guard.server";
+import { enhanceListing, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
+import { getCatalog } from "~/lib/storefront/catalog.server";
 import type {
   GenerateOriginalStorefrontInput,
   GenerateOriginalStorefrontResult,
@@ -75,6 +77,7 @@ export interface StorefrontBuildDependencies {
   buildEvidence(shopId: string): Promise<CatalogRoutingEvidence>;
   resolveDesign(request: StoreDesignRequest, evidence: CatalogRoutingEvidence): StoreDesignResolution;
   loadRecipe(templateId: StoreTemplateId, templateVersion: number): Promise<StorefrontRecipeArtifact>;
+  prepareRecipeImages(shopId: string, signal: AbortSignal): Promise<{ required: number; ready: number }>;
   assertWriteAllowed(shopId: string): Promise<void>;
   readPointers(shopId: string): Promise<StorefrontReleasePointers>;
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
@@ -193,6 +196,12 @@ const defaultDependencies: StorefrontBuildDependencies = {
   buildEvidence: buildCatalogRoutingEvidence,
   resolveDesign: (request, evidence) => resolveStoreDesign(request, evidence, STORE_TEMPLATE_REGISTRY),
   loadRecipe,
+  prepareRecipeImages: async (shopId, signal) => {
+    const products = await getCatalog().listProducts(shopId, { limit: 12 });
+    const required = products.length > 0 && products.every((product) => product.images.length === 0) ? products.length : 0;
+    const ready = await generateMissingListingImages(shopId, products, enhanceListing, signal);
+    return { required, ready };
+  },
   assertWriteAllowed: assertStorefrontWriteAllowed,
   readPointers: readStorefrontReleasePointers,
   createVersion: createStorefrontBundleVersion,
@@ -216,6 +225,7 @@ export interface StorefrontBuildInput {
 }
 
 export interface PreparedStorefrontDesignBuild {
+  request: StoreDesignRequest;
   evidence: CatalogRoutingEvidence;
   resolution: StoreDesignResolution;
   pointers: StorefrontReleasePointers;
@@ -230,7 +240,15 @@ export async function prepareStorefrontDesignBuild(
   dependencies: StorefrontBuildDependencies = defaultDependencies,
 ): Promise<PreparedStorefrontDesignBuild> {
   const evidence = await dependencies.buildEvidence(input.shopId);
-  const resolution = dependencies.resolveDesign(input.request, evidence);
+  await dependencies.assertWriteAllowed(input.shopId);
+  const pointers = await dependencies.readPointers(input.shopId);
+  const request: StoreDesignRequest = pointers.draftVersionId === null && input.request.mode === "custom"
+    ? { prompt: input.request.prompt, mode: "auto" }
+    : input.request;
+  let resolution = dependencies.resolveDesign(request, evidence);
+  if (pointers.draftVersionId === null && resolution.kind === "custom") {
+    resolution = dependencies.resolveDesign({ prompt: "", mode: "auto" }, evidence);
+  }
   if (resolution.kind === "recipe" && !(input.recipeBuildEnabled ?? isStorefrontRecipeBuildEnabled())) {
     throw new StorefrontBuildError(
       "storefront_recipe_build_disabled",
@@ -245,12 +263,10 @@ export async function prepareStorefrontDesignBuild(
       503,
     );
   }
-  await dependencies.assertWriteAllowed(input.shopId);
-  const pointers = await dependencies.readPointers(input.shopId);
   const customQuotaReservationToken = resolution.kind === "custom"
-    ? await dependencies.reserveCustomBuild({ shopId: input.shopId, prompt: input.request.prompt, trusted: input.trusted ?? false })
+    ? await dependencies.reserveCustomBuild({ shopId: input.shopId, prompt: request.prompt, trusted: input.trusted ?? false })
     : undefined;
-  return { evidence, resolution, pointers, ...(customQuotaReservationToken ? { customQuotaReservationToken } : {}) };
+  return { request, evidence, resolution, pointers, ...(customQuotaReservationToken ? { customQuotaReservationToken } : {}) };
 }
 
 async function emit(
@@ -271,7 +287,7 @@ export async function buildStorefrontDesign(
   dependencies: StorefrontBuildDependencies = defaultDependencies,
 ): Promise<StorefrontBuildReceipt> {
   const prepared = input.prepared ?? await prepareStorefrontDesignBuild(input, dependencies);
-  const { evidence, resolution: frozenResolution, pointers, customQuotaReservationToken } = prepared;
+  const { request, evidence, resolution: frozenResolution, pointers, customQuotaReservationToken } = prepared;
   const recommendationChanged = input.recommendedResolution
     ? input.recommendedResolution.catalogFingerprint !== frozenResolution.catalogFingerprint
     : false;
@@ -288,7 +304,7 @@ export async function buildStorefrontDesign(
     await emit(input.onEvent, { stage: "generating_original" });
     const generated = await dependencies.generateCustom({
       shopId: input.shopId,
-      prompt: input.request.prompt,
+      prompt: request.prompt,
       expectedDraftVersionId: pointers.draftVersionId,
       actorId: input.actorId ?? null,
       trusted: input.trusted ?? false,
@@ -325,7 +341,31 @@ export async function buildStorefrontDesign(
     templateId: frozenResolution.templateId,
     templateVersion: frozenResolution.templateVersion,
   });
-  const recipe = await dependencies.loadRecipe(frozenResolution.templateId, frozenResolution.templateVersion);
+  const imageryController = new AbortController();
+  // Leave 20 seconds of the one-minute preview target for validation and draft installation.
+  const imageryTimer = setTimeout(() => imageryController.abort(), 40_000);
+  let recipe: StorefrontRecipeArtifact;
+  let imagery: { required: number; ready: number };
+  try {
+    [recipe, imagery] = await Promise.race([
+      Promise.all([
+        dependencies.loadRecipe(frozenResolution.templateId, frozenResolution.templateVersion),
+        dependencies.prepareRecipeImages(input.shopId, imageryController.signal),
+      ]),
+      new Promise<never>((_resolve, reject) => imageryController.signal.addEventListener("abort", () => reject(
+        new StorefrontBuildError("storefront_recipe_imagery_timeout", "Product image generation exceeded the first-preview deadline. Your current draft was not changed.", 504),
+      ), { once: true })),
+    ]);
+  } finally {
+    clearTimeout(imageryTimer);
+  }
+  if (imagery.ready < imagery.required) {
+    throw new StorefrontBuildError(
+      "storefront_recipe_imagery_failed",
+      "Product images could not be generated for this preview. Your current draft was not changed.",
+      502,
+    );
+  }
   if (
     recipe.bundle.source.kind !== "recipe" ||
     recipe.bundle.source.templateId !== frozenResolution.templateId ||
@@ -365,10 +405,10 @@ export async function buildStorefrontDesign(
       ...recipe.report,
       proofKind: "deploy_time_recipe_matrix",
     },
-    generationPrompt: input.request.prompt,
+    generationPrompt: request.prompt,
     resolution: {
       ...frozenResolution,
-      request: input.request,
+      request,
       evidence,
     },
   });

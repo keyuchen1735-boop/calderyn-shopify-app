@@ -13,9 +13,10 @@ import { action, loader, previewCompilerId, rewriteStorefrontHrefs, rewriteDocSt
 // The route imports the storefront stylesheet as a URL and several server-only
 // data sources. Stub the URL import and the DB/session reads so the loader's
 // real doc-selection + render wiring runs in isolation.
-const { sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock } = vi.hoisted(() => ({
+const { sessionMock, getCatalogMock, getPreviewCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   getCatalogMock: vi.fn(),
+  getPreviewCatalogMock: vi.fn(),
   getSettingsMock: vi.fn(),
   loadDraftMock: vi.fn(),
   getSupabaseMock: vi.fn(),
@@ -26,7 +27,7 @@ const { sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabase
 }));
 vi.mock("~/styles/storefront.css?url", () => ({ default: "/assets/storefront.css" }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sessionMock }));
-vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
+vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock, getPreviewCatalog: getPreviewCatalogMock }));
 vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: getSettingsMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadDraftDoc: loadDraftMock }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: getSupabaseMock }));
@@ -62,9 +63,10 @@ const catalog = {
 };
 
 beforeEach(() => {
-  for (const m of [sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock]) m.mockReset();
+  for (const m of [sessionMock, getCatalogMock, getPreviewCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock]) m.mockReset();
   sessionMock.mockResolvedValue({ shopId: SHOP });
   getCatalogMock.mockReturnValue(catalog);
+  getPreviewCatalogMock.mockReturnValue(catalog);
   getSettingsMock.mockResolvedValue(settings);
   readPreviewBundleVersionMock.mockResolvedValue(null);
   readPreviewCommerceSessionMock.mockResolvedValue({
@@ -100,6 +102,7 @@ describe("dashboard.store.preview loader", () => {
       const result = await loaderData("https://app.example.com/dashboard/store/preview?template=commons-index&route=home");
       expect(result).toMatchObject({ runtime: 1, bundleId: "preview:commons-index", routeId: "home" });
       expect(getRecipeMock).toHaveBeenCalledWith("commons-index");
+      expect(getPreviewCatalogMock).toHaveBeenCalled();
       expect(readPreviewBundleVersionMock).not.toHaveBeenCalled();
       expect(loadDraftMock).not.toHaveBeenCalled();
     } finally {

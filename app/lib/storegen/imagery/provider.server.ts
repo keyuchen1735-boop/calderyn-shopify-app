@@ -9,6 +9,7 @@ export interface ListingImageRequest {
   productDescription: string;
   sourceImageUrl: string | null;
   mode: "product_shot" | "lifestyle_scene";
+  signal?: AbortSignal;
 }
 export interface ImageProvider {
   name: string;

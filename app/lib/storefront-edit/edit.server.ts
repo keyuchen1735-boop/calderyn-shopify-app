@@ -480,9 +480,9 @@ export async function editStorefrontByPrompt(
     trusted?: boolean;
   },
   dependencies: StorefrontEditDependencies = defaultDependencies,
-): Promise<StorefrontEditReceipt | { status: "start_over" }> {
+): Promise<StorefrontEditReceipt | { status: "start_over"; mode: "custom" }> {
   const intent = parseEditIntent(input.prompt, input.context);
-  if (intent.kind === "startOver") return { status: "start_over" };
+  if (intent.kind === "startOver") return { status: "start_over", mode: "custom" };
   try {
     const base = await dependencies.loadDraft(input.shopId);
     if (!base) throw new StorefrontEditError("storefront_edit_unavailable", "There is no runtime-1 draft to edit.", 409);

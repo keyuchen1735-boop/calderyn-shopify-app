@@ -300,6 +300,7 @@ export async function persistExternalImage(
       opts.fetchImpl ?? defaultFetch,
       opts.maxBytes ?? MAX_IMAGE_BYTES,
       opts.timeoutMs ?? FETCH_TIMEOUT_MS,
+      opts.signal,
     );
     const mime = sniffImageMime(bytes);
     if (!mime) return keep(url, "unrecognized_image", { shopId, source });

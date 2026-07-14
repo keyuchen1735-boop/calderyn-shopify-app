@@ -20,7 +20,7 @@ function clickButton(root: HTMLElement, label: RegExp) {
 }
 
 describe("welcome template selection", () => {
-  it("shows a merchant-bound interactive recipe and honest original-build expectations", () => {
+  it("shows a merchant-bound first recipe and reserves full redesign for a follow-up prompt", () => {
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -44,10 +44,8 @@ describe("welcome template selection", () => {
     expect(host.textContent).toMatch(/with your store data/i);
     expect(host.textContent).toMatch(/no AI design credit/i);
 
-    clickButton(host, /Create something original/i);
-    expect(host.textContent).toMatch(/Concept exploration.*visual judging.*browser proof/i);
-    expect(host.textContent).toMatch(/Uses one AI design run/i);
-    expect(host.querySelector(".cd-template-live__frame")).toBeNull();
+    expect([...host.querySelectorAll("button")].some((button) => /Create something original/i.test(button.textContent ?? ""))).toBe(false);
+    expect(host.textContent).toMatch(/full redesign.*after.*first draft/i);
     act(() => root.unmount());
   });
 });

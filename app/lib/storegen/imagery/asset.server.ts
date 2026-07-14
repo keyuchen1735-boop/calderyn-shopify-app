@@ -13,7 +13,7 @@ const SOURCE = "higgsfield";
 
 export interface EnhanceResult { productId: string; status: "ready" | "failed"; url: string | null }
 
-export async function enhanceListing(shopId: string, product: StoreProduct): Promise<EnhanceResult> {
+export async function enhanceListing(shopId: string, product: StoreProduct, opts: { signal?: AbortSignal } = {}): Promise<EnhanceResult> {
   if (!UUID_RE.test(shopId)) throw new Error(`enhanceListing requires a real (uuid) shop_id, got ${shopId}`);
   const sb = getSupabase();
   let url: string | null = null;
@@ -22,6 +22,7 @@ export async function enhanceListing(shopId: string, product: StoreProduct): Pro
     const out = await getImageProvider().generateListingImage({
       productTitle: product.title, productDescription: product.description,
       sourceImageUrl: product.images[0]?.url ?? null, mode: "product_shot",
+      signal: opts.signal,
     });
     status = "ready";
     // Higgsfield returns an EPHEMERAL provider URL that expires; capture it into
@@ -29,8 +30,10 @@ export async function enhanceListing(shopId: string, product: StoreProduct): Pro
     // path serves to buyers — is stable and self-hosted. persistExternalImage
     // never throws: on a persistence failure it logs and returns the ephemeral
     // url, so the image still renders (rule 12) and the row stays 'ready'.
-    url = (await persistExternalImage(shopId, out.url, "generated", "generated")).url;
+    url = (await persistExternalImage(shopId, out.url, "generated", "generated", { signal: opts.signal })).url;
+    if (opts.signal?.aborted) return { productId: product.id, status: "failed", url: null };
   } catch {
+    if (opts.signal?.aborted) return { productId: product.id, status: "failed", url: null };
     status = "failed"; // keep the source image; surfaced as a failed asset row
   }
   // url is NOT NULL in store_asset; "" is the sentinel for failed rows. It is never surfaced
@@ -41,6 +44,18 @@ export async function enhanceListing(shopId: string, product: StoreProduct): Pro
   );
   if (error) throw error;
   return { productId: product.id, status, url };
+}
+
+export async function generateMissingListingImages(
+  shopId: string,
+  products: StoreProduct[],
+  enhance: typeof enhanceListing = enhanceListing,
+  signal?: AbortSignal,
+): Promise<number> {
+  if (products.length === 0 || products.some((product) => product.images.length > 0)) return 0;
+  // ponytail: the first recipe renders at most 12 featured products; add queued catalog-wide generation if that ceiling changes.
+  const results = await Promise.all(products.slice(0, 12).map((product) => enhance(shopId, product, { signal })));
+  return results.filter((result) => result.status === "ready").length;
 }
 
 export async function applyAssetOverrides(shopId: string, products: StoreProduct[]): Promise<StoreProduct[]> {

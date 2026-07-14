@@ -14,6 +14,7 @@ async function generate(req: ListingImageRequest): Promise<{ url: string }> {
     title: req.productTitle,
     description: req.productDescription,
     referenceImageUrl: req.sourceImageUrl,
+    signal: req.signal,
   });
   return { url };
 }

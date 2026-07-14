@@ -190,10 +190,6 @@ export default function WelcomeOverlay({
       onBuildDesign({ prompt, mode: "recipe", templateId: selectedTemplateId });
       return;
     }
-    if (designMode === "custom") {
-      if (prompt) onBuildDesign({ prompt, mode: "custom" });
-      return;
-    }
     onBuildDesign({ prompt, mode: "auto" }, recommendation);
   };
 
@@ -316,15 +312,6 @@ export default function WelcomeOverlay({
                     />
                   </section>
                 )}
-                {designMode === "custom" && (
-                  <section className="cd-custom-expectation" aria-label="Original storefront build stages">
-                    <div>
-                      <strong>A genuinely original storefront</strong>
-                      <span>Concept exploration → visual judging → complete route generation → owned imagery → browser proof.</span>
-                    </div>
-                    <span className="cd-template-cost">Uses one AI design run · usually several minutes</span>
-                  </section>
-                )}
                 <div className="cd-template-actions">
                   <button
                     type="button"
@@ -358,33 +345,20 @@ export default function WelcomeOverlay({
                   >
                     Use recommendation
                   </button>
-                  <button
-                    type="button"
-                    className="cd-chip"
-                    data-welcome-item=""
-                    aria-pressed={designMode === "custom"}
-                    onClick={() => {
-                      setDesignMode("custom");
-                      setSelectedTemplateId(null);
-                    }}
-                  >
-                    Create something original
-                  </button>
                   <Btn
                     kind="primary"
                     data-welcome-item=""
-                    disabled={(designMode === "recipe" && !selectedTemplateId) || (designMode === "custom" && !templatePrompt.trim())}
+                    disabled={designMode === "recipe" && !selectedTemplateId}
                     onClick={submitDesign}
                   >
-                    {designMode === "custom"
-                      ? "Create original store"
-                      : designMode === "recipe" && selectedTemplateId
+                    {designMode === "recipe" && selectedTemplateId
                         ? `Build ${STORE_TEMPLATE_REGISTRY.templates.find((template) => template.id === selectedTemplateId)?.name ?? "selected recipe"}`
                         : recommendedTemplateId
                           ? `Build ${STORE_TEMPLATE_REGISTRY.templates.find((template) => template.id === recommendedTemplateId)?.name ?? "recommended store"}`
                           : "Build recommended store"}
                   </Btn>
                 </div>
+                <div className="cd-welcome-note">Ask for a full redesign after your first draft if you want an entirely original direction.</div>
               </div>
             )}
 

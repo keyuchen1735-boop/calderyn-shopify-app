@@ -13,7 +13,7 @@ import { randomBytes } from "node:crypto";
 import storefrontCss from "~/styles/storefront.css?url";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { getSupabase } from "~/lib/supabase.server";
-import { getCatalog } from "~/lib/storefront/catalog.server";
+import { getCatalog, getPreviewCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
 import { loadDraftDoc } from "~/lib/storebuilder/page-document.server";
@@ -151,7 +151,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         shopId,
         route,
         version,
-        dataDependencies: { cartLoader: async () => commerce.cart },
+        dataDependencies: { catalog: getPreviewCatalog(), cartLoader: async () => commerce.cart },
       });
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");
@@ -167,7 +167,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
         shopId,
         route,
         version,
-        dataDependencies: { cartLoader: async () => commerce.cart },
+        dataDependencies: { catalog: getPreviewCatalog(), cartLoader: async () => commerce.cart },
       });
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");

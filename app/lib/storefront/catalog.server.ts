@@ -6,6 +6,7 @@ import type { StorefrontCatalog } from "./catalog";
 import { ownedCatalog } from "./catalog.owned.server";
 import { fixtureCatalog } from "./catalog.stub.server";
 import { DEMO_SHOP_ID } from "./shop.server";
+import { applyAssetOverrides } from "~/lib/storegen/imagery/asset.server";
 
 // Route per call on the shopId every catalog method already receives: real tenants
 // read the owned catalog; EXACTLY the demo sentinel reads the in-memory stub. The
@@ -25,6 +26,19 @@ const routingCatalog: StorefrontCatalog = {
   getCollection: (shopId, handle) => pick(shopId).getCollection?.(shopId, handle) ?? Promise.resolve(null),
 };
 
+const previewCatalog: StorefrontCatalog = {
+  ...routingCatalog,
+  listProducts: async (shopId, opts) => applyAssetOverrides(shopId, await routingCatalog.listProducts(shopId, opts)),
+  getProduct: async (shopId, handle) => {
+    const product = await routingCatalog.getProduct(shopId, handle);
+    return product ? (await applyAssetOverrides(shopId, [product]))[0] ?? null : null;
+  },
+};
+
 export function getCatalog(): StorefrontCatalog {
   return routingCatalog;
+}
+
+export function getPreviewCatalog(): StorefrontCatalog {
+  return previewCatalog;
 }

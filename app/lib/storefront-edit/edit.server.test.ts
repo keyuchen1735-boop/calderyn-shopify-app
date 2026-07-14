@@ -331,7 +331,7 @@ describe("editStorefrontByPrompt", () => {
     const result = await editStorefrontByPrompt({
       shopId: SHOP, actorId: ACTOR, prompt: "Start over with a completely new store", expectedDraftVersionId: BASE,
     }, deps);
-    expect(result).toEqual({ status: "start_over" });
+    expect(result).toEqual({ status: "start_over", mode: "custom" });
     expect(deps.loadDraft).not.toHaveBeenCalled();
   });
 });
