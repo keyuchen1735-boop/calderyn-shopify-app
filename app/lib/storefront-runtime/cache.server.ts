@@ -33,18 +33,27 @@ export function buildStorefrontCacheKey(input: StorefrontCacheKeyInput): string 
   ].join(":");
 }
 
-export type StorefrontCacheSurface = StorefrontRouteId | "account" | "preview" | "signedMedia";
+export type StorefrontCacheSurface = StorefrontRouteId | "account" | "policy" | "preview" | "signedMedia";
+
+export function storefrontTenantCacheTag(shopId: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shopId)) {
+    throw new Error("storefront cache tag requires a UUID shop id");
+  }
+  return `storefront-shop-${shopId.toLowerCase()}`;
+}
 
 export function storefrontCacheHeaders(input: {
   routeId: StorefrontCacheSurface;
   personalized: boolean;
+  shopId?: string;
 }): Headers {
   const headers = new Headers();
   const publicBrowse = !input.personalized &&
-    (input.routeId === "home" || input.routeId === "collection" || input.routeId === "product");
+    (input.routeId === "home" || input.routeId === "collection" || input.routeId === "product" || input.routeId === "policy");
   if (publicBrowse) {
     headers.set("Cache-Control", "public, max-age=0, s-maxage=300, stale-while-revalidate=60");
     headers.set("Vary", "Host, Accept-Encoding");
+    if (input.shopId) headers.set("Vercel-Cache-Tag", storefrontTenantCacheTag(input.shopId));
   } else {
     headers.set("Cache-Control", "private, no-store");
     headers.set("Vary", "Host, Cookie, Authorization");

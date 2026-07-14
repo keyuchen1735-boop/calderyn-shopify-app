@@ -24,6 +24,8 @@ import {
   generateStudioStoreWithImages,
   publishStudioStore,
   saveStudioHero,
+  saveStudioPolicy,
+  deleteStudioPolicy,
   setStudioAccent,
   setStudioVibe,
   startStoreExperiment,
@@ -36,6 +38,8 @@ import {
   type StudioGenerateReceipt,
   type StudioHero,
   type StudioState,
+  type StudioPolicy,
+  type StudioPolicyId,
   type StudioVibe,
   undoStudioStorefrontEdit,
 } from "~/lib/dashboard/store-client";
@@ -49,6 +53,7 @@ import {
   parseProductLine,
   planStagedAttachments,
   shouldShowWelcome,
+  showLegacySectionsPanel,
   showPromptCanvas,
   type BuildPhase,
   type BuildStage,
@@ -61,6 +66,7 @@ import type { DashboardCtx } from "../context";
 import ChatRail from "../store/ChatRail";
 import TopBar, { type Device } from "../store/TopBar";
 import WelcomeOverlay from "../store/WelcomeOverlay";
+import StorePoliciesEditor from "../store/StorePoliciesEditor";
 import { confettiFrom } from "../store/confetti";
 import type { ChatAction, ChatMsg } from "../store/chat-types";
 import type { PageKey } from "~/lib/storebuilder/types";
@@ -198,6 +204,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setPublishing(v);
   };
   const [confirmingPublish, setConfirmingPublish] = useState(false);
+  const [policiesOpen, setPoliciesOpen] = useState(false);
 
   // --- experiments --------------------------------------------------------------
   const [decidingExperiment, setDecidingExperiment] = useState(false);
@@ -978,6 +985,20 @@ export default function Store({ app }: { app: DashboardCtx }) {
     void runPublish();
   };
 
+  const onPolicySave = async (policy: Pick<StudioPolicy, "id" | "title" | "body">) => {
+    await saveStudioPolicy(policy);
+    await refresh();
+    reloadPreview();
+    toast("Store policy saved");
+  };
+
+  const onPolicyDelete = async (policyId: StudioPolicyId) => {
+    await deleteStudioPolicy(policyId);
+    await refresh();
+    reloadPreview();
+    toast("Store policy removed");
+  };
+
   const onDecideExperiment = async (decision: "ship" | "keep" | "stop") => {
     if (!data?.experiment || decidingExperiment) return;
     setDecidingExperiment(true);
@@ -1105,6 +1126,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
             onDeviceChange={onDeviceChange}
             markupOn={markupOn}
             onToggleMarkup={onToggleMarkup}
+            onEditPolicies={() => setPoliciesOpen(true)}
             onPublish={onPublishClick}
             publishing={publishing}
           />
@@ -1118,7 +1140,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
                 src={previewSrc}
                 sandbox="allow-same-origin allow-scripts allow-popups"
               />
-              {page === "home" && !building && (
+              {showLegacySectionsPanel({ page, building, draftRuntime: data.release.draftRuntime }) && (
                 <SectionsPanel
                   sections={data.sections ?? []}
                   busyId={sectionBusyId}
@@ -1229,6 +1251,14 @@ export default function Store({ app }: { app: DashboardCtx }) {
             onBuildPlain={onWelcomeBuildPlain}
             onBuildDesign={onWelcomeBuildDesign}
             onAddProduct={(line) => void onWelcomeAddProduct(line)}
+          />
+        )}
+        {policiesOpen && (
+          <StorePoliciesEditor
+            policies={data.policies ?? []}
+            onSave={onPolicySave}
+            onDelete={onPolicyDelete}
+            onClose={() => setPoliciesOpen(false)}
           />
         )}
       </div>

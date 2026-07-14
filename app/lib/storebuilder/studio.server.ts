@@ -19,6 +19,7 @@ import {
   readStorefrontReleaseState,
 } from "~/lib/storefront-bundle/build.server";
 import { publishStorefrontRelease } from "~/lib/storefront-bundle/release.server";
+import { loadStorefrontPolicies } from "~/lib/storefront/policies.server";
 import { loadDraftDoc, loadPublishedDoc, saveDraft, publishDoc } from "./page-document.server";
 import { defaultHomeDocument } from "./default-doc";
 import { validateDocument, type ValidIds } from "./validate";
@@ -329,7 +330,7 @@ async function shopOrgSlug(shopId: string): Promise<string | null> {
 
 export async function loadStudioState(shopId: string): Promise<StudioState> {
   const catalog = getCatalog();
-  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug, experiment, release] =
+  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug, experiment, release, policies] =
     await Promise.all([
       getStoreSettings(shopId),
       loadDraftDoc(shopId, "home"),
@@ -348,6 +349,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
             draftRuntimeVersion: null,
             publishedRuntimeVersion: null,
           }),
+      UUID_RE.test(shopId) ? loadStorefrontPolicies(shopId) : Promise.resolve([]),
     ]);
 
   const doc = draft ?? published;
@@ -384,6 +386,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     generation,
     orgSlug,
     sections: doc ? sectionsFromDoc(doc) : [],
+    policies,
     // The public storefront resolves tenants by Host, so on the dashboard
     // origin the fixed app path renders the demo shell — the real tenant URL
     // needs the org_slug subdomain. tenantDomain keeps the host provably

@@ -3,6 +3,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import { assertCanGenerate } from "~/lib/storegen/guard.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { cloneStorefrontBundleAssetProvenance, loadVerifiedStorefrontAssetProofBytes } from "../storefront-bundle/assets.server";
+import { isStorefrontCustomBuildEnabled, isStorefrontRecipeBuildEnabled } from "../storefront-bundle/build.server";
 import { createAnthropicStructuredProvider } from "../storefront-ai/provider.server";
 import type { BrowserProofReport, MaterializedAssetResult, MerchantStorefrontContext, StorefrontAiProvider } from "../storefront-ai/contracts";
 import { assembleStorefrontContext } from "../storefront-ai/context.server";
@@ -44,6 +45,8 @@ export interface StorefrontEditDependencies {
   loadDraft(shopId: string): Promise<LoadedStorefrontDraft | null>;
   loadVersion(shopId: string, versionId: string): Promise<LoadedStorefrontDraft | null>;
   loadEditAudit(input: { shopId: string; resultVersionId: string }): Promise<{ baseVersionId: string; resultVersionId: string } | null>;
+  recipeBuildEnabled(): boolean;
+  customBuildEnabled(): boolean;
   preflight(input: { shopId: string; prompt: string; trusted: boolean }): Promise<void>;
   compileStructuralPatch(input: {
     prompt: string;
@@ -254,6 +257,8 @@ const defaultDependencies: StorefrontEditDependencies = {
   loadDraft,
   loadVersion,
   loadEditAudit,
+  recipeBuildEnabled: isStorefrontRecipeBuildEnabled,
+  customBuildEnabled: isStorefrontCustomBuildEnabled,
   preflight: ({ shopId, prompt, trusted }) => assertCanGenerate(shopId, prompt, { trusted }),
   compileStructuralPatch: (input) => createDefaultStructuralPatchCompiler()(input),
   validate: validateCompiledBundle,
@@ -291,6 +296,26 @@ function recipeFields(bundle: StorefrontBundleV1) {
   return bundle.source.kind === "recipe"
     ? { sourceKind: "recipe" as const, templateId: bundle.source.templateId, templateVersion: bundle.source.templateVersion }
     : { sourceKind: "custom" as const, templateId: null, templateVersion: null };
+}
+
+function assertEditWriterEnabled(
+  sourceKind: StorefrontBundleV1["source"]["kind"],
+  dependencies: StorefrontEditDependencies,
+): void {
+  if (sourceKind === "recipe" && !dependencies.recipeBuildEnabled()) {
+    throw new StorefrontEditError(
+      "storefront_recipe_build_disabled",
+      "Recipe storefront builds are temporarily disabled. Your current draft was not changed.",
+      503,
+    );
+  }
+  if (sourceKind === "custom" && !dependencies.customBuildEnabled()) {
+    throw new StorefrontEditError(
+      "storefront_custom_build_disabled",
+      "Original AI storefront generation is not available right now. Your current draft was not changed.",
+      503,
+    );
+  }
 }
 
 function databaseValidationReport(validation: BundleValidationReport): Record<string, unknown> {
@@ -464,6 +489,13 @@ export async function editStorefrontByPrompt(
     if (base.versionId !== input.expectedDraftVersionId) {
       throw new StorefrontEditError("storefront_edit_conflict", "The storefront draft changed before this edit.", 409);
     }
+    assertEditWriterEnabled(base.bundle.source.kind, dependencies);
+    // Structural recipe edits use the AI patch compiler and may detach into a
+    // custom-derived bundle, so the custom writer must be live before quota or
+    // provider spend even while the current draft remains recipe-linked.
+    if (intent.kind === "structural" && base.bundle.source.kind === "recipe") {
+      assertEditWriterEnabled("custom", dependencies);
+    }
     let compiledPatch = intent.kind === "deterministic"
       ? { operations: intent.operations, provider: { kind: "deterministic" as const, model: null } }
       : await (async () => {
@@ -496,6 +528,9 @@ export async function editStorefrontByPrompt(
           derivedFromTemplateVersion: base.bundle.source.templateVersion,
         };
       }
+      // A deterministic recipe edit can still leave the declared override
+      // surface. Gate the resulting source before browser proof or writes.
+      assertEditWriterEnabled(applied.bundle.source.kind, dependencies);
       validation = dependencies.validate(applied.bundle);
       if (!validation.ok) {
         attemptAudits.push({
@@ -654,6 +689,7 @@ export async function undoStorefrontEdit(
     }
     const target = await dependencies.loadVersion(input.shopId, input.targetVersionId);
     if (!target) throw new StorefrontEditError("storefront_undo_target_missing", "The undo version is no longer available.", 409);
+    assertEditWriterEnabled(target.bundle.source.kind, dependencies);
     const validation = dependencies.validate(target.bundle);
     if (!validation.ok) {
       throw new StorefrontEditError(

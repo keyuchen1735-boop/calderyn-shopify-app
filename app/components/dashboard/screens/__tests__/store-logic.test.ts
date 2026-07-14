@@ -2,6 +2,7 @@
 // lacks (products, checkout) so the studio can offer to fix each one inline —
 // but an empty list, or the merchant declining, must never block publishing.
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   buildStep,
   missingPieces,
@@ -13,7 +14,22 @@ import {
   parseProductLine,
   importStepRows,
   welcomeSubline,
+  showLegacySectionsPanel,
 } from "../store-logic";
+
+describe("legacy section controls", () => {
+  it("shows them only for an idle runtime-0 home preview", () => {
+    expect(showLegacySectionsPanel({ page: "home", building: false, draftRuntime: 0 })).toBe(true);
+    expect(showLegacySectionsPanel({ page: "home", building: false, draftRuntime: 1 })).toBe(false);
+    expect(showLegacySectionsPanel({ page: "product", building: false, draftRuntime: 0 })).toBe(false);
+    expect(showLegacySectionsPanel({ page: "home", building: true, draftRuntime: 0 })).toBe(false);
+  });
+
+  it("wires the runtime-aware predicate to the Store sections panel", () => {
+    const source = readFileSync("app/components/dashboard/screens/Store.tsx", "utf8");
+    expect(source).toContain("showLegacySectionsPanel({ page, building, draftRuntime: data.release.draftRuntime })");
+  });
+});
 
 describe("showPromptCanvas", () => {
   it("shows the empty prompt canvas only until the merchant's first build", () => {

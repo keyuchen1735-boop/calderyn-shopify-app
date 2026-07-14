@@ -49,6 +49,13 @@ import {
   STOREFRONT_REFERENCE_MEDIA_TYPES,
   type MerchantReferenceImage,
 } from "~/lib/storefront-ai/contracts";
+import {
+  deleteStorefrontPolicy,
+  isStorefrontPolicyId,
+  saveStorefrontPolicy,
+  STOREFRONT_POLICY_BODY_MAX,
+  STOREFRONT_POLICY_TITLE_MAX,
+} from "~/lib/storefront/policies.server";
 
 // Store studio read model: brand settings, home hero copy, preview products,
 // draft/published flags, and the latest generation run.
@@ -226,6 +233,17 @@ async function prepareRuntimeBuild(
       throw new CalderynError({ code: error.code, status: error.status, message: error.message });
     }
     throw error;
+  }
+}
+
+async function assertLegacySectionMutationAllowed(shopId: string): Promise<void> {
+  const release = await readStorefrontReleaseState(shopId);
+  if (release.draftVersionId && release.draftRuntimeVersion === 1) {
+    throw new CalderynError({
+      code: "storefront_bundle_section_edit_required",
+      status: 409,
+      message: "This storefront uses prompt editing. Ask Calderyn to change or reorder this section.",
+    });
   }
 }
 
@@ -455,6 +473,35 @@ export async function action({ request }: ActionFunctionArgs) {
       }));
     }
 
+    case "policy-save": {
+      const policyId = typeof b.policyId === "string" ? b.policyId : "";
+      const title = typeof b.title === "string" ? b.title.trim() : "";
+      const policyBody = typeof b.body === "string" ? b.body.trim() : "";
+      if (!isStorefrontPolicyId(policyId)) {
+        return jsonError(422, "invalid_storefront_policy_id", "Choose a supported store policy.");
+      }
+      if (!title || title.length > STOREFRONT_POLICY_TITLE_MAX) {
+        return jsonError(422, "invalid_storefront_policy_title", "Policy titles must be between 1 and 120 characters.");
+      }
+      if (!policyBody || policyBody.length > STOREFRONT_POLICY_BODY_MAX) {
+        return jsonError(422, "invalid_storefront_policy_body", "Policy text must be between 1 and 50,000 characters.");
+      }
+      return dashboardJson(async () => ({
+        policy: await saveStorefrontPolicy(session.shopId, { id: policyId, title, body: policyBody }),
+      }));
+    }
+
+    case "policy-delete": {
+      const policyId = typeof b.policyId === "string" ? b.policyId : "";
+      if (!isStorefrontPolicyId(policyId)) {
+        return jsonError(422, "invalid_storefront_policy_id", "Choose a supported store policy.");
+      }
+      return dashboardJson(async () => {
+        await deleteStorefrontPolicy(session.shopId, policyId);
+        return { deletedPolicyId: policyId };
+      });
+    }
+
     case "accent": {
       const color = typeof b.color === "string" ? b.color : "";
       if (!HEX_COLOR_RE.test(color)) {
@@ -511,13 +558,19 @@ export async function action({ request }: ActionFunctionArgs) {
       const id = typeof b.id === "string" ? b.id : "";
       const direction = b.direction === "up" || b.direction === "down" ? b.direction : null;
       if (!id || !direction) return jsonError(422, "invalid_section", "Section move needs an id and a direction.");
-      return dashboardJson(async () => ({ sections: await moveStudioSection(session.shopId, id, direction) }));
+      return dashboardJson(async () => {
+        await assertLegacySectionMutationAllowed(session.shopId);
+        return { sections: await moveStudioSection(session.shopId, id, direction) };
+      });
     }
 
     case "section-remove": {
       const id = typeof b.id === "string" ? b.id : "";
       if (!id) return jsonError(422, "invalid_section", "Section remove needs an id.");
-      return dashboardJson(async () => ({ sections: await removeStudioSection(session.shopId, id) }));
+      return dashboardJson(async () => {
+        await assertLegacySectionMutationAllowed(session.shopId);
+        return { sections: await removeStudioSection(session.shopId, id) };
+      });
     }
 
     case "section-regenerate": {
@@ -533,12 +586,17 @@ export async function action({ request }: ActionFunctionArgs) {
       // A real design-model call: bound it like other paid entry points. The shared
       // storegen burst limit is deliberately not consumed (a section redo must not lock
       // the merchant out of a full rebuild); a dedicated hourly cap bounds the spend.
-      if (!(await rateLimit(`sectionregen:${session.shopId}`, 20, 3_600_000))) {
-        return jsonError(429, "rate_limited", "Too many section redos. Please wait a little while.");
-      }
-      return dashboardJson(async () => ({
-        sections: await regenerateStudioSection(session.shopId, id, instruction),
-      }));
+      return dashboardJson(async () => {
+        await assertLegacySectionMutationAllowed(session.shopId);
+        if (!(await rateLimit(`sectionregen:${session.shopId}`, 20, 3_600_000))) {
+          throw new CalderynError({
+            code: "rate_limited",
+            status: 429,
+            message: "Too many section redos. Please wait a little while.",
+          });
+        }
+        return { sections: await regenerateStudioSection(session.shopId, id, instruction) };
+      });
     }
 
     case "experiment-start": {

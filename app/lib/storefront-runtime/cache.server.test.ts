@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildStorefrontCacheKey, storefrontCacheHeaders } from "./cache.server";
+import { buildStorefrontCacheKey, storefrontCacheHeaders, storefrontTenantCacheTag } from "./cache.server";
 
 describe("storefront runtime cache policy", () => {
   it("keys public HTML after tenant resolution using bundle, route, catalog, and settings revisions", () => {
@@ -23,6 +23,8 @@ describe("storefront runtime cache policy", () => {
   it("allows neutral public browse caching and forces personalized surfaces private no-store", () => {
     expect(storefrontCacheHeaders({ routeId: "home", personalized: false }).get("Cache-Control"))
       .toBe("public, max-age=0, s-maxage=300, stale-while-revalidate=60");
+    expect(storefrontCacheHeaders({ routeId: "policy", personalized: false }).get("Cache-Control"))
+      .toBe("public, max-age=0, s-maxage=300, stale-while-revalidate=60");
     for (const routeId of ["cart", "checkout", "account", "preview", "signedMedia"] as const) {
       const headers = storefrontCacheHeaders({ routeId, personalized: false });
       expect(headers.get("Cache-Control")).toBe("private, no-store");
@@ -30,5 +32,13 @@ describe("storefront runtime cache policy", () => {
     }
     expect(storefrontCacheHeaders({ routeId: "product", personalized: true }).get("Cache-Control"))
       .toBe("private, no-store");
+  });
+
+  it("tags public tenant HTML for hard invalidation after policy writes", () => {
+    const shopId = "11111111-1111-4111-8111-111111111111";
+    expect(storefrontTenantCacheTag(shopId)).toBe(`storefront-shop-${shopId}`);
+    expect(storefrontCacheHeaders({ routeId: "home", personalized: false, shopId }).get("Vercel-Cache-Tag"))
+      .toBe(`storefront-shop-${shopId}`);
+    expect(() => storefrontTenantCacheTag("not-a-shop")).toThrow("UUID shop id");
   });
 });

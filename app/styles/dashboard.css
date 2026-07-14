@@ -2740,6 +2740,60 @@
 }
 .cd-modal-dialog { width: 100%; }
 
+/* Store Studio policy editor: one compact merchant-authored surface. Policies
+   stay visibly sparse until the merchant adds copy; no generic legal text is
+   implied by the UI. */
+.cd-policy-editor-overlay { z-index: 90; }
+.cd-policy-editor {
+  width: min(820px, 100%); max-height: min(680px, calc(100vh - 32px));
+  overflow: hidden; display: flex; flex-direction: column;
+  background: var(--card-solid); border: 0.5px solid var(--hairline-strong);
+  border-radius: 16px; box-shadow: var(--shadow-pop);
+}
+.cd-policy-editor-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 24px;
+  padding: 18px 20px; border-bottom: 0.5px solid var(--hairline-strong);
+}
+.cd-policy-editor-head h2 { margin: 0; color: var(--text-1); font-size: calc(18px * var(--type-scale)); letter-spacing: -0.02em; }
+.cd-policy-editor-head p { margin: 4px 0 0; color: var(--text-3); font-size: calc(12.5px * var(--type-scale)); }
+.cd-policy-close {
+  width: 30px; height: 30px; border: 0; border-radius: 8px; cursor: pointer;
+  background: transparent; color: var(--text-2); font: 22px/1 inherit;
+}
+.cd-policy-close:hover:not(:disabled) { background: var(--gray-bg); color: var(--text-1); }
+.cd-policy-editor-body { min-height: 0; display: grid; grid-template-columns: 180px minmax(0, 1fr); }
+.cd-policy-tabs {
+  display: flex; flex-direction: column; gap: 4px; padding: 14px;
+  border-right: 0.5px solid var(--hairline-strong); background: var(--gray-bg);
+}
+.cd-policy-tabs button {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 9px 10px; border: 0; border-radius: 9px; cursor: pointer;
+  background: transparent; color: var(--text-2); font: inherit; text-align: left;
+}
+.cd-policy-tabs button:hover, .cd-policy-tabs button[data-active="1"] { background: var(--card-solid); color: var(--text-1); }
+.cd-policy-tabs button[data-active="1"] { box-shadow: 0 0 0 0.5px var(--hairline-strong); }
+.cd-policy-tabs button span { font-size: calc(13px * var(--type-scale)); font-weight: 600; }
+.cd-policy-tabs button small { color: var(--text-3); font-size: calc(11px * var(--type-scale)); }
+.cd-policy-form { min-width: 0; min-height: 470px; display: flex; flex-direction: column; gap: 14px; padding: 18px 20px; }
+.cd-policy-text-field { min-height: 0; flex: 1; }
+.cd-policy-textarea { min-height: 290px; height: 100%; line-height: 1.55; }
+.cd-policy-form-foot { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.cd-policy-feedback { min-height: 18px; color: var(--green); font-size: calc(12px * var(--type-scale)); }
+.cd-policy-feedback [data-error="1"] { color: var(--red); }
+.cd-policy-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.cd-policy-confirm { color: var(--text-2); font-size: calc(12px * var(--type-scale)); }
+
+@media (max-width: 620px) {
+  .cd-policy-editor-body { grid-template-columns: 1fr; }
+  .cd-policy-tabs { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 0.5px solid var(--hairline-strong); }
+  .cd-policy-tabs button { min-width: 105px; }
+  .cd-policy-form { min-height: 430px; padding: 16px; }
+  .cd-policy-textarea { min-height: 230px; }
+  .cd-policy-form-foot { align-items: flex-start; flex-direction: column; }
+  .cd-policy-actions { width: 100%; flex-wrap: wrap; justify-content: flex-end; }
+}
+
 /* ============ phone-width layout (≤767px) ============ */
 /* Customer detail: content column beside a 300px meta rail on wide screens,
    one stacked column once the rail can no longer fit beside real content

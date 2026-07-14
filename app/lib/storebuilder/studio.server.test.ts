@@ -8,7 +8,7 @@ import { publishStudioStore, loadStudioState, saveStudioVibe, sectionsFromDoc, m
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // mocks still apply even though they are written below them (imports-first
 // satisfies the import/first rule).
-const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock, storegenMock, bundleBuildMock, releaseMock } =
+const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock, storegenMock, bundleBuildMock, releaseMock, policiesMock } =
   vi.hoisted(() => ({
     storegenMock: { regenerateHomeSection: vi.fn() },
     fromMock: vi.fn(),
@@ -41,6 +41,7 @@ const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experime
       isStorefrontBundlePublishEnabled: vi.fn(),
     },
     releaseMock: { publishStorefrontRelease: vi.fn() },
+    policiesMock: { loadStorefrontPolicies: vi.fn() },
   }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
@@ -52,6 +53,7 @@ vi.mock("~/lib/experiments/store-experiment.server", () => experimentsMock);
 vi.mock("~/lib/storegen/generate.server", () => storegenMock);
 vi.mock("~/lib/storefront-bundle/build.server", () => bundleBuildMock);
 vi.mock("~/lib/storefront-bundle/release.server", () => releaseMock);
+vi.mock("~/lib/storefront/policies.server", () => policiesMock);
 vi.mock("~/lib/storefront/settings.server", () => ({
   DEFAULT_PALETTE: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
   getStoreSettings: settingsMock.getStoreSettings,
@@ -93,6 +95,7 @@ beforeEach(() => {
   });
   bundleBuildMock.isStorefrontBundlePublishEnabled.mockReturnValue(false);
   releaseMock.publishStorefrontRelease.mockResolvedValue("33333333-3333-3333-3333-333333333333");
+  policiesMock.loadStorefrontPolicies.mockResolvedValue([]);
   for (const key of Object.keys(tableResults)) delete tableResults[key];
   upserts.length = 0;
   fromMock.mockImplementation((table: string) => {
@@ -183,6 +186,25 @@ describe("publishStudioStore (gateless)", () => {
 });
 
 describe("loadStudioState readiness", () => {
+  it("exposes only the merchant policies that actually exist", async () => {
+    policiesMock.loadStorefrontPolicies.mockResolvedValueOnce([{
+      id: "terms",
+      title: "Purchase terms",
+      body: "Payment is due at checkout.",
+      updatedAt: "2026-07-14T12:00:00.000Z",
+    }]);
+
+    const state = await loadStudioState(shop);
+
+    expect(policiesMock.loadStorefrontPolicies).toHaveBeenCalledWith(shop);
+    expect(state.policies).toEqual([{
+      id: "terms",
+      title: "Purchase terms",
+      body: "Payment is due at checkout.",
+      updatedAt: "2026-07-14T12:00:00.000Z",
+    }]);
+  });
+
   it("counts immutable runtime-1 draft and published pointers in the Studio state", async () => {
     bundleBuildMock.readStorefrontReleaseState.mockResolvedValue({
       draftVersionId: "33333333-3333-3333-3333-333333333333",

@@ -8,7 +8,8 @@ import {
   measureStorefrontBundle,
   validateStorefrontBundleBudgets,
 } from "./browser.server";
-import { createStorefrontProofData, storefrontProofContext } from "./fixtures";
+import { createStorefrontProofData, storefrontProofContext, storefrontProofPolicies } from "./fixtures";
+import { storefrontPolicyLinks } from "../storefront/policies.server";
 
 describe("storefront browser proof matrix", () => {
   it("covers every route at the three validation-profile viewports", () => {
@@ -38,6 +39,13 @@ describe("storefront browser proof matrix", () => {
     expect(search.search?.results).toHaveLength(0);
     expect(checkout.cart?.lines.length).toBeGreaterThan(0);
     expect(storefrontProofContext().products.length).toBeGreaterThan(1);
+  });
+
+  it("derives policy links from production-shaped merchant policy records", () => {
+    const policies = storefrontProofPolicies();
+    expect(policies).toHaveLength(4);
+    expect(policies.every((policy) => policy.body.length > 40 && policy.updatedAt.length > 0)).toBe(true);
+    expect(createStorefrontProofData("home").policyLinks).toEqual(storefrontPolicyLinks(policies));
   });
 
   it("fails closed when DOM, CSS, interaction, route, or full-bundle budgets are exceeded", () => {

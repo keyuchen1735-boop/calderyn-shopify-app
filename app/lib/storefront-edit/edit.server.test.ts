@@ -16,6 +16,8 @@ function dependencies(bundle = baseBundle()) {
     loadDraft: vi.fn().mockResolvedValue({ versionId: BASE, artifactHash: `sha256:${"a".repeat(64)}`, bundle }),
     loadVersion: vi.fn().mockResolvedValue({ versionId: BASE, artifactHash: `sha256:${"a".repeat(64)}`, bundle }),
     loadEditAudit: vi.fn().mockResolvedValue({ baseVersionId: BASE, resultVersionId: RESULT }),
+    recipeBuildEnabled: vi.fn().mockReturnValue(true),
+    customBuildEnabled: vi.fn().mockReturnValue(true),
     preflight: vi.fn().mockResolvedValue(undefined),
     compileStructuralPatch: vi.fn(),
     validate: vi.fn().mockReturnValue({ profileVersion: 1, ok: true, diagnostics: [] }),
@@ -35,6 +37,40 @@ function dependencies(bundle = baseBundle()) {
 beforeEach(() => vi.restoreAllMocks());
 
 describe("editStorefrontByPrompt", () => {
+  it("blocks recipe edits at the recipe writer switch before proof or persistence", async () => {
+    const recipe = baseBundle();
+    recipe.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
+    const deps = dependencies(recipe);
+    vi.mocked(deps.recipeBuildEnabled).mockReturnValue(false);
+
+    await expect(editStorefrontByPrompt({
+      shopId: SHOP, actorId: ACTOR, prompt: "Make the accent #ff5500", expectedDraftVersionId: BASE,
+    }, deps)).rejects.toMatchObject({ code: "storefront_recipe_build_disabled", status: 503 });
+
+    expect(deps.preflight).not.toHaveBeenCalled();
+    expect(deps.compileStructuralPatch).not.toHaveBeenCalled();
+    expect(deps.loadProofContext).not.toHaveBeenCalled();
+    expect(deps.prove).not.toHaveBeenCalled();
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.editDraft).not.toHaveBeenCalled();
+  });
+
+  it("blocks custom structural edits before quota, provider, proof, or persistence", async () => {
+    const deps = dependencies();
+    vi.mocked(deps.customBuildEnabled).mockReturnValue(false);
+
+    await expect(editStorefrontByPrompt({
+      shopId: SHOP, actorId: ACTOR, prompt: "Create a new editorial hero", expectedDraftVersionId: BASE,
+    }, deps)).rejects.toMatchObject({ code: "storefront_custom_build_disabled", status: 503 });
+
+    expect(deps.preflight).not.toHaveBeenCalled();
+    expect(deps.compileStructuralPatch).not.toHaveBeenCalled();
+    expect(deps.loadProofContext).not.toHaveBeenCalled();
+    expect(deps.prove).not.toHaveBeenCalled();
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.editDraft).not.toHaveBeenCalled();
+  });
+
   it("persists an override-safe recipe edit without detaching and writes replayable audit", async () => {
     const recipe = baseBundle();
     recipe.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
@@ -405,6 +441,25 @@ describe("createDefaultStructuralPatchCompiler", () => {
 });
 
 describe("undoStorefrontEdit", () => {
+  it("blocks a custom restore at the custom writer switch before proof or persistence", async () => {
+    const deps = dependencies();
+    vi.mocked(deps.customBuildEnabled).mockReturnValue(false);
+    vi.mocked(deps.loadDraft).mockResolvedValue({
+      versionId: RESULT,
+      artifactHash: `sha256:${"b".repeat(64)}`,
+      bundle: baseBundle(),
+    });
+
+    await expect(undoStorefrontEdit({
+      shopId: SHOP, actorId: ACTOR, expectedDraftVersionId: RESULT, targetVersionId: BASE,
+    }, deps)).rejects.toMatchObject({ code: "storefront_custom_build_disabled", status: 503 });
+
+    expect(deps.loadProofContext).not.toHaveBeenCalled();
+    expect(deps.prove).not.toHaveBeenCalled();
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.editDraft).not.toHaveBeenCalled();
+  });
+
   it("creates a fresh immutable restore version with cloned provenance before the atomic undo CAS", async () => {
     const deps = dependencies();
     vi.mocked(deps.loadDraft).mockResolvedValue({ versionId: RESULT, artifactHash: `sha256:${"b".repeat(64)}`, bundle: baseBundle() });

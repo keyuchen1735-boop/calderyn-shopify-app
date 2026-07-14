@@ -43,7 +43,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   if (runtime1) {
     if (runtime1.data.notFound) throw new Response(null, { status: 404 });
     const nonce = randomBytes(18).toString("base64url");
-    const headers = storefrontCacheHeaders({ routeId: "collection", personalized: false });
+    const headers = storefrontCacheHeaders({ routeId: "collection", personalized: false, shopId });
     markStorefrontBundleRendered(headers, nonce);
     const title = runtime1.data.collection?.title ?? "Collection";
     return json({ ...runtime1, nonce, seoMeta: [{ title }] }, { headers });

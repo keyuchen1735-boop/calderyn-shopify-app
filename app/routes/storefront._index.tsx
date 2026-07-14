@@ -41,7 +41,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "home" } });
   if (runtime1) {
     const nonce = randomBytes(18).toString("base64url");
-    const headers = storefrontCacheHeaders({ routeId: "home", personalized: false });
+    const headers = storefrontCacheHeaders({ routeId: "home", personalized: false, shopId });
     markStorefrontBundleRendered(headers, nonce);
     return json({ ...runtime1, nonce, seoMeta: [{ title: runtime1.data.store.name }] }, { headers });
   }

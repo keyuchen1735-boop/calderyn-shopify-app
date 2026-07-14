@@ -32,6 +32,11 @@ const {
   persistAssetMock,
   cleanupAssetMock,
   rateLimitMock,
+  moveSectionMock,
+  removeSectionMock,
+  regenerateSectionMock,
+  savePolicyMock,
+  deletePolicyMock,
 } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   prechecksMock: vi.fn(),
@@ -48,6 +53,11 @@ const {
   persistAssetMock: vi.fn(),
   cleanupAssetMock: vi.fn(),
   rateLimitMock: vi.fn(),
+  moveSectionMock: vi.fn(),
+  removeSectionMock: vi.fn(),
+  regenerateSectionMock: vi.fn(),
+  savePolicyMock: vi.fn(),
+  deletePolicyMock: vi.fn(),
 }));
 
 vi.mock("~/lib/calderyn.server", () => ({
@@ -82,6 +92,9 @@ vi.mock("~/lib/storebuilder/studio.server", () => ({
   saveStudioHero: vi.fn(),
   saveStudioAccent: vi.fn(),
   saveStudioVibe: vi.fn(),
+  moveStudioSection: moveSectionMock,
+  removeStudioSection: removeSectionMock,
+  regenerateStudioSection: regenerateSectionMock,
   publishStudioStore: publishMock,
 }));
 vi.mock("~/lib/experiments/store-experiment.server", () => ({
@@ -112,12 +125,19 @@ vi.mock("~/lib/storefront-bundle/release.server", () => ({
     constructor(public code: string, message: string, public status: number) { super(message); }
   },
 }));
+vi.mock("~/lib/storefront/policies.server", () => ({
+  STOREFRONT_POLICY_TITLE_MAX: 120,
+  STOREFRONT_POLICY_BODY_MAX: 50_000,
+  isStorefrontPolicyId: (value: unknown) => ["privacy", "terms", "refund", "shipping"].includes(String(value)),
+  saveStorefrontPolicy: savePolicyMock,
+  deleteStorefrontPolicy: deletePolicyMock,
+}));
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const URL = "https://test.example.com/dashboard/api/store";
 
 beforeEach(() => {
-  for (const m of [sessionMock, prechecksMock, designerQuotaMock, classifyMock, createProductMock, uploadMediaMock, publishMock, editMock, undoEditMock, releaseStateMock, buildMock, prepareBuildMock, persistAssetMock, cleanupAssetMock, rateLimitMock]) {
+  for (const m of [sessionMock, prechecksMock, designerQuotaMock, classifyMock, createProductMock, uploadMediaMock, publishMock, editMock, undoEditMock, releaseStateMock, buildMock, prepareBuildMock, persistAssetMock, cleanupAssetMock, rateLimitMock, moveSectionMock, removeSectionMock, regenerateSectionMock, savePolicyMock, deletePolicyMock]) {
     m.mockReset();
   }
   sessionMock.mockResolvedValue({ shopId: SHOP, userId: null, accountCreatedAt: null });
@@ -134,6 +154,13 @@ beforeEach(() => {
   persistAssetMock.mockResolvedValue({ assetKey: `${SHOP}/storefront/sha256/asset.png`, contentHash: "a".repeat(64), mediaType: "image/png", byteSize: 16 });
   cleanupAssetMock.mockResolvedValue(undefined);
   rateLimitMock.mockResolvedValue(true);
+  moveSectionMock.mockResolvedValue([]);
+  removeSectionMock.mockResolvedValue([]);
+  regenerateSectionMock.mockResolvedValue([]);
+  savePolicyMock.mockResolvedValue({
+    id: "privacy", title: "Privacy policy", body: "We use data to fulfill orders.", updatedAt: "2026-07-14T12:00:00.000Z",
+  });
+  deletePolicyMock.mockResolvedValue(undefined);
 });
 
 function pngFile(name: string, bytes = 16): File {
@@ -162,6 +189,81 @@ async function postMultipart(fields: {
 }
 
 describe("dashboard.api.store multipart generate", () => {
+  it("saves a bounded policy for the authenticated session shop", async () => {
+    const request = new Request(URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "policy-save",
+        policyId: "privacy",
+        title: "Privacy policy",
+        body: "We use data to fulfill orders.",
+      }),
+    });
+
+    const response = await action({ request } as ActionFunctionArgs);
+
+    expect(response.status).toBe(200);
+    expect(savePolicyMock).toHaveBeenCalledWith(SHOP, {
+      id: "privacy", title: "Privacy policy", body: "We use data to fulfill orders.",
+    });
+  });
+
+  it("rejects invalid policy fields before calling the service", async () => {
+    const request = new Request(URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "policy-save", policyId: "privacy", title: "", body: "Body" }),
+    });
+
+    const response = await action({ request } as ActionFunctionArgs);
+
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "invalid_storefront_policy_title" });
+    expect(savePolicyMock).not.toHaveBeenCalled();
+  });
+
+  it("deletes only an allowlisted policy for the authenticated session shop", async () => {
+    const request = new Request(URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "policy-delete", policyId: "shipping" }),
+    });
+
+    const response = await action({ request } as ActionFunctionArgs);
+
+    expect(response.status).toBe(200);
+    expect(deletePolicyMock).toHaveBeenCalledWith(SHOP, "shipping");
+  });
+
+  it.each(["section-move", "section-remove", "section-regenerate"])(
+    "rejects legacy %s against a runtime-1 draft before mutating page documents",
+    async (sectionAction) => {
+      releaseStateMock.mockResolvedValue({
+        draftVersionId: "33333333-3333-3333-3333-333333333333",
+        publishedVersionId: null,
+        draftRuntimeVersion: 1,
+        publishedRuntimeVersion: null,
+      });
+      const request = new Request(URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: sectionAction, id: "hero", direction: "down", instruction: "Try again" }),
+      });
+
+      const response = await action({ request } as ActionFunctionArgs);
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({
+        error: "storefront_bundle_section_edit_required",
+        message: "This storefront uses prompt editing. Ask Calderyn to change or reorder this section.",
+      });
+      expect(moveSectionMock).not.toHaveBeenCalled();
+      expect(removeSectionMock).not.toHaveBeenCalled();
+      expect(regenerateSectionMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps every active storefront build entrypoint off the legacy generator import path", () => {
     const sources = [
       "app/routes/dashboard.api.store.tsx",
@@ -211,6 +313,55 @@ describe("dashboard.api.store multipart generate", () => {
     const response = await action({ request } as ActionFunctionArgs);
     expect(response.status).toBe(200);
     expect(undoEditMock).toHaveBeenCalledWith(expect.objectContaining({ shopId: SHOP, actorId: null }));
+  });
+
+  it("returns the honest custom-writer disabled response for prompt edits", async () => {
+    editMock.mockRejectedValueOnce(new StorefrontEditError(
+      "storefront_custom_build_disabled",
+      "Original AI storefront generation is not available right now. Your current draft was not changed.",
+      503,
+    ));
+    const request = new Request(URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "edit", prompt: "Create a cinematic editorial opening",
+        expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
+      }),
+    });
+
+    const response = await action({ request } as ActionFunctionArgs);
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "storefront_custom_build_disabled",
+      message: "Original AI storefront generation is not available right now. Your current draft was not changed.",
+    });
+    expect(undoEditMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the honest recipe-writer disabled response for edit undo", async () => {
+    undoEditMock.mockRejectedValueOnce(new StorefrontEditError(
+      "storefront_recipe_build_disabled",
+      "Recipe storefront builds are temporarily disabled. Your current draft was not changed.",
+      503,
+    ));
+    const request = new Request(URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "undo-edit",
+        targetVersionId: "33333333-3333-3333-3333-333333333333",
+        expectedDraftVersionId: "44444444-4444-4444-4444-444444444444",
+      }),
+    });
+
+    const response = await action({ request } as ActionFunctionArgs);
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "storefront_recipe_build_disabled",
+      message: "Recipe storefront builds are temporarily disabled. Your current draft was not changed.",
+    });
+    expect(editMock).not.toHaveBeenCalled();
   });
 
   it("returns the stable 409 edit conflict contract", async () => {

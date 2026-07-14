@@ -1,8 +1,19 @@
 import type { MerchantStorefrontContext } from "../storefront-ai/contracts";
 import type { StorefrontRouteId } from "../storefront-bundle/types";
 import type { PublicPresentationData, PublicProduct } from "../storefront-runtime/public-data.server";
+import { storefrontPolicyLinks, type StorefrontPolicy } from "../storefront/policies.server";
 
 const PROOF_ORIGIN = "https://storefront-proof.local";
+
+export function storefrontProofPolicies(): StorefrontPolicy[] {
+  const updatedAt = "2026-07-14T12:00:00.000Z";
+  return [
+    { id: "privacy", title: "Privacy", body: "Northline uses customer details only to fulfill orders, provide support, prevent fraud, and meet legal obligations.", updatedAt },
+    { id: "terms", title: "Terms", body: "Purchases from Northline are subject to the prices, availability, payment terms, and product details shown at checkout.", updatedAt },
+    { id: "refund", title: "Refunds", body: "Unused items may be returned within thirty days. Approved refunds are issued to the original payment method.", updatedAt },
+    { id: "shipping", title: "Shipping", body: "Available delivery services, charges, and estimated arrival windows are calculated and displayed during checkout.", updatedAt },
+  ];
+}
 
 function product(index: number, overrides: Partial<PublicProduct> = {}): PublicProduct {
   const available = index !== 2;
@@ -53,12 +64,7 @@ export function createStorefrontProofData(routeId: StorefrontRouteId): PublicPre
   const active = products[0];
   return {
     store: { name: "Northline Supply & Studio", logo: null },
-    policyLinks: [
-      { id: "privacy", title: "Privacy", href: "/storefront/policies/privacy" },
-      { id: "terms", title: "Terms", href: "/storefront/policies/terms" },
-      { id: "refund", title: "Refunds", href: "/storefront/policies/refund" },
-      { id: "shipping", title: "Shipping", href: "/storefront/policies/shipping" },
-    ],
+    policyLinks: storefrontPolicyLinks(storefrontProofPolicies()),
     product: routeId === "product" ? active : null,
     collection: routeId === "collection" ? {
       id: "proof-collection",

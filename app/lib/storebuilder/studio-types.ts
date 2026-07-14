@@ -118,6 +118,17 @@ export interface StudioSection {
   title: string;
 }
 
+export type StudioPolicyId = "privacy" | "terms" | "refund" | "shipping";
+
+/** Merchant-authored legal copy only. Missing policies stay missing instead of
+ * being populated with generic text that may not match the merchant's store. */
+export interface StudioPolicy {
+  id: StudioPolicyId;
+  title: string;
+  body: string;
+  updatedAt: string;
+}
+
 export interface StudioState {
   settings: StudioSettings;
   /** From the draft home doc's hero block (published as fallback); null when
@@ -153,6 +164,8 @@ export interface StudioState {
   /** Editable sections of the home draft (published as fallback), in page order.
    *  Empty when no doc exists yet. */
   sections: StudioSection[];
+  /** Persisted merchant policies. Sparse by design: no fabricated legal copy. */
+  policies: StudioPolicy[];
 }
 
 /** Merchant-facing design-model choice for a generation run. The client only

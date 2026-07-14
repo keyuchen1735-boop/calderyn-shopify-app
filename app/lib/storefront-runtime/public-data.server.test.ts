@@ -3,6 +3,11 @@ import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
 import { parseStorefrontSearchParams } from "~/lib/storefront/search.server";
 import { PublicDataPlanError, resolvePublicData } from "./public-data.server";
 
+const { policyLinksLoaderMock } = vi.hoisted(() => ({ policyLinksLoaderMock: vi.fn() }));
+vi.mock("~/lib/storefront/policies.server", () => ({
+  loadStorefrontPolicyLinks: (...args: unknown[]) => policyLinksLoaderMock(...args),
+}));
+
 const SHOP = "11111111-1111-1111-1111-111111111111";
 
 function product(handle: string, imageUrl = "https://media.example/one.jpg"): StoreProduct {
@@ -55,6 +60,25 @@ const settingsLoader = vi.fn(async () => ({
 }));
 
 describe("runtime-1 public data plans", () => {
+  it("loads live merchant policy links with the server-resolved tenant by default", async () => {
+    policyLinksLoaderMock.mockResolvedValueOnce([
+      { id: "privacy", title: "Privacy policy", href: "/storefront/policies/privacy" },
+      { id: "refund", title: "Returns", href: "/storefront/policies/refund" },
+    ]);
+
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "policyLinks" }],
+      route: { kind: "home" },
+    }, { catalog: catalog(), settingsLoader });
+
+    expect(policyLinksLoaderMock).toHaveBeenCalledWith(SHOP);
+    expect(data.policyLinks).toEqual([
+      { id: "privacy", title: "Privacy policy", href: "/storefront/policies/privacy" },
+      { id: "refund", title: "Returns", href: "/storefront/policies/refund" },
+    ]);
+  });
+
   it("rejects invented and over-limit plans before any catalog read", async () => {
     const fake = catalog();
     await expect(resolvePublicData({

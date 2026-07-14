@@ -9,9 +9,12 @@ import type { Browser, HTTPRequest, Page } from "puppeteer-core";
 import { launchChromium } from "../browser/chromium.server";
 import type { BrowserProofReport, MaterializedAssetResult, MerchantStorefrontContext } from "../storefront-ai/contracts";
 import type { StorefrontBundleV1, StorefrontRouteId } from "../storefront-bundle/types";
+import { StorefrontPolicyPage } from "../storefront/policy-page";
+import { resolveStorefrontPolicyPath, type StorefrontPolicy } from "../storefront/policies.server";
 import { renderStorefrontSurface } from "../storefront-runtime/render.server";
 import type { PublicPresentationData, PublicProduct } from "../storefront-runtime/public-data.server";
-import { createStorefrontProofData } from "./fixtures";
+import { createStorefrontProofData, storefrontProofPolicies } from "./fixtures";
+import { verifyStorefrontPolicyRoutes } from "./policy-routes";
 import {
   createBrowserProofReport,
   type StorefrontBrowserDiagnostic,
@@ -213,7 +216,7 @@ function documentHtml(markup: string, title: string): string {
     `style-src 'nonce-${PROOF_NONCE}'`,
     "img-src 'self' data:",
     "font-src 'self'",
-    "connect-src 'none'",
+    "connect-src 'self'",
     `script-src 'nonce-${PROOF_NONCE}'`,
     "frame-src 'none'",
     "object-src 'none'",
@@ -257,6 +260,8 @@ async function serveProofRequest(
   unexpected: string[],
   runtimeSource: string,
   ownedAssets: ReadonlyMap<string, { mediaType: string; bytes: Uint8Array }>,
+  policies: ReadonlyMap<string, StorefrontPolicy>,
+  storeName: string,
 ): Promise<void> {
   const url = request.url();
   if (url.startsWith("data:") || url === "about:blank") {
@@ -276,6 +281,20 @@ async function serveProofRequest(
   }
   if (parsed.pathname === "/__proof__/runtime.js") {
     await request.respond({ status: 200, contentType: "text/javascript; charset=utf-8", body: runtimeSource });
+    return;
+  }
+  const policyId = resolveStorefrontPolicyPath(parsed.pathname);
+  const policy = policyId ? policies.get(policyId) : undefined;
+  if (policy) {
+    const markup = renderToStaticMarkup(createElement(StorefrontPolicyPage, {
+      policy,
+      store: { name: storeName, logo: null },
+    }));
+    await request.respond({
+      status: 200,
+      contentType: "text/html; charset=utf-8",
+      body: documentHtml(markup, `${policy.title} — ${storeName}`),
+    });
     return;
   }
   const ownedAsset = ownedAssets.get(parsed.pathname);
@@ -341,8 +360,9 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
     });
     const images = [...document.images];
     const imageFailures = images.filter((image) => Boolean(image.currentSrc || image.getAttribute("src")) && image.complete && image.naturalWidth === 0).map((image) => image.currentSrc || image.src);
-    const allowed = /^\/storefront(?:\/(?:collections|products|search|cart|checkout|account|policies)(?:[/?#].*)?)?$/;
+    const allowed = /^\/storefront(?:\/(?:collections|products|search|cart|checkout|account)(?:[/?#].*)?)?$/;
     const deadLinks = [...document.querySelectorAll<HTMLAnchorElement>("a[href]")]
+      .filter((link) => !link.closest("[data-cd-platform-content='policyLinks']"))
       .map((link) => link.getAttribute("href") ?? "")
       .filter((href) => href !== "#" && href.startsWith("/") && !allowed.test(href));
     const unresolvedBindings = [...document.querySelectorAll<HTMLElement>("[data-cd-text],[data-cd-money],[data-cd-src],[data-cd-alt],[data-cd-repeat]")]
@@ -536,6 +556,8 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
   const requestFailures: string[] = [];
   const axe = await axeSource();
   const runtimeSource = await browserRuntimeSource();
+  const proofPolicies = new Map(storefrontProofPolicies().map((policy) => [policy.id, policy]));
+  const proofStoreName = input.context?.store.name ?? createStorefrontProofData("home").store.name;
   let currentUnexpected: string[] = [];
   let currentConsole: string[] = [];
   let currentFailures: string[] = [];
@@ -546,7 +568,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       void request.respond({ status: 200, contentType: "text/html; charset=utf-8", body: currentDocument });
       return;
     }
-    void serveProofRequest(request, currentUnexpected, runtimeSource, ownedAssets);
+    void serveProofRequest(request, currentUnexpected, runtimeSource, ownedAssets, proofPolicies, proofStoreName);
   });
   page.on("console", (message) => {
     if (message.type() === "error") currentConsole.push(message.text());
@@ -641,6 +663,27 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       const consoleBeforeAxe = [...currentConsole];
       const audit = await auditPage(page, input.bundle, routeId, axe);
       assertActive();
+      const policyRouteFailures = await verifyStorefrontPolicyRoutes(
+        await page.$$eval("[data-cd-platform-content='policyLinks'] a[href]", (links) => links.map((link) => {
+          const anchor = link as HTMLAnchorElement;
+          return {
+            id: new URL(anchor.href).pathname.split("/").at(-1) ?? "",
+            href: anchor.getAttribute("href") ?? "",
+          };
+        })),
+        (href) => page.evaluate(async (policyHref) => {
+          const response = await fetch(policyHref, { credentials: "omit", redirect: "manual" });
+          const contentType = response.headers.get("content-type") ?? "";
+          const html = await response.text();
+          const policyDocument = new DOMParser().parseFromString(html, "text/html");
+          return {
+            status: response.status,
+            contentType,
+            policyId: policyDocument.querySelector<HTMLElement>("[data-cd-storefront-policy]")?.dataset.cdStorefrontPolicy ?? null,
+          };
+        }, href),
+      );
+      assertActive();
       // axe temporarily applies inline styles while computing contrast. Those
       // sandbox mutations are not storefront CSP violations and are discarded;
       // navigation/resource/runtime console errors captured before axe remain.
@@ -654,6 +697,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       if (commerceExerciseFailures.length || audit.commerceFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "commerce.runtime", "Trusted commerce controls did not hydrate, style, or execute", { failures: [...commerceExerciseFailures, ...audit.commerceFailures] });
       if (audit.checkoutFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "checkout.boundary", "Checkout platform boundary is incomplete", { failures: audit.checkoutFailures });
       if (audit.shellStyleFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "shell.unstyled", "Storefront shell retains raw browser navigation styling", { failures: audit.shellStyleFailures });
+      if (policyRouteFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "policy.route", "Merchant policy links do not resolve to matching same-origin storefront policy pages", { failures: policyRouteFailures });
       if (audit.focusableCount === 0) addDiagnostic(diagnostics, routeId, viewport.name, "keyboard.empty", "Route has no keyboard-focusable navigation or commerce control");
       if (!audit.reducedMotion) addDiagnostic(diagnostics, routeId, viewport.name, "motion.preference", "Reduced-motion media preference was not active");
       if (audit.cls >= 0.1) addDiagnostic(diagnostics, routeId, viewport.name, "performance.cls", `CLS ${audit.cls.toFixed(3)} exceeds 0.10`);

@@ -2,6 +2,7 @@ import type { DataRequirement, StorefrontRouteId } from "~/lib/storefront-bundle
 import type { StorefrontCatalog, StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, type StoreSettings } from "~/lib/storefront/settings.server";
+import { loadStorefrontPolicyLinks } from "~/lib/storefront/policies.server";
 import {
   parseStorefrontSearchParams,
   searchStorefront,
@@ -223,7 +224,7 @@ export async function resolvePublicData(
   const data = baseData(settings);
 
   if (hasRequirement(input, "policyLinks")) {
-    data.policyLinks = await (dependencies.policyLoader?.(input.shopId) ?? Promise.resolve([]));
+    data.policyLinks = await (dependencies.policyLoader ?? loadStorefrontPolicyLinks)(input.shopId);
   }
 
   let rawCurrentProduct: StoreProduct | null = null;

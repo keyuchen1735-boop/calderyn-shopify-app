@@ -22,6 +22,16 @@ export interface MissingPiece {
   screen: Screen;
 }
 
+/** Legacy section controls mutate runtime-0 page documents and must never be
+ * shown beside an immutable runtime-1 bundle preview. */
+export function showLegacySectionsPanel(input: {
+  page: string;
+  building: boolean;
+  draftRuntime: 0 | 1;
+}): boolean {
+  return input.page === "home" && !input.building && input.draftRuntime === 0;
+}
+
 export type BuildPhase =
   | { kind: "running"; stage?: BuildStage }
   | { kind: "done"; status: "draft" | "no_products" | "failed" }
