@@ -49,27 +49,32 @@ beforeEach(() => {
 });
 
 describe("saveVariants image persistence", () => {
-  it("captures image-mode generated URLs into owned storage and rewrites them; leaves copy-mode + data: URLs alone", async () => {
+  it("captures URL and inline image-mode generations into owned storage; leaves copy-mode alone", async () => {
     const variants = [
-      variant("image", "https://higgs.cdn/gen.png"),
+      variant("image", "https://provider.cdn/gen.png"),
       variant("copy", "https://scontent.meta/orig.jpg"),
       variant("image", "data:image/png;base64,AAAA"),
     ];
     await saveVariants(SHOP, "run1", variants);
 
-    // Only the fetchable image-mode variant is persisted.
-    expect(persistMock).toHaveBeenCalledTimes(1);
-    expect(persistMock).toHaveBeenCalledWith(SHOP, "https://higgs.cdn/gen.png", "generated", "generated");
+    expect(persistMock).toHaveBeenCalledTimes(2);
+    expect(persistMock).toHaveBeenCalledWith(SHOP, "https://provider.cdn/gen.png", "generated", "generated");
+    expect(persistMock).toHaveBeenCalledWith(SHOP, "data:image/png;base64,AAAA", "generated", "generated");
 
     const saved = holder.variants!;
     expect(saved[0].input.imageUrl).toBe("https://owned.cdn/a.png"); // rewritten to owned
     expect(saved[1].input.imageUrl).toBe("https://scontent.meta/orig.jpg"); // copy-mode untouched
-    expect(saved[2].input.imageUrl).toBe("data:image/png;base64,AAAA"); // non-fetchable untouched
+    expect(saved[2].input.imageUrl).toBe("https://owned.cdn/a.png");
   });
 
   it("keeps the ephemeral url when persistence fails (rule 12)", async () => {
-    persistMock.mockResolvedValue({ persisted: false, url: "https://higgs.cdn/gen.png", error: "fetch_failed" });
-    await saveVariants(SHOP, "run1", [variant("image", "https://higgs.cdn/gen.png")]);
-    expect(holder.variants![0].input.imageUrl).toBe("https://higgs.cdn/gen.png");
+    persistMock.mockResolvedValue({ persisted: false, url: "https://provider.cdn/gen.png", error: "fetch_failed" });
+    await saveVariants(SHOP, "run1", [variant("image", "https://provider.cdn/gen.png")]);
+    expect(holder.variants![0].input.imageUrl).toBe("https://provider.cdn/gen.png");
+  });
+  it("does not save a Gemini data URI when owned persistence fails", async () => {
+    persistMock.mockResolvedValue({ persisted: false, url: "data:image/jpeg;base64,AAAA", error: "upload_failed" });
+    await expect(saveVariants(SHOP, "run1", [variant("image", "data:image/jpeg;base64,AAAA")])).rejects.toThrow(/persistence failed/i);
+    expect(holder.variants).toBeUndefined();
   });
 });

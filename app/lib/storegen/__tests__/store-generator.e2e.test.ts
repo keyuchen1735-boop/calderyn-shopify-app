@@ -4,7 +4,7 @@
 // loadDraftDoc/loadPublishedDoc → resolveRenderData → renderBlocks → renderToStaticMarkup, plus
 // the imagery path (findImprovableListings → enhanceListing → applyAssetOverrides). The only
 // stubs are the true external boundaries: Supabase (in-memory tables), Anthropic (scripted
-// messages.create), and the Higgsfield image provider (fake/throwing). The catalog is the REAL
+// messages.create), and the image provider (fake/throwing). The catalog is the REAL
 // fixture.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createElement, Fragment } from "react";
@@ -364,7 +364,7 @@ describe("store generator e2e", () => {
     expect(out.status).toBe("ready");
     expect(out.url).toBe("https://img/generated.png");
     // Asset persisted as ready through the real store_asset upsert.
-    const assetRow = db.assets.get(`${SHOP}|p-tee|higgsfield`);
+    const assetRow = db.assets.get(`${SHOP}|p-tee|gemini`);
     expect(assetRow).toMatchObject({ status: "ready", url: "https://img/generated.png" });
 
     const overridden = await applyAssetOverrides(SHOP, products);
@@ -390,7 +390,7 @@ describe("store generator e2e", () => {
     const out = await enhanceListing(SHOP, target);
     expect(out.status).toBe("failed");
     expect(out.url).toBeNull();
-    expect(db.assets.get(`${SHOP}|p-hoodie|higgsfield`)).toMatchObject({ status: "failed" });
+    expect(db.assets.get(`${SHOP}|p-hoodie|gemini`)).toMatchObject({ status: "failed" });
 
     // A failed asset is filtered out — the product keeps its original image.
     const overridden = await applyAssetOverrides(SHOP, products);

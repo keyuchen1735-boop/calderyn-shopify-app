@@ -9,7 +9,7 @@ import { persistExternalImage } from "~/lib/assets/persist.server";
 import { getImageProvider } from "./provider.server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const SOURCE = "higgsfield";
+const SOURCE = "gemini";
 
 export interface EnhanceResult { productId: string; status: "ready" | "failed"; url: string | null }
 
@@ -25,12 +25,10 @@ export async function enhanceListing(shopId: string, product: StoreProduct, opts
       signal: opts.signal,
     });
     status = "ready";
-    // Higgsfield returns an EPHEMERAL provider URL that expires; capture it into
-    // owned storage so the stored store_asset.url — which the storefront read
-    // path serves to buyers — is stable and self-hosted. persistExternalImage
-    // never throws: on a persistence failure it logs and returns the ephemeral
-    // url, so the image still renders (rule 12) and the row stays 'ready'.
-    url = (await persistExternalImage(shopId, out.url, "generated", "generated", { signal: opts.signal })).url;
+    // Capture Gemini's inline image into owned storage before previewing it.
+    const persisted = await persistExternalImage(shopId, out.url, "generated", "generated", { signal: opts.signal });
+    if (!persisted.persisted && out.url.startsWith("data:image/")) throw new Error("Gemini image persistence failed");
+    url = persisted.url;
     if (opts.signal?.aborted) return { productId: product.id, status: "failed", url: null };
   } catch {
     if (opts.signal?.aborted) return { productId: product.id, status: "failed", url: null };
@@ -60,9 +58,12 @@ export async function generateMissingListingImages(
 
 export async function applyAssetOverrides(shopId: string, products: StoreProduct[]): Promise<StoreProduct[]> {
   if (!UUID_RE.test(shopId)) return products;
-  const { data, error } = await getSupabase().from("store_asset").select("product_id, url, status").eq("shop_id", shopId);
+  const { data, error } = await getSupabase().from("store_asset").select("product_id, url, status, created_at").eq("shop_id", shopId);
   if (error) throw error;
-  const ready = new Map((data ?? []).filter((r) => r.status === "ready" && r.url).map((r) => [r.product_id as string, r.url as string]));
+  const ready = new Map<string, string>();
+  for (const row of [...(data ?? [])].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))) {
+    if (row.status === "ready" && row.url && !ready.has(String(row.product_id))) ready.set(String(row.product_id), String(row.url));
+  }
   if (ready.size === 0) return products;
   return products.map((p) => {
     const url = ready.get(p.id);

@@ -19,7 +19,7 @@ export function validateCreativeMedia(input: CreativeInput): string | null {
 
 // --- SSRF policy on remote-fetched media URLs ---------------------------
 // imageUrl / videoFrameUrls reach external fetchers (Anthropic via a url image
-// block in score.server.ts, Higgsfield's referenceImageUrl). The client uploads
+// block in score.server.ts and image-generation reference inputs). The client uploads
 // arrive as `data:` URLs we hand to the model inline, so those stay allowed; any
 // remote URL must be https: to a non-private host. Meta-sourced runs are exempt
 // (their creative comes from the live ad, not untrusted JSON) — this is only
