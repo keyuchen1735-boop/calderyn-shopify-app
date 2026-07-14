@@ -1,4 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useGSAP } from "@gsap/react";
+import gsap from "gsap";
+import { Flip } from "gsap/Flip";
 import { gradeFromRow } from "~/lib/campaign-grade";
 import {
   Card,
@@ -25,7 +28,6 @@ import {
   fetchCampaignCreatives,
   fetchCampaignSeries,
   regenerateCampaign,
-  screenCampaignCreative,
   type CampaignCreativesDTO,
   type RegenerateDTO,
 } from "~/lib/dashboard/client";
@@ -35,30 +37,59 @@ import {
   type CampaignDraftRow,
 } from "~/lib/dashboard/campaign-drafts-client";
 import { CampaignWizard } from "./CampaignWizard";
-import {
-  CAMPAIGN_DRAFT_PLATFORM_LABELS,
-  type CampaignDraftPlatform,
-} from "~/lib/ads/campaign-draft-types";
-import type { Variant, CreativeScreenRun, CreativeInput } from "~/lib/screener/types";
+import { CAMPAIGN_DRAFT_PLATFORM_LABELS } from "~/lib/ads/campaign-draft-types";
+import type { Variant, CreativeInput } from "~/lib/screener/types";
 import { DEFAULT_SPEND_CENTS } from "~/lib/screener/types";
 import { sortActiveFirst } from "~/lib/campaign-sort";
 import type { DashboardCtx } from "../context";
 import type { CampaignVM } from "../view-models";
 import type { CampaignGradeRow, DailyRoasRow } from "~/lib/types";
 
+gsap.registerPlugin(useGSAP, Flip);
+
 const PENDING_SCORE: CampaignCalderynScore = {
-  value: null, band: "nodata", performance: null, creative: null, confidence: "low",
-  weakDimensions: [], tips: [], adsCovered: 0, adsTotal: 0,
+  value: null,
+  band: "nodata",
+  performance: null,
+  creative: null,
+  confidence: "low",
+  weakDimensions: [],
+  tips: [],
+  adsCovered: 0,
+  adsTotal: 0,
 };
 
 /** Shared column template for the campaigns table (header + rows). */
 const CAMP_GRID = "minmax(0,1fr) 72px 96px 68px 54px 104px 22px";
 
-const BADGE_ACTIVE = { color: "var(--green)", background: "var(--green-bg)" } as const;
-const BADGE_NEUTRAL = { color: "var(--text-2)", background: "var(--gray-bg)" } as const;
+const BADGE_ACTIVE = {
+  color: "var(--green)",
+  background: "var(--green-bg)",
+} as const;
+const BADGE_NEUTRAL = {
+  color: "var(--text-2)",
+  background: "var(--gray-bg)",
+} as const;
+
+type CampaignView = "list" | "cards";
+
+function campaignPerDay(c: CampaignVM): {
+  cents: number | null;
+  label: "budget" | "7d avg";
+} {
+  if (c.daily_budget_cents > 0)
+    return { cents: c.daily_budget_cents, label: "budget" };
+  return {
+    cents: c.spend_7d > 0 ? Math.round(c.spend_7d / 7) : null,
+    label: "7d avg",
+  };
+}
 
 /** Band-tinted styles for the numeric score chip (mirrors ScorePill tones). */
-const BAND_CHIP: Record<CampaignCalderynScore["band"], { color: string; background: string }> = {
+const BAND_CHIP: Record<
+  CampaignCalderynScore["band"],
+  { color: string; background: string }
+> = {
   strong: { color: "var(--green)", background: "var(--green-bg)" },
   fair: { color: "var(--orange)", background: "var(--orange-bg)" },
   weak: { color: "var(--red)", background: "var(--red-bg)" },
@@ -66,8 +97,15 @@ const BAND_CHIP: Record<CampaignCalderynScore["band"], { color: string; backgrou
 };
 
 /** 75/55 composite bands for scored creatives (matches the score-chip bands). */
-function compositeChip(composite: number): { color: string; background: string } {
-  return composite >= 75 ? BAND_CHIP.strong : composite >= 55 ? BAND_CHIP.fair : BAND_CHIP.weak;
+function compositeChip(composite: number): {
+  color: string;
+  background: string;
+} {
+  return composite >= 75
+    ? BAND_CHIP.strong
+    : composite >= 55
+      ? BAND_CHIP.fair
+      : BAND_CHIP.weak;
 }
 
 /** Numeric Calderyn-score chip; blank scores render an em dash, never a made-up
@@ -95,7 +133,9 @@ function ScoreDim({ label, value }: { label: string; value: number | null }) {
     <div style={{ marginBottom: 11 }}>
       <div className="flex justify-between" style={{ fontSize: 13 }}>
         <span>{label}</span>
-        <b className="tabular-nums" style={{ color: tone }}>{value ?? "—"}</b>
+        <b className="tabular-nums" style={{ color: tone }}>
+          {value ?? "—"}
+        </b>
       </div>
       <div className="cd-trust-bar" style={{ marginTop: 5 }}>
         <i style={{ width: `${value ?? 0}%`, background: tone }} />
@@ -107,9 +147,14 @@ function ScoreDim({ label, value }: { label: string; value: number | null }) {
 /** Key/value line in the detail right rail. */
 function MetricRow({ k, v }: { k: string; v: ReactNode }) {
   return (
-    <div className="flex items-center justify-between" style={{ padding: "7px 0", fontSize: 13 }}>
+    <div
+      className="flex items-center justify-between"
+      style={{ padding: "7px 0", fontSize: 13 }}
+    >
       <span className="cd-caption">{k}</span>
-      <b className="tabular-nums" style={{ fontWeight: 600 }}>{v}</b>
+      <b className="tabular-nums" style={{ fontWeight: 600 }}>
+        {v}
+      </b>
     </div>
   );
 }
@@ -130,7 +175,10 @@ function useNarrowViewport(maxWidth = 1024): boolean {
 /** "Peak & Pine" → "P&P"-style initials for the ad-preview avatar. */
 function storeInitials(label: string): string {
   const words = label.split(/\s+/).filter((w) => /[a-zA-Z0-9]/.test(w));
-  const initials = words.map((w) => w[0].toUpperCase()).slice(0, 3).join("");
+  const initials = words
+    .map((w) => w[0].toUpperCase())
+    .slice(0, 3)
+    .join("");
   return initials || "—";
 }
 
@@ -207,7 +255,9 @@ function RowQuickActions({
       app.refresh();
     } catch (err) {
       const message =
-        err instanceof DashboardApiError ? err.message : "Action failed — try again.";
+        err instanceof DashboardApiError
+          ? err.message
+          : "Action failed — try again.";
       app.toast(message, "x", "critical");
     } finally {
       setBusy(false);
@@ -229,7 +279,9 @@ function RowQuickActions({
           disabled={busy}
           onClick={() =>
             paused
-              ? run("resume_campaign", "Campaign resumed.", { status: "active" })
+              ? run("resume_campaign", "Campaign resumed.", {
+                  status: "active",
+                })
               : run("pause_campaign", "Campaign paused.", { status: "paused" })
           }
         >
@@ -257,7 +309,9 @@ function RowQuickActions({
               className="cd-btn-icon"
               ariaLabel="Duplicate campaign"
               disabled={busy}
-              onClick={() => run("duplicate_campaign", "Copy created on Meta (paused).", {})}
+              onClick={() =>
+                run("duplicate_campaign", "Copy created on Meta (paused).", {})
+              }
             >
               {""}
             </Btn>
@@ -281,16 +335,10 @@ function CampaignRow({
   onEditBudget: () => void;
   onChanged: (patch: Partial<CampaignVM>) => void;
 }) {
-  const losing = c.roas_7d < c.breakeven_roas;
+  const hasPerformanceData = c.spend_7d > 0;
+  const losing = hasPerformanceData && c.roas_7d < c.breakeven_roas;
   const paused = c.status === "paused";
-  // Spend/day prefers the real daily budget; falls back to the 7-day average
-  // when no budget is set. The caption says which one is shown.
-  const hasBudget = c.daily_budget_cents > 0;
-  const perDay = hasBudget
-    ? c.daily_budget_cents
-    : c.spend_7d > 0
-      ? Math.round(c.spend_7d / 7)
-      : null;
+  const perDay = campaignPerDay(c);
   return (
     // A div with button semantics rather than a real <button>: the row nests
     // the per-row action buttons (pause/resume, edit budget, duplicate),
@@ -298,7 +346,7 @@ function CampaignRow({
     <div
       role="button"
       tabIndex={0}
-      className="cd-camp-row"
+      className="cd-camp-row cd-campaign-item"
       onClick={onClick}
       onKeyDown={(e) => {
         // Only when the row itself is focused — Enter/Space on a nested
@@ -310,7 +358,8 @@ function CampaignRow({
         }
       }}
       data-dim={paused ? "1" : "0"}
-      style={{ gridTemplateColumns: CAMP_GRID, padding: "14px 20px", opacity: paused ? 0.55 : undefined }}
+      data-attention={losing ? "1" : "0"}
+      style={{ gridTemplateColumns: CAMP_GRID, padding: "10px 16px" }}
     >
       <div className="min-w-0 flex items-center" style={{ gap: 11 }}>
         <PlatformMark platform={c.platform} />
@@ -320,31 +369,48 @@ function CampaignRow({
         </div>
       </div>
       <div>
-        <span className="cd-badge" style={paused ? BADGE_NEUTRAL : BADGE_ACTIVE}>
+        <span
+          className="cd-badge"
+          style={paused ? BADGE_NEUTRAL : BADGE_ACTIVE}
+        >
           {paused ? "Paused" : "Active"}
         </span>
       </div>
       <div className="tabular-nums">
-        {perDay == null ? (
+        {perDay.cents == null ? (
           "—"
         ) : (
           <>
-            <div>{money(perDay)}</div>
-            <div className="cd-caption">{hasBudget ? "budget" : "7d avg"}</div>
+            <div>{money(perDay.cents)}</div>
+            <div className="cd-caption">{perDay.label}</div>
           </>
         )}
       </div>
       <div
         className="cd-row-num tabular-nums"
-        style={{ color: losing ? "var(--red)" : "var(--green)" }}
+        style={{
+          color: !hasPerformanceData
+            ? "var(--text-3)"
+            : losing
+              ? "var(--red)"
+              : "var(--green)",
+        }}
       >
         {c.roas_7d.toFixed(1)}×
       </div>
       <div className="text-right">
         <ScoreChip score={c.calderynScore ?? PENDING_SCORE} />
       </div>
-      <RowQuickActions app={app} c={c} onEditBudget={onEditBudget} onChanged={onChanged} />
-      <div className="flex" style={{ justifyContent: "flex-end", color: "var(--text-3)" }}>
+      <RowQuickActions
+        app={app}
+        c={c}
+        onEditBudget={onEditBudget}
+        onChanged={onChanged}
+      />
+      <div
+        className="flex"
+        style={{ justifyContent: "flex-end", color: "var(--text-3)" }}
+      >
         <CDIcon name="chevronRight" size={15} />
       </div>
     </div>
@@ -365,12 +431,13 @@ function DraftRow({
 }) {
   return (
     <div
+      className="cd-draft-row cd-campaign-item"
       style={{
         display: "grid",
         alignItems: "center",
         gridTemplateColumns: CAMP_GRID,
-        gap: 12,
-        padding: "14px 20px",
+        gap: 10,
+        padding: "10px 16px",
         borderTop: "0.5px solid var(--hairline)",
         fontSize: 13.5,
       }}
@@ -380,17 +447,29 @@ function DraftRow({
         <div className="min-w-0">
           <div className="cd-row-title truncate">{d.name}</div>
           <div className="cd-caption">
-            {CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} · Draft · created {timeAgo(d.createdAt)}
+            {CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} · Draft · updated{" "}
+            {timeAgo(d.updatedAt)}
           </div>
         </div>
       </div>
       <div>
-        <span className="cd-badge" style={BADGE_NEUTRAL}>Draft</span>
+        <span className="cd-badge" style={BADGE_NEUTRAL}>
+          Draft
+        </span>
       </div>
-      <div className="tabular-nums" style={{ color: "var(--text-3)" }}>—</div>
-      <div className="cd-row-num tabular-nums" style={{ color: "var(--text-3)" }}>—</div>
+      <div className="tabular-nums" style={{ color: "var(--text-3)" }}>
+        —
+      </div>
+      <div
+        className="cd-row-num tabular-nums"
+        style={{ color: "var(--text-3)" }}
+      >
+        —
+      </div>
       <div className="text-right">
-        <span className="cd-score" style={BAND_CHIP.nodata}>—</span>
+        <span className="cd-score" style={BAND_CHIP.nodata}>
+          —
+        </span>
       </div>
       <div className="flex items-center justify-end" style={{ gap: 4 }}>
         <Btn small icon="arrowRight" onClick={onContinue}>
@@ -399,7 +478,13 @@ function DraftRow({
       </div>
       <div className="flex items-center justify-end">
         <Tooltip content="Delete draft">
-          <Btn small icon="trash" className="cd-btn-icon" ariaLabel="Delete draft" onClick={onDelete}>
+          <Btn
+            small
+            icon="trash"
+            className="cd-btn-icon"
+            ariaLabel="Delete draft"
+            onClick={onDelete}
+          >
             {""}
           </Btn>
         </Tooltip>
@@ -408,135 +493,167 @@ function DraftRow({
   );
 }
 
-/* ---------- Screen-new-creative card (list) ---------- */
-// The design's one-row card, made real against the existing screening flow
-// (screenCampaignCreative → POST /screen). That flow requires the actual ad
-// image (the server 422s without media), so the card carries an image-URL
-// field alongside the hook input — a deliberate deviation that keeps the
-// button honest instead of always-failing. Results render inline below.
-function ScreenNewCreativeCard({
+function CampaignCard({
   app,
-  campaigns,
+  c,
+  onClick,
+  onEditBudget,
+  onChanged,
 }: {
   app: DashboardCtx;
-  campaigns: CampaignVM[];
+  c: CampaignVM;
+  onClick: () => void;
+  onEditBudget: () => void;
+  onChanged: (patch: Partial<CampaignVM>) => void;
 }) {
-  const [campaignId, setCampaignId] = useState<string>(campaigns[0]?.id ?? "");
-  const [brief, setBrief] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [run, setRun] = useState<CreativeScreenRun | null>(null);
-
-  // Keep the selection valid if campaigns refresh underneath us.
-  useEffect(() => {
-    if (!campaigns.some((c) => c.id === campaignId)) {
-      setCampaignId(campaigns[0]?.id ?? "");
-    }
-  }, [campaigns, campaignId]);
-
-  if (campaigns.length === 0) return null;
-
-  const submit = async () => {
-    if (busy || !campaignId || !brief.trim() || !imageUrl.trim()) return;
-    setBusy(true);
-    try {
-      setRun(
-        await screenCampaignCreative(campaignId, {
-          headline: brief.trim(),
-          primaryText: "",
-          cta: "SHOP_NOW",
-          destinationUrl: "",
-          audience: "",
-          assumedSpendCents: DEFAULT_SPEND_CENTS,
-          mediaKind: "image",
-          imageUrl: imageUrl.trim(),
-        }),
-      );
-    } catch (err) {
-      const message =
-        err instanceof DashboardApiError
-          ? err.message
-          : "Couldn't screen that creative — check the image URL and try again.";
-      app.toast(message, "x", "critical");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const sc = run?.scorecard ?? null;
+  const paused = c.status === "paused";
+  const hasPerformanceData = c.spend_7d > 0;
+  const losing = hasPerformanceData && c.roas_7d < c.breakeven_roas;
+  const perDay = campaignPerDay(c);
+  const score = c.calderynScore ?? PENDING_SCORE;
+  const { label: scoreLabel } = scorePillStyle(score);
 
   return (
-    <Card>
-      <div className="flex items-center" style={{ gap: 12, flexWrap: "wrap" }}>
-        <h2 className="cd-h2" style={{ flex: "0 0 auto" }}>Screen new creative</h2>
-        <select
-          className="cd-input"
-          aria-label="Campaign"
-          value={campaignId}
-          onChange={(e) => setCampaignId(e.target.value)}
-          style={{ flex: "0 1 200px", minWidth: 140 }}
-        >
-          {campaigns.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-        <input
-          className="cd-input"
-          type="text"
-          placeholder="Summit Down · cold-weather hook"
-          value={brief}
-          onChange={(e) => setBrief(e.target.value)}
-          style={{ flex: 1, minWidth: 220 }}
-        />
-        <input
-          className="cd-input"
-          type="text"
-          placeholder="Image URL (https)"
-          value={imageUrl}
-          onChange={(e) => setImageUrl(e.target.value)}
-          style={{ flex: 1, minWidth: 180 }}
-        />
-        <span
-          title={
-            !campaignId
-              ? "Pick a campaign to score against"
-              : !brief.trim()
-                ? "Write the hook or headline to score"
-                : !imageUrl.trim()
-                  ? "Screening needs the creative image's URL"
-                  : undefined
-          }
-        >
-          <Btn
-            kind="primary"
-            small
-            disabled={busy || !campaignId || !brief.trim() || !imageUrl.trim()}
-            onClick={submit}
-          >
-            {/* "Score", not "Generate": this flow screens the supplied creative;
-                generation lives behind Regenerate on the campaign detail. */}
-            {busy ? "Scoring…" : "Score creative"}
-          </Btn>
-        </span>
-      </div>
-      {sc && (
-        <div
-          className="flex items-center"
-          style={{ gap: 12, marginTop: 14, paddingTop: 14, borderTop: "0.5px solid var(--hairline)" }}
-        >
-          <span className="cd-score" style={compositeChip(sc.composite)}>{sc.composite}</span>
+    <article
+      role="button"
+      tabIndex={0}
+      className="cd-campaign-card cd-campaign-item"
+      data-dim={paused ? "1" : "0"}
+      data-attention={losing ? "1" : "0"}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
+    >
+      <div className="cd-campaign-card-head">
+        <div className="min-w-0 flex items-center" style={{ gap: 10 }}>
+          <PlatformMark platform={c.platform} />
           <div className="min-w-0">
-            <div className="cd-row-title truncate">{run?.creativeInput?.headline ?? brief}</div>
-            <div className="cd-caption">{sc.summary}</div>
+            <div className="cd-row-title truncate">{c.name}</div>
+            <div className="cd-caption">{c.platform}</div>
           </div>
         </div>
-      )}
-      {run && run.status === "error" && (
-        <div className="cd-caption" style={{ marginTop: 10 }}>
-          Couldn&apos;t score: {run.error}
+        <span
+          className="cd-badge"
+          style={paused ? BADGE_NEUTRAL : BADGE_ACTIVE}
+        >
+          {paused ? "Paused" : "Active"}
+        </span>
+      </div>
+
+      <div className="cd-campaign-card-metrics">
+        <div>
+          <span>7-day ROAS</span>
+          <strong
+            className="tabular-nums"
+            style={{
+              color: !hasPerformanceData
+                ? "var(--text-3)"
+                : losing
+                  ? "var(--red)"
+                  : "var(--green)",
+            }}
+          >
+            {c.roas_7d.toFixed(1)}×
+          </strong>
+          {(!hasPerformanceData || losing) && (
+            <small className={losing ? "is-attention" : ""}>
+              {!hasPerformanceData
+                ? "Waiting for data"
+                : `Below ${c.breakeven_roas.toFixed(1)}×`}
+            </small>
+          )}
         </div>
-      )}
-    </Card>
+        <div>
+          <span>
+            {perDay.label === "budget" ? "Budget/day" : "Spend/day · avg"}
+          </span>
+          <strong className="tabular-nums">
+            {perDay.cents == null ? "—" : money(perDay.cents)}
+          </strong>
+        </div>
+        <div>
+          <span>Calderyn score</span>
+          <strong
+            className="tabular-nums"
+            style={{ color: BAND_CHIP[score.band].color }}
+            title={scoreLabel}
+          >
+            {score.value ?? "—"}
+          </strong>
+        </div>
+      </div>
+
+      <div className="cd-campaign-card-foot">
+        <RowQuickActions
+          app={app}
+          c={c}
+          onEditBudget={onEditBudget}
+          onChanged={onChanged}
+        />
+        <span className="cd-campaign-card-open">
+          View campaign <CDIcon name="chevronRight" size={14} />
+        </span>
+      </div>
+    </article>
+  );
+}
+
+function DraftCard({
+  d,
+  onContinue,
+  onDelete,
+}: {
+  d: CampaignDraftRow;
+  onContinue: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <article className="cd-campaign-card cd-campaign-draft-card cd-campaign-item">
+      <div className="cd-campaign-card-head">
+        <div className="min-w-0 flex items-center" style={{ gap: 10 }}>
+          <PlatformMark platform={CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} />
+          <div className="min-w-0">
+            <div className="cd-row-title truncate">{d.name}</div>
+            <div className="cd-caption">
+              {CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]}
+            </div>
+          </div>
+        </div>
+        <span className="cd-badge" style={BADGE_NEUTRAL}>
+          Draft
+        </span>
+      </div>
+      <div className="cd-campaign-draft-copy">
+        <span className="cd-campaign-draft-icon">
+          <CDIcon name="pencil" size={17} />
+        </span>
+        <div>
+          <b>Ready to continue</b>
+          <small>Saved {timeAgo(d.updatedAt)}</small>
+        </div>
+      </div>
+      <div className="cd-campaign-card-foot">
+        <Btn small icon="arrowRight" onClick={onContinue}>
+          Continue setup
+        </Btn>
+        <Tooltip content="Delete draft">
+          <Btn
+            small
+            icon="trash"
+            className="cd-btn-icon"
+            ariaLabel="Delete draft"
+            onClick={onDelete}
+          >
+            {""}
+          </Btn>
+        </Tooltip>
+      </div>
+    </article>
   );
 }
 
@@ -556,6 +673,7 @@ function CampaignDetail({
   onBack: () => void;
   metaCanPushDrafts: boolean;
 }) {
+  const detailRootRef = useRef<HTMLDivElement>(null);
   // The live status can drift from app.campaigns until the next refresh lands,
   // so hold the optimistic status locally and prefer it for rendering.
   const [status, setStatus] = useState(c.status);
@@ -565,7 +683,9 @@ function CampaignDetail({
     setStatus(c.status);
   }, [c.status]);
 
-  const [creativeData, setCreativeData] = useState<CampaignCreativesDTO | null>(null);
+  const [creativeData, setCreativeData] = useState<CampaignCreativesDTO | null>(
+    null,
+  );
   // Distinct from `creativeData == null` (still loading): a fetch failure must
   // not masquerade as "not connected" — that would show misleading Meta-connect
   // guidance on a transient network/5xx error (rule 12, fail visibly).
@@ -574,13 +694,43 @@ function CampaignDetail({
   const [regenBusy, setRegenBusy] = useState(false);
   const narrow = useNarrowViewport();
 
+  useGSAP(
+    () => {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const sections = detailRootRef.current?.querySelectorAll(
+        ".cd-screen-head, .cd-stat-grid > .cd-card, .cd-grid-camp > div > .cd-card",
+      );
+      if (!sections?.length) return;
+      gsap.fromTo(
+        sections,
+        { autoAlpha: 0, y: 8, scale: 0.992, willChange: "transform,opacity" },
+        {
+          autoAlpha: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.3,
+          stagger: 0.035,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform,willChange",
+        },
+      );
+    },
+    { scope: detailRootRef, dependencies: [c.id], revertOnUpdate: true },
+  );
+
   useEffect(() => {
     let live = true;
     setCreativesLoadError(false);
     fetchCampaignCreatives(c.id)
-      .then((d) => { if (live) setCreativeData(d); })
-      .catch(() => { if (live) setCreativesLoadError(true); });
-    return () => { live = false; };
+      .then((d) => {
+        if (live) setCreativeData(d);
+      })
+      .catch(() => {
+        if (live) setCreativesLoadError(true);
+      });
+    return () => {
+      live = false;
+    };
   }, [c.id]);
 
   // Spend + ROAS history for the chart card, below. Null while loading (the
@@ -595,20 +745,80 @@ function CampaignDetail({
     setSeries(null);
     setSeriesLoadError(false);
     fetchCampaignSeries(c.id)
-      .then((s) => { if (live) setSeries(s); })
-      .catch(() => { if (live) setSeriesLoadError(true); });
-    return () => { live = false; };
+      .then((s) => {
+        if (live) setSeries(s);
+      })
+      .catch(() => {
+        if (live) setSeriesLoadError(true);
+      });
+    return () => {
+      live = false;
+    };
   }, [c.id]);
 
+  useGSAP(
+    () => {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const changed = [
+        detailRootRef.current?.querySelector(
+          ".cd-campaign-creative-card > div:last-child",
+        ),
+        detailRootRef.current?.querySelector(
+          ".cd-campaign-chart-card > div:last-child",
+        ),
+        detailRootRef.current?.querySelector(".cd-campaign-variants-card"),
+      ].filter((node): node is Element => Boolean(node));
+      if (changed.length === 0) return;
+      gsap.fromTo(
+        changed,
+        { autoAlpha: 0.55, y: 4 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.24,
+          stagger: 0.035,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        },
+      );
+    },
+    {
+      scope: detailRootRef,
+      dependencies: [
+        Boolean(creativeData),
+        creativesLoadError,
+        Boolean(series),
+        seriesLoadError,
+        variants.length,
+      ],
+      revertOnUpdate: true,
+    },
+  );
+
   const runRegen = async () => {
-    const adIds = (creativeData?.creatives ?? []).map((x) => x.adId).filter(Boolean);
-    if (adIds.length === 0) { app.toast("No creatives to regenerate yet.", "x", "critical"); return; }
+    const adIds = (creativeData?.creatives ?? [])
+      .map((x) => x.adId)
+      .filter(Boolean);
+    if (adIds.length === 0) {
+      app.toast("No creatives to regenerate yet.", "x", "critical");
+      return;
+    }
     setRegenBusy(true);
     try {
-      const res: RegenerateDTO = await regenerateCampaign(c.id, adIds, creativeData?.assumedSpendCents ?? DEFAULT_SPEND_CENTS);
+      const res: RegenerateDTO = await regenerateCampaign(
+        c.id,
+        adIds,
+        creativeData?.assumedSpendCents ?? DEFAULT_SPEND_CENTS,
+      );
       if (res.ok) {
         setVariants(res.variants);
-        app.toast(res.variants.length > 0 ? `Generated ${res.variants.length} stronger variant(s).` : "No variant beat the original.", "sparkle", "success");
+        app.toast(
+          res.variants.length > 0
+            ? `Generated ${res.variants.length} stronger variant(s).`
+            : "No variant beat the original.",
+          "sparkle",
+          "success",
+        );
       } else {
         // Say which precondition failed — the old blanket "score first" pointed
         // at a per-ad scoring control this surface no longer renders.
@@ -633,7 +843,11 @@ function CampaignDetail({
     setPushing(true);
     try {
       const r = await pushCreativeDraft(c.id, v.input);
-      app.toast(r.outcome === "succeeded" ? "Draft pushed to Meta (paused)" : "Push parked for retry");
+      app.toast(
+        r.outcome === "succeeded"
+          ? "Draft pushed to Meta (paused)"
+          : "Push parked for retry",
+      );
     } catch {
       app.toast("Couldn't push the draft — check the action history");
     } finally {
@@ -643,11 +857,12 @@ function CampaignDetail({
 
   // Header "Push to Meta" targets the strongest regenerated variant; disabled
   // (with an honest tooltip) until one exists — nothing is pushed blind.
-  const bestVariant = variants.length > 0
-    ? variants.reduce((a, b) => (b.composite > a.composite ? b : a))
-    : null;
+  const bestVariant =
+    variants.length > 0
+      ? variants.reduce((a, b) => (b.composite > a.composite ? b : a))
+      : null;
 
-  const losing = c.roas_7d < c.breakeven_roas;
+  const losing = c.spend_7d > 0 && c.roas_7d < c.breakeven_roas;
   const paused = status === "paused";
 
   const run = async (
@@ -668,11 +883,17 @@ function CampaignDetail({
       app.refresh();
       app.toast(
         successText,
-        type === "pause_campaign" ? "pause" : type === "resume_campaign" ? "play" : "reduce",
+        type === "pause_campaign"
+          ? "pause"
+          : type === "resume_campaign"
+            ? "play"
+            : "reduce",
       );
     } catch (err) {
       const message =
-        err instanceof DashboardApiError ? err.message : "Action failed — please try again.";
+        err instanceof DashboardApiError
+          ? err.message
+          : "Action failed — please try again.";
       app.toast(message, "x", "critical");
     } finally {
       setBusy(false);
@@ -686,7 +907,11 @@ function CampaignDetail({
   const firstAd = creativeData?.creatives[0] ?? null;
   const cre: CreativeInput | null = firstAd?.creative ?? null;
   const creFormat =
-    cre?.mediaKind === "video" ? "Video" : cre?.mediaKind === "image" || cre?.imageUrl ? "Image" : "—";
+    cre?.mediaKind === "video"
+      ? "Video"
+      : cre?.mediaKind === "image" || cre?.imageUrl
+        ? "Image"
+        : "—";
   // Live creative preview + regeneration are Meta-only (the only platform with a
   // creative fetcher), so a TikTok/Google campaign never shows Meta-connect
   // guidance or the Meta-only creative tools.
@@ -698,10 +923,13 @@ function CampaignDetail({
   });
 
   const creativeCard = (
-    <Card pad={false}>
+    <Card pad={false} className="cd-campaign-creative-card">
       <div
         className="flex items-center justify-between"
-        style={{ padding: "14px 16px", borderBottom: "0.5px solid var(--hairline-strong)" }}
+        style={{
+          padding: "14px 16px",
+          borderBottom: "0.5px solid var(--hairline-strong)",
+        }}
       >
         <div className="cd-anh" style={{ margin: 0 }}>
           <CDIcon name="image" size={15} />
@@ -713,41 +941,78 @@ function CampaignDetail({
         <div className="flex items-center" style={{ gap: 9, marginBottom: 12 }}>
           <span className="cd-acct-av">{storeInitials(app.storeLabel)}</span>
           <div className="min-w-0">
-            <div style={{ fontSize: 13, fontWeight: 640 }}>{app.storeLabel}</div>
+            <div style={{ fontSize: 13, fontWeight: 640 }}>
+              {app.storeLabel}
+            </div>
             <div className="cd-caption">Sponsored · {c.platform}</div>
           </div>
         </div>
-        <p style={{ fontSize: 13.5, lineHeight: 1.5, color: cre?.primaryText ? "var(--text-1)" : "var(--text-3)", marginBottom: 12 }}>
+        <p
+          style={{
+            fontSize: 13.5,
+            lineHeight: 1.5,
+            color: cre?.primaryText ? "var(--text-1)" : "var(--text-3)",
+            marginBottom: 12,
+          }}
+        >
           {cre?.primaryText || creEmptyText}
         </p>
         {cre?.imageUrl ? (
           <img
             src={cre.imageUrl}
             alt={cre.headline || "Ad creative"}
-            style={{ display: "block", width: "100%", height: 300, objectFit: "cover", borderRadius: 12 }}
+            style={{
+              display: "block",
+              width: "100%",
+              height: 300,
+              objectFit: "cover",
+              borderRadius: 12,
+            }}
           />
         ) : (
           <div
             className="cd-nc-empty"
-            style={{ height: 300, background: "var(--gray-bg)", borderRadius: 12 }}
+            style={{
+              height: 300,
+              background: "var(--gray-bg)",
+              borderRadius: 12,
+            }}
           >
             {creEmptyText}
           </div>
         )}
         <div
           className="flex items-center justify-between"
-          style={{ gap: 12, marginTop: 12, padding: "11px 14px", background: "var(--gray-bg)", borderRadius: 12 }}
+          style={{
+            gap: 12,
+            marginTop: 12,
+            padding: "11px 14px",
+            background: "var(--gray-bg)",
+            borderRadius: 12,
+          }}
         >
           <div className="min-w-0">
             <div className="cd-caption" style={{ letterSpacing: "0.04em" }}>
-              {cre?.destinationUrl ? destinationDomain(cre.destinationUrl) : "—"}
+              {cre?.destinationUrl
+                ? destinationDomain(cre.destinationUrl)
+                : "—"}
             </div>
-            <div className="truncate" style={{ fontSize: 14, fontWeight: 640, letterSpacing: "-0.01em" }}>
+            <div
+              className="truncate"
+              style={{
+                fontSize: 14,
+                fontWeight: 640,
+                letterSpacing: "-0.01em",
+              }}
+            >
               {cre?.headline || "—"}
             </div>
           </div>
           {/* Static preview of the ad's own CTA — part of the creative, not an app control. */}
-          <span className="cd-btn cd-btn-secondary cd-btn-sm" style={{ flexShrink: 0, pointerEvents: "none" }}>
+          <span
+            className="cd-btn cd-btn-secondary cd-btn-sm"
+            style={{ flexShrink: 0, pointerEvents: "none" }}
+          >
             {cre?.cta ? ctaLabel(cre.cta) : "—"}
           </span>
         </div>
@@ -759,10 +1024,13 @@ function CampaignDetail({
   // regenerate flow returns scored Variant[]s, not score-card dims, so they
   // surface here; the header Push to Meta targets the strongest one.
   const variantsCard = variants.length > 0 && (
-    <Card pad={false}>
+    <Card pad={false} className="cd-campaign-variants-card">
       <div
         className="flex items-center justify-between"
-        style={{ padding: "14px 16px", borderBottom: "0.5px solid var(--hairline-strong)" }}
+        style={{
+          padding: "14px 16px",
+          borderBottom: "0.5px solid var(--hairline-strong)",
+        }}
       >
         <div className="cd-anh" style={{ margin: 0 }}>
           <CDIcon name="sparkle" size={15} />
@@ -774,14 +1042,23 @@ function CampaignDetail({
         <div
           key={`${i}:${v.input.headline}`}
           className="flex items-center"
-          style={{ gap: 12, padding: "13px 16px", borderTop: i > 0 ? "0.5px solid var(--hairline)" : undefined }}
+          style={{
+            gap: 12,
+            padding: "13px 16px",
+            borderTop: i > 0 ? "0.5px solid var(--hairline)" : undefined,
+          }}
         >
-          <span className="cd-score" style={compositeChip(v.composite)}>{v.composite}</span>
+          <span className="cd-score" style={compositeChip(v.composite)}>
+            {v.composite}
+          </span>
           <div className="min-w-0" style={{ flex: 1 }}>
             <div className="cd-row-title truncate">{v.input.headline}</div>
             <div className="cd-caption truncate">{v.rationale}</div>
           </div>
-          <b className="tabular-nums" style={{ color: "var(--green)", fontSize: 13, flexShrink: 0 }}>
+          <b
+            className="tabular-nums"
+            style={{ color: "var(--green)", fontSize: 13, flexShrink: 0 }}
+          >
             +{v.delta}
           </b>
         </div>
@@ -797,14 +1074,16 @@ function CampaignDetail({
   // revenue with no spend recorded yet (rounding/attribution lag), and a 0
   // would draw a false dip. roasSeries renders in its own Sparkline (not
   // index-paired with spendSeries), so dropping points is safe.
-  const roasSeries = (series ?? []).filter((r) => r.spend_cents > 0).map((r) => r.revenue_cents / r.spend_cents);
+  const roasSeries = (series ?? [])
+    .filter((r) => r.spend_cents > 0)
+    .map((r) => r.revenue_cents / r.spend_cents);
   const chartWidth = narrow ? 260 : 440;
   const chartCard = (
-    <Card>
+    <Card className="cd-campaign-chart-card">
       <div className="cd-anh-wrap">
         <div className="cd-anh">
           <CDIcon name="arrowUpRight" size={15} />
-          Spend vs revenue ·{" "}
+          Spend and ROAS ·{" "}
           {seriesLoadError
             ? "unavailable"
             : series
@@ -823,11 +1102,15 @@ function CampaignDetail({
       ) : (
         <div className="flex flex-col" style={{ gap: 16, padding: "4px 0" }}>
           <div>
-            <div className="cd-caption" style={{ marginBottom: 6 }}>Spend/day</div>
+            <div className="cd-caption" style={{ marginBottom: 6 }}>
+              Spend/day
+            </div>
             <Sparkline data={spendSeries} width={chartWidth} height={56} />
           </div>
           <div>
-            <div className="cd-caption" style={{ marginBottom: 6 }}>ROAS/day</div>
+            <div className="cd-caption" style={{ marginBottom: 6 }}>
+              ROAS/day
+            </div>
             <Sparkline
               data={roasSeries}
               width={chartWidth}
@@ -843,13 +1126,21 @@ function CampaignDetail({
 
   const scoreCard = (
     <Card>
-      <div className="cd-caption" style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}>
+      <div
+        className="cd-caption"
+        style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}
+      >
         Score
       </div>
       <div className="flex items-baseline" style={{ gap: 7, marginTop: 2 }}>
         <span
           className="tabular-nums"
-          style={{ fontSize: 34, fontWeight: 680, lineHeight: 1, color: BAND_CHIP[s.band].color }}
+          style={{
+            fontSize: 34,
+            fontWeight: 680,
+            lineHeight: 1,
+            color: BAND_CHIP[s.band].color,
+          }}
         >
           {s.value ?? "—"}
         </span>
@@ -865,32 +1156,31 @@ function CampaignDetail({
     </Card>
   );
 
-  // Delivery: rows render from REAL fields only — the daily budget is the one
-  // per-campaign delivery number the sync carries today; every metric with no
-  // source renders the design's "—" (never a fabricated number). Objective /
-  // Audience have no real fields, so those rows are omitted.
+  // Keep this rail useful and compact: only fields the campaign sync actually
+  // carries belong here. Unavailable delivery metrics stay hidden.
   const deliveryCard = (
     <Card>
       <div className="cd-anh" style={{ marginBottom: 10 }}>
         <CDIcon name="scan" size={15} />
-        Delivery
+        Campaign setup
       </div>
-      <MetricRow k="Impressions" v="—" />
-      <MetricRow k="Clicks" v="—" />
-      <MetricRow k="CTR" v="—" />
-      <MetricRow k="CPA" v="—" />
-      <MetricRow k="CPM" v="—" />
-      <MetricRow k="Frequency" v="—" />
-      <MetricRow k="Reach" v="—" />
+      <MetricRow k="Platform" v={c.platform} />
+      <MetricRow k="Status" v={paused ? "Paused" : "Active"} />
       <MetricRow
         k="Budget"
-        v={c.daily_budget_cents > 0 ? `${money(c.daily_budget_cents)}/day` : "—"}
+        v={
+          c.daily_budget_cents > 0 ? `${money(c.daily_budget_cents)}/day` : "—"
+        }
       />
     </Card>
   );
 
   return (
-    <div className="cd-screen" data-screen-label="Campaign detail">
+    <div
+      ref={detailRootRef}
+      className="cd-screen"
+      data-screen-label="Campaign detail"
+    >
       <header className="cd-screen-head">
         <div className="flex items-center" style={{ gap: 10, minWidth: 0 }}>
           <Btn small icon="chevronLeft" onClick={onBack}>
@@ -899,12 +1189,20 @@ function CampaignDetail({
           <h1 className="cd-h1 truncate" style={{ fontSize: 24, minWidth: 0 }}>
             {c.name}
           </h1>
-          <span className="cd-badge" style={BADGE_NEUTRAL}>{c.platform}</span>
-          <span className="cd-badge" style={paused ? BADGE_NEUTRAL : BADGE_ACTIVE}>
+          <span className="cd-badge" style={BADGE_NEUTRAL}>
+            {c.platform}
+          </span>
+          <span
+            className="cd-badge"
+            style={paused ? BADGE_NEUTRAL : BADGE_ACTIVE}
+          >
             {paused ? "Paused" : "Active"}
           </span>
         </div>
-        <div className="flex items-center flex-wrap" style={{ gap: 8, flexShrink: 0 }}>
+        <div
+          className="flex items-center flex-wrap"
+          style={{ gap: 8, flexShrink: 0 }}
+        >
           {/* Pause/resume + cut-budget are real operator actions with no other
               home — kept beyond the design's two header buttons (deliberate). */}
           {paused ? (
@@ -912,7 +1210,9 @@ function CampaignDetail({
               small
               icon="play"
               disabled={busy}
-              onClick={() => run("resume_campaign", "Campaign resumed.", "active")}
+              onClick={() =>
+                run("resume_campaign", "Campaign resumed.", "active")
+              }
             >
               Resume
             </Btn>
@@ -922,7 +1222,11 @@ function CampaignDetail({
               icon="pause"
               disabled={busy}
               onClick={() =>
-                run("pause_campaign", `Campaign paused — syncing to ${c.platform}.`, "paused")
+                run(
+                  "pause_campaign",
+                  `Campaign paused — syncing to ${c.platform}.`,
+                  "paused",
+                )
               }
             >
               Pause
@@ -930,13 +1234,23 @@ function CampaignDetail({
           )}
           {/* 0.7 × nothing is nothing: the action route rejects a zero budget,
               so never offer a cut that cannot succeed. */}
-          <span title={c.daily_budget_cents <= 0 ? "No daily budget set on this campaign" : undefined}>
+          <span
+            title={
+              c.daily_budget_cents <= 0
+                ? "No daily budget set on this campaign"
+                : undefined
+            }
+          >
             <Btn
               small
               icon="reduce"
               disabled={busy || c.daily_budget_cents <= 0}
               onClick={() =>
-                run("reduce_campaign_budget", "Budget reduced 30% — logged to action history.", status)
+                run(
+                  "reduce_campaign_budget",
+                  "Budget reduced 30% — logged to action history.",
+                  status,
+                )
               }
             >
               Cut budget 30%
@@ -986,7 +1300,9 @@ function CampaignDetail({
             <CountMoney cents={c.spend_7d} />
           </span>
           <span className="cd-caption tabular-nums">
-            {c.daily_budget_cents > 0 ? `${money(c.daily_budget_cents)}/day budget` : "No daily budget set"}
+            {c.daily_budget_cents > 0
+              ? `${money(c.daily_budget_cents)}/day budget`
+              : "No daily budget set"}
           </span>
         </Card>
         <Card className="cd-stat">
@@ -1000,7 +1316,12 @@ function CampaignDetail({
             </>
           ) : (
             <>
-              <span className="cd-stat-value" style={{ color: "var(--text-3)" }}>—</span>
+              <span
+                className="cd-stat-value"
+                style={{ color: "var(--text-3)" }}
+              >
+                —
+              </span>
               <span className="cd-caption">No attributed revenue yet</span>
             </>
           )}
@@ -1013,12 +1334,23 @@ function CampaignDetail({
           >
             {c.roas_7d.toFixed(1)}×
           </span>
-          <span className="cd-caption tabular-nums">break-even {c.breakeven_roas.toFixed(1)}×</span>
+          <span className="cd-caption tabular-nums">
+            break-even {c.breakeven_roas.toFixed(1)}×
+          </span>
         </Card>
         <Card className="cd-stat">
-          <span className="cd-stat-label">Conversions</span>
-          <span className="cd-stat-value" style={{ color: "var(--text-3)" }}>—</span>
-          <span className="cd-caption">Not tracked per campaign yet</span>
+          <span className="cd-stat-label">Calderyn score</span>
+          <span
+            className="cd-stat-value tabular-nums"
+            style={{ color: BAND_CHIP[s.band].color }}
+          >
+            {s.value ?? "—"}
+          </span>
+          <span className="cd-caption">
+            {s.value == null
+              ? "Scoring in progress"
+              : `${s.confidence} confidence`}
+          </span>
         </Card>
       </div>
 
@@ -1054,8 +1386,10 @@ function CampaignList({
 }: {
   app: DashboardCtx;
   joined: CampaignVM[];
-  setDraftPrefill: (p: { id?: string; name?: string; platform?: CampaignDraftPlatform } | null) => void;
+  setDraftPrefill: (draft: CampaignDraftRow | null) => void;
 }) {
+  const screenRef = useRef<HTMLDivElement>(null);
+  const [viewMode, setViewMode] = useState<CampaignView>("list");
   // Owned campaign drafts render alongside synced campaigns. Fetched on mount,
   // and re-fetched after a draft is deleted or a new one is saved from the
   // inline empty-state wizard (which never unmounts this component).
@@ -1076,12 +1410,27 @@ function CampaignList({
   useEffect(() => {
     let live = true;
     fetchCampaignDrafts()
-      .then((rows) => { if (live) setDrafts(rows); })
+      .then((rows) => {
+        if (live) setDrafts(rows);
+      })
       .catch(() => {
         // Non-fatal: the list still renders the synced campaigns.
       });
-    return () => { live = false; };
+    return () => {
+      live = false;
+    };
   }, []);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("calderyn.campaigns.view");
+    if (saved === "list" || saved === "cards") setViewMode(saved);
+  }, []);
+
+  const chooseView = (next: CampaignView) => {
+    if (next === viewMode) return;
+    setViewMode(next);
+    window.localStorage.setItem("calderyn.campaigns.view", next);
+  };
 
   // Empty-state entry point (no campaigns, no drafts) shows the first-campaign
   // wizard inline instead of the plain Placeholder. "Skip" reveals the
@@ -1089,14 +1438,17 @@ function CampaignList({
   const [skippedEmpty, setSkippedEmpty] = useState(false);
 
   const deleteDraft = async (d: CampaignDraftRow) => {
-    if (!window.confirm(`Delete the "${d.name}" draft? This can't be undone.`)) return;
+    if (!window.confirm(`Delete the "${d.name}" draft? This can't be undone.`))
+      return;
     try {
       await deleteCampaignDraft(d.id);
       setDrafts((cur) => cur.filter((row) => row.id !== d.id));
       app.toast("Draft deleted.", "check", "success");
     } catch (err) {
       const message =
-        err instanceof DashboardApiError ? err.message : "Couldn't delete the draft — try again.";
+        err instanceof DashboardApiError
+          ? err.message
+          : "Couldn't delete the draft — try again.";
       app.toast(message, "x", "critical");
     }
   };
@@ -1104,7 +1456,10 @@ function CampaignList({
   // Local optimistic patches from row quick actions (pause/resume/budget),
   // keyed by campaign id — merged over the server data until the next
   // refresh lands.
-  const [overrides, setOverrides] = useState<Record<string, Partial<CampaignVM>>>({});
+  const [overrides, setOverrides] = useState<
+    Record<string, Partial<CampaignVM>>
+  >({});
+  const reorderStateRef = useRef<ReturnType<typeof Flip.getState> | null>(null);
   const [budgetFor, setBudgetFor] = useState<CampaignVM | null>(null);
   // Reconcile patches once a new campaigns array arrives: executeAction
   // updates the ad_campaign_dim mirror BEFORE responding, so the action's own
@@ -1126,7 +1481,9 @@ function CampaignList({
         const freshRow = fresh.get(id);
         const reflected =
           freshRow != null &&
-          (Object.keys(patch) as (keyof CampaignVM)[]).every((k) => freshRow[k] === patch[k]);
+          (Object.keys(patch) as (keyof CampaignVM)[]).every(
+            (k) => freshRow[k] === patch[k],
+          );
         if (reflected) {
           changed = true;
         } else {
@@ -1136,11 +1493,37 @@ function CampaignList({
       return changed ? next : prev;
     });
   }, [app.campaigns, joined]);
-  const merged = joined.map((c) => (overrides[c.id] ? { ...c, ...overrides[c.id] } : c));
+  const merged = joined.map((c) =>
+    overrides[c.id] ? { ...c, ...overrides[c.id] } : c,
+  );
 
   // Active campaigns sort to the top; within each status group, highest 7d
   // spend first. Paused rows still render (dimmed), just below the active ones.
   const shown = sortActiveFirst(merged, (a, b) => b.spend_7d - a.spend_7d);
+  const shownOrder = shown.map((c) => c.id).join("|");
+
+  const patchCampaign = (id: string, patch: Partial<CampaignVM>) => {
+    const nextOrder = sortActiveFirst(
+      merged.map((campaign) =>
+        campaign.id === id ? { ...campaign, ...patch } : campaign,
+      ),
+      (a, b) => b.spend_7d - a.spend_7d,
+    )
+      .map((campaign) => campaign.id)
+      .join("|");
+    if (
+      patch.status !== undefined &&
+      nextOrder !== shownOrder &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      const items = screenRef.current?.querySelectorAll(".cd-campaign-item");
+      if (items?.length) reorderStateRef.current = Flip.getState(items);
+    }
+    setOverrides((cur) => ({
+      ...cur,
+      [id]: { ...cur[id], ...patch },
+    }));
+  };
 
   const loading = app.loading && joined.length === 0;
 
@@ -1150,26 +1533,108 @@ function CampaignList({
   const active = shown.filter((c) => c.status !== "paused");
   // Only live campaigns spend, so paused budgets stay out of the $/day figure.
   const perDayCents = active.reduce(
-    (sum, c) =>
-      sum +
-      (c.daily_budget_cents > 0
-        ? c.daily_budget_cents
-        : c.spend_7d > 0
-          ? Math.round(c.spend_7d / 7)
-          : 0),
+    (sum, c) => sum + Math.max(0, c.daily_budget_cents),
     0,
   );
-  // A campaign with no spend yet (just launched, ad in review) isn't "losing
-  // money" — require real spend before judging, matching trueRoas().
-  const losers = active.filter((c) => c.spend_7d > 0 && c.roas_7d < c.breakeven_roas);
   const platforms = Array.from(new Set(shown.map((c) => c.platform)));
+  // Membership/view changes animate. Routine analytics polling does not replay
+  // the collection entrance and look like a page refresh.
+  const collectionSignature = `${viewMode}:${loading}`;
+
+  useGSAP(
+    () => {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const elements = gsap.utils.toArray<HTMLElement>(
+        screenRef.current?.querySelectorAll(".cd-campaign-summary") ?? [],
+      );
+      if (elements.length === 0) return;
+      gsap.fromTo(
+        elements,
+        { autoAlpha: 0, y: 6 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.28,
+          stagger: 0.05,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        },
+      );
+    },
+    { scope: screenRef },
+  );
+
+  useGSAP(
+    () => {
+      const state = reorderStateRef.current;
+      reorderStateRef.current = null;
+      if (!state) return;
+      const root = screenRef.current;
+      if (root) root.dataset.reordering = "1";
+      const clearReordering = () => {
+        if (root) delete root.dataset.reordering;
+      };
+      const animation = Flip.from(state, {
+        duration: 0.32,
+        ease: "power2.out",
+        absolute: false,
+        simple: true,
+        stagger: 0.015,
+        onComplete: clearReordering,
+        onInterrupt: clearReordering,
+      });
+      return () => {
+        clearReordering();
+        animation.kill();
+      };
+    },
+    {
+      scope: screenRef,
+      dependencies: [shownOrder],
+    },
+  );
+
+  useGSAP(
+    () => {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const items = gsap.utils
+        .toArray<HTMLElement>(
+          screenRef.current?.querySelectorAll(".cd-campaign-item") ?? [],
+        )
+        .slice(0, 8);
+      if (items.length === 0) return;
+      gsap.fromTo(
+        items,
+        { autoAlpha: 0, y: 8, scale: 0.99, willChange: "transform,opacity" },
+        {
+          autoAlpha: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.28,
+          stagger: { each: 0.035, from: "start" },
+          ease: "power2.out",
+          overwrite: "auto",
+          clearProps: "opacity,visibility,transform,willChange",
+        },
+      );
+    },
+    {
+      scope: screenRef,
+      dependencies: [collectionSignature],
+      revertOnUpdate: true,
+    },
+  );
 
   return (
-    <div className="cd-screen">
-      <ScreenHeader title="Campaigns" sub="Every ad platform, in one place.">
+    <div ref={screenRef} className="cd-screen cd-campaign-list">
+      <ScreenHeader
+        title="Campaigns"
+        sub="See what is running, what it costs, and what needs attention."
+      >
         <Btn
           kind="primary"
-          small
+          icon="plus"
+          className="cd-new-campaign-btn"
           onClick={() => {
             setDraftPrefill(null);
             app.navigate("campaigns", "new");
@@ -1178,10 +1643,10 @@ function CampaignList({
           New campaign
         </Btn>
       </ScreenHeader>
-      {shown.length > 0 && (
+      {(shown.length > 0 || drafts.length > 0) && (
         <div
-          className="flex items-center"
-          style={{ gap: 14, flexWrap: "wrap", fontSize: 13, color: "var(--text-2)", margin: "-8px 2px 0" }}
+          className="cd-campaign-summary"
+          aria-label="Campaign account summary"
         >
           <div className="flex items-center" style={{ gap: 5 }}>
             {platforms.map((p) => (
@@ -1189,24 +1654,49 @@ function CampaignList({
             ))}
           </div>
           <span>
-            <b style={{ color: "var(--text-1)", fontWeight: 600 }}>{active.length}</b> live{" "}
-            {active.length === 1 ? "campaign" : "campaigns"}
+            <b style={{ color: "var(--text-1)", fontWeight: 600 }}>
+              {active.length}
+            </b>{" "}
+            live {active.length === 1 ? "campaign" : "campaigns"}
           </span>
           <span className="tabular-nums">
-            <b style={{ color: "var(--text-1)", fontWeight: 600 }}>{money(perDayCents)}</b>/day
+            <b style={{ color: "var(--text-1)", fontWeight: 600 }}>
+              {money(perDayCents)}
+            </b>
+            /day budget
           </span>
-          {losers.length > 0 && (
-            <span className="cd-badge" style={{ color: "var(--red)", background: "var(--red-bg)" }}>
-              {losers.length} losing money
-            </span>
-          )}
+          <div
+            className="cd-campaign-view-toggle"
+            role="group"
+            aria-label="Campaign layout"
+          >
+            <button
+              type="button"
+              data-active={viewMode === "list" ? "1" : "0"}
+              aria-pressed={viewMode === "list"}
+              onClick={() => chooseView("list")}
+            >
+              <CDIcon name="list" size={14} /> List
+            </button>
+            <button
+              type="button"
+              data-active={viewMode === "cards" ? "1" : "0"}
+              aria-pressed={viewMode === "cards"}
+              onClick={() => chooseView("cards")}
+            >
+              <CDIcon name="grid" size={14} /> Cards
+            </button>
+          </div>
         </div>
       )}
-      <div className="cd-card" style={{ overflow: "hidden" }}>
-        {loading ? (
-          <TableSkeleton />
-        ) : shown.length === 0 && drafts.length === 0 ? (
-          skippedEmpty ? (
+      {loading || (shown.length === 0 && drafts.length === 0) ? (
+        <div
+          className="cd-card cd-campaign-table"
+          style={{ overflow: "hidden" }}
+        >
+          {loading ? (
+            <TableSkeleton />
+          ) : skippedEmpty ? (
             <Placeholder
               icon="megaphone"
               title="No campaigns yet"
@@ -1229,18 +1719,27 @@ function CampaignList({
                 }}
               />
             </div>
-          )
-        ) : (
+          )}
+        </div>
+      ) : viewMode === "list" ? (
+        <div
+          className="cd-card cd-campaign-table"
+          style={{ overflow: "hidden" }}
+        >
           <Pan min={560}>
             <div
               className="cd-tablehd"
-              style={{ gridTemplateColumns: CAMP_GRID, gap: 12, padding: "13px 20px" }}
+              style={{
+                gridTemplateColumns: CAMP_GRID,
+                gap: 10,
+                padding: "9px 16px",
+              }}
             >
               <span>Campaign</span>
               {/* No per-campaign autopilot flag exists in the data, so this
                   column shows the real status instead of an Auto/Manual state. */}
               <span>Status</span>
-              <span>Spend/day</span>
+              <span>Daily</span>
               <span>ROAS</span>
               <span className="text-right">Score</span>
               <span />
@@ -1253,9 +1752,7 @@ function CampaignList({
                 c={c}
                 onClick={() => app.navigate("campaigns", c.id)}
                 onEditBudget={() => setBudgetFor(c)}
-                onChanged={(patch) =>
-                  setOverrides((cur) => ({ ...cur, [c.id]: { ...cur[c.id], ...patch } }))
-                }
+                onChanged={(patch) => patchCampaign(c.id, patch)}
               />
             ))}
             {drafts.map((d) => (
@@ -1263,16 +1760,39 @@ function CampaignList({
                 key={d.id}
                 d={d}
                 onContinue={() => {
-                  setDraftPrefill({ id: d.id, name: d.name, platform: d.platform });
+                  setDraftPrefill(d);
                   app.navigate("campaigns", "new");
                 }}
                 onDelete={() => deleteDraft(d)}
               />
             ))}
           </Pan>
-        )}
-      </div>
-      <ScreenNewCreativeCard app={app} campaigns={shown} />
+        </div>
+      ) : (
+        <div className="cd-campaign-card-grid">
+          {shown.map((c) => (
+            <CampaignCard
+              key={c.id}
+              app={app}
+              c={c}
+              onClick={() => app.navigate("campaigns", c.id)}
+              onEditBudget={() => setBudgetFor(c)}
+              onChanged={(patch) => patchCampaign(c.id, patch)}
+            />
+          ))}
+          {drafts.map((d) => (
+            <DraftCard
+              key={d.id}
+              d={d}
+              onContinue={() => {
+                setDraftPrefill(d);
+                app.navigate("campaigns", "new");
+              }}
+              onDelete={() => deleteDraft(d)}
+            />
+          ))}
+        </div>
+      )}
       {budgetFor && (
         <EditBudgetModal
           app={app}
@@ -1281,7 +1801,10 @@ function CampaignList({
           onSaved={(newCents) =>
             setOverrides((cur) => ({
               ...cur,
-              [budgetFor.id]: { ...cur[budgetFor.id], daily_budget_cents: newCents },
+              [budgetFor.id]: {
+                ...cur[budgetFor.id],
+                daily_budget_cents: newCents,
+              },
             }))
           }
         />
@@ -1300,7 +1823,7 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   // hits "Continue setup" on a DraftRow — lifted here since the wizard mounts
   // fresh on the "new" nav param, unrelated to CampaignList's own state. The
   // id lets the wizard replace the resumed draft instead of duplicating it.
-  const [draftPrefill, setDraftPrefill] = useState<{ id?: string; name?: string; platform?: CampaignDraftPlatform } | null>(
+  const [draftPrefill, setDraftPrefill] = useState<CampaignDraftRow | null>(
     null,
   );
 
@@ -1330,7 +1853,11 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
         if (!g) return c;
         // Resolve via the shared grader so a no-revenue grade row shows "no data"
         // not "poor" (P1-6) — same logic adaptCampaign uses for the initial load.
-        return { ...c, grade: gradeFromRow(g, c.roas_7d), breakeven_roas: g.break_even_roas };
+        return {
+          ...c,
+          grade: gradeFromRow(g, c.roas_7d),
+          breakeven_roas: g.break_even_roas,
+        };
       }),
     [app.campaigns, grades],
   );
@@ -1349,7 +1876,9 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   }
 
   // Row-click / deep-link: nav.param carries the selected campaign id.
-  const selected = app.nav.param ? joined.find((c) => c.id === app.nav.param) : null;
+  const selected = app.nav.param
+    ? joined.find((c) => c.id === app.nav.param)
+    : null;
   if (selected) {
     return (
       <CampaignDetail
@@ -1362,5 +1891,7 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
     );
   }
 
-  return <CampaignList app={app} joined={joined} setDraftPrefill={setDraftPrefill} />;
+  return (
+    <CampaignList app={app} joined={joined} setDraftPrefill={setDraftPrefill} />
+  );
 }

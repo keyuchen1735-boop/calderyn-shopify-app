@@ -98,6 +98,8 @@ describe("imageGenerator", () => {
     expect(arg.count).toBe(2);
     expect(arg.prompt).toContain("Hook strength");
     expect(arg.prompt).toContain("clean contrasting background");
+    expect(arg.prompt).toContain(ORIGINAL.primaryText);
+    expect(arg.prompt).toContain("source of truth");
   });
 
   it("returns no candidates when generation yields no images", async () => {

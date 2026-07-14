@@ -1,7 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const productsQuery = { data: [{ id: "p1", title: "Tee", status: "active", updated_at: "2026-06-28T00:00:00Z" }], count: 1, error: null };
-const mediaQuery = { data: [{ product_id: "p1", storage_path: "a.jpg" }], error: null };
+const productsQuery = {
+  data: [
+    {
+      id: "p1",
+      title: "Tee",
+      status: "active",
+      updated_at: "2026-06-28T00:00:00Z",
+    },
+  ],
+  count: 1,
+  error: null,
+};
+let mediaRows: Array<Record<string, unknown>> = [];
 
 // Mutable per-test fixtures for the variant + shipping reads.
 let variantRows: Array<Record<string, unknown>> = [];
@@ -20,27 +31,60 @@ vi.mock("~/lib/supabase.server", () => ({
         return { select: () => ({ eq: () => ordered }) };
       }
       if (table === "product_media") {
-        // .select().in().eq(is_primary).not(storage_path,is,null)
-        return { select: () => ({ in: () => ({ eq: () => ({ not: () => Promise.resolve(mediaQuery) }) }) }) };
+        const mediaResult = () =>
+          Promise.resolve({ data: mediaRows, error: null });
+        const ordered: {
+          order: () => typeof ordered;
+          then: Promise<unknown>["then"];
+        } = {
+          order: () => ordered,
+          then: (resolve, reject) => mediaResult().then(resolve, reject),
+        };
+        return { select: () => ({ in: () => ({ eq: () => ordered }) }) };
       }
       if (table === "variant_shipping") {
         // listProducts chains .eq("shop_id").in("variant_id", chunk)
-        return { select: () => ({ eq: () => ({ in: () => Promise.resolve({ data: shippingRows, error: null }) }) }) };
+        return {
+          select: () => ({
+            eq: () => ({
+              in: () => Promise.resolve({ data: shippingRows, error: null }),
+            }),
+          }),
+        };
       }
       // variant_dim
-      return { select: () => ({ in: () => Promise.resolve({ data: variantRows, error: null }) }) };
+      return {
+        select: () => ({
+          in: () => Promise.resolve({ data: variantRows, error: null }),
+        }),
+      };
     },
   }),
 }));
 
 beforeEach(() => {
+  mediaRows = [{ product_id: "p1", storage_path: "a.jpg", external_url: null }];
   variantRows = [
     { id: "v1", product_id: "p1", retail_price_cents: 1999 },
     { id: "v2", product_id: "p1", retail_price_cents: 2499 },
   ];
   shippingRows = [
-    { variant_id: "v1", weight_grams: 340, length_mm: 127, width_mm: 127, height_mm: 102, requires_shipping: true },
-    { variant_id: "v2", weight_grams: 0, length_mm: null, width_mm: null, height_mm: null, requires_shipping: false },
+    {
+      variant_id: "v1",
+      weight_grams: 340,
+      length_mm: 127,
+      width_mm: 127,
+      height_mm: 102,
+      requires_shipping: true,
+    },
+    {
+      variant_id: "v2",
+      weight_grams: 0,
+      length_mm: null,
+      width_mm: null,
+      height_mm: null,
+      requires_shipping: false,
+    },
   ];
 });
 
@@ -49,7 +93,31 @@ describe("listProducts", () => {
     const { listProducts } = await import("../catalog.server");
     const { products, total } = await listProducts("shop1", {});
     expect(total).toBe(1);
-    expect(products[0]).toEqual(expect.objectContaining({ id: "p1", variantCount: 2, primaryImagePath: "a.jpg" }));
+    expect(products[0]).toEqual(
+      expect.objectContaining({
+        id: "p1",
+        variantCount: 2,
+        primaryImagePath: "a.jpg",
+      }),
+    );
+  });
+
+  it("returns an imported or rehosted primary image URL", async () => {
+    mediaRows = [
+      {
+        product_id: "p1",
+        storage_path: null,
+        external_url: "https://cdn.example/tee.jpg",
+      },
+    ];
+    const { listProducts } = await import("../catalog.server");
+    const { products } = await listProducts("shop1", {});
+    expect(products[0]).toEqual(
+      expect.objectContaining({
+        primaryImagePath: null,
+        primaryImageUrl: "https://cdn.example/tee.jpg",
+      }),
+    );
   });
 
   it("rolls up min variant price and heaviest physical weight", async () => {
@@ -63,7 +131,14 @@ describe("listProducts", () => {
   it("reports null price when no variant carries one", async () => {
     variantRows = [{ id: "v1", product_id: "p1", retail_price_cents: null }];
     shippingRows = [
-      { variant_id: "v1", weight_grams: 340, length_mm: 127, width_mm: 127, height_mm: 102, requires_shipping: true },
+      {
+        variant_id: "v1",
+        weight_grams: 340,
+        length_mm: 127,
+        width_mm: 127,
+        height_mm: 102,
+        requires_shipping: true,
+      },
     ];
     const { listProducts } = await import("../catalog.server");
     const { products } = await listProducts("shop1", {});
@@ -73,7 +148,14 @@ describe("listProducts", () => {
   it("flags a physical variant missing dims as ship-incomplete (mirrors incomplete_shipping)", async () => {
     shippingRows = [
       // weight but no dims -> fails the same predicate as the activation 422
-      { variant_id: "v1", weight_grams: 340, length_mm: null, width_mm: null, height_mm: null, requires_shipping: true },
+      {
+        variant_id: "v1",
+        weight_grams: 340,
+        length_mm: null,
+        width_mm: null,
+        height_mm: null,
+        requires_shipping: true,
+      },
       { variant_id: "v2", weight_grams: 0, requires_shipping: false },
     ];
     const { listProducts } = await import("../catalog.server");
@@ -83,7 +165,14 @@ describe("listProducts", () => {
 
   it("treats a variant with no variant_shipping row as physical and incomplete", async () => {
     shippingRows = [
-      { variant_id: "v1", weight_grams: 340, length_mm: 127, width_mm: 127, height_mm: 102, requires_shipping: true },
+      {
+        variant_id: "v1",
+        weight_grams: 340,
+        length_mm: 127,
+        width_mm: 127,
+        height_mm: 102,
+        requires_shipping: true,
+      },
       // v2 has no shipping row at all
     ];
     const { listProducts } = await import("../catalog.server");

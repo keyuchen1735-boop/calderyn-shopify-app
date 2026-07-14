@@ -1,21 +1,35 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
+import {
+  dashboardJson,
+  jsonError,
+  requireSameOrigin,
+} from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { firstRunPreflight } from "~/lib/meta/first-run.server";
-import { metaWriteClientForShopId, metaDraftPushEnabled } from "~/lib/meta/ad-create.server";
-import { createFirstCampaign, RollbackFailedError } from "~/lib/meta/campaign-create.server";
+import {
+  metaWriteClientForShopId,
+  metaDraftPushEnabled,
+} from "~/lib/meta/ad-create.server";
+import {
+  createFirstCampaign,
+  RollbackFailedError,
+} from "~/lib/meta/campaign-create.server";
 import { decideRunTransition, canonicalJson } from "~/lib/meta/first-run-state";
 import { normalizeMetaCta } from "~/lib/meta/cta-types";
 import { resolveCampaignDimId } from "~/lib/ads/campaign-dim.server";
 import { getShopCountry } from "~/lib/ship-cost/shop-country.server";
 import { insertAuditWithIdempotency } from "~/lib/actions/execute.server";
 import type { CreativeInput } from "~/lib/screener/types";
+import { isUuid } from "~/lib/ids";
+import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 
 // GET: Meta preflight for the first-campaign wizard (connected/scope/page/funding).
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
-  return dashboardJson(async () => firstRunPreflight(session.shopId, getSupabase()));
+  return dashboardJson(async () =>
+    firstRunPreflight(session.shopId, getSupabase()),
+  );
 }
 
 const MIN_BUDGET_CENTS = 500;
@@ -36,6 +50,7 @@ export type ParsedFirstRun =
       runId: string;
       productId: string;
       budgetCents: number;
+      placement: "facebook" | "instagram" | null;
       creative: {
         headline: string;
         primaryText: string;
@@ -53,18 +68,40 @@ export type ParsedFirstRun =
  * (defense in depth, not redundant: this is the honest 422 for the merchant;
  * that's the last-resort guard against a caller that skips this parser).
  */
-export function parseFirstRunBody(body: Record<string, unknown>): ParsedFirstRun {
-  const fail = (code: string, message: string): ParsedFirstRun => ({ ok: false, error: { code, message } });
+export function parseFirstRunBody(
+  body: Record<string, unknown>,
+): ParsedFirstRun {
+  const fail = (code: string, message: string): ParsedFirstRun => ({
+    ok: false,
+    error: { code, message },
+  });
 
   const runId = str(body.runId);
   if (!runId) return fail("missing_run_id", "runId is required");
+  if (!isUuid(runId))
+    return fail("invalid_run_id", "runId must be a valid UUID");
 
   const productId = str(body.productId);
   if (!productId) return fail("missing_product_id", "productId is required");
+  if (!isUuid(productId))
+    return fail("invalid_product_id", "productId must be a valid UUID");
+
+  const placementRaw = str(body.placement);
+  const placement =
+    placementRaw === "facebook" || placementRaw === "instagram"
+      ? placementRaw
+      : null;
+  if (placementRaw && !placement) {
+    return fail("invalid_placement", "placement must be facebook or instagram");
+  }
 
   const rawBudget = Number(body.budgetCents);
   const budgetCents = Math.round(rawBudget);
-  if (!Number.isFinite(rawBudget) || budgetCents < MIN_BUDGET_CENTS || budgetCents > MAX_BUDGET_CENTS) {
+  if (
+    !Number.isFinite(rawBudget) ||
+    budgetCents < MIN_BUDGET_CENTS ||
+    budgetCents > MAX_BUDGET_CENTS
+  ) {
     return fail(
       "budget_out_of_range",
       `budgetCents must be between ${MIN_BUDGET_CENTS} and ${MAX_BUDGET_CENTS}`,
@@ -77,35 +114,64 @@ export function parseFirstRunBody(body: Record<string, unknown>): ParsedFirstRun
       : {};
 
   const headline = str(creativeRaw.headline).slice(0, MAX_HEADLINE_LEN);
-  if (!headline) return fail("missing_headline", "creative.headline is required");
+  if (!headline)
+    return fail("missing_headline", "creative.headline is required");
 
   const destinationUrlRaw = str(creativeRaw.destinationUrl);
   let destinationUrl: string;
   try {
     const u = new URL(destinationUrlRaw);
-    if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("unsupported protocol");
+    if (u.protocol !== "http:" && u.protocol !== "https:")
+      throw new Error("unsupported protocol");
     destinationUrl = u.toString();
   } catch {
-    return fail("missing_destination_url", "creative.destinationUrl must be a valid http(s) URL");
+    return fail(
+      "missing_destination_url",
+      "creative.destinationUrl must be a valid http(s) URL",
+    );
   }
 
-  const primaryText = str(creativeRaw.primaryText).slice(0, MAX_PRIMARY_TEXT_LEN);
+  const primaryText = str(creativeRaw.primaryText).slice(
+    0,
+    MAX_PRIMARY_TEXT_LEN,
+  );
+  if (!primaryText)
+    return fail("missing_primary_text", "creative.primaryText is required");
   // call_to_action.type is a Meta ENUM — free text (including AI-generated
   // copy like "Shop the sale") is rejected at ad-create time. Normalize and
   // whitelist; anything unrecognized becomes SHOP_NOW.
   const cta = normalizeMetaCta(str(creativeRaw.cta));
   const imageUrlRaw = str(creativeRaw.imageUrl);
+  if (!imageUrlRaw)
+    return fail("missing_image_url", "creative.imageUrl is required");
+  let imageUrl: string;
+  try {
+    const parsedImageUrl = new URL(imageUrlRaw);
+    if (
+      parsedImageUrl.protocol !== "http:" &&
+      parsedImageUrl.protocol !== "https:"
+    ) {
+      throw new Error("unsupported protocol");
+    }
+    imageUrl = parsedImageUrl.toString();
+  } catch {
+    return fail(
+      "invalid_image_url",
+      "creative.imageUrl must be a valid http(s) URL",
+    );
+  }
 
   return {
     ok: true,
     runId,
     productId,
     budgetCents,
+    placement,
     creative: {
       headline,
       primaryText,
       cta,
-      imageUrl: imageUrlRaw.length > 0 ? imageUrlRaw : null,
+      imageUrl,
       destinationUrl,
     },
   };
@@ -134,21 +200,22 @@ export async function action({ request }: ActionFunctionArgs) {
     return jsonError(422, "invalid_json");
   }
   const parsed = parseFirstRunBody(rawBody);
-  if (!parsed.ok) return jsonError(422, parsed.error.code, parsed.error.message);
+  if (!parsed.ok)
+    return jsonError(422, parsed.error.code, parsed.error.message);
 
   const sb = getSupabase();
   const shopId = session.shopId;
-  const inputRecord = {
-    product_id: parsed.productId,
-    budget_cents: parsed.budgetCents,
-    creative: parsed.creative,
-  };
-
   return dashboardJson(async () => {
     // Two independent reads, side by side. The scope gate is still checked
     // FIRST below — the run-row read is a shop-scoped select with no side
     // effects, so overlapping it never lets an unauthorized request act.
-    const [pushEnabled, runRowRes] = await Promise.all([
+    const [
+      pushEnabled,
+      runRowRes,
+      productRowRes,
+      imageAssetRes,
+      storefrontOrigin,
+    ] = await Promise.all([
       // Defense in depth: the wizard's UI gate is advisory; a direct POST could
       // otherwise reach here without ads_management on the stored Meta token.
       metaDraftPushEnabled(sb, shopId),
@@ -162,6 +229,25 @@ export async function action({ request }: ActionFunctionArgs) {
         .eq("shop_id", shopId)
         .eq("id", parsed.runId)
         .maybeSingle(),
+      // The product id is client-controlled. Verify it belongs to this shop
+      // before creating a run row or touching Meta.
+      sb
+        .from("product_dim")
+        .select("id, handle")
+        .eq("shop_id", shopId)
+        .eq("id", parsed.productId)
+        .maybeSingle(),
+      // Generated, mirrored product, and merchant-uploaded creative images all
+      // live in the shop-owned asset registry. Never let an arbitrary remote
+      // URL reach the publisher API.
+      sb
+        .from("asset_dim")
+        .select("id")
+        .eq("shop_id", shopId)
+        .eq("public_url", parsed.creative.imageUrl)
+        .limit(1)
+        .maybeSingle(),
+      getShopStorefrontOrigin(shopId),
     ]);
     if (!pushEnabled) {
       throw jsonError(
@@ -172,12 +258,45 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     const { data: existing, error: selErr } = runRowRes;
     if (selErr) throw selErr;
+    if (productRowRes.error) throw productRowRes.error;
+    if (!productRowRes.data) {
+      throw jsonError(
+        404,
+        "product_not_found",
+        "That product is no longer available in your catalog.",
+      );
+    }
+    if (imageAssetRes.error) throw imageAssetRes.error;
+    if (!imageAssetRes.data) {
+      throw jsonError(
+        422,
+        "creative_image_not_owned",
+        "Choose a generated image or upload one from the review screen.",
+      );
+    }
+    const productDestinationUrl = storefrontOrigin
+      ? `${storefrontOrigin}/storefront/products/${String(productRowRes.data.handle)}`
+      : new URL(
+          `/storefront/products/${String(productRowRes.data.handle)}`,
+          request.url,
+        ).toString();
+    const canonicalCreative = {
+      ...parsed.creative,
+      destinationUrl: productDestinationUrl,
+    };
+    const inputRecord = {
+      product_id: parsed.productId,
+      budget_cents: parsed.budgetCents,
+      ...(parsed.placement ? { placement: parsed.placement } : {}),
+      creative: canonicalCreative,
+    };
 
     const transition = decideRunTransition(
       existing
         ? {
             status: String(existing.status),
-            meta_campaign_id: (existing.meta_campaign_id as string | null) ?? null,
+            meta_campaign_id:
+              (existing.meta_campaign_id as string | null) ?? null,
             updated_at: String(existing.updated_at),
           }
         : null,
@@ -187,9 +306,12 @@ export async function action({ request }: ActionFunctionArgs) {
     if (transition === "fresh" || !existing) {
       // (`!existing` is for TS narrowing only — decideRunTransition returns
       // "fresh" exactly when the row is null.)
-      const { error: insErr } = await sb
-        .from("campaign_wizard_runs")
-        .insert({ id: parsed.runId, shop_id: shopId, status: "creating", input: inputRecord });
+      const { error: insErr } = await sb.from("campaign_wizard_runs").insert({
+        id: parsed.runId,
+        shop_id: shopId,
+        status: "creating",
+        input: inputRecord,
+      });
       if (insErr) {
         // A concurrent request for the SAME runId lost the race to insert first.
         if ((insErr as { code?: string }).code === "23505") {
@@ -204,14 +326,23 @@ export async function action({ request }: ActionFunctionArgs) {
       // mirror write itself failed after a real success — surfaced as a
       // genuine 500 rather than silently 200-ing with a bogus id.
       const campaignDimId = existing.meta_campaign_id
-        ? await resolveCampaignDimId(sb, shopId, "meta", String(existing.meta_campaign_id))
+        ? await resolveCampaignDimId(
+            sb,
+            shopId,
+            "meta",
+            String(existing.meta_campaign_id),
+          )
         : null;
       if (!campaignDimId) {
         throw new Error(
           `campaign_wizard_runs ${parsed.runId} is 'created' but its ad_campaign_dim mirror is missing`,
         );
       }
-      return { run_id: parsed.runId, campaign_dim_id: campaignDimId, status: "created" as const };
+      return {
+        run_id: parsed.runId,
+        campaign_dim_id: campaignDimId,
+        status: "created" as const,
+      };
     } else if (transition === "reject_in_progress") {
       throw jsonError(409, "run_in_progress", RUN_IN_PROGRESS_MESSAGE);
     } else if (transition === "needs_review") {
@@ -243,7 +374,11 @@ export async function action({ request }: ActionFunctionArgs) {
       //    (failed/rolled_back AND stale-creating).
       const { data: reopened, error: updErr } = await sb
         .from("campaign_wizard_runs")
-        .update({ status: "creating", error: null, updated_at: new Date().toISOString() })
+        .update({
+          status: "creating",
+          error: null,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", parsed.runId)
         .eq("shop_id", shopId)
         .eq("status", String(existing.status))
@@ -270,7 +405,11 @@ export async function action({ request }: ActionFunctionArgs) {
       // actually connected (not stuck at 'creating' forever).
       await sb
         .from("campaign_wizard_runs")
-        .update({ status: "failed", error: "meta not connected", updated_at: new Date().toISOString() })
+        .update({
+          status: "failed",
+          error: "meta not connected",
+          updated_at: new Date().toISOString(),
+        })
         .eq("shop_id", shopId)
         .eq("id", parsed.runId);
       throw jsonError(
@@ -282,11 +421,11 @@ export async function action({ request }: ActionFunctionArgs) {
     const countryCode = shopCountry ?? "US";
 
     const creative: CreativeInput = {
-      headline: parsed.creative.headline,
-      primaryText: parsed.creative.primaryText,
-      cta: parsed.creative.cta,
-      imageUrl: parsed.creative.imageUrl,
-      destinationUrl: withFirstRunUtm(parsed.creative.destinationUrl, parsed.runId),
+      headline: canonicalCreative.headline,
+      primaryText: canonicalCreative.primaryText,
+      cta: canonicalCreative.cta,
+      imageUrl: canonicalCreative.imageUrl,
+      destinationUrl: withFirstRunUtm(productDestinationUrl, parsed.runId),
       audience: "",
     };
 
@@ -302,7 +441,10 @@ export async function action({ request }: ActionFunctionArgs) {
     const bookkeepCampaignId = async (campaignId: string): Promise<void> => {
       const { error } = await sb
         .from("campaign_wizard_runs")
-        .update({ meta_campaign_id: campaignId, updated_at: new Date().toISOString() })
+        .update({
+          meta_campaign_id: campaignId,
+          updated_at: new Date().toISOString(),
+        })
         .eq("shop_id", shopId)
         .eq("id", parsed.runId);
       if (error) throw error;
@@ -316,6 +458,7 @@ export async function action({ request }: ActionFunctionArgs) {
           name: parsed.creative.headline,
           dailyBudgetCents: parsed.budgetCents,
           countryCode,
+          publisherPlatform: parsed.placement ?? undefined,
           creative,
         },
         undefined,
@@ -326,7 +469,8 @@ export async function action({ request }: ActionFunctionArgs) {
       // throws a plain Error for "no Facebook Page", not an ActionError — never
       // assume otherwise.
       const message = err instanceof Error ? err.message : String(err);
-      const orphanCampaignId = err instanceof RollbackFailedError ? err.orphanCampaignId : null;
+      const orphanCampaignId =
+        err instanceof RollbackFailedError ? err.orphanCampaignId : null;
       await sb
         .from("campaign_wizard_runs")
         .update({
@@ -428,6 +572,10 @@ export async function action({ request }: ActionFunctionArgs) {
       sb,
     );
 
-    return { run_id: parsed.runId, campaign_dim_id: campaignDimId, status: "created" as const };
+    return {
+      run_id: parsed.runId,
+      campaign_dim_id: campaignDimId,
+      status: "created" as const,
+    };
   });
 }

@@ -329,8 +329,8 @@ export function Tooltip({ content, children }: { content: string; children: Reac
 
 export function PlatformMark({ platform }: { platform: Platform | string }) {
   return (
-    <span className="cd-platform" title={platform} data-platform={platform}>
-      <PlatformIcon platform={platform} size={16} title={platform} />
+    <span className="cd-platform cd-platform-logo" title={platform} data-platform={platform}>
+      <PlatformIcon platform={platform} size={18} title={platform} />
     </span>
   );
 }

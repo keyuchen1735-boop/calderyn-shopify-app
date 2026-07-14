@@ -13,10 +13,21 @@ export function buildImagePrompt(req: GenerateRequest): string {
     ? req.weakMetrics.map((m) => `- ${m.label} (${m.score}/100): ${m.reasoning}`).join("\n")
     : "- (no specific weak dimensions flagged)";
   const refs = req.styleRefs.length ? `\nMatch the look of the merchant's winning ads: ${req.styleRefs.join(", ")}.` : "";
+  const identityDirection = req.input.imageUrl
+    ? [
+        "Use the reference product image as the source of truth for the product's",
+        "shape, materials, colors, proportions, and recognizable details.",
+        "Create a new advertising scene around that exact product — do NOT redesign it.",
+      ].join(" ")
+    : [
+        "Create an advertising image for the product described below.",
+        "Do not add unsupported features, branding, claims, or a different product.",
+      ].join(" ");
   return [
-    "Generate an improved advertising image for this product, keeping the same product",
-    "identity as the reference image — do NOT invent a different product.",
+    "Generate an improved advertising image for this product.",
+    identityDirection,
     `\nHeadline context: ${req.input.headline}`,
+    `Product context: ${req.input.primaryText}`,
     `Audience: ${req.input.audience}`,
     `\nFix these weak dimensions:\n${weak}`,
     req.tips.length ? `\nApply these fixes: ${req.tips.join("; ")}` : "",

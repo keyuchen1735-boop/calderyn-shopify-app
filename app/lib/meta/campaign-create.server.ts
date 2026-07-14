@@ -47,6 +47,8 @@ export interface FirstCampaignInput {
   name: string;
   dailyBudgetCents: number; // pre-clamped by the route; asserted again here
   countryCode: string; // e.g. "US"
+  /** Optional publisher restriction; omitted preserves Meta automatic placements. */
+  publisherPlatform?: "facebook" | "instagram";
   creative: CreativeInput;
 }
 
@@ -131,7 +133,10 @@ export async function createFirstCampaign(
             optimization_goal: "LINK_CLICKS",
             bid_strategy: "LOWEST_COST_WITHOUT_CAP",
             status: "ACTIVE",
-            targeting: JSON.stringify({ geo_locations: { countries: [input.countryCode] } }),
+            targeting: JSON.stringify({
+              geo_locations: { countries: [input.countryCode] },
+              ...(input.publisherPlatform ? { publisher_platforms: [input.publisherPlatform] } : {}),
+            }),
           }),
           "ad set create",
         ),

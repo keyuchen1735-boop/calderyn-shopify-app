@@ -11,7 +11,10 @@ import { runBulkInChunks } from "./orders-client";
 import type { LiveAnalyticsSnapshot } from "./live-analytics-types";
 import type { CatalogSort } from "~/lib/catalog/catalog-sort";
 import type { SeoListingVM } from "~/lib/catalog/types";
-import type { ListingDraftCurrent, ListingPlan } from "~/lib/catalog/listing-prompt";
+import type {
+  ListingDraftCurrent,
+  ListingPlan,
+} from "~/lib/catalog/listing-prompt";
 import type {
   Alert,
   AuditEntry,
@@ -48,7 +51,12 @@ import { gradeFromRow } from "~/lib/campaign-grade";
 import { friendlyActionError, displayAuditTarget } from "~/lib/friendly-error";
 import { auditLegibility } from "~/lib/audit-legibility";
 import { stateDiff } from "~/lib/audit-state-diff";
-import type { CreativeScreenRun, ScoreCard, CreativeInput, Variant } from "~/lib/screener/types";
+import type {
+  CreativeScreenRun,
+  ScoreCard,
+  CreativeInput,
+  Variant,
+} from "~/lib/screener/types";
 import type {
   ChatMessage as AssistantMessage,
   ConversationSummary as AssistantConversation,
@@ -91,7 +99,8 @@ async function parseErrorBody(res: Response): Promise<ApiErrorBody> {
 async function toApiError(res: Response): Promise<DashboardApiError> {
   const body = await parseErrorBody(res);
   const code = body.error ?? `http_${res.status}`;
-  const message = body.message ?? body.error ?? res.statusText ?? "Request failed";
+  const message =
+    body.message ?? body.error ?? res.statusText ?? "Request failed";
   return new DashboardApiError(res.status, code, message, body.audit_id);
 }
 
@@ -184,14 +193,18 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   // action — parity with the Autopilot queue's hasCampaign.
   const campaign_id =
     a.campaign_id ??
-    (a.campaign != null ? campaigns.find((c) => c.name === a.campaign)?.id ?? null : null);
+    (a.campaign != null
+      ? (campaigns.find((c) => c.name === a.campaign)?.id ?? null)
+      : null);
 
   // A SKU-scoped alert (e.g. sku_stockout_vs_spend) can still name the offending
   // campaign in its evidence — a real ad_campaign_dim id. Use it to make the
   // campaign fix executable without treating the alert as campaign-scoped.
   const evRaw = (a.evidence as Record<string, unknown> | null) ?? {};
   const evidenceCampaignId =
-    typeof evRaw.campaign_id === "string" && evRaw.campaign_id ? evRaw.campaign_id : null;
+    typeof evRaw.campaign_id === "string" && evRaw.campaign_id
+      ? evRaw.campaign_id
+      : null;
   const execCampaignId = campaign_id ?? evidenceCampaignId;
 
   // exclude_geo drops one of the four internal region buckets from a campaign's
@@ -208,17 +221,26 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   // exclude_geo is executable only with a resolvable campaign AND a valid bucket;
   // otherwise it stays a deep-link (below).
   const canExcludeGeo =
-    Boolean(execCampaignId) && detectorActions.includes("exclude_geo") && Boolean(region);
+    Boolean(execCampaignId) &&
+    detectorActions.includes("exclude_geo") &&
+    Boolean(region);
   // reallocate_inventory 422s without a complete transfer plan in evidence, so it
   // is offered only when the evidence can actually drive the mutation — never a
   // dead button (rule 12). Same gate the inventory page and Autopilot queue use.
-  const canReallocate = detectorActions.includes("reallocate_inventory") && hasTransferPlan(evRaw);
+  const canReallocate =
+    detectorActions.includes("reallocate_inventory") && hasTransferPlan(evRaw);
   // Campaign kinds need a resolvable campaign AND must be valid for the detector —
   // a winning-campaign (scaling) alert offers increase, never pause/reduce.
   const actions: string[] = [
-    ...(execCampaignId && detectorActions.includes("pause_campaign") ? ["pause_campaign"] : []),
-    ...(execCampaignId && detectorActions.includes("reduce_campaign_budget") ? ["reduce_campaign_budget"] : []),
-    ...(execCampaignId && detectorActions.includes("increase_campaign_budget") ? ["increase_campaign_budget"] : []),
+    ...(execCampaignId && detectorActions.includes("pause_campaign")
+      ? ["pause_campaign"]
+      : []),
+    ...(execCampaignId && detectorActions.includes("reduce_campaign_budget")
+      ? ["reduce_campaign_budget"]
+      : []),
+    ...(execCampaignId && detectorActions.includes("increase_campaign_budget")
+      ? ["increase_campaign_budget"]
+      : []),
     ...(canExcludeGeo ? ["exclude_geo"] : []),
     ...(canReallocate ? ["reallocate_inventory"] : []),
     ...(detectorActions.includes("create_po_draft") ? ["create_po_draft"] : []),
@@ -230,8 +252,11 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   // runnable on THIS alert. If the default can't run here, recommend nothing so
   // the UI shows "Review" — never a dead button, never a cross-surface
   // disagreement where Alerts recommends a move Autopilot would not (rule 12).
-  const defaultAction = recommendedAction(a.detector_id, { hasCampaign: Boolean(campaign_id) });
-  const recommended = defaultAction && actions.includes(defaultAction) ? defaultAction : null;
+  const defaultAction = recommendedAction(a.detector_id, {
+    hasCampaign: Boolean(campaign_id),
+  });
+  const recommended =
+    defaultAction && actions.includes(defaultAction) ? defaultAction : null;
 
   // Detector kinds with no executor but a manual destination (e.g. free-shipping
   // → Shopify Shipping settings) surface as deep-links, not dead buttons (rule 12).
@@ -273,12 +298,18 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
   };
 }
 
-export function adaptCampaign(c: Campaign, grades: CampaignGradeRow[]): CampaignVM {
+export function adaptCampaign(
+  c: Campaign,
+  grades: CampaignGradeRow[],
+): CampaignVM {
   const g = grades.find((row) => row.campaign_id === c.id);
   const breakeven_roas = g?.break_even_roas ?? 0;
   // Single grade source (P1-6): "nodata" when the grade row has spend but no
   // attributed revenue, so an attribution gap never renders as "poor".
-  const grade = gradeFromRow(g ?? { roas: c.roas_7d, break_even_roas: breakeven_roas }, c.roas_7d);
+  const grade = gradeFromRow(
+    g ?? { roas: c.roas_7d, break_even_roas: breakeven_roas },
+    c.roas_7d,
+  );
 
   return {
     id: c.id,
@@ -290,7 +321,9 @@ export function adaptCampaign(c: Campaign, grades: CampaignGradeRow[]): Campaign
     // Coerce non-finite live values to 0 so the screen's `.toFixed(1)` calls
     // can't throw on a null/undefined ROAS or margin from a partial API row.
     roas_7d: Number.isFinite(c.roas_7d) ? c.roas_7d : 0,
-    contribution_margin: Number.isFinite(c.contribution_margin) ? c.contribution_margin : 0,
+    contribution_margin: Number.isFinite(c.contribution_margin)
+      ? c.contribution_margin
+      : 0,
     breakeven_roas,
     grade,
     // TODO(api): per-campaign roas series — no per-campaign trend exists yet.
@@ -315,7 +348,8 @@ const AUDIT_VERBS: Record<string, string> = {
 function summarizeState(state: unknown): string {
   if (state == null) return "—";
   if (typeof state === "string") return state;
-  if (typeof state === "number" || typeof state === "boolean") return String(state);
+  if (typeof state === "number" || typeof state === "boolean")
+    return String(state);
   try {
     const json = JSON.stringify(state);
     if (!json || json === "{}" || json === "[]") return "—";
@@ -374,7 +408,9 @@ export function adaptIntegrations(
   const keys = Object.keys(record);
   const ordered = [
     ...INTEGRATION_ORDER.filter((k) => k in record),
-    ...keys.filter((k) => !(INTEGRATION_ORDER as readonly string[]).includes(k)).sort(),
+    ...keys
+      .filter((k) => !(INTEGRATION_ORDER as readonly string[]).includes(k))
+      .sort(),
   ];
   return ordered.map((key) => {
     const i = record[key];
@@ -424,7 +460,9 @@ export async function fetchAlerts(
   if (filters?.severity) qs.set("severity", filters.severity);
   if (filters?.detector) qs.set("detector", filters.detector);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
-  const data = await apiGet<{ alerts: Alert[] }>(`/dashboard/api/alerts${suffix}`);
+  const data = await apiGet<{ alerts: Alert[] }>(
+    `/dashboard/api/alerts${suffix}`,
+  );
   return data.alerts.map((a) => adaptAlert(a, campaigns));
 }
 
@@ -441,7 +479,9 @@ export async function fetchAlert(
 export async function fetchCampaigns(
   grades: CampaignGradeRow[] = [],
 ): Promise<CampaignVM[]> {
-  const data = await apiGet<{ campaigns: Campaign[] }>("/dashboard/api/campaigns");
+  const data = await apiGet<{ campaigns: Campaign[] }>(
+    "/dashboard/api/campaigns",
+  );
   return data.campaigns.map((c) => adaptCampaign(c, grades));
 }
 
@@ -460,15 +500,23 @@ export async function fetchCampaign(
 // Keep these fields in sync by hand when the server type changes.
 export interface CampaignDirectionDTO {
   direction: "scale_up" | "scale_down" | "keep" | "pause";
-  actionKind: "pause_campaign" | "reduce_campaign_budget" | "increase_campaign_budget" | null;
+  actionKind:
+    | "pause_campaign"
+    | "reduce_campaign_budget"
+    | "increase_campaign_budget"
+    | null;
   suggestedBudgetCents: number | null;
   reason: string;
   reasonSource: "claude" | "template";
   dataSufficient: boolean;
 }
 
-export async function fetchCampaignDirection(id: string): Promise<CampaignDirectionDTO> {
-  return apiGet<CampaignDirectionDTO>(`/dashboard/api/campaigns/${encodeURIComponent(id)}/direction`);
+export async function fetchCampaignDirection(
+  id: string,
+): Promise<CampaignDirectionDTO> {
+  return apiGet<CampaignDirectionDTO>(
+    `/dashboard/api/campaigns/${encodeURIComponent(id)}/direction`,
+  );
 }
 
 // Mirror of FirstRunPreflight in ~/lib/meta/first-run.server.ts - a browser-safe
@@ -486,16 +534,38 @@ export async function fetchFirstRunPreflight(): Promise<FirstRunPreflight> {
   return apiGet<FirstRunPreflight>("/dashboard/api/campaigns/first-run");
 }
 
-/** One AI-generated ad-copy variant for the first-campaign wizard's step 3. */
+/** One AI-generated ad direction for the first-campaign wizard's step 3. */
 export interface FirstRunCreativeVariant {
   headline: string;
   primaryText: string;
   cta: string;
   rationale: string;
+  /** Provider-generated visual for this direction; product media is the fallback. */
+  imageUrl: string | null;
+  imageGenerated: boolean;
+  /** Re-scored Calderyn composite; variants are returned best-first. */
+  score: number | null;
 }
 
+interface FirstRunCreativeResponse {
+  available: boolean;
+  variants: FirstRunCreativeVariant[];
+  destinationUrl: string;
+  imageUrl: string | null;
+  fallback: { headline: string; primaryText: string; cta: string };
+  regenerationsLeft: number;
+}
+
+// React development remounts and fast repeated clicks can start the same
+// generation request twice before the first response arrives. Share that one
+// in-flight request so the server-side allowance is consumed exactly once.
+const firstRunCreativeRequests = new Map<
+  string,
+  Promise<FirstRunCreativeResponse>
+>();
+
 /**
- * Generate up to 3 ad-copy variants from a chosen catalog product. `available:
+ * Generate up to 3 ad directions from a chosen catalog product. `available:
  * false` means the generator is unconfigured (no API key / quota) - the wizard
  * should fall back to manual copy editing rather than treat it as an error.
  * destinationUrl/imageUrl are always returned (even when unavailable) — the
@@ -504,18 +574,30 @@ export interface FirstRunCreativeVariant {
  */
 export async function generateFirstRunCreatives(
   productId: string,
-): Promise<{
-  available: boolean;
-  variants: FirstRunCreativeVariant[];
-  destinationUrl: string;
-  imageUrl: string | null;
-}> {
-  return apiSend<{
-    available: boolean;
-    variants: FirstRunCreativeVariant[];
-    destinationUrl: string;
-    imageUrl: string | null;
-  }>("POST", "/dashboard/api/campaigns/first-run/creatives", { productId });
+  runId: string,
+  attempt: number,
+): Promise<FirstRunCreativeResponse> {
+  const requestKey = `${runId}:${productId}:${attempt}`;
+  const pending = firstRunCreativeRequests.get(requestKey);
+  if (pending) return pending;
+
+  const request = apiSend<FirstRunCreativeResponse>(
+    "POST",
+    "/dashboard/api/campaigns/first-run/creatives",
+    {
+      productId,
+      runId,
+      attempt,
+    },
+  );
+  firstRunCreativeRequests.set(requestKey, request);
+  const clear = () => {
+    if (firstRunCreativeRequests.get(requestKey) === request) {
+      firstRunCreativeRequests.delete(requestKey);
+    }
+  };
+  void request.then(clear, clear);
+  return request;
 }
 
 /** The wizard's Meta-create input: the runId is client-minted (crypto.randomUUID())
@@ -525,6 +607,7 @@ export interface FirstRunCreateInput {
   runId: string;
   productId: string;
   budgetCents: number;
+  placement?: "facebook" | "instagram";
   creative: {
     headline: string;
     primaryText: string;
@@ -541,21 +624,25 @@ export interface FirstRunCreateInput {
 export async function createFirstCampaignRun(
   input: FirstRunCreateInput,
 ): Promise<{ runId: string; campaignDimId: string }> {
-  const data = await apiSend<{ run_id: string; campaign_dim_id: string; status: string }>(
-    "POST",
-    "/dashboard/api/campaigns/first-run",
-    {
-      runId: input.runId,
-      productId: input.productId,
-      budgetCents: input.budgetCents,
-      creative: input.creative,
-    },
-  );
+  const data = await apiSend<{
+    run_id: string;
+    campaign_dim_id: string;
+    status: string;
+  }>("POST", "/dashboard/api/campaigns/first-run", {
+    runId: input.runId,
+    productId: input.productId,
+    budgetCents: input.budgetCents,
+    placement: input.placement,
+    creative: input.creative,
+  });
   return { runId: data.run_id, campaignDimId: data.campaign_dim_id };
 }
 
 /** Per-campaign daily spend+revenue series for the detail chart (default 90d window). */
-export async function fetchCampaignSeries(id: string, days = 90): Promise<DailyRoasRow[]> {
+export async function fetchCampaignSeries(
+  id: string,
+  days = 90,
+): Promise<DailyRoasRow[]> {
   const data = await apiGet<{ series: DailyRoasRow[] }>(
     `/dashboard/api/campaigns/${encodeURIComponent(id)}/series?days=${days}`,
   );
@@ -576,7 +663,9 @@ export async function fetchAudit(): Promise<AuditVM[]> {
 }
 
 export async function fetchGuardrails(): Promise<GuardrailVM> {
-  const data = await apiGet<{ guardrails: GuardrailConfig }>("/dashboard/api/guardrails");
+  const data = await apiGet<{ guardrails: GuardrailConfig }>(
+    "/dashboard/api/guardrails",
+  );
   return toGuardrailVM(data.guardrails);
 }
 
@@ -595,8 +684,8 @@ function toGuardrailVM(g: GuardrailConfig): GuardrailVM {
   return {
     ...g,
     // TODO(api): autopilot_actions_today not yet returned by GuardrailConfig.
-    autopilot_actions_today: (g as { autopilot_actions_today?: number })
-      .autopilot_actions_today ?? 0,
+    autopilot_actions_today:
+      (g as { autopilot_actions_today?: number }).autopilot_actions_today ?? 0,
   };
 }
 
@@ -661,7 +750,11 @@ export async function fetchConsent(): Promise<boolean> {
 }
 
 export async function putConsent(consent: boolean): Promise<boolean> {
-  const data = await apiSend<{ consent: boolean }>("PUT", "/dashboard/api/consent", { consent });
+  const data = await apiSend<{ consent: boolean }>(
+    "PUT",
+    "/dashboard/api/consent",
+    { consent },
+  );
   return Boolean(data.consent);
 }
 
@@ -728,22 +821,31 @@ export async function fetchBilling(): Promise<BillingStatus> {
 
 /** Create-or-reuse the shop's Express account and mint a hosted-onboarding link. */
 export async function startPayoutOnboarding(): Promise<{ url: string }> {
-  return apiSend<{ url: string }>("POST", "/dashboard/api/billing", { intent: "start-onboarding" });
+  return apiSend<{ url: string }>("POST", "/dashboard/api/billing", {
+    intent: "start-onboarding",
+  });
 }
 
 /** Pull account status from Stripe (charges/payouts/details flags) and return a fresh DTO. */
 export async function refreshPayoutStatus(): Promise<BillingStatus> {
-  return apiSend<BillingStatus>("POST", "/dashboard/api/billing", { intent: "refresh-status" });
+  return apiSend<BillingStatus>("POST", "/dashboard/api/billing", {
+    intent: "refresh-status",
+  });
 }
 
 /** Mint a single-use Express-dashboard login link on demand (409 when not onboarded). */
 export async function fetchPayoutLoginLink(): Promise<{ url: string }> {
-  return apiSend<{ url: string }>("POST", "/dashboard/api/billing", { intent: "login-link" });
+  return apiSend<{ url: string }>("POST", "/dashboard/api/billing", {
+    intent: "login-link",
+  });
 }
 
 /** Originate a 50c go-live test transaction and return the Stripe Checkout url. */
 export async function startTestTransaction(): Promise<{ url: string }> {
-  return apiSend<{ url: string }>("POST", "/dashboard/api/cutover-test-transaction");
+  return apiSend<{ url: string }>(
+    "POST",
+    "/dashboard/api/cutover-test-transaction",
+  );
 }
 
 export async function fetchIntegrations(): Promise<IntegrationVM[]> {
@@ -757,7 +859,9 @@ export async function fetchIntegrations(): Promise<IntegrationVM[]> {
  * Start a dashboard-native OAuth connect. Returns the provider consent-screen
  * URL to navigate to; the callback lands back on /dashboard?<provider>=connected.
  */
-export async function startIntegrationConnect(provider: string): Promise<{ url: string }> {
+export async function startIntegrationConnect(
+  provider: string,
+): Promise<{ url: string }> {
   return apiSend<{ url: string }>("POST", "/dashboard/api/integrations", {
     intent: "connect",
     provider,
@@ -765,7 +869,9 @@ export async function startIntegrationConnect(provider: string): Promise<{ url: 
 }
 
 /** POST an integrations mutation; the route responds with the refreshed rows. */
-async function mutateIntegrations(body: Record<string, unknown>): Promise<IntegrationVM[]> {
+async function mutateIntegrations(
+  body: Record<string, unknown>,
+): Promise<IntegrationVM[]> {
   const data = await apiSend<{ integrations: Record<string, Integration> }>(
     "POST",
     "/dashboard/api/integrations",
@@ -783,7 +889,9 @@ export async function connectIntegrationKey(
 }
 
 /** Disconnect a provider; returns the refreshed integrations list. */
-export async function disconnectIntegration(provider: string): Promise<IntegrationVM[]> {
+export async function disconnectIntegration(
+  provider: string,
+): Promise<IntegrationVM[]> {
   return mutateIntegrations({ intent: "disconnect", provider });
 }
 
@@ -835,18 +943,27 @@ export async function executeCampaignAction(
     type: input.type,
     idempotency_key: crypto.randomUUID(),
   };
-  if (input.dailyBudgetCents !== undefined) body.daily_budget_cents = input.dailyBudgetCents;
+  if (input.dailyBudgetCents !== undefined)
+    body.daily_budget_cents = input.dailyBudgetCents;
   if (input.alertId !== undefined) body.alert_id = input.alertId;
   if (input.region !== undefined) body.region = input.region;
 
-  const data = await apiSend<{ audit_id: string; outcome: string; calibration?: ApproveReceipt }>(
+  const data = await apiSend<{
+    audit_id: string;
+    outcome: string;
+    calibration?: ApproveReceipt;
+  }>(
     "POST",
     `/dashboard/api/campaigns/${encodeURIComponent(campaignId)}/action`,
     body,
   );
   // Note: 502 action_failed is surfaced as a DashboardApiError by apiSend, with
   // its auditId carried through from the response body.
-  return { auditId: data.audit_id, outcome: data.outcome, calibration: data.calibration };
+  return {
+    auditId: data.audit_id,
+    outcome: data.outcome,
+    calibration: data.calibration,
+  };
 }
 
 /** Push a regenerated winning variant to Meta as a PAUSED draft ad. The
@@ -876,11 +993,25 @@ export async function pushCreativeDraft(
 
 export async function executeAlertAction(
   alertId: string,
-  input: { type: string; newPriceCents?: number; poQuantity?: string; poUnitCost?: string },
-): Promise<{ auditId: string; outcome: string; acknowledged: boolean; calibration?: ApproveReceipt }> {
-  const body: Record<string, unknown> = { type: input.type, idempotency_key: crypto.randomUUID() };
+  input: {
+    type: string;
+    newPriceCents?: number;
+    poQuantity?: string;
+    poUnitCost?: string;
+  },
+): Promise<{
+  auditId: string;
+  outcome: string;
+  acknowledged: boolean;
+  calibration?: ApproveReceipt;
+}> {
+  const body: Record<string, unknown> = {
+    type: input.type,
+    idempotency_key: crypto.randomUUID(),
+  };
   // adjust_price only: optional merchant override; omitted → engine suggestion.
-  if (input.newPriceCents !== undefined) body.new_price_cents = input.newPriceCents;
+  if (input.newPriceCents !== undefined)
+    body.new_price_cents = input.newPriceCents;
   // create_po_draft only: quantity + optional unit cost (blank → TBD).
   if (input.poQuantity !== undefined) body.po_quantity = input.poQuantity;
   if (input.poUnitCost !== undefined) body.po_unit_cost = input.poUnitCost;
@@ -889,7 +1020,11 @@ export async function executeAlertAction(
     outcome: string;
     acknowledged: boolean;
     calibration?: ApproveReceipt;
-  }>("POST", `/dashboard/api/alerts/${encodeURIComponent(alertId)}/action`, body);
+  }>(
+    "POST",
+    `/dashboard/api/alerts/${encodeURIComponent(alertId)}/action`,
+    body,
+  );
   return {
     auditId: data.audit_id,
     outcome: data.outcome,
@@ -1016,7 +1151,10 @@ export async function sendAssistantMessage(
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", Origin: location.origin },
-    body: JSON.stringify({ message, conversation_id: conversationId ?? undefined }),
+    body: JSON.stringify({
+      message,
+      conversation_id: conversationId ?? undefined,
+    }),
   });
   const body = (await res.json().catch(() => ({}))) as {
     conversation_id?: string;
@@ -1026,7 +1164,9 @@ export async function sendAssistantMessage(
   if (res.status === 401) redirectToLogin();
   if (!res.ok) {
     const msg =
-      typeof body.message === "string" ? body.message : body.error ?? "Could not reach Calderyn";
+      typeof body.message === "string"
+        ? body.message
+        : (body.error ?? "Could not reach Calderyn");
     throw new AssistantSendError(msg, body.conversation_id ?? null);
   }
   return {
@@ -1046,11 +1186,13 @@ export async function sendAssistantMessage(
 export async function confirmAssistantAction(
   pendingId: string,
 ): Promise<{ receipt: ActionReceipt; message: AssistantMessage | null }> {
-  const data = await apiSend<{ receipt: ActionReceipt; message: AssistantMessage | null }>(
-    "POST",
-    "/dashboard/api/assistant/confirm",
-    { pending_id: pendingId, decision: "confirm" },
-  );
+  const data = await apiSend<{
+    receipt: ActionReceipt;
+    message: AssistantMessage | null;
+  }>("POST", "/dashboard/api/assistant/confirm", {
+    pending_id: pendingId,
+    decision: "confirm",
+  });
   return { receipt: data.receipt, message: data.message ?? null };
 }
 
@@ -1058,11 +1200,17 @@ export async function confirmAssistantAction(
  *  server's `dismissed` flag: `false` means the pending row was NOT actually
  *  pending (already executed/dismissed elsewhere, or expired) — the caller
  *  must not report this as a plain "no changes made" dismissal. */
-export async function dismissAssistantAction(pendingId: string): Promise<boolean> {
-  const data = await apiSend<{ dismissed: boolean }>("POST", "/dashboard/api/assistant/confirm", {
-    pending_id: pendingId,
-    decision: "dismiss",
-  });
+export async function dismissAssistantAction(
+  pendingId: string,
+): Promise<boolean> {
+  const data = await apiSend<{ dismissed: boolean }>(
+    "POST",
+    "/dashboard/api/assistant/confirm",
+    {
+      pending_id: pendingId,
+      decision: "dismiss",
+    },
+  );
   return data.dismissed;
 }
 
@@ -1073,14 +1221,22 @@ export async function fetchCalibration(): Promise<{
   updated_at: string | null;
   nearGraduation: number;
 }> {
-  const data = await apiGet<{ pct: number | null; updated_at: string | null; nearGraduation?: number }>(
-    "/dashboard/api/calibration",
-  );
-  return { pct: data.pct, updated_at: data.updated_at, nearGraduation: data.nearGraduation ?? 0 };
+  const data = await apiGet<{
+    pct: number | null;
+    updated_at: string | null;
+    nearGraduation?: number;
+  }>("/dashboard/api/calibration");
+  return {
+    pct: data.pct,
+    updated_at: data.updated_at,
+    nearGraduation: data.nearGraduation ?? 0,
+  };
 }
 
 export async function fetchActionQueue(): Promise<QueueProposalVM[]> {
-  const data = await apiGet<{ proposals: QueueProposalVM[] }>("/dashboard/api/queue");
+  const data = await apiGet<{ proposals: QueueProposalVM[] }>(
+    "/dashboard/api/queue",
+  );
   return data.proposals;
 }
 
@@ -1108,14 +1264,18 @@ export async function rejectProposal(input: {
 
 /** Return all active learned calibration rules for the session's shop. */
 export async function fetchLearnedRules(): Promise<LearnedRuleVM[]> {
-  const data = await apiGet<{ rules: LearnedRule[] }>("/dashboard/api/calibration/rules");
+  const data = await apiGet<{ rules: LearnedRule[] }>(
+    "/dashboard/api/calibration/rules",
+  );
   // LearnedRule and LearnedRuleVM have the same shape; cast through directly.
   return data.rules as LearnedRuleVM[];
 }
 
 /** Deactivate (undo) a learned calibration rule by id. */
 export async function undoRule(ruleId: string): Promise<void> {
-  await apiSend<{ ok: true }>("POST", "/dashboard/api/calibration/rules", { ruleId });
+  await apiSend<{ ok: true }>("POST", "/dashboard/api/calibration/rules", {
+    ruleId,
+  });
 }
 
 // --- live engine -------------------------------------------------------------
@@ -1134,7 +1294,11 @@ export async function toggleFeatureAutonomy(input: {
   actionKind: string;
   enabled: boolean;
 }): Promise<{ ok: boolean; enabled: boolean }> {
-  return apiSend<{ ok: boolean; enabled: boolean }>("POST", "/dashboard/api/live-engine/toggle", input);
+  return apiSend<{ ok: boolean; enabled: boolean }>(
+    "POST",
+    "/dashboard/api/live-engine/toggle",
+    input,
+  );
 }
 
 // --- creative screener (campaign drop-in) ------------------------------------
@@ -1211,7 +1375,15 @@ export async function scoreCampaignAd(
 }
 
 export type RegenerateDTO =
-  | { ok: true; runId: string; weakestAdId: string; variants: Variant[]; allScored: Variant[]; generated: number; discarded: number }
+  | {
+      ok: true;
+      runId: string;
+      weakestAdId: string;
+      variants: Variant[];
+      allScored: Variant[];
+      generated: number;
+      discarded: number;
+    }
   | { ok: false; reason: string };
 
 export async function regenerateCampaign(
@@ -1304,7 +1476,13 @@ export type { SeoListingVM } from "~/lib/catalog/types";
 export interface ProductDetailVM extends ProductDraft {
   id: string;
   handle: string;
-  media: Array<{ id: string; url: string; isPrimary: boolean; alt: string | null; position: number }>;
+  media: Array<{
+    id: string;
+    url: string;
+    isPrimary: boolean;
+    alt: string | null;
+    position: number;
+  }>;
   updatedAt: string;
   /** Null when the search-listing reads failed server-side — the editor shows
    *  the card as temporarily unavailable and must not submit `seo`. */
@@ -1328,7 +1506,12 @@ export interface CollectionProductVM {
 }
 
 export async function fetchProducts(
-  opts: { search?: string; status?: string; offset?: number; sort?: CatalogSort } = {},
+  opts: {
+    search?: string;
+    status?: string;
+    offset?: number;
+    sort?: CatalogSort;
+  } = {},
 ): Promise<{ products: ProductSummaryVM[]; total: number }> {
   const qs = new URLSearchParams();
   if (opts.search) qs.set("search", opts.search);
@@ -1350,17 +1533,31 @@ export async function fetchProduct(id: string): Promise<ProductDetailVM> {
 
 /** POST to create (no id) or PUT to update (id). Returns the product id either
  *  way — the PUT route replies `{ ok: true }`, so the caller's id is echoed. */
-export async function saveProduct(draft: ProductDraft, id?: string): Promise<{ id: string }> {
+export async function saveProduct(
+  draft: ProductDraft,
+  id?: string,
+): Promise<{ id: string }> {
   if (id) {
-    await apiSend("PUT", `/dashboard/api/catalog/products/${encodeURIComponent(id)}`, draft);
+    await apiSend(
+      "PUT",
+      `/dashboard/api/catalog/products/${encodeURIComponent(id)}`,
+      draft,
+    );
     return { id };
   }
-  return apiSend<{ id: string }>("POST", "/dashboard/api/catalog/products", draft);
+  return apiSend<{ id: string }>(
+    "POST",
+    "/dashboard/api/catalog/products",
+    draft,
+  );
 }
 
 /** Archive (soft-delete) a product — the DELETE route flips status to archived. */
 export async function archiveProduct(id: string): Promise<void> {
-  await apiSend("DELETE", `/dashboard/api/catalog/products/${encodeURIComponent(id)}`);
+  await apiSend(
+    "DELETE",
+    `/dashboard/api/catalog/products/${encodeURIComponent(id)}`,
+  );
 }
 
 // --- bulk catalog actions ------------------------------------------------------
@@ -1380,8 +1577,14 @@ interface BulkProductResultWire {
   error?: string;
 }
 
-function mapBulkProductResults(rows: BulkProductResultWire[]): BulkProductResultVM[] {
-  return rows.map((r) => ({ productId: r.product_id, ok: r.ok, error: r.error }));
+function mapBulkProductResults(
+  rows: BulkProductResultWire[],
+): BulkProductResultVM[] {
+  return rows.map((r) => ({
+    productId: r.product_id,
+    ok: r.ok,
+    error: r.error,
+  }));
 }
 
 // The catalog page size is 50 (listProducts' default limit), so "select all on this page" can
@@ -1392,7 +1595,10 @@ function mapBulkProductResults(rows: BulkProductResultWire[]): BulkProductResult
 // per-product failures so already-applied results are never discarded.
 
 /** How a product lands in the flat results when its whole chunk rejected. */
-const productFailure = (productId: string, error: string): BulkProductResultVM => ({
+const productFailure = (
+  productId: string,
+  error: string,
+): BulkProductResultVM => ({
   productId,
   ok: false,
   error,
@@ -1404,14 +1610,18 @@ export async function bulkSetProductStatus(
   productIds: string[],
   status: "active" | "draft" | "archived",
 ): Promise<{ results: BulkProductResultVM[] }> {
-  return runBulkInChunks(productIds, async (slice) => {
-    const data = await apiSend<{ results: BulkProductResultWire[] }>(
-      "POST",
-      "/dashboard/api/catalog/products/bulk/status",
-      { product_ids: slice, status },
-    );
-    return { results: mapBulkProductResults(data.results) };
-  }, productFailure);
+  return runBulkInChunks(
+    productIds,
+    async (slice) => {
+      const data = await apiSend<{ results: BulkProductResultWire[] }>(
+        "POST",
+        "/dashboard/api/catalog/products/bulk/status",
+        { product_ids: slice, status },
+      );
+      return { results: mapBulkProductResults(data.results) };
+    },
+    productFailure,
+  );
 }
 
 /** Add every selected product to a collection. Membership writes are naturally idempotent
@@ -1420,59 +1630,103 @@ export async function bulkAddProductsToCollection(
   productIds: string[],
   collectionId: string,
 ): Promise<{ results: BulkProductResultVM[] }> {
-  return runBulkInChunks(productIds, async (slice) => {
-    const data = await apiSend<{ results: BulkProductResultWire[] }>(
-      "POST",
-      "/dashboard/api/catalog/products/bulk/collection",
-      { product_ids: slice, collection_id: collectionId },
-    );
-    return { results: mapBulkProductResults(data.results) };
-  }, productFailure);
+  return runBulkInChunks(
+    productIds,
+    async (slice) => {
+      const data = await apiSend<{ results: BulkProductResultWire[] }>(
+        "POST",
+        "/dashboard/api/catalog/products/bulk/collection",
+        { product_ids: slice, collection_id: collectionId },
+      );
+      return { results: mapBulkProductResults(data.results) };
+    },
+    productFailure,
+  );
 }
 
 export async function fetchCollections(): Promise<CollectionVM[]> {
-  const data = await apiGet<{ collections: CollectionVM[] }>("/dashboard/api/catalog/collections");
+  const data = await apiGet<{ collections: CollectionVM[] }>(
+    "/dashboard/api/catalog/collections",
+  );
   return data.collections;
 }
 
 export async function createCollection(title: string): Promise<CollectionVM> {
-  const data = await apiSend<{ id: string }>("POST", "/dashboard/api/catalog/collections", { title });
+  const data = await apiSend<{ id: string }>(
+    "POST",
+    "/dashboard/api/catalog/collections",
+    { title },
+  );
   // Optimistic handle via the SAME shared helper the server uses, so the row
   // labels itself with the authoritative slug immediately (no drift). A brand
   // new collection has no members yet, so the count is authoritatively zero.
-  return { id: data.id, title, handle: collectionHandle(title), productCount: 0 };
+  return {
+    id: data.id,
+    title,
+    handle: collectionHandle(title),
+    productCount: 0,
+  };
 }
 
 /** Rename a collection. The handle is deliberately left unchanged server-side
  *  so existing storefront links keep resolving. */
-export async function renameCollection(id: string, title: string): Promise<void> {
-  await apiSend("PUT", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}`, { title });
+export async function renameCollection(
+  id: string,
+  title: string,
+): Promise<void> {
+  await apiSend(
+    "PUT",
+    `/dashboard/api/catalog/collections/${encodeURIComponent(id)}`,
+    { title },
+  );
 }
 
 /** Delete a collection (memberships included). Products are untouched. */
 export async function deleteCollection(id: string): Promise<void> {
-  await apiSend("DELETE", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}`);
+  await apiSend(
+    "DELETE",
+    `/dashboard/api/catalog/collections/${encodeURIComponent(id)}`,
+  );
 }
 
-export async function fetchCollectionProducts(id: string): Promise<CollectionProductVM[]> {
+export async function fetchCollectionProducts(
+  id: string,
+): Promise<CollectionProductVM[]> {
   const data = await apiGet<{ products: CollectionProductVM[] }>(
     `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`,
   );
   return data.products;
 }
 
-export async function addToCollection(id: string, productId: string): Promise<void> {
-  await apiSend("POST", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`, { productId });
+export async function addToCollection(
+  id: string,
+  productId: string,
+): Promise<void> {
+  await apiSend(
+    "POST",
+    `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`,
+    { productId },
+  );
 }
 
-export async function removeFromCollection(id: string, productId: string): Promise<void> {
-  await apiSend("DELETE", `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`, { productId });
+export async function removeFromCollection(
+  id: string,
+  productId: string,
+): Promise<void> {
+  await apiSend(
+    "DELETE",
+    `/dashboard/api/catalog/collections/${encodeURIComponent(id)}/products`,
+    { productId },
+  );
 }
 
 /** Upload one product image. Multipart, so this uses a raw fetch (apiSend forces
  *  JSON): the browser sets the multipart boundary; do NOT set Content-Type. The
  *  server signs the stored path and returns a ready-to-render URL. */
-export async function uploadProductImage(productId: string, file: File): Promise<{ id: string; url: string }> {
+export async function uploadProductImage(
+  productId: string,
+  file: File,
+): Promise<{ id: string; url: string }> {
   const fd = new FormData();
   fd.set("productId", productId);
   fd.set("file", file);
@@ -1487,23 +1741,58 @@ export async function uploadProductImage(productId: string, file: File): Promise
   return (await res.json()) as { id: string; url: string };
 }
 
+/** Upload a replacement image used only by the campaign creative editor. */
+export async function uploadCampaignCreativeImage(
+  file: File,
+): Promise<{ id: string; url: string }> {
+  const form = new FormData();
+  form.set("file", file);
+  const response = await fetch("/dashboard/api/assets/upload", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { Origin: location.origin },
+    body: form,
+  });
+  if (response.status === 401) redirectToLogin();
+  if (!response.ok) throw await toApiError(response);
+  const data = (await response.json()) as { id: string; url: string };
+  return { id: data.id, url: data.url };
+}
+
 export async function deleteProductImage(mediaId: string): Promise<void> {
   await apiSend("DELETE", "/dashboard/api/catalog/media", { mediaId });
 }
 
 /** Make this image the product's main (storefront lead) image. */
 export async function setPrimaryProductImage(mediaId: string): Promise<void> {
-  await apiSend("PUT", "/dashboard/api/catalog/media", { mediaId, intent: "set_primary" });
+  await apiSend("PUT", "/dashboard/api/catalog/media", {
+    mediaId,
+    intent: "set_primary",
+  });
 }
 
 /** Set an image's alt text; empty clears it. */
-export async function setProductImageAlt(mediaId: string, alt: string | null): Promise<void> {
-  await apiSend("PUT", "/dashboard/api/catalog/media", { mediaId, intent: "set_alt", alt });
+export async function setProductImageAlt(
+  mediaId: string,
+  alt: string | null,
+): Promise<void> {
+  await apiSend("PUT", "/dashboard/api/catalog/media", {
+    mediaId,
+    intent: "set_alt",
+    alt,
+  });
 }
 
 /** Move an image one step in the gallery order; past-the-edge moves no-op. */
-export async function moveProductImage(mediaId: string, dir: "up" | "down"): Promise<void> {
-  await apiSend("PUT", "/dashboard/api/catalog/media", { mediaId, intent: "move", dir });
+export async function moveProductImage(
+  mediaId: string,
+  dir: "up" | "down",
+): Promise<void> {
+  await apiSend("PUT", "/dashboard/api/catalog/media", {
+    mediaId,
+    intent: "move",
+    dir,
+  });
 }
 
 // --- AI listing drafts (new-product flow) ------------------------------------
@@ -1519,7 +1808,10 @@ export async function fetchListingDraft(
   prompt: string,
   current: ListingDraftCurrent,
 ): Promise<ListingPlan> {
-  return apiSend<ListingPlan>("POST", "/dashboard/api/listing-draft", { prompt, current });
+  return apiSend<ListingPlan>("POST", "/dashboard/api/listing-draft", {
+    prompt,
+    current,
+  });
 }
 
 // --- inventory --------------------------------------------------------------
@@ -1555,33 +1847,60 @@ export interface LedgerEntryVM {
   created_at: string;
 }
 
-export async function fetchVariantInventory(variantId: string): Promise<VariantBalanceVM[]> {
+export async function fetchVariantInventory(
+  variantId: string,
+): Promise<VariantBalanceVM[]> {
   const d = await apiGet<{ balances: VariantBalanceVM[] }>(
     `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`,
   );
   return d.balances;
 }
-export async function setOnHand(variantId: string, locationId: string, onHand: number): Promise<void> {
-  await apiSend("PUT", `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`, {
-    intent: "set_on_hand",
-    locationId,
-    onHand,
-  });
+export async function setOnHand(
+  variantId: string,
+  locationId: string,
+  onHand: number,
+): Promise<void> {
+  await apiSend(
+    "PUT",
+    `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`,
+    {
+      intent: "set_on_hand",
+      locationId,
+      onHand,
+    },
+  );
 }
-export async function setVariantReorderPoint(variantId: string, locationId: string, reorderPoint: number | null): Promise<void> {
-  await apiSend("PUT", `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`, {
-    intent: "set_reorder",
-    locationId,
-    reorderPoint,
-  });
+export async function setVariantReorderPoint(
+  variantId: string,
+  locationId: string,
+  reorderPoint: number | null,
+): Promise<void> {
+  await apiSend(
+    "PUT",
+    `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`,
+    {
+      intent: "set_reorder",
+      locationId,
+      reorderPoint,
+    },
+  );
 }
-export async function markVariantUnavailable(variantId: string, locationId: string, qty: number, reason: string): Promise<void> {
-  await apiSend("PUT", `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`, {
-    intent: "mark_unavailable",
-    locationId,
-    qty,
-    reason,
-  });
+export async function markVariantUnavailable(
+  variantId: string,
+  locationId: string,
+  qty: number,
+  reason: string,
+): Promise<void> {
+  await apiSend(
+    "PUT",
+    `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}`,
+    {
+      intent: "mark_unavailable",
+      locationId,
+      qty,
+      reason,
+    },
+  );
 }
 export async function createTransfer(input: {
   variantId: string;
@@ -1590,10 +1909,17 @@ export async function createTransfer(input: {
   qty: number;
   mode: "instant" | "in_transit";
 }): Promise<{ transferId: string }> {
-  return apiSend<{ transferId: string }>("POST", "/dashboard/api/catalog/inventory/transfer", input);
+  return apiSend<{ transferId: string }>(
+    "POST",
+    "/dashboard/api/catalog/inventory/transfer",
+    input,
+  );
 }
 export async function receiveTransfer(transferId: string): Promise<void> {
-  await apiSend("POST", "/dashboard/api/catalog/inventory/transfer", { intent: "receive", transferId });
+  await apiSend("POST", "/dashboard/api/catalog/inventory/transfer", {
+    intent: "receive",
+    transferId,
+  });
 }
 export interface PendingTransferVM {
   id: string;
@@ -1603,13 +1929,17 @@ export interface PendingTransferVM {
   toName: string;
   createdAt: string;
 }
-export async function fetchPendingTransfers(variantId: string): Promise<PendingTransferVM[]> {
+export async function fetchPendingTransfers(
+  variantId: string,
+): Promise<PendingTransferVM[]> {
   const d = await apiGet<{ transfers: PendingTransferVM[] }>(
     `/dashboard/api/catalog/inventory/transfer?variantId=${encodeURIComponent(variantId)}`,
   );
   return d.transfers;
 }
-export async function fetchInventoryHistory(variantId: string): Promise<LedgerEntryVM[]> {
+export async function fetchInventoryHistory(
+  variantId: string,
+): Promise<LedgerEntryVM[]> {
   const d = await apiGet<{ history: LedgerEntryVM[] }>(
     `/dashboard/api/catalog/inventory/${encodeURIComponent(variantId)}/history`,
   );
@@ -1662,7 +1992,9 @@ export interface PurchaseOrderVM {
 export async function fetchPurchaseOrders(
   opts: { offset?: number } = {},
 ): Promise<{ rows: PurchaseOrderVM[]; total: number }> {
-  const qs = opts.offset ? `?offset=${encodeURIComponent(String(opts.offset))}` : "";
+  const qs = opts.offset
+    ? `?offset=${encodeURIComponent(String(opts.offset))}`
+    : "";
   return apiGet<{ rows: PurchaseOrderVM[]; total: number }>(
     `/dashboard/api/catalog/purchase-orders${qs}`,
   );
@@ -1671,7 +2003,12 @@ export async function fetchPurchaseOrders(
 export interface ImportRunVM {
   id: string;
   state: "pulling" | "promoting" | "done" | "error";
-  counts: { products: number; variants: number; collections: number; balances: number } | null;
+  counts: {
+    products: number;
+    variants: number;
+    collections: number;
+    balances: number;
+  } | null;
   report: { imported: string[]; notIncluded: string[] } | null;
   error: string | null;
   startedAt: string;
@@ -1721,7 +2058,10 @@ export async function requestCutoverTransition(
   to: CutoverMode,
   reason?: string,
 ): Promise<CutoverStatusVM> {
-  return apiSend<CutoverStatusVM>("POST", "/dashboard/api/cutover", { to, reason });
+  return apiSend<CutoverStatusVM>("POST", "/dashboard/api/cutover", {
+    to,
+    reason,
+  });
 }
 
 export interface DriftRowVM {
@@ -1751,11 +2091,16 @@ export async function fetchCutoverDrift(): Promise<DriftReportVM> {
 }
 
 export async function fetchLocations(): Promise<LocationVM[]> {
-  const d = await apiGet<{ locations: LocationVM[] }>("/dashboard/api/catalog/locations");
+  const d = await apiGet<{ locations: LocationVM[] }>(
+    "/dashboard/api/catalog/locations",
+  );
   return d.locations;
 }
 /** Active locations plus the deactivated ones, for the reactivation panel. */
-export async function fetchLocationsWithInactive(): Promise<{ locations: LocationVM[]; inactive: LocationVM[] }> {
+export async function fetchLocationsWithInactive(): Promise<{
+  locations: LocationVM[];
+  inactive: LocationVM[];
+}> {
   const d = await apiGet<{ locations: LocationVM[]; inactive?: LocationVM[] }>(
     "/dashboard/api/catalog/locations?includeInactive=1",
   );
@@ -1775,17 +2120,36 @@ export async function updateLocation(
     country?: string;
   },
 ): Promise<void> {
-  await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, patch);
+  await apiSend(
+    "PUT",
+    `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`,
+    patch,
+  );
 }
-export async function createLocation(input: { name: string; priority?: number }): Promise<{ id: string }> {
-  return apiSend<{ id: string }>("POST", "/dashboard/api/catalog/locations", input);
+export async function createLocation(input: {
+  name: string;
+  priority?: number;
+}): Promise<{ id: string }> {
+  return apiSend<{ id: string }>(
+    "POST",
+    "/dashboard/api/catalog/locations",
+    input,
+  );
 }
 /** Deactivate a location. Rejects with a 409 DashboardApiError while any stock
  *  (on hand, reserved, or incoming) still sits there. */
 export async function deactivateLocation(id: string): Promise<void> {
-  await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, { active: false });
+  await apiSend(
+    "PUT",
+    `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`,
+    { active: false },
+  );
 }
 /** Reactivate a deactivated location so it fills orders again. */
 export async function reactivateLocation(id: string): Promise<void> {
-  await apiSend("PUT", `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`, { active: true });
+  await apiSend(
+    "PUT",
+    `/dashboard/api/catalog/locations/${encodeURIComponent(id)}`,
+    { active: true },
+  );
 }
