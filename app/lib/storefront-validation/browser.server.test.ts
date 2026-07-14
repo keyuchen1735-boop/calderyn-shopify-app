@@ -40,6 +40,7 @@ describe("storefront browser proof matrix", () => {
     expect(search.search?.results).toHaveLength(0);
     expect(checkout.cart?.lines.length).toBeGreaterThan(0);
     expect(storefrontProofContext().products.length).toBeGreaterThan(1);
+    expect(storefrontProofContext(27).products).toHaveLength(27);
   });
 
   it("derives policy links from production-shaped merchant policy records", () => {
