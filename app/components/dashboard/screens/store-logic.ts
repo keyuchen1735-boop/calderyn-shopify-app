@@ -48,13 +48,20 @@ const RUNTIME1_STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] =
   { stage: "proofing", title: "Proofing the storefront", sub: "Confirming the approved recipe and ecommerce surfaces before install." },
 ];
 
+const CUSTOM_STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
+  { stage: "routing", title: "Matching your store", sub: "Confirming that your brief calls for an original design path." },
+  { stage: "generating_original", title: "Creating an original direction", sub: "Exploring concepts, imagery and complete commerce routes from your brief." },
+];
+
 /** Multi-row live progress for the streaming build: each row is a REAL stage the
  *  server reported. Without a stage (the non-streaming fallback) and for terminal
  *  phases, this collapses to the single legacy row. */
 export function buildSteps(phase: BuildPhase): BuildStepView[] {
   if (phase.kind !== "running" || !phase.stage) return [buildStep(phase)];
-  const rows = RUNTIME1_STAGE_ROWS.some((row) => row.stage === phase.stage)
-    ? RUNTIME1_STAGE_ROWS
+  const rows = phase.stage === "generating_original"
+    ? CUSTOM_STAGE_ROWS
+    : RUNTIME1_STAGE_ROWS.some((row) => row.stage === phase.stage)
+      ? RUNTIME1_STAGE_ROWS
     : LEGACY_STAGE_ROWS;
   const at = rows.findIndex((row) => row.stage === phase.stage);
   return rows.map((r, i) => ({

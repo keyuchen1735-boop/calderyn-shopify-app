@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { renderBlocks } from "~/lib/storebuilder/render";
 import { PdpBlockColumns } from "~/lib/storebuilder/pdp-layout";
 import type { Block, BlockDocument, RenderData } from "~/lib/storebuilder/types";
@@ -8,12 +8,12 @@ import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 // vi.mock calls are hoisted above every import, so the mocks below still apply
 // before the route module is evaluated.
-import { loader, rewriteStorefrontHrefs, rewriteDocStorefrontHrefs } from "../dashboard.store.preview";
+import { action, loader, rewriteStorefrontHrefs, rewriteDocStorefrontHrefs } from "../dashboard.store.preview";
 
 // The route imports the storefront stylesheet as a URL and several server-only
 // data sources. Stub the URL import and the DB/session reads so the loader's
 // real doc-selection + render wiring runs in isolation.
-const { sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock } = vi.hoisted(() => ({
+const { sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   getCatalogMock: vi.fn(),
   getSettingsMock: vi.fn(),
@@ -21,6 +21,8 @@ const { sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabase
   getSupabaseMock: vi.fn(),
   readPreviewBundleVersionMock: vi.fn(),
   readPreviewCommerceSessionMock: vi.fn(),
+  getRecipeMock: vi.fn(),
+  createPreviewCommerceAdapterMock: vi.fn(),
 }));
 vi.mock("~/styles/storefront.css?url", () => ({ default: "/assets/storefront.css" }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sessionMock }));
@@ -31,9 +33,10 @@ vi.mock("~/lib/supabase.server", () => ({ getSupabase: getSupabaseMock }));
 vi.mock("~/lib/storefront-runtime/preview-commerce.server", () => ({
   readPreviewBundleVersion: readPreviewBundleVersionMock,
   readPreviewCommerceSession: readPreviewCommerceSessionMock,
-  createPreviewCommerceAdapter: vi.fn(),
+  createPreviewCommerceAdapter: createPreviewCommerceAdapterMock,
   commitPreviewCommerceSession: vi.fn(),
 }));
+vi.mock("~/lib/storefront-recipes", () => ({ getStorefrontRecipe: getRecipeMock }));
 
 /** Chainable shops.org_slug read: getSupabase().from().select().eq().maybeSingle(). */
 function stubOrgSlug(orgSlug: string | null) {
@@ -59,7 +62,7 @@ const catalog = {
 };
 
 beforeEach(() => {
-  for (const m of [sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock]) m.mockReset();
+  for (const m of [sessionMock, getCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock]) m.mockReset();
   sessionMock.mockResolvedValue({ shopId: SHOP });
   getCatalogMock.mockReturnValue(catalog);
   getSettingsMock.mockResolvedValue(settings);
@@ -72,6 +75,7 @@ beforeEach(() => {
       subtotal: { cents: 0, currency: "USD" }, discounts: { cents: 0, currency: "USD" }, total: { cents: 0, currency: "USD" },
     },
   });
+  createPreviewCommerceAdapterMock.mockReturnValue({ checkout: () => ({ kind: "simulated", status: "ready" }) });
 });
 
 async function loaderData(url: string) {
@@ -80,6 +84,43 @@ async function loaderData(url: string) {
 }
 
 describe("dashboard.store.preview loader", () => {
+  it("renders a selected recipe against the authenticated merchant catalog without installing it", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    getRecipeMock.mockReturnValue({ bundle: { ...bundle, source: { kind: "recipe", templateId: "commons-index", templateVersion: 1 } } });
+    try {
+      const result = await loaderData("https://app.example.com/dashboard/store/preview?template=commons-index&route=home");
+      expect(result).toMatchObject({ runtime: 1, bundleId: "preview:commons-index", routeId: "home" });
+      expect(getRecipeMock).toHaveBeenCalledWith("commons-index");
+      expect(readPreviewBundleVersionMock).not.toHaveBeenCalled();
+      expect(loadDraftMock).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
+  it("keeps checkout simulation interactive for an ephemeral selected recipe", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    try {
+      const form = new FormData();
+      form.set("intent", "checkout");
+      const response = await action({
+        request: new Request("https://app.example.com/dashboard/store/preview?template=commons-index&route=checkout", {
+          method: "POST", body: form,
+        }),
+      } as ActionFunctionArgs);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ kind: "simulated", status: "ready" });
+      expect(readPreviewBundleVersionMock).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
   it("loads every runtime-1 preview route from the authenticated shop's immutable draft bundle", async () => {
     const previous = process.env.STOREFRONT_BUNDLE_READ;
     process.env.STOREFRONT_BUNDLE_READ = "1";

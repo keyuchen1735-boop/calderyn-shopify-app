@@ -1,6 +1,12 @@
 import { getSupabase } from "~/lib/supabase.server";
 import type { BundleValidationReport } from "~/lib/storefront-compiler/validate";
 import type { DefinedRecipe } from "~/lib/storefront-recipes/factory";
+import { generateOriginalStorefront } from "~/lib/storefront-ai/generate.server";
+import type {
+  GenerateOriginalStorefrontInput,
+  GenerateOriginalStorefrontResult,
+  MerchantReferenceImage,
+} from "~/lib/storefront-ai/contracts";
 import { STORE_TEMPLATE_REGISTRY } from "./registry";
 import { buildCatalogRoutingEvidence } from "./routing-evidence.server";
 import { resolveStoreDesign } from "./routing";
@@ -44,6 +50,7 @@ export type StorefrontBuildEvent =
       recommendationChangeReason?: string;
     }
   | { stage: "applying_recipe"; templateId: StoreTemplateId; templateVersion: number }
+  | { stage: "generating_original" }
   | { stage: "compiling" | "validating" | "proofing" }
   | { stage: "installed"; receipt: StorefrontBuildReceipt };
 
@@ -71,6 +78,8 @@ export interface StorefrontBuildDependencies {
   readPointers(shopId: string): Promise<StorefrontReleasePointers>;
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
   installDraft(input: InstallStorefrontDraftInput): Promise<string>;
+  customBuildEnabled(): boolean;
+  generateCustom(input: GenerateOriginalStorefrontInput): Promise<GenerateOriginalStorefrontResult>;
 }
 
 function enabled(value: string | undefined): boolean {
@@ -82,6 +91,10 @@ export function isStorefrontRecipeBuildEnabled(value = process.env.STOREFRONT_RE
 }
 
 export function isStorefrontBundlePublishEnabled(value = process.env.STOREFRONT_BUNDLE_PUBLISH): boolean {
+  return enabled(value);
+}
+
+export function isStorefrontCustomBuildEnabled(value = process.env.STOREFRONT_CUSTOM_BUILD): boolean {
   return enabled(value);
 }
 
@@ -182,7 +195,56 @@ const defaultDependencies: StorefrontBuildDependencies = {
   readPointers: readStorefrontReleasePointers,
   createVersion: createStorefrontBundleVersion,
   installDraft: installStorefrontDraft,
+  customBuildEnabled: isStorefrontCustomBuildEnabled,
+  generateCustom: (input) => generateOriginalStorefront(input),
 };
+
+export interface StorefrontBuildInput {
+  shopId: string;
+  actorId?: string | null;
+  request: StoreDesignRequest;
+  recommendedResolution?: StoreDesignResolution;
+  recipeBuildEnabled?: boolean;
+  customBuildEnabled?: boolean;
+  trusted?: boolean;
+  referenceImages?: MerchantReferenceImage[];
+  onEvent?: (event: StorefrontBuildEvent) => void | Promise<void>;
+  prepared?: PreparedStorefrontDesignBuild;
+}
+
+export interface PreparedStorefrontDesignBuild {
+  evidence: CatalogRoutingEvidence;
+  resolution: StoreDesignResolution;
+  pointers: StorefrontReleasePointers;
+}
+
+/** Resolve and reject every switch/write guard before a streaming response is
+ * committed. The returned decision is then consumed by buildStorefrontDesign,
+ * so routing is frozen once rather than recomputed across the stream boundary. */
+export async function prepareStorefrontDesignBuild(
+  input: Pick<StorefrontBuildInput, "shopId" | "request" | "recipeBuildEnabled" | "customBuildEnabled">,
+  dependencies: StorefrontBuildDependencies = defaultDependencies,
+): Promise<PreparedStorefrontDesignBuild> {
+  const evidence = await dependencies.buildEvidence(input.shopId);
+  const resolution = dependencies.resolveDesign(input.request, evidence);
+  if (resolution.kind === "recipe" && !(input.recipeBuildEnabled ?? isStorefrontRecipeBuildEnabled())) {
+    throw new StorefrontBuildError(
+      "storefront_recipe_build_disabled",
+      "Recipe storefront builds are temporarily disabled. Your current draft was not changed.",
+      503,
+    );
+  }
+  if (resolution.kind === "custom" && !(input.customBuildEnabled ?? dependencies.customBuildEnabled())) {
+    throw new StorefrontBuildError(
+      "storefront_custom_build_disabled",
+      "Original AI storefront generation is not available right now. Your current draft was not changed.",
+      503,
+    );
+  }
+  await dependencies.assertWriteAllowed(input.shopId);
+  const pointers = await dependencies.readPointers(input.shopId);
+  return { evidence, resolution, pointers };
+}
 
 async function emit(
   callback: ((event: StorefrontBuildEvent) => void | Promise<void>) | undefined,
@@ -198,18 +260,11 @@ async function emit(
  * generator participates in this path.
  */
 export async function buildStorefrontDesign(
-  input: {
-    shopId: string;
-    actorId?: string | null;
-    request: StoreDesignRequest;
-    recommendedResolution?: StoreDesignResolution;
-    recipeBuildEnabled?: boolean;
-    onEvent?: (event: StorefrontBuildEvent) => void | Promise<void>;
-  },
+  input: StorefrontBuildInput,
   dependencies: StorefrontBuildDependencies = defaultDependencies,
 ): Promise<StorefrontBuildReceipt> {
-  const evidence = await dependencies.buildEvidence(input.shopId);
-  const frozenResolution = dependencies.resolveDesign(input.request, evidence);
+  const prepared = input.prepared ?? await prepareStorefrontDesignBuild(input, dependencies);
+  const { evidence, resolution: frozenResolution, pointers } = prepared;
   const recommendationChanged = input.recommendedResolution
     ? input.recommendedResolution.catalogFingerprint !== frozenResolution.catalogFingerprint
     : false;
@@ -223,22 +278,40 @@ export async function buildStorefrontDesign(
   });
 
   if (frozenResolution.kind === "custom") {
-    throw new StorefrontBuildError(
-      "storefront_custom_build_disabled",
-      "Original AI storefront generation is not available right now. Your current draft was not changed.",
-      503,
-    );
+    await emit(input.onEvent, { stage: "generating_original" });
+    const generated = await dependencies.generateCustom({
+      shopId: input.shopId,
+      prompt: input.request.prompt,
+      expectedDraftVersionId: pointers.draftVersionId,
+      actorId: input.actorId ?? null,
+      trusted: input.trusted ?? false,
+      routingResolution: frozenResolution,
+      ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
+    });
+    if (generated.status === "disabled") {
+      throw new StorefrontBuildError(generated.code, "Original AI storefront generation is not available right now. Your current draft was not changed.", 503);
+    }
+    if (generated.status === "cancelled") {
+      throw new StorefrontBuildError(generated.code, "Original storefront generation was cancelled. Your current draft was not changed.", 409);
+    }
+    if (generated.status === "failed") {
+      throw new StorefrontBuildError(
+        generated.code,
+        generated.code === "generation_budget_exceeded"
+          ? "Original storefront generation reached its build limit. Your current draft was not changed."
+          : "Original storefront generation failed. Your current draft was not changed.",
+        generated.code === "generation_budget_exceeded" ? 429 : 502,
+      );
+    }
+    const receipt: StorefrontBuildReceipt = {
+      runtime: 1,
+      versionId: generated.versionId,
+      status: "draft",
+      resolution: frozenResolution,
+    };
+    await emit(input.onEvent, { stage: "installed", receipt });
+    return receipt;
   }
-  const recipeBuildEnabled = input.recipeBuildEnabled ?? isStorefrontRecipeBuildEnabled();
-  if (!recipeBuildEnabled) {
-    throw new StorefrontBuildError(
-      "storefront_recipe_build_disabled",
-      "Recipe storefront builds are temporarily disabled. Your current draft was not changed.",
-      503,
-    );
-  }
-
-  await dependencies.assertWriteAllowed(input.shopId);
   await emit(input.onEvent, {
     stage: "applying_recipe",
     templateId: frozenResolution.templateId,
@@ -268,7 +341,6 @@ export async function buildStorefrontDesign(
   }
   await emit(input.onEvent, { stage: "proofing" });
 
-  const pointers = await dependencies.readPointers(input.shopId);
   const versionId = await dependencies.createVersion({
     shopId: input.shopId,
     sourceKind: "recipe",

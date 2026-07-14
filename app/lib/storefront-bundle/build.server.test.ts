@@ -3,6 +3,7 @@ import type { StoreDesignResolution, StorefrontBundleV1 } from "./types";
 import {
   StorefrontBuildError,
   buildStorefrontDesign,
+  prepareStorefrontDesignBuild,
   type StorefrontBuildDependencies,
   type StorefrontBuildEvent,
 } from "./build.server";
@@ -57,6 +58,14 @@ function dependencies(overrides: Partial<StorefrontBuildDependencies> = {}): Sto
     readPointers: vi.fn().mockResolvedValue({ draftVersionId: PRIOR_DRAFT, publishedVersionId: null }),
     createVersion: vi.fn().mockResolvedValue(VERSION),
     installDraft: vi.fn().mockResolvedValue(VERSION),
+    customBuildEnabled: () => true,
+    generateCustom: vi.fn().mockResolvedValue({
+      status: "installed",
+      versionId: VERSION,
+      bundle: { ...bundle, source: { kind: "custom", generationId: "gen-1", promptHash: `sha256:${"b".repeat(64)}` } },
+      artifactHash: `sha256:${"c".repeat(64)}`,
+      audit: {},
+    }),
     ...overrides,
   };
 }
@@ -182,12 +191,10 @@ describe("runtime-1 storefront build", () => {
     expect(invalid.installDraft).not.toHaveBeenCalled();
   });
 
-  it("fails honestly when recipe or custom build is disabled and never calls a legacy generator", async () => {
-    const legacyGenerate = vi.fn();
-    const legacyTemplateBrief = vi.fn();
+  it("preflights build switches and write conflicts before any streamed build work", async () => {
     const deps = dependencies();
 
-    await expect(buildStorefrontDesign({
+    await expect(prepareStorefrontDesignBuild({
       shopId: SHOP,
       request: { prompt: "refills", mode: "auto" },
       recipeBuildEnabled: false,
@@ -204,14 +211,56 @@ describe("runtime-1 storefront build", () => {
       breakdown: [],
       reasons: ["Original design requested"],
     }) });
-    await expect(buildStorefrontDesign({
+    await expect(prepareStorefrontDesignBuild({
       shopId: SHOP,
       request: { prompt: "Create something completely new", mode: "custom" },
-      recipeBuildEnabled: true,
+      customBuildEnabled: false,
     }, customDeps)).rejects.toMatchObject({ code: "storefront_custom_build_disabled", status: 503 });
 
-    expect(legacyGenerate).not.toHaveBeenCalled();
-    expect(legacyTemplateBrief).not.toHaveBeenCalled();
+    const conflict = dependencies({
+      assertWriteAllowed: vi.fn().mockRejectedValue(new StorefrontBuildError("experiment_running", "Stop the test first.", 409)),
+    });
+    await expect(prepareStorefrontDesignBuild({
+      shopId: SHOP,
+      request: { prompt: "refills", mode: "auto" },
+      recipeBuildEnabled: true,
+    }, conflict)).rejects.toMatchObject({ code: "experiment_running", status: 409 });
+    expect(conflict.readPointers).not.toHaveBeenCalled();
+  });
+
+  it("routes a custom resolution into the original compiler and installs its receipt", async () => {
+    const customResolution: StoreDesignResolution = {
+      kind: "custom",
+      reason: "explicit_custom",
+      routingVersion: 1,
+      registryVersion: 1,
+      catalogFingerprint: "sha256:fresh",
+      breakdown: [],
+      reasons: ["Original design requested"],
+    };
+    const customDeps = dependencies({ resolveDesign: vi.fn().mockReturnValue(customResolution) });
+    const events: StorefrontBuildEvent[] = [];
+    const receipt = await buildStorefrontDesign({
+      shopId: SHOP,
+      actorId: USER,
+      trusted: true,
+      request: { prompt: "Create something completely new", mode: "custom" },
+      customBuildEnabled: true,
+      onEvent: (event) => { events.push(event); },
+    }, customDeps);
+
+    expect(customDeps.generateCustom).toHaveBeenCalledWith(expect.objectContaining({
+      shopId: SHOP,
+      actorId: USER,
+      trusted: true,
+      prompt: "Create something completely new",
+      expectedDraftVersionId: PRIOR_DRAFT,
+      routingResolution: customResolution,
+    }));
+    expect(customDeps.loadRecipe).not.toHaveBeenCalled();
+    expect(customDeps.createVersion).not.toHaveBeenCalled();
+    expect(events.map((event) => event.stage)).toEqual(["routing", "generating_original", "installed"]);
+    expect(receipt).toEqual({ runtime: 1, versionId: VERSION, status: "draft", resolution: customResolution });
   });
 
   it("leaves the current draft untouched when release creation fails", async () => {

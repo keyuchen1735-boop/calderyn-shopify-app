@@ -19,6 +19,7 @@ import {
   addProductFromImage,
   buildStudioStoreStream,
   decideStoreExperiment,
+  editStudioStorefront,
   fetchStudio,
   generateStudioStoreWithImages,
   publishStudioStore,
@@ -36,8 +37,10 @@ import {
   type StudioHero,
   type StudioState,
   type StudioVibe,
+  undoStudioStorefrontEdit,
 } from "~/lib/dashboard/store-client";
 import type { StoreDesignRequest, StoreDesignResolution } from "~/lib/storefront-bundle/types";
+import type { PreviewEditContext } from "~/lib/storefront-edit/types";
 import {
   decideWelcomeBranch,
   isDeterministicChatIntent,
@@ -163,7 +166,19 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const reloadPreview = useCallback(() => setPreviewVersion((v) => v + 1), []);
   const [page, setPage] = useState<PageKey>("home");
   const [device, setDevice] = useState<Device>("desktop");
+  const [previewEditContext, setPreviewEditContext] = useState<PreviewEditContext | undefined>();
   const badgeRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const receivePreviewRegion = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || !event.data || event.data.type !== "storefront-preview-region") return;
+      const { routeId, regionId } = event.data as { routeId?: unknown; regionId?: unknown };
+      if (typeof routeId !== "string" || typeof regionId !== "string" || !/^[a-zA-Z0-9_-]{1,120}$/.test(regionId)) return;
+      if (!["home", "collection", "product", "search", "cart", "checkout"].includes(routeId)) return;
+      setPreviewEditContext({ routeId: routeId as PreviewEditContext["routeId"], regionId });
+    };
+    window.addEventListener("message", receivePreviewRegion);
+    return () => window.removeEventListener("message", receivePreviewRegion);
+  }, []);
 
   // --- markup (session-only strokes + note -> chat message) -----------------
   const [markupOn, setMarkupOn] = useState(false);
@@ -464,6 +479,61 @@ export default function Store({ app }: { app: DashboardCtx }) {
     }
   };
 
+  const runBundleUndo = async (undo: { targetVersionId: string; expectedDraftVersionId: string }) => {
+    if (chatBusyRef.current || buildingRef.current) return;
+    setChatBusyBoth(true);
+    try {
+      await undoStudioStorefrontEdit(undo);
+      await refresh();
+      reloadPreview();
+      if (aliveRef.current) pushMsg({ id: newId(), kind: "ai-text", text: "Undone. The previous complete storefront version is back in preview." });
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't undo that storefront change.";
+      toast(msg, "warn", "critical");
+    } finally {
+      if (aliveRef.current) setChatBusyBoth(false);
+    }
+  };
+
+  const runRuntime1Edit = async (text: string, context?: PreviewEditContext) => {
+    const expectedDraftVersionId = data?.release.draftVersionId;
+    if (!expectedDraftVersionId || chatBusyRef.current || buildingRef.current) return;
+    setChatBusyBoth(true);
+    const thinkId = newId();
+    pushMsg({ id: thinkId, kind: "ai-thinking" });
+    try {
+      const result = await editStudioStorefront({ prompt: text, expectedDraftVersionId, ...(context ? { context } : {}) });
+      if (result.status === "start_over") {
+        setMessages((messages) => messages.filter((message) => message.id !== thinkId));
+        setChatBusyBoth(false);
+        await runBuild({ prompt: text, mode: "auto" });
+        return;
+      }
+      await refresh();
+      reloadPreview();
+      if (!aliveRef.current) return;
+      const routeSummary = result.changedScope.routes.length > 0
+        ? ` Updated ${result.changedScope.routes.join(", ")}.`
+        : " Updated the store-wide design system.";
+      const provenance = result.detachedFromRecipe
+        ? " This version is now a custom-derived design; the rest of the store was preserved."
+        : " The recipe remains linked, so its safe overrides are still editable.";
+      setMessages((messages) => messages.map((message) => message.id === thinkId ? {
+        id: thinkId,
+        kind: "ai-text",
+        text: `Done.${routeSummary}${provenance}`,
+        actions: [{ label: "Undo", onClick: () => void runBundleUndo(result.undo) }],
+      } : message));
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that storefront change.";
+      setMessages((messages) => messages.map((message) => message.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : message));
+    } finally {
+      if (aliveRef.current) setChatBusyBoth(false);
+    }
+  };
+
   const runExperiment = async (expKind: StudioExperimentKind) => {
     if (chatBusyRef.current) return;
     setChatBusyBoth(true);
@@ -494,6 +564,17 @@ export default function Store({ app }: { app: DashboardCtx }) {
   };
 
   const runChatIntent = (intent: ChatIntent) => {
+    if (data?.release.draftRuntime === 1 && data.release.draftVersionId && intent.kind !== "experiment") {
+      const instruction = intent.kind === "vibe"
+        ? `Make the storefront ${intent.vibe}`
+        : intent.kind === "accent"
+          ? `Make the accent ${intent.color}`
+          : intent.kind === "hero"
+            ? `Change the home headline to "${intent.headline}"`
+            : intent.brief;
+      void runRuntime1Edit(instruction);
+      return;
+    }
     if (isDeterministicChatIntent(intent)) {
       void runDeterministic(intent);
     } else if (intent.kind === "experiment") {
@@ -512,6 +593,10 @@ export default function Store({ app }: { app: DashboardCtx }) {
       if (!text) return;
       setPrompt("");
       pushMsg({ id: newId(), kind: "user-text", text });
+      if (data?.release.draftRuntime === 1 && data.release.draftVersionId) {
+        void runRuntime1Edit(text, /\b(?:this|that|selected|here)\b/i.test(text) ? previewEditContext : undefined);
+        return;
+      }
       runChatIntent(parseChatIntent(text));
       return;
     }
@@ -555,6 +640,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const onPageChange = (p: PageKey) => {
     if (markupOn) exitMarkup(); // stroke coords are relative to the frame; a page swap invalidates them
     setPage(p);
+    setPreviewEditContext(undefined);
   };
   const onDeviceChange = (d: Device) => {
     if (markupOn) exitMarkup();
@@ -587,6 +673,10 @@ export default function Store({ app }: { app: DashboardCtx }) {
     const intent = parseChatIntent(note, "note");
     pushMsg({ id: newId(), kind: "user-text", text: `[Marked up the ${pageLabel} page] ${note}` });
     exitMarkup();
+    if (data?.release.draftRuntime === 1 && data.release.draftVersionId) {
+      void runRuntime1Edit(note, previewEditContext);
+      return;
+    }
     if (isDeterministicChatIntent(intent)) {
       void runDeterministic(intent, { pageLabel });
     } else {

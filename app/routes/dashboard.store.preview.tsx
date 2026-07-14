@@ -8,6 +8,7 @@
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
+import { useEffect } from "react";
 import { randomBytes } from "node:crypto";
 import storefrontCss from "~/styles/storefront.css?url";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
@@ -35,6 +36,9 @@ import {
 } from "~/lib/storefront-runtime/preview-commerce.server";
 import type { PublicRouteContext } from "~/lib/storefront-runtime/public-data.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
+import { getStorefrontRecipe } from "~/lib/storefront-recipes";
+import { isStoreTemplateId, STORE_TEMPLATE_REGISTRY } from "~/lib/storefront-bundle/registry";
+import type { StorefrontVersionRecord } from "~/lib/storefront-runtime/release-resolution.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
@@ -123,6 +127,38 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const shopId = session.shopId;
   if (isStorefrontBundleReadEnabled()) {
+    const templateId = new URL(request.url).searchParams.get("template");
+    const registered = isStoreTemplateId(templateId) && STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === templateId)
+      ? templateId
+      : null;
+    if (registered) {
+      const recipe = getStorefrontRecipe(registered);
+      const version: StorefrontVersionRecord = {
+        id: `preview:${registered}`,
+        shopId,
+        sourceKind: "recipe",
+        status: "validated",
+        schemaVersion: recipe.bundle.schemaVersion,
+        runtimeVersion: recipe.bundle.runtimeVersion,
+        validationProfileVersion: recipe.bundle.validationProfileVersion,
+        artifactHash: `sha256:${recipe.hash}`,
+        artifact: { sourceKind: "recipe", bundle: recipe.bundle },
+        createdAt: new Date(0).toISOString(),
+      };
+      const route = await previewRouteContext(request, shopId);
+      const commerce = await readPreviewCommerceSession(request, shopId);
+      const runtime1 = await resolveRuntime1VersionRoute({
+        shopId,
+        route,
+        version,
+        dataDependencies: { cartLoader: async () => commerce.cart },
+      });
+      if (runtime1) {
+        const nonce = randomBytes(18).toString("base64url");
+        const headers = storefrontCacheHeaders({ routeId: "preview", personalized: true });
+        return json({ ...runtime1, nonce }, { headers });
+      }
+    }
     const version = await readPreviewBundleVersion(shopId);
     if (version) {
       const route = await previewRouteContext(request, shopId);
@@ -189,7 +225,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export async function action({ request }: ActionFunctionArgs) {
   const session = await requireDashboardSession(request);
   const shopId = session.shopId;
-  if (!isStorefrontBundleReadEnabled() || !(await readPreviewBundleVersion(shopId))) {
+  const selectedTemplateId = new URL(request.url).searchParams.get("template");
+  const hasEphemeralRecipe = isStoreTemplateId(selectedTemplateId) &&
+    STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === selectedTemplateId);
+  if (!isStorefrontBundleReadEnabled() || (!hasEphemeralRecipe && !(await readPreviewBundleVersion(shopId)))) {
     throw new Response(null, { status: 404 });
   }
   const current = await readPreviewCommerceSession(request, shopId);
@@ -239,6 +278,21 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function StoreDraftPreview() {
   const loaded = useLoaderData<typeof loader>();
+  useEffect(() => {
+    if (!isRuntime1RenderData(loaded)) return;
+    const selectRegion = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[id^='cd-']") : null;
+      const route = target?.closest<HTMLElement>("[data-cd-bundle-route]")?.dataset.cdBundleRoute;
+      if (!target || !route) return;
+      window.parent.postMessage({
+        type: "storefront-preview-region",
+        routeId: route,
+        regionId: target.id.replace(/-[a-f0-9]{12}$/, ""),
+      }, window.location.origin);
+    };
+    document.addEventListener("click", selectRegion, { capture: true });
+    return () => document.removeEventListener("click", selectRegion, { capture: true });
+  }, [loaded]);
   if (isRuntime1RenderData(loaded)) {
     return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: loaded.routeId, data: loaded.data, nonce: loaded.nonce, mode: "preview" })}<StorefrontHydrator bundle={loaded.bundle} routeId={loaded.routeId} data={loaded.data} mode="preview" /></>;
   }

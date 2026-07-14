@@ -1,12 +1,16 @@
 // app/routes/__tests__/dashboard.api.store.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ActionFunctionArgs } from "@remix-run/node";
+import { readFileSync } from "node:fs";
 import type * as HttpServer from "~/lib/dashboard/http.server";
 // vi.mock is hoisted above these imports by vitest, so the mocks are in place
 // before the route module is evaluated (same ordering as dashboard.store.preview
 // .test). CalderynError resolves to the mocked class below.
 import { action } from "../dashboard.api.store";
 import { CalderynError } from "~/lib/calderyn.server";
+import { StorefrontEditError } from "~/lib/storefront-edit/edit.server";
+import { StorefrontReleaseError } from "~/lib/storefront-bundle/release.server";
+import { StorefrontBuildError } from "~/lib/storefront-bundle/build.server";
 
 // The route pulls in the whole studio/experiment/catalog server graph. Mock the
 // direct deps so the multipart handler's control flow runs in isolation; keep
@@ -14,24 +18,34 @@ import { CalderynError } from "~/lib/calderyn.server";
 // response envelope + CalderynError mapping is exercised.
 const {
   sessionMock,
-  assertGenMock,
   prechecksMock,
   designerQuotaMock,
   classifyMock,
-  generateMock,
   createProductMock,
   uploadMediaMock,
   publishMock,
+  editMock,
+  undoEditMock,
+  releaseStateMock,
+  buildMock,
+  prepareBuildMock,
+  persistAssetMock,
+  rateLimitMock,
 } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
-  assertGenMock: vi.fn(),
   prechecksMock: vi.fn(),
   designerQuotaMock: vi.fn(),
   classifyMock: vi.fn(),
-  generateMock: vi.fn(),
   createProductMock: vi.fn(),
   uploadMediaMock: vi.fn(),
   publishMock: vi.fn(),
+  editMock: vi.fn(),
+  undoEditMock: vi.fn(),
+  releaseStateMock: vi.fn(),
+  buildMock: vi.fn(),
+  prepareBuildMock: vi.fn(),
+  persistAssetMock: vi.fn(),
+  rateLimitMock: vi.fn(),
 }));
 
 vi.mock("~/lib/calderyn.server", () => ({
@@ -50,16 +64,14 @@ vi.mock("~/lib/calderyn.server", () => ({
 }));
 vi.mock("~/lib/dashboard/http.server", async (orig) => {
   const actual = await orig<typeof HttpServer>();
-  return { ...actual, requireSameOrigin: () => "https://test.example.com" };
+  return { ...actual, requireSameOrigin: () => "https://test.example.com", rateLimit: rateLimitMock };
 });
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sessionMock }));
 vi.mock("~/lib/ai-quota.server", () => ({ quotaTrusted: () => true }));
 vi.mock("~/lib/storegen/guard.server", () => ({
-  assertCanGenerate: assertGenMock,
   assertGeneratePrechecks: prechecksMock,
   assertDesignerQuota: designerQuotaMock,
 }));
-vi.mock("~/lib/storegen/generate.server", () => ({ generateStore: generateMock }));
 vi.mock("~/lib/storegen/attachment-intent.server", () => ({ classifyAttachmentIntent: classifyMock }));
 vi.mock("~/lib/catalog/catalog.server", () => ({ createProduct: createProductMock }));
 vi.mock("~/lib/catalog/media.server", () => ({ uploadProductMedia: uploadMediaMock }));
@@ -74,22 +86,48 @@ vi.mock("~/lib/experiments/store-experiment.server", () => ({
   decideExperiment: vi.fn(),
   startExperiment: vi.fn(),
 }));
+vi.mock("~/lib/storefront-edit/edit.server", () => ({
+  editStorefrontByPrompt: editMock,
+  undoStorefrontEdit: undoEditMock,
+  StorefrontEditError: class StorefrontEditError extends Error {
+    constructor(public code: string, message: string, public status: number) { super(message); }
+  },
+}));
+vi.mock("~/lib/storefront-bundle/build.server", () => ({
+  readStorefrontReleaseState: releaseStateMock,
+  prepareStorefrontDesignBuild: prepareBuildMock,
+  buildStorefrontDesign: buildMock,
+  StorefrontBuildError: class StorefrontBuildError extends Error {
+    constructor(public code: string, message: string, public status: number) { super(message); }
+  },
+}));
+vi.mock("~/lib/storefront-bundle/assets.server", () => ({ persistStorefrontAssetBytes: persistAssetMock }));
+vi.mock("~/lib/storefront-bundle/release.server", () => ({
+  StorefrontReleaseError: class StorefrontReleaseError extends Error {
+    constructor(public code: string, message: string, public status: number) { super(message); }
+  },
+}));
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const URL = "https://test.example.com/dashboard/api/store";
 
 beforeEach(() => {
-  for (const m of [sessionMock, assertGenMock, prechecksMock, designerQuotaMock, classifyMock, generateMock, createProductMock, uploadMediaMock, publishMock]) {
+  for (const m of [sessionMock, prechecksMock, designerQuotaMock, classifyMock, createProductMock, uploadMediaMock, publishMock, editMock, undoEditMock, releaseStateMock, buildMock, prepareBuildMock, persistAssetMock, rateLimitMock]) {
     m.mockReset();
   }
   sessionMock.mockResolvedValue({ shopId: SHOP, userId: null, accountCreatedAt: null });
-  assertGenMock.mockResolvedValue(undefined);
   prechecksMock.mockResolvedValue(undefined);
   designerQuotaMock.mockResolvedValue(undefined);
-  generateMock.mockResolvedValue({ runId: "run-1", status: "draft", tokenCost: 0, docs: {} });
   createProductMock.mockResolvedValue({ id: "prod-1" });
   uploadMediaMock.mockResolvedValue({ id: "media-1", storagePath: "p" });
   publishMock.mockResolvedValue(undefined);
+  editMock.mockResolvedValue({ status: "installed", versionId: "44444444-4444-4444-4444-444444444444", changedScope: { routes: ["home"], designTokens: [] }, detachedFromRecipe: false });
+  undoEditMock.mockResolvedValue({ status: "installed", versionId: "33333333-3333-3333-3333-333333333333", undoneVersionId: "44444444-4444-4444-4444-444444444444" });
+  releaseStateMock.mockResolvedValue({ draftVersionId: null, publishedVersionId: null, draftRuntimeVersion: null, publishedRuntimeVersion: null });
+  prepareBuildMock.mockResolvedValue({ evidence: {}, resolution: { kind: "custom" }, pointers: { draftVersionId: null, publishedVersionId: null } });
+  buildMock.mockResolvedValue({ runtime: 1, versionId: "55555555-5555-5555-5555-555555555555", status: "draft", resolution: { kind: "custom" } });
+  persistAssetMock.mockResolvedValue({ assetKey: `${SHOP}/storefront/sha256/asset.png`, contentHash: "a".repeat(64), mediaType: "image/png", byteSize: 16 });
+  rateLimitMock.mockResolvedValue(true);
 });
 
 function pngFile(name: string, bytes = 16): File {
@@ -114,6 +152,70 @@ async function postMultipart(fields: {
 }
 
 describe("dashboard.api.store multipart generate", () => {
+  it("keeps every active storefront build entrypoint off the legacy generator import path", () => {
+    const sources = [
+      "app/routes/dashboard.api.store.tsx",
+      "app/routes/dashboard.api.store.generate.tsx",
+      "app/lib/storefront-bundle/build.server.ts",
+    ].map((url) => readFileSync(url, "utf8"));
+    for (const source of sources) expect(source).not.toContain("storegen/generate.server");
+    expect(sources.join("\n")).toContain("storefront-ai/generate.server");
+  });
+
+  it("routes a reference rebuild from a runtime-1 draft through the original compiler", async () => {
+    releaseStateMock.mockResolvedValue({ draftVersionId: "33333333-3333-3333-3333-333333333333", publishedVersionId: null, draftRuntimeVersion: 1, publishedRuntimeVersion: null });
+    classifyMock.mockResolvedValue({ addAsProducts: false, useAsReference: true });
+    const response = await postMultipart({ brief: "use this as a design reference", images: [pngFile("reference.png")] });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "draft", runId: "55555555-5555-5555-5555-555555555555" });
+    expect(classifyMock).toHaveBeenCalledTimes(1);
+    expect(buildMock).toHaveBeenCalledTimes(1);
+  });
+  it("applies a scoped runtime-1 prompt edit with the authenticated actor", async () => {
+    const request = new Request(URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "edit", prompt: "Shorten this heading",
+        expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
+        context: { routeId: "home", regionId: "cd-home-n2" },
+      }),
+    });
+    const response = await action({ request } as ActionFunctionArgs);
+    expect(response.status).toBe(200);
+    expect(editMock).toHaveBeenCalledWith(expect.objectContaining({
+      shopId: SHOP, actorId: null, prompt: "Shorten this heading",
+      expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
+      context: { routeId: "home", regionId: "cd-home-n2" },
+    }));
+  });
+
+  it("undoes an edit through the same authenticated CAS boundary", async () => {
+    const request = new Request(URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "undo-edit",
+        targetVersionId: "33333333-3333-3333-3333-333333333333",
+        expectedDraftVersionId: "44444444-4444-4444-4444-444444444444",
+      }),
+    });
+    const response = await action({ request } as ActionFunctionArgs);
+    expect(response.status).toBe(200);
+    expect(undoEditMock).toHaveBeenCalledWith(expect.objectContaining({ shopId: SHOP, actorId: null }));
+  });
+
+  it("returns the stable 409 edit conflict contract", async () => {
+    editMock.mockRejectedValueOnce(new StorefrontEditError("storefront_edit_conflict", "The draft changed", 409));
+    const request = new Request(URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "edit", prompt: "Make it warmer",
+        expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
+      }),
+    });
+    const response = await action({ request } as ActionFunctionArgs);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "storefront_edit_conflict" });
+  });
   it("passes the authenticated actor into the runtime-aware atomic publish seam", async () => {
     const request = new Request(URL, {
       method: "POST",
@@ -125,6 +227,18 @@ describe("dashboard.api.store multipart generate", () => {
     expect(publishMock).toHaveBeenCalledWith(SHOP, null);
   });
 
+  it("maps runtime-1 publish CAS conflicts to the truthful release status", async () => {
+    publishMock.mockRejectedValueOnce(new StorefrontReleaseError("storefront_publish_conflict", "The live release changed.", 409));
+    const request = new Request(URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "publish" }),
+    });
+    const response = await action({ request } as ActionFunctionArgs);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "storefront_publish_conflict", message: "The live release changed." });
+  });
+
   it("rejects an oversize image with 422 before any model spend", async () => {
     const big = new File([new Uint8Array(3_932_161)], "big.png", { type: "image/png" });
     const res = await postMultipart({ brief: "hi", images: [big] });
@@ -134,7 +248,6 @@ describe("dashboard.api.store multipart generate", () => {
     expect(prechecksMock).not.toHaveBeenCalled();
     expect(designerQuotaMock).not.toHaveBeenCalled();
     expect(classifyMock).not.toHaveBeenCalled();
-    expect(generateMock).not.toHaveBeenCalled();
   });
 
   it("maps a precheck refusal to its status with zero model spend (guard before classify)", async () => {
@@ -146,7 +259,6 @@ describe("dashboard.api.store multipart generate", () => {
     expect((await res.json()).error).toBe("rate_limited");
     expect(classifyMock).not.toHaveBeenCalled();
     expect(createProductMock).not.toHaveBeenCalled();
-    expect(generateMock).not.toHaveBeenCalled();
     expect(designerQuotaMock).not.toHaveBeenCalled();
   });
 
@@ -155,7 +267,6 @@ describe("dashboard.api.store multipart generate", () => {
     const res = await postMultipart({ images: [bad] });
     expect(res.status).toBe(422);
     expect((await res.json()).error).toBe("unsupported_media_type");
-    expect(generateMock).not.toHaveBeenCalled();
   });
 
   it("rejects more than four images with 422", async () => {
@@ -176,7 +287,6 @@ describe("dashboard.api.store multipart generate", () => {
     expect(body.products).toBeUndefined();
     expect(body.runId).toBeUndefined();
     expect(createProductMock).not.toHaveBeenCalled();
-    expect(generateMock).not.toHaveBeenCalled();
     // A classification-only outcome must not burn a daily designer slot — the
     // merchant's follow-up retry would otherwise cost 2 of 5 base-tier slots.
     expect(designerQuotaMock).not.toHaveBeenCalled();
@@ -194,7 +304,6 @@ describe("dashboard.api.store multipart generate", () => {
     expect(body.intent).toEqual({ addAsProducts: true, useAsReference: false });
     expect(createProductMock).toHaveBeenCalledTimes(2);
     expect(createProductMock).toHaveBeenCalledWith(SHOP, { title: "Red mug", status: "draft", variants: [{}] });
-    expect(generateMock).not.toHaveBeenCalled();
     expect(body.products).toHaveLength(2);
     expect(body.products[0]).toMatchObject({ id: "p1", title: "Red mug" });
     expect(body.products[0].imageError).toBeUndefined();
@@ -222,20 +331,32 @@ describe("dashboard.api.store multipart generate", () => {
     expect(uploadMediaMock).toHaveBeenCalledTimes(1);
   });
 
-  it("passes the attachments to generateStore as referenceImages on the reference path", async () => {
+  it("persists reference attachments into the Task10 asset path and calls the original builder, never legacy generation", async () => {
     classifyMock.mockResolvedValue({ addAsProducts: false, useAsReference: true });
     const res = await postMultipart({ brief: "match this vibe", images: [pngFile("board.png")] });
     const body = await res.json();
     expect(body.status).toBe("draft");
-    expect(body.runId).toBe("run-1");
+    expect(body.runId).toBe("55555555-5555-5555-5555-555555555555");
     expect(body.intent).toEqual({ addAsProducts: false, useAsReference: true });
     expect(createProductMock).not.toHaveBeenCalled();
     // Generation is certain here, so the daily designer slot IS consumed.
-    expect(designerQuotaMock).toHaveBeenCalledTimes(1);
-    const arg = generateMock.mock.calls[0][0];
-    expect(arg.referenceImages).toHaveLength(1);
-    expect(arg.referenceImages[0].mediaType).toBe("image/png");
-    expect(arg.brief).toBe("match this vibe");
+    expect(persistAssetMock).toHaveBeenCalledWith({ shopId: SHOP, bytes: expect.any(Uint8Array) });
+    expect(buildMock).toHaveBeenCalledWith(expect.objectContaining({
+      shopId: SHOP,
+      request: { prompt: "match this vibe", mode: "custom" },
+      referenceImages: [{ assetKey: `${SHOP}/storefront/sha256/asset.png`, mediaType: "image/png" }],
+    }));
+  });
+
+  it("returns a truthful preflight flag refusal before persisting a reference asset", async () => {
+    prepareBuildMock.mockRejectedValueOnce(new StorefrontBuildError(
+      "storefront_custom_build_disabled", "Original builds are temporarily disabled.", 503,
+    ));
+    const response = await postMultipart({ brief: "match this vibe", intent: "reference", images: [pngFile("board.png")] });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "storefront_custom_build_disabled", message: "Original builds are temporarily disabled." });
+    expect(persistAssetMock).not.toHaveBeenCalled();
+    expect(buildMock).not.toHaveBeenCalled();
   });
 
   it("creates products first, then generates, when the intent is both (quota before any write)", async () => {
@@ -243,20 +364,20 @@ describe("dashboard.api.store multipart generate", () => {
     const res = await postMultipart({ brief: "add and match", images: [pngFile("mug.png")] });
     const body = await res.json();
     expect(body.status).toBe("draft");
-    expect(body.runId).toBe("run-1");
+    expect(body.runId).toBe("55555555-5555-5555-5555-555555555555");
     expect(createProductMock).toHaveBeenCalledTimes(1);
-    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(buildMock).toHaveBeenCalledTimes(1);
     expect(body.products).toHaveLength(1);
     // The designer quota is consumed BEFORE any product row is written, so a
     // quota refusal is a clean 429 with no partial writes.
-    expect(designerQuotaMock.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(prepareBuildMock.mock.invocationCallOrder[0]).toBeLessThan(
       createProductMock.mock.invocationCallOrder[0],
     );
   });
 
   it("returns a 200 'failed' receipt carrying the created products when generation throws after creation", async () => {
     classifyMock.mockResolvedValue({ addAsProducts: true, useAsReference: true });
-    generateMock.mockImplementation(() => Promise.reject(new Error("api down")));
+    buildMock.mockRejectedValueOnce(new Error("api down"));
     const res = await postMultipart({ brief: "add and match", images: [pngFile("mug.png")] });
     // NOT the bare 502 — that would discard the fact the drafts now exist.
     expect(res.status).toBe(200);
@@ -269,43 +390,54 @@ describe("dashboard.api.store multipart generate", () => {
 
   it("keeps the 502 for a products-free reference generation failure (nothing to discard)", async () => {
     classifyMock.mockResolvedValue({ addAsProducts: false, useAsReference: true });
-    generateMock.mockImplementation(() => Promise.reject(new Error("api down")));
+    buildMock.mockRejectedValueOnce(new Error("api down"));
     const res = await postMultipart({ brief: "match", images: [pngFile("a.png")] });
     expect(res.status).toBe(502);
-    expect((await res.json()).error).toBe("generation_failed");
+    expect((await res.json()).error).toBe("storefront_build_failed");
   });
 
-  it("passes the generator's referencesUnread flag through to the receipt", async () => {
+  it("returns the installed runtime-1 version for a reference build", async () => {
     classifyMock.mockResolvedValue({ addAsProducts: false, useAsReference: true });
-    generateMock.mockResolvedValue({ runId: "run-2", status: "draft", tokenCost: 0, docs: {}, referencesUnread: true });
     const body = await (await postMultipart({ brief: "match", images: [pngFile("a.png")] })).json();
-    expect(body.referencesUnread).toBe(true);
-    expect(body.runId).toBe("run-2");
+    expect(body.referencesUnread).toBeUndefined();
+    expect(body.runId).toBe("55555555-5555-5555-5555-555555555555");
   });
 
   it("treats a multipart request with no attachments like the plain generate", async () => {
     const res = await postMultipart({ brief: "just a brief" });
     const body = await res.json();
-    expect(body).toEqual({ runId: "run-1", status: "draft" });
+    expect(body).toEqual({ runId: "55555555-5555-5555-5555-555555555555", status: "draft" });
     expect(classifyMock).not.toHaveBeenCalled();
     // Same guard pair as the JSON path: prechecks then the daily quota.
     expect(prechecksMock).toHaveBeenCalledTimes(1);
-    expect(designerQuotaMock).toHaveBeenCalledTimes(1);
+    expect(designerQuotaMock).not.toHaveBeenCalled();
+    expect(buildMock).toHaveBeenCalledTimes(1);
   });
 
   it("skips the classifier when an explicit reference intent is sent, and generates", async () => {
     const res = await postMultipart({ brief: "here you go", intent: "reference", images: [pngFile("board.png")] });
     const body = await res.json();
     expect(body.status).toBe("draft");
-    expect(body.runId).toBe("run-1");
+    expect(body.runId).toBe("55555555-5555-5555-5555-555555555555");
     expect(body.intent).toEqual({ addAsProducts: false, useAsReference: true });
     // The whole point: the ambiguous brief is NOT re-classified (that would
     // return null again and loop the merchant back to the same question).
     expect(classifyMock).not.toHaveBeenCalled();
     expect(createProductMock).not.toHaveBeenCalled();
     // Generation is certain here, so the daily designer slot IS consumed.
-    expect(designerQuotaMock).toHaveBeenCalledTimes(1);
-    expect(generateMock.mock.calls[0][0].referenceImages).toHaveLength(1);
+    expect(designerQuotaMock).not.toHaveBeenCalled();
+    expect(buildMock.mock.calls[0][0].referenceImages).toHaveLength(1);
+  });
+
+  it("rejects a GIF as an AI visual reference instead of casting it into the Task10 contract", async () => {
+    persistAssetMock.mockResolvedValueOnce({
+      assetKey: `${SHOP}/storefront/sha256/asset.gif`, contentHash: "a".repeat(64), mediaType: "image/gif", byteSize: 16,
+    });
+    const gif = new File([new Uint8Array(16)], "motion.gif", { type: "image/gif" });
+    const response = await postMultipart({ brief: "match this", intent: "reference", images: [gif] });
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "unsupported_reference_image" });
+    expect(buildMock).not.toHaveBeenCalled();
   });
 
   it("skips the classifier for an explicit products intent and adds drafts only", async () => {
@@ -315,7 +447,6 @@ describe("dashboard.api.store multipart generate", () => {
     expect(body.intent).toEqual({ addAsProducts: true, useAsReference: false });
     expect(classifyMock).not.toHaveBeenCalled();
     expect(createProductMock).toHaveBeenCalledTimes(1);
-    expect(generateMock).not.toHaveBeenCalled();
     // Catalog work, not generation — no designer slot consumed.
     expect(designerQuotaMock).not.toHaveBeenCalled();
   });
@@ -327,7 +458,7 @@ describe("dashboard.api.store multipart generate", () => {
     expect(body.intent).toEqual({ addAsProducts: true, useAsReference: true });
     expect(classifyMock).not.toHaveBeenCalled();
     expect(createProductMock).toHaveBeenCalledTimes(1);
-    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(buildMock).toHaveBeenCalledTimes(1);
     expect(body.products).toHaveLength(1);
   });
 
@@ -344,10 +475,9 @@ describe("dashboard.api.store multipart generate", () => {
     expect(designerQuotaMock).not.toHaveBeenCalled();
     expect(classifyMock).not.toHaveBeenCalled();
     expect(createProductMock).not.toHaveBeenCalled();
-    expect(generateMock).not.toHaveBeenCalled();
   });
 
-  it("leaves the JSON generate path unchanged (no intent classification)", async () => {
+  it("routes the JSON generate compatibility path into the runtime-1 builder", async () => {
     const request = new Request(URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -355,9 +485,8 @@ describe("dashboard.api.store multipart generate", () => {
     });
     const res = (await action({ request } as ActionFunctionArgs)) as Response;
     const body = await res.json();
-    expect(body).toEqual({ runId: "run-1", status: "draft" });
+    expect(body).toEqual({ runId: "55555555-5555-5555-5555-555555555555", status: "draft" });
     expect(classifyMock).not.toHaveBeenCalled();
-    // The JSON path still runs the single combined guard, byte-identical.
-    expect(assertGenMock).toHaveBeenCalledTimes(1);
+    expect(buildMock).toHaveBeenCalledWith(expect.objectContaining({ request: { prompt: "hello", mode: "auto" } }));
   });
 });

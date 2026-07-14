@@ -231,7 +231,7 @@ export interface StudioGenerateReceipt {
 /** Real generation stages, streamed by the server as they happen (mirrors
  *  generate.server.ts BuildStage — a server-only module clients can't import). */
 export type LegacyBuildStage = "brand" | "designing" | "checking";
-export type Runtime1BuildStage = "routing" | "applying_recipe" | "compiling" | "validating" | "proofing";
+export type Runtime1BuildStage = "routing" | "applying_recipe" | "generating_original" | "compiling" | "validating" | "proofing";
 export type BuildStage = LegacyBuildStage | Runtime1BuildStage;
 export const BUILD_STAGES: readonly BuildStage[] = [
   "brand",
@@ -261,10 +261,11 @@ export type BuildEvent =
       recommendationChangeReason?: string;
     }
   | { stage: "applying_recipe"; templateId: string; templateVersion: number }
+  | { stage: "generating_original" }
   | { stage: "compiling" | "validating" | "proofing" }
   | { stage: "installed"; receipt: StudioBundleBuildReceipt }
   | { stage: "done"; receipt: StudioGenerateReceipt }
-  | { stage: "error"; message: string };
+  | { stage: "error"; message: string; code?: string; status?: number };
 
 /** Strict parse of one stream line — junk, unknown stages and malformed terminal
  *  lines are null (callers treat an unparseable stream as a failed stream). */
@@ -297,12 +298,20 @@ export function parseBuildEvent(line: string): BuildEvent | null {
   if (o.stage === "applying_recipe" && typeof o.templateId === "string" && typeof o.templateVersion === "number") {
     return { stage: "applying_recipe", templateId: o.templateId, templateVersion: o.templateVersion };
   }
+  if (o.stage === "generating_original") return { stage: "generating_original" };
   if (o.stage === "installed" && typeof o.receipt === "object" && o.receipt !== null) {
     return { stage: "installed", receipt: o.receipt as StudioBundleBuildReceipt };
   }
   if (o.stage === "done" && typeof o.receipt === "object" && o.receipt !== null) {
     return { stage: "done", receipt: o.receipt as StudioGenerateReceipt };
   }
-  if (o.stage === "error" && typeof o.message === "string") return { stage: "error", message: o.message };
+  if (o.stage === "error" && typeof o.message === "string") {
+    return {
+      stage: "error",
+      message: o.message,
+      ...(typeof o.code === "string" ? { code: o.code } : {}),
+      ...(typeof o.status === "number" && Number.isInteger(o.status) ? { status: o.status } : {}),
+    };
+  }
   return null;
 }

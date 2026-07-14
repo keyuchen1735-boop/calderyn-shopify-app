@@ -176,6 +176,13 @@ export default function WelcomeOverlay({
     if (right.id === recommendedTemplateId) return 1;
     return left.name.localeCompare(right.name);
   });
+  const previewTemplateId = selectedTemplateId ?? recommendedTemplateId;
+  const previewTemplate = previewTemplateId
+    ? STORE_TEMPLATE_REGISTRY.templates.find((template) => template.id === previewTemplateId)
+    : null;
+  const matchReasons = recommendation?.kind === "recipe" && recommendation.templateId === previewTemplateId
+    ? recommendation.reasons
+    : [];
 
   const submitDesign = () => {
     const prompt = templatePrompt.trim();
@@ -287,6 +294,37 @@ export default function WelcomeOverlay({
                     </button>
                   ))}
                 </div>
+                {designMode !== "custom" && previewTemplate && (
+                  <section className="cd-template-live" aria-label={`${previewTemplate.name} interactive preview`}>
+                    <div className="cd-template-live__copy">
+                      <div>
+                        <strong>{previewTemplate.name}, with your store data</strong>
+                        <span>Interactive home, collections, products, cart and checkout. This preview does not install anything.</span>
+                      </div>
+                      <span className="cd-template-cost">Recipe build · no AI design credit</span>
+                    </div>
+                    {matchReasons.length > 0 && (
+                      <ul className="cd-template-reasons" aria-label="Why this matches">
+                        {matchReasons.slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}
+                      </ul>
+                    )}
+                    <iframe
+                      className="cd-template-live__frame"
+                      title={`${previewTemplate.name} with your catalog`}
+                      src={`/dashboard/store/preview?template=${encodeURIComponent(previewTemplate.id)}&route=home`}
+                      sandbox="allow-same-origin allow-scripts allow-popups"
+                    />
+                  </section>
+                )}
+                {designMode === "custom" && (
+                  <section className="cd-custom-expectation" aria-label="Original storefront build stages">
+                    <div>
+                      <strong>A genuinely original storefront</strong>
+                      <span>Concept exploration → visual judging → complete route generation → owned imagery → browser proof.</span>
+                    </div>
+                    <span className="cd-template-cost">Uses one AI design run · usually several minutes</span>
+                  </section>
+                )}
                 <div className="cd-template-actions">
                   <button
                     type="button"

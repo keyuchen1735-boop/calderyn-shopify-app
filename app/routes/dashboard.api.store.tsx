@@ -12,9 +12,8 @@ import {
   regenerateStudioSection,
 } from "~/lib/storebuilder/studio.server";
 import { decideExperiment, startExperiment, type StoreExperimentKind } from "~/lib/experiments/store-experiment.server";
-import { generateStore, type GenerateResult } from "~/lib/storegen/generate.server";
 import { classifyAttachmentIntent, type AttachmentImage, type AttachmentIntent } from "~/lib/storegen/attachment-intent.server";
-import { assertCanGenerate, assertGeneratePrechecks, assertDesignerQuota } from "~/lib/storegen/guard.server";
+import { assertDesignerQuota, assertGeneratePrechecks } from "~/lib/storegen/guard.server";
 import { createProduct } from "~/lib/catalog/catalog.server";
 import { uploadProductMedia } from "~/lib/catalog/media.server";
 import { CalderynError } from "~/lib/calderyn.server";
@@ -22,13 +21,28 @@ import { isUuid } from "~/lib/ids";
 import {
   STUDIO_IMAGE_MEDIA_TYPES,
   STUDIO_EXPERIMENT_KINDS,
-  type StudioDesignModel,
   type StudioVibe,
   type StudioGenerateReceipt,
   type StudioAddedProduct,
 } from "~/lib/storebuilder/studio-types";
 import { quotaTrusted } from "~/lib/ai-quota.server";
 import type { DashboardSession } from "~/lib/dashboard/session.server";
+import {
+  editStorefrontByPrompt,
+  StorefrontEditError,
+  undoStorefrontEdit,
+} from "~/lib/storefront-edit/edit.server";
+import type { PreviewEditContext } from "~/lib/storefront-edit/types";
+import {
+  buildStorefrontDesign,
+  prepareStorefrontDesignBuild,
+  readStorefrontReleaseState,
+  StorefrontBuildError,
+  type PreparedStorefrontDesignBuild,
+} from "~/lib/storefront-bundle/build.server";
+import { persistStorefrontAssetBytes } from "~/lib/storefront-bundle/assets.server";
+import { StorefrontReleaseError } from "~/lib/storefront-bundle/release.server";
+import type { MerchantReferenceImage } from "~/lib/storefront-ai/contracts";
 
 // Store studio read model: brand settings, home hero copy, preview products,
 // draft/published flags, and the latest generation run.
@@ -43,11 +57,52 @@ const STUDIO_VIBES: readonly string[] = ["minimal", "bold", "warm"];
 const EXPERIMENT_KINDS: readonly string[] = STUDIO_EXPERIMENT_KINDS;
 const EXPERIMENT_DECISIONS: readonly string[] = ["ship", "keep", "stop"];
 const EXPERIMENT_NAME_MAX = 80;
+const EDIT_PROMPT_MAX = 2_000;
+const EDIT_ROUTES = new Set(["home", "collection", "product", "search", "cart", "checkout"]);
+const COMPILER_ID_RE = /^[a-zA-Z0-9_-]{1,120}$/;
 
 function heroText(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const t = v.trim();
   return t.length <= HERO_TEXT_MAX ? t : null;
+}
+
+function editContext(value: unknown): PreviewEditContext | undefined | null {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.routeId !== "string" || !EDIT_ROUTES.has(record.routeId) ||
+      typeof record.regionId !== "string" || !COMPILER_ID_RE.test(record.regionId)) return null;
+  return { routeId: record.routeId as PreviewEditContext["routeId"], regionId: record.regionId };
+}
+
+async function editResponse(run: () => Promise<unknown>): Promise<Response> {
+  try {
+    return new Response(JSON.stringify(await run()), {
+      status: 200,
+      headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    if (error instanceof StorefrontEditError) return jsonError(error.status, error.code, error.message);
+    console.error("[dashboard.api.store] storefront edit failed", error);
+    return jsonError(500, "storefront_edit_failed", "The storefront edit failed. Your draft was not changed.");
+  }
+}
+
+async function releaseResponse(run: () => Promise<unknown>): Promise<Response> {
+  try {
+    return new Response(JSON.stringify(await run()), {
+      status: 200,
+      headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    if (error instanceof StorefrontReleaseError || error instanceof StorefrontBuildError) {
+      return jsonError(error.status, error.code, error.message);
+    }
+    if (error instanceof CalderynError) return jsonError(error.status, error.code, error.message);
+    console.error("[dashboard.api.store] storefront release mutation failed", error);
+    return jsonError(500, "storefront_release_failed", "The storefront release was not changed.");
+  }
 }
 
 // Attachment limits for the multipart generate path. The Anthropic image API
@@ -59,6 +114,7 @@ const MAX_IMAGE_BYTES = 3_932_160;
 const MAX_IMAGES = 4;
 // Shared with the composer's staging screen (studio-types.ts) — one allowlist.
 const IMAGE_MEDIA_TYPES: ReadonlySet<string> = new Set(STUDIO_IMAGE_MEDIA_TYPES);
+const REFERENCE_MEDIA_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/webp", "image/avif"]);
 
 // Explicit intent override the needs_intent quick-reply resubmits: the merchant
 // already told us what to do, so map the choice straight to a decision and SKIP
@@ -116,30 +172,53 @@ async function createDraftProductFromImage(shopId: string, img: BufferedImage): 
   return { id, title };
 }
 
-/** Real generation — awaited deliberately, can take several seconds. Any throw
- *  becomes the 502 both entry points share; the SOFT-degraded "failed" status
- *  comes back inside a successful result, not as a throw. */
-async function runGenerate(
-  shopId: string,
-  brief: string | undefined,
-  designModel: StudioDesignModel | undefined,
-  referenceImages?: AttachmentImage[],
-): Promise<GenerateResult> {
+async function runStorefrontBuild(
+  session: DashboardSession,
+  prompt: string,
+  mode: "auto" | "custom",
+  referenceImages?: MerchantReferenceImage[],
+  preparedInput?: PreparedStorefrontDesignBuild,
+): Promise<{ versionId: string }> {
   try {
-    return await generateStore({
-      shopId,
-      mode: brief ? "brief" : "catalog",
-      brief,
-      designModel,
-      ...(referenceImages && referenceImages.length > 0 ? { referenceImages } : {}),
+    const request = { prompt, mode } as const;
+    const prepared = preparedInput ?? await prepareRuntimeBuild(session.shopId, request);
+    const receipt = await buildStorefrontDesign({
+      shopId: session.shopId,
+      actorId: session.userId,
+      trusted: quotaTrusted(session),
+      request,
+      prepared,
+      ...(referenceImages?.length ? { referenceImages } : {}),
     });
+    return { versionId: receipt.versionId };
   } catch (err) {
-    console.error("[dashboard.api.store] store generation failed", err);
+    if (err instanceof CalderynError) throw err;
+    if (err instanceof StorefrontBuildError || err instanceof StorefrontReleaseError) {
+      throw new CalderynError({ code: err.code, status: err.status, message: err.message });
+    }
+    console.error("[dashboard.api.store] storefront build failed", err);
     throw new CalderynError({
-      code: "generation_failed",
+      code: "storefront_build_failed",
       status: 502,
-      message: "Store generation failed. Please try again.",
+      message: "Storefront build failed. Your current draft was not changed.",
     });
+  }
+}
+
+async function prepareRuntimeBuild(
+  shopId: string,
+  request: { prompt: string; mode: "auto" | "custom" },
+): Promise<PreparedStorefrontDesignBuild> {
+  if (!(await rateLimit(`storefront-build:${shopId}`, 10, 60_000))) {
+    throw new CalderynError({ code: "rate_limited", status: 429, message: "Too many storefront builds. Please wait a moment." });
+  }
+  try {
+    return await prepareStorefrontDesignBuild({ shopId, request });
+  } catch (error) {
+    if (error instanceof StorefrontBuildError || error instanceof StorefrontReleaseError) {
+      throw new CalderynError({ code: error.code, status: error.status, message: error.message });
+    }
+    throw error;
   }
 }
 
@@ -166,7 +245,6 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
   if (modelField !== null && modelField !== "sonnet" && modelField !== "opus") {
     return jsonError(422, "invalid_model", "Model must be sonnet or opus.");
   }
-  const designModel = (typeof modelField === "string" ? modelField : undefined) as StudioDesignModel | undefined;
   const rawBrief = typeof briefField === "string" ? briefField : undefined;
 
   // Optional explicit intent (the needs_intent quick-reply resubmission). Valid
@@ -210,12 +288,12 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
     await assertGeneratePrechecks(session.shopId, rawBrief);
     const brief = rawBrief && rawBrief.trim() ? rawBrief.trim() : undefined;
 
-    // Multipart with no attachments behaves exactly like the JSON generate path
-    // (identical guard order: prechecks above, then the daily quota).
+    // Multipart with no attachments uses the same prompt-first runtime-1 router
+    // as the JSON compatibility path. Recipe installs do not consume AI quota;
+    // a custom resolution is billed inside the original compiler preflight.
     if (files.length === 0) {
-      await assertDesignerQuota(session.shopId, { trusted: quotaTrusted(session) });
-      const result = await runGenerate(session.shopId, brief, designModel);
-      return { runId: result.runId, status: result.status } satisfies StudioGenerateReceipt;
+      const result = await runStorefrontBuild(session, brief ?? "", "auto");
+      return { runId: result.versionId, status: "draft" } satisfies StudioGenerateReceipt;
     }
 
     // Buffer + base64-encode each image once; reused across the three consumers.
@@ -235,13 +313,26 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
     // and no designer quota consumed. (Unreachable when intent was explicit.)
     if (!intent) return { status: "needs_intent" } satisfies StudioGenerateReceipt;
 
-    // Generation is now certain when useAsReference, so consume the daily
-    // designer slot HERE — before any product rows are written, so a quota
-    // refusal is a clean 429 with no partial state. A products-only intent
-    // takes no designer slot at all: adding catalog drafts is not a generation.
-    if (intent.useAsReference) {
-      await assertDesignerQuota(session.shopId, { trusted: quotaTrusted(session) });
-    }
+    const customPrompt = brief ?? "Use the attached images as the design reference.";
+    // Freeze switches and write permission before persisting reference assets
+    // or creating catalog drafts. The builder consumes this exact decision.
+    const prepared = intent.useAsReference
+      ? await prepareRuntimeBuild(session.shopId, { prompt: customPrompt, mode: "custom" })
+      : undefined;
+
+    const referenceImages: MerchantReferenceImage[] = intent.useAsReference
+      ? await Promise.all(images.map(async (image) => {
+          const persisted = await persistStorefrontAssetBytes({ shopId: session.shopId, bytes: image.bytes });
+          if (!REFERENCE_MEDIA_TYPES.has(persisted.mediaType)) {
+            throw new CalderynError({
+              code: "unsupported_reference_image",
+              status: 422,
+              message: "Design references must be PNG, JPEG, WebP or AVIF images.",
+            });
+          }
+          return { assetKey: persisted.assetKey, mediaType: persisted.mediaType as MerchantReferenceImage["mediaType"] };
+        }))
+      : [];
 
     // Create products FIRST (draft rows), THEN generate — the generator re-reads
     // the catalog, so the new drafts land in the snapshot it designs around.
@@ -252,9 +343,9 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
       : [];
 
     if (intent.useAsReference) {
-      let result: GenerateResult;
+      let result: { versionId: string };
       try {
-        result = await runGenerate(session.shopId, brief, designModel, asAttachmentImages());
+        result = await runStorefrontBuild(session, customPrompt, "custom", referenceImages, prepared);
       } catch (err) {
         // Products were already written; the shared 502 would discard that fact.
         // Return an honest 200 receipt carrying both: the created products AND
@@ -266,11 +357,10 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
         throw err;
       }
       return {
-        runId: result.runId,
-        status: result.status,
+        runId: result.versionId,
+        status: "draft",
         intent,
         ...(products.length > 0 ? { products } : {}),
-        ...(result.referencesUnread ? { referencesUnread: true as const } : {}),
       } satisfies StudioGenerateReceipt;
     }
 
@@ -301,6 +391,35 @@ export async function action({ request }: ActionFunctionArgs) {
   const b = body as Record<string, unknown>;
 
   switch (b.action) {
+    case "edit": {
+      const prompt = typeof b.prompt === "string" ? b.prompt.trim() : "";
+      const expectedDraftVersionId = typeof b.expectedDraftVersionId === "string" ? b.expectedDraftVersionId : "";
+      const context = editContext(b.context);
+      if (!prompt || prompt.length > EDIT_PROMPT_MAX) return jsonError(422, "invalid_edit_prompt", "Keep the edit prompt under 2,000 characters.");
+      if (!isUuid(expectedDraftVersionId)) return jsonError(422, "invalid_draft_version");
+      if (context === null) return jsonError(422, "invalid_edit_context");
+      return editResponse(() => editStorefrontByPrompt({
+        shopId: session.shopId,
+        actorId: session.userId,
+        prompt,
+        expectedDraftVersionId,
+        trusted: quotaTrusted(session),
+        ...(context ? { context } : {}),
+      }));
+    }
+
+    case "undo-edit": {
+      const targetVersionId = typeof b.targetVersionId === "string" ? b.targetVersionId : "";
+      const expectedDraftVersionId = typeof b.expectedDraftVersionId === "string" ? b.expectedDraftVersionId : "";
+      if (!isUuid(targetVersionId) || !isUuid(expectedDraftVersionId)) return jsonError(422, "invalid_edit_undo");
+      return editResponse(() => undoStorefrontEdit({
+        shopId: session.shopId,
+        actorId: session.userId,
+        targetVersionId,
+        expectedDraftVersionId,
+      }));
+    }
+
     case "save-hero": {
       const headline = heroText(b.headline);
       const subhead = heroText(b.subhead);
@@ -330,21 +449,24 @@ export async function action({ request }: ActionFunctionArgs) {
       if (b.model !== undefined && b.model !== "sonnet" && b.model !== "opus") {
         return jsonError(422, "invalid_model", "Model must be sonnet or opus.");
       }
-      const designModel = b.model as StudioDesignModel | undefined;
       const rawBrief = typeof b.brief === "string" ? b.brief : undefined;
       return dashboardJson(async () => {
-        // Brief cap, burst limit, mid-test refusal AND the daily AI quota are
-        // shared with dashboard.builder.generate.tsx (guard.server.ts) — one
-        // shop gets one coherent budget across both paid entry points.
-        await assertCanGenerate(session.shopId, rawBrief, { trusted: quotaTrusted(session) });
+        const release = await readStorefrontReleaseState(session.shopId);
+        if (release.draftRuntimeVersion === 1) {
+          throw new CalderynError({
+            code: "storefront_edit_request_required",
+            status: 409,
+            message: "This store uses the new storefront editor. Send the prompt as an edit or explicitly start over.",
+          });
+        }
         const brief = rawBrief && rawBrief.trim() ? rawBrief.trim() : undefined;
-        const result = await runGenerate(session.shopId, brief, designModel);
-        return { runId: result.runId, status: result.status };
+        const result = await runStorefrontBuild(session, brief ?? "", "auto");
+        return { runId: result.versionId, status: "draft" };
       });
     }
 
     case "publish": {
-      return dashboardJson(async () => {
+      return releaseResponse(async () => {
         await publishStudioStore(session.shopId, session.userId);
         return { publishedAt: new Date().toISOString() };
       });

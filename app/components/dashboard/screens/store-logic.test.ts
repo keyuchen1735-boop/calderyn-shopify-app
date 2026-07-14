@@ -39,6 +39,13 @@ describe("buildSteps", () => {
     expect(proofing.map((row) => row.title).join(" ")).not.toMatch(/brand kit/i);
   });
 
+  it("shows the original compiler path without claiming a recipe was applied", () => {
+    const rows = buildSteps({ kind: "running", stage: "generating_original" });
+    expect(rows.map((row) => row.title).join(" ")).toMatch(/original/i);
+    expect(rows.map((row) => row.title).join(" ")).not.toMatch(/recipe/i);
+    expect(rows.map((row) => row.dot)).toEqual(["done", "run"]);
+  });
+
   it("renders the three real stages with run/done/wait dots as the build advances", () => {
     const atBrand = buildSteps({ kind: "running", stage: "brand" });
     expect(atBrand.map((r) => r.dot)).toEqual(["run", "wait", "wait"]);

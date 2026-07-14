@@ -1,26 +1,35 @@
 // app/routes/dashboard.api.store.generate.tsx
-// Streaming twin of /dashboard/api/store's "generate" action: same guards, same
-// generation — but real build stages are streamed to the studio chat as NDJSON
+// Runtime-1 storefront build stream. Real recipe/original-compiler stages are
+// streamed to the studio chat as NDJSON
 // lines while the merchant waits, ending with the receipt (or an in-band error
 // line; the HTTP status is already committed once the stream starts). Guard and
 // validation failures reject as plain JSON BEFORE the stream opens, so quota and
 // rate-limit errors keep their proper status codes.
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
-import { generateStore } from "~/lib/storegen/generate.server";
-import { assertCanGenerate } from "~/lib/storegen/guard.server";
-import { CalderynError } from "~/lib/calderyn.server";
+import { jsonError, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { quotaTrusted } from "~/lib/ai-quota.server";
-import type { StudioGenerateReceipt } from "~/lib/storebuilder/studio-types";
 import { STORE_TEMPLATE_REGISTRY } from "~/lib/storefront-bundle/registry";
 import { parseStoreDesignRequest } from "~/lib/storefront-bundle/routing";
 import {
   buildStorefrontDesign,
+  prepareStorefrontDesignBuild,
   StorefrontBuildError,
   type StorefrontBuildEvent,
 } from "~/lib/storefront-bundle/build.server";
 import type { StoreDesignResolution } from "~/lib/storefront-bundle/types";
+import { StorefrontReleaseError } from "~/lib/storefront-bundle/release.server";
+
+function buildFailure(error: unknown): { code: string; message: string; status: number } {
+  if (error instanceof StorefrontBuildError || error instanceof StorefrontReleaseError) {
+    return { code: error.code, message: error.message, status: error.status };
+  }
+  return {
+    code: "storefront_build_failed",
+    message: "Storefront build failed. Your current draft was not changed.",
+    status: 502,
+  };
+}
 
 function recommendedResolution(value: unknown): StoreDesignResolution | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
@@ -47,78 +56,44 @@ export async function action({ request }: ActionFunctionArgs) {
     return jsonError(422, "invalid_body");
   }
 
-  if (Object.hasOwn(body, "designRequest")) {
-    const parsed = parseStoreDesignRequest(body.designRequest, STORE_TEMPLATE_REGISTRY);
-    if (!parsed.ok) return jsonError(422, parsed.error);
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        const send = (event: StorefrontBuildEvent | { stage: "error"; message: string }) => {
-          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
-        };
-        try {
-          await buildStorefrontDesign({
-            shopId: session.shopId,
-            actorId: session.userId,
-            request: parsed.value,
-            recommendedResolution: recommendedResolution(body.recommendedResolution),
-            onEvent: send,
-          });
-        } catch (err) {
-          console.error("[dashboard.api.store.generate] runtime-1 build failed", err);
-          send({
-            stage: "error",
-            message: err instanceof StorefrontBuildError
-              ? err.message
-              : "Storefront build failed. Your current draft was not changed.",
-          });
-        } finally {
-          controller.close();
-        }
-      },
-    });
-    return new Response(stream, {
-      headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },
-    });
+  const requestInput = Object.hasOwn(body, "designRequest")
+    ? body.designRequest
+    : {
+        prompt: typeof body.brief === "string" ? body.brief : "",
+        mode: "auto",
+      };
+  const parsed = parseStoreDesignRequest(requestInput, STORE_TEMPLATE_REGISTRY);
+  if (!parsed.ok) return jsonError(422, parsed.error);
+  if (!(await rateLimit(`storefront-build:${session.shopId}`, 10, 60_000))) {
+    return jsonError(429, "rate_limited", "Too many storefront builds. Please wait a moment.");
   }
 
-  const brief = typeof body.brief === "string" && body.brief.trim() ? body.brief.trim() : undefined;
-  if (body.model !== undefined && body.model !== "sonnet" && body.model !== "opus") {
-    return jsonError(422, "invalid_model", "Model must be sonnet or opus.");
-  }
-  const designModel = body.model as "sonnet" | "opus" | undefined;
-
+  let prepared;
   try {
-    await assertCanGenerate(session.shopId, brief, { trusted: quotaTrusted(session) });
-  } catch (err) {
-    if (err instanceof CalderynError) return jsonError(err.status, err.code, err.message);
-    throw err;
+    prepared = await prepareStorefrontDesignBuild({ shopId: session.shopId, request: parsed.value });
+  } catch (error) {
+    const failure = buildFailure(error);
+    return jsonError(failure.status, failure.code, failure.message);
   }
-
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (o: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(o)}\n`));
+      const send = (event: StorefrontBuildEvent | { stage: "error"; code: string; status: number; message: string }) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
       try {
-        const result = await generateStore({
+        await buildStorefrontDesign({
           shopId: session.shopId,
-          mode: brief ? "brief" : "catalog",
-          brief,
-          designModel,
-          onStage: (stage) => send({ stage }),
+          actorId: session.userId,
+          request: parsed.value,
+          recommendedResolution: recommendedResolution(body.recommendedResolution),
+          trusted: quotaTrusted(session),
+          prepared,
+          onEvent: send,
         });
-        const receipt: StudioGenerateReceipt = {
-          runId: result.runId,
-          status: result.status,
-          ...(result.verification ? { verification: result.verification } : {}),
-          ...(result.referencesUnread ? { referencesUnread: true as const } : {}),
-        };
-        send({ stage: "done", receipt });
       } catch (err) {
-        // The stream is already 200; surface the failure in-band with a stable
-        // merchant-safe message — upstream detail goes to the server log only.
-        console.error("[dashboard.api.store.generate] stream generation failed", err);
-        send({ stage: "error", message: "Store generation failed. Please try again." });
+        console.error("[dashboard.api.store.generate] runtime-1 build failed", err);
+        send({ stage: "error", ...buildFailure(err) });
       } finally {
         controller.close();
       }
