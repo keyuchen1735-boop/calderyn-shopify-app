@@ -1,0 +1,40 @@
+import { describe, expect, it } from "vitest";
+import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
+import { BROADCAST_PATCH_BAY_ASSETS } from "./assets";
+import { BROADCAST_PATCH_BAY_RECIPE } from "./bundle";
+
+const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((node) => node.kind === "text" ? [] : [...(node.repeat ? [node.repeat.source] : []), ...repeats(node.children)]);
+const actions = (route: RouteArtifact) => route.interactions.transitions.map((item) => item.action.type);
+
+describe("broadcast-patch-bay storefront recipe", () => {
+  it("compiles a modular signal patch bay and complete creator-commerce route matrix", () => {
+    const { bundle, config, report } = BROADCAST_PATCH_BAY_RECIPE;
+    expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 1 });
+    expect(config.archetype).toEqual({ composition: "signal-patch-bay", hero: "rig-signal-chain", scroll: "modular-patching", cards: "signal-modules", iconography: ["signal path glyphs", "compatibility port marks"] });
+    expect(bundle.designSystem).toMatchObject({ displayFontId: "space-grotesk", bodyFontId: "ibm-plex-mono", iconStyle: "signal-path glyphs and compatibility-port marks", motionStyle: "modular patch transitions with reduced-motion static routing" });
+    expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
+    expect(BROADCAST_PATCH_BAY_ASSETS.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 78150 })]);
+    expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
+    expect(bundle.routes.home.html).toContain("Play");
+    expect(bundle.routes.home.html).toContain("Publish");
+    expect(actions(bundle.routes.home)).toEqual(expect.arrayContaining(["tabs.select"]));
+    expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
+    expect(repeats(bundle.routes.collection.tree)).toContain("collection.products");
+    expect(actions(bundle.routes.collection)).toEqual(expect.arrayContaining(["collection.filter", "collection.sort"]));
+    expect(bundle.routes.collection.trustedSlots.map((slot) => slot.kind)).toContain("quickViewCommerce");
+    expect(repeats(bundle.routes.product.tree)).toEqual(expect.arrayContaining(["product.images", "product.variants"]));
+    expect(bundle.routes.product.trustedSlots.map((slot) => slot.kind)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
+    expect(repeats(bundle.routes.search.tree)).toContain("search.results");
+    expect(actions(bundle.routes.search)).toEqual(expect.arrayContaining(["search.submit", "search.clear"]));
+    expect(repeats(bundle.routes.cart.tree)).toContain("cart.lines");
+    expect(bundle.routes.cart.trustedSlots.map((slot) => slot.kind)).toEqual(expect.arrayContaining(["cartLineControls", "cartSummary"]));
+    expect(bundle.routes.checkout.layout).toMatchObject({ columnMode: "summaryFirst", spacingTokenId: "rack-gap" });
+    const text = Object.values(bundle.routes).map((route) => "html" in route ? route.html : route.decorativeHtml).join(" ");
+    expect(text).toContain("No compatible signal found");
+    expect(text).toContain("Sold out");
+    expect(text).toContain("Compatibility");
+    expect(text).not.toMatch(/https?:\/\//);
+    expect(Object.values(bundle.routes).filter((route): route is RouteArtifact => "html" in route).every((route) => route.css.includes("overflow-wrap:anywhere"))).toBe(true);
+  });
+});
