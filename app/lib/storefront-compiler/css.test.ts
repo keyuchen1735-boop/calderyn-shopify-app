@@ -34,4 +34,18 @@ describe("compileCss", () => {
     expect(result.css).toContain("@keyframes cd-home-reveal");
     expect(result.css).toContain("animation: cd-home-reveal 250ms ease");
   });
+
+  it("allows only closed runtime presentation-state attributes in recipe selectors", () => {
+    const result = compileCss(
+      `[data-cd-active-value="play"] .panel { opacity: 1 } [data-cd-class-token="studio"] { color: var(--accent) }`,
+      { namespace: "home" },
+    );
+
+    expect(result.css).toContain('data-cd-active-value="play"');
+    expect(result.css).toContain('data-cd-class-token="studio"');
+    expect(() => compileCss(`[data-cd-trusted-slot-id] { display: none }`, { namespace: "home" })).toThrow(
+      /protected|compiler/i,
+    );
+    expect(() => compileCss(`[data-cd-instance] { opacity: 0 }`, { namespace: "home" })).toThrow(/compiler/i);
+  });
 });

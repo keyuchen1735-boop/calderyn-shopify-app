@@ -13,6 +13,7 @@ const FORBIDDEN_PROTECTED_ATTRIBUTES = new Set([
   "data-cd-checkout-root",
   "data-cd-platform-root",
 ]);
+const PRESENTATION_STATE_ATTRIBUTES = new Set(["data-cd-active-value", "data-cd-class-token"]);
 
 function isSafeIdentifier(value: string): boolean {
   if (value.length === 0 || value.length > 80) return false;
@@ -109,7 +110,11 @@ function compileSelector(
         if (FORBIDDEN_PROTECTED_ATTRIBUTES.has(attribute.attribute)) {
           throw new CompilerError("css.protected_selector", "Generated CSS cannot select protected platform hosts");
         }
-        if (attribute.attribute.startsWith("data-cd-") && attribute.attribute !== "data-cd-state") {
+        if (
+          attribute.attribute.startsWith("data-cd-") &&
+          attribute.attribute !== "data-cd-state" &&
+          !PRESENTATION_STATE_ATTRIBUTES.has(attribute.attribute)
+        ) {
           throw new CompilerError("css.compiler_selector", `Compiler-owned selector ${attribute.attribute} is forbidden`);
         }
       });
