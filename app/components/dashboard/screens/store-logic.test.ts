@@ -29,6 +29,18 @@ describe("parseBuildEvent", () => {
 });
 
 describe("buildSteps", () => {
+  it("shows only the real edit pipeline while a storefront patch runs", () => {
+    const rows = buildSteps({ kind: "editing", stage: "validating" });
+
+    expect(rows.map((row) => row.title)).toEqual([
+      "Preparing your change",
+      "Validating the storefront",
+      "Proofing the preview",
+      "Installing the preview",
+    ]);
+    expect(rows.map((row) => row.dot)).toEqual(["done", "run", "wait", "wait"]);
+  });
+
   it("renders the five runtime-1 install stages without mixing in legacy generator copy", () => {
     const routing = buildSteps({ kind: "running", stage: "routing" });
     expect(routing).toHaveLength(5);

@@ -239,6 +239,7 @@ describe("compiled-node server renderer", () => {
 
     expect(html.match(/data-cd-compiler-id="cd-home-card"/g)).toHaveLength(2);
     expect(html.match(/id="cd-home-card-i-[^"]+"/g)).toHaveLength(2);
+    expect(html.match(/data-cd-repeat-owner="true"/g)).toHaveLength(2);
   });
 
   it("resolves each product.images repeat binding to that media item's URL and alt text", () => {

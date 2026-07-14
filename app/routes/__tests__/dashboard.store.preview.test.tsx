@@ -87,10 +87,14 @@ async function loaderData(url: string) {
 
 describe("dashboard.store.preview loader", () => {
   it("selects repeated preview DOM by canonical compiler metadata, never by parsing its suffixed DOM id", () => {
-    const target = {
-      closest: () => ({ dataset: { cdCompilerId: "cd-home-card" } }),
-    } as unknown as Element;
-    expect(previewCompilerId(target)).toBe("cd-home-card");
+    const repeatOwner = { dataset: { cdCompilerId: "cd-home-grid" } };
+    const selected = {
+      dataset: { cdCompilerId: "cd-home-title" },
+      closest: (selector: string) => selector === "[data-cd-repeat-owner][data-cd-compiler-id]" ? repeatOwner : null,
+    };
+    const target = { closest: () => selected } as unknown as Element;
+
+    expect(previewCompilerId(target)).toBe("cd-home-grid");
   });
 
   it("renders a selected recipe against the authenticated merchant catalog without installing it", async () => {

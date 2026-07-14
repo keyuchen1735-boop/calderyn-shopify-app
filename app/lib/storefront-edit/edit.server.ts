@@ -17,7 +17,7 @@ import {
   type EditStorefrontDraftInput,
   type ValidateStorefrontBundleVersionInput,
 } from "../storefront-bundle/release.server";
-import type { StorefrontBundleV1, StorefrontRouteId } from "../storefront-bundle/types";
+import type { CompiledNode, StorefrontBundleV1, StorefrontRouteId } from "../storefront-bundle/types";
 import { validateCompiledBundle, type BundleValidationReport } from "../storefront-compiler/validate";
 import { storefrontAiBrowserProof } from "../storefront-validation/browser.server";
 import { applyDeterministicStorefrontEdit } from "./deterministic";
@@ -30,6 +30,7 @@ import type {
   LoadedStorefrontDraft,
   PreviewEditContext,
   StructuralPatchScope,
+  StorefrontEditEvent,
   StorefrontEditReceipt,
   StorefrontPatchOperation,
 } from "./types";
@@ -470,6 +471,24 @@ function mapError(error: unknown): never {
   throw error;
 }
 
+function repeatOwnerId(nodes: readonly CompiledNode[], targetId: string, ownerId?: string): string | null {
+  for (const node of nodes) {
+    if (node.kind !== "element") continue;
+    const nextOwner = ownerId ?? (node.repeat ? node.id : undefined);
+    if (node.id === targetId) return nextOwner ?? node.id;
+    const nested = repeatOwnerId(node.children, targetId, nextOwner);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function safeStructuralContext(bundle: StorefrontBundleV1, context?: PreviewEditContext): PreviewEditContext | undefined {
+  if (!context || context.routeId === "checkout") return context;
+  const route = bundle.routes[context.routeId];
+  const regionId = repeatOwnerId(route.tree, context.regionId) ?? context.regionId;
+  return { ...context, regionId };
+}
+
 export async function editStorefrontByPrompt(
   input: {
     shopId: string;
@@ -478,6 +497,7 @@ export async function editStorefrontByPrompt(
     expectedDraftVersionId: string;
     context?: PreviewEditContext;
     trusted?: boolean;
+    onEvent?: (event: StorefrontEditEvent) => void;
   },
   dependencies: StorefrontEditDependencies = defaultDependencies,
 ): Promise<StorefrontEditReceipt | { status: "start_over"; mode: "custom" }> {
@@ -496,11 +516,13 @@ export async function editStorefrontByPrompt(
     if (intent.kind === "structural" && base.bundle.source.kind === "recipe") {
       assertEditWriterEnabled("custom", dependencies);
     }
+    const structuralContext = intent.kind === "structural" ? safeStructuralContext(base.bundle, intent.context) : undefined;
+    input.onEvent?.({ stage: "compiling" });
     let compiledPatch = intent.kind === "deterministic"
       ? { operations: intent.operations, provider: { kind: "deterministic" as const, model: null } }
       : await (async () => {
           await dependencies.preflight({ shopId: input.shopId, prompt: input.prompt, trusted: input.trusted ?? false });
-          return dependencies.compileStructuralPatch({ prompt: input.prompt, context: intent.context, bundle: base.bundle });
+          return dependencies.compileStructuralPatch({ prompt: input.prompt, context: structuralContext, bundle: base.bundle });
         })();
     let applied: ReturnType<typeof applyStorefrontPatch>;
     let validation: BundleValidationReport;
@@ -509,7 +531,6 @@ export async function editStorefrontByPrompt(
     let proofAssets: MaterializedAssetResult["proofAssets"] | null = null;
     let repairAttempted = false;
     const attemptAudits: EditAttemptAudit[] = [];
-    const structuralContext = intent.kind === "structural" ? intent.context : undefined;
     for (;;) {
       applied = intent.kind === "deterministic"
         ? applyDeterministicStorefrontEdit(base.bundle, compiledPatch.operations)
@@ -531,6 +552,7 @@ export async function editStorefrontByPrompt(
       // A deterministic recipe edit can still leave the declared override
       // surface. Gate the resulting source before browser proof or writes.
       assertEditWriterEnabled(applied.bundle.source.kind, dependencies);
+      input.onEvent?.({ stage: "validating" });
       validation = dependencies.validate(applied.bundle);
       if (!validation.ok) {
         attemptAudits.push({
@@ -558,6 +580,7 @@ export async function editStorefrontByPrompt(
         proofAssets ??= needsOwnedProofAssets(base.bundle)
           ? await dependencies.loadProofAssets({ shopId: input.shopId, versionId: base.versionId, manifest: base.bundle.assets })
           : [];
+        input.onEvent?.({ stage: "proofing" });
         browserProof = await proveEditBundle(applied.bundle, proofContext, proofAssets, dependencies);
         attemptAudits.push({
           attempt: attemptAudits.length + 1,
@@ -595,6 +618,7 @@ export async function editStorefrontByPrompt(
         throw error;
       }
     }
+    input.onEvent?.({ stage: "installing" });
     const detached = base.bundle.source.kind === "recipe" && !patchFitsRecipeOverride(base.bundle, compiledPatch.operations);
     const artifact = { sourceKind: applied.bundle.source.kind, bundle: applied.bundle };
     const resultHash = await dependencies.hashArtifact({
@@ -659,7 +683,7 @@ export async function editStorefrontByPrompt(
         })),
       }),
     });
-    return {
+    const receipt: StorefrontEditReceipt = {
       status: "installed",
       versionId,
       baseVersionId: base.versionId,
@@ -669,6 +693,8 @@ export async function editStorefrontByPrompt(
       detachedFromRecipe: detached,
       undo: { targetVersionId: base.versionId, expectedDraftVersionId: versionId },
     };
+    input.onEvent?.({ stage: "installed", receipt });
+    return receipt;
   } catch (error) {
     mapError(error);
   }

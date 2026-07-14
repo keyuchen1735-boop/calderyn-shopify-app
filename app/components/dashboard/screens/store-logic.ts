@@ -34,6 +34,7 @@ export function showLegacySectionsPanel(input: {
 
 export type BuildPhase =
   | { kind: "running"; stage?: BuildStage }
+  | { kind: "editing"; stage: "compiling" | "validating" | "proofing" | "installing" }
   | { kind: "done"; status: "draft" | "no_products" | "failed" }
   | { kind: "failed"; message: string };
 
@@ -63,10 +64,25 @@ const CUSTOM_STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
   { stage: "generating_original", title: "Creating an original direction", sub: "Exploring concepts, imagery and complete commerce routes from your brief." },
 ];
 
+const EDIT_STAGE_ROWS = [
+  { stage: "compiling", title: "Preparing your change", sub: "Applying your request to the selected storefront region." },
+  { stage: "validating", title: "Validating the storefront", sub: "Checking the changed bundle against the runtime contract." },
+  { stage: "proofing", title: "Proofing the preview", sub: "Opening the changed storefront in a browser before install." },
+  { stage: "installing", title: "Installing the preview", sub: "Saving the verified version as your current draft." },
+] as const;
+
 /** Multi-row live progress for the streaming build: each row is a REAL stage the
  *  server reported. Without a stage (the non-streaming fallback) and for terminal
  *  phases, this collapses to the single legacy row. */
 export function buildSteps(phase: BuildPhase): BuildStepView[] {
+  if (phase.kind === "editing") {
+    const at = EDIT_STAGE_ROWS.findIndex((row) => row.stage === phase.stage);
+    return EDIT_STAGE_ROWS.map((row, index) => ({
+      dot: index < at ? "done" : index === at ? "run" : "wait",
+      title: row.title,
+      sub: row.sub,
+    }));
+  }
   if (phase.kind !== "running" || !phase.stage) return [buildStep(phase)];
   const rows = phase.stage === "generating_original"
     ? CUSTOM_STAGE_ROWS
@@ -85,6 +101,10 @@ export function buildSteps(phase: BuildPhase): BuildStepView[] {
  *  every page, so it reads as done — adding products is a suggestion, not a
  *  prerequisite. */
 export function buildStep(phase: BuildPhase): BuildStepView {
+  if (phase.kind === "editing") {
+    const row = EDIT_STAGE_ROWS.find((candidate) => candidate.stage === phase.stage)!;
+    return { dot: "run", title: row.title, sub: row.sub };
+  }
   if (phase.kind === "running") {
     return {
       dot: "run",

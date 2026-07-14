@@ -25,7 +25,7 @@ import {
   type StudioPolicyId,
 } from "~/lib/storebuilder/studio-types";
 import type { StoreDesignRequest, StoreDesignResolution } from "~/lib/storefront-bundle/types";
-import type { PreviewEditContext, StorefrontEditReceipt } from "~/lib/storefront-edit/types";
+import type { PreviewEditContext, StorefrontEditReceipt, StorefrontEditStage } from "~/lib/storefront-edit/types";
 
 export type {
   StudioState,
@@ -61,6 +61,78 @@ export async function editStudioStorefront(input: {
   context?: PreviewEditContext;
 }): Promise<StorefrontEditReceipt | { status: "start_over"; mode: "custom" }> {
   return apiSend("POST", "/dashboard/api/store", { action: "edit", ...input });
+}
+
+export async function editStudioStorefrontStream(
+  input: { prompt: string; expectedDraftVersionId: string; context?: PreviewEditContext },
+  onStage: (stage: StorefrontEditStage) => void,
+): Promise<StorefrontEditReceipt | { status: "start_over"; mode: "custom" }> {
+  let response: Response;
+  try {
+    response = await fetch("/dashboard/api/store", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "content-type": "application/json",
+        ...(typeof location !== "undefined" ? { Origin: location.origin } : {}),
+      },
+      body: JSON.stringify({ action: "edit", ...input }),
+    });
+  } catch (error) {
+    throw new StudioStreamError(error instanceof Error ? error.message : "edit stream request failed");
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
+    throw new DashboardApiError(response.status, body.error ?? "storefront_edit_failed", body.message ?? "Storefront edit failed.");
+  }
+  if (!response.body) throw new StudioStreamError("edit response had no stream body");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const handleLine = (line: string): StorefrontEditReceipt | { status: "start_over"; mode: "custom" } | undefined => {
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+    if (["compiling", "validating", "proofing", "installing"].includes(String(event.stage))) {
+      onStage(event.stage as StorefrontEditStage);
+    } else if (event.stage === "installed" && event.receipt && typeof event.receipt === "object") {
+      return event.receipt as StorefrontEditReceipt;
+    } else if (event.stage === "start_over") {
+      return { status: "start_over", mode: "custom" };
+    } else if (event.stage === "error") {
+      throw new DashboardApiError(
+        typeof event.status === "number" ? event.status : 502,
+        typeof event.code === "string" ? event.code : "storefront_edit_failed",
+        typeof event.message === "string" ? event.message : "Storefront edit failed.",
+      );
+    }
+    return undefined;
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        const receipt = handleLine(line);
+        if (receipt) return receipt;
+      }
+    }
+    const receipt = buffer.trim() ? handleLine(buffer.trim()) : undefined;
+    if (receipt) return receipt;
+  } catch (error) {
+    if (error instanceof DashboardApiError) throw error;
+    throw new StudioStreamError(error instanceof Error ? error.message : "edit stream read failed");
+  }
+  throw new StudioStreamError("edit stream ended without an installed storefront");
 }
 
 export async function undoStudioStorefrontEdit(input: {

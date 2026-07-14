@@ -19,7 +19,7 @@ import {
   addProductFromImage,
   buildStudioStoreStream,
   decideStoreExperiment,
-  editStudioStorefront,
+  editStudioStorefrontStream,
   fetchStudio,
   generateStudioStoreWithImages,
   publishStudioStore,
@@ -508,9 +508,17 @@ export default function Store({ app }: { app: DashboardCtx }) {
     if (!expectedDraftVersionId || chatBusyRef.current || buildingRef.current) return;
     setChatBusyBoth(true);
     const thinkId = newId();
-    pushMsg({ id: thinkId, kind: "ai-thinking" });
+    pushMsg({ id: thinkId, kind: "ai-working", phase: { kind: "editing", stage: "compiling" } });
     try {
-      const result = await editStudioStorefront({ prompt: text, expectedDraftVersionId, ...(context ? { context } : {}) });
+      const result = await editStudioStorefrontStream(
+        { prompt: text, expectedDraftVersionId, ...(context ? { context } : {}) },
+        (stage) => {
+          if (!aliveRef.current) return;
+          setMessages((messages) => messages.map((message) => message.id === thinkId
+            ? { id: thinkId, kind: "ai-working", phase: { kind: "editing", stage } }
+            : message));
+        },
+      );
       if (result.status === "start_over") {
         setMessages((messages) => messages.filter((message) => message.id !== thinkId));
         setChatBusyBoth(false);

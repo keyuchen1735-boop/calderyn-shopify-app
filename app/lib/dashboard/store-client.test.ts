@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   addProductFromImage,
   buildStudioStoreStream,
+  editStudioStorefrontStream,
   generateStudioStoreStream,
   generateStudioStoreWithImages,
   productTitleFromFilename,
@@ -270,6 +271,28 @@ describe("generateStudioStoreStream", () => {
   it("rejects with StudioStreamError when fetch itself fails (network)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network down")));
     await expect(generateStudioStoreStream("b", "sonnet", () => {})).rejects.toBeInstanceOf(StudioStreamError);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("editStudioStorefrontStream", () => {
+  it("forwards real edit stages and resolves only after the preview version is installed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
+      '{"stage":"compiling"}',
+      '{"stage":"validating"}',
+      '{"stage":"proofing"}',
+      '{"stage":"installing"}',
+      '{"stage":"installed","receipt":{"status":"installed","versionId":"version-2","baseVersionId":"version-1","bundle":{},"changedScope":{"designTokens":[],"routes":["collection"]},"browserProof":{"ok":true,"diagnostics":[],"screenshots":[],"browserMs":4},"detachedFromRecipe":true,"undo":{"targetVersionId":"version-1","expectedDraftVersionId":"version-2"}}}',
+    ])));
+    const stages: string[] = [];
+
+    const receipt = await editStudioStorefrontStream({
+      prompt: "Redesign these cards",
+      expectedDraftVersionId: "version-1",
+    }, (stage) => stages.push(stage));
+
+    expect(stages).toEqual(["compiling", "validating", "proofing", "installing"]);
+    expect(receipt).toMatchObject({ status: "installed", versionId: "version-2" });
     vi.unstubAllGlobals();
   });
 });
