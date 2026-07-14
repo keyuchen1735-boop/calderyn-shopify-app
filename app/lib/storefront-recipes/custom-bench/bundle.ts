@@ -35,7 +35,7 @@ const home = {
           <p class="recipe-copy">Choose the object, set the material, place your mark, then approve the workshop proof.</p>
           <a class="primary-action" data-cd-route="collection">Choose an object</a>
         </div>
-        <figure class="proof-stage"><img data-cd-asset="custom-bench-hero" alt="Personalized object on the Custom Bench worktable"><figcaption>Live workshop proof</figcaption></figure>
+        <figure class="proof-stage"><img data-cd-asset="hero" alt="Personalized object on the Custom Bench worktable"><figcaption>Live workshop proof</figcaption></figure>
       </section>
       <section id="configurator" class="configurator" data-cd-state-id="bench-step" data-cd-state-type="enum" data-cd-state-initial="choose" data-cd-state-values="choose personalize approve" data-cd-bind-state="bench-step" data-cd-bind-property="classToken">
         <h2>Build the commission</h2>

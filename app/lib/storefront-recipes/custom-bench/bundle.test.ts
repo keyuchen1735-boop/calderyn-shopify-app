@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CUSTOM_BENCH_RECIPE } from "./bundle";
 
@@ -16,14 +18,15 @@ describe("Custom Bench storefront recipe", () => {
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
     expect(bundle.designSystem).toMatchObject({ displayFontId: "space-grotesk", bodyFontId: "ibm-plex-mono" });
     expect(bundle.assets.entries).toEqual([
-      expect.objectContaining({ key: "custom-bench-hero", mediaType: "image/webp", byteSize: 132568 }),
+      expect.objectContaining({ key: "hero", mediaType: "image/webp", byteSize: 132568 }),
     ]);
+    expect(existsSync(resolve(process.cwd(), "public/storefront-recipes/custom-bench", `${bundle.assets.entries[0]?.key}.webp`))).toBe(true);
 
     expect(bundle.shell.bindings.map((binding) => binding.ref)).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: "store.name" }),
     ]));
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
-    expect(bundle.routes.home.html).toContain('data-cd-asset-key="custom-bench-hero"');
+    expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
     expect(bundle.routes.home.html).toContain("Approve your proof");
     expect(bundle.routes.home.interactions.transitions.map((transition) => transition.action.type)).toEqual(
       expect.arrayContaining(["state.set", "scroll.to"]),
