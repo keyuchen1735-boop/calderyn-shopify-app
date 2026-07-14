@@ -8,6 +8,7 @@ import type {
 import { hasRuntime1Storefront, resolveRuntime1Route, resolveStorefrontRelease } from "./release-resolution.server";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
+import { ATELIER_GRID_BUNDLE } from "~/lib/storefront-recipes/atelier-nine/bundle";
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const originalBundleRead = process.env.STOREFRONT_BUNDLE_READ;
@@ -101,7 +102,7 @@ describe("storefront release resolution", () => {
     const assetUrlLoader = vi.fn(async () => ({ hero: "https://assets.example.test/signed-hero" }));
     const result = await resolveRuntime1Route({
       shopId: SHOP,
-      route: { kind: "home" },
+      route: { kind: "product", handle: "missing" },
       reader: reader(live, []),
       bundleReadEnabled: true,
       assetUrlLoader,
@@ -113,6 +114,104 @@ describe("storefront release resolution", () => {
 
     expect(assetUrlLoader).toHaveBeenCalledWith({ shopId: SHOP, bundleId: "live-assets", manifest: bundle.assets });
     expect(result?.data.storefrontAssetUrls).toEqual({ hero: "https://assets.example.test/signed-hero" });
+  });
+
+  it("serves recipe-derived custom assets from same-origin only when provenance matches the registered recipe exactly", async () => {
+    const bundle = structuredClone(ATELIER_GRID_BUNDLE);
+    bundle.source = {
+      kind: "custom",
+      generationId: "edit-generation",
+      promptHash: `sha256:${"c".repeat(64)}`,
+      derivedFromVersionId: "recipe-version",
+      derivedFromTemplateId: "atelier-nine",
+      derivedFromTemplateVersion: 1,
+    };
+    const live = {
+      ...version("derived-assets", 1, "2026-07-02T00:00:00Z"),
+      artifact: { sourceKind: "custom" as const, bundle },
+    };
+    const assetUrlLoader = vi.fn(async () => ({}));
+    const result = await resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "product", handle: "missing" },
+      reader: reader(live, []),
+      bundleReadEnabled: true,
+      assetUrlLoader,
+      dataDependencies: {
+        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+      },
+    });
+
+    expect(assetUrlLoader).not.toHaveBeenCalled();
+    expect(result?.data.storefrontAssetUrls).toEqual({
+      hero: "/storefront-recipes/atelier-nine/hero.webp",
+    });
+  });
+
+  it("never treats a tampered derived asset manifest as a deploy-owned recipe asset", async () => {
+    const bundle = structuredClone(ATELIER_GRID_BUNDLE);
+    bundle.source = {
+      kind: "custom",
+      generationId: "edit-generation",
+      promptHash: `sha256:${"c".repeat(64)}`,
+      derivedFromTemplateId: "atelier-nine",
+      derivedFromTemplateVersion: 1,
+    };
+    bundle.assets.entries[0] = { ...bundle.assets.entries[0]!, contentHash: "d".repeat(64) };
+    const live = {
+      ...version("tampered-assets", 1, "2026-07-02T00:00:00Z"),
+      artifact: { sourceKind: "custom" as const, bundle },
+    };
+    const assetUrlLoader = vi.fn(async () => ({ hero: "https://assets.example.test/verified-tampered" }));
+    const result = await resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "product", handle: "missing" },
+      reader: reader(live, []),
+      bundleReadEnabled: true,
+      assetUrlLoader,
+      dataDependencies: {
+        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+      },
+    });
+
+    expect(assetUrlLoader).toHaveBeenCalledWith({ shopId: SHOP, bundleId: "tampered-assets", manifest: bundle.assets });
+    expect(result?.data.storefrontAssetUrls).toEqual({ hero: "https://assets.example.test/verified-tampered" });
+  });
+
+  it("fails closed to verified owned storage for an unknown derived recipe id", async () => {
+    const bundle = structuredClone(ATELIER_GRID_BUNDLE);
+    bundle.source = {
+      kind: "custom",
+      generationId: "edit-generation",
+      promptHash: `sha256:${"c".repeat(64)}`,
+      derivedFromTemplateId: "unknown-recipe",
+      derivedFromTemplateVersion: 1,
+    } as unknown as typeof bundle.source;
+    const live = {
+      ...version("unknown-derived-assets", 1, "2026-07-02T00:00:00Z"),
+      artifact: { sourceKind: "custom" as const, bundle },
+    };
+    const assetUrlLoader = vi.fn(async () => ({ hero: "https://assets.example.test/verified-fallback" }));
+    const result = await resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "product", handle: "missing" },
+      reader: reader(live, []),
+      bundleReadEnabled: true,
+      assetUrlLoader,
+      dataDependencies: {
+        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+      },
+    });
+
+    expect(assetUrlLoader).toHaveBeenCalledWith({
+      shopId: SHOP,
+      bundleId: "unknown-derived-assets",
+      manifest: bundle.assets,
+    });
+    expect(result?.data.storefrontAssetUrls).toEqual({ hero: "https://assets.example.test/verified-fallback" });
   });
 
   it("memoizes the immutable release by Request so parent and child consume one pointer read", async () => {

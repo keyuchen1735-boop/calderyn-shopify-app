@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -16,6 +16,13 @@ const RELEASES = migration("20260713140000_storefront_bundle_releases.sql");
 const ASSETS = migration("20260713141000_storefront_bundle_assets.sql");
 const FUNCTIONS = migration("20260713142000_storefront_bundle_functions.sql");
 const CUSTOM_ASSET_KEYS = migration("20260713210000_storefront_custom_asset_logical_keys.sql");
+const EDIT_ASSET_PROVENANCE_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../supabase/migrations/20260713220000_storefront_edit_asset_provenance.sql",
+);
+const EDIT_ASSET_PROVENANCE = existsSync(EDIT_ASSET_PROVENANCE_PATH)
+  ? readFileSync(EDIT_ASSET_PROVENANCE_PATH, "utf8").toLowerCase()
+  : "";
 const SQL = `${RELEASES}\n${ASSETS}\n${FUNCTIONS}`;
 
 describe("storefront bundle persistence migrations", () => {
@@ -159,5 +166,24 @@ describe("storefront bundle persistence migrations", () => {
     expect(CUSTOM_ASSET_KEYS).toMatch(/ref\.logical_key = entry ->> 'key'/);
     expect(CUSTOM_ASSET_KEYS).toMatch(/asset\.asset_key = ref\.asset_key/);
     expect(CUSTOM_ASSET_KEYS).toMatch(/asset\.content_hash = entry ->> 'contenthash'/);
+  });
+
+  it("clones custom and registered recipe asset provenance only into candidate edit versions", () => {
+    expect(EDIT_ASSET_PROVENANCE).toMatch(/create table public\.storefront_recipe_asset_registry/);
+    expect(EDIT_ASSET_PROVENANCE).toMatch(/create table public\.storefront_bundle_recipe_asset/);
+    expect(EDIT_ASSET_PROVENANCE).toMatch(/create function public\.clone_storefront_bundle_asset_provenance/);
+    expect(EDIT_ASSET_PROVENANCE).toMatch(/v_target\.status <> 'candidate'/);
+    expect(EDIT_ASSET_PROVENANCE).toMatch(/v_source\.status <> 'validated'/);
+    expect(EDIT_ASSET_PROVENANCE).toMatch(/registry\.content_hash = entry ->> 'contenthash'/);
+    expect(EDIT_ASSET_PROVENANCE).toMatch(/asset\.asset_key = source_ref\.asset_key/);
+    expect(EDIT_ASSET_PROVENANCE).toMatch(/target_ref\.logical_key = entry ->> 'key'/);
+  });
+
+  it("requires every custom manifest entry to have exactly one verified owned or recipe-static provenance row", () => {
+    const installable = EDIT_ASSET_PROVENANCE.match(/function public\.storefront_assert_installable[\s\S]+?\$\$;/)?.[0] ?? "";
+    expect(installable).toMatch(/v_owned_reference_count \+ v_recipe_reference_count <> v_manifest_count/);
+    expect(installable).toMatch(/storefront_bundle_recipe_asset/);
+    expect(installable).toMatch(/storefront_recipe_asset_registry/);
+    expect(installable).toMatch(/asset_manifest_mismatch/);
   });
 });

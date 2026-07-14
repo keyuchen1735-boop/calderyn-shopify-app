@@ -7,6 +7,7 @@ const SHOP = "11111111-1111-1111-1111-111111111111";
 const ACTOR = "22222222-2222-2222-2222-222222222222";
 const BASE = "33333333-3333-3333-3333-333333333333";
 const RESULT = "44444444-4444-4444-4444-444444444444";
+const RESTORED = "55555555-5555-5555-5555-555555555555";
 const baseBundle = () => compileBundle(structuredClone(VALID_BUNDLE_SOURCE)).bundle;
 
 function dependencies(bundle = baseBundle()) {
@@ -17,6 +18,8 @@ function dependencies(bundle = baseBundle()) {
     compileStructuralPatch: vi.fn(),
     validate: vi.fn().mockReturnValue({ profileVersion: 1, ok: true, diagnostics: [] }),
     createVersion: vi.fn().mockResolvedValue(RESULT),
+    cloneAssetProvenance: vi.fn().mockResolvedValue(undefined),
+    validateVersion: vi.fn().mockResolvedValue(RESULT),
     hashArtifact: vi.fn().mockResolvedValue(`sha256:${"b".repeat(64)}`),
     editDraft: vi.fn().mockResolvedValue(RESULT),
     randomId: vi.fn().mockReturnValue("edit-generation"),
@@ -56,6 +59,7 @@ describe("editStorefrontByPrompt", () => {
     const recipe = baseBundle();
     recipe.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
     const productBefore = structuredClone(recipe.routes.product);
+    recipe.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
     const deps = dependencies(recipe);
     const homeTarget = recipe.routes.home.tree[0];
     if (homeTarget.kind !== "element") throw new Error("fixture");
@@ -78,6 +82,37 @@ describe("editStorefrontByPrompt", () => {
     expect(result.bundle.routes.product).toEqual(productBefore);
     expect(deps.compileStructuralPatch).toHaveBeenCalledTimes(1);
     expect(deps.preflight).toHaveBeenCalledWith({ shopId: SHOP, prompt: "Turn the home opening into an editorial composition", trusted: false });
+    expect(deps.createVersion).toHaveBeenCalledWith(expect.objectContaining({
+      sourceKind: "custom",
+      status: "candidate",
+      validationReport: null,
+    }));
+    expect(deps.cloneAssetProvenance).toHaveBeenCalledWith({ shopId: SHOP, sourceVersionId: BASE, targetVersionId: RESULT });
+    expect(deps.validateVersion).toHaveBeenCalledWith(expect.objectContaining({
+      shopId: SHOP,
+      versionId: RESULT,
+      validationReport: expect.objectContaining({ valid: true }),
+    }));
+    expect(vi.mocked(deps.cloneAssetProvenance).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.validateVersion).mock.invocationCallOrder[0]!,
+    );
+    expect(vi.mocked(deps.validateVersion).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.editDraft).mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("clones verified logical asset references before validating an edited custom version", async () => {
+    const custom = baseBundle();
+    custom.assets.entries = [{ key: "hero", contentHash: "b".repeat(64), mediaType: "image/webp", byteSize: 84 }];
+    const deps = dependencies(custom);
+
+    await editStorefrontByPrompt({
+      shopId: SHOP, actorId: ACTOR, prompt: "Make the accent #ff5500", expectedDraftVersionId: BASE,
+    }, deps);
+
+    expect(deps.createVersion).toHaveBeenCalledWith(expect.objectContaining({ sourceKind: "custom", status: "candidate" }));
+    expect(deps.cloneAssetProvenance).toHaveBeenCalledWith({ shopId: SHOP, sourceVersionId: BASE, targetVersionId: RESULT });
+    expect(deps.validateVersion).toHaveBeenCalledWith(expect.objectContaining({ versionId: RESULT }));
   });
 
   it("returns no-change on validation failure and never writes a version or audit", async () => {
@@ -136,20 +171,28 @@ describe("editStorefrontByPrompt", () => {
 });
 
 describe("undoStorefrontEdit", () => {
-  it("CAS-installs the recorded base version and records an atomic undo audit", async () => {
+  it("creates a fresh immutable restore version with cloned provenance before the atomic undo CAS", async () => {
     const deps = dependencies();
     vi.mocked(deps.loadDraft).mockResolvedValue({ versionId: RESULT, artifactHash: `sha256:${"b".repeat(64)}`, bundle: baseBundle() });
+    vi.mocked(deps.createVersion).mockResolvedValue(RESTORED);
+    vi.mocked(deps.validateVersion).mockResolvedValue(RESTORED);
     const result = await undoStorefrontEdit({
       shopId: SHOP, actorId: ACTOR, expectedDraftVersionId: RESULT, targetVersionId: BASE,
     }, deps);
-    expect(result).toEqual({ status: "installed", versionId: BASE, undoneVersionId: RESULT });
+    expect(result).toEqual({ status: "installed", versionId: RESTORED, undoneVersionId: RESULT });
+    expect(deps.createVersion).toHaveBeenCalledWith(expect.objectContaining({
+      sourceKind: "custom",
+      status: "candidate",
+      resolution: { kind: "undo", restoredFromVersionId: BASE, undoneVersionId: RESULT },
+    }));
+    expect(deps.cloneAssetProvenance).toHaveBeenCalledWith({ shopId: SHOP, sourceVersionId: BASE, targetVersionId: RESTORED });
+    expect(deps.validateVersion).toHaveBeenCalledWith(expect.objectContaining({ versionId: RESTORED }));
     expect(deps.editDraft).toHaveBeenCalledWith(expect.objectContaining({
       baseVersionId: RESULT,
-      resultVersionId: BASE,
+      resultVersionId: RESTORED,
       expectedDraftVersionId: RESULT,
       prompt: "Undo storefront edit",
       patch: { operations: [{ kind: "restoreVersion", versionId: BASE }] },
     }));
-    expect(deps.createVersion).not.toHaveBeenCalled();
   });
 });

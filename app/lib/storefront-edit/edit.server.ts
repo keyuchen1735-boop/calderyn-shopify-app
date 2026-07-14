@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
 import { assertCanGenerate } from "~/lib/storegen/guard.server";
 import { CalderynError } from "~/lib/calderyn.server";
+import { cloneStorefrontBundleAssetProvenance } from "../storefront-bundle/assets.server";
 import { createAnthropicStructuredProvider } from "../storefront-ai/provider.server";
 import type { StorefrontAiProvider } from "../storefront-ai/contracts";
 import {
@@ -9,8 +10,10 @@ import {
   editStorefrontDraft,
   hashStorefrontArtifact,
   StorefrontReleaseError,
+  validateStorefrontBundleVersion,
   type CreateStorefrontBundleVersionInput,
   type EditStorefrontDraftInput,
+  type ValidateStorefrontBundleVersionInput,
 } from "../storefront-bundle/release.server";
 import type { StorefrontBundleV1, StorefrontRouteId } from "../storefront-bundle/types";
 import { validateCompiledBundle, type BundleValidationReport } from "../storefront-compiler/validate";
@@ -44,6 +47,8 @@ export interface StorefrontEditDependencies {
   }): Promise<CompiledStorefrontPatch>;
   validate(bundle: StorefrontBundleV1): BundleValidationReport;
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
+  cloneAssetProvenance(input: { shopId: string; sourceVersionId: string; targetVersionId: string }): Promise<void>;
+  validateVersion(input: ValidateStorefrontBundleVersionInput): Promise<string>;
   hashArtifact(input: {
     schemaVersion: number;
     runtimeVersion: number;
@@ -166,6 +171,8 @@ const defaultDependencies: StorefrontEditDependencies = {
   compileStructuralPatch: (input) => createDefaultStructuralPatchCompiler()(input),
   validate: validateCompiledBundle,
   createVersion: createStorefrontBundleVersion,
+  cloneAssetProvenance: cloneStorefrontBundleAssetProvenance,
+  validateVersion: validateStorefrontBundleVersion,
   hashArtifact: hashStorefrontArtifact,
   editDraft: editStorefrontDraft,
   randomId: randomUUID,
@@ -183,6 +190,51 @@ function recipeFields(bundle: StorefrontBundleV1) {
   return bundle.source.kind === "recipe"
     ? { sourceKind: "recipe" as const, templateId: bundle.source.templateId, templateVersion: bundle.source.templateVersion }
     : { sourceKind: "custom" as const, templateId: null, templateVersion: null };
+}
+
+function databaseValidationReport(validation: BundleValidationReport): Record<string, unknown> {
+  return { ...validation, valid: validation.ok } as unknown as Record<string, unknown>;
+}
+
+async function createValidatedEditVersion(input: {
+  shopId: string;
+  sourceVersionId: string;
+  bundle: StorefrontBundleV1;
+  artifact: Record<string, unknown>;
+  artifactHash: string;
+  validation: BundleValidationReport;
+  generationPrompt: string;
+  resolution: Record<string, unknown>;
+}, dependencies: StorefrontEditDependencies): Promise<string> {
+  const custom = input.bundle.source.kind === "custom";
+  const validationReport = databaseValidationReport(input.validation);
+  const versionId = await dependencies.createVersion({
+    shopId: input.shopId,
+    ...recipeFields(input.bundle),
+    status: custom ? "candidate" : "validated",
+    schemaVersion: input.bundle.schemaVersion,
+    runtimeVersion: input.bundle.runtimeVersion,
+    validationProfileVersion: input.bundle.validationProfileVersion,
+    artifact: input.artifact,
+    assetManifest: input.bundle.assets as unknown as Record<string, unknown>,
+    validationReport: custom ? null : validationReport,
+    generationPrompt: input.generationPrompt,
+    resolution: input.resolution,
+  });
+  if (custom) {
+    await dependencies.cloneAssetProvenance({
+      shopId: input.shopId,
+      sourceVersionId: input.sourceVersionId,
+      targetVersionId: versionId,
+    });
+    await dependencies.validateVersion({
+      shopId: input.shopId,
+      versionId,
+      artifactHash: input.artifactHash,
+      validationReport,
+    });
+  }
+  return versionId;
 }
 
 function mapError(error: unknown): never {
@@ -249,19 +301,16 @@ export async function editStorefrontByPrompt(
       artifact,
       assetManifest: applied.bundle.assets as unknown as Record<string, unknown>,
     });
-    const versionId = await dependencies.createVersion({
+    const versionId = await createValidatedEditVersion({
       shopId: input.shopId,
-      ...recipeFields(applied.bundle),
-      status: "validated",
-      schemaVersion: applied.bundle.schemaVersion,
-      runtimeVersion: applied.bundle.runtimeVersion,
-      validationProfileVersion: applied.bundle.validationProfileVersion,
+      sourceVersionId: base.versionId,
+      bundle: applied.bundle,
       artifact,
-      assetManifest: applied.bundle.assets as unknown as Record<string, unknown>,
-      validationReport: validation as unknown as Record<string, unknown>,
+      artifactHash: resultHash,
+      validation,
       generationPrompt: input.prompt,
       resolution: { kind: "edit", baseVersionId: base.versionId, detachedFromRecipe: detached },
-    });
+    }, dependencies);
     await dependencies.editDraft({
       shopId: input.shopId,
       baseVersionId: base.versionId,
@@ -303,21 +352,48 @@ export async function undoStorefrontEdit(
       throw new StorefrontEditError("storefront_edit_conflict", "The storefront draft changed before undo.", 409);
     }
     if (!target) throw new StorefrontEditError("storefront_undo_target_missing", "The undo version is no longer available.", 409);
+    const validation = dependencies.validate(target.bundle);
+    if (!validation.ok) {
+      throw new StorefrontEditError(
+        "storefront_undo_target_invalid",
+        "The undo version no longer passes storefront validation.",
+        409,
+        validation.diagnostics,
+      );
+    }
+    const artifact = { sourceKind: target.bundle.source.kind, bundle: target.bundle };
+    const resultHash = await dependencies.hashArtifact({
+      schemaVersion: target.bundle.schemaVersion,
+      runtimeVersion: target.bundle.runtimeVersion,
+      validationProfileVersion: target.bundle.validationProfileVersion,
+      artifact,
+      assetManifest: target.bundle.assets as unknown as Record<string, unknown>,
+    });
+    const restoredVersionId = await createValidatedEditVersion({
+      shopId: input.shopId,
+      sourceVersionId: target.versionId,
+      bundle: target.bundle,
+      artifact,
+      artifactHash: resultHash,
+      validation,
+      generationPrompt: "Undo storefront edit",
+      resolution: { kind: "undo", restoredFromVersionId: target.versionId, undoneVersionId: current.versionId },
+    }, dependencies);
     await dependencies.editDraft({
       shopId: input.shopId,
       baseVersionId: current.versionId,
-      resultVersionId: target.versionId,
+      resultVersionId: restoredVersionId,
       expectedDraftVersionId: input.expectedDraftVersionId,
       actorId: input.actorId ?? null,
       baseArtifactHash: current.artifactHash,
-      resultArtifactHash: target.artifactHash,
+      resultArtifactHash: resultHash,
       prompt: "Undo storefront edit",
       scope: { kind: "undo", restoredVersionId: target.versionId },
       patch: { operations: [{ kind: "restoreVersion", versionId: target.versionId }] },
       provider: { kind: "deterministic", model: null },
-      validation: { reusedValidatedVersion: true },
+      validation: auditJson(validation),
     });
-    return { status: "installed", versionId: target.versionId, undoneVersionId: current.versionId };
+    return { status: "installed", versionId: restoredVersionId, undoneVersionId: current.versionId };
   } catch (error) {
     mapError(error);
   }

@@ -2,6 +2,7 @@ import type { DataRequirement, StorefrontBundleV1, StorefrontRouteId } from "~/l
 import { resolveVerifiedStorefrontAssetUrls } from "~/lib/storefront-bundle/assets.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
+import { getStorefrontRecipe, STOREFRONT_RECIPE_BY_ID } from "~/lib/storefront-recipes";
 import { isStorefrontBundleReadEnabled } from "./csp.server";
 import {
   resolvePublicData,
@@ -43,6 +44,40 @@ export interface StorefrontReleaseHistoryEntry {
 export interface StorefrontReleaseReader {
   readPublished(shopId: string): Promise<StorefrontVersionRecord | null>;
   readReleaseHistory(shopId: string): Promise<StorefrontReleaseHistoryEntry[]>;
+}
+
+function recipeDerivedStaticAssets(bundle: StorefrontBundleV1): {
+  urls: Readonly<Record<string, string>>;
+  ownedManifest: StorefrontBundleV1["assets"];
+} {
+  if (bundle.source.kind !== "custom" || !bundle.source.derivedFromTemplateId || !bundle.source.derivedFromTemplateVersion) {
+    return { urls: {}, ownedManifest: bundle.assets };
+  }
+  const templateId = bundle.source.derivedFromTemplateId;
+  if (!Object.hasOwn(STOREFRONT_RECIPE_BY_ID, templateId)) {
+    return { urls: {}, ownedManifest: bundle.assets };
+  }
+  const recipe = getStorefrontRecipe(templateId);
+  if (recipe.config.templateVersion !== bundle.source.derivedFromTemplateVersion) {
+    return { urls: {}, ownedManifest: bundle.assets };
+  }
+  const registered = new Map(recipe.bundle.assets.entries.map((entry) => [entry.key, entry]));
+  const staticEntries = new Set<string>();
+  for (const entry of bundle.assets.entries) {
+    const expected = registered.get(entry.key);
+    if (entry.mediaType === "image/webp" && expected &&
+      expected.contentHash === entry.contentHash && expected.mediaType === entry.mediaType && expected.byteSize === entry.byteSize) {
+      staticEntries.add(entry.key);
+    }
+  }
+  const urls = Object.fromEntries([...staticEntries].map((key) => [
+    key,
+    `/storefront-recipes/${templateId}/${key}.webp`,
+  ]));
+  return {
+    urls,
+    ownedManifest: { entries: bundle.assets.entries.filter((entry) => !staticEntries.has(entry.key)) },
+  };
 }
 
 type DatabaseVersionRow = {
@@ -330,27 +365,29 @@ export async function resolveRuntime1VersionRoute(input: {
     : null;
   if (!bundle) return null;
   const routeId = routeIdForPublicContext(input.route);
+  const derivedStaticAssets = recipeDerivedStaticAssets(bundle);
   const [data, storefrontAssetUrls] = await Promise.all([
     resolvePublicData({
       shopId: input.shopId,
       route: input.route,
       requiredData: routeRequirements(bundle, input.route),
     }, input.dataDependencies),
-    bundle.source.kind === "custom" && bundle.assets.entries.length > 0
+    bundle.source.kind === "custom" && derivedStaticAssets.ownedManifest.entries.length > 0
       ? (input.assetUrlLoader ?? resolveVerifiedStorefrontAssetUrls)({
           shopId: input.shopId,
           bundleId: input.version.id,
-          manifest: bundle.assets,
+          manifest: derivedStaticAssets.ownedManifest,
         })
       : Promise.resolve({}),
   ]);
+  const resolvedAssetUrls = { ...derivedStaticAssets.urls, ...storefrontAssetUrls };
   return {
     runtime: 1,
     bundleId: input.version.id,
     artifactHash: input.version.artifactHash,
     routeId,
     bundle,
-    data: Object.keys(storefrontAssetUrls).length > 0 ? { ...data, storefrontAssetUrls } : data,
+    data: Object.keys(resolvedAssetUrls).length > 0 ? { ...data, storefrontAssetUrls: resolvedAssetUrls } : data,
   };
 }
 

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   attachVerifiedStorefrontAsset,
+  cloneStorefrontBundleAssetProvenance,
   beginStorefrontAssetGarbageCollection,
   finalizeStorefrontAssetGarbageCollection,
   deleteStorefrontAssetGeneration,
@@ -49,6 +50,19 @@ describe("storefront bundle asset repository", () => {
       p_logical_key: "hero",
       p_asset_key: assetKey,
     }));
+  });
+
+  it("clones only database-verified asset provenance between immutable bundle versions", async () => {
+    await cloneStorefrontBundleAssetProvenance({
+      shopId: SHOP,
+      sourceVersionId: "33333333-3333-3333-3333-333333333333",
+      targetVersionId: BUNDLE,
+    });
+    expect(rpc).toHaveBeenCalledWith("clone_storefront_bundle_asset_provenance", {
+      p_shop_id: SHOP,
+      p_source_bundle_id: "33333333-3333-3333-3333-333333333333",
+      p_target_bundle_id: BUNDLE,
+    });
   });
 
   it("rejects any caller-supplied key that disagrees with the derived immutable key", async () => {

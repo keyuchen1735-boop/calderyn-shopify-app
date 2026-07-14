@@ -120,6 +120,24 @@ export async function attachVerifiedStorefrontAsset(input: {
   });
 }
 
+/**
+ * Copy immutable asset provenance from one validated version into a custom
+ * candidate. The database verifies both owned object metadata and pinned
+ * recipe-static identities; callers never choose the copied object keys.
+ */
+export async function cloneStorefrontBundleAssetProvenance(input: {
+  shopId: string;
+  sourceVersionId: string;
+  targetVersionId: string;
+}): Promise<void> {
+  await assertStorefrontWriteAllowed(input.shopId);
+  await assetRpc("clone_storefront_bundle_asset_provenance", {
+    p_shop_id: input.shopId,
+    p_source_bundle_id: input.sourceVersionId,
+    p_target_bundle_id: input.targetVersionId,
+  });
+}
+
 const STOREFRONT_ASSET_URL_TTL_SECONDS = 60 * 60;
 
 export async function resolveVerifiedStorefrontAssetUrls(input: {
