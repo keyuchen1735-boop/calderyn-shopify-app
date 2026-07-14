@@ -3,6 +3,7 @@ import { compileBundle } from "../storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "../storefront-compiler/__fixtures__/valid-bundle";
 import {
   STOREFRONT_PROOF_ROUTES,
+  isSupportedStorefrontProofLink,
   STOREFRONT_PROOF_VIEWPORTS,
   buildStorefrontProofCases,
   measureStorefrontBundle,
@@ -46,6 +47,13 @@ describe("storefront browser proof matrix", () => {
     expect(policies).toHaveLength(4);
     expect(policies.every((policy) => policy.body.length > 40 && policy.updatedAt.length > 0)).toBe(true);
     expect(createStorefrontProofData("home").policyLinks).toEqual(storefrontPolicyLinks(policies));
+  });
+
+  it("treats exact storefront policy URLs as supported internal routes", () => {
+    expect(isSupportedStorefrontProofLink("/storefront/policies/shipping")).toBe(true);
+    expect(isSupportedStorefrontProofLink("/storefront/policies/refund?from=checkout")).toBe(true);
+    expect(isSupportedStorefrontProofLink("/storefront/policies/invented")).toBe(false);
+    expect(isSupportedStorefrontProofLink("/admin/policies/shipping")).toBe(false);
   });
 
   it("fails closed when DOM, CSS, interaction, route, or full-bundle budgets are exceeded", () => {

@@ -36,7 +36,12 @@ const PROOF_NONCE = "storefront-proof-nonce";
 const ROUTE_BYTES_LIMIT = 250 * 1024;
 const INTERACTION_BYTES_LIMIT = 40 * 1024;
 const FULL_BUNDLE_BYTES_LIMIT = 1.5 * 1024 * 1024;
+const STOREFRONT_PROOF_ROUTE_RE = /^\/storefront(?:\/(?:collections|products|search|cart|checkout|account)(?:[/?#].*)?|\/policies\/(?:privacy|terms|refund|shipping)\/?(?:[?#].*)?)?$/;
 let proofRuntimeSource: Promise<string> | undefined;
+
+export function isSupportedStorefrontProofLink(href: string): boolean {
+  return STOREFRONT_PROOF_ROUTE_RE.test(href);
+}
 
 export interface StorefrontProofCase {
   routeId: StorefrontRouteId;
@@ -347,7 +352,7 @@ interface PageAuditResult {
 async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: StorefrontRouteId, axe: string): Promise<PageAuditResult> {
   const route = routeId === "checkout" ? null : bundle.routes[routeId];
   await page.evaluate(axe);
-  return page.evaluate(async ({ transitions, route }) => {
+  return page.evaluate(async ({ transitions, route, supportedRoutePattern }) => {
     const visible = (element: HTMLElement) => {
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
@@ -360,7 +365,7 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
     });
     const images = [...document.images];
     const imageFailures = images.filter((image) => Boolean(image.currentSrc || image.getAttribute("src")) && image.complete && image.naturalWidth === 0).map((image) => image.currentSrc || image.src);
-    const allowed = /^\/storefront(?:\/(?:collections|products|search|cart|checkout|account)(?:[/?#].*)?)?$/;
+    const allowed = new RegExp(supportedRoutePattern);
     const deadLinks = [...document.querySelectorAll<HTMLAnchorElement>("a[href]")]
       .filter((link) => !link.closest("[data-cd-platform-content='policyLinks']"))
       .map((link) => link.getAttribute("href") ?? "")
@@ -457,7 +462,11 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
       lcp: paints.at(-1)?.startTime ?? 0,
       longTask: Math.max(0, ...tasks.map((entry) => entry.duration)),
     };
-  }, { transitions: route?.interactions.transitions ?? [], route: routeId });
+  }, {
+    transitions: route?.interactions.transitions ?? [],
+    route: routeId,
+    supportedRoutePattern: STOREFRONT_PROOF_ROUTE_RE.source,
+  });
 }
 
 async function pixelDiffRatio(page: Page, current: Buffer, baseline: Buffer): Promise<number> {
