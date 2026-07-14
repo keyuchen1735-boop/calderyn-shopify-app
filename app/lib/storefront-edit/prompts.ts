@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CompiledNode, StorefrontBundleV1, StorefrontRouteId } from "../storefront-bundle/types";
-import type { PreviewEditContext } from "./types";
+import type { PreviewEditContext, StructuralPatchScope } from "./types";
 
 export const STOREFRONT_PATCH_SYSTEM_PROMPT = `You are a storefront patch compiler. Return typed patch operations only. Never return JavaScript, external URLs, customer data, storage keys, or a full storefront. Structural HTML and CSS are compiler source, not executable code. Use only compiler-issued IDs and verified owned asset logical keys in the provided scope. Include exact supplied SHA-256 preconditions. Preserve every unnamed route and region.`;
 
@@ -14,12 +14,14 @@ export function storefrontPatchPrompt(input: {
   bundle: StorefrontBundleV1;
   repair?: {
     attempt: 1;
+    scope: StructuralPatchScope;
     staticDiagnostics?: Array<{ code: string; path: string; message: string }>;
     browserProof?: { ok: boolean; diagnostics: Array<{ routeId: StorefrontRouteId; regionId?: string; code: string; message: string }> };
   };
 }): string {
-  const route = input.context?.routeId ?? "unspecified";
-  const region = input.context?.regionId ?? "unspecified";
+  const effectiveScope = input.context ?? input.repair?.scope;
+  const route = effectiveScope?.routeId ?? "unspecified";
+  const region = effectiveScope?.regionId ?? "unspecified";
   const routeIds: StorefrontRouteId[] = ["home", "collection", "product", "search", "cart", "checkout"];
   const ids = routeIds.map((routeId) => {
     const tree: CompiledNode[] = routeId === "checkout"
@@ -30,15 +32,15 @@ export function storefrontPatchPrompt(input: {
     const css = routeId === "checkout" ? input.bundle.routes.checkout.decorativeCss : input.bundle.routes[routeId].css;
     return `${routeId} (css ${digest(css)}): ${collect(tree).slice(0, 200).join(", ")}`;
   });
-  const selectedTree = input.context
+  const selectedTree = effectiveScope?.regionId
     ? (() => {
-        const tree = input.context.routeId === "checkout"
+        const tree = effectiveScope.routeId === "checkout"
           ? input.bundle.routes.checkout.decorativeTree
-          : input.bundle.routes[input.context.routeId].tree;
+          : input.bundle.routes[effectiveScope.routeId].tree;
         const find = (nodes: readonly CompiledNode[]): CompiledNode | null => {
           for (const node of nodes) {
             if (node.kind !== "element") continue;
-            if (node.id === input.context!.regionId) return node;
+            if (node.id === effectiveScope.regionId) return node;
             const nested = find(node.children);
             if (nested) return nested;
           }

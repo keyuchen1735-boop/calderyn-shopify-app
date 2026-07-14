@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import postcss from "postcss";
+import selectorParser from "postcss-selector-parser";
 import { assertSafeDesignTokenValue, compileCss } from "../storefront-compiler/css";
 import { isCompilerIdentifier } from "../storefront-compiler/assets";
 import { compileHtml, serializeCompiledTree, type ProtectedCssNode } from "../storefront-compiler/html";
@@ -305,6 +307,7 @@ function replaceRegion(
     throw new StorefrontPatchError("patch_source_invalid", error instanceof Error ? error.message : "Replacement compiler source is invalid");
   }
   const replacement = compiled.tree[0];
+  css = scopeRegionCss(css, replacement.id);
   const removed = descendantIds(target);
   const outside = allElementIds(route.tree);
   for (const id of removed) outside.delete(id);
@@ -340,6 +343,33 @@ function replaceRegion(
   };
 }
 
+function scopeRegionCss(css: string, replacementId: string): string {
+  if (!css.trim()) return css;
+  try {
+    const root = postcss.parse(css, { from: undefined });
+    root.walkRules((rule) => {
+      if (rule.parent?.type === "atrule" && rule.parent.name.toLowerCase() === "keyframes") return;
+      rule.selector = selectorParser((selectors) => {
+        selectors.each((selector) => {
+          const nodes = [...selector.nodes];
+          const bundleCombinator = nodes.findIndex((node, index) => index > 0 && node.type === "combinator");
+          if (bundleCombinator < 0) throw new StorefrontPatchError("patch_css_scope", "Replacement CSS lost its route scope");
+          if (nodes.slice(bundleCombinator + 1).some((node) => node.type === "combinator" && (node.value.trim() === "+" || node.value.trim() === "~"))) {
+            throw new StorefrontPatchError("patch_css_scope", "Replacement CSS cannot use sibling selectors outside its region");
+          }
+          let compoundEnd = bundleCombinator + 1;
+          while (compoundEnd + 1 < nodes.length && nodes[compoundEnd + 1]!.type !== "combinator") compoundEnd += 1;
+          selector.insertAfter(nodes[compoundEnd]!, selectorParser.id({ value: replacementId }));
+        });
+      }).processSync(rule.selector, { lossless: false });
+    });
+    return root.toString();
+  } catch (error) {
+    if (error instanceof StorefrontPatchError) throw error;
+    throw new StorefrontPatchError("patch_css_scope", error instanceof Error ? error.message : "Replacement CSS could not be region scoped");
+  }
+}
+
 function replaceRouteCss(
   bundle: StorefrontBundleV1,
   operation: Extract<StorefrontPatchOperation, { kind: "replaceRouteCss" }>,
@@ -364,7 +394,8 @@ function setText(route: EditableArtifact, target: CompiledElementNode, value: st
     throw new StorefrontPatchError("patch_text_invalid", "Edited text must be 1 to 500 safe characters");
   }
   const current = textValue(target);
-  if (expected !== undefined && current !== expected) {
+  const actualPrecondition = replaceAll ? digest(target) : current;
+  if (expected !== undefined && actualPrecondition !== expected) {
     throw new StorefrontPatchError("patch_precondition_failed", `Text ${target.id} changed before this edit`);
   }
   if (replaceAll) target.children = [{ kind: "text", value: clean }];
@@ -380,7 +411,10 @@ function hiddenClass(routeId: StorefrontRouteId): string {
   return `storefront-edit-hidden-${routeId}`;
 }
 
-function setVisibility(route: EditableArtifact, routeId: StorefrontRouteId, target: CompiledElementNode, hidden: boolean): void {
+function setVisibility(route: EditableArtifact, routeId: StorefrontRouteId, target: CompiledElementNode, hidden: boolean, expected?: string): void {
+  if (expected !== undefined && digest(target) !== expected) {
+    throw new StorefrontPatchError("patch_precondition_failed", `Region ${target.id} changed before this edit`);
+  }
   const className = hiddenClass(routeId);
   const classes = new Set((target.attributes.class ?? "").split(/\s+/).filter(Boolean));
   if (hidden) classes.add(className);
@@ -487,7 +521,7 @@ export function applyStorefrontPatch(
       }
       case "setVisibility": {
         const route = artifact(bundle, operation.routeId);
-        setVisibility(route, operation.routeId, assertTarget(route, operation.targetId), operation.hidden);
+        setVisibility(route, operation.routeId, assertTarget(route, operation.targetId), operation.hidden, operation.expected);
         routes.add(operation.routeId);
         break;
       }

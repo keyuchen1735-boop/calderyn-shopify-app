@@ -23,10 +23,12 @@ import { applyDeterministicStorefrontEdit } from "./deterministic";
 import { parseEditIntent } from "./intent";
 import { applyStorefrontPatch, StorefrontPatchError } from "./patch.server";
 import { STOREFRONT_PATCH_SYSTEM_PROMPT, storefrontPatchPrompt } from "./prompts";
+import { patchFitsRecipeOverride } from "./recipe-override";
 import type {
   CompiledStorefrontPatch,
   LoadedStorefrontDraft,
   PreviewEditContext,
+  StructuralPatchScope,
   StorefrontEditReceipt,
   StorefrontPatchOperation,
 } from "./types";
@@ -41,12 +43,13 @@ export class StorefrontEditError extends Error {
 export interface StorefrontEditDependencies {
   loadDraft(shopId: string): Promise<LoadedStorefrontDraft | null>;
   loadVersion(shopId: string, versionId: string): Promise<LoadedStorefrontDraft | null>;
+  loadEditAudit(input: { shopId: string; resultVersionId: string }): Promise<{ baseVersionId: string; resultVersionId: string } | null>;
   preflight(input: { shopId: string; prompt: string; trusted: boolean }): Promise<void>;
   compileStructuralPatch(input: {
     prompt: string;
     context?: PreviewEditContext;
     bundle: StorefrontBundleV1;
-    repair?: { attempt: 1; staticDiagnostics?: BundleValidationReport["diagnostics"]; browserProof?: BrowserProofReport };
+    repair?: { attempt: 1; scope: StructuralPatchScope; staticDiagnostics?: BundleValidationReport["diagnostics"]; browserProof?: BrowserProofReport };
   }): Promise<CompiledStorefrontPatch>;
   validate(bundle: StorefrontBundleV1): BundleValidationReport;
   loadProofContext(input: { shopId: string; prompt: string }): Promise<MerchantStorefrontContext>;
@@ -107,6 +110,18 @@ async function loadDraft(shopId: string): Promise<LoadedStorefrontDraft | null> 
   return typeof id === "string" ? loadVersion(shopId, id) : null;
 }
 
+async function loadEditAudit(input: { shopId: string; resultVersionId: string }): Promise<{ baseVersionId: string; resultVersionId: string } | null> {
+  const result = await getSupabase()
+    .from("storefront_bundle_edit")
+    .select("base_version_id, result_version_id")
+    .eq("shop_id", input.shopId)
+    .eq("result_version_id", input.resultVersionId)
+    .maybeSingle();
+  if (result.error) throw result.error;
+  if (!result.data) return null;
+  return { baseVersionId: String(result.data.base_version_id), resultVersionId: String(result.data.result_version_id) };
+}
+
 const PATCH_SCHEMA: Record<string, unknown> = {
   type: "object",
   additionalProperties: false,
@@ -118,18 +133,20 @@ const PATCH_SCHEMA: Record<string, unknown> = {
         oneOf: [
           {
             type: "object", additionalProperties: false,
-            required: ["kind", "routeId", "targetId", "value"],
+            required: ["kind", "routeId", "targetId", "value", "expected"],
             properties: {
               kind: { const: "replaceTextChildren" }, routeId: { enum: ["home", "collection", "product", "search", "cart", "checkout"] },
               targetId: { type: "string", maxLength: 120 }, value: { type: "string", minLength: 1, maxLength: 500 },
+              expected: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
             },
           },
           {
             type: "object", additionalProperties: false,
-            required: ["kind", "routeId", "targetId", "hidden"],
+            required: ["kind", "routeId", "targetId", "hidden", "expected"],
             properties: {
               kind: { const: "setVisibility" }, routeId: { enum: ["home", "collection", "product", "search", "cart", "checkout"] },
               targetId: { type: "string", maxLength: 120 }, hidden: { type: "boolean" },
+              expected: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
             },
           },
           {
@@ -163,27 +180,32 @@ const PATCH_SCHEMA: Record<string, unknown> = {
   },
 };
 
-function parseProviderOperations(value: unknown, context?: PreviewEditContext): StorefrontPatchOperation[] {
+function parseProviderOperations(value: unknown, scope?: StructuralPatchScope): StorefrontPatchOperation[] {
   if (!value || typeof value !== "object" || !Array.isArray((value as { operations?: unknown }).operations)) {
     throw new StorefrontEditError("storefront_patch_invalid", "The patch compiler returned an invalid operation list.", 502);
   }
   const operations = (value as { operations: unknown[] }).operations;
   if (operations.length < 1 || operations.length > 12) throw new StorefrontEditError("storefront_patch_invalid", "The patch compiler returned too many operations.", 502);
-  return operations.map((candidate): StorefrontPatchOperation => {
+  const parsed = operations.map((candidate): StorefrontPatchOperation => {
     if (!candidate || typeof candidate !== "object") throw new StorefrontEditError("storefront_patch_invalid", "A patch operation was malformed.", 502);
     const op = candidate as Record<string, unknown>;
     if (!new Set(["home", "collection", "product", "search", "cart", "checkout"]).has(String(op.routeId))) {
       throw new StorefrontEditError("storefront_patch_invalid", "A patch route was not allowed.", 502);
     }
     const routeId = op.routeId as StorefrontRouteId;
-    if (context && (routeId !== context.routeId || (op.kind !== "replaceRouteCss" && op.targetId !== context.regionId))) {
+    if (scope && routeId !== scope.routeId) {
       throw new StorefrontEditError("storefront_patch_scope", "The patch compiler attempted to edit outside the selected preview region.", 502);
     }
-    if (op.kind === "replaceTextChildren" && typeof op.targetId === "string" && typeof op.value === "string") {
-      return { kind: "replaceTextChildren", routeId, targetId: op.targetId, value: op.value };
+    if (scope?.regionId && (op.kind === "replaceRouteCss" || op.targetId !== scope.regionId)) {
+      throw new StorefrontEditError("storefront_patch_scope", "The patch compiler attempted to edit outside the selected preview region.", 502);
     }
-    if (op.kind === "setVisibility" && typeof op.targetId === "string" && typeof op.hidden === "boolean") {
-      return { kind: "setVisibility", routeId, targetId: op.targetId, hidden: op.hidden };
+    if (op.kind === "replaceTextChildren" && typeof op.targetId === "string" && typeof op.value === "string" &&
+        typeof op.expected === "string" && /^sha256:[a-f0-9]{64}$/.test(op.expected)) {
+      return { kind: "replaceTextChildren", routeId, targetId: op.targetId, value: op.value, expected: op.expected };
+    }
+    if (op.kind === "setVisibility" && typeof op.targetId === "string" && typeof op.hidden === "boolean" &&
+        typeof op.expected === "string" && /^sha256:[a-f0-9]{64}$/.test(op.expected)) {
+      return { kind: "setVisibility", routeId, targetId: op.targetId, hidden: op.hidden, expected: op.expected };
     }
     if (op.kind === "replaceRegion" && routeId !== "checkout" && typeof op.targetId === "string" &&
         typeof op.expected === "string" && /^sha256:[a-f0-9]{64}$/.test(op.expected) &&
@@ -202,6 +224,10 @@ function parseProviderOperations(value: unknown, context?: PreviewEditContext): 
     }
     throw new StorefrontEditError("storefront_patch_invalid", "A patch operation kind was not allowed.", 502);
   });
+  if (new Set(parsed.map((operation) => "routeId" in operation ? operation.routeId : null).filter(Boolean)).size > 1) {
+    throw new StorefrontEditError("storefront_patch_scope", "A storefront edit may change only one route at a time.", 502);
+  }
+  return parsed;
 }
 
 export function createDefaultStructuralPatchCompiler(provider?: StorefrontAiProvider) {
@@ -209,7 +235,7 @@ export function createDefaultStructuralPatchCompiler(provider?: StorefrontAiProv
     prompt: string;
     context?: PreviewEditContext;
     bundle: StorefrontBundleV1;
-    repair?: { attempt: 1; staticDiagnostics?: BundleValidationReport["diagnostics"]; browserProof?: BrowserProofReport };
+    repair?: { attempt: 1; scope: StructuralPatchScope; staticDiagnostics?: BundleValidationReport["diagnostics"]; browserProof?: BrowserProofReport };
   }): Promise<CompiledStorefrontPatch> => {
     const response = await (provider ?? createAnthropicStructuredProvider()).complete({
       operation: "patch",
@@ -218,7 +244,7 @@ export function createDefaultStructuralPatchCompiler(provider?: StorefrontAiProv
       schema: PATCH_SCHEMA,
     });
     return {
-      operations: parseProviderOperations(response.value, input.context),
+      operations: parseProviderOperations(response.value, input.context ?? input.repair?.scope),
       provider: { kind: "ai_patch", provider: response.provider, model: response.model, usage: response.usage },
     };
   };
@@ -227,6 +253,7 @@ export function createDefaultStructuralPatchCompiler(provider?: StorefrontAiProv
 const defaultDependencies: StorefrontEditDependencies = {
   loadDraft,
   loadVersion,
+  loadEditAudit,
   preflight: ({ shopId, prompt, trusted }) => assertCanGenerate(shopId, prompt, { trusted }),
   compileStructuralPatch: (input) => createDefaultStructuralPatchCompiler()(input),
   validate: validateCompiledBundle,
@@ -245,6 +272,17 @@ function promptHash(prompt: string): string {
   return `sha256:${createHash("sha256").update(prompt.trim()).digest("hex")}`;
 }
 
+function catalogFingerprint(context: MerchantStorefrontContext): string {
+  if (!Array.isArray(context.collections) || !Array.isArray(context.products)) return context.fingerprint;
+  const catalog = {
+    collections: context.collections.map(({ id, handle, productCount }) => ({ id, handle, productCount })),
+    products: context.products.map(({ id, handle, productType, tags, optionNames, availability, collectionIds }) => ({
+      id, handle, productType, tags, optionNames, availability, collectionIds: collectionIds ?? [],
+    })),
+  };
+  return `sha256:${createHash("sha256").update(JSON.stringify(catalog)).digest("hex")}`;
+}
+
 function auditJson(value: object): Record<string, unknown> {
   return value as unknown as Record<string, unknown>;
 }
@@ -257,6 +295,70 @@ function recipeFields(bundle: StorefrontBundleV1) {
 
 function databaseValidationReport(validation: BundleValidationReport): Record<string, unknown> {
   return { ...validation, valid: validation.ok } as unknown as Record<string, unknown>;
+}
+
+interface EditAttemptAudit {
+  attempt: number;
+  patch: CompiledStorefrontPatch;
+  staticDiagnostics: BundleValidationReport["diagnostics"];
+  browserDiagnostics: BrowserProofReport["diagnostics"];
+  browserMs: number;
+}
+
+function boundedDiagnostics<T extends { code: string; message: string }>(diagnostics: readonly T[]): T[] {
+  return diagnostics.slice(0, 24).map((diagnostic) => ({
+    ...diagnostic,
+    code: diagnostic.code.slice(0, 120),
+    message: diagnostic.message.slice(0, 500),
+  }));
+}
+
+function operationSummary(operation: StorefrontPatchOperation): Record<string, unknown> {
+  if (operation.kind === "replaceRegion") {
+    return {
+      kind: operation.kind,
+      routeId: operation.routeId,
+      targetId: operation.targetId,
+      expected: operation.expected,
+      sourceHash: promptHash(`${operation.source.html}\u0000${operation.source.css}`),
+      htmlBytes: Buffer.byteLength(operation.source.html),
+      cssBytes: Buffer.byteLength(operation.source.css),
+    };
+  }
+  if (operation.kind === "replaceRouteCss") {
+    return {
+      kind: operation.kind,
+      routeId: operation.routeId,
+      expected: operation.expected,
+      cssHash: promptHash(operation.css),
+      cssBytes: Buffer.byteLength(operation.css),
+    };
+  }
+  return { ...operation } as unknown as Record<string, unknown>;
+}
+
+function repairScopeFromStatic(
+  diagnostics: BundleValidationReport["diagnostics"],
+  selected?: PreviewEditContext,
+): { scope: StructuralPatchScope; diagnostics: BundleValidationReport["diagnostics"] } | null {
+  const diagnostic = diagnostics.find((entry) => /^routes\.(home|collection|product|search|cart|checkout)(?:\.|$)/.test(entry.path));
+  const routeId = diagnostic?.path.match(/^routes\.(home|collection|product|search|cart|checkout)(?:\.|$)/)?.[1] as StorefrontRouteId | undefined;
+  if (!diagnostic || !routeId || (selected && selected.routeId !== routeId)) return null;
+  return { scope: { routeId, ...(selected?.regionId ? { regionId: selected.regionId } : {}) }, diagnostics: [diagnostic] };
+}
+
+function repairScopeFromBrowser(
+  proof: BrowserProofReport,
+  selected?: PreviewEditContext,
+): { scope: StructuralPatchScope; proof: BrowserProofReport } | null {
+  const diagnostic = proof.diagnostics[0];
+  if (!diagnostic || (selected && selected.routeId !== diagnostic.routeId) ||
+      (selected && diagnostic.regionId && selected.regionId !== diagnostic.regionId)) return null;
+  const scope: StructuralPatchScope = {
+    routeId: diagnostic.routeId,
+    ...(diagnostic.regionId ?? selected?.regionId ? { regionId: diagnostic.regionId ?? selected!.regionId } : {}),
+  };
+  return { scope, proof: { ...proof, diagnostics: [diagnostic] } };
 }
 
 async function proveEditBundle(
@@ -374,6 +476,8 @@ export async function editStorefrontByPrompt(
     let proofContext: MerchantStorefrontContext | null = null;
     let proofAssets: MaterializedAssetResult["proofAssets"] | null = null;
     let repairAttempted = false;
+    const attemptAudits: EditAttemptAudit[] = [];
+    const structuralContext = intent.kind === "structural" ? intent.context : undefined;
     for (;;) {
       applied = intent.kind === "deterministic"
         ? applyDeterministicStorefrontEdit(base.bundle, compiledPatch.operations)
@@ -381,7 +485,7 @@ export async function editStorefrontByPrompt(
       if (JSON.stringify(applied.bundle) === JSON.stringify(base.bundle)) {
         throw new StorefrontEditError("storefront_edit_no_change", "That request did not change the storefront.", 422);
       }
-      const shouldDetach = base.bundle.source.kind === "recipe" && (intent.kind === "structural" || applied.structural);
+      const shouldDetach = base.bundle.source.kind === "recipe" && !patchFitsRecipeOverride(base.bundle, compiledPatch.operations);
       if (shouldDetach && base.bundle.source.kind === "recipe") {
         applied.bundle.source = {
           kind: "custom",
@@ -394,13 +498,21 @@ export async function editStorefrontByPrompt(
       }
       validation = dependencies.validate(applied.bundle);
       if (!validation.ok) {
-        if (intent.kind === "structural" && !repairAttempted) {
+        attemptAudits.push({
+          attempt: attemptAudits.length + 1,
+          patch: compiledPatch,
+          staticDiagnostics: boundedDiagnostics(validation.diagnostics),
+          browserDiagnostics: [],
+          browserMs: 0,
+        });
+        const repair = intent.kind === "structural" ? repairScopeFromStatic(validation.diagnostics, structuralContext) : null;
+        if (repair && !repairAttempted) {
           repairAttempted = true;
           compiledPatch = await dependencies.compileStructuralPatch({
             prompt: input.prompt,
-            context: intent.context,
+            context: structuralContext,
             bundle: base.bundle,
-            repair: { attempt: 1, staticDiagnostics: validation.diagnostics },
+            repair: { attempt: 1, scope: repair.scope, staticDiagnostics: repair.diagnostics },
           });
           continue;
         }
@@ -412,26 +524,43 @@ export async function editStorefrontByPrompt(
           ? await dependencies.loadProofAssets({ shopId: input.shopId, versionId: base.versionId, manifest: base.bundle.assets })
           : [];
         browserProof = await proveEditBundle(applied.bundle, proofContext, proofAssets, dependencies);
+        attemptAudits.push({
+          attempt: attemptAudits.length + 1,
+          patch: compiledPatch,
+          staticDiagnostics: [],
+          browserDiagnostics: [],
+          browserMs: browserProof.browserMs,
+        });
         break;
       } catch (error) {
         const failedProof = error instanceof StorefrontEditError && error.details && typeof error.details === "object" &&
           "ok" in error.details && (error.details as BrowserProofReport).ok === false
           ? error.details as BrowserProofReport
           : null;
-        if (intent.kind === "structural" && !repairAttempted && failedProof) {
+        if (failedProof) {
+          attemptAudits.push({
+            attempt: attemptAudits.length + 1,
+            patch: compiledPatch,
+            staticDiagnostics: [],
+            browserDiagnostics: boundedDiagnostics(failedProof.diagnostics),
+            browserMs: failedProof.browserMs,
+          });
+        }
+        const repair = intent.kind === "structural" && failedProof ? repairScopeFromBrowser(failedProof, structuralContext) : null;
+        if (repair && !repairAttempted) {
           repairAttempted = true;
           compiledPatch = await dependencies.compileStructuralPatch({
             prompt: input.prompt,
-            context: intent.context,
+            context: structuralContext,
             bundle: base.bundle,
-            repair: { attempt: 1, browserProof: failedProof },
+            repair: { attempt: 1, scope: repair.scope, browserProof: repair.proof },
           });
           continue;
         }
         throw error;
       }
     }
-    const detached = base.bundle.source.kind === "recipe" && (intent.kind === "structural" || applied.structural);
+    const detached = base.bundle.source.kind === "recipe" && !patchFitsRecipeOverride(base.bundle, compiledPatch.operations);
     const artifact = { sourceKind: applied.bundle.source.kind, bundle: applied.bundle };
     const resultHash = await dependencies.hashArtifact({
       schemaVersion: applied.bundle.schemaVersion,
@@ -459,10 +588,41 @@ export async function editStorefrontByPrompt(
       baseArtifactHash: base.artifactHash,
       resultArtifactHash: resultHash,
       prompt: input.prompt,
-      scope: auditJson(applied.changedScope),
-      patch: { operations: compiledPatch.operations },
-      provider: auditJson(compiledPatch.provider),
-      validation: auditJson({ static: validation, browserProof }),
+      scope: auditJson({
+        ...applied.changedScope,
+        auditContractVersion: 1,
+        selectedScope: input.context ?? null,
+        compiler: {
+          schemaVersion: applied.bundle.schemaVersion,
+          runtimeVersion: applied.bundle.runtimeVersion,
+          validationProfileVersion: applied.bundle.validationProfileVersion,
+        },
+      }),
+      patch: {
+        contractVersion: 1,
+        operations: compiledPatch.operations,
+        attempts: attemptAudits.map((attempt) => ({ attempt: attempt.attempt, operations: attempt.patch.operations.map(operationSummary) })),
+      },
+      provider: auditJson({
+        ...compiledPatch.provider,
+        attempts: attemptAudits.map((attempt) => ({ attempt: attempt.attempt, ...attempt.patch.provider })),
+        totalUsage: attemptAudits.reduce((usage, attempt) => ({
+          inputTokens: usage.inputTokens + (attempt.patch.provider.usage?.inputTokens ?? 0),
+          outputTokens: usage.outputTokens + (attempt.patch.provider.usage?.outputTokens ?? 0),
+        }), { inputTokens: 0, outputTokens: 0 }),
+      }),
+      validation: auditJson({
+        static: validation,
+        browserProof,
+        proofContextFingerprint: proofContext?.fingerprint ?? null,
+        catalogFingerprint: proofContext ? catalogFingerprint(proofContext) : null,
+        attempts: attemptAudits.map((attempt) => ({
+          attempt: attempt.attempt,
+          staticDiagnostics: attempt.staticDiagnostics,
+          browserDiagnostics: attempt.browserDiagnostics,
+          browserMs: attempt.browserMs,
+        })),
+      }),
     });
     return {
       status: "installed",
@@ -484,13 +644,15 @@ export async function undoStorefrontEdit(
   dependencies: StorefrontEditDependencies = defaultDependencies,
 ): Promise<{ status: "installed"; versionId: string; undoneVersionId: string }> {
   try {
-    const [current, target] = await Promise.all([
-      dependencies.loadDraft(input.shopId),
-      dependencies.loadVersion(input.shopId, input.targetVersionId),
-    ]);
+    const current = await dependencies.loadDraft(input.shopId);
     if (!current || current.versionId !== input.expectedDraftVersionId) {
       throw new StorefrontEditError("storefront_edit_conflict", "The storefront draft changed before undo.", 409);
     }
+    const audit = await dependencies.loadEditAudit({ shopId: input.shopId, resultVersionId: current.versionId });
+    if (!audit || audit.resultVersionId !== current.versionId || audit.baseVersionId !== input.targetVersionId) {
+      throw new StorefrontEditError("storefront_undo_target_invalid", "The requested version is not the recorded base of the current storefront edit.", 409);
+    }
+    const target = await dependencies.loadVersion(input.shopId, input.targetVersionId);
     if (!target) throw new StorefrontEditError("storefront_undo_target_missing", "The undo version is no longer available.", 409);
     const validation = dependencies.validate(target.bundle);
     if (!validation.ok) {

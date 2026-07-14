@@ -14,10 +14,11 @@ describe("platform-owned commerce hosts", () => {
       hostSize: "block",
       themeTokenIds: ["ink"],
     };
-    const html = renderToStaticMarkup(<TrustedSlotHost slot={slot} instanceId={slot.id} authorityKey="product:p1" />);
+    const html = renderToStaticMarkup(<TrustedSlotHost slot={slot} instanceId={slot.id} compilerId={slot.id} authorityKey="product:p1" />);
     expect(html).toContain('data-cd-trusted-slot="addToCart"');
     expect(html).toContain('data-cd-shadow-mode="closed"');
     expect(html).toContain('data-cd-authority-key="product:p1"');
+    expect(html).toContain(`data-cd-compiler-id="${slot.id}"`);
     expect(html).not.toContain("dangerouslySetInnerHTML");
   });
 

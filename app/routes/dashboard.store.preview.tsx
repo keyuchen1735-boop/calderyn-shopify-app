@@ -276,18 +276,25 @@ export async function action({ request }: ActionFunctionArgs) {
   return json({ cart: adapter.cart() }, { headers });
 }
 
+export function previewCompilerId(target: Element): string | null {
+  const selected = target.closest<HTMLElement>("[data-cd-compiler-id]");
+  const compilerId = selected?.dataset.cdCompilerId;
+  return typeof compilerId === "string" && /^[a-zA-Z0-9_-]{1,120}$/.test(compilerId) ? compilerId : null;
+}
+
 export default function StoreDraftPreview() {
   const loaded = useLoaderData<typeof loader>();
   useEffect(() => {
     if (!isRuntime1RenderData(loaded)) return;
     const selectRegion = (event: MouseEvent) => {
-      const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[id^='cd-']") : null;
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-cd-compiler-id]") : null;
       const route = target?.closest<HTMLElement>("[data-cd-bundle-route]")?.dataset.cdBundleRoute;
-      if (!target || !route) return;
+      const compilerId = target ? previewCompilerId(target) : null;
+      if (!target || !route || !compilerId) return;
       window.parent.postMessage({
         type: "storefront-preview-region",
         routeId: route,
-        regionId: target.id.replace(/-[a-f0-9]{12}$/, ""),
+        regionId: compilerId,
       }, window.location.origin);
     };
     document.addEventListener("click", selectRegion, { capture: true });

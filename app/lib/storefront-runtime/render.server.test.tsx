@@ -221,6 +221,24 @@ describe("compiled-node server renderer", () => {
     expect(previewHtml.match(/id="cd-[^"]+"/g)).toEqual(publicHtml.match(/id="cd-[^"]+"/g));
     expect(previewHtml).toContain("/dashboard/store/preview?route=home");
     expect(publicHtml).toContain('href="/storefront"');
+    expect(publicHtml).toContain('data-cd-compiler-id="cd-shell-home-link"');
+    expect(publicHtml).toContain('data-cd-compiler-id="cd-home-');
+  });
+
+  it("keeps the canonical compiler ID on repeated DOM instances", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><section data-cd-repeat="featured.products"><article id="card" data-cd-key="product.id"><h2 id="title" data-cd-text="product.title"></h2></article></section></main>`;
+    const bundle = compileBundle(source).bundle;
+    const products = [
+      { ...publicProduct, id: "product-a", handle: "a", title: "A" },
+      { ...publicProduct, id: "product-b", handle: "b", title: "B" },
+    ];
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data: { ...data, featuredProducts: products }, nonce: "repeat", mode: "preview",
+    }));
+
+    expect(html.match(/data-cd-compiler-id="cd-home-card"/g)).toHaveLength(2);
+    expect(html.match(/id="cd-home-card-i-[^"]+"/g)).toHaveLength(2);
   });
 
   it("resolves each product.images repeat binding to that media item's URL and alt text", () => {

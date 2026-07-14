@@ -265,19 +265,28 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
         key={key}
         slot={slot}
         instanceId={instanceId}
+        compilerId={node.id}
         authorityKey={authorityKeyForSlot(slot, context)}
       />
     );
   }
 
   const props: Record<string, unknown> = { key };
-  for (const [name, value] of Object.entries(node.attributes)) props[reactAttributeName(name)] = value;
+  for (const [name, value] of Object.entries(node.attributes)) {
+    const reactName = reactAttributeName(name);
+    if (reactName === "value" && (node.tag === "input" || node.tag === "select" || node.tag === "textarea")) {
+      props.defaultValue = value;
+    } else {
+      props[reactName] = value;
+    }
+  }
   const assetKey = node.attributes["data-cd-asset-key"];
   if ((node.tag === "img" || node.tag === "source") && assetKey) {
     const assetUrl = context.assetUrls.get(assetKey);
     if (assetUrl) props.src = assetUrl;
   }
   props.id = context.instanceSuffix ? `${node.id}-${context.instanceSuffix}` : node.id;
+  props["data-cd-compiler-id"] = node.id;
   if (context.instanceSuffix) props["data-cd-instance"] = context.instanceSuffix;
   if (node.routeTarget) props.href = targetHref(node.routeTarget, context);
 

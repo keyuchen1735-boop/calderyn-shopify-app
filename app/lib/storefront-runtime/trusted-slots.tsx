@@ -3,14 +3,16 @@ import type { TrustedSlotManifest } from "~/lib/storefront-bundle/types";
 export interface TrustedSlotHostProps {
   slot: TrustedSlotManifest;
   instanceId: string;
+  compilerId: string;
   authorityKey: string;
 }
 
-export function TrustedSlotHost({ slot, instanceId, authorityKey }: TrustedSlotHostProps) {
+export function TrustedSlotHost({ slot, instanceId, compilerId, authorityKey }: TrustedSlotHostProps) {
   const instance = instanceId === slot.id ? undefined : instanceId.slice(slot.id.length + 1);
   return (
     <div
       id={instanceId}
+      data-cd-compiler-id={compilerId}
       data-cd-trusted-slot={slot.kind}
       data-cd-slot-scope={slot.scopeId ?? "root"}
       data-cd-authority-key={authorityKey}

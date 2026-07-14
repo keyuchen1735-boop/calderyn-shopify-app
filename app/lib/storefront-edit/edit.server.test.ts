@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { compileBundle } from "../storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "../storefront-compiler/__fixtures__/valid-bundle";
@@ -14,6 +15,7 @@ function dependencies(bundle = baseBundle()) {
   const deps: StorefrontEditDependencies = {
     loadDraft: vi.fn().mockResolvedValue({ versionId: BASE, artifactHash: `sha256:${"a".repeat(64)}`, bundle }),
     loadVersion: vi.fn().mockResolvedValue({ versionId: BASE, artifactHash: `sha256:${"a".repeat(64)}`, bundle }),
+    loadEditAudit: vi.fn().mockResolvedValue({ baseVersionId: BASE, resultVersionId: RESULT }),
     preflight: vi.fn().mockResolvedValue(undefined),
     compileStructuralPatch: vi.fn(),
     validate: vi.fn().mockReturnValue({ profileVersion: 1, ok: true, diagnostics: [] }),
@@ -54,10 +56,44 @@ describe("editStorefrontByPrompt", () => {
       expectedDraftVersionId: BASE,
       prompt: "Make the accent #ff5500",
       patch: expect.objectContaining({ operations: [expect.objectContaining({ kind: "setToken" })] }),
-      provider: { kind: "deterministic", model: null },
+      provider: expect.objectContaining({ kind: "deterministic", model: null }),
       validation: expect.objectContaining({ browserProof: expect.objectContaining({ ok: true, browserMs: 25 }) }),
     }));
     expect(vi.mocked(deps.prove).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(deps.createVersion).mock.invocationCallOrder[0]!);
+    const audit = vi.mocked(deps.editDraft).mock.calls[0]![0];
+    expect(audit.scope).toMatchObject({
+      selectedScope: null,
+      compiler: { schemaVersion: 1, runtimeVersion: 1, validationProfileVersion: 1 },
+    });
+    expect(audit.provider).toMatchObject({
+      attempts: [expect.objectContaining({ attempt: 1, kind: "deterministic" })],
+      totalUsage: { inputTokens: 0, outputTokens: 0 },
+    });
+    expect(audit.validation).toMatchObject({
+      proofContextFingerprint: "proof-context",
+      catalogFingerprint: "proof-context",
+      attempts: [expect.objectContaining({ attempt: 1, staticDiagnostics: [], browserDiagnostics: [] })],
+    });
+  });
+
+  it("detaches recipe text, visibility, and layout edits outside the declared semantic override surface", async () => {
+    const recipe = baseBundle();
+    recipe.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
+    const root = recipe.routes.home.tree[0]!;
+    if (root.kind !== "element") throw new Error("fixture root");
+    const arbitrary = root;
+    const deps = dependencies(recipe);
+
+    const result = await editStorefrontByPrompt({
+      shopId: SHOP,
+      prompt: `Set headline to "A deliberately different line"`,
+      expectedDraftVersionId: BASE,
+      context: { routeId: "home", regionId: arbitrary.id },
+    }, deps);
+
+    if (result.status !== "installed") throw new Error("expected installed edit");
+    expect(result.detachedFromRecipe).toBe(true);
+    expect(result.bundle.source).toMatchObject({ kind: "custom", derivedFromTemplateId: "atelier-nine" });
   });
 
   it("detaches a structural recipe edit, preserves untouched routes, and never regenerates the store", async () => {
@@ -69,7 +105,10 @@ describe("editStorefrontByPrompt", () => {
     const homeTarget = recipe.routes.home.tree[0];
     if (homeTarget.kind !== "element") throw new Error("fixture");
     vi.mocked(deps.compileStructuralPatch).mockResolvedValue({
-      operations: [{ kind: "replaceTextChildren", routeId: "home", targetId: homeTarget.id, value: "A new editorial opening" }],
+      operations: [{
+        kind: "replaceTextChildren", routeId: "home", targetId: homeTarget.id, value: "A new editorial opening",
+        expected: `sha256:${createHash("sha256").update(JSON.stringify(homeTarget)).digest("hex")}`,
+      }],
       provider: { kind: "ai_patch", provider: "anthropic", model: "test", usage: { inputTokens: 5, outputTokens: 7 } },
     });
     const result = await editStorefrontByPrompt({
@@ -163,11 +202,11 @@ describe("editStorefrontByPrompt", () => {
     const deps = dependencies(recipe);
     vi.mocked(deps.compileStructuralPatch)
       .mockResolvedValueOnce({
-        operations: [{ kind: "replaceTextChildren", routeId: "home", targetId: target.id, value: "Overflowing opening" }],
+        operations: [{ kind: "replaceTextChildren", routeId: "home", targetId: target.id, value: "Overflowing opening", expected: `sha256:${createHash("sha256").update(JSON.stringify(target)).digest("hex")}` }],
         provider: { kind: "ai_patch", provider: "fixture", model: "fixture-model" },
       })
       .mockResolvedValueOnce({
-        operations: [{ kind: "replaceTextChildren", routeId: "home", targetId: target.id, value: "Repaired opening" }],
+        operations: [{ kind: "replaceTextChildren", routeId: "home", targetId: target.id, value: "Repaired opening", expected: `sha256:${createHash("sha256").update(JSON.stringify(target)).digest("hex")}` }],
         provider: { kind: "ai_patch", provider: "fixture", model: "fixture-model" },
       });
     vi.mocked(deps.prove)
@@ -189,6 +228,17 @@ describe("editStorefrontByPrompt", () => {
     expect(deps.prove).toHaveBeenCalledTimes(2);
     expect(deps.createVersion).toHaveBeenCalledTimes(1);
     expect(deps.editDraft).toHaveBeenCalledTimes(1);
+    expect(deps.compileStructuralPatch).toHaveBeenLastCalledWith(expect.objectContaining({
+      repair: expect.objectContaining({ scope: { routeId: "home", regionId: target.id } }),
+    }));
+    const audit = vi.mocked(deps.editDraft).mock.calls[0]![0];
+    expect(audit.provider).toMatchObject({ attempts: [expect.any(Object), expect.any(Object)] });
+    expect(audit.validation).toMatchObject({
+      attempts: [
+        expect.objectContaining({ browserDiagnostics: [expect.objectContaining({ routeId: "home", regionId: target.id })] }),
+        expect.objectContaining({ browserDiagnostics: [] }),
+      ],
+    });
   });
 
   it("requires browser proof even for deterministic layout-affecting edits", async () => {
@@ -294,6 +344,64 @@ describe("createDefaultStructuralPatchCompiler", () => {
       prompt: "Change this", context: { routeId: "home", regionId: target.id }, bundle,
     })).rejects.toMatchObject({ code: "storefront_patch_scope" });
   });
+
+  it("rejects route-wide CSS for a selected region and generic patches spanning routes", async () => {
+    const bundle = baseBundle();
+    const target = bundle.routes.home.tree[0]!;
+    if (target.kind !== "element") throw new Error("fixture root");
+    const scopedProvider = { complete: vi.fn().mockResolvedValue({
+      value: { operations: [{ kind: "replaceRouteCss", routeId: "home", expected: `sha256:${"a".repeat(64)}`, css: ".x{display:block}" }] },
+      provider: "fixture", model: "fixture-model", usage: { inputTokens: 1, outputTokens: 1 },
+    }) };
+    await expect(createDefaultStructuralPatchCompiler(scopedProvider)({
+      prompt: "Change this", context: { routeId: "home", regionId: target.id }, bundle,
+    })).rejects.toMatchObject({ code: "storefront_patch_scope" });
+
+    const genericProvider = { complete: vi.fn().mockResolvedValue({
+      value: { operations: [
+        { kind: "replaceRegion", routeId: "home", targetId: target.id, expected: `sha256:${"a".repeat(64)}`, source: { html: "<main>One</main>", css: "" } },
+        { kind: "replaceRegion", routeId: "product", targetId: bundle.routes.product.tree[0]!.kind === "element" ? bundle.routes.product.tree[0]!.id : "bad", expected: `sha256:${"b".repeat(64)}`, source: { html: "<main>Two</main>", css: "" } },
+      ] },
+      provider: "fixture", model: "fixture-model", usage: { inputTokens: 1, outputTokens: 1 },
+    }) };
+    await expect(createDefaultStructuralPatchCompiler(genericProvider)({ prompt: "Change the composition", bundle }))
+      .rejects.toMatchObject({ code: "storefront_patch_scope" });
+  });
+
+  it("requires exact subtree hashes on model-authored text and visibility operations", async () => {
+    const bundle = baseBundle();
+    const target = bundle.routes.home.tree[0]!;
+    if (target.kind !== "element") throw new Error("fixture root");
+    const provider = { complete: vi.fn().mockResolvedValue({
+      value: { operations: [{ kind: "setVisibility", routeId: "home", targetId: target.id, hidden: true }] },
+      provider: "fixture", model: "fixture-model", usage: { inputTokens: 1, outputTokens: 1 },
+    }) };
+    await expect(createDefaultStructuralPatchCompiler(provider)({ prompt: "Hide it", bundle }))
+      .rejects.toMatchObject({ code: "storefront_patch_invalid" });
+  });
+
+  it("binds a repair compiler call to the diagnosed route and region", async () => {
+    const bundle = baseBundle();
+    const target = bundle.routes.home.tree[0]!;
+    if (target.kind !== "element") throw new Error("fixture root");
+    const provider = { complete: vi.fn().mockResolvedValue({
+      value: { operations: [{
+        kind: "replaceRegion", routeId: "product",
+        targetId: bundle.routes.product.tree[0]!.kind === "element" ? bundle.routes.product.tree[0]!.id : "bad",
+        expected: `sha256:${"a".repeat(64)}`, source: { html: "<main>Escape</main>", css: "" },
+      }] },
+      provider: "fixture", model: "fixture-model", usage: { inputTokens: 1, outputTokens: 1 },
+    }) };
+    await expect(createDefaultStructuralPatchCompiler(provider)({
+      prompt: "Repair it",
+      bundle,
+      repair: {
+        attempt: 1,
+        scope: { routeId: "home", regionId: target.id },
+        browserProof: { ok: false, diagnostics: [{ routeId: "home", regionId: target.id, code: "overflow", message: "overflow" }], screenshots: [], browserMs: 1 },
+      },
+    })).rejects.toMatchObject({ code: "storefront_patch_scope" });
+  });
 });
 
 describe("undoStorefrontEdit", () => {
@@ -331,5 +439,24 @@ describe("undoStorefrontEdit", () => {
       prompt: "Undo storefront edit",
       patch: { operations: [{ kind: "restoreVersion", versionId: BASE }] },
     }));
+    expect(deps.loadEditAudit).toHaveBeenCalledWith({ shopId: SHOP, resultVersionId: RESULT });
+    expect(vi.mocked(deps.loadEditAudit).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(deps.prove).mock.invocationCallOrder[0]!);
+  });
+
+  it("rejects an undo target that is not the current edit audit base before proof or writes", async () => {
+    const deps = dependencies();
+    vi.mocked(deps.loadDraft).mockResolvedValue({ versionId: RESULT, artifactHash: `sha256:${"b".repeat(64)}`, bundle: baseBundle() });
+    vi.mocked(deps.loadEditAudit).mockResolvedValue({
+      baseVersionId: "66666666-6666-6666-6666-666666666666",
+      resultVersionId: RESULT,
+    });
+
+    await expect(undoStorefrontEdit({
+      shopId: SHOP, actorId: ACTOR, expectedDraftVersionId: RESULT, targetVersionId: BASE,
+    }, deps)).rejects.toMatchObject({ code: "storefront_undo_target_invalid", status: 409 });
+    expect(deps.loadVersion).not.toHaveBeenCalled();
+    expect(deps.prove).not.toHaveBeenCalled();
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.editDraft).not.toHaveBeenCalled();
   });
 });

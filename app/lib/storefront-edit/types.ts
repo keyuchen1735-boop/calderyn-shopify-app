@@ -19,11 +19,16 @@ export interface PreviewEditContext {
   regionId: string;
 }
 
+export interface StructuralPatchScope {
+  routeId: StorefrontRouteId;
+  regionId?: string;
+}
+
 export type StorefrontPatchOperation =
   | { kind: "setToken"; tokenId: string; value: string; expected?: string }
   | { kind: "setFont"; target: "display" | "body"; fontId: CuratedFontId; expected?: CuratedFontId }
   | { kind: "setText" | "replaceTextChildren"; routeId: StorefrontRouteId; targetId: string; value: string; expected?: string }
-  | { kind: "setVisibility"; routeId: StorefrontRouteId; targetId: string; hidden: boolean }
+  | { kind: "setVisibility"; routeId: StorefrontRouteId; targetId: string; hidden: boolean; expected?: string }
   | { kind: "moveRegion"; routeId: StorefrontRouteId; targetId: string; direction: "up" | "down" }
   | { kind: "reorderChildren"; routeId: StorefrontRouteId; parentId: string; childIds: string[]; expected?: string[] }
   | {

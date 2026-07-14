@@ -74,11 +74,45 @@ describe("applyStorefrontPatch", () => {
     expect(result.bundle.routes.home.interactions.transitions).toEqual([
       expect.objectContaining({ sourceId: expect.stringMatching(/details$/), action: expect.objectContaining({ type: "accordion.toggle", targetId: expect.stringMatching(/panel$/) }) }),
     ]);
-    expect(result.bundle.routes.home.css).toContain("[data-cd-bundle=home] .opening");
+    const replacement = result.bundle.routes.home.tree[0];
+    if (replacement.kind !== "element") throw new Error("fixture root");
+    expect(result.bundle.routes.home.css).toContain(`[data-cd-bundle=home] .opening#${replacement.id}`);
     expect(JSON.stringify(result.bundle.routes.home.tree)).toContain('"data-cd-asset-key":"hero"');
     expect(result.changedScope).toMatchObject({ routes: ["home"], regions: [`home:${target.id}`] });
     expect(result.structural).toBe(true);
     expect(validateCompiledBundle(result.bundle)).toMatchObject({ ok: true, diagnostics: [] });
+  });
+
+  it("roots replacement CSS at the exact replacement compiler ID and rejects sibling escapes", () => {
+    const bundle = freshBundle();
+    const target = bundle.routes.home.tree[0]!;
+    if (target.kind !== "element") throw new Error("fixture root");
+
+    expect(() => applyStorefrontPatch(bundle, [{
+      kind: "replaceRegion",
+      routeId: "home",
+      targetId: target.id,
+      expected: digest(target),
+      source: {
+        html: `<main id="opening" class="opening"><p class="copy">Safe</p></main>`,
+        css: `.opening + .unrelated { display:none }`,
+      },
+    }])).toThrowError(/scope|sibling|region/i);
+  });
+
+  it("requires exact subtree hashes for AI-authored element operations", () => {
+    const bundle = freshBundle();
+    const target = bundle.routes.home.tree[0]!;
+    if (target.kind !== "element") throw new Error("fixture root");
+
+    expect(() => applyStorefrontPatch(bundle, [{
+      kind: "replaceTextChildren", routeId: "home", targetId: target.id, value: "Changed",
+      expected: `sha256:${"0".repeat(64)}`,
+    }])).toThrowError(/changed before this edit/);
+    expect(() => applyStorefrontPatch(bundle, [{
+      kind: "setVisibility", routeId: "home", targetId: target.id, hidden: true,
+      expected: `sha256:${"0".repeat(64)}`,
+    }])).toThrowError(/changed before this edit/);
   });
 
   it("rejects stale structural preconditions and asset references outside the verified manifest", () => {
