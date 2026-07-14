@@ -95,10 +95,10 @@ const collectionHtml = `
     <a class="atelier-action" data-cd-route="home">← Return to the cover</a>
   </header>
   <nav class="atelier-collection-filters" aria-label="Collection filters">
-    <button class="atelier-filter" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">All pieces</button>
-    <button class="atelier-filter" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Tailoring</button>
-    <button class="atelier-filter" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Dresses</button>
-    <button class="atelier-filter" data-cd-on="click" data-cd-action="collection.sort">Price ascending</button>
+    <button class="atelier-filter" value="all" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">All pieces</button>
+    <button class="atelier-filter" value="tailoring" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Tailoring</button>
+    <button class="atelier-filter" value="dresses" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Dresses</button>
+    <button class="atelier-filter" value="price_asc" data-cd-on="click" data-cd-action="collection.sort">Price ascending</button>
   </nav>
   <section class="atelier-collection-grid">
     <article class="atelier-collection-card" data-cd-repeat="collection.products">
@@ -191,9 +191,9 @@ const searchHtml = `
     <a class="atelier-action" data-cd-route="home">← Return home</a>
   </header>
   <nav class="atelier-search-tools" aria-label="Search suggestions">
-    <button class="atelier-search-chip" data-cd-on="click" data-cd-action="search.update">New arrivals</button>
-    <button class="atelier-search-chip" data-cd-on="click" data-cd-action="search.submit">Tailored pieces</button>
-    <button class="atelier-search-chip" data-cd-on="click" data-cd-action="search.clear">Clear query</button>
+    <input class="atelier-search-input" aria-label="Search the archive" type="search" name="q" value="" placeholder="Piece, fabric, or cut" data-cd-on="input" data-cd-action="search.update">
+    <button class="atelier-search-chip" value="submit" data-cd-on="click" data-cd-action="search.submit">Search archive</button>
+    <button class="atelier-search-chip" value="clear" data-cd-on="click" data-cd-action="search.clear">Clear query</button>
   </nav>
   <section class="atelier-search-list">
     <article class="atelier-search-result" data-cd-repeat="search.results">
@@ -215,6 +215,7 @@ const searchCss = `
 .atelier-search-title { max-width:10ch; margin-bottom:2.5rem; font-size:clamp(3.5rem,8vw,7rem) }
 .atelier-search-tools { display:flex; gap:.75rem; padding:1rem 0; border-bottom:1px solid #161615 }
 .atelier-search-chip { padding:.7rem 1rem; color:#161615; background:transparent; border:1px solid #161615; border-radius:0; font-family:var(--font-display); text-transform:uppercase }
+.atelier-search-input { min-width:min(28rem,60vw); padding:.7rem 1rem; color:#161615; background:#f5f1e9; border:1px solid #161615; font-family:var(--font-body) }
 .atelier-search-chip:hover { color:#f5f1e9; background:#d63821; border-color:#d63821 }
 .atelier-search-list { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)) }
 .atelier-search-result { border-right:1px solid #aaa49b; border-bottom:1px solid #aaa49b }
@@ -335,7 +336,7 @@ const config = {
       signature: "single-line issue masthead above a separate trusted cart surface",
       source: {
         ...routeDefaults,
-        html: `<header class="atelier-nav"><a class="atelier-wordmark atelier-link" data-cd-route="home" data-cd-text="store.name"></a><nav class="atelier-nav-links" aria-label="Primary"><a class="atelier-link" data-cd-route="collection">Collection</a><a class="atelier-link" data-cd-route="search">Search</a><a class="atelier-link" data-cd-route="account">Account</a><a class="atelier-link" data-cd-route="cart">Bag</a></nav></header><div data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div><footer class="atelier-nav-links"><a class="atelier-link" data-cd-route="policy" data-cd-param-policy-id="shipping">Shipping</a><a class="atelier-link" data-cd-route="policy" data-cd-param-policy-id="refund">Returns</a><div data-cd-policy-links></div></footer>`,
+        html: `<header class="atelier-nav"><span class="niche-icon niche-icon--atelier" aria-hidden="true">&#8599;</span><a class="atelier-wordmark atelier-link" data-cd-route="home" data-cd-text="store.name"></a><nav class="atelier-nav-links" aria-label="Primary"><a class="atelier-link" data-cd-route="collection">Collection</a><a class="atelier-link" data-cd-route="search">Search</a><a class="atelier-link" data-cd-route="account">Account</a><a class="atelier-link" data-cd-route="cart">Bag <span data-cd-text="cart.count"></span></a></nav></header><div data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div><footer class="atelier-nav-links"><a class="atelier-link" data-cd-route="policy" data-cd-param-policy-id="shipping">Shipping</a><a class="atelier-link" data-cd-route="policy" data-cd-param-policy-id="refund">Returns</a><div data-cd-policy-links></div></footer>`,
         css: `.atelier-nav, .atelier-nav-links { padding-left:max(1rem,calc((100% - 96rem)/2)); padding-right:max(1rem,calc((100% - 96rem)/2)) }`,
       },
     },

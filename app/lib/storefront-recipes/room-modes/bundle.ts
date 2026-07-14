@@ -41,15 +41,18 @@ const config = {
       source: {
         html: `
           <header class="room-masthead">
+            <span class="niche-icon niche-icon--room" aria-hidden="true">&#8962;</span>
             <a class="room-brand type-display" data-cd-route="home" data-cd-text="store.name">Room Modes</a>
             <nav class="room-nav" aria-label="Store navigation">
               <a data-cd-route="home">Scenes</a>
               <a data-cd-route="collection">Objects</a>
               <a data-cd-route="search">Search</a>
-              <a data-cd-route="cart">Cart</a>
+              <a data-cd-route="account">Account</a>
+              <a data-cd-route="cart">Cart <span data-cd-text="cart.count"></span></a>
             </nav>
           </header>
           <aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="chalk ink amber"></aside>
+          <footer data-cd-policy-links></footer>
         `,
         css: `
           .room-brand{font-size:1.4rem;font-weight:700}.room-nav{display:flex;gap:1.25rem}.room-nav a{color:var(--ink);font-size:.72rem;text-transform:uppercase}
@@ -62,8 +65,7 @@ const config = {
       signature: "viewport-height room scene with mode rail, owned hero image, and spatial product hotspots",
       source: {
         html: `
-          <main>
-            <div data-cd-state-id="room-mode" data-cd-state-type="enum" data-cd-state-initial="living" data-cd-state-values="living studio sleep"></div>
+          <main class="room-state" data-cd-state-id="room-mode" data-cd-state-type="enum" data-cd-state-initial="living" data-cd-state-values="living studio sleep" data-cd-bind-state="room-mode" data-cd-bind-property="classToken">
             <section class="scene-hero">
               <figure class="scene-image"><img data-cd-asset="hero" alt="Connected living room arranged as a product scene" width="1600" height="1200"></figure>
               <div class="scene-copy resilient-copy">
@@ -74,9 +76,9 @@ const config = {
               </div>
             </section>
             <nav class="mode-rail" aria-label="Room modes">
-              <button data-cd-on="click" data-cd-action="state.set" data-cd-state="room-mode">Living</button>
-              <button data-cd-on="click" data-cd-action="state.set" data-cd-state="room-mode">Studio</button>
-              <button data-cd-on="click" data-cd-action="state.set" data-cd-state="room-mode">Sleep</button>
+              <button value="living" data-cd-on="click" data-cd-action="state.set" data-cd-state="room-mode">Living</button>
+              <button value="studio" data-cd-on="click" data-cd-action="state.set" data-cd-state="room-mode">Studio</button>
+              <button value="sleep" data-cd-on="click" data-cd-action="state.set" data-cd-state="room-mode">Sleep</button>
               <span>Scene view</span><span>Object index</span>
             </nav>
             <section aria-label="Objects in this room" data-cd-repeat="featured.products">
@@ -96,6 +98,7 @@ const config = {
           .scene-image{margin:0;min-width:0}.scene-image img{display:block;width:100%;height:78dvh;object-fit:cover}.scene-copy{align-self:end;padding:clamp(1.5rem,5vw,5rem)}
           .scene-copy h1{font-size:clamp(3.7rem,8vw,8.5rem);max-width:7ch}.mode-rail{display:flex;gap:.5rem;padding:1rem;overflow:auto;background:var(--chalk)}
           .mode-rail button{border:1px solid var(--line);background:transparent;padding:.75rem 1.1rem}.mode-rail span{padding:.75rem;color:var(--smoke)}
+          .room-state[data-cd-class-token="living"] .scene-copy{border-right:6px solid var(--amber)}.room-state[data-cd-class-token="studio"] .scene-copy{border-right:6px solid var(--blue)}.room-state[data-cd-class-token="sleep"] .scene-copy{border-right:6px solid var(--violet)}
           .home-empty,.resilient-copy{overflow-wrap:anywhere}.home-empty{padding:1.25rem;border-top:1px solid var(--line)}
           @media(max-width:700px){.scene-hero{grid-template-columns:1fr}.scene-image img{height:52dvh}.scene-copy h1{font-size:3.6rem}.mode-rail{scroll-snap-type:x mandatory}}
           @media(prefers-reduced-motion:reduce){.mode-rail{scroll-snap-type:none}}
@@ -111,10 +114,10 @@ const config = {
           <main>
             <header class="object-index resilient-copy"><small class="protocol-copy">Live merchant collection</small><h1 data-cd-text="collection.title"></h1><p data-cd-text="collection.description"></p><b data-cd-text="collection.productCount"></b></header>
             <nav class="facet-bench" aria-label="Collection filters">
-              <button data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="room">Living</button>
-              <button data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="room">Studio</button>
-              <button data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="protocol">Matter</button>
-              <button data-cd-on="click" data-cd-action="collection.sort">Architect order</button>
+              <button value="living" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Living</button>
+              <button value="studio" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Studio</button>
+              <button value="matter" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Matter</button>
+              <button value="title_asc" data-cd-on="click" data-cd-action="collection.sort">Architect order</button>
             </nav>
             <section class="object-matrix" data-cd-repeat="collection.products">
               <article data-cd-key="product.id">
@@ -165,13 +168,13 @@ const config = {
       source: {
         html: `
           <main>
-            <header class="query-board resilient-copy"><small class="protocol-copy">Search room, object, protocol, or finish</small><h1 data-cd-text="search.query">Object search</h1><button data-cd-on="click" data-cd-action="search.submit">Run object query</button><button data-cd-on="click" data-cd-action="search.clear">Clear room query</button></header>
+            <header class="query-board resilient-copy"><small class="protocol-copy">Search room, object, protocol, or finish</small><h1 data-cd-text="search.query">Object search</h1><input aria-label="Object search" type="search" name="q" value="" placeholder="Room, object, protocol, or finish" data-cd-on="input" data-cd-action="search.update"><button value="submit" data-cd-on="click" data-cd-action="search.submit">Run object query</button><button value="clear" data-cd-on="click" data-cd-action="search.clear">Clear room query</button></header>
             <section data-cd-repeat="search.results"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="560" height="420"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><a data-cd-route="product" data-cd-param-handle="product.handle">Open result</a></article></section>
             <p class="query-empty resilient-copy">No object or room found. Search a finish, protocol, or collection name.</p>
           </main>
         `,
         css: `
-          .query-board{padding:clamp(2rem,8vw,7rem);border-bottom:1px solid var(--ink)}.query-board h1{font-size:clamp(3.4rem,8vw,8rem)}.query-board button{margin-right:.5rem;padding:.8rem;border:1px solid var(--ink);background:transparent}
+          .query-board{padding:clamp(2rem,8vw,7rem);border-bottom:1px solid var(--ink)}.query-board h1{font-size:clamp(3.4rem,8vw,8rem)}.query-board input,.query-board button{margin-right:.5rem;padding:.8rem;border:1px solid var(--ink);background:transparent}
           .query-board,.query-empty,.resilient-copy{overflow-wrap:anywhere}.query-empty{padding:2rem}
         `,
         requiredData: [],
