@@ -18,6 +18,8 @@ vi.mock("../../supabase.server", () => ({
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
 import { trackStorefrontEvent } from "../events.server";
 // eslint-disable-next-line import/first -- see above
+import { appendStorefrontTrackingCookies } from "../visitor-cookie.server";
+// eslint-disable-next-line import/first -- see above
 import type { VisitorSession } from "../visitor-cookie.server";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";
@@ -36,6 +38,21 @@ beforeEach(() => {
 });
 
 describe("trackStorefrontEvent", () => {
+  it("forwards tracking cookies when the runtime lacks Headers.getSetCookie", () => {
+    const source = new Headers();
+    source.append("Set-Cookie", "cd_vid=visitor; Path=/; HttpOnly");
+    source.append("Set-Cookie", "cd_sid=session.n; Path=/; HttpOnly");
+    Object.defineProperty(source, "getSetCookie", { value: undefined });
+    const target = new Headers();
+
+    appendStorefrontTrackingCookies(target, source);
+
+    expect(target.getSetCookie()).toEqual([
+      "cd_vid=visitor; Path=/; HttpOnly",
+      "cd_sid=session.n; Path=/; HttpOnly",
+    ]);
+  });
+
   it("inserts a PII-free row and returns Set-Cookie headers", async () => {
     const headers = await trackStorefrontEvent(
       req({ ua: "Mozilla/5.0", country: "US", city: "Austin", path: "/storefront/products/mug" }),

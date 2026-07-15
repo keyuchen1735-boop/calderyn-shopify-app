@@ -11,6 +11,7 @@ import { useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { clearCartId, readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
+import { appendStorefrontTrackingCookies } from "~/lib/storefront/visitor-cookie.server";
 import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import { findOrderByConfirmationToken, formatOrderRef } from "~/lib/order/checkout.server";
 import { PICKUP_SERVICE_NAME } from "~/lib/commerce/types";
@@ -102,7 +103,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     captured ? "checkout_complete" : "page_view",
     exposure,
   );
-  for (const c of track.getSetCookie()) headers.append("Set-Cookie", c);
+  appendStorefrontTrackingCookies(headers, track);
 
   // Reflect the ACTUAL order state so the buyer is never falsely reassured. The webhook may lag
   // (order still `checkout_pending` reads as "processing"), but a `cancelled`/`refunded` order
