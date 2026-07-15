@@ -50,6 +50,13 @@ describe("concept exploration", () => {
     expect(() => parseConceptCandidate(concept)).toThrow(/globalCss must be empty/i);
   });
 
+  it("rejects runtime-unsafe design tokens during concept compilation", () => {
+    const concept = createConcept(0);
+    concept.designSystem.tokens["font-body"] = '"Remote Font"';
+
+    expect(() => compileConceptCandidate(concept)).toThrow(/Unsafe storefront design token "font-body"/);
+  });
+
   it("generates three structural briefs in parallel and repairs invalid output once", async () => {
     let active = 0;
     let maxActive = 0;
@@ -139,6 +146,31 @@ describe("concept exploration", () => {
 });
 
 describe("novelty and visual judging", () => {
+  it("keeps a valid judgment when its rationale exceeds the audit bound", async () => {
+    const context = createContext();
+    const candidate = { ...compileConceptCandidate(createConcept(0)), strategy: "asymmetric-commerce" as const };
+    const provider: StorefrontAiProvider = {
+      complete: vi.fn(async () => ({
+        value: { scores: PASSING_JUDGE_SCORES, rationale: "x".repeat(2_001) },
+        usage: { inputTokens: 1, outputTokens: 1 }, provider: "fixture", model: "fixture",
+      })),
+    };
+
+    const ranked = await rankConcepts({
+      candidates: [candidate],
+      context,
+      provider,
+      render: async () => ({
+        desktop: { key: "judge-desktop", mediaType: "image/webp", bytes: new Uint8Array([1]) },
+        mobile: { key: "judge-mobile", mediaType: "image/webp", bytes: new Uint8Array([2]) },
+        browserMs: 1,
+      }),
+    });
+
+    expect(ranked.accepted).toHaveLength(1);
+    expect(ranked.accepted[0].rationale).toHaveLength(2_000);
+  });
+
   it("renders the compiled design tokens, curated fonts, and global CSS in judge screenshots", () => {
     const concept = createConcept(0);
     concept.designSystem.globalCss = `.judge-accent { color: var(--ink) }`;

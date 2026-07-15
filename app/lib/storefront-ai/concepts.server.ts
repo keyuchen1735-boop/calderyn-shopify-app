@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { cloneElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { launchChromium } from "../browser/chromium.server";
 import { isCuratedFontId } from "../storefront-bundle/types";
@@ -145,6 +146,7 @@ export function compileConceptCandidate(candidate: ConceptCandidateSource): Comp
     if (!isCompilerIdentifier(key)) throw new Error(`Invalid design token ${key}`);
     assertSafeDesignTokenValue(key, value);
   }
+  storefrontDesignSystemCss(candidate.designSystem);
   for (const [key, value] of Object.entries(candidate.designSystem.breakpoints)) {
     if (!isCompilerIdentifier(key) || !Number.isFinite(value) || value < 240 || value > 3_840) throw new Error(`Invalid breakpoint ${key}`);
   }
@@ -267,7 +269,8 @@ export async function renderConceptWithMerchantData(input: {
     interactions: compiled.interactions,
     trustedSlots: compiled.trustedSlots,
   });
-  const shellMarkup = renderToStaticMarkup(renderStorefrontRoute({ routeId: "home", artifact: artifact(shell, compileCss(candidate.candidate.shell.css, { namespace: "shell", protectedNodes: shell.protectedCssNodes, protectedSourceIds: shell.protectedSourceIds }).css), data, nonce: "judge" }).element);
+  const shellElement = renderStorefrontRoute({ routeId: "home", artifact: artifact(shell, compileCss(candidate.candidate.shell.css, { namespace: "shell", protectedNodes: shell.protectedCssNodes, protectedSourceIds: shell.protectedSourceIds }).css), data, nonce: "judge" }).element;
+  const shellMarkup = renderToStaticMarkup(cloneElement(shellElement, { "data-cd-bundle": "shell" }));
   const homeMarkup = renderToStaticMarkup(renderStorefrontRoute({ routeId: "home", artifact: artifact(home, compileCss(candidate.candidate.home.css, { namespace: "home", protectedNodes: home.protectedCssNodes, protectedSourceIds: home.protectedSourceIds }).css), data, nonce: "judge" }).element);
   const designCss = compileConceptJudgeDesignCss(candidate.candidate);
   const document = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style nonce="judge">html,body{margin:0;min-height:100%;overflow-x:hidden}${designCss}</style></head><body><div data-cd-bundle="global" data-cd-bundle-runtime="1" data-cd-bundle-source="custom">${shellMarkup}${homeMarkup}</div></body></html>`;
@@ -283,10 +286,20 @@ export async function renderConceptWithMerchantData(input: {
   try {
     const page = await browser.newPage();
     await page.setContent(document, { waitUntil: "domcontentloaded", timeout: 20_000 });
-    await page.setViewport({ width: 1440, height: 1000 });
-    const desktop = new Uint8Array(await page.screenshot({ type: "webp", fullPage: true }));
-    await page.setViewport({ width: 390, height: 844 });
-    const mobile = new Uint8Array(await page.screenshot({ type: "webp", fullPage: true }));
+    const capture = async (width: number, viewportHeight: number) => {
+      await page.setViewport({ width, height: viewportHeight });
+      const documentHeight = await page.evaluate(() => Math.max(
+        globalThis.document.documentElement.scrollHeight,
+        globalThis.document.body?.scrollHeight ?? 0,
+      ));
+      return new Uint8Array(await page.screenshot({
+        type: "webp",
+        clip: { x: 0, y: 0, width, height: Math.min(7_680, Math.max(viewportHeight, documentHeight)) },
+        captureBeyondViewport: true,
+      }));
+    };
+    const desktop = await capture(1440, 1000);
+    const mobile = await capture(390, 844);
     if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("Generation cancelled", "AbortError");
     return {
       desktop: { key: "judge-desktop", mediaType: "image/webp", bytes: desktop },

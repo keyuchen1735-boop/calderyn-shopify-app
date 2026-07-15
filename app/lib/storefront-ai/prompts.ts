@@ -97,7 +97,7 @@ export const JUDGE_SCHEMA: Record<string, unknown> = {
       required: ["promptFit", "ecommerceClarity", "hierarchy", "responsiveQuality", "interactionClarity", "typographyImagery", "accessibility", "originality"],
       properties: Object.fromEntries(["promptFit", "ecommerceClarity", "hierarchy", "responsiveQuality", "interactionClarity", "typographyImagery", "accessibility", "originality"].map((key) => [key, { type: "number", minimum: 0, maximum: 100 }])),
     },
-    rationale: { type: "string" },
+    rationale: { type: "string", maxLength: 2_000 },
   },
 };
 
@@ -150,6 +150,7 @@ export const COMPILER_SYSTEM_PROMPT = `You are the Calderyn Storefront Compiler 
 Return only the forced schema tool. Never emit HTML comments, JavaScript, script tags, inline style attributes, inline event handlers, forms, external URLs, remote fonts, or invented data fields.
 Keep the complete serialized tool result below 20,000 output tokens. Use compact HTML and CSS without repeated markup or declarations.
 Use only these curated IDs for displayFontId and bodyFontId: ${CURATED_FONT_IDS.join(", ")}.
+font-body and font-display are runtime-owned; never include them in designSystem.tokens. Token values are 1 to 240 characters and must not contain quotes, escapes, colons, semicolons, braces, angle brackets, or line breaks.
 iconStyle and motionStyle must be non-empty descriptions of at most 120 characters.
 Breakpoint values must be JSON numbers from 240 through 3840, representing CSS pixels without a px suffix.
 Request at most 8 asset requests. Every asset request key must match ^[A-Za-z0-9_-]{1,80}$; use only letters, numbers, underscores, and hyphens.
@@ -173,7 +174,7 @@ function dataBlock(value: unknown): string {
   return `<CONTEXT_DATA>${JSON.stringify(value)}</CONTEXT_DATA>`;
 }
 
-const CONCEPT_SOURCE_CONSTRAINTS = `Concept shell/home are static compiler-safe previews. Use no buttons, trusted slots, states, bindings to state, or interaction actions. Neither shell.html nor home.html may contain the literal <slot tag or data-cd-slot. Root anchors use no route parameters and never target product or collection; route them only to home, search, cart, checkout, or account. IDs and references never cross between shell and home. Root data bindings are limited to store.name, store.logo, and cart.count. Product bindings appear only inside a featured.products repeat. Product anchors inside featured.products require data-cd-param-handle="product.handle". The repeat parent has only data-cd-repeat; set data-cd-repeat="featured.products" on it. Put data-cd-key="product.id" on a descendant and invent no helper data-cd attributes. globalCss must be empty; keep concept styles in shell.css and home.css. In shell.css and home.css, never select any data-cd-* attribute (including [data-cd-key]); style repeat descendants with authored classes. Every CSS selector stays away from trusted commerce hosts because concepts contain no slots.`;
+const CONCEPT_SOURCE_CONSTRAINTS = `Concept shell/home are static compiler-safe previews. Use no buttons, trusted slots, states, bindings to state, or interaction actions. Neither shell.html nor home.html may contain the literal <slot tag or data-cd-slot. Root anchors use no route parameters and never target product or collection; route them only to home, search, cart, checkout, or account. IDs and references never cross between shell and home. Root data bindings are limited to store.name, store.logo, and cart.count. Product bindings appear only inside a featured.products repeat. Product anchors inside featured.products require data-cd-param-handle="product.handle". The repeat parent has only data-cd-repeat; set data-cd-repeat="featured.products" on it. Put data-cd-key="product.id" on a descendant and invent no helper data-cd attributes. Home must use a responsive desktop multi-column featured.products grid. Every repeated product card must remain visually complete with a prominent product title and an authored CSS fallback surface when product.primaryImage or price is unavailable; do not rely on empty image or money bindings for card structure. globalCss must be empty; keep concept styles in shell.css and home.css. In shell.css and home.css, never select any data-cd-* attribute (including [data-cd-key]); style repeat descendants with authored classes. Every CSS selector stays away from trusted commerce hosts because concepts contain no slots.`;
 
 export function conceptPrompt(context: MerchantStorefrontContext, strategy: ConceptStrategy, candidateId: string): string {
   return `Create shell plus home for candidate ${candidateId}. Return the complete candidate object matching the forced schema, never a partial patch. ${STRUCTURAL_CONSTRAINTS[strategy]}
@@ -201,7 +202,7 @@ export function judgePrompt(
   candidate: ExploredConcept,
   context: MerchantStorefrontContext,
 ): string {
-  return `Score candidate ${candidate.candidate.concept.name} from 0-100 on every required dimension using the attached real Chromium desktop and mobile screenshots. Fail ecommerce ambiguity, weak product prominence, or recipe convergence.
+  return `Score candidate ${candidate.candidate.concept.name} from 0-100 on every required dimension using the attached real Chromium desktop and mobile screenshots. Concept previews intentionally contain no buttons, trusted commerce slots, states, or interactions; score navigation anchors and static affordance hierarchy without requiring add-to-cart, filters, or other controls forbidden at this stage. Do not penalize missing product imagery or prices when CONTEXT_DATA does not provide them; instead judge whether authored fallback surfaces and product titles remain deliberate and prominent. Still fail unstyled or broken layouts, weak product prominence, poor responsive adaptation, ecommerce ambiguity, or recipe convergence.
 COMPILED_FINGERPRINT:${candidate.compiledFingerprint}
 ${dataBlock({ prompt: context.prompt, products: context.products, collections: context.collections, recipeNoveltySignatures: context.recipeNoveltySignatures })}`;
 }
