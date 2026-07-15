@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { cloneElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { launchChromium } from "../browser/chromium.server";
 import { isCuratedFontId } from "../storefront-bundle/types";
@@ -269,7 +270,8 @@ export async function renderConceptWithMerchantData(input: {
     interactions: compiled.interactions,
     trustedSlots: compiled.trustedSlots,
   });
-  const shellMarkup = renderToStaticMarkup(renderStorefrontRoute({ routeId: "home", artifact: artifact(shell, compileCss(candidate.candidate.shell.css, { namespace: "shell", protectedNodes: shell.protectedCssNodes, protectedSourceIds: shell.protectedSourceIds }).css), data, nonce: "judge" }).element);
+  const shellElement = renderStorefrontRoute({ routeId: "home", artifact: artifact(shell, compileCss(candidate.candidate.shell.css, { namespace: "shell", protectedNodes: shell.protectedCssNodes, protectedSourceIds: shell.protectedSourceIds }).css), data, nonce: "judge" }).element;
+  const shellMarkup = renderToStaticMarkup(cloneElement(shellElement, { "data-cd-bundle": "shell" }));
   const homeMarkup = renderToStaticMarkup(renderStorefrontRoute({ routeId: "home", artifact: artifact(home, compileCss(candidate.candidate.home.css, { namespace: "home", protectedNodes: home.protectedCssNodes, protectedSourceIds: home.protectedSourceIds }).css), data, nonce: "judge" }).element);
   const designCss = compileConceptJudgeDesignCss(candidate.candidate);
   const htmlDocument = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style nonce="judge">html,body{margin:0;min-height:100%;overflow-x:hidden}${designCss}</style></head><body><div data-cd-bundle="global" data-cd-bundle-runtime="1" data-cd-bundle-source="custom">${shellMarkup}${homeMarkup}</div></body></html>`;

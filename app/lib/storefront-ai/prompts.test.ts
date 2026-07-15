@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createContext } from "./__fixtures__/deterministic";
-import { COMPILER_SYSTEM_PROMPT, CONCEPT_SCHEMA, EXPANSION_GROUP_SCHEMAS, JUDGE_SCHEMA, conceptPrompt, conceptRepairPrompt, routeRepairPrompt } from "./prompts";
+import { COMPILER_SYSTEM_PROMPT, CONCEPT_SCHEMA, EXPANSION_GROUP_SCHEMAS, JUDGE_SCHEMA, conceptPrompt, conceptRepairPrompt, judgePrompt, routeRepairPrompt } from "./prompts";
 
 describe("COMPILER_SYSTEM_PROMPT", () => {
   it("distinguishes repeater source attributes from compiler-owned output markers", () => {
@@ -103,9 +103,23 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
     expect(prompt).toContain("Neither shell.html nor home.html may contain the literal <slot tag or data-cd-slot");
     expect(prompt).toContain("In shell.css and home.css, never select any data-cd-* attribute (including [data-cd-key])");
     expect(prompt).toContain("Every CSS selector stays away from trusted commerce hosts because concepts contain no slots");
+    expect(prompt).toContain("responsive desktop multi-column featured.products grid");
+    expect(prompt).toContain("authored CSS fallback surface when product.primaryImage or price is unavailable");
 
     const schema = CONCEPT_SCHEMA as { properties: { designSystem: { properties: { globalCss: { maxLength?: number } } } } };
     expect(schema.properties.designSystem.properties.globalCss.maxLength).toBe(0);
+  });
+
+  it("judges the static concept against available merchant data", () => {
+    const candidate = {
+      compiledFingerprint: "sha256:fixture",
+      candidate: { concept: { name: "Fixture" } },
+    } as Parameters<typeof judgePrompt>[0];
+    const prompt = judgePrompt(candidate, createContext());
+
+    expect(prompt).toContain("Concept previews intentionally contain no buttons, trusted commerce slots, states, or interactions");
+    expect(prompt).toContain("Do not penalize missing product imagery or prices when CONTEXT_DATA does not provide them");
+    expect(prompt).toContain("Still fail unstyled or broken layouts");
   });
 
   it("preserves the static concept constraints during repair", () => {

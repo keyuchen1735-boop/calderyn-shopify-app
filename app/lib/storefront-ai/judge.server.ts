@@ -57,8 +57,8 @@ function parseJudge(value: unknown): { scores: JudgeScores; rationale: string } 
     if (!Number.isFinite(number) || number < 0 || number > 100) throw new Error(`Judge score ${key} is invalid`);
     return [key, number];
   })) as unknown as JudgeScores;
-  if (typeof object.rationale !== "string" || object.rationale.length > 2_000) throw new Error("Judge rationale is invalid");
-  return { scores, rationale: object.rationale };
+  if (typeof object.rationale !== "string") throw new Error("Judge rationale is invalid");
+  return { scores, rationale: object.rationale.slice(0, 2_000) };
 }
 
 export interface RankConceptsInput {

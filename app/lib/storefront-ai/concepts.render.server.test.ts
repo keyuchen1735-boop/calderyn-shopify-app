@@ -19,6 +19,10 @@ describe("concept Chromium render lifecycle", () => {
 
     await renderConceptWithMerchantData({ candidate, context: createContext() });
 
+    expect(page.setContent).toHaveBeenCalledWith(
+      expect.stringContaining('data-cd-bundle="shell"'),
+      expect.objectContaining({ waitUntil: "domcontentloaded" }),
+    );
     expect(screenshot).toHaveBeenNthCalledWith(1, expect.objectContaining({
       clip: { x: 0, y: 0, width: 1440, height: 12_000, scale: 0.64 },
       captureBeyondViewport: true,
