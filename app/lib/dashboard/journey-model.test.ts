@@ -29,6 +29,19 @@ describe("journeyView", () => {
     expect(v.next).toBe("storefront_published");
   });
 
+  it("lets the merchant view a later step without treating skipped work as complete", () => {
+    const v = journeyView({
+      completed: { account: T0, first_product: T0 },
+      liveCardDismissed: false,
+      recapDismissed: false,
+      activeStep: "shipping",
+    });
+    expect(v.phase).toBe(2);
+    expect(v.active).toBe("shipping");
+    expect(v.next).toBe("payouts");
+    expect(v.phasesComplete).toEqual([]);
+  });
+
   it("retires when first_order completes", () => {
     const all = Object.fromEntries(JOURNEY_STEPS.map((s) => [s.key, T0]));
     const v = journeyView({

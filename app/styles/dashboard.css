@@ -2522,6 +2522,8 @@
 .cd-jr-check { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; color: var(--text-3); }
 .cd-jr-row.done .cd-jr-check { color: var(--green); }
 .cd-jr-row > .cd-btn { min-width: 84px; justify-content: center; }
+.cd-jr-nav { display: flex; align-items: center; gap: 8px; padding: 10px 0 2px; border-top: 0.5px solid var(--hairline); }
+.cd-jr-nav .cd-btn:last-child { margin-left: auto; }
 .cd-jr-live, .cd-jr-recap { position: relative; padding: 14px 40px 14px 18px; margin-bottom: 10px; }
 .cd-jr-live-t { font-size: calc(14px * var(--type-scale)); font-weight: 600; color: var(--text-1); }
 .cd-jr-live-url { display: flex; gap: 10px; align-items: center; margin-top: 6px; font-size: calc(12.5px * var(--type-scale)); }

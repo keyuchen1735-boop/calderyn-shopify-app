@@ -36,6 +36,10 @@ export const JOURNEY_STEPS: JourneyStepDef[] = [
     pitch: "This one completes itself.", cta: "", screen: "" },
 ];
 
+export function isMilestoneKey(value: unknown): value is MilestoneKey {
+  return typeof value === "string" && JOURNEY_STEPS.some((step) => step.key === value);
+}
+
 // Toast fragments per completed step ("<done> — next: <verb next>").
 const DONE_LABELS: Record<MilestoneKey, string> = {
   account: "Account created",
@@ -63,7 +67,7 @@ const NEXT_LABELS: Record<MilestoneKey, string> = {
 export interface JourneyStepState { def: JourneyStepDef; done: boolean; completedAt: string | null }
 
 export interface JourneyView {
-  phase: JourneyPhase; retired: boolean; next: MilestoneKey | null;
+  phase: JourneyPhase; retired: boolean; next: MilestoneKey | null; active: MilestoneKey | null;
   steps: JourneyStepState[]; phasesComplete: JourneyPhase[];
   showRecap: boolean; showLiveCard: boolean;
 }
@@ -83,6 +87,7 @@ export function journeyView(input: {
   completed: Partial<Record<MilestoneKey, string>>;
   liveCardDismissed: boolean;
   recapDismissed: boolean;
+  activeStep?: MilestoneKey | null;
 }): JourneyView {
   const { completed } = input;
   const steps: JourneyStepState[] = JOURNEY_STEPS.map((def) => ({
@@ -90,13 +95,18 @@ export function journeyView(input: {
   }));
   const phaseDone = (p: JourneyPhase) => steps.filter((s) => s.def.phase === p).every((s) => s.done);
   const phasesComplete = ([1, 2, 3] as JourneyPhase[]).filter(phaseDone);
-  const phase: JourneyPhase = !phaseDone(1) ? 1 : !phaseDone(2) ? 2 : 3;
+  const progressPhase: JourneyPhase = !phaseDone(1) ? 1 : !phaseDone(2) ? 2 : 3;
   const retired = completed.first_order != null;
-  const next = steps.find((s) => s.def.phase === phase && !s.done)?.def.key ?? null;
+  const next = steps.find((s) => s.def.phase === progressPhase && !s.done)?.def.key ?? null;
+  const selected = input.activeStep
+    ? steps.find((step) => step.def.key === input.activeStep)?.def ?? null
+    : null;
+  const active = selected?.key ?? next;
+  const phase = selected?.phase ?? progressPhase;
   const backfilledRetire = withinBackfill(completed.first_order, completed.account);
   const backfilledPublish = withinBackfill(completed.storefront_published, completed.account);
   return {
-    phase, retired, next, steps, phasesComplete,
+    phase, retired, next, active, steps, phasesComplete,
     showRecap: retired && !input.recapDismissed && !backfilledRetire,
     showLiveCard:
       completed.storefront_published != null && !retired &&

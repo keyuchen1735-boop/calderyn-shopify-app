@@ -1,11 +1,12 @@
 import { getSupabase } from "~/lib/supabase.server";
 import { isFullyEnabledAccount, type ConnectedAccountRow } from "~/lib/payments/connect.server";
 import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
-import type { MilestoneKey } from "~/lib/dashboard/journey-model";
+import { isMilestoneKey, type MilestoneKey } from "~/lib/dashboard/journey-model";
 import { deriveDone, type JourneySignals } from "./journey-derive";
 import { PROBE_SALE_STATES } from "~/lib/cutover/test-transaction.server";
 
 const MARKER_KEYS = ["live_card_dismissed", "recap_dismissed"] as const;
+const ACTIVE_STEP_PREFIX = "active_step:";
 
 // shops.id is a uuid for real/demo shops provisioned through the normal path;
 // showcase fixtures may carry non-uuid ids. Same guard as
@@ -85,6 +86,7 @@ export interface JourneyProgress {
   completed: Partial<Record<MilestoneKey, string>>;
   liveCardDismissed: boolean;
   recapDismissed: boolean;
+  activeStep: MilestoneKey | null;
   storefrontUrl: string | null;
 }
 
@@ -116,16 +118,47 @@ export async function getJourneyProgress(shopId: string): Promise<JourneyProgres
   const completed: Partial<Record<MilestoneKey, string>> = {};
   let liveCardDismissed = false;
   let recapDismissed = false;
+  let activeStep: MilestoneKey | null = null;
+  let activeStepAt = "";
   for (const row of data ?? []) {
     if (row.milestone_key === "live_card_dismissed") liveCardDismissed = true;
     else if (row.milestone_key === "recap_dismissed") recapDismissed = true;
-    else completed[row.milestone_key as MilestoneKey] = row.completed_at as string;
+    else if (row.milestone_key.startsWith(ACTIVE_STEP_PREFIX)) {
+      const candidate = row.milestone_key.slice(ACTIVE_STEP_PREFIX.length);
+      const completedAt = typeof row.completed_at === "string" ? row.completed_at : "";
+      if (isMilestoneKey(candidate) && completedAt >= activeStepAt) {
+        activeStep = candidate;
+        activeStepAt = completedAt;
+      }
+    } else if (isMilestoneKey(row.milestone_key)) {
+      completed[row.milestone_key] = row.completed_at as string;
+    }
   }
   const storefrontUrl =
     orgSlug && process.env.NODE_ENV !== "development"
       ? `https://${tenantDomain(orgSlug)}/storefront`
       : "/storefront";
-  return { completed, liveCardDismissed, recapDismissed, storefrontUrl };
+  return { completed, liveCardDismissed, recapDismissed, activeStep, storefrontUrl };
+}
+
+export async function setJourneyActiveStep(shopId: string, step: MilestoneKey): Promise<void> {
+  const sb = getSupabase();
+  const marker = `${ACTIVE_STEP_PREFIX}${step}`;
+  const { error: insertError } = await sb
+    .from("shop_setup_progress")
+    .upsert([{ shop_id: shopId, milestone_key: marker }], {
+      onConflict: "shop_id,milestone_key",
+      ignoreDuplicates: true,
+    });
+  if (insertError) throw insertError;
+
+  const { error: cleanupError } = await sb
+    .from("shop_setup_progress")
+    .delete()
+    .eq("shop_id", shopId)
+    .like("milestone_key", `${ACTIVE_STEP_PREFIX}%`)
+    .neq("milestone_key", marker);
+  if (cleanupError) throw cleanupError;
 }
 
 export async function dismissJourneyCard(
