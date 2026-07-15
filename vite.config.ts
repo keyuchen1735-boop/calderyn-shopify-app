@@ -11,14 +11,18 @@ declare module "@remix-run/node" {
 
 const appUrl = new URL(process.env.SHOPIFY_APP_URL || "http://localhost");
 const host = appUrl.hostname;
+const devPort = Number(process.env.PORT || 3000);
 const hmrEnabled = process.env.ENABLE_DEV_HMR === "true";
 const hmrConfig =
   host === "localhost"
     ? {
         protocol: "ws" as const,
         host: "localhost",
-        port: 64999,
-        clientPort: 64999,
+        // Share the local HTTP port by default. A fixed HMR port makes a
+        // second worktree/dev server disconnect continuously when that port
+        // is already owned by another Vite process.
+        port: Number(process.env.HMR_PORT) || devPort,
+        clientPort: Number(process.env.HMR_PORT) || devPort,
       }
     : {
         protocol: "wss" as const,
@@ -30,7 +34,7 @@ const hmrConfig =
 export default defineConfig({
   server: {
     allowedHosts: [host],
-    port: Number(process.env.PORT || 3000),
+    port: devPort,
     strictPort: true,
     hmr: hmrEnabled ? hmrConfig : false,
     fs: {

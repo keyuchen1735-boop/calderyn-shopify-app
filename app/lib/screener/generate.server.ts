@@ -160,6 +160,7 @@ function buildPrompt(req: GenerateRequest): string {
   return [
     "Rewrite ONLY the copy (headline, primary text, CTA) of this ad to fix its weakest dimensions.",
     "Keep the same product, offer, image and destination — do NOT invent new claims or products.",
+    "Do not use em dashes or en dashes. Use commas or short sentences instead.",
     `\nCurrent headline: ${req.input.headline}`,
     `Current primary text: ${req.input.primaryText}`,
     `Current CTA: ${req.input.cta}`,

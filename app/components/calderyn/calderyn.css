@@ -267,10 +267,10 @@
 .cmpx-status { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .cmpx-tag { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 7px; }
 .cmpx-tag-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
-.cmpx-tag-active { background: #e7f5ec; color: #1a7f4f; }
+.cmpx-tag-active { background: #e8f1f7; color: #23556e; }
 .cmpx-tag-paused { background: #f1f1f1; color: #6a6a6a; }
 .cmpx-tag-scale { background: #e9eef3; color: #173a4d; }
-.cmpx-tag-pause { background: #fbf3da; color: #7a5800; }
+.cmpx-tag-pause { background: #f1f1f1; color: #6a6a6a; }
 .cmpx-num { font-size: 13.5px; color: #4a4a4a; }
 .cmpx-roas { font-size: 14px; font-weight: 700; }
 .cmpx-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }

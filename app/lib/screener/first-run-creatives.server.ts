@@ -21,6 +21,45 @@ export interface FirstRunImageGeneration {
   providerAttempted: boolean;
 }
 
+/** Model copy is normalized at the server boundary so generated campaign text
+ * never leaks typographic long dashes into drafts, previews, or ad payloads. */
+export function normalizeGeneratedText(value: string): string {
+  return value
+    .replace(/\s*[—–]\s*/g, ", ")
+    .replace(/,\s*,+/g, ", ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function normalizeCreativeTextRecord(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  const normalized = { ...record };
+  for (const field of ["headline", "primaryText", "rationale"] as const) {
+    if (typeof record[field] === "string") {
+      normalized[field] = normalizeGeneratedText(record[field]);
+    }
+  }
+  return normalized;
+}
+
+/** Normalize both newly built and idempotently replayed wizard responses. */
+export function normalizeFirstRunCreativePayload<T>(payload: T): T {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+  const record = payload as Record<string, unknown>;
+  return {
+    ...record,
+    ...(Object.hasOwn(record, "fallback")
+      ? { fallback: normalizeCreativeTextRecord(record.fallback) }
+      : {}),
+    ...(Array.isArray(record.variants)
+      ? { variants: record.variants.map(normalizeCreativeTextRecord) }
+      : {}),
+  } as T;
+}
+
 interface FirstRunImageDeps {
   reserve: (shop: string, count: number) => Promise<ReserveSlotsResult>;
   release: (eventId: string | null) => Promise<void>;

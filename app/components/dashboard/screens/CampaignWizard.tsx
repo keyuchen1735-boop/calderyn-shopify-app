@@ -1,6 +1,7 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
+import { CalderynHexMark } from "~/components/CalderynHexMark";
 import {
   Card,
   Btn,
@@ -13,6 +14,7 @@ import { money } from "../format";
 import {
   fetchFirstRunPreflight,
   generateFirstRunCreatives,
+  buildFirstRunPlaceholderVariants,
   createFirstCampaignRun,
   executeCampaignAction,
   startIntegrationConnect,
@@ -47,8 +49,8 @@ const DEFAULT_BUDGET_CENTS = 1500;
 const META_CREATE_ENABLED = true;
 
 const BADGE_GOOD = {
-  color: "var(--green)",
-  background: "var(--green-bg)",
+  color: "var(--live)",
+  background: "color-mix(in oklch, var(--live) 13%, transparent)",
 } as const;
 
 const STEP_ORDER = ["platform", "product", "creative", "review"] as const;
@@ -85,13 +87,13 @@ const CAMPAIGN_PLACEMENTS: Array<{
     id: "google",
     label: "Google",
     platform: "google",
-    detail: "Preview + export plan",
+    detail: "Preview and save a draft",
   },
   {
     id: "tiktok",
     label: "TikTok",
     platform: "tiktok",
-    detail: "Preview + export plan",
+    detail: "Preview and save a draft",
   },
 ];
 
@@ -106,6 +108,17 @@ function placementLabel(placement: CampaignPlacement): string {
     CAMPAIGN_PLACEMENTS.find((option) => option.id === placement)?.label ??
     "Facebook"
   );
+}
+
+const REVIEW_PREVIEW_PLACEMENTS: CampaignPlacement[] = [
+  "instagram",
+  "facebook",
+  "google",
+  "tiktok",
+];
+
+function isMobileOnlyPreview(placement: CampaignPlacement): boolean {
+  return placement === "instagram" || placement === "tiktok";
 }
 
 gsap.registerPlugin(useGSAP);
@@ -133,6 +146,10 @@ interface WizardState {
   productId: string | null;
   productTitle: string | null;
   productImageUrl: string | null;
+  /** The product whose initial paid image set the user explicitly approved.
+   * Keeping this in wizard state lets Back/forward navigation resume the same
+   * idempotent attempt instead of silently starting or spending again. */
+  generationApprovedProductId: string | null;
   budgetCents: number;
   creative: CreativeFields | null;
   creativeVariants: FirstRunCreativeVariant[] | null;
@@ -149,6 +166,7 @@ type WizardAction =
     }
   | { type: "preflight"; preflight: FirstRunPreflight }
   | { type: "product"; id: string; title: string; imageUrl: string | null }
+  | { type: "confirmGeneration"; productId: string }
   | { type: "budget"; cents: number }
   | { type: "creative"; creative: CreativeFields }
   | {
@@ -187,17 +205,24 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
     case "preflight":
       return { ...state, preflight: action.preflight };
     case "product":
+      // Re-selecting the current product must not erase a generated set (or an
+      // in-flight approval) when the user revisits the Product step.
+      if (action.id === state.productId) return state;
       // A new product invalidates any creative generated for the old one.
       return {
         ...state,
         productId: action.id,
         productTitle: action.title,
         productImageUrl: action.imageUrl,
+        generationApprovedProductId: null,
         creative: null,
         creativeVariants: null,
         selectedCreativeIndex: 0,
         regenerationsLeft: 2,
       };
+    case "confirmGeneration":
+      if (action.productId !== state.productId) return state;
+      return { ...state, generationApprovedProductId: action.productId };
     case "budget":
       return { ...state, budgetCents: action.cents };
     case "creative":
@@ -239,6 +264,9 @@ function initWizardState(prefill: WizardPrefill): WizardState {
       productId: prefill.state.productId,
       productTitle: prefill.state.productTitle,
       productImageUrl: prefill.state.productImageUrl,
+      generationApprovedProductId: prefill.state.creative
+        ? prefill.state.productId
+        : null,
       budgetCents: prefill.state.budgetCents,
       creative: prefill.state.creative,
       creativeVariants: prefill.state.creativeVariants,
@@ -261,6 +289,7 @@ function initWizardState(prefill: WizardPrefill): WizardState {
     productId: null,
     productTitle: null,
     productImageUrl: null,
+    generationApprovedProductId: null,
     budgetCents: DEFAULT_BUDGET_CENTS,
     creative: null,
     creativeVariants: null,
@@ -350,7 +379,17 @@ function WizardHeader({
   );
 }
 
-function CampaignDraftPreview({ state }: { state: WizardState }) {
+function CampaignDraftPreview({
+  state,
+  continueLabel,
+  continueDisabled,
+  onContinue,
+}: {
+  state: WizardState;
+  continueLabel: string;
+  continueDisabled: boolean;
+  onContinue: () => void;
+}) {
   const platform = placementLabel(state.placement);
   const previewImageUrl = state.creative?.imageUrl ?? state.productImageUrl;
   const previewRef = useRef<HTMLElement>(null);
@@ -361,7 +400,7 @@ function CampaignDraftPreview({ state }: { state: WizardState }) {
       const timeline = gsap.timeline({ defaults: { ease: "power2.out" } });
       const art = previewRef.current?.querySelector(".cd-cw-preview-art");
       const copy = previewRef.current?.querySelectorAll(
-        ".cd-cw-preview-copy > *, .cd-cw-preview-facts > span",
+        ".cd-cw-preview-copy > *, .cd-cw-preview-facts > span, .cd-cw-preview-action",
       );
       if (art) {
         timeline.fromTo(
@@ -394,6 +433,7 @@ function CampaignDraftPreview({ state }: { state: WizardState }) {
       scope: previewRef,
       dependencies: [
         state.placement,
+        state.step,
         state.productId,
         state.creative?.imageUrl,
         state.creative?.headline,
@@ -444,6 +484,15 @@ function CampaignDraftPreview({ state }: { state: WizardState }) {
       <p>
         <CDIcon name="shield" size={14} /> Nothing spends until you turn it on.
       </p>
+      <div className="cd-cw-preview-action">
+        <Btn
+          kind="primary"
+          disabled={continueDisabled}
+          onClick={onContinue}
+        >
+          {continueLabel}
+        </Btn>
+      </div>
     </aside>
   );
 }
@@ -463,12 +512,10 @@ function PlatformStep({
   state,
   dispatch,
   app,
-  onNext,
 }: {
   state: WizardState;
   dispatch: React.Dispatch<WizardAction>;
   app: DashboardCtx;
-  onNext: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -518,11 +565,6 @@ function PlatformStep({
   const isMeta = state.platform === "meta";
   const loadingPreflight =
     isMeta && state.preflight === null && !preflightError;
-  const canContinue =
-    !isMeta ||
-    (state.preflight?.metaConnected === true &&
-      state.preflight.adsScope === true &&
-      state.preflight.pageOk === true);
   const hasMetaReadinessIssue = Boolean(
     state.preflight?.metaConnected &&
     (!state.preflight.adsScope || !state.preflight.pageOk),
@@ -653,7 +695,7 @@ function PlatformStep({
                   <CDIcon name="check" size={12} /> Selected
                 </span>
               ) : option.platform !== "meta" ? (
-                <span className="cd-badge">Export only</span>
+                <span className="cd-badge">Draft only</span>
               ) : null}
             </div>
             <div className="cd-h3">{option.label}</div>
@@ -662,9 +704,9 @@ function PlatformStep({
         ))}
       </div>
 
-      <div className="cd-cw-platform-foot">
-        <div className="cd-cw-platform-status-slot">
-          {showMetaStatus && (
+      {showMetaStatus && (
+        <div className="cd-cw-platform-foot">
+          <div className="cd-cw-platform-status-slot">
             <Card className="cd-cw-platform-status">
               {loadingPreflight ? (
                 <p className="cd-caption">Checking your Meta connection…</p>
@@ -749,12 +791,9 @@ function PlatformStep({
                 </div>
               ) : null}
             </Card>
-          )}
+          </div>
         </div>
-        <Btn kind="primary" disabled={!canContinue} onClick={onNext}>
-          Continue to product
-        </Btn>
-      </div>
+      )}
     </div>
   );
 }
@@ -765,12 +804,10 @@ function ProductStep({
   state,
   dispatch,
   app,
-  onNext,
 }: {
   state: WizardState;
   dispatch: React.Dispatch<WizardAction>;
   app: DashboardCtx;
-  onNext: () => void;
 }) {
   const [search, setSearch] = useState("");
   // Debounce the search box so each keystroke doesn't fire a request — same
@@ -877,8 +914,6 @@ function ProductStep({
     },
   );
 
-  const canContinue = state.productId != null;
-
   return (
     <div
       ref={productRootRef}
@@ -950,26 +985,340 @@ function ProductStep({
           ))}
         </div>
       )}
-
-      <div className="cd-cw-actions">
-        <Btn kind="primary" disabled={!canContinue} onClick={onNext}>
-          Continue to creative
-        </Btn>
-      </div>
     </div>
   );
 }
 
 /* ---------- Step 3: creative ---------- */
 
+function CreativeGenerationConfirmationDialog({
+  productTitle,
+  onConfirm,
+  onCancel,
+}: {
+  productTitle: string | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const confirmationRef = useRef<HTMLDivElement>(null);
+
+  const { contextSafe } = useGSAP(
+    () => {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        confirmationRef.current
+          ?.querySelector<HTMLElement>("[data-generation-confirm] .cd-btn")
+          ?.focus({ preventScroll: true });
+        return;
+      }
+      const dialog = confirmationRef.current?.querySelector(
+        ".cd-cw-generation-dialog",
+      );
+      const details = confirmationRef.current?.querySelectorAll(
+        ".cd-cw-generation-consent-copy > *, .cd-cw-generation-consent-action",
+      );
+      const mark = confirmationRef.current?.querySelector(
+        ".cd-cw-generation-consent-mark",
+      );
+      const timeline = gsap.timeline({ defaults: { ease: "power3.out" } });
+      timeline.fromTo(
+        confirmationRef.current,
+        { autoAlpha: 0 },
+        {
+          autoAlpha: 1,
+          duration: 0.22,
+          clearProps: "opacity,visibility",
+        },
+      );
+      if (dialog) {
+        timeline.fromTo(
+          dialog,
+          { autoAlpha: 0, y: 12, scale: 0.97, willChange: "transform,opacity" },
+          {
+            autoAlpha: 1,
+            y: 0,
+            scale: 1,
+            duration: 0.36,
+            ease: "back.out(1.35)",
+            clearProps: "transform,opacity,visibility,willChange",
+          },
+          "<0.02",
+        );
+      }
+      if (mark) {
+        timeline.fromTo(
+          mark,
+          { scale: 0.82, rotation: -8 },
+          { scale: 1, rotation: 0, duration: 0.34 },
+          "<0.04",
+        );
+      }
+      if (details?.length) {
+        timeline.fromTo(
+          details,
+          { autoAlpha: 0, y: 4 },
+          {
+            autoAlpha: 1,
+            y: 0,
+            duration: 0.25,
+            stagger: 0.045,
+            clearProps: "transform,opacity,visibility",
+          },
+          "<0.04",
+        );
+      }
+      confirmationRef.current
+        ?.querySelector<HTMLElement>("[data-generation-confirm] .cd-btn")
+        ?.focus({ preventScroll: true });
+    },
+    { scope: confirmationRef },
+  );
+
+  const closeWith = contextSafe((callback: () => void) => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      callback();
+      return;
+    }
+    const dialog = confirmationRef.current?.querySelector(
+      ".cd-cw-generation-dialog",
+    );
+    const timeline = gsap.timeline({ onComplete: callback });
+    if (dialog) {
+      timeline.to(dialog, {
+        autoAlpha: 0,
+        y: 7,
+        scale: 0.985,
+        duration: 0.16,
+        ease: "power2.in",
+      });
+    }
+    timeline.to(
+      confirmationRef.current,
+      { autoAlpha: 0, duration: 0.14, ease: "power1.in" },
+      "-=0.08",
+    );
+  });
+
+  return (
+    <div
+      ref={confirmationRef}
+      className="cd-cw-generation-confirmation"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") closeWith(onCancel);
+      }}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) closeWith(onCancel);
+      }}
+    >
+      <div
+        className="cd-card cd-cw-generation-consent cd-cw-generation-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="creative-generation-dialog-title"
+        aria-describedby="creative-generation-dialog-detail"
+      >
+        <span className="cd-cw-generation-consent-mark" aria-hidden="true">
+          <CalderynHexMark
+            size={18}
+            fill="var(--accent)"
+            stroke="var(--on-accent)"
+          />
+        </span>
+        <div className="cd-cw-generation-consent-copy">
+          <b id="creative-generation-dialog-title">
+            Use 3 credits to generate?
+          </b>
+          <small id="creative-generation-dialog-detail">
+            Calderyn will create three product-specific ad images.
+          </small>
+          {productTitle && <span>Based on {productTitle}</span>}
+        </div>
+        <div className="cd-cw-generation-consent-action">
+          <Btn onClick={() => closeWith(onCancel)}>Not yet</Btn>
+          <span data-generation-confirm>
+            <Btn
+              kind="primary"
+              icon="sparkle"
+              onClick={() => closeWith(onConfirm)}
+            >
+              Yes, generate
+            </Btn>
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreativeGenerationStage({
+  productImageUrl,
+  compact = false,
+}: {
+  productImageUrl: string | null;
+  compact?: boolean;
+}) {
+  const generationRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(
+    () => {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+      const cards = generationRef.current?.querySelectorAll(
+        ".cd-cw-generation-card-inner",
+      );
+      const scans = generationRef.current?.querySelectorAll(
+        ".cd-cw-generation-scan",
+      );
+      const copy = generationRef.current?.querySelectorAll(
+        ".cd-cw-generation-copy > *",
+      );
+      const pulse = generationRef.current?.querySelector(
+        ".cd-cw-generation-pulse",
+      );
+      if (!cards?.length) return;
+
+      const entrance = gsap.timeline({ defaults: { ease: "power3.out" } });
+      entrance
+        .fromTo(
+          generationRef.current,
+          { autoAlpha: 0, scale: 0.992 },
+          {
+            autoAlpha: 1,
+            scale: 1,
+            duration: 0.32,
+            clearProps: "transform,opacity,visibility",
+          },
+        )
+        .fromTo(
+          cards,
+          {
+            autoAlpha: 0,
+            y: 12,
+            rotationX: -8,
+            transformPerspective: 800,
+          },
+          {
+            autoAlpha: 1,
+            y: 0,
+            rotationX: 0,
+            duration: 0.46,
+            stagger: 0.075,
+          },
+          "<0.04",
+        );
+
+      if (copy?.length) {
+        entrance.fromTo(
+          copy,
+          { autoAlpha: 0, y: 4 },
+          {
+            autoAlpha: 1,
+            y: 0,
+            duration: 0.26,
+            stagger: 0.055,
+            clearProps: "transform,opacity,visibility",
+          },
+          "<0.1",
+        );
+      }
+
+      const float = gsap.timeline({
+        paused: true,
+        repeat: -1,
+        yoyo: true,
+        defaults: { duration: 1.65, ease: "sine.inOut" },
+      });
+      float.to(cards, {
+        y: (index) => (index === 1 ? -4 : -2),
+        rotationY: (index) => (index - 1) * 1.6,
+        stagger: 0.12,
+      });
+      entrance.call(() => float.play(), undefined, ">-0.02");
+
+      if (scans?.length) {
+        gsap.fromTo(
+          scans,
+          { autoAlpha: 0, yPercent: -180 },
+          {
+            autoAlpha: 0.72,
+            yPercent: 760,
+            duration: 1.45,
+            stagger: 0.18,
+            repeat: -1,
+            repeatDelay: 0.42,
+            ease: "power1.inOut",
+          },
+        );
+      }
+
+      if (pulse) {
+        gsap.to(pulse, {
+          autoAlpha: 0.72,
+          scale: 1.12,
+          duration: 1.05,
+          repeat: -1,
+          yoyo: true,
+          ease: "sine.inOut",
+        });
+      }
+    },
+    { scope: generationRef },
+  );
+
+  return (
+    <div
+      ref={generationRef}
+      className={`cd-cw-generation-stage${compact ? " is-compact" : " cd-card cd-pad"}`}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="cd-cw-generation-copy">
+        <span className="cd-cw-generation-pulse" aria-hidden="true">
+          <CalderynHexMark
+            size={16}
+            fill="var(--accent)"
+            stroke="var(--on-accent)"
+          />
+        </span>
+        <div>
+          <b>{compact ? "Finding fresh directions" : "Creating three directions"}</b>
+          <small>Visuals · Copy · Scoring</small>
+        </div>
+      </div>
+
+      <div className="cd-cw-generation-deck" aria-hidden="true">
+        {[0, 1, 2].map((option) => (
+          <span
+            key={option}
+            className="cd-cw-generation-card"
+            data-option={option + 1}
+          >
+            <span className="cd-cw-generation-card-inner">
+              <span className="cd-cw-generation-art">
+                {productImageUrl ? <img src={productImageUrl} alt="" /> : null}
+                <span className="cd-cw-generation-scan" />
+              </span>
+              <span className="cd-cw-generation-lines">
+                <i />
+                <i />
+              </span>
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CreativeStep({
   state,
   dispatch,
-  onNext,
+  regenerating,
+  setRegenerating,
 }: {
   state: WizardState;
   dispatch: React.Dispatch<WizardAction>;
-  onNext: () => void;
+  regenerating: boolean;
+  setRegenerating: (value: boolean) => void;
 }) {
   const [loadError, setLoadError] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
@@ -977,7 +1326,6 @@ function CreativeStep({
   // above zero on a remount would turn ordinary Back navigation into an
   // unintended regeneration request.
   const [generationTick, setGenerationTick] = useState(0);
-  const [regenerating, setRegenerating] = useState(false);
   const [regenerationError, setRegenerationError] = useState<string | null>(
     null,
   );
@@ -986,12 +1334,19 @@ function CreativeStep({
   const productTitle = state.productTitle;
   const variants = state.creativeVariants;
   const selectedIdx = state.selectedCreativeIndex;
+  const generationApproved =
+    state.generationApprovedProductId === productId && productId !== null;
 
   useEffect(() => {
     const isRegeneration = generationTick > 0;
     // Returning to this step keeps the previously generated set. A deliberate
     // regeneration is the only path that re-bills the generator.
-    if (!productId || (!isRegeneration && state.creative)) return;
+    if (
+      !productId ||
+      (!isRegeneration &&
+        (!generationApproved || (state.creative && variants?.length)))
+    )
+      return;
     let alive = true;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     setLoadError(false);
@@ -1001,11 +1356,20 @@ function CreativeStep({
     generateFirstRunCreatives(productId, state.runId, attempt)
       .then((res) => {
         if (!alive) return;
-        if (res.available && res.variants.length > 0) {
-          const first = res.variants[0];
+        const displayVariants =
+          res.available && res.variants.length > 0
+            ? res.variants
+            : !isRegeneration
+              ? buildFirstRunPlaceholderVariants({
+                  fallback: res.fallback,
+                  imageUrl: res.imageUrl ?? state.productImageUrl,
+                })
+              : [];
+        if (displayVariants.length > 0) {
+          const first = displayVariants[0];
           dispatch({
             type: "creativeOptions",
-            variants: res.variants,
+            variants: displayVariants,
             regenerationsLeft: res.regenerationsLeft,
             creative: {
               headline: first.headline,
@@ -1013,7 +1377,7 @@ function CreativeStep({
               cta: first.cta,
               imageUrl: first.imageUrl ?? res.imageUrl,
               destinationUrl: res.destinationUrl,
-              audience: "Broad — your country",
+              audience: "Broad, your country",
             },
           });
         } else if (isRegeneration) {
@@ -1022,18 +1386,8 @@ function CreativeStep({
             "Couldn't create a fresh set right now. Your current options are unchanged.",
           );
         } else {
-          dispatch({
-            type: "creative",
-            creative: {
-              headline: res.fallback.headline || productTitle || "",
-              primaryText: res.fallback.primaryText,
-              cta: res.fallback.cta || "SHOP_NOW",
-              imageUrl: res.imageUrl,
-              destinationUrl: res.destinationUrl,
-              audience: "Broad — your country",
-            },
-          });
           dispatch({ type: "regenerationsLeft", value: res.regenerationsLeft });
+          setLoadError(true);
         }
       })
       .catch((error: unknown) => {
@@ -1074,7 +1428,7 @@ function CreativeStep({
       if (retryTimer) clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productId, generationTick, retryTick]);
+  }, [productId, generationApproved, generationTick, retryTick]);
 
   const loading = state.creative === null && !loadError;
   const creative = state.creative;
@@ -1101,13 +1455,6 @@ function CreativeStep({
     setRegenerating(true);
     setGenerationTick((tick) => tick + 1);
   };
-
-  const canContinue =
-    !!creative &&
-    creative.headline.trim() !== "" &&
-    creative.primaryText.trim() !== "" &&
-    creative.cta.trim() !== "" &&
-    creative.destinationUrl.trim() !== "";
 
   useGSAP(
     () => {
@@ -1156,38 +1503,32 @@ function CreativeStep({
         <div>
           <h2 className="cd-h2">Choose your strongest direction</h2>
         </div>
-        <div className="cd-cw-regenerate-control">
-          <Btn
-            small
-            icon="rotate"
-            disabled={loading || regenerating || state.regenerationsLeft <= 0}
-            onClick={regenerate}
-          >
-            {loading || regenerating
-              ? "Generating…"
-              : `Regenerate · ${state.regenerationsLeft} left`}
-          </Btn>
-        </div>
+        {creative && Boolean(variants?.length) && (
+          <div className="cd-cw-regenerate-control">
+            <Btn
+              small
+              icon="rotate"
+              disabled={regenerating || state.regenerationsLeft <= 0}
+              onClick={regenerate}
+            >
+              {regenerating
+                ? "Generating…"
+                : `Regenerate · ${state.regenerationsLeft} left`}
+            </Btn>
+          </div>
+        )}
       </div>
 
       {loading ? (
-        <Card className="cd-cw-working">
-          <span>
-            <CDIcon name="sparkle" size={18} />
-          </span>
-          <div>
-            <b>Calderyn is creating your ads</b>
-            <small>Generating visuals and scoring each direction.</small>
-          </div>
-        </Card>
+        <CreativeGenerationStage productImageUrl={state.productImageUrl} />
       ) : loadError ? (
         <Card>
           <div
             className="flex items-center justify-between"
             style={{ flexWrap: "wrap", gap: 10 }}
           >
-            <span className="cd-caption" style={{ color: "var(--red)" }}>
-              Couldn't prepare your ad.
+            <span className="cd-caption">
+              Images weren't generated. Try again before continuing.
             </span>
             <Btn small onClick={() => setRetryTick((t) => t + 1)}>
               Try again
@@ -1214,6 +1555,7 @@ function CreativeStep({
                     className="cd-cw-concept-card"
                     data-selected={selected ? "1" : "0"}
                     data-option={i + 1}
+                    data-placeholder={variant.imageGenerated ? "0" : "1"}
                     onClick={() => selectVariant(i)}
                   >
                     <span className="cd-cw-concept-art">
@@ -1229,9 +1571,7 @@ function CreativeStep({
                       )}
                       <span className="cd-cw-concept-shade" />
                       <span className="cd-cw-concept-label">
-                        {variant.imageGenerated
-                          ? "AI generated"
-                          : `Direction ${i + 1}`}
+                        {variant.imageGenerated ? "AI generated" : "Placeholder"}
                         {i === 0 && variant.score != null && <b>Top pick</b>}
                       </span>
                       <span
@@ -1239,12 +1579,18 @@ function CreativeStep({
                         data-selected={selected ? "1" : "0"}
                       >
                         <b>
-                          {variant.score == null
-                            ? "New"
-                            : Math.round(variant.score)}
+                          {variant.imageGenerated
+                            ? variant.score == null
+                              ? "New"
+                              : Math.round(variant.score)
+                            : "Source"}
                         </b>
                         <small>
-                          {variant.score == null ? "visual" : "score"}
+                          {variant.imageGenerated
+                            ? variant.score == null
+                              ? "visual"
+                              : "score"
+                            : "image"}
                         </small>
                         {selected && <CDIcon name="check" size={11} />}
                       </span>
@@ -1265,90 +1611,13 @@ function CreativeStep({
               })}
               {regenerating && (
                 <div className="cd-cw-regenerating">
-                  <CDIcon name="sparkle" size={18} />
-                  <span>Finding fresh winning angles…</span>
+                  <CreativeGenerationStage
+                    productImageUrl={state.productImageUrl}
+                    compact
+                  />
                 </div>
               )}
             </div>
-          )}
-          {creative && (!variants || variants.length === 0) && (
-            <Card className="cd-cw-manual-creative">
-              <div className="cd-cw-review-media">
-                {creative.imageUrl ? (
-                  <img src={creative.imageUrl} alt="" />
-                ) : (
-                  <CDIcon name="image" size={18} />
-                )}
-                <span>
-                  <b>Your product image</b>
-                  <small>Ready to customize</small>
-                </span>
-              </div>
-              <div className="cd-cw-creative-fields">
-                <label>
-                  <span>
-                    <b>Primary text</b>
-                    <small>{creative.primaryText.length}/125</small>
-                  </span>
-                  <textarea
-                    className="cd-input"
-                    rows={3}
-                    maxLength={125}
-                    value={creative.primaryText}
-                    onChange={(event) =>
-                      dispatch({
-                        type: "creative",
-                        creative: {
-                          ...creative,
-                          primaryText: event.target.value,
-                        },
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  <span>
-                    <b>Headline</b>
-                    <small>{creative.headline.length}/40</small>
-                  </span>
-                  <input
-                    className="cd-input"
-                    maxLength={40}
-                    value={creative.headline}
-                    onChange={(event) =>
-                      dispatch({
-                        type: "creative",
-                        creative: { ...creative, headline: event.target.value },
-                      })
-                    }
-                  />
-                </label>
-                <label className="cd-cw-creative-cta">
-                  <span>
-                    <b>Button</b>
-                  </span>
-                  <span className="cd-cw-select-wrap">
-                    <select
-                      className="cd-input"
-                      value={creative.cta}
-                      onChange={(event) =>
-                        dispatch({
-                          type: "creative",
-                          creative: { ...creative, cta: event.target.value },
-                        })
-                      }
-                    >
-                      {META_CTA_TYPES.map((cta) => (
-                        <option key={cta} value={cta}>
-                          {cta.replace(/_/g, " ")}
-                        </option>
-                      ))}
-                    </select>
-                    <CDIcon name="chevronDown" size={14} />
-                  </span>
-                </label>
-              </div>
-            </Card>
           )}
         </>
       )}
@@ -1356,16 +1625,6 @@ function CreativeStep({
       {regenerationError && (
         <p className="cd-caption cd-cw-generation-error">{regenerationError}</p>
       )}
-
-      <div className="cd-cw-actions">
-        <Btn
-          kind="primary"
-          disabled={!canContinue || regenerating}
-          onClick={onNext}
-        >
-          Customize &amp; preview
-        </Btn>
-      </div>
     </div>
   );
 }
@@ -1381,18 +1640,6 @@ function SummaryRow({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function buildPlanText(state: WizardState): string {
-  return [
-    `Platform: ${placementLabel(state.placement)}`,
-    `Product: ${state.productTitle ?? ""}`,
-    `Daily budget: ${money(state.budgetCents)}`,
-    `Audience: Broad — your country`,
-    `Headline: ${state.creative?.headline ?? ""}`,
-    `Primary text: ${state.creative?.primaryText ?? ""}`,
-    `Call to action: ${state.creative?.cta ?? ""}`,
-  ].join("\n");
-}
-
 function destinationHost(url: string | undefined): string {
   if (!url) return "yourstore.com";
   try {
@@ -1405,12 +1652,16 @@ function destinationHost(url: string | undefined): string {
 function LiveAdPreview({
   state,
   storeLabel,
-  placement,
+  device,
+  previewPlacement,
+  previewDirection,
   revision,
 }: {
   state: WizardState;
   storeLabel: string;
-  placement: "mobile" | "desktop";
+  device: "mobile" | "desktop";
+  previewPlacement: CampaignPlacement;
+  previewDirection: -1 | 1;
   revision: number;
 }) {
   const creative = state.creative;
@@ -1433,16 +1684,16 @@ function LiveAdPreview({
       timeline.fromTo(
         ad,
         {
-          autoAlpha: 0.82,
-          scale: 0.992,
-          y: 3,
+          autoAlpha: 0.68,
+          x: previewDirection * 12,
+          scale: 0.994,
           willChange: "transform,opacity",
         },
         {
           autoAlpha: 1,
+          x: 0,
           scale: 1,
-          y: 0,
-          duration: 0.3,
+          duration: 0.32,
           clearProps: "transform,opacity,visibility,willChange",
         },
       );
@@ -1461,14 +1712,14 @@ function LiveAdPreview({
     },
     {
       scope: livePreviewRef,
-      dependencies: [placement, state.placement, revision],
+      dependencies: [device, previewPlacement, previewDirection, revision],
       revertOnUpdate: true,
     },
   );
 
   let ad: ReactNode;
 
-  if (state.placement === "instagram") {
+  if (previewPlacement === "instagram") {
     ad = (
       <article
         className="cd-cw-live-ad cd-cw-live-instagram"
@@ -1513,7 +1764,7 @@ function LiveAdPreview({
         </small>
       </article>
     );
-  } else if (state.placement === "google") {
+  } else if (previewPlacement === "google") {
     ad = (
       <article
         className="cd-cw-live-ad cd-cw-live-google"
@@ -1533,7 +1784,7 @@ function LiveAdPreview({
         </div>
       </article>
     );
-  } else if (state.placement === "tiktok") {
+  } else if (previewPlacement === "tiktok") {
     ad = (
       <article
         className="cd-cw-live-ad cd-cw-live-tiktok"
@@ -1541,7 +1792,7 @@ function LiveAdPreview({
       >
         <div className="cd-cw-live-media">{media}</div>
         <div className="cd-cw-tiktok-copy" data-preview-copy>
-          <b>@{storeLabel.toLowerCase().replace(/\s+/g, "")}</b>
+          <b>@{storeLabel.toLowerCase().replace(/[^a-z0-9._]/g, "")}</b>
           <p>{creative?.primaryText}</p>
           <small>Sponsored · {creative?.headline}</small>
         </div>
@@ -1602,8 +1853,8 @@ function LiveAdPreview({
     <div
       ref={livePreviewRef}
       className="cd-cw-live-stage"
-      data-placement={placement}
-      data-network={state.placement}
+      data-placement={device}
+      data-network={previewPlacement}
     >
       {ad}
     </div>
@@ -1635,7 +1886,10 @@ function ReviewStep({
   const [turningOn, setTurningOn] = useState(false);
   /** True once resume_campaign succeeded — makes the Turn on button single-use. */
   const [turnedOn, setTurnedOn] = useState(false);
-  const [placement, setPlacement] = useState<"mobile" | "desktop">("mobile");
+  const [device, setDevice] = useState<"mobile" | "desktop">("mobile");
+  const [previewPlacement, setPreviewPlacement] =
+    useState<CampaignPlacement>(state.placement);
+  const [previewDirection, setPreviewDirection] = useState<-1 | 1>(1);
   const [previewRevision, setPreviewRevision] = useState(0);
   const [reviewPreflightPending, setReviewPreflightPending] = useState(
     state.platform === "meta",
@@ -1644,6 +1898,15 @@ function ReviewStep({
   const [uploadingImage, setUploadingImage] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const reviewRootRef = useRef<HTMLDivElement>(null);
+
+  const selectPreviewPlacement = (nextPlacement: CampaignPlacement) => {
+    if (nextPlacement === previewPlacement) return;
+    const currentIndex = REVIEW_PREVIEW_PLACEMENTS.indexOf(previewPlacement);
+    const nextIndex = REVIEW_PREVIEW_PLACEMENTS.indexOf(nextPlacement);
+    setPreviewDirection(nextIndex >= currentIndex ? 1 : -1);
+    setPreviewPlacement(nextPlacement);
+    if (isMobileOnlyPreview(nextPlacement)) setDevice("mobile");
+  };
 
   useEffect(() => {
     if (state.platform !== "meta") {
@@ -1929,40 +2192,78 @@ function ReviewStep({
           aria-labelledby="ad-preview-title"
         >
           <div className="cd-cw-ad-preview-toolbar">
-            <div>
-              <PlatformMark platform={placementLabel(state.placement)} />
-              <span id="ad-preview-title">
-                {placementLabel(state.placement)} preview
-              </span>
+            <div
+              className="cd-cw-preview-platform-tabs"
+              role="tablist"
+              aria-label="Preview platform"
+            >
+              {REVIEW_PREVIEW_PLACEMENTS.map((option) => {
+                const label = placementLabel(option);
+                const isCampaignPlacement = option === state.placement;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    role="tab"
+                    aria-selected={previewPlacement === option}
+                    aria-label={`${label}${isCampaignPlacement ? ", selected campaign placement" : ""}`}
+                    data-campaign-placement={isCampaignPlacement ? "1" : "0"}
+                    onClick={() => selectPreviewPlacement(option)}
+                  >
+                    <PlatformMark platform={label} size={20} />
+                    <span>{label}</span>
+                    {isCampaignPlacement && <small>Selected</small>}
+                  </button>
+                );
+              })}
             </div>
-            <div className="cd-cw-placement-toggle" aria-label="Preview device">
-              <button
-                type="button"
-                aria-pressed={placement === "mobile"}
-                onClick={() => setPlacement("mobile")}
-              >
-                Phone
-              </button>
-              <button
-                type="button"
-                aria-pressed={placement === "desktop"}
-                onClick={() => setPlacement("desktop")}
-              >
-                Desktop
-              </button>
+            <div className="cd-cw-preview-toolbar-meta">
+              <div className="cd-cw-preview-title">
+                <PlatformMark platform={placementLabel(previewPlacement)} size={22} />
+                <span id="ad-preview-title">
+                  {placementLabel(previewPlacement)} preview
+                </span>
+                {previewPlacement !== state.placement && (
+                  <span className="cd-cw-preview-only">Preview only</span>
+                )}
+              </div>
+              {isMobileOnlyPreview(previewPlacement) ? (
+                <span className="cd-cw-mobile-placement">Mobile placement</span>
+              ) : (
+                <div className="cd-cw-placement-toggle" aria-label="Preview device">
+                  <button
+                    type="button"
+                    aria-pressed={device === "mobile"}
+                    onClick={() => setDevice("mobile")}
+                  >
+                    Phone
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={device === "desktop"}
+                    onClick={() => setDevice("desktop")}
+                  >
+                    Desktop
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
           <LiveAdPreview
             state={state}
             storeLabel={app.storeLabel || "Your store"}
-            placement={placement}
+            device={device}
+            previewPlacement={previewPlacement}
+            previewDirection={previewDirection}
             revision={previewRevision}
           />
 
           <p className="cd-cw-preview-note">
-            <CDIcon name="check" size={13} /> Uses the exact image, copy,
-            headline, and button you selected.
+            <CDIcon name="check" size={13} />
+            {previewPlacement === state.placement
+              ? "Selected placement with your exact creative."
+              : `Preview only. Campaign remains set to ${placementLabel(state.placement)}.`}
           </p>
         </section>
 
@@ -2230,23 +2531,8 @@ function ReviewStep({
               </div>
             )
           ) : (
-            <div className="cd-cw-launch-plan">
-              <p className="cd-caption">
-                Your plan — copy this into {placementLabel(state.placement)}{" "}
-                Ads, or save it as a draft and come back later.
-              </p>
-              <textarea
-                className="cd-input"
-                readOnly
-                rows={7}
-                value={buildPlanText(state)}
-                style={{
-                  width: "100%",
-                  fontFamily: "inherit",
-                  resize: "vertical",
-                }}
-              />
-              <div className="flex justify-end">
+            <div className="cd-cw-launch-actions">
+              <div className="cd-cw-launch-buttons">
                 <Btn kind="primary" disabled={saving} onClick={saveDraft}>
                   {saving ? "Saving…" : "Save as draft"}
                 </Btn>
@@ -2276,9 +2562,13 @@ export function CampaignWizard({
   embedded?: boolean;
 }) {
   const [state, dispatch] = useReducer(wizardReducer, prefill, initWizardState);
+  const [creativeRegenerating, setCreativeRegenerating] = useState(false);
+  const [generationConfirmationOpen, setGenerationConfirmationOpen] =
+    useState(false);
   const idx = STEP_ORDER.indexOf(state.step);
   const rootRef = useRef<HTMLDivElement>(null);
   const previousStepRef = useRef(idx);
+  const continueTriggerRef = useRef<HTMLElement | null>(null);
 
   useGSAP(
     () => {
@@ -2358,7 +2648,65 @@ export function CampaignWizard({
   };
   const goNext = () => {
     if (idx === STEP_ORDER.length - 1) return;
+    if (
+      state.step === "product" &&
+      state.productId &&
+      !state.creative &&
+      state.generationApprovedProductId !== state.productId
+    ) {
+      continueTriggerRef.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      setGenerationConfirmationOpen(true);
+      return;
+    }
     dispatch({ type: "step", step: STEP_ORDER[idx + 1] });
+  };
+
+  const cancelGenerationConfirmation = () => {
+    setGenerationConfirmationOpen(false);
+    requestAnimationFrame(() =>
+      continueTriggerRef.current?.focus({ preventScroll: true }),
+    );
+  };
+
+  const confirmGeneration = () => {
+    if (!state.productId) return;
+    dispatch({ type: "confirmGeneration", productId: state.productId });
+    setGenerationConfirmationOpen(false);
+    dispatch({ type: "step", step: "creative" });
+  };
+
+  useEffect(() => {
+    if (state.step !== "creative") setCreativeRegenerating(false);
+  }, [state.step]);
+
+  const platformReady =
+    state.platform !== "meta" ||
+    (state.preflight?.metaConnected === true &&
+      state.preflight.adsScope === true &&
+      state.preflight.pageOk === true);
+  const creativeReady = Boolean(
+    state.creative &&
+      state.creative.headline.trim() !== "" &&
+      state.creative.primaryText.trim() !== "" &&
+      state.creative.cta.trim() !== "" &&
+      state.creative.destinationUrl.trim() !== "",
+  );
+  const continueDisabled =
+    state.step === "platform"
+      ? !platformReady
+      : state.step === "product"
+        ? state.productId == null
+        : state.step === "creative"
+          ? !creativeReady || creativeRegenerating
+          : true;
+  const continueLabel: Record<WizardStep, string> = {
+    platform: "Continue to product",
+    product: "Continue to creative",
+    creative: "Customize & preview",
+    review: "Review campaign",
   };
 
   const body = (
@@ -2386,7 +2734,6 @@ export function CampaignWizard({
               state={state}
               dispatch={dispatch}
               app={app}
-              onNext={goNext}
             />
           )}
           {state.step === "product" && (
@@ -2394,11 +2741,15 @@ export function CampaignWizard({
               state={state}
               dispatch={dispatch}
               app={app}
-              onNext={goNext}
             />
           )}
           {state.step === "creative" && (
-            <CreativeStep state={state} dispatch={dispatch} onNext={goNext} />
+            <CreativeStep
+              state={state}
+              dispatch={dispatch}
+              regenerating={creativeRegenerating}
+              setRegenerating={setCreativeRegenerating}
+            />
           )}
           {state.step === "review" && (
             <ReviewStep
@@ -2410,8 +2761,22 @@ export function CampaignWizard({
             />
           )}
         </main>
-        {state.step !== "review" && <CampaignDraftPreview state={state} />}
+        {state.step !== "review" && (
+          <CampaignDraftPreview
+            state={state}
+            continueLabel={continueLabel[state.step]}
+            continueDisabled={continueDisabled}
+            onContinue={goNext}
+          />
+        )}
       </div>
+      {generationConfirmationOpen && state.step === "product" && (
+        <CreativeGenerationConfirmationDialog
+          productTitle={state.productTitle}
+          onCancel={cancelGenerationConfirmation}
+          onConfirm={confirmGeneration}
+        />
+      )}
     </div>
   );
 

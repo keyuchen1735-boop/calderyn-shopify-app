@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   combineFirstRunDirections,
   generateFirstRunImages,
+  normalizeFirstRunCreativePayload,
+  normalizeGeneratedText,
 } from "~/lib/screener/first-run-creatives.server";
 import type {
   CreativeGenerator,
@@ -71,6 +73,40 @@ describe("combineFirstRunDirections", () => {
 
     expect(combined[0].input.imageUrl).toBe(original.imageUrl);
     expect(combined[0].imageGenerated).toBe(false);
+  });
+});
+
+describe("normalizeGeneratedText", () => {
+  it("removes long dashes from model output without joining words", () => {
+    expect(
+      normalizeGeneratedText(
+        "Built for rain — without the bulk – and ready for every trail.",
+      ),
+    ).toBe("Built for rain, without the bulk, and ready for every trail.");
+  });
+
+  it("normalizes fresh and replayed creative response fields", () => {
+    const normalized = normalizeFirstRunCreativePayload({
+      available: true,
+      destinationUrl: "https://shop.example/products/trail-pack",
+      fallback: {
+        headline: "Trail pack — lighter",
+        primaryText: "Weather ready — without bulk.",
+        cta: "SHOP_NOW",
+      },
+      variants: [
+        {
+          headline: "Carry more — feel less",
+          primaryText: "Balanced storage — every mile.",
+          rationale: "Clear benefit — concise proof.",
+        },
+      ],
+    });
+
+    expect(JSON.stringify(normalized)).not.toMatch(/[—–]/);
+    expect(normalized.destinationUrl).toBe(
+      "https://shop.example/products/trail-pack",
+    );
   });
 });
 

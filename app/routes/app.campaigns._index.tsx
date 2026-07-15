@@ -60,10 +60,10 @@ import type { ActionKind, Campaign } from "~/lib/types";
 import { resolveCampaignScore } from "~/lib/campaign-score/resolve.server";
 import type { CampaignCalderynScore } from "~/lib/campaign-score/types";
 
-const SCORE_BADGE_TONE: Record<CampaignCalderynScore["band"], "success" | "warning" | "critical" | undefined> = {
-  strong: "success",
-  fair: "warning",
-  weak: "critical",
+const SCORE_BADGE_TONE: Record<CampaignCalderynScore["band"], "info" | undefined> = {
+  strong: "info",
+  fair: undefined,
+  weak: undefined,
   nodata: undefined,
 };
 
@@ -890,11 +890,11 @@ export default function Campaigns() {
   };
   const sortInd = (idx: number) => (sortIndex === idx ? (sortDir === "ascending" ? " ↑" : " ↓") : "");
   const sortCol = (idx: number) => (sortIndex === idx ? "#173a4d" : "#9a9a9a");
-  const PLATS: { key: "All" | "Meta" | "Google" | "TikTok"; dot?: string }[] = [
+  const PLATS: { key: "All" | "Meta" | "Google" | "TikTok" }[] = [
     { key: "All" },
-    { key: "Meta", dot: "#1877F2" },
-    { key: "Google", dot: "#EA4335" },
-    { key: "TikTok", dot: "#111111" },
+    { key: "Meta" },
+    { key: "Google" },
+    { key: "TikTok" },
   ];
 
   return (
@@ -969,7 +969,7 @@ export default function Campaigns() {
                       setPage(0);
                     }}
                   >
-                    {p.dot && <span className="cmpx-chip-dot" style={{ background: p.dot }} />}
+                    {p.key !== "All" && <PlatformIcon platform={p.key} size={13} />}
                     {p.key}
                   </button>
                 ))}
@@ -1017,7 +1017,7 @@ export default function Campaigns() {
                           {c.name}
                         </button>
                         <span className="cmpx-plat">
-                          <PlatformIcon platform={c.platform} size={16} />
+                          <PlatformIcon platform={c.platform} size={14} />
                           {c.platform}
                         </span>
                         <div className="cmpx-status">
@@ -1041,7 +1041,7 @@ export default function Campaigns() {
                           {campaignBudgetLabel(c.status, c.daily_budget_cents)}
                         </span>
                         <span className="cmpx-num cmpx-r">{fmtMoney(c.spend_7d)}</span>
-                        <span className="cmpx-roas cmpx-r" style={{ color: losing ? "#b3300f" : "#1a1a1a" }}>
+                        <span className="cmpx-roas cmpx-r" style={{ color: losing ? "#737373" : "#23556e" }}>
                           {campaignRoasLabel(c.roas_7d)}
                         </span>
                         <div className="cmpx-actions">
@@ -1458,7 +1458,7 @@ function ScaleBudgetModal({
 function PlatformTag({ platform }: { platform: Campaign["platform"] }) {
   return (
     <InlineStack gap="150" blockAlign="center" wrap={false}>
-      <PlatformIcon platform={platform} size={16} />
+      <PlatformIcon platform={platform} size={14} />
       <Text as="span" variant="bodySm">
         {platform}
       </Text>
