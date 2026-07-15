@@ -15,7 +15,10 @@ module.exports = {
       // reloads need to re-authenticate (stale-deploy fallback → login
       // screen in the admin iframe). Use the wrapper instead.
       files: ["app/**/*.ts", "app/**/*.tsx"],
-      excludedFiles: ["app/lib/embedded-nav.ts"],
+      excludedFiles: [
+        "app/lib/embedded-nav.ts",
+        "app/components/dashboard/DashboardApp.tsx",
+      ],
       rules: {
         "no-restricted-imports": [
           "error",

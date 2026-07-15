@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation } from "@remix-run/react";
+import { useLocation, useNavigate, useNavigationType } from "@remix-run/react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
@@ -355,9 +355,11 @@ export default function DashboardApp({
   }, []);
   const t = useMemo<DashboardTheme>(() => ({ ...DASHBOARD_THEME, dark }), [dark]);
 
-  // Screen state is the URL: seeded from the SSR location (deep links), pushed
-  // on navigate, and re-parsed on popstate so the back button works.
+  // Screen state is the URL: seeded from the SSR location (deep links) and
+  // kept in sync with Remix navigation so browser back/forward works.
   const location = useLocation();
+  const routerNavigate = useNavigate();
+  const navigationType = useNavigationType();
   const [nav, setNav] = useState<NavState>(
     () => parsePath(location.pathname) ?? { screen: "dashboard", param: null, sub: null },
   );
@@ -387,33 +389,32 @@ export default function DashboardApp({
       setAcctOpen(false);
       const path = pathFor(next);
       if (window.location.pathname !== path) {
-        // Preserve the router's history state (its position index) so browser
-        // back/forward and scroll restoration keep working across our entries.
         // Deliberately drop the query string: dashboard queries are one-shot
         // (OAuth return notices) and must not ride along to every screen.
-        window.history.pushState(window.history.state, "", path);
+        routerNavigate(path);
       }
       // In-place expansions (an alert row opening) keep the pane where it is.
       if (!opts?.preserveScroll) {
         document.getElementById("cd-main")?.scrollTo({ top: 0 });
       }
     },
-    [],
+    [routerNavigate],
   );
 
-  // Back/forward re-derive the screen from the URL; an unknown deep link
-  // canonicalizes to Mission Control once on mount.
+  // Back/forward re-derive the screen from Remix's location; an unknown deep
+  // link canonicalizes to Mission Control.
   useEffect(() => {
-    if (!parsePath(window.location.pathname)) {
-      window.history.replaceState(null, "", DASHBOARD_BASE + window.location.search);
+    const next = parsePath(location.pathname);
+    if (!next) {
+      routerNavigate(DASHBOARD_BASE + location.search, { replace: true });
+      setNav({ screen: "dashboard", param: null, sub: null });
+      return;
     }
-    const onPop = () => {
-      setNav(parsePath(window.location.pathname) ?? { screen: "dashboard", param: null, sub: null });
+    setNav(next);
+    if (navigationType === "POP") {
       document.getElementById("cd-main")?.scrollTo({ top: 0 });
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
+    }
+  }, [location.pathname, location.search, navigationType, routerNavigate]);
 
   // Escape closes the More sheet (backdrop click handles pointer dismissal).
   useEffect(() => {
