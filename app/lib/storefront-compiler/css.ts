@@ -15,6 +15,12 @@ const FORBIDDEN_PROTECTED_ATTRIBUTES = new Set([
 ]);
 const PRESENTATION_STATE_ATTRIBUTES = new Set(["data-cd-active-value", "data-cd-class-token"]);
 
+export const RUNTIME_CSS_CUSTOM_PROPERTY_IDS: ReadonlySet<string> = new Set([
+  "font-body",
+  "font-display",
+  "cd-progress",
+]);
+
 function isSafeIdentifier(value: string): boolean {
   if (value.length === 0 || value.length > 80) return false;
   for (const character of value) {
@@ -385,8 +391,27 @@ export function assertSafeCssValue(property: string, value: string, checkoutDeco
   }
 }
 
+export function requiredCssCustomPropertyIds(source: string): Set<string> {
+  const root = postcss.parse(source, { from: undefined });
+  const required = new Set<string>();
+  root.walkDecls((declaration) => {
+    valueParser(declaration.value).walk((node) => {
+      if (node.type !== "function" || decodeCssEscapes(node.value).toLowerCase() !== "var") return;
+      const token = node.nodes.find((child) => child.type === "word" && child.value.startsWith("--"));
+      const hasFallback = node.nodes.some((child) => child.type === "div" && child.value === ",");
+      if (token?.type === "word" && !hasFallback) required.add(decodeCssEscapes(token.value).slice(2));
+    });
+  });
+  return required;
+}
+
 export function assertSafeDesignTokenValue(tokenId: string, value: string): void {
   if (!isSafeIdentifier(tokenId)) throw new CompilerError("design.token", "Design token ID is invalid");
+  valueParser(value).walk((node) => {
+    if (node.type === "function" && decodeCssEscapes(node.value).toLowerCase() === "var") {
+      throw new CompilerError("design.token", "Design token values cannot reference other custom properties");
+    }
+  });
   const compiled = compileCss(`.token { --${tokenId}: ${value}; }`, { namespace: "token-check" });
   const root = postcss.parse(compiled.css, { from: undefined });
   let declarationCount = 0;
@@ -423,7 +448,16 @@ export interface CompiledCssResult {
 
 export interface ValidateCompiledCssOptions extends CompileCssOptions {}
 
+function assertSafeStyleText(source: string): void {
+  // HTML parses style contents as raw text, so a closing tag is dangerous even
+  // when a CSS parser sees it only inside a comment or quoted value.
+  if (/<\/style/i.test(source)) {
+    throw new CompilerError("css.raw_text_end_tag", "CSS cannot contain an HTML style end tag");
+  }
+}
+
 export function validateCompiledCss(source: string, options: ValidateCompiledCssOptions): { ruleCount: number } {
+  assertSafeStyleText(source);
   let root: postcss.Root;
   try {
     root = postcss.parse(source, { from: undefined });
@@ -475,6 +509,7 @@ export function validateCompiledCss(source: string, options: ValidateCompiledCss
 
 export function compileCss(source: string, options: CompileCssOptions): CompiledCssResult {
   if (!isSafeIdentifier(options.namespace)) throw new CompilerError("css.namespace", "CSS namespace is invalid");
+  assertSafeStyleText(source);
   let root: postcss.Root;
   try {
     root = postcss.parse(source, { from: undefined });

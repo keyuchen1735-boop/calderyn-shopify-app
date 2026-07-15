@@ -89,7 +89,7 @@ describe("compiled-node server renderer", () => {
       const source = structuredClone(VALID_BUNDLE_SOURCE);
       source.designSystem.displayFontId = fontId;
       source.designSystem.bodyFontId = fontId;
-      source.designSystem.tokens = { ink: "#123456", rhythm: "clamp(1rem, 2vw, 2rem)" };
+      source.designSystem.tokens = { ink: "#123456", rhythm: "clamp(1rem, 2vw, 2rem)", "space-4": "16px", surface: "#ffffff" };
       const html = renderToStaticMarkup(renderStorefrontSurface({
         bundle: compileBundle(source).bundle,
         routeId: "home",
@@ -384,6 +384,51 @@ describe("compiled-node server renderer", () => {
     expect(html).toContain('<style nonce="route-nonce"');
     expect(html).toContain(".title{color:red}");
     expect(html).toContain('data-cd-bundle="home"');
+  });
+
+  it("emits compiler-validated CSS as raw style text so quoted selectors hydrate exactly", () => {
+    const result = renderStorefrontRoute({
+      routeId: "home",
+      artifact: artifact({ css: `[data-state="ready"]{display:grid}` }),
+      data,
+      nonce: "route-nonce",
+    });
+    const html = renderToStaticMarkup(createElement(() => result.element));
+
+    expect(html).toContain(`[data-state="ready"]{display:grid}`);
+    expect(html).not.toContain("[data-state=&quot;ready&quot;]");
+  });
+
+  it("fails closed when a persisted artifact contains a raw style terminator", () => {
+    const compromised = artifact({ css: `[data-cd-bundle="home"] main{/*</style><form>*/color:red}` });
+
+    expect(() => {
+      const result = renderStorefrontRoute({
+        routeId: "home",
+        artifact: compromised,
+        data,
+        nonce: "route-nonce",
+      });
+      renderToStaticMarkup(createElement(() => result.element));
+    }).toThrow(/style end tag/i);
+  });
+
+  it("renders a stable decorative placeholder when catalog media is missing", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><section data-cd-repeat="featured.products"><img data-cd-key="product.id" data-cd-src="product.primaryImage" data-cd-alt="product.title"></section></main>`;
+    const bundle = compileBundle(source).bundle;
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle,
+      routeId: "home",
+      data: { ...data, featuredProducts: [publicProduct] },
+      nonce: "media-fallback-nonce",
+      mode: "public",
+    }));
+
+    expect(html).toContain('data-cd-media-fallback="true"');
+    expect(html).toContain('src="data:image/svg+xml,');
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).not.toContain('alt="Product one"');
   });
 
   it("returns a platform-owned 404 instead of rendering a generated missing-record route", () => {

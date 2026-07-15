@@ -148,7 +148,8 @@ const search = {
   `,
   css: `
     .search-bench h1 { font-family: var(--font-display); font-size: clamp(3.5rem, 8vw, 7rem); text-transform: uppercase }
-    .query-controls { display: flex; gap: .5rem }
+    .query-controls { display: flex; flex-wrap: wrap; gap: .5rem }
+    .query-controls input { flex: 1 1 14rem; min-width: 0 }
     .query-controls input, .query-controls button { background: transparent; border: 1px solid var(--rule); padding: .8rem 1rem }
     .ranked-results { display: grid; grid-template-columns: repeat(3, 1fr) }
     .ranked-results img { aspect-ratio: 4 / 5; object-fit: cover; width: 100% }
@@ -200,7 +201,7 @@ export const CUSTOM_BENCH_RECIPE = defineRecipe({
   designSystem: {
     displayFontId: "space-grotesk",
     bodyFontId: "ibm-plex-mono",
-    tokens: { paper: "#eee9dd", ink: "#11100e", cobalt: "#2148ff", signal: "#b83a29", rule: "#746f65" },
+    tokens: { paper: "#eee9dd", ink: "#11100e", cobalt: "#2148ff", signal: "#b83a29", rule: "#746f65", line: "#746f65", "space-workshop": "20px" },
     breakpoints: { mobile: 760, wide: 1180 },
     iconStyle: "square workshop glyphs and dimension-line indicators",
     motionStyle: "guided proof steps with restrained horizontal specimen rails",

@@ -6,6 +6,7 @@ import {
   isSupportedStorefrontProofLink,
   STOREFRONT_PROOF_VIEWPORTS,
   buildStorefrontProofCases,
+  detectHorizontalLayoutFailures,
   measureStorefrontBundle,
   validateStorefrontBundleBudgets,
 } from "./browser.server";
@@ -66,5 +67,22 @@ describe("storefront browser proof matrix", () => {
     expect(metrics.fullBundleBytes).toBeGreaterThan(0);
     expect(report.ok).toBe(false);
     expect(report.diagnostics.some((entry) => entry.code === "budget.route-bytes" || entry.code === "budget.bundle-bytes")).toBe(true);
+  });
+
+  it("rejects the reported 2688px viewport escape while allowing intentional clipped compositions", () => {
+    expect(detectHorizontalLayoutFailures({
+      documentWidth: 2_688,
+      viewportWidth: 1_920,
+      candidates: [{ label: "northbound-hero", left: 821, right: 2_688, contained: false }],
+    })).toEqual([
+      "document:2688px>1920px",
+      "northbound-hero:821..2688px",
+    ]);
+
+    expect(detectHorizontalLayoutFailures({
+      documentWidth: 1_920,
+      viewportWidth: 1_920,
+      candidates: [{ label: "cropped-art", left: 821, right: 2_688, contained: true }],
+    })).toEqual([]);
   });
 });

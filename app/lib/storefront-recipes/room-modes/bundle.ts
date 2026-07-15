@@ -17,6 +17,8 @@ const config = {
       ink: "#111412",
       smoke: "#303634",
       amber: "#f0a52b",
+      blue: "#2d63d4",
+      violet: "#7251a8",
       line: "#8b918d",
       "space-room": "28px",
     },

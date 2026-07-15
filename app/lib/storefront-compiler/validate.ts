@@ -24,7 +24,7 @@ import {
   type BindingScope,
   type BindingScopeKind,
 } from "./bindings";
-import { assertSafeDesignTokenValue, validateCompiledCss } from "./css";
+import { RUNTIME_CSS_CUSTOM_PROPERTY_IDS, assertSafeDesignTokenValue, requiredCssCustomPropertyIds, validateCompiledCss } from "./css";
 import { isAllowedCompiledTag, serializeCompiledTree, type ProtectedCssNode } from "./html";
 
 export const validationLimitsV1 = Object.freeze({
@@ -855,6 +855,53 @@ function validateGlobalCss(value: unknown, protectedNodes: readonly ProtectedCss
   catch (error) { add("bundle.global_css", "designSystem.globalCss", error instanceof Error ? error.message : "Global CSS is unsafe"); }
 }
 
+function validateDesignTokenCoverage(bundle: UnknownRecord, add: AddDiagnostic): void {
+  const design = record(bundle.designSystem);
+  const tokens = record(design?.tokens);
+  if (!design || !tokens) return;
+  const tokenIds = new Set([...Object.keys(tokens), ...RUNTIME_CSS_CUSTOM_PROPERTY_IDS]);
+  const routes = record(bundle.routes);
+  const cssArtifacts: Array<[string, unknown]> = [
+    ["designSystem.globalCss", design.globalCss],
+    ["shell.css", record(bundle.shell)?.css],
+    ...(["home", "collection", "product", "search", "cart"] as const).map((routeId) => [
+      `routes.${routeId}.css`,
+      record(routes?.[routeId])?.css,
+    ] as [string, unknown]),
+    ["routes.checkout.decorativeCss", record(routes?.checkout)?.decorativeCss],
+  ];
+  for (const [path, css] of cssArtifacts) {
+    if (typeof css !== "string") continue;
+    try {
+      for (const tokenId of requiredCssCustomPropertyIds(css)) {
+        if (!tokenIds.has(tokenId)) add("bundle.token_reference", path, `CSS references missing design token --${tokenId}`);
+      }
+    } catch {
+      // The artifact-specific CSS validator reports malformed CSS separately.
+    }
+  }
+  for (const [routeId, route] of [["shell", bundle.shell], ...(["home", "collection", "product", "search", "cart"] as const).map((id) => [id, routes?.[id]])] as Array<[string, unknown]>) {
+    const trustedSlots = record(route)?.trustedSlots;
+    if (!Array.isArray(trustedSlots)) continue;
+    trustedSlots.forEach((slot, index) => {
+      const ids = record(slot)?.themeTokenIds;
+      if (!Array.isArray(ids)) return;
+      ids.forEach((tokenId) => {
+        if (typeof tokenId === "string" && !tokenIds.has(tokenId)) {
+          add("bundle.token_reference", `${routeId}.trustedSlots[${index}]`, `Commerce slot references missing design token --${tokenId}`);
+        }
+      });
+    });
+  }
+  const layout = record(record(routes?.checkout)?.layout);
+  const layoutTokenIds = [layout?.spacingTokenId, ...(Array.isArray(layout?.surfaceTokenIds) ? layout.surfaceTokenIds : [])];
+  layoutTokenIds.forEach((tokenId) => {
+    if (typeof tokenId === "string" && !tokenIds.has(tokenId)) {
+      add("bundle.token_reference", "routes.checkout.layout", `Checkout layout references missing design token --${tokenId}`);
+    }
+  });
+}
+
 export function validateCompiledBundle(value: unknown): BundleValidationReport {
   const diagnostics: CompilerDiagnostic[] = [];
   const add: AddDiagnostic = (code, path, message) => diagnostics.push({ code, path, message });
@@ -877,6 +924,7 @@ export function validateCompiledBundle(value: unknown): BundleValidationReport {
     trees.push(validateCheckout(routes?.checkout, add));
     validateAssetReferenceSet(bundle, trees, add);
     validateGlobalCss(bundle.designSystem, protectedNodes, add);
+    validateDesignTokenCoverage(bundle, add);
     const serialized = safeJson(value);
     if (!serialized) add("bundle.serialization", "bundle", "Bundle is not serializable");
     else if (bytes(serialized) > validationLimitsV1.bundleExcludingImagesBytes) add("bundle.byte_limit", "bundle", "Bundle exceeds 1.5MB excluding image payloads");

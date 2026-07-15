@@ -6,7 +6,7 @@ export const VALID_BUNDLE_SOURCE: StorefrontBundleSourceV1 = {
   designSystem: {
     displayFontId: "fraunces",
     bodyFontId: "inter",
-    tokens: { ink: "#111111" },
+    tokens: { ink: "#111111", "space-4": "16px", surface: "#ffffff" },
     breakpoints: { mobile: 390 },
     iconStyle: "line",
     motionStyle: "restrained",

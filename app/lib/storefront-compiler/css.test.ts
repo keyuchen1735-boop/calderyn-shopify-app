@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MALICIOUS_CSS_CASES } from "./__fixtures__/malicious";
-import { compileCss, isolateCompiledShellCss } from "./css";
+import { compileCss, isolateCompiledShellCss, validateCompiledCss } from "./css";
 
 describe("compileCss", () => {
   it.each(MALICIOUS_CSS_CASES)("rejects %s", (_name, source) => {
@@ -22,6 +22,13 @@ describe("compileCss", () => {
     String.raw`.card { content: "h\74tps://evil.example/track" }`,
   ])("rejects CSS-escaped network values after canonical parsing: %s", (source) => {
     expect(() => compileCss(source, { namespace: "home" })).toThrow(/network/i);
+  });
+
+  it("rejects HTML style terminators even when CSS treats them as comments", () => {
+    const injection = `[data-cd-bundle="home"] main{/*</style><form action=/storefront/cart><button>PAY NOW</button></form><style>*/color:red}`;
+
+    expect(() => validateCompiledCss(injection, { namespace: "home" })).toThrow(/style end tag/i);
+    expect(() => compileCss(`main{/*</style><form>*/color:red}`, { namespace: "home" })).toThrow(/style end tag/i);
   });
 
   it("scopes selectors and namespaces IDs and keyframes", () => {

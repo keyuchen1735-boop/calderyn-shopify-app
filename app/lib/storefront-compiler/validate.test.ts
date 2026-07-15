@@ -226,6 +226,17 @@ describe("validation profile v1", () => {
     expect(codes).toContain("asset.entry");
   });
 
+  it("rejects persisted CSS and commerce manifests with unresolved design tokens", () => {
+    const bundle = compileBundle(structuredClone(VALID_BUNDLE_SOURCE)).bundle;
+    bundle.routes.home.css += `[data-cd-bundle=home] .hero{color:var(--missing-accent)}[data-cd-bundle=home] .never-matches{--missing-accent:#f00}`;
+    bundle.routes.product.trustedSlots[0]!.themeTokenIds.push("missing-commerce-token");
+    bundle.designSystem.tokens.ink = "var(--missing-token-value)";
+
+    const codes = validateCompiledBundle(bundle).diagnostics.map((item) => item.code);
+    expect(codes).toContain("bundle.token_reference");
+    expect(codes).toContain("bundle.tokens");
+  });
+
   it("requires compiled asset references and manifest logical keys to match exactly", () => {
     const missing = structuredClone(VALID_BUNDLE_SOURCE);
     missing.routes.home.html = `<main><img data-cd-asset="hero" alt="Editorial hero"></main>`;

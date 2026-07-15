@@ -48,7 +48,7 @@ const checkout = {
 export const SOFT_CHEMISTRY_RECIPE = defineRecipe({
   templateId: "soft-chemistry", templateVersion: 1,
   concept: { name: "Soft Chemistry", rationale: "A clinical editorial sequence makes formula choice transparent without making the store feel sterile.", noveltySignature: ["routine sheets", "ingredient dossier", "concern index"] },
-  designSystem: { displayFontId: "source-serif-4", bodyFontId: "inter", tokens: { milk: "#f4f0eb", ink: "#231e27", lilac: "#c8b6e9", blue: "#a7d7e7", yellow: "#ecff5b" }, breakpoints: { mobile: 760, wide: 1180 }, iconStyle: "fine ingredient diagrams and quiet clinical symbols", motionStyle: "soft reveals motivated by routine sequence and dossier disclosure", globalCss: `.clinical-copy { overflow-wrap: anywhere }` },
+  designSystem: { displayFontId: "source-serif-4", bodyFontId: "inter", tokens: { milk: "#f4f0eb", ink: "#231e27", lilac: "#c8b6e9", blue: "#a7d7e7", yellow: "#ecff5b", "space-clinical": "24px" }, breakpoints: { mobile: 760, wide: 1180 }, iconStyle: "fine ingredient diagrams and quiet clinical symbols", motionStyle: "soft reveals motivated by routine sequence and dossier disclosure", globalCss: `.clinical-copy { overflow-wrap: anywhere }` },
   archetype: { composition: "clinical-editorial", hero: "ingredient-routine-hero", scroll: "soft-reveal", cards: "ingredient-dossiers", iconography: ["fine ingredient diagrams", "quiet clinical symbols"] },
   surfaces: {
     shell: { signature: "quiet formula masthead with ingredient navigation and trusted bag", source: shell },
