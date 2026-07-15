@@ -57,7 +57,18 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const headers = new Headers();
   if (captured) {
     const cookieCartId = await readCartId(request);
-    const cookieCartState = cookieCartId ? await getCartState(shopId, cookieCartId) : null;
+    // A transient DB error must not 500 the post-payment receipt — the one page that should
+    // always render. On a read failure leave the cart cookie alone: a stale purchased-cart
+    // cookie self-heals on the next clean read, whereas clearing here could wipe an active basket.
+    let cookieCartState: Awaited<ReturnType<typeof getCartState>> | "unknown" = null;
+    if (cookieCartId) {
+      try {
+        cookieCartState = await getCartState(shopId, cookieCartId);
+      } catch (err) {
+        console.error("[confirmation] cart-state read failed; leaving cart cookie", err);
+        cookieCartState = "unknown";
+      }
+    }
     // Only a consumed cart (or a stale cookie whose cart no longer exists) is safe to clear; an
     // active 'cart' basket the buyer is building must survive viewing an old receipt.
     if (cookieCartState === "checkout_pending" || cookieCartState === null) {

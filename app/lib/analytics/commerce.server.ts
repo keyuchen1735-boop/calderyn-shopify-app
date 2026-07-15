@@ -41,6 +41,15 @@ const SALE_STATES = ["paid", "fulfilled", "refunded", "partially_refunded"] as c
 // total with no offsetting sale (the native reader already filters SALE_STATES).
 const IMPORTED_SALE_STATES = ["paid", "partially_paid", "partially_refunded", "refunded"] as const;
 
+// imported_order.financial_status is stored verbatim from the source (ingest/mappers.server.ts
+// writes displayFinancialStatus as-is): the Admin GraphQL backfill — the primary migration
+// funnel — supplies Shopify's UPPERCASE enum (PAID, REFUNDED, …), while REST/webhook rows are
+// lowercase. PostgREST .in() is an exact, case-sensitive match, so filtering on the lowercase
+// set alone silently drops every GraphQL-migrated order from gross / order count / the Shopify
+// channel total. Match both cases (order/imported-list.server.ts lowercases on read for the
+// same reason — the column is not normalized).
+export const IMPORTED_SALE_STATE_FILTER = IMPORTED_SALE_STATES.flatMap((s) => [s, s.toUpperCase()]);
+
 // Caps on window reads. Far above pilot volume; if a shop ever exceeds them the
 // aggregates degrade to a floor rather than failing the screen (and the warn
 // below says so). At that size this belongs in a SQL aggregate.
@@ -147,7 +156,7 @@ async function readWindowImportedOrders(
       .from("imported_order")
       .select("total_cents, shipping_cents, tax_cents, processed_at")
       .eq("shop_id", shopId)
-      .in("financial_status", [...IMPORTED_SALE_STATES])
+      .in("financial_status", IMPORTED_SALE_STATE_FILTER)
       .gte("processed_at", sinceIso)
       .order("processed_at", { ascending: false })
       // Stable tiebreak so pagination across the PostgREST 1000-row clamp can't
