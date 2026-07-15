@@ -225,6 +225,22 @@ describe("compiled-node server renderer", () => {
     expect(publicHtml).toContain('data-cd-compiler-id="cd-home-');
   });
 
+  it("keeps the selected recipe while navigating its interactive preview", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
+    source.shell.html = `<a data-cd-route="collection">Shop</a>`;
+
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle: compileBundle(source).bundle,
+      routeId: "home",
+      data,
+      nonce: "recipe-preview-nonce",
+      mode: "preview",
+    }));
+
+    expect(html).toContain("/dashboard/store/preview?route=collection&amp;template=atelier-nine");
+  });
+
   it("renders the global shell footer after the active route", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.shell.html = `<header class="global-header">Global header</header><footer>Global footer</footer>`;

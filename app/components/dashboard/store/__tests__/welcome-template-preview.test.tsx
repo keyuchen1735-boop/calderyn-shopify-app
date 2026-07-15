@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WelcomeOverlay from "../WelcomeOverlay";
+import { STORE_TEMPLATE_REGISTRY } from "~/lib/storefront-bundle/registry";
 
 vi.mock("@gsap/react", () => ({ useGSAP: () => undefined }));
 vi.mock("gsap", () => ({ default: { registerPlugin: vi.fn(), from: vi.fn(), set: vi.fn(), timeline: vi.fn() } }));
@@ -14,12 +15,42 @@ afterEach(() => {
 });
 
 function clickButton(root: HTMLElement, label: RegExp) {
-  const button = [...root.querySelectorAll("button")].find((candidate) => label.test(candidate.textContent ?? ""));
+  const button = [...root.querySelectorAll("button")].find((candidate) =>
+    label.test(candidate.textContent || candidate.getAttribute("aria-label") || ""));
   expect(button).toBeTruthy();
   act(() => button!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
 describe("welcome template selection", () => {
+  it("renders every registered recipe card from its real HTML preview route", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    act(() => root.render(
+      <WelcomeOverlay
+        branch={{ kind: "ready" }}
+        importRun={null}
+        buildPhase={null}
+        productCount={3}
+        onBuildPlain={() => undefined}
+        onBuildDesign={() => undefined}
+        onAddProduct={() => undefined}
+      />,
+    ));
+
+    clickButton(host, /How should it look/i);
+    const frames = [...host.querySelectorAll<HTMLIFrameElement>(".cd-welcome-card iframe")];
+    expect(frames).toHaveLength(11);
+    expect(frames.map((frame) => frame.getAttribute("src")).sort()).toEqual(
+      STORE_TEMPLATE_REGISTRY.templates
+        .map((template) => `/dashboard/store/preview?template=${template.id}&route=home`)
+        .sort(),
+    );
+    expect(frames.every((frame) => frame.getAttribute("loading") === "lazy")).toBe(true);
+    expect(host.querySelector(".cd-welcome-card img")).toBeNull();
+    act(() => root.unmount());
+  });
+
   it("shows a merchant-bound first recipe and reserves full redesign for a follow-up prompt", () => {
     const host = document.createElement("div");
     document.body.append(host);
@@ -38,7 +69,7 @@ describe("welcome template selection", () => {
 
     clickButton(host, /How should it look/i);
     clickButton(host, /Commons Index/i);
-    const frame = host.querySelector<HTMLIFrameElement>('iframe[title*="Commons Index"]');
+    const frame = host.querySelector<HTMLIFrameElement>('iframe[title="Commons Index with your catalog"]');
     expect(frame?.getAttribute("src")).toBe("/dashboard/store/preview?template=commons-index&route=home");
     expect(frame?.getAttribute("sandbox")).toContain("allow-scripts");
     expect(host.textContent).toMatch(/with your store data/i);

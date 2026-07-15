@@ -14,7 +14,6 @@ import type {
 import { STORE_TEMPLATE_REGISTRY } from "./registry";
 import { buildCatalogRoutingEvidence } from "./routing-evidence.server";
 import { resolveStoreDesign } from "./routing";
-import { personalizeStorefrontRecipe } from "./personalize.server";
 import {
   assertStorefrontWriteAllowed,
   createStorefrontBundleVersion,
@@ -79,12 +78,6 @@ export interface StorefrontBuildDependencies {
   buildEvidence(shopId: string): Promise<CatalogRoutingEvidence>;
   resolveDesign(request: StoreDesignRequest, evidence: CatalogRoutingEvidence): StoreDesignResolution;
   loadRecipe(templateId: StoreTemplateId, templateVersion: number): Promise<StorefrontRecipeArtifact>;
-  personalizeRecipe(input: {
-    recipe: StorefrontRecipeArtifact;
-    prompt: string;
-    evidence: CatalogRoutingEvidence;
-    signal: AbortSignal;
-  }): Promise<StorefrontRecipeArtifact>;
   prepareRecipeImages(shopId: string, signal: AbortSignal): Promise<{ required: number; ready: number }>;
   assertWriteAllowed(shopId: string): Promise<void>;
   readPointers(shopId: string): Promise<StorefrontReleasePointers>;
@@ -204,7 +197,6 @@ const defaultDependencies: StorefrontBuildDependencies = {
   buildEvidence: buildCatalogRoutingEvidence,
   resolveDesign: (request, evidence) => resolveStoreDesign(request, evidence, STORE_TEMPLATE_REGISTRY),
   loadRecipe,
-  personalizeRecipe: personalizeStorefrontRecipe,
   prepareRecipeImages: async (shopId, signal) => {
     // Local and preview builds deliberately use the recipe's own placeholder
     // imagery unless paid generation has been explicitly enabled.
@@ -377,13 +369,7 @@ export async function buildStorefrontDesign(
   try {
     [recipe, imagery] = await Promise.race([
       Promise.all([
-        dependencies.loadRecipe(frozenResolution.templateId, frozenResolution.templateVersion).then((loadedRecipe) =>
-          dependencies.personalizeRecipe({
-            recipe: loadedRecipe,
-            prompt: request.prompt,
-            evidence,
-            signal: imageryController.signal,
-          })),
+        dependencies.loadRecipe(frozenResolution.templateId, frozenResolution.templateVersion),
         dependencies.prepareRecipeImages(input.shopId, imageryController.signal),
       ]),
       new Promise<never>((_resolve, reject) => imageryController.signal.addEventListener("abort", () => reject(

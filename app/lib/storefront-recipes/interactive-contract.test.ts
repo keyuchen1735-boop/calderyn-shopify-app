@@ -21,6 +21,23 @@ function topology(nodes: readonly CompiledNode[], depth = 0): string {
 }
 
 describe("interactive storefront recipe contracts", () => {
+  it("keeps every template's HTML and CSS while binding merchant identity and catalog photography", () => {
+    expect(STOREFRONT_RECIPES).toHaveLength(11);
+    for (const recipe of STOREFRONT_RECIPES) {
+      const { bundle } = recipe;
+      expect(bundle.shell.bindings.some((binding) =>
+        binding.ref.kind === "data" && binding.ref.path === "store.name"
+      ), `${recipe.config.templateId} store name`).toBe(true);
+      expect(bundle.shell.css, `${recipe.config.templateId} shell styling`).toBeTruthy();
+      for (const routeId of ["home", "collection", "product"] as const) {
+        expect(bundle.routes[routeId].bindings.some((binding) =>
+          binding.kind === "src" && binding.ref.kind === "data" && binding.ref.path === "product.primaryImage"
+        ), `${recipe.config.templateId} ${routeId} product image`).toBe(true);
+        expect(bundle.routes[routeId].css, `${recipe.config.templateId} ${routeId} styling`).toBeTruthy();
+      }
+    }
+  });
+
   it("keeps home commerce slots scoped to real repeated products", () => {
     for (const recipe of STOREFRONT_RECIPES) {
       for (const slot of recipe.bundle.routes.home.trustedSlots.filter((candidate) => candidate.kind === "quickViewCommerce")) {
