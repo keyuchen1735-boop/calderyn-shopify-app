@@ -36,9 +36,13 @@ export async function enhanceListing(shopId: string, product: StoreProduct, opts
   }
   // url is NOT NULL in store_asset; "" is the sentinel for failed rows. It is never surfaced
   // because applyAssetOverrides filters on status === "ready" && r.url.
+  // A failed attempt must NOT clobber a previously-ready asset: re-builds re-run
+  // generation for every image-less product, so a transient provider failure
+  // would otherwise wipe a good image. On failure we only insert when no row
+  // exists yet (rule-12 visibility); a successful run always overwrites.
   const { error } = await sb.from("store_asset").upsert(
     { shop_id: shopId, product_id: product.id, source: SOURCE, url: url ?? "", status, created_at: new Date().toISOString() },
-    { onConflict: "shop_id,product_id,source" },
+    { onConflict: "shop_id,product_id,source", ignoreDuplicates: status === "failed" },
   );
   if (error) throw error;
   return { productId: product.id, status, url };
