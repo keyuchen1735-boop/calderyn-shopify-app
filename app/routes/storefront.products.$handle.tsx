@@ -9,6 +9,7 @@ import { resolveHandleRedirect } from "~/lib/storefront/handle-redirect.server";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId, commitCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
+import { appendStorefrontTrackingCookies } from "~/lib/storefront/visitor-cookie.server";
 import { buildCart, addCartLine, VariantUnavailableError } from "~/lib/order/cart.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
 import { formatMoney } from "~/lib/storefront/money";
@@ -174,7 +175,7 @@ export async function action({ request }: ActionFunctionArgs) {
     experimentId: served.experimentId,
     variantKey: served.variantKey,
   });
-  for (const c of track.getSetCookie()) headers.append("Set-Cookie", c);
+  appendStorefrontTrackingCookies(headers, track);
 
   // redirect after the mutation to avoid a double-submit on refresh.
   return redirect("/storefront/cart", { headers });

@@ -34,6 +34,14 @@ export interface VisitorSession {
   headers: Headers;
 }
 
+export function appendStorefrontTrackingCookies(target: Headers, source: Headers): void {
+  const getSetCookie = (source as Headers & { getSetCookie?: () => string[] }).getSetCookie;
+  const cookies = typeof getSetCookie === "function"
+    ? getSetCookie.call(source)
+    : (source.get("Set-Cookie")?.split(/,\s*(?=cd_(?:vid|sid)=)/) ?? []);
+  for (const cookie of cookies) target.append("Set-Cookie", cookie);
+}
+
 const SID_VALUE_RE = /^([0-9a-f-]{36})\.(r|n)$/;
 
 /** Read the visitor id off the request if one is already set, without minting
