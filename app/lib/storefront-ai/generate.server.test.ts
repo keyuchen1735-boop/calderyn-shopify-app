@@ -570,35 +570,49 @@ describe("generateOriginalStorefront", () => {
   });
 
   it("garbage-collects persisted candidate assets after a wall-time abort", async () => {
-    const deps = passingDependencies({
-      now: () => Date.now(),
-      browserProof: vi.fn(() => new Promise<never>(() => undefined)),
-    });
-    const baseComplete = deps.provider.complete;
-    deps.provider.complete = vi.fn(async (request) => {
-      const response = await baseComplete(request);
-      if (request.operation !== "concept" && request.operation !== "repairConcept") return response;
-      return {
-        ...response,
-        value: {
-          ...(response.value as object),
-          home: { ...(response.value as { home: object }).home, html: `<main><h1 data-cd-text="store.name"></h1><img data-cd-asset="hero" alt="Hero"></main>` },
-          assetRequests: [{ key: "hero", purpose: "hero", required: true }],
-        },
-      };
-    });
-    deps.produceAsset = vi.fn(async () => ({ bytes: new Uint8Array([1, 2, 3]), provenance: "fixture" }));
-    deps.persistAsset = vi.fn(async () => ({ assetKey: "owned/sha256/hero.webp", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 3 }));
-    const result = await generateOriginalStorefront({
-      shopId: TEST_SHOP_ID,
-      prompt: "original",
-      expectedDraftVersionId: null,
-      actorId: null,
-      trusted: true,
-      budget: { maxWallMs: 5 },
-    }, deps);
-    expect(result).toMatchObject({ status: "failed", code: "generation_budget_exceeded" });
-    expect(deps.cleanupAsset).toHaveBeenCalledWith(expect.objectContaining({ assetKey: "owned/sha256/hero.webp" }));
+    vi.useFakeTimers();
+    try {
+      let proofStarted!: () => void;
+      const atProof = new Promise<void>((resolve) => { proofStarted = resolve; });
+      const deps = passingDependencies({
+        now: () => Date.now(),
+        browserProof: vi.fn(() => {
+          proofStarted();
+          return new Promise<never>(() => undefined);
+        }),
+      });
+      const baseComplete = deps.provider.complete;
+      deps.provider.complete = vi.fn(async (request) => {
+        const response = await baseComplete(request);
+        if (request.operation !== "concept" && request.operation !== "repairConcept") return response;
+        return {
+          ...response,
+          value: {
+            ...(response.value as object),
+            home: { ...(response.value as { home: object }).home, html: `<main><h1 data-cd-text="store.name"></h1><img data-cd-asset="hero" alt="Hero"></main>` },
+            assetRequests: [{ key: "hero", purpose: "hero", required: true }],
+          },
+        };
+      });
+      deps.produceAsset = vi.fn(async () => ({ bytes: new Uint8Array([1, 2, 3]), provenance: "fixture" }));
+      deps.persistAsset = vi.fn(async () => ({ assetKey: "owned/sha256/hero.webp", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 3 }));
+      const generation = generateOriginalStorefront({
+        shopId: TEST_SHOP_ID,
+        prompt: "original",
+        expectedDraftVersionId: null,
+        actorId: null,
+        trusted: true,
+        budget: { maxWallMs: 5 },
+      }, deps);
+      await atProof;
+      expect(deps.persistAsset).toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(5);
+      const result = await generation;
+      expect(result).toMatchObject({ status: "failed", code: "generation_budget_exceeded" });
+      expect(deps.cleanupAsset).toHaveBeenCalledWith(expect.objectContaining({ assetKey: "owned/sha256/hero.webp" }));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("has no import or call path to legacy generateStore", () => {

@@ -65,6 +65,7 @@ export function createContext(): MerchantStorefrontContext {
 
 export function createConcept(index = 0): ConceptCandidateSource {
   const base = structuredClone(VALID_BUNDLE_SOURCE);
+  base.shell.html += `<footer><span data-cd-text="store.name"></span></footer>`;
   const signature = DISTINCT_SIGNATURES[index % DISTINCT_SIGNATURES.length];
   const topology = index % DISTINCT_SIGNATURES.length;
   base.routes.home.html = topology === 0

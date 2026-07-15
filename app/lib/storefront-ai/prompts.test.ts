@@ -109,6 +109,12 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
     expect(prompt).toContain("authored CSS fallback surface when product.primaryImage or price is unavailable");
     expect(prompt).toContain("At a 1440px viewport, at least two repeated product cards must share the first row");
     expect(prompt).toContain("never use viewport-relative heights or min-heights for product cards");
+    expect(prompt).toContain("The first 1440x800 and 390x844 overview frames must both contain");
+    expect(prompt).toContain("Never leave the first viewport mostly blank, empty, or purely decorative");
+    expect(prompt).toContain("Never rotate or vertically orient navigation text or the store wordmark");
+    expect(prompt).toContain("The runtime renders leading shell chrome, then the active route, then");
+    expect(prompt).toContain("shell.html must never contain main, a route outlet, or a content host");
+    expect(prompt).toContain("one top-level footer with store identity and policy links");
 
     const schema = CONCEPT_SCHEMA as { properties: { designSystem: { properties: { globalCss: { maxLength?: number } } } } };
     expect(schema.properties.designSystem.properties.globalCss.maxLength).toBe(0);
@@ -125,6 +131,8 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
     expect(prompt).toContain("Do not penalize missing product imagery or prices when CONTEXT_DATA does not provide them");
     expect(prompt).toContain("desktop overview, desktop catalog, mobile overview, then mobile catalog");
     expect(prompt).toContain("never deduct for missing filters, add-to-cart, hover states, or secondary actions");
+    expect(prompt).toContain("fewer than two products");
+    expect(prompt).toContain("do not call the grid broken or incomplete solely because only one real product can render");
     expect(prompt).toContain("Still fail unstyled or broken layouts");
   });
 

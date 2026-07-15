@@ -381,6 +381,7 @@ export interface RenderStorefrontRouteInput {
   artifact: RouteArtifact;
   data: PublicPresentationData;
   nonce: string;
+  assetUrls?: ReadonlyMap<string, string>;
 }
 
 export function renderStorefrontRoute(input: RenderStorefrontRouteInput): {
@@ -395,7 +396,7 @@ export function renderStorefrontRoute(input: RenderStorefrontRouteInput): {
     element: (
       <div data-cd-bundle={input.routeId} data-cd-bundle-route={input.routeId}>
         {input.artifact.css ? <style nonce={input.nonce} data-cd-bundle-style={input.routeId}>{input.artifact.css}</style> : null}
-        {renderTree(input.artifact.tree, input.artifact.bindings, input.artifact.trustedSlots, input.data)}
+        {renderTree(input.artifact.tree, input.artifact.bindings, input.artifact.trustedSlots, input.data, "public", input.assetUrls)}
       </div>
     ),
   };
@@ -431,6 +432,16 @@ export interface RenderStorefrontSurfaceInput {
   customAssetUrls?: Readonly<Record<string, string>>;
 }
 
+export function splitShellTree(tree: readonly CompiledNode[]): { beforeRoute: CompiledNode[]; afterRoute: CompiledNode[] } {
+  const beforeRoute: CompiledNode[] = [];
+  const afterRoute: CompiledNode[] = [];
+  for (const node of tree) {
+    if (node.kind === "element" && node.tag === "footer") afterRoute.push(node);
+    else beforeRoute.push(node);
+  }
+  return { beforeRoute, afterRoute };
+}
+
 export function isRuntime1RenderData(value: unknown): value is {
   runtime: 1;
   bundle: StorefrontBundleV1;
@@ -448,6 +459,7 @@ export function isRuntime1RenderData(value: unknown): value is {
 /** Render the immutable shell and selected route from the same resolved bundle object. */
 export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, checkoutContent, customAssetUrls }: RenderStorefrontSurfaceInput): ReactElement {
   const assetUrls = assetUrlsForBundle(bundle, customAssetUrls ?? data.storefrontAssetUrls);
+  const shellTree = splitShellTree(bundle.shell.tree);
   let routeResult: ReactElement;
   if (routeId === "checkout") {
     routeResult = (
@@ -476,9 +488,10 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
       {bundle.designSystem.globalCss ? <style nonce={nonce} data-cd-bundle-style="global">{bundle.designSystem.globalCss}</style> : null}
       <div data-cd-bundle="shell" data-cd-bundle-shell={routeId}>
         {bundle.shell.css ? <style nonce={nonce} data-cd-bundle-style="shell">{bundle.shell.css}</style> : null}
-        {renderTree(bundle.shell.tree, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls)}
+        {renderTree(shellTree.beforeRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls)}
+        {routeResult}
+        {renderTree(shellTree.afterRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls)}
       </div>
-      {routeResult}
     </div>
   );
 }

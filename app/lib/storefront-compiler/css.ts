@@ -42,6 +42,49 @@ function isInsideKeyframes(rule: Rule): boolean {
   return false;
 }
 
+const ROUTE_BOUNDARY_EXCLUSIONS = selectorParser()
+  .astSync(":not([data-cd-bundle-route]):not([data-cd-bundle-route] *)", { lossless: false })
+  .first.nodes;
+const LEGACY_PSEUDO_ELEMENTS = new Set([":before", ":after", ":first-line", ":first-letter"]);
+
+function isolateCompiledShellSelector(selector: string): string {
+  return selectorParser((root) => {
+    root.each((selectorNode) => {
+      let alreadyIsolated = false;
+      selectorNode.walkAttributes((attribute) => {
+        if (attribute.attribute === "data-cd-bundle-route") alreadyIsolated = true;
+      });
+      if (alreadyIsolated) return;
+      let lastCombinator = -1;
+      selectorNode.nodes.forEach((node, index) => {
+        if (node.type === "combinator") lastCombinator = index;
+      });
+      const pseudoElement = selectorNode.nodes.find((node, index) =>
+        index > lastCombinator && node.type === "pseudo" &&
+        (node.value.startsWith("::") || LEGACY_PSEUDO_ELEMENTS.has(node.value.toLowerCase())),
+      );
+      for (const exclusion of ROUTE_BOUNDARY_EXCLUSIONS) {
+        if (pseudoElement) selectorNode.insertBefore(pseudoElement, exclusion.clone());
+        else selectorNode.append(exclusion.clone());
+      }
+    });
+  }).processSync(selector, { lossless: false });
+}
+
+export function isolateCompiledShellCss(source: string): string {
+  if (!source) return "";
+  let root: postcss.Root;
+  try {
+    root = postcss.parse(source, { from: undefined });
+  } catch (error) {
+    throw new CompilerError("css.parse", error instanceof Error ? error.message : "Invalid CSS");
+  }
+  root.walkRules((rule) => {
+    if (!isInsideKeyframes(rule)) rule.selector = isolateCompiledShellSelector(rule.selector);
+  });
+  return root.toString();
+}
+
 function selectorCanMatchProtected(
   selector: selectorParser.Selector,
   protectedNodes: readonly ProtectedCssNode[],
@@ -474,5 +517,10 @@ export function compileCss(source: string, options: CompileCssOptions): Compiled
     atRule.params = keyframes.get(atRule.params)!;
   });
 
-  return { css: root.toString(), ruleCount, keyframes: [...keyframes.values()].sort() };
+  const css = root.toString();
+  return {
+    css: options.namespace === "shell" ? isolateCompiledShellCss(css) : css,
+    ruleCount,
+    keyframes: [...keyframes.values()].sort(),
+  };
 }

@@ -50,6 +50,26 @@ describe("concept exploration", () => {
     expect(() => parseConceptCandidate(concept)).toThrow(/globalCss must be empty/i);
   });
 
+  it("rejects shell route outlets that would render before the actual home page", () => {
+    const shells = [
+      `<header><a data-cd-route="home">Home</a></header><main><div></div></main>`,
+      `<header><a data-cd-route="home">Home</a></header><div class="shell-content"></div>`,
+      `<header><a data-cd-route="home">Home</a></header><div class="shell-content"><span>Outlet</span></div>`,
+      `<header><a data-cd-route="home">Home</a></header>`,
+      `<header><a data-cd-route="home">Home</a></header><footer>One</footer><footer>Two</footer>`,
+    ];
+
+    for (const html of shells) {
+      const concept = createConcept(0);
+      concept.shell.html = html;
+      expect(() => compileConceptCandidate(concept)).toThrow(/shell.*navigation chrome/i);
+    }
+
+    const concept = createConcept(0);
+    concept.shell.html = `<header><a data-cd-route="home">Home</a></header><footer>Footer</footer>`;
+    expect(() => compileConceptCandidate(concept)).not.toThrow();
+  });
+
   it("generates three structural briefs in parallel and repairs invalid output once", async () => {
     let active = 0;
     let maxActive = 0;

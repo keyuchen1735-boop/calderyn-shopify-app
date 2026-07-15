@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MALICIOUS_CSS_CASES } from "./__fixtures__/malicious";
-import { compileCss } from "./css";
+import { compileCss, isolateCompiledShellCss } from "./css";
 
 describe("compileCss", () => {
   it.each(MALICIOUS_CSS_CASES)("rejects %s", (_name, source) => {
@@ -33,6 +33,15 @@ describe("compileCss", () => {
     expect(result.css).toContain("#cd-home-feature:hover");
     expect(result.css).toContain("@keyframes cd-home-reveal");
     expect(result.css).toContain("animation: cd-home-reveal 250ms ease");
+  });
+
+  it("keeps shell selectors out of a nested active route on supported browsers", () => {
+    const result = compileCss(`a, header~footer, a::before { color: red }`, { namespace: "shell" });
+
+    expect(result.css).toContain(":not([data-cd-bundle-route]):not([data-cd-bundle-route] *)");
+    expect(result.css).toContain(":not([data-cd-bundle-route]):not([data-cd-bundle-route] *)::before");
+    expect(result.css).not.toContain("@scope");
+    expect(isolateCompiledShellCss(result.css)).toBe(result.css);
   });
 
   it("allows only closed runtime presentation-state attributes in recipe selectors", () => {

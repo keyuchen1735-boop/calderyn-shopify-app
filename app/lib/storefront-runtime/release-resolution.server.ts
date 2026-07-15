@@ -3,6 +3,7 @@ import { resolveVerifiedStorefrontAssetUrls } from "~/lib/storefront-bundle/asse
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
 import { getStorefrontRecipe, STOREFRONT_RECIPE_BY_ID } from "~/lib/storefront-recipes";
+import { isolateCompiledShellCss } from "~/lib/storefront-compiler/css";
 import { isStorefrontBundleReadEnabled } from "./csp.server";
 import {
   resolvePublicData,
@@ -381,12 +382,16 @@ export async function resolveRuntime1VersionRoute(input: {
       : Promise.resolve({}),
   ]);
   const resolvedAssetUrls = { ...derivedStaticAssets.urls, ...storefrontAssetUrls };
+  const isolatedShellCss = isolateCompiledShellCss(bundle.shell.css);
+  const resolvedBundle = isolatedShellCss === bundle.shell.css
+    ? bundle
+    : { ...bundle, shell: { ...bundle.shell, css: isolatedShellCss } };
   return {
     runtime: 1,
     bundleId: input.version.id,
     artifactHash: input.version.artifactHash,
     routeId,
-    bundle,
+    bundle: resolvedBundle,
     data: Object.keys(resolvedAssetUrls).length > 0 ? { ...data, storefrontAssetUrls: resolvedAssetUrls } : data,
   };
 }
