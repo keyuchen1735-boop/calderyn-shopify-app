@@ -6,7 +6,7 @@ const { launchMock } = vi.hoisted(() => ({ launchMock: vi.fn() }));
 vi.mock("../browser/chromium.server", () => ({ launchChromium: launchMock }));
 
 describe("concept Chromium render lifecycle", () => {
-  it("clips judge screenshots below the provider image dimension limit", async () => {
+  it("downscales full-page judge evidence below the provider image dimension limit", async () => {
     const screenshot = vi.fn(async () => new Uint8Array([1]));
     const page = {
       setContent: vi.fn(async () => undefined),
@@ -24,11 +24,11 @@ describe("concept Chromium render lifecycle", () => {
       expect.objectContaining({ waitUntil: "domcontentloaded" }),
     );
     expect(screenshot).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      clip: { x: 0, y: 0, width: 1440, height: 7_680 },
+      clip: { x: 0, y: 0, width: 1440, height: 12_000, scale: 0.64 },
       captureBeyondViewport: true,
     }));
     expect(screenshot).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      clip: { x: 0, y: 0, width: 390, height: 7_680 },
+      clip: { x: 0, y: 0, width: 390, height: 12_000, scale: 0.64 },
       captureBeyondViewport: true,
     }));
   });

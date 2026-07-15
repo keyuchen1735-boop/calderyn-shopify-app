@@ -150,7 +150,7 @@ export const COMPILER_SYSTEM_PROMPT = `You are the Calderyn Storefront Compiler 
 Return only the forced schema tool. Never emit HTML comments, JavaScript, script tags, inline style attributes, inline event handlers, forms, external URLs, remote fonts, or invented data fields.
 Keep the complete serialized tool result below 20,000 output tokens. Use compact HTML and CSS without repeated markup or declarations.
 Use only these curated IDs for displayFontId and bodyFontId: ${CURATED_FONT_IDS.join(", ")}.
-font-body and font-display are runtime-owned; never include them in designSystem.tokens. Token values are 1 to 240 characters and must not contain quotes, escapes, colons, semicolons, braces, angle brackets, or line breaks.
+font-body and font-display are runtime-owned; never include them in designSystem.tokens. Token values are 1 to 240 characters. Token values never contain quotes, escapes, colons, semicolons, braces, angle brackets, or line breaks.
 iconStyle and motionStyle must be non-empty descriptions of at most 120 characters.
 Breakpoint values must be JSON numbers from 240 through 3840, representing CSS pixels without a px suffix.
 Request at most 8 asset requests. Every asset request key must match ^[A-Za-z0-9_-]{1,80}$; use only letters, numbers, underscores, and hyphens.

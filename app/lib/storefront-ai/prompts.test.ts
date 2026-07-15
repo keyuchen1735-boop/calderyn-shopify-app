@@ -15,13 +15,8 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
     expect(COMPILER_SYSTEM_PROMPT).toContain("below 20,000 output tokens");
   });
 
-  it("reserves runtime-owned font tokens", () => {
-    expect(COMPILER_SYSTEM_PROMPT).toContain("font-body and font-display are runtime-owned; never include them in designSystem.tokens");
-  });
-
-  it("bounds judge rationale in the forced schema", () => {
+  it("keeps judge rationale within the parser bound", () => {
     const schema = JUDGE_SCHEMA as { properties: { rationale: { maxLength?: number } } };
-
     expect(schema.properties.rationale.maxLength).toBe(2_000);
   });
 
@@ -56,6 +51,8 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
     expect(COMPILER_SYSTEM_PROMPT).toContain("grid tracks are only 1fr, 1fr 1fr, 2fr 1fr, or minmax(0, 1fr) minmax(0, 1fr)");
     expect(COMPILER_SYSTEM_PROMPT).toContain("font-family is only inherit, var(--font-body), or var(--font-display)");
     expect(COMPILER_SYSTEM_PROMPT).toContain("font weight is normal, bold, 400, 500, 600, 700, 800, or 900");
+    expect(COMPILER_SYSTEM_PROMPT).toContain("font-body and font-display are runtime-owned");
+    expect(COMPILER_SYSTEM_PROMPT).toContain("Token values never contain quotes, escapes, colons, semicolons, braces, angle brackets, or line breaks");
     expect(COMPILER_SYSTEM_PROMPT).toContain("grid placement is one local identifier");
     expect(COMPILER_SYSTEM_PROMPT).toContain("Numeric state ranges span at most 10000");
     expect(COMPILER_SYSTEM_PROMPT).toContain("hidden and expanded bind only boolean states");

@@ -32,12 +32,6 @@ const globalCss = `
 .shipping-bar { display:flex; justify-content:space-between; padding:11px 16px; color:#fff; background:#d63821; font-size:10px; text-transform:uppercase }
 @media (max-width:760px) {
   .atelier-shell { width:min(calc(100% - 20px),1540px) }
-  .announcement span:last-child { display:none }
-  .header-row { display:flex; flex-wrap:wrap; width:calc(100vw - 20px); height:auto; min-height:58px; padding:8px 0 }
-  .atelier-wordmark { font-size:22px }
-  .atelier-nav-links { order:3; width:100%; gap:18px; overflow-x:auto; padding:7px 0 2px }
-  .atelier-utility { margin-left:auto }
-  .atelier-utility .atelier-link:not(:last-child) { display:none }
   .atelier-footer { grid-template-columns:1fr; gap:28px; padding:40px 0 }
   .shipping-bar { display:block; text-align:center }
   .shipping-bar span:last-child { display:none }
@@ -93,7 +87,7 @@ const homeCss = `
 .hero-media img { width:100%; height:100%; object-fit:cover; object-position:58% center }
 .hero-note { position:absolute; right:18px; bottom:18px; width:166px; padding:10px; color:#fff; background:#101010; font-size:10px; line-height:1.45; text-transform:uppercase }
 .catalog { display:grid; grid-template-columns:255px minmax(0,1fr); border-bottom:1px solid #101010 }
-.catalog-side { padding:18px 28px 28px 0; border-right:1px solid #101010 }
+.catalog-side { position:sticky; top:67px; align-self:start; padding:18px 28px 28px 0; border-right:1px solid #101010 }
 .catalog-side h2,.catalog-head h2 { margin:0; font-size:12px; text-transform:uppercase }
 .catalog-side h2 { margin-bottom:28px }
 .category-list { display:grid }
@@ -125,7 +119,7 @@ const homeCss = `
   .hero-intro p { margin:0; font-size:15px }
   .hero-media { min-height:72vw }
   .catalog { grid-template-columns:1fr }
-  .catalog-side { padding:18px 0; border-right:0; border-bottom:1px solid #101010; overflow-x:auto }
+  .catalog-side { position:static; padding:18px 0; border-right:0; border-bottom:1px solid #101010; overflow-x:auto }
   .category-list { display:flex; width:max-content; gap:18px }
   .category-list span { gap:8px; border:0 }
   .catalog-head { padding-inline:0 }
@@ -136,6 +130,7 @@ const homeCss = `
   .manifesto h2 { font-size:34px }
   .manifesto-index { min-height:280px }
 }
+@media (prefers-reduced-motion:reduce) { .catalog-side { position:static } }
 `;
 
 const collectionHtml = `
@@ -389,8 +384,8 @@ const config = {
       signature: "canonical announcement and masthead before the route composition",
       source: {
         ...routeDefaults,
-        html: `<div class="announcement"><span>Complimentary shipping on all orders over $300</span><span>Edition 03 / Summer 2026</span></div><header class="atelier-site-header"><div class="atelier-shell header-row"><a class="atelier-wordmark atelier-link" data-cd-route="home" data-cd-text="store.name"></a><nav class="atelier-nav-links" aria-label="Primary"><a class="atelier-link" data-cd-route="collection">Shop</a><a class="atelier-link" data-cd-route="collection">Collections</a><a class="atelier-link" data-cd-route="home">About</a><a class="atelier-link" data-cd-route="search">Journal</a></nav><div class="atelier-utility"><a class="atelier-link" data-cd-route="search">Search</a><a class="atelier-link" data-cd-route="account">Account</a><a class="atelier-link" data-cd-route="cart">Bag (<span data-cd-text="cart.count"></span>)</a></div></div></header><div data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div>`,
-        css: `.atelier-policy-links{display:flex;flex-wrap:wrap;gap:1rem}.atelier-policy-links a{color:var(--ink);text-decoration:none}`,
+        html: `<div class="announcement"><span>Complimentary shipping on all orders over $300</span><span>Edition 03 / Summer 2026</span></div><header class="atelier-site-header"><div class="atelier-shell header-row"><a class="atelier-wordmark atelier-link" data-cd-route="home"><span class="niche-icon niche-icon--atelier" aria-hidden="true">&#10022;</span><span data-cd-text="store.name"></span></a><nav class="atelier-nav-links" aria-label="Primary"><a class="atelier-link" data-cd-route="collection">Shop</a><a class="atelier-link" data-cd-route="collection">Collections</a><a class="atelier-link" data-cd-route="home">About</a><a class="atelier-link" data-cd-route="search">Journal</a></nav><div class="atelier-utility"><a class="atelier-link" data-cd-route="search">Search</a><a class="atelier-link" data-cd-route="account">Account</a><a class="atelier-link" data-cd-route="cart">Bag (<span data-cd-text="cart.count"></span>)</a></div></div></header><div data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div><nav class="atelier-policy-links" aria-label="Store policies" data-cd-policy-links></nav>`,
+        css: `.niche-icon--atelier{margin-right:.35em;color:var(--accent)}.atelier-policy-links{display:flex;flex-wrap:wrap;gap:1rem}.atelier-policy-links a{color:var(--ink);text-decoration:none}@media(max-width:1120px){.header-row{grid-template-columns:200px 1fr 200px}.atelier-nav-links{gap:18px}.atelier-utility{gap:12px}}@media(max-width:760px){.announcement span:last-child{display:none}.header-row{display:flex;flex-wrap:wrap;width:calc(100vw - 20px);height:auto;min-height:58px;padding:8px 0}.atelier-wordmark{font-size:22px}.atelier-nav-links{order:3;width:100%;gap:18px;overflow-x:auto;padding:7px 0 2px}.atelier-utility{margin-left:auto}.atelier-utility .atelier-link:not(:last-child){display:none}}`,
       },
     },
     home: { signature: "offset cover story beside owned full-height fashion photography", source: { ...routeDefaults, html: homeHtml, css: homeCss } },
