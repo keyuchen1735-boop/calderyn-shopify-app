@@ -143,6 +143,11 @@ export function connectionNotice(
   return null;
 }
 
+/** Legacy dashboard OAuth returns opened Connectors from the dashboard root. */
+export function shouldOpenConnectorsAfterOAuth(pathname: string): boolean {
+  return pathname === "/dashboard" || pathname === "/dashboard/";
+}
+
 const KIND_TO_PROVIDER: Record<string, string> = {
   meta_ads: "meta",
   google_ads: "google",

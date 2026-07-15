@@ -885,10 +885,12 @@ export async function fetchIntegrations(): Promise<IntegrationVM[]> {
  */
 export async function startIntegrationConnect(
   provider: string,
+  returnTo?: string,
 ): Promise<{ url: string }> {
   return apiSend<{ url: string }>("POST", "/dashboard/api/integrations", {
     intent: "connect",
     provider,
+    returnTo,
   });
 }
 

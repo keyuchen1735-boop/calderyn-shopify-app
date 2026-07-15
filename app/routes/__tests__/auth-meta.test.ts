@@ -5,12 +5,15 @@ import { loader } from "../auth.meta.$";
 // auth-google.test.ts.
 const consumeOAuthState = vi.fn();
 const exchangeCodeForToken = vi.fn();
+const parseOAuthState = vi.fn();
 
 vi.mock("~/lib/meta/oauth-state.server", () => ({
   consumeOAuthState: (...a: unknown[]) => consumeOAuthState(...a),
-  parseOAuthState: () => ({ nonce: "n", host: null, shop: null }),
-  embeddedReturnUrl: (path: string, params: Record<string, string>) =>
-    `${path}?${new URLSearchParams(params).toString()}`,
+  parseOAuthState: (...a: unknown[]) => parseOAuthState(...a),
+  embeddedReturnUrl: (path: string, params: Record<string, string>, ctx: { returnTo?: string | null }) =>
+    `${ctx.returnTo ?? path}?${new URLSearchParams(params).toString()}`,
+  popupResultUrl: (args: { provider: string; status: string; reason?: string }) =>
+    `/auth/connected?${new URLSearchParams({ provider: args.provider, status: args.status, ...(args.reason ? { reason: args.reason } : {}) }).toString()}`,
   postOAuthPath: async () => "/app/settings",
 }));
 vi.mock("~/lib/meta/oauth.server", () => ({
@@ -24,6 +27,8 @@ vi.mock("~/lib/crypto.server", () => ({ encrypt: (s: string) => `enc(${s})` }));
 beforeEach(() => {
   consumeOAuthState.mockReset();
   exchangeCodeForToken.mockReset();
+  parseOAuthState.mockReset();
+  parseOAuthState.mockReturnValue({ nonce: "n", host: null, shop: null });
   process.env.META_APP_ID = "aid";
   process.env.META_APP_SECRET = "sec";
   process.env.SHOPIFY_APP_URL = "https://app.example";
@@ -50,5 +55,26 @@ describe("auth.meta loader", () => {
 
   it("still 400s when code and state are both missing (not a decline)", async () => {
     await expect(loader(req("foo=bar"))).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("returns a valid callback failure to the campaign wizard with its reason", async () => {
+    parseOAuthState.mockReturnValue({
+      nonce: "n",
+      host: null,
+      shop: null,
+      dashboard: true,
+      returnTo: "/dashboard/campaigns/new",
+    });
+    consumeOAuthState.mockResolvedValue("shop-1");
+    exchangeCodeForToken.mockResolvedValue({ accessToken: "token", expiresInSec: 3600 });
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ data: [] }), { status: 200 }),
+    );
+
+    const res = await loader(req("code=code-1&state=packed-state"));
+    expect(res.status).toBe(302);
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("/dashboard/campaigns/new?meta=error");
+    expect(location).toContain("no+ad+account");
   });
 });

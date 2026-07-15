@@ -18,7 +18,7 @@ import { CDIcon } from "./icons";
 import { ToastHost, Toggle } from "./ui";
 import { ACTION_LABELS } from "./format";
 import { autopilotToasts, autopilotFailureLines } from "~/lib/autopilot-banner";
-import { connectionNotice } from "~/lib/integrations";
+import { connectionNotice, shouldOpenConnectorsAfterOAuth } from "~/lib/integrations";
 import { useLiveFeed } from "./live";
 import { applyUndo } from "./undo";
 import type { ApproveReceipt } from "~/lib/calibration/delta";
@@ -542,9 +542,9 @@ export default function DashboardApp({
   }, [nav.screen, navigate, toast]);
 
   // One-shot post-OAuth connect notice: provider callbacks land the browser on
-  // /dashboard?<provider>=connected|error (see oauth-state.server.ts). Open
-  // Settings, surface the result, and strip the params so a reload doesn't
-  // re-announce it. navigate/toast are stable, so this runs once per page load.
+  // /dashboard/<originating-screen>?<provider>=connected|error. Surface the
+  // result in place and strip the params so a reload doesn't re-announce it.
+  // Legacy callbacks that only know /dashboard still open Settings.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const notice = connectionNotice(params);
@@ -561,7 +561,9 @@ export default function DashboardApp({
       "",
       `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
     );
-    navigate("settings", null, "connectors");
+    if (shouldOpenConnectorsAfterOAuth(window.location.pathname)) {
+      navigate("settings", null, "connectors");
+    }
     if (notice.ok) {
       toast(`${notice.provider} connected`, "check");
     } else {

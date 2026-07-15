@@ -158,6 +158,18 @@ describe("packOAuthState / parseOAuthState", () => {
     });
   });
 
+  it("round-trips a dashboard return path", () => {
+    const state = packOAuthState("nonce-1", {
+      dashboard: true,
+      returnTo: "/dashboard/campaigns/new",
+    });
+    expect(parseOAuthState(state)).toMatchObject({
+      nonce: "nonce-1",
+      dashboard: true,
+      returnTo: "/dashboard/campaigns/new",
+    });
+  });
+
   it("returns the bare nonce when no context is supplied", () => {
     expect(packOAuthState("nonce-1")).toBe("nonce-1");
     expect(packOAuthState("nonce-1", {})).toBe("nonce-1");
@@ -281,6 +293,28 @@ describe("embeddedReturnUrl", () => {
         { host: null, shop: "demo.myshopify.com", dashboard: true },
       ),
     ).toBe("https://calderyncompany.com/dashboard?meta=connected");
+  });
+
+  it("returns to the exact safe dashboard page that started OAuth", () => {
+    process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
+    expect(
+      embeddedReturnUrl(
+        "/app/settings",
+        { meta: "connected" },
+        { host: null, shop: null, dashboard: true, returnTo: "/dashboard/campaigns/new" },
+      ),
+    ).toBe("https://calderyncompany.com/dashboard/campaigns/new?meta=connected");
+  });
+
+  it("rejects an unsafe dashboard return path", () => {
+    process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
+    expect(
+      embeddedReturnUrl(
+        "/app/settings",
+        { meta: "error", reason: "access_denied" },
+        { host: null, shop: null, dashboard: true, returnTo: "//attacker.example/steal" },
+      ),
+    ).toBe("https://calderyncompany.com/dashboard?meta=error&reason=access_denied");
   });
 
   it("falls back to the app host, then a relative path, when the public URL is unset", () => {

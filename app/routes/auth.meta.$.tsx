@@ -55,6 +55,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const shopId = await consumeOAuthState(sb, state);
   if (!shopId) throw new Response("Invalid or expired OAuth state", { status: 400 });
 
+  try {
   const fetcher = async (u: string): Promise<GraphTokenResponse> =>
     (await fetch(u)).json() as Promise<GraphTokenResponse>;
   const { accessToken, expiresInSec } = await exchangeCodeForToken(fetcher, {
@@ -144,4 +145,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   if (returnCtx.popup) return redirect(popupResultUrl({ provider: "Meta Ads", status: "connected" }));
   return redirect(embeddedReturnUrl(await postOAuthPath(sb, shopId), { meta: "connected" }, returnCtx));
+  } catch (error) {
+    console.error("[auth.meta] connection failed", error);
+    const reason = await metaConnectionFailureReason(error);
+    if (returnCtx.popup) {
+      return redirect(popupResultUrl({ provider: "Meta Ads", status: "error", reason }));
+    }
+    return redirect(embeddedReturnUrl("/app/settings", { meta: "error", reason }, returnCtx));
+  }
 };
+
+async function metaConnectionFailureReason(error: unknown): Promise<string> {
+  if (error instanceof Response && error.status >= 400 && error.status < 500) {
+    const message = (await error.clone().text()).trim();
+    if (message && message.length <= 240) return message;
+  }
+  return "Meta could not complete the connection. Please try again.";
+}

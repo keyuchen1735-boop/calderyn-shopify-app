@@ -1803,6 +1803,7 @@ export function calderynClient(shop: string) {
         // dashboard=true (dashboard-native connect) makes the callback land back
         // on /dashboard?<provider>=connected|error instead of the embedded admin.
         dashboard?: boolean,
+        returnTo?: string | null,
       ): Promise<{ redirectUrl: string }> {
         if (provider === "meta") {
           const appId = process.env.META_APP_ID;
@@ -1819,7 +1820,7 @@ export function calderynClient(shop: string) {
           // Single-use, server-stored nonce bound to this shop (replaces the old
           // static HMAC-of-shop state). Consumed once at /auth/meta on callback.
           const shopId = await shopIdP;
-          const state = await createOAuthState(supabase, shopId, { host, shop, popup, dashboard });
+          const state = await createOAuthState(supabase, shopId, { host, shop, popup, dashboard, returnTo });
           return { redirectUrl: buildAuthUrl({ appId, redirectUri, state }) };
         }
         if (provider === "google") {
