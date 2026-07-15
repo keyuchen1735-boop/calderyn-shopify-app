@@ -145,7 +145,7 @@ beforeEach(() => {
   designerQuotaMock.mockResolvedValue(undefined);
   createProductMock.mockResolvedValue({ id: "prod-1" });
   uploadMediaMock.mockResolvedValue({ id: "media-1", storagePath: "p" });
-  publishMock.mockResolvedValue(undefined);
+  publishMock.mockResolvedValue("https://moonlight-ceramics-a1b2c3.calderyncompany.com/storefront");
   editMock.mockResolvedValue({ status: "installed", versionId: "44444444-4444-4444-4444-444444444444", changedScope: { routes: ["home"], designTokens: [] }, detachedFromRecipe: false });
   undoEditMock.mockResolvedValue({ status: "installed", versionId: "33333333-3333-3333-3333-333333333333", undoneVersionId: "44444444-4444-4444-4444-444444444444" });
   releaseStateMock.mockResolvedValue({ draftVersionId: null, publishedVersionId: null, draftRuntimeVersion: null, publishedRuntimeVersion: null });
@@ -391,6 +391,9 @@ describe("dashboard.api.store multipart generate", () => {
     const response = (await action({ request } as ActionFunctionArgs)) as Response;
     expect(response.status).toBe(200);
     expect(publishMock).toHaveBeenCalledWith(SHOP, null);
+    await expect(response.json()).resolves.toMatchObject({
+      storefrontUrl: "https://moonlight-ceramics-a1b2c3.calderyncompany.com/storefront",
+    });
   });
 
   it("maps runtime-1 publish CAS conflicts to the truthful release status", async () => {

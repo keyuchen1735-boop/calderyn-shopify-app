@@ -62,7 +62,6 @@ import type { DashboardCtx } from "../context";
 import ChatRail from "../store/ChatRail";
 import TopBar, { type Device } from "../store/TopBar";
 import WelcomeOverlay from "../store/WelcomeOverlay";
-import { confettiFrom } from "../store/confetti";
 import type { ChatAction, ChatMsg } from "../store/chat-types";
 import type { PageKey } from "~/lib/storebuilder/types";
 
@@ -947,27 +946,15 @@ export default function Store({ app }: { app: DashboardCtx }) {
 
   const runPublish = async () => {
     if (!data || publishingRef.current) return;
-    const firstPublish = !data.hasPublished;
     setConfirmingPublish(false);
     setPublishingBoth(true);
     try {
       // Flush any in-flight deterministic edit first, so the published
       // snapshot matches the last requested vibe/accent/hero change.
       await mutationChain.current;
-      await publishStudioStore();
+      const { storefrontUrl } = await publishStudioStore();
       if (!aliveRef.current) return;
-      setData((d) => (d ? { ...d, hasPublished: true } : d));
-      reloadPreview();
-      if (firstPublish) {
-        confettiFrom(badgeRef.current);
-        const actions: ChatAction[] = [{ label: "Open my store", kind: "primary", onClick: openStorefront }];
-        if (!data.checkoutReady) {
-          actions.push({ label: "Connect payouts", onClick: () => app.navigate("payments") });
-        }
-        pushMsg({ id: newId(), kind: "ai-text", text: `Your store is live at ${data.storefrontUrl}.`, actions });
-      } else {
-        toast("Published to your storefront");
-      }
+      window.location.assign(storefrontUrl);
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Could not publish.";

@@ -6,7 +6,7 @@ import { publishStudioStore, loadStudioState, saveStudioVibe, sectionsFromDoc, m
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // mocks still apply even though they are written below them (imports-first
 // satisfies the import/first rule).
-const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock, storegenMock, bundleBuildMock, releaseMock, policiesMock, domainMock } =
+const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock, storegenMock, bundleBuildMock, releaseMock, policiesMock, domainMock, authTenantMock } =
   vi.hoisted(() => ({
     storegenMock: { regenerateHomeSection: vi.fn() },
     fromMock: vi.fn(),
@@ -45,6 +45,7 @@ const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experime
       registerTenantDomain: vi.fn(),
       tenantDomain: (slug: string) => `${slug}.calderyncompany.com`,
     },
+    authTenantMock: { slugify: vi.fn(() => "test-store-a1b2c3") },
   }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
@@ -58,6 +59,7 @@ vi.mock("~/lib/storefront-bundle/build.server", () => bundleBuildMock);
 vi.mock("~/lib/storefront-bundle/release.server", () => releaseMock);
 vi.mock("~/lib/storefront/policies.server", () => policiesMock);
 vi.mock("~/lib/storefront/vercel-domain.server", () => domainMock);
+vi.mock("~/lib/auth/tenant.server", () => authTenantMock);
 vi.mock("~/lib/storefront/settings.server", () => ({
   DEFAULT_PALETTE: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
   getStoreSettings: settingsMock.getStoreSettings,
@@ -70,6 +72,9 @@ const shop = "11111111-1111-1111-1111-111111111111";
 // tables without a configured result read as "no row".
 const tableResults: Record<string, { data: unknown; error: unknown }> = {};
 const upserts: Array<{ table: string; row: Record<string, unknown> }> = [];
+const updates: Array<{ table: string; row: Record<string, unknown> }> = [];
+const updateResults: Array<{ data: unknown; error: unknown }> = [];
+const readResults: Record<string, Array<{ data: unknown; error: unknown }>> = {};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -104,17 +109,30 @@ beforeEach(() => {
   domainMock.registerTenantDomain.mockResolvedValue(true);
   for (const key of Object.keys(tableResults)) delete tableResults[key];
   upserts.length = 0;
+  updates.length = 0;
+  updateResults.length = 0;
+  for (const key of Object.keys(readResults)) delete readResults[key];
   fromMock.mockImplementation((table: string) => {
     const chain: Record<string, unknown> = {};
+    let updateRow: Record<string, unknown> | null = null;
     chain.select = () => chain;
     chain.eq = () => chain;
+    chain.is = () => chain;
     chain.order = () => chain;
     chain.limit = () => chain;
-    chain.maybeSingle = () =>
-      Promise.resolve(tableResults[table] ?? { data: null, error: null });
+    chain.maybeSingle = () => Promise.resolve(
+      updateRow
+        ? (updateResults.shift() ?? { data: updateRow, error: null })
+        : (readResults[table]?.shift() ?? tableResults[table] ?? { data: null, error: null }),
+    );
     chain.upsert = (row: Record<string, unknown>) => {
       upserts.push({ table, row });
       return Promise.resolve({ error: null });
+    };
+    chain.update = (row: Record<string, unknown>) => {
+      updates.push({ table, row });
+      updateRow = row;
+      return chain;
     };
     return chain;
   });
@@ -183,18 +201,57 @@ describe("publishStudioStore", () => {
     expect(releaseMock.publishStorefrontRelease).not.toHaveBeenCalled();
   });
 
-  it("refuses to publish when the shop has no tenant slug", async () => {
-    tableResults.shops = { data: { org_slug: null }, error: null };
-
-    await expect(publishStudioStore(shop)).rejects.toMatchObject({
-      code: "storefront_domain_missing",
-      status: 409,
+  it("assigns a tenant URL when a legacy shop publishes without one", async () => {
+    tableResults.shops = { data: { org_slug: null, display_name: "Account Name", shop_domain: null }, error: null };
+    settingsMock.getStoreSettings.mockResolvedValueOnce({
+      storeName: "Moonlight Ceramics",
+      palette: { primary: "#0f766e" },
+      logoUrl: null,
+      voiceTagline: null,
+      vibe: "minimal",
     });
+    authTenantMock.slugify.mockReturnValueOnce("moonlight-ceramics-a1b2c3");
 
-    expect(domainMock.registerTenantDomain).not.toHaveBeenCalled();
-    expect(domainMock.isTenantDomainReachable).not.toHaveBeenCalled();
-    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
-    expect(releaseMock.publishStorefrontRelease).not.toHaveBeenCalled();
+    await expect(publishStudioStore(shop)).resolves.toBe(
+      "https://moonlight-ceramics-a1b2c3.calderyncompany.com/storefront",
+    );
+
+    expect(authTenantMock.slugify).toHaveBeenCalledWith("Moonlight Ceramics");
+    expect(updates).toContainEqual({ table: "shops", row: { org_slug: "moonlight-ceramics-a1b2c3" } });
+    expect(domainMock.registerTenantDomain).toHaveBeenCalledWith("moonlight-ceramics-a1b2c3");
+    expect(domainMock.isTenantDomainReachable).toHaveBeenCalledWith("moonlight-ceramics-a1b2c3");
+    expect(pageDoc.publishDoc).toHaveBeenCalledWith(shop, "home");
+  });
+
+  it("retries a colliding store-name slug", async () => {
+    tableResults.shops = { data: { org_slug: null, display_name: "Moonlight Ceramics", shop_domain: null }, error: null };
+    authTenantMock.slugify
+      .mockReturnValueOnce("moonlight-ceramics-collision")
+      .mockReturnValueOnce("moonlight-ceramics-a1b2c3");
+    updateResults.push(
+      { data: null, error: { code: "23505" } },
+      { data: { org_slug: "moonlight-ceramics-a1b2c3" }, error: null },
+    );
+
+    await expect(publishStudioStore(shop)).resolves.toBe(
+      "https://moonlight-ceramics-a1b2c3.calderyncompany.com/storefront",
+    );
+
+    expect(authTenantMock.slugify).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses the slug won by a concurrent first publish", async () => {
+    readResults.shops = [
+      { data: { org_slug: null, display_name: "Moonlight Ceramics", shop_domain: null }, error: null },
+      { data: { org_slug: "moonlight-ceramics-winner" }, error: null },
+    ];
+    updateResults.push({ data: null, error: null });
+
+    await expect(publishStudioStore(shop)).resolves.toBe(
+      "https://moonlight-ceramics-winner.calderyncompany.com/storefront",
+    );
+
+    expect(domainMock.registerTenantDomain).toHaveBeenCalledWith("moonlight-ceramics-winner");
   });
 
   it("keeps local publishing on the development storefront origin", async () => {
@@ -202,7 +259,7 @@ describe("publishStudioStore", () => {
     tableResults.shops = { data: { org_slug: null }, error: null };
 
     try {
-      await expect(publishStudioStore(shop)).resolves.toBeUndefined();
+      await expect(publishStudioStore(shop)).resolves.toBe("/storefront");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -216,14 +273,18 @@ describe("publishStudioStore", () => {
     domainMock.registerTenantDomain.mockResolvedValueOnce(false);
     domainMock.isTenantDomainReachable.mockResolvedValueOnce(true);
 
-    await expect(publishStudioStore(shop)).resolves.toBeUndefined();
+    await expect(publishStudioStore(shop)).resolves.toBe(
+      "https://test-store.calderyncompany.com/storefront",
+    );
 
     expect(domainMock.isTenantDomainReachable).toHaveBeenCalledWith("test-store");
     expect(pageDoc.publishDoc).toHaveBeenCalledWith(shop, "home");
   });
 
   it("publishes the default home doc when no draft exists instead of throwing", async () => {
-    await expect(publishStudioStore(shop)).resolves.toBeUndefined();
+    await expect(publishStudioStore(shop)).resolves.toBe(
+      "https://test-store.calderyncompany.com/storefront",
+    );
     // The seeded draft is the default home document (has a hero block).
     expect(pageDoc.saveDraft).toHaveBeenCalledWith(
       shop,

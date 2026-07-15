@@ -4,6 +4,7 @@
 // store_settings and store_generation through the service-role client the
 // underlying libs already use.
 import { getSupabase } from "~/lib/supabase.server";
+import { slugify } from "~/lib/auth/tenant.server";
 import {
   isTenantDomainReachable,
   registerTenantDomain,
@@ -60,17 +61,45 @@ async function refuseMidTest(shopId: string, what: string): Promise<void> {
   }
 }
 
-async function requirePublishableTenantDomain(shopId: string): Promise<void> {
-  if (process.env.NODE_ENV === "development") return;
-  const { data, error } = await getSupabase().from("shops").select("org_slug").eq("id", shopId).maybeSingle();
+async function requirePublishableTenantDomain(shopId: string): Promise<string> {
+  if (process.env.NODE_ENV === "development") return "/storefront";
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("shops")
+    .select("org_slug, display_name, shop_domain")
+    .eq("id", shopId)
+    .maybeSingle();
   if (error) throw error;
-  const orgSlug = typeof data?.org_slug === "string" ? data.org_slug.trim() : "";
+  let orgSlug = typeof data?.org_slug === "string" ? data.org_slug.trim() : "";
   if (!orgSlug) {
-    throw new CalderynError({
-      code: "storefront_domain_missing",
-      status: 409,
-      message: "Add a store URL before publishing so shoppers can reach checkout on your storefront.",
-    });
+    const storeName = (await getStoreSettings(shopId)).storeName.trim();
+    const displayName = typeof data?.display_name === "string" ? data.display_name.trim() : "";
+    const shopDomain = typeof data?.shop_domain === "string" ? data.shop_domain.replace(/\.myshopify\.com$/i, "") : "";
+    for (let attempt = 0; attempt < 3 && !orgSlug; attempt++) {
+      const candidate = slugify(storeName || displayName || shopDomain || "Store");
+      const claimed = await sb
+        .from("shops")
+        .update({ org_slug: candidate })
+        .eq("id", shopId)
+        .is("org_slug", null)
+        .select("org_slug")
+        .maybeSingle();
+      if (claimed.error && (claimed.error as { code?: string }).code !== "23505") throw claimed.error;
+      if ((claimed.error as { code?: string } | null)?.code === "23505") continue;
+      orgSlug = typeof claimed.data?.org_slug === "string" ? claimed.data.org_slug.trim() : "";
+      if (!orgSlug) {
+        const current = await sb.from("shops").select("org_slug").eq("id", shopId).maybeSingle();
+        if (current.error) throw current.error;
+        orgSlug = typeof current.data?.org_slug === "string" ? current.data.org_slug.trim() : "";
+      }
+    }
+    if (!orgSlug) {
+      throw new CalderynError({
+        code: "storefront_domain_registration_failed",
+        status: 503,
+        message: "The storefront URL could not be reserved. Try publishing again.",
+      });
+    }
   }
   await registerTenantDomain(orgSlug);
   if (!(await isTenantDomainReachable(orgSlug))) {
@@ -80,6 +109,7 @@ async function requirePublishableTenantDomain(shopId: string): Promise<void> {
       message: "The storefront domain could not be prepared. Try publishing again in a moment.",
     });
   }
+  return `https://${tenantDomain(orgSlug)}/storefront`;
 }
 
 /** Extract the hero block's real text fields from a doc; null when absent. */
@@ -504,7 +534,7 @@ export async function saveStudioVibe(shopId: string, vibe: StudioVibe): Promise<
  *  validating each draft first (page-document.server.ts caller obligation).
  *  Once the tenant domain is ready, an empty draft set seeds and publishes the
  *  default home doc so the storefront never goes live blank. */
-export async function publishStudioStore(shopId: string, actorId?: string | null): Promise<void> {
+export async function publishStudioStore(shopId: string, actorId?: string | null): Promise<string> {
   // Demo/fixture shops can't persist page documents (saveDraft throws a raw
   // Error for non-uuid ids) — refuse cleanly instead of 500ing.
   if (!UUID_RE.test(shopId)) {
@@ -525,7 +555,7 @@ export async function publishStudioStore(shopId: string, actorId?: string | null
       message: "An experiment is running on your store. Decide it before publishing.",
     });
   }
-  await requirePublishableTenantDomain(shopId);
+  const storefrontUrl = await requirePublishableTenantDomain(shopId);
   const release = await readStorefrontReleaseState(shopId);
   if (release.draftRuntimeVersion === 1 && release.draftVersionId) {
     if (!isStorefrontBundlePublishEnabled()) {
@@ -541,7 +571,7 @@ export async function publishStudioStore(shopId: string, actorId?: string | null
       expectedPublishedVersionId: release.publishedVersionId,
       actorId: actorId ?? null,
     });
-    return;
+    return storefrontUrl;
   }
   if (release.draftRuntimeVersion !== null && release.draftRuntimeVersion !== 0) {
     throw new CalderynError({
@@ -567,4 +597,5 @@ export async function publishStudioStore(shopId: string, actorId?: string | null
     publishedAny = true;
   }
   if (!publishedAny) await publishPage("home", defaultHomeDocument());
+  return storefrontUrl;
 }

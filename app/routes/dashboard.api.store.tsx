@@ -566,8 +566,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
     case "publish": {
       return releaseResponse(async () => {
-        await publishStudioStore(session.shopId, session.userId);
-        return { publishedAt: new Date().toISOString() };
+        const storefrontUrl = await publishStudioStore(session.shopId, session.userId);
+        return { publishedAt: new Date().toISOString(), storefrontUrl };
       });
     }
 

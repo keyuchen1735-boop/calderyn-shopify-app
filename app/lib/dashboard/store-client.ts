@@ -229,8 +229,8 @@ export async function generateStudioStoreWithImages(
 
 /** Publish every drafted storefront page after the tenant domain is ready. The
  *  server seeds and publishes the default home page when nothing is drafted. */
-export async function publishStudioStore(): Promise<{ publishedAt: string }> {
-  return apiSend<{ publishedAt: string }>("POST", "/dashboard/api/store", {
+export async function publishStudioStore(): Promise<{ publishedAt: string; storefrontUrl: string }> {
+  return apiSend<{ publishedAt: string; storefrontUrl: string }>("POST", "/dashboard/api/store", {
     action: "publish",
   });
 }
