@@ -500,6 +500,31 @@ describe("generateOriginalStorefront", () => {
     expect(budgetDeps.installValidatedBundle).not.toHaveBeenCalled();
   });
 
+  it("allows the production-sized concept, judging, and expansion path within the default model budget", async () => {
+    const deps = passingDependencies();
+    const baseComplete = deps.provider.complete;
+    deps.provider.complete = vi.fn(async (request) => {
+      const response = await baseComplete(request);
+      const modelTokens = request.operation === "judge" ? 20_000
+        : request.operation === "expand" ? 15_943
+          : 18_000;
+      return { ...response, usage: { inputTokens: modelTokens, outputTokens: 0 } };
+    });
+
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "original",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+    }, deps);
+
+    expect(result.status).toBe("installed");
+    if (result.status !== "installed") throw new Error("expected install");
+    expect(result.audit.usage.modelTokens).toBe(197_829);
+    expect(deps.installValidatedBundle).toHaveBeenCalledOnce();
+  });
+
   it("meters all three concept renders into the browser budget before install", async () => {
     const renderConcept = vi.fn(async () => ({
       desktop: { key: "judge-desktop", mediaType: "image/webp" as const, bytes: new Uint8Array([1]) },
