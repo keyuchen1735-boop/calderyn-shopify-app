@@ -489,7 +489,9 @@ describe("createDefaultStructuralPatchCompiler", () => {
     expect(provider.complete).toHaveBeenCalledWith(expect.objectContaining({
       operation: "patch",
       schema: expect.objectContaining({ type: "object" }),
+      system: expect.stringContaining("Trusted commerce hosts use data-cd-slot, never data-cd-trusted-slot-id"),
     }));
+    expect(vi.mocked(provider.complete).mock.calls[0]![0].system).toContain("Never emit compiler-owned output markers such as data-cd-repeat-id");
     const serializedPrompt = vi.mocked(provider.complete).mock.calls[0]![0].prompt;
     expect(serializedPrompt).toContain("Verified owned asset keys: hero");
     expect(serializedPrompt).not.toContain("contentHash");
@@ -506,6 +508,27 @@ describe("createDefaultStructuralPatchCompiler", () => {
     await expect(createDefaultStructuralPatchCompiler(provider)({
       prompt: "Change this", context: { routeId: "home", regionId: target.id }, bundle,
     })).rejects.toMatchObject({ code: "storefront_patch_scope" });
+  });
+
+  it("provides authoring metadata for compiled trusted slot IDs", async () => {
+    const bundle = baseBundle();
+    const slot = bundle.routes.product.trustedSlots[0]!;
+    const provider = { complete: vi.fn().mockResolvedValue({
+      value: { operations: [{
+        kind: "replaceRegion", routeId: "product", targetId: slot.id,
+        expected: `sha256:${"a".repeat(64)}`,
+        source: { html: `<div data-cd-slot="${slot.kind}" data-cd-host-size="${slot.hostSize}"></div>`, css: "" },
+      }] },
+      provider: "fixture", model: "fixture-model", usage: { inputTokens: 1, outputTokens: 1 },
+    }) };
+
+    await createDefaultStructuralPatchCompiler(provider)({
+      prompt: "Redesign the purchase area", context: { routeId: "product", regionId: slot.id }, bundle,
+    });
+
+    const prompt = vi.mocked(provider.complete).mock.calls[0]![0].prompt;
+    expect(prompt).toContain(`product ${slot.id}: data-cd-slot="${slot.kind}"`);
+    expect(prompt).toContain(`data-cd-host-size="${slot.hostSize}"`);
   });
 
   it("rejects route-wide CSS for a selected region and generic patches spanning routes", async () => {
