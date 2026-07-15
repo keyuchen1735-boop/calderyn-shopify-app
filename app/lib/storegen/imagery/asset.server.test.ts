@@ -91,10 +91,29 @@ describe("applyAssetOverrides", () => {
 });
 
 describe("generateMissingListingImages", () => {
+  const stubReadyAssets = (ids: string[]) => {
+    const inMock = vi.fn().mockResolvedValue({ data: ids.map((id) => ({ product_id: id })), error: null });
+    const chain = { eq: vi.fn(() => chain), in: inMock } as { eq: ReturnType<typeof vi.fn>; in: typeof inMock };
+    fromMock.mockReturnValue({ select: () => chain });
+    return { inMock };
+  };
+
   it("generates the first recipe's product imagery only when the catalog has none", async () => {
+    stubReadyAssets([]);
     const enhance = vi.fn(async (_shopId: string, item: StoreProduct) => ({ productId: item.id, status: "ready" as const, url: `/generated/${item.id}.webp` }));
     const result = await generateMissingListingImages(realShop, [product("1", null), product("2", null)], enhance);
     expect(result).toBe(2);
     expect(enhance).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips products that already have a ready gemini asset yet counts them toward the ready total", async () => {
+    const { inMock } = stubReadyAssets(["1"]);
+    const enhance = vi.fn(async (_shopId: string, item: StoreProduct) => ({ productId: item.id, status: "ready" as const, url: `/generated/${item.id}.webp` }));
+    const result = await generateMissingListingImages(realShop, [product("1", null), product("2", null)], enhance);
+    expect(result).toBe(2);
+    expect(enhance).toHaveBeenCalledTimes(1);
+    expect(enhance).not.toHaveBeenCalledWith(realShop, expect.objectContaining({ id: "1" }), expect.anything());
+    expect(enhance).toHaveBeenCalledWith(realShop, expect.objectContaining({ id: "2" }), expect.anything());
+    expect(inMock).toHaveBeenCalledWith("product_id", ["1", "2"]);
   });
 });

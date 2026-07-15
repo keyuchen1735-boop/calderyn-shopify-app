@@ -44,6 +44,19 @@ export async function enhanceListing(shopId: string, product: StoreProduct, opts
   return { productId: product.id, status, url };
 }
 
+async function readReadyAssetIds(shopId: string, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const { data, error } = await getSupabase()
+    .from("store_asset")
+    .select("product_id")
+    .eq("shop_id", shopId)
+    .eq("source", SOURCE)
+    .eq("status", "ready")
+    .in("product_id", ids);
+  if (error) throw error;
+  return new Set((data ?? []).map((row) => String(row.product_id)));
+}
+
 export async function generateMissingListingImages(
   shopId: string,
   products: StoreProduct[],
@@ -52,8 +65,11 @@ export async function generateMissingListingImages(
 ): Promise<number> {
   if (products.length === 0 || products.some((product) => product.images.length > 0)) return 0;
   // ponytail: the first recipe renders at most 12 featured products; add queued catalog-wide generation if that ceiling changes.
-  const results = await Promise.all(products.slice(0, 12).map((product) => enhance(shopId, product, { signal })));
-  return results.filter((result) => result.status === "ready").length;
+  const selected = products.slice(0, 12);
+  const alreadyReady = await readReadyAssetIds(shopId, selected.map((product) => product.id));
+  const pending = selected.filter((product) => !alreadyReady.has(product.id));
+  const results = await Promise.all(pending.map((product) => enhance(shopId, product, { signal })));
+  return alreadyReady.size + results.filter((result) => result.status === "ready").length;
 }
 
 export async function applyAssetOverrides(shopId: string, products: StoreProduct[]): Promise<StoreProduct[]> {
