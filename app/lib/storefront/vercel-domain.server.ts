@@ -27,6 +27,21 @@ export function tenantDomain(orgSlug: string): string {
   return `${orgSlug}.${TENANT_ZONE}`;
 }
 
+/** A successful app health check on the tenant hostname proves working TLS and
+ * routing to this Vercel project without creating a synthetic storefront view. */
+export async function isTenantDomainReachable(orgSlug: string): Promise<boolean> {
+  try {
+    const response = await fetch(`https://${tenantDomain(orgSlug)}/healthz`, {
+      method: "HEAD",
+      redirect: "manual",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function registerTenantDomain(orgSlug: string): Promise<boolean> {
   const token = process.env.VERCEL_TOKEN;
   if (!token) {
