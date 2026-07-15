@@ -257,7 +257,6 @@ export interface GenerateDependencies {
   }): Promise<VisualEvidenceImage[]>;
   provider: StorefrontAiProvider;
   compileConcept(candidate: ConceptCandidateSource): CompiledConcept;
-  renderConcept(input: { candidate: ExploredConcept; context: MerchantStorefrontContext; signal?: AbortSignal }): Promise<ConceptRenderEvidence>;
   produceAsset(input: { shopId: string; request: AssetRequest; context: MerchantStorefrontContext; signal?: AbortSignal }): Promise<ProducedAsset | null>;
   persistAsset(input: { shopId: string; bytes: Uint8Array; signal?: AbortSignal }): Promise<PersistedOwnedAsset>;
   cleanupAsset(input: { shopId: string; assetKey: string; signal?: AbortSignal }): Promise<void>;

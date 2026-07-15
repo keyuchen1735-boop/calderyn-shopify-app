@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { CURATED_FONT_IDS } from "../storefront-bundle/types";
 import { compileBundle } from "../storefront-compiler/compile";
-import { createConcept, createContext, createExpansion, PASSING_JUDGE_SCORES, TEST_SHOP_ID, TEST_VERSION_ID } from "./__fixtures__/deterministic";
+import { createConcept, createContext, createExpansion, TEST_SHOP_ID, TEST_VERSION_ID } from "./__fixtures__/deterministic";
 import type { GenerateDependencies, GenerationCheckpoint, StorefrontAiProvider, StructuredModelResponse } from "./contracts";
 import { generateOriginalStorefront } from "./generate.server";
 import { compileConceptCandidate } from "./concepts.server";
@@ -13,7 +13,6 @@ function passingDependencies(overrides: Partial<GenerateDependencies> = {}): Gen
     complete: vi.fn(async (request) => {
       const strategyIndex = request.prompt.includes("spatial-catalog") ? 2 : request.prompt.includes("narrative-utility") ? 1 : 0;
       if (request.operation === "concept" || request.operation === "repairConcept") return { value: createConcept(strategyIndex), usage: { inputTokens: 10, outputTokens: 20 }, provider: "fixture", model: "fixture" };
-      if (request.operation === "judge") return { value: { scores: PASSING_JUDGE_SCORES, rationale: "clear" }, usage: { inputTokens: 5, outputTokens: 5 }, provider: "fixture", model: "fixture" };
       if (request.operation === "expand") return { value: createExpansion(), usage: { inputTokens: 10, outputTokens: 20 }, provider: "fixture", model: "fixture" };
       throw new Error(`unexpected ${request.operation}`);
     }),
@@ -25,13 +24,6 @@ function passingDependencies(overrides: Partial<GenerateDependencies> = {}): Gen
     loadReferenceImages: vi.fn(async () => []),
     provider,
     compileConcept: compileConceptCandidate,
-    renderConcept: vi.fn(async () => ({
-      desktop: { key: "judge-desktop", mediaType: "image/webp" as const, bytes: new Uint8Array([1]) },
-      desktopCatalog: { key: "judge-desktop-catalog", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
-      mobile: { key: "judge-mobile", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
-      mobileCatalog: { key: "judge-mobile-catalog", mediaType: "image/webp" as const, bytes: new Uint8Array([3]) },
-      browserMs: 12,
-    })),
     produceAsset: vi.fn(async () => null),
     persistAsset: vi.fn(),
     cleanupAsset: vi.fn(async () => undefined),
@@ -125,16 +117,57 @@ describe("generateOriginalStorefront", () => {
         contextSnapshot: createContext(),
         promptContractVersion: 1,
         routingResolution,
-        candidateCount: 3,
+        candidateCount: 1,
         routeValidation: expect.objectContaining({ ok: true }),
         finalArtifactHash: result.artifactHash,
       }),
     }));
-    expect(checkpoint.mock.calls.map(([event]) => event.stage)).toEqual(expect.arrayContaining(["context", "concepts", "judging", "expanding", "proofing", "installed"]));
+    expect(checkpoint.mock.calls.map(([event]) => event.stage)).toEqual(expect.arrayContaining(["context", "concepts", "expanding", "proofing", "installed"]));
+    expect(checkpoint.mock.calls.map(([event]) => event.stage)).not.toContain("judging");
     expect(checkpoint.mock.calls.every(([event]) =>
       event.shopId === TEST_SHOP_ID && event.promptHash === createContext().promptHash &&
       !JSON.stringify(event.detail ?? {}).includes("make it original")
     )).toBe(true);
+  });
+
+  it("generates one concept and skips visual judging before producing images", async () => {
+    const deps = passingDependencies();
+    const operations: string[] = [];
+    const baseComplete = deps.provider.complete;
+    deps.provider.complete = vi.fn(async (request) => {
+      operations.push(request.operation);
+      const response = await baseComplete(request);
+      if (request.operation !== "concept") return response;
+      const concept = structuredClone(response.value as ReturnType<typeof createConcept>);
+      concept.home.html = `<main><img data-cd-asset="hero" alt="Store hero"></main>`;
+      concept.assetRequests = [{ key: "hero", purpose: "Store hero", required: false }];
+      return { ...response, value: concept };
+    });
+    deps.produceAsset = vi.fn(async () => {
+      operations.push("produceAsset");
+      return { bytes: new Uint8Array([1, 2, 3]), provenance: "fixture" };
+    });
+    deps.persistAsset = vi.fn(async () => ({
+      assetKey: "owned/sha256/hero.webp",
+      contentHash: "a".repeat(64),
+      mediaType: "image/webp" as const,
+      byteSize: 3,
+    }));
+
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "Create a completely original storefront from scratch",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+    }, deps);
+
+    expect(result.status).toBe("installed");
+    expect(operations.filter((operation) => operation === "concept")).toHaveLength(1);
+    expect(operations).not.toContain("judge");
+    expect(operations.indexOf("produceAsset")).toBeGreaterThan(operations.lastIndexOf("expand"));
+    if (result.status !== "installed") throw new Error("expected install");
+    expect(result.audit.candidateCount).toBe(1);
   });
 
   it("installs when the provider follows the trusted-slot source contract", async () => {
@@ -464,7 +497,7 @@ describe("generateOriginalStorefront", () => {
     const conceptRequests = vi.mocked(deps.provider.complete).mock.calls
       .map(([request]) => request)
       .filter((request) => request.operation === "concept");
-    expect(conceptRequests).toHaveLength(3);
+    expect(conceptRequests).toHaveLength(1);
     expect(conceptRequests.every((request) => request.images?.[0]?.key === "reference-image-001")).toBe(true);
     expect(JSON.stringify(conceptRequests)).not.toContain("private/storage");
   });
@@ -500,13 +533,12 @@ describe("generateOriginalStorefront", () => {
     expect(budgetDeps.installValidatedBundle).not.toHaveBeenCalled();
   });
 
-  it("allows the production-sized concept, judging, and expansion path within the default model budget", async () => {
+  it("allows the production-sized single-concept expansion path within the default model budget", async () => {
     const deps = passingDependencies();
     const baseComplete = deps.provider.complete;
     deps.provider.complete = vi.fn(async (request) => {
       const response = await baseComplete(request);
-      const modelTokens = request.operation === "judge" ? 20_000
-        : request.operation === "expand" ? 15_943
+      const modelTokens = request.operation === "expand" ? 15_943
           : 18_000;
       return { ...response, usage: { inputTokens: modelTokens, outputTokens: 0 } };
     });
@@ -521,33 +553,8 @@ describe("generateOriginalStorefront", () => {
 
     expect(result.status).toBe("installed");
     if (result.status !== "installed") throw new Error("expected install");
-    expect(result.audit.usage.modelTokens).toBe(197_829);
+    expect(result.audit.usage.modelTokens).toBe(65_829);
     expect(deps.installValidatedBundle).toHaveBeenCalledOnce();
-  });
-
-  it("meters all three concept renders into the browser budget before install", async () => {
-    const renderConcept = vi.fn(async () => ({
-      desktop: { key: "judge-desktop", mediaType: "image/webp" as const, bytes: new Uint8Array([1]) },
-      desktopCatalog: { key: "judge-desktop-catalog", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
-      mobile: { key: "judge-mobile", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
-      mobileCatalog: { key: "judge-mobile-catalog", mediaType: "image/webp" as const, bytes: new Uint8Array([3]) },
-      browserMs: 20,
-    }));
-    const deps = passingDependencies({ renderConcept });
-    const result = await generateOriginalStorefront({
-      shopId: TEST_SHOP_ID,
-      prompt: "original",
-      expectedDraftVersionId: null,
-      actorId: null,
-      trusted: true,
-      budget: { maxBrowserMs: 59 },
-    }, deps);
-
-    expect(renderConcept).toHaveBeenCalledTimes(3);
-    expect(result).toMatchObject({ status: "failed", code: "generation_budget_exceeded" });
-    if (result.status !== "failed") throw new Error("expected browser budget failure");
-    expect(result.audit?.usage?.browserMs).toBe(60);
-    expect(deps.installValidatedBundle).not.toHaveBeenCalled();
   });
 
   it("actively aborts a hung provider call at the wall-time budget", async () => {
