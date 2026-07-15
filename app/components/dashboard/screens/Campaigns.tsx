@@ -268,7 +268,7 @@ function RowQuickActions({
       style={{ gap: 6, justifyContent: "flex-end" }}
       onClick={(e) => e.stopPropagation()}
     >
-      <Tooltip content={paused ? "Resume" : "Pause"}>
+      <Tooltip content={paused ? "Resume" : "Pause"} escapeClipping>
         <Btn
           small
           icon={paused ? "play" : "pause"}
@@ -288,7 +288,7 @@ function RowQuickActions({
       </Tooltip>
       {isMeta && (
         <>
-          <Tooltip content="Edit daily budget">
+          <Tooltip content="Edit daily budget" escapeClipping>
             <Btn
               small
               icon="pencil"
@@ -300,7 +300,7 @@ function RowQuickActions({
               {""}
             </Btn>
           </Tooltip>
-          <Tooltip content="Duplicate (created paused)">
+          <Tooltip content="Duplicate (created paused)" escapeClipping>
             <Btn
               small
               icon="copy"
@@ -475,7 +475,7 @@ function DraftRow({
         </Btn>
       </div>
       <div className="flex items-center justify-end">
-        <Tooltip content="Delete draft">
+        <Tooltip content="Delete draft" escapeClipping>
           <Btn
             small
             icon="trash"
@@ -1529,10 +1529,7 @@ function CampaignList({
           )}
         </div>
       ) : (
-        <div
-          className="cd-card cd-campaign-table"
-          style={{ overflow: "hidden" }}
-        >
+        <div className="cd-card cd-campaign-table">
           <Pan min={560}>
             <div
               className="cd-tablehd"

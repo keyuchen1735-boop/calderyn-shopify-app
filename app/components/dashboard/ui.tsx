@@ -7,6 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { blendedRoas, money, moneyK, SEV_STYLE } from "./format";
@@ -316,13 +317,110 @@ export function ScorePill({ score }: { score: CampaignCalderynScore }) {
  * visible bubble is `aria-hidden` to avoid a double read. Class is `cd-htip`,
  * NOT `cd-tip` — the latter is the chart hover-label (absolute, fixed width).
  */
-export function Tooltip({ content, children }: { content: string; children: ReactNode }) {
+export function Tooltip({
+  content,
+  children,
+  escapeClipping = false,
+}: {
+  content: string;
+  children: ReactNode;
+  escapeClipping?: boolean;
+}) {
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const bubbleRef = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{
+    top: number;
+    left: number;
+    arrowLeft: number;
+    placement: "top" | "bottom";
+  } | null>(null);
+
+  useEffect(() => {
+    if (!escapeClipping || !open) return;
+
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      const bubble = bubbleRef.current;
+      if (!trigger || !bubble) return;
+
+      const triggerRect = trigger.getBoundingClientRect();
+      const bubbleRect = bubble.getBoundingClientRect();
+      const margin = 8;
+      const gap = 8;
+      const maxLeft = Math.max(margin, window.innerWidth - bubbleRect.width - margin);
+      const left = Math.min(Math.max(triggerRect.left, margin), maxLeft);
+      let top = triggerRect.top - bubbleRect.height - gap;
+      let placement: "top" | "bottom" = "top";
+
+      if (top < margin) {
+        top = triggerRect.bottom + gap;
+        placement = "bottom";
+      }
+      top = Math.min(top, Math.max(margin, window.innerHeight - bubbleRect.height - margin));
+
+      setPosition({
+        top,
+        left,
+        arrowLeft: Math.min(
+          Math.max(triggerRect.left + triggerRect.width / 2 - left, 10),
+          bubbleRect.width - 10,
+        ),
+        placement,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [content, escapeClipping, open]);
+
+  const close = () => {
+    setOpen(false);
+    setPosition(null);
+  };
+  const bubble = (
+    <span
+      ref={bubbleRef}
+      className={`cd-htip-pop${escapeClipping ? " cd-htip-pop--portal" : ""}`}
+      data-placement={position?.placement}
+      aria-hidden="true"
+      style={
+        escapeClipping
+          ? ({
+              top: position?.top ?? 0,
+              left: position?.left ?? 0,
+              visibility: position ? "visible" : "hidden",
+              "--cd-tooltip-arrow-left": `${position?.arrowLeft ?? 14}px`,
+            } as CSSProperties)
+          : undefined
+      }
+    >
+      {content}
+    </span>
+  );
+
   return (
-    <span className="cd-htip" tabIndex={0} aria-label={content}>
+    <span
+      ref={triggerRef}
+      className="cd-htip"
+      tabIndex={0}
+      aria-label={content}
+      onMouseEnter={escapeClipping ? () => setOpen(true) : undefined}
+      onMouseLeave={escapeClipping ? close : undefined}
+      onFocus={escapeClipping ? () => setOpen(true) : undefined}
+      onBlur={escapeClipping ? close : undefined}
+    >
       {children}
-      <span className="cd-htip-pop" aria-hidden="true">
-        {content}
-      </span>
+      {escapeClipping && open && typeof document !== "undefined"
+        ? createPortal(bubble, triggerRef.current?.closest(".cd-root") ?? document.body)
+        : !escapeClipping
+          ? bubble
+          : null}
     </span>
   );
 }

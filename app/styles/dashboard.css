@@ -349,8 +349,16 @@
     opacity: 1; visibility: visible; transform: translateY(0);
   }
   .cd-htip-pop::after {
-    content: ""; position: absolute; top: 100%; left: 14px;
+    content: ""; position: absolute; top: 100%; left: var(--cd-tooltip-arrow-left, 14px);
     border: 5px solid transparent; border-top-color: var(--card-solid);
+  }
+  .cd-htip-pop.cd-htip-pop--portal {
+    position: fixed; bottom: auto; z-index: 100;
+    opacity: 1; transform: none;
+  }
+  .cd-htip-pop--portal[data-placement="bottom"]::after {
+    top: auto; bottom: 100%;
+    border-top-color: transparent; border-bottom-color: var(--card-solid);
   }
   @media (prefers-reduced-motion: reduce) {
     .cd-htip-pop { transition: opacity 0.14s ease; transform: none; }
