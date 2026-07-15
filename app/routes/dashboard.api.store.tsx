@@ -348,12 +348,8 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
 
   return dashboardJson(async () => {
     // Cheap guards first (brief cap, burst limit, mid-test refusal) — BEFORE any
-    // model spend. The daily designer quota is deliberately NOT consumed here:
-    // checkAiQuota records a hit at check time, so a needs_intent reply (and the
-    // merchant's follow-up retry) or a products-only outcome must not burn one of
-    // the day's generation slots. The classification call below is still model
-    // spend, but it is cheap (digest model, ~300 tokens) and bounded by the same
-    // burst limit — an accepted tradeoff, see guard.server.ts.
+    // model spend. The designer cooldown is deliberately NOT started here so a
+    // needs_intent reply does not delay the merchant's follow-up generation.
     await assertGeneratePrechecks(session.shopId, rawBrief);
     const brief = rawBrief && rawBrief.trim() ? rawBrief.trim() : undefined;
 
@@ -378,8 +374,8 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
     // An explicit intent skips classification entirely (the quick-reply already
     // resolved the ambiguity); otherwise the model decides what the images are for.
     const intent = explicitIntent ?? (await classifyAttachmentIntent({ brief: brief ?? null, images: asAttachmentImages() }));
-    // Couldn't tell what to do → ask the merchant. No generation, no products —
-    // and no designer quota consumed. (Unreachable when intent was explicit.)
+    // Couldn't tell what to do → ask the merchant. No generation, no products,
+    // and no designer cooldown started. (Unreachable when intent was explicit.)
     if (!intent) return { status: "needs_intent" } satisfies StudioGenerateReceipt;
 
     const customPrompt = brief ?? "Use the attached images as the design reference.";
@@ -444,7 +440,7 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
       } satisfies StudioGenerateReceipt;
     }
 
-    // Products only — no generation ran, no designer quota touched.
+    // Products only — no generation ran, no designer cooldown started.
       return { status: "products_added", intent, products } satisfies StudioGenerateReceipt;
     } finally {
       await Promise.all(referenceAssetKeys.map((assetKey) => garbageCollectUnreferencedStorefrontAsset({
@@ -665,9 +661,8 @@ export async function action({ request }: ActionFunctionArgs) {
       return dashboardJson(async () => {
         // The AI challenger runs a real design-model generation, so it shares the generate
         // entry points' guards: the burst limit up front (a scripted client must not fire
-        // unlimited challenger generations), and the daily designer quota LAST — consumed via
-        // the hook only once startExperiment's own refusals (running test, nothing published)
-        // have passed, so a refused start never burns a slot (quota-last, guard.server.ts).
+        // unlimited challenger generations), and the designer cooldown last via the hook so
+        // startExperiment's own refusals never delay a corrected retry.
         if (kind === "ai_page") await assertGeneratePrechecks(session.shopId, undefined);
         return {
           experiment: await startExperiment(session.shopId, {

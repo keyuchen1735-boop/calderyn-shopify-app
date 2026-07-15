@@ -26,7 +26,7 @@ import { recordGeneration, recordProposal } from "./audit.server";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // 90k: the budget counts INPUT tokens too, and a full quality run is brand + block plans +
 // N home candidates + a judge + possibly one revision. Generation volume is already bounded
-// by the burst limit + daily designer quota, so the budget is a per-run runaway safety net,
+// by the burst limit, so the budget is a per-run runaway safety net,
 // not the cost cap — starving pages into silent fallbacks is worse than the marginal spend.
 const TOKEN_BUDGET = Number(process.env.STOREGEN_TOKEN_BUDGET ?? 90000);
 // Concurrent home candidates per run (1 disables the judge/critique pipeline entirely —
@@ -354,7 +354,7 @@ export async function generateStore(input: GenerateInput): Promise<GenerateResul
   // Stage-2 calls can therefore overshoot by at most their own output allowances — a bounded,
   // accepted overshoot. The alternative (pre-reserving output tokens) starves pages into
   // silent fallbacks whenever the estimate is pessimistic, which is strictly worse than
-  // spending a little past a safety net the burst limit + daily quota already bound.
+  // spending a little past a safety net the burst limit already bounds.
   async function call(system: string, user: string, opts?: { model?: string; maxTokens?: number; images?: Anthropic.ImageBlockParam[] }): Promise<CallResult | null> {
     if (skipLlm) return null;
     const maxTokens = opts?.maxTokens ?? 3000;

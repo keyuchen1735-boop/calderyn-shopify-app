@@ -479,8 +479,7 @@ describe("dashboard.api.store multipart generate", () => {
     expect(body.products).toBeUndefined();
     expect(body.runId).toBeUndefined();
     expect(createProductMock).not.toHaveBeenCalled();
-    // A classification-only outcome must not burn a daily designer slot — the
-    // merchant's follow-up retry would otherwise cost 2 of 5 base-tier slots.
+    // A classification-only outcome must not delay the merchant's follow-up.
     expect(designerQuotaMock).not.toHaveBeenCalled();
   });
 
@@ -500,7 +499,7 @@ describe("dashboard.api.store multipart generate", () => {
     expect(body.products[0]).toMatchObject({ id: "p1", title: "Red mug" });
     expect(body.products[0].imageError).toBeUndefined();
     expect(body.products[1]).toMatchObject({ id: "p2", title: "Blue mug", imageError: "media_too_large" });
-    // Catalog work, not generation — no daily designer slot consumed.
+    // Catalog work, not generation — no designer cooldown started.
     expect(designerQuotaMock).not.toHaveBeenCalled();
   });
 
@@ -531,7 +530,7 @@ describe("dashboard.api.store multipart generate", () => {
     expect(body.runId).toBe("55555555-5555-5555-5555-555555555555");
     expect(body.intent).toEqual({ addAsProducts: false, useAsReference: true });
     expect(createProductMock).not.toHaveBeenCalled();
-    // Generation is certain here, so the daily designer slot IS consumed.
+    // Generation is certain here, so the builder owns the designer cooldown.
     expect(persistAssetMock).toHaveBeenCalledWith({ shopId: SHOP, bytes: expect.any(Uint8Array) });
     expect(cleanupAssetMock).toHaveBeenCalledWith({
       shopId: SHOP,
@@ -591,7 +590,7 @@ describe("dashboard.api.store multipart generate", () => {
     expect(buildMock).not.toHaveBeenCalled();
   });
 
-  it("creates products first, then generates, when the intent is both (quota before any write)", async () => {
+  it("creates products first, then generates, when the intent is both (guard before any write)", async () => {
     classifyMock.mockResolvedValue({ addAsProducts: true, useAsReference: true });
     const res = await postMultipart({ brief: "add and match", images: [pngFile("mug.png")] });
     const body = await res.json();
@@ -600,8 +599,8 @@ describe("dashboard.api.store multipart generate", () => {
     expect(createProductMock).toHaveBeenCalledTimes(1);
     expect(buildMock).toHaveBeenCalledTimes(1);
     expect(body.products).toHaveLength(1);
-    // The designer quota is consumed BEFORE any product row is written, so a
-    // quota refusal is a clean 429 with no partial writes.
+    // The designer guard runs before any product row is written, so a refusal
+    // is a clean 429 with no partial writes.
     expect(prepareBuildMock.mock.invocationCallOrder[0]).toBeLessThan(
       createProductMock.mock.invocationCallOrder[0],
     );
@@ -640,7 +639,7 @@ describe("dashboard.api.store multipart generate", () => {
     const body = await res.json();
     expect(body).toEqual({ runId: "55555555-5555-5555-5555-555555555555", status: "draft" });
     expect(classifyMock).not.toHaveBeenCalled();
-    // Same guard pair as the JSON path: prechecks then the daily quota.
+    // Same guard path as the JSON request.
     expect(prechecksMock).toHaveBeenCalledTimes(1);
     expect(designerQuotaMock).not.toHaveBeenCalled();
     expect(buildMock).toHaveBeenCalledTimes(1);
@@ -656,7 +655,7 @@ describe("dashboard.api.store multipart generate", () => {
     // return null again and loop the merchant back to the same question).
     expect(classifyMock).not.toHaveBeenCalled();
     expect(createProductMock).not.toHaveBeenCalled();
-    // Generation is certain here, so the daily designer slot IS consumed.
+    // Generation is certain here, so the builder owns the designer cooldown.
     expect(designerQuotaMock).not.toHaveBeenCalled();
     expect(buildMock.mock.calls[0][0].referenceImages).toHaveLength(1);
   });
@@ -679,7 +678,7 @@ describe("dashboard.api.store multipart generate", () => {
     expect(body.intent).toEqual({ addAsProducts: true, useAsReference: false });
     expect(classifyMock).not.toHaveBeenCalled();
     expect(createProductMock).toHaveBeenCalledTimes(1);
-    // Catalog work, not generation — no designer slot consumed.
+    // Catalog work, not generation — no designer cooldown started.
     expect(designerQuotaMock).not.toHaveBeenCalled();
   });
 

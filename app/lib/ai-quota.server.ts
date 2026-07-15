@@ -1,9 +1,8 @@
 // app/lib/ai-quota.server.ts
 //
-// Per-shop daily caps + cooldowns for the paid Anthropic endpoints (store
-// designer, assistant, listing drafts), layered on the same Postgres
-// fixed-window limiter as the existing per-minute burst caps. The daily
-// window is 86,400s and epoch-aligned, so allowances reset at midnight UTC.
+// Per-shop cooldowns for the paid Anthropic endpoints, plus daily caps for
+// assistant and listing drafts. These use the same Postgres fixed-window
+// limiter as the existing per-minute burst caps.
 //
 // Like rate_limit_touch itself this fails OPEN — quota is spend-abuse
 // defense-in-depth; the Anthropic workspace spend limit is the hard backstop.
@@ -13,15 +12,13 @@ export type AiFeature = "designer" | "assistant" | "listing";
 
 type QuotaConfig = {
   cooldownMs: number;
-  daily: { base: number; trusted: number };
+  daily?: { base: number; trusted: number };
 };
 
-// Caps are sized so a genuine evaluator never notices them while a scripted
-// account is bounded to roughly a dollar of spend per day.
 const QUOTAS: Record<AiFeature, QuotaConfig> = {
-  // Store generation is a multi-prompt run — the most expensive call in the
-  // product. A real merchant redesigns a handful of times, not dozens.
-  designer: { cooldownMs: 20_000, daily: { base: 5, trusted: 20 } },
+  // Store generation stays unlimited across the day; the cooldown prevents
+  // accidental duplicate submissions.
+  designer: { cooldownMs: 20_000 },
   // Chat turns are cheap individually; the cap exists to stop scripts, not
   // to meter humans.
   assistant: { cooldownMs: 4_000, daily: { base: 30, trusted: 300 } },
@@ -37,9 +34,8 @@ export type QuotaVerdict =
   | { allowed: false; code: "ai_cooldown" | "ai_daily_limit"; message: string };
 
 /**
- * Shops that skip all AI caps: local development (iterating on the designer
- * would otherwise burn the day's cap on test runs — Vitest "test" and Vercel
- * "production" stay metered) and any shop id in AI_QUOTA_BYPASS_SHOPS
+ * Shops that skip all AI caps: local development and any shop id in
+ * AI_QUOTA_BYPASS_SHOPS
  * (comma-separated). The allowlist lives in the deployment env, not source, so
  * exempting an account is a config change; empty allowlist = every shop capped.
  * ponytail: env allowlist; move to a shop_settings flag if it outgrows a handful.
@@ -51,10 +47,8 @@ function isQuotaBypassed(shopId: string): boolean {
 }
 
 /**
- * Record one hit for `feature` against the shop's cooldown and daily buckets
- * and report whether the request may proceed. Cooldown is checked first so a
- * hammering client burns its own cooldown window, not the shop's daily
- * allowance.
+ * Record one hit for `feature` against the shop's cooldown and optional daily
+ * bucket and report whether the request may proceed.
  */
 export async function checkAiQuota(opts: {
   shopId: string;
@@ -71,6 +65,7 @@ export async function checkAiQuota(opts: {
       message: `Going a little fast — try again in ${Math.ceil(cfg.cooldownMs / 1000)} seconds.`,
     };
   }
+  if (!cfg.daily) return { allowed: true };
   const cap = opts.trusted ? cfg.daily.trusted : cfg.daily.base;
   const day = await rateLimit(`ai:day:${opts.feature}:${opts.shopId}`, cap, DAY_MS);
   if (!day) {
@@ -84,8 +79,9 @@ export async function checkAiQuota(opts: {
 }
 
 /**
- * Trusted tier gets the higher daily caps: Shopify-embedded sessions (the app
- * is installed on a real store; `userId` is null by construction) and
+ * Trusted tier gets the higher configured daily caps: Shopify-embedded
+ * sessions (the app is installed on a real store; `userId` is null by
+ * construction) and
  * first-party accounts older than seven days. Email verification is not a
  * tier — it is already a hard gate at the API door.
  */
