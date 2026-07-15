@@ -44,6 +44,8 @@ import type {
 import AssistantPanel from "./AssistantPanel";
 import BugReportButton from "./BugReportButton";
 import ContactButton from "./ContactButton";
+import { OnboardingTour } from "./OnboardingTour";
+import type { ProductTourOutcome } from "~/lib/dashboard/product-tour";
 import { parsePath, pathFor, DASHBOARD_BASE } from "./routes";
 import {
   DASHBOARD_SIDEBAR_WIDTH,
@@ -316,6 +318,8 @@ export default function DashboardApp({
   demoMode = false,
   hasCatalog,
   canDeleteAccount = false,
+  productTourPending = false,
+  productTourAvailable = false,
 }: {
   authBase?: string;
   shopDomain: string | null;
@@ -330,6 +334,10 @@ export default function DashboardApp({
   /** First-party account → Settings shows the self-delete Danger zone. Legacy
    *  Shopify (shop-based) sessions have no users row and are exempt. */
   canDeleteAccount?: boolean;
+  /** New first-party accounts receive one automatic orientation on Home. */
+  productTourPending?: boolean;
+  /** Controls whether the account menu offers a replay entry point. */
+  productTourAvailable?: boolean;
 }) {
   // Night mode (dark theme). Defaults to dark; the merchant's choice persists in
   // localStorage. Initialised to true so the server render and first client render
@@ -385,6 +393,16 @@ export default function DashboardApp({
   const [storeSidebarExpanded, setStoreSidebarExpanded] = useState(false);
   const storeFocus = nav.screen === "storefront";
   const sidebarCompact = shouldCompactStoreSidebar(nav.screen, storeSidebarExpanded);
+  const [tourPending, setTourPending] = useState(productTourPending);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [assistantTourDemo, setAssistantTourDemo] = useState<{ n: number } | null>(null);
+  const assistantTourDemoSeq = useRef(0);
+
+  // The automatic tour waits until the merchant reaches Home. Deep links still
+  // land where intended; the orientation appears the first time they return.
+  useEffect(() => {
+    if (tourPending && nav.screen === "dashboard") setTourOpen(true);
+  }, [nav.screen, tourPending]);
 
   const navigate = useCallback(
     (
@@ -1269,6 +1287,49 @@ export default function DashboardApp({
     setAssistantSignal((n) => n + 1);
   }, []);
 
+  const handleTourOutcome = useCallback(
+    (outcome: ProductTourOutcome) => {
+      // Preview steps intentionally keep the browser URL on Home. Reconcile
+      // the visible screen before closing so Skip, Escape, and Finish never
+      // leave history and the dashboard UI describing different locations.
+      navigate("dashboard");
+      setTourOpen(false);
+      setTourPending(false);
+      client
+        .apiSend("POST", "/dashboard/api/product-tour", { intent: outcome })
+        .catch((error: unknown) =>
+          toast(
+            error instanceof client.DashboardApiError
+              ? error.message
+              : "We couldn't save that choice. The tour may appear again next time.",
+            "warn",
+            "critical",
+          ),
+        );
+    },
+    [navigate, toast],
+  );
+
+  const replayProductTour = useCallback(() => {
+    setAcctOpen(false);
+    navigate("dashboard");
+    setTourOpen(true);
+  }, [navigate]);
+
+  // Tour navigation swaps the real dashboard screen in place. Using Remix
+  // navigation here would reload the route loader and remount DashboardApp,
+  // which would discard the active tour before the next step can render.
+  const previewTourDestination = useCallback((screen: ScreenId) => {
+    setNav({ screen, param: null, sub: null });
+    setMoreOpen(false);
+    setAcctOpen(false);
+    document.getElementById("cd-main")?.scrollTo({ top: 0 });
+  }, []);
+
+  const handleAssistantTourDemo = useCallback((active: boolean) => {
+    setAssistantTourDemo(active ? { n: ++assistantTourDemoSeq.current } : null);
+  }, []);
+
   const app: DashboardCtx = {
     t,
     authBase,
@@ -1433,6 +1494,7 @@ export default function DashboardApp({
           <button
             className="cd-nav-item"
             data-active={activeNav === item.id ? "1" : "0"}
+            data-tour-anchor={item.id}
             style={{ width: "100%", paddingRight: 52 }}
             title={sidebarCompact ? item.label : undefined}
             onClick={() => navigate(item.id)}
@@ -1476,6 +1538,7 @@ export default function DashboardApp({
             type="button"
             className="cd-nav-item cd-nav-parent"
             data-active={activeNav === item.id ? "1" : "0"}
+            data-tour-anchor={item.id}
             data-expanded={expanded ? "1" : "0"}
             aria-expanded={expanded}
             title={sidebarCompact ? item.label : undefined}
@@ -1511,6 +1574,7 @@ export default function DashboardApp({
         className="cd-nav-item"
         data-active={activeNav === item.id ? "1" : "0"}
         title={sidebarCompact ? item.label : undefined}
+        data-tour-anchor={item.id}
         onClick={() => navigate(item.id)}
       >
         <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
@@ -1567,6 +1631,7 @@ export default function DashboardApp({
             type="button"
             className="cd-ask-btn"
             title={sidebarCompact ? "Ask Calderyn" : undefined}
+            data-tour-anchor="assistant"
             onClick={() => setAssistantSignal((n) => n + 1)}
           >
             <CDIcon name="assist" size={18} strokeWidth={1.8} />
@@ -1598,6 +1663,12 @@ export default function DashboardApp({
                 <CDIcon name="card" size={16} strokeWidth={1.8} />
                 Billing & payouts
               </button>
+              {productTourAvailable && (
+                <button type="button" className="cd-acct-mi" onClick={replayProductTour}>
+                  <CDIcon name="play" size={16} strokeWidth={1.8} />
+                  Take the quick tour
+                </button>
+              )}
               <div className="cd-acct-sep" />
               <button type="button" className="cd-acct-mi" data-danger="1" onClick={signOut}>
                 <CDIcon name="logout" size={16} strokeWidth={1.8} />
@@ -1654,7 +1725,19 @@ export default function DashboardApp({
         <Screen app={app} />
       </main>
 
-      <AssistantPanel app={app} openSignal={assistantSignal} prompt={assistantPrompt} />
+      <OnboardingTour
+        open={tourOpen}
+        onOutcome={handleTourOutcome}
+        onDemoNavigate={previewTourDestination}
+        onAssistantDemo={handleAssistantTourDemo}
+      />
+
+      <AssistantPanel
+        app={app}
+        openSignal={assistantSignal}
+        prompt={assistantPrompt}
+        tourDemo={assistantTourDemo}
+      />
       <BugReportButton app={app} openSignal={bugSignal} />
       <ContactButton app={app} />
 
@@ -1666,6 +1749,7 @@ export default function DashboardApp({
             type="button"
             className="cd-tab"
             data-active={activeNav === item.id ? "1" : "0"}
+            data-tour-anchor={item.id}
             onClick={() => navigate(item.id)}
           >
             <span className="cd-tab-ico">
@@ -1681,6 +1765,7 @@ export default function DashboardApp({
           type="button"
           className="cd-tab"
           data-active={onMoreScreen ? "1" : "0"}
+          data-tour-anchor="more"
           aria-expanded={moreOpen}
           aria-haspopup="menu"
           onClick={() => setMoreOpen((v) => !v)}

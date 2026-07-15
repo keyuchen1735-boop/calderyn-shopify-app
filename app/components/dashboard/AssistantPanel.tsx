@@ -299,14 +299,22 @@ export default function AssistantPanel({
   app,
   openSignal,
   prompt,
+  tourDemo,
 }: {
   app: DashboardCtx;
   openSignal?: number;
   /** A hand-off from Home's prompt bar: open the panel and send this text as
    *  the next user turn. `n` makes re-sends of the same text distinct. */
   prompt?: { n: number; text: string } | null;
+  /** Opens the real assistant panel with a read-only, local example. No API
+   *  request or conversation history is touched during the product tour. */
+  tourDemo?: { n: number } | null;
 }) {
   const [state, setState] = useState<PanelState>("closed");
+  const tourDemoActive = tourDemo != null;
+  const [tourDemoInput, setTourDemoInput] = useState("");
+  const [tourDemoStage, setTourDemoStage] = useState<0 | 1 | 2>(0);
+  const tourDemoWasActiveRef = useRef(false);
 
   // The sidebar "Ask Calderyn" button and the mobile "More" sheet open the
   // panel by bumping openSignal. Each increment re-opens it fully, whatever
@@ -314,6 +322,47 @@ export default function AssistantPanel({
   useEffect(() => {
     if (openSignal) setState("open");
   }, [openSignal]);
+
+  useEffect(() => {
+    if (!tourDemo) {
+      if (tourDemoWasActiveRef.current) setState("closed");
+      tourDemoWasActiveRef.current = false;
+      setTourDemoInput("");
+      setTourDemoStage(0);
+      return;
+    }
+
+    tourDemoWasActiveRef.current = true;
+    setState("open");
+    setTourDemoInput("");
+    setTourDemoStage(0);
+    const example = "What should I reorder this week?";
+    if (reduced()) {
+      setTourDemoStage(2);
+      return;
+    }
+
+    let index = 0;
+    let userTimer: number | undefined;
+    let answerTimer: number | undefined;
+    const typingTimer = window.setInterval(() => {
+      index += 2;
+      setTourDemoInput(example.slice(0, index));
+      if (index < example.length) return;
+      window.clearInterval(typingTimer);
+      userTimer = window.setTimeout(() => {
+        setTourDemoInput("");
+        setTourDemoStage(1);
+        answerTimer = window.setTimeout(() => setTourDemoStage(2), 450);
+      }, 220);
+    }, 24);
+
+    return () => {
+      window.clearInterval(typingTimer);
+      if (userTimer !== undefined) window.clearTimeout(userTimer);
+      if (answerTimer !== undefined) window.clearTimeout(answerTimer);
+    };
+  }, [tourDemo]);
 
   // Navigating away while the panel is open docks it to a pill instead of
   // leaving it floating over the new screen. Navigating while docked/peek/
@@ -346,7 +395,7 @@ export default function AssistantPanel({
   // re-runs this effect while the fetch is still in flight.
   const historyFetchStartedRef = useRef(false);
   useEffect(() => {
-    if (state === "closed" || historyFetchStartedRef.current) return;
+    if (state === "closed" || tourDemoActive || historyFetchStartedRef.current) return;
     historyFetchStartedRef.current = true;
     let alive = true;
     client
@@ -365,7 +414,7 @@ export default function AssistantPanel({
     return () => {
       alive = false;
     };
-  }, [state]);
+  }, [state, tourDemoActive]);
 
   // Only a genuinely open (or opening-toward) panel needs its scroll position
   // kept pinned to the latest message — skip the extra reflow on every
@@ -619,8 +668,8 @@ export default function AssistantPanel({
   // the prop doesn't typecheck against the stable React types this repo
   // pins.
   useEffect(() => {
-    panelRef.current?.toggleAttribute("inert", state !== "open");
-  }, [state]);
+    panelRef.current?.toggleAttribute("inert", state !== "open" || tourDemoActive);
+  }, [state, tourDemoActive]);
 
   const openFull = () => setState("open");
   const enterDockZone = () => setState((cur) => (cur === "docked" ? "peek" : cur));
@@ -636,6 +685,7 @@ export default function AssistantPanel({
         data-state={state}
         role="dialog"
         aria-label="Ask Calderyn"
+        aria-hidden={tourDemoActive ? true : undefined}
       >
         <div className="cd-chat-head">
           <div className="cd-chat-head-title">
@@ -648,13 +698,14 @@ export default function AssistantPanel({
             </div>
           </div>
           <div className="cd-chat-head-btns">
-            <Btn small onClick={newChat}>
+            <Btn small disabled={tourDemoActive} onClick={newChat}>
               New chat
             </Btn>
             <button
               type="button"
               className="cd-chat-close"
               aria-label="Close assistant"
+              disabled={tourDemoActive}
               onClick={() => setState("closed")}
             >
               <CDIcon name="x" size={16} strokeWidth={2} />
@@ -663,7 +714,21 @@ export default function AssistantPanel({
         </div>
 
       <div className="cd-chat-msgs" ref={msgsRef}>
-        {historyLoaded && messages.length === 0 && (
+        {tourDemoActive && tourDemoStage >= 1 && (
+          <div className="cd-chat-bubble" data-role="user" aria-label="You">
+            <div className="cd-chat-bubble-body">
+              <p className="cd-body">What should I reorder this week?</p>
+            </div>
+          </div>
+        )}
+        {tourDemoActive && tourDemoStage >= 2 && (
+          <div className="cd-chat-bubble" data-role="assistant" aria-label="Calderyn">
+            <div className="cd-chat-bubble-body">
+              <p className="cd-body">Linen Shirt is first—only 3 left and selling fastest.</p>
+            </div>
+          </div>
+        )}
+        {!tourDemoActive && historyLoaded && messages.length === 0 && (
           <div className="cd-chat-empty">
             <p className="cd-sub">
               Ask anything about your store&rsquo;s alerts, campaigns, inventory, or action
@@ -685,7 +750,7 @@ export default function AssistantPanel({
             </div>
           </div>
         )}
-        {messages.map((m) => (
+        {!tourDemoActive && messages.map((m) => (
           <div
             key={m.id}
             className="cd-chat-bubble"
@@ -741,7 +806,7 @@ export default function AssistantPanel({
             </div>
           </div>
         ))}
-        {sending && (
+        {!tourDemoActive && sending && (
           <div className="cd-chat-thinking" role="status">
             <span className="cd-chat-dot" />
             <span className="cd-chat-dot" />
@@ -749,7 +814,7 @@ export default function AssistantPanel({
             <span className="cd-chat-thinking-text">{thinking}</span>
           </div>
         )}
-        {errorText && <div className="cd-chat-error">{errorText}</div>}
+        {!tourDemoActive && errorText && <div className="cd-chat-error">{errorText}</div>}
       </div>
 
       <div className="cd-chat-composer">
@@ -758,10 +823,13 @@ export default function AssistantPanel({
           className="cd-input cd-chat-input"
           rows={1}
           placeholder="Ask about your data…"
-          value={input}
-          disabled={sending}
-          onChange={(e) => setInput(e.target.value)}
+          value={tourDemoActive ? tourDemoInput : input}
+          disabled={tourDemoActive || sending}
+          onChange={(e) => {
+            if (!tourDemoActive) setInput(e.target.value);
+          }}
           onKeyDown={(e) => {
+            if (tourDemoActive) return;
             // Chat convention: Enter sends, Shift+Enter inserts a newline.
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -769,7 +837,12 @@ export default function AssistantPanel({
             }
           }}
         />
-        <Btn kind="primary" small disabled={!input.trim() || sending} onClick={() => sendText(input)}>
+        <Btn
+          kind="primary"
+          small
+          disabled={tourDemoActive || !input.trim() || sending}
+          onClick={() => sendText(input)}
+        >
           Send
         </Btn>
       </div>
