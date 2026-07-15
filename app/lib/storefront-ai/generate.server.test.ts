@@ -27,7 +27,9 @@ function passingDependencies(overrides: Partial<GenerateDependencies> = {}): Gen
     compileConcept: compileConceptCandidate,
     renderConcept: vi.fn(async () => ({
       desktop: { key: "judge-desktop", mediaType: "image/webp" as const, bytes: new Uint8Array([1]) },
+      desktopCatalog: { key: "judge-desktop-catalog", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
       mobile: { key: "judge-mobile", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
+      mobileCatalog: { key: "judge-mobile-catalog", mediaType: "image/webp" as const, bytes: new Uint8Array([3]) },
       browserMs: 12,
     })),
     produceAsset: vi.fn(async () => null),
@@ -501,7 +503,9 @@ describe("generateOriginalStorefront", () => {
   it("meters all three concept renders into the browser budget before install", async () => {
     const renderConcept = vi.fn(async () => ({
       desktop: { key: "judge-desktop", mediaType: "image/webp" as const, bytes: new Uint8Array([1]) },
+      desktopCatalog: { key: "judge-desktop-catalog", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
       mobile: { key: "judge-mobile", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
+      mobileCatalog: { key: "judge-mobile-catalog", mediaType: "image/webp" as const, bytes: new Uint8Array([3]) },
       browserMs: 20,
     }));
     const deps = passingDependencies({ renderConcept });

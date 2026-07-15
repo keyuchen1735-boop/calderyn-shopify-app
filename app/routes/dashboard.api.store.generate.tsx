@@ -82,11 +82,16 @@ export async function action({ request }: ActionFunctionArgs) {
     return jsonError(failure.status, failure.code, failure.message);
   }
   const encoder = new TextEncoder();
+  let cancelled = false;
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: StorefrontBuildEvent | { stage: "error"; code: string; status: number; message: string }) => {
-        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      const write = (value: unknown) => {
+        if (!cancelled) controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
       };
+      const send = (event: StorefrontBuildEvent | { stage: "error"; code: string; status: number; message: string }) => write(event);
+      const heartbeat = setInterval(() => {
+        try { write({ stage: "heartbeat" }); } catch { clearInterval(heartbeat); }
+      }, 15_000);
       try {
         await buildStorefrontDesign({
           shopId: session.shopId,
@@ -101,9 +106,11 @@ export async function action({ request }: ActionFunctionArgs) {
         console.error("[dashboard.api.store.generate] runtime-1 build failed", err);
         send({ stage: "error", ...buildFailure(err) });
       } finally {
-        controller.close();
+        clearInterval(heartbeat);
+        if (!cancelled) controller.close();
       }
     },
+    cancel() { cancelled = true; },
   });
   return new Response(stream, {
     headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },

@@ -70,6 +70,44 @@ describe("dashboard.api.store.generate streaming action", () => {
     expect(config.maxDuration).toBe(800);
   });
 
+  it("keeps an idle generation stream alive while model work is pending", async () => {
+    vi.useFakeTimers();
+    let finishBuild = () => {};
+    let read: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
+    buildMock.mockImplementation(() => new Promise<void>((resolve) => { finishBuild = resolve; }));
+
+    try {
+      const res = await post({ designRequest: { prompt: "Build something original", mode: "custom" } });
+      read = res.body!.getReader().read();
+      await vi.advanceTimersByTimeAsync(15_000);
+      const chunk = await Promise.race([read, Promise.resolve(null)]);
+
+      expect(chunk?.done).toBe(false);
+      expect(new TextDecoder().decode(chunk?.value)).toBe('{"stage":"heartbeat"}\n');
+    } finally {
+      finishBuild();
+      await read;
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores late build events after the stream consumer cancels", async () => {
+    let emit = (_event: unknown) => {};
+    let finishBuild = () => {};
+    buildMock.mockImplementation((input: { onEvent?: (event: unknown) => void }) => new Promise<void>((resolve) => {
+      emit = input.onEvent ?? emit;
+      finishBuild = resolve;
+    }));
+
+    const res = await post({ designRequest: { prompt: "Build something original", mode: "custom" } });
+    const reader = res.body!.getReader();
+    const cancelled = reader.cancel();
+
+    expect(() => emit({ stage: "compiling" })).not.toThrow();
+    finishBuild();
+    await cancelled;
+  });
+
   it("routes runtime-1 design requests without invoking the legacy generator or its AI quota", async () => {
     const frozen = {
       kind: "recipe",

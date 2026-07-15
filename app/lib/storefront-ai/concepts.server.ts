@@ -287,32 +287,37 @@ export async function renderConceptWithMerchantData(input: {
   try {
     const page = await browser.newPage();
     await page.setContent(htmlDocument, { waitUntil: "domcontentloaded", timeout: 20_000 });
-    const screenshot = async (width: number) => {
-      const contentHeight = await page.evaluate(() => Math.max(
-        document.documentElement.scrollHeight,
-        document.body?.scrollHeight ?? 0,
-      ));
-      const height = Math.max(1, Math.ceil(contentHeight));
-      return new Uint8Array(await page.screenshot({
+    const screenshots = async (width: number, height: number) => {
+      const measured = await page.evaluate(() => {
+        const firstProduct = document.querySelector('[data-cd-repeat-owner="true"]');
+        return {
+          contentHeight: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0),
+          catalogTop: firstProduct ? firstProduct.getBoundingClientRect().top + window.scrollY : 0,
+        };
+      });
+      const contentHeight = Math.max(1, Math.ceil(measured.contentHeight));
+      const clipHeight = Math.min(height, contentHeight);
+      const catalogY = Math.min(
+        Math.max(0, Math.floor(measured.catalogTop) - Math.round(height / 4)),
+        Math.max(0, contentHeight - clipHeight),
+      );
+      const capture = async (y: number) => new Uint8Array(await page.screenshot({
         type: "webp",
-        clip: {
-          x: 0,
-          y: 0,
-          width,
-          height,
-          scale: Math.min(1, 7_680 / Math.max(width, height)),
-        },
+        clip: { x: 0, y, width, height: clipHeight },
         captureBeyondViewport: true,
       }));
+      return { overview: await capture(0), catalog: await capture(catalogY) };
     };
     await page.setViewport({ width: 1440, height: 1000 });
-    const desktop = await screenshot(1440);
+    const desktop = await screenshots(1440, 800);
     await page.setViewport({ width: 390, height: 844 });
-    const mobile = await screenshot(390);
+    const mobile = await screenshots(390, 844);
     if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("Generation cancelled", "AbortError");
     return {
-      desktop: { key: "judge-desktop", mediaType: "image/webp", bytes: desktop },
-      mobile: { key: "judge-mobile", mediaType: "image/webp", bytes: mobile },
+      desktop: { key: "judge-desktop-overview", mediaType: "image/webp", bytes: desktop.overview },
+      desktopCatalog: { key: "judge-desktop-catalog", mediaType: "image/webp", bytes: desktop.catalog },
+      mobile: { key: "judge-mobile-overview", mediaType: "image/webp", bytes: mobile.overview },
+      mobileCatalog: { key: "judge-mobile-catalog", mediaType: "image/webp", bytes: mobile.catalog },
       browserMs: Math.max(0, Date.now() - browserStartedAt),
     };
   } finally {
