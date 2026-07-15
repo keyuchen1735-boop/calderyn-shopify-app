@@ -135,18 +135,32 @@ export default function OrdersToolbar({
       }
       const full = inner ? inner.offsetHeight : el.scrollHeight;
       if (filtersOpen) {
-        gsap.set(el, { height: 0, opacity: 0 });
+        gsap.set(el, { height: 0, opacity: 0, y: -4, willChange: "height,transform,opacity" });
         gsap.to(el, {
           height: full,
           opacity: 1,
+          y: 0,
           duration: 0.22,
           ease: "power2.out",
           onComplete: () => {
             el.style.height = "auto";
+            el.style.removeProperty("transform");
+            el.style.removeProperty("will-change");
           },
         });
       } else {
-        gsap.to(el, { height: 0, opacity: 0, duration: 0.16, ease: "power2.in" });
+        gsap.set(el, { willChange: "height,transform,opacity" });
+        gsap.to(el, {
+          height: 0,
+          opacity: 0,
+          y: -4,
+          duration: 0.16,
+          ease: "power2.in",
+          onComplete: () => {
+            el.style.removeProperty("transform");
+            el.style.removeProperty("will-change");
+          },
+        });
       }
     },
     { dependencies: [filtersOpen] },
@@ -161,146 +175,8 @@ export default function OrdersToolbar({
   };
 
   return (
-    <div style={{ marginBottom: 10 }}>
-      <div className="cd-orders-toolbar-row">
-        <div className="flex items-center gap-2" style={{ flex: "1 1 auto", minWidth: 0, flexWrap: "wrap" }}>
-          <div className="cd-orders-search">
-            <CDIcon name="search" size={14} strokeWidth={1.8} />
-            <input
-              type="text"
-              placeholder="Search orders"
-              aria-label="Search orders"
-              value={searchInput}
-              onChange={(e) => onSearchInputChange(e.target.value)}
-            />
-          </div>
-          <button
-            type="button"
-            className="cd-btn cd-btn-secondary cd-btn-sm cd-orders-filter-toggle"
-            aria-expanded={filtersOpen}
-            aria-controls="orders-filter-panel"
-            onClick={() => setFiltersOpen((v) => !v)}
-          >
-            <CDIcon name="sliders" size={14} strokeWidth={1.9} />
-            Filters
-            {activeFilterCount > 0 && <span className="cd-orders-filter-count">{activeFilterCount}</span>}
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
-          <select
-            className="cd-input cd-orders-sort"
-            aria-label="Sort by"
-            value={sort ?? "date"}
-            onChange={(e) => onSortChange(e.target.value as OrdersListParams["sort"])}
-          >
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <Btn
-            small
-            icon={dir === "asc" ? "arrowUp" : "arrowDown"}
-            onClick={() => onDirChange(dir === "asc" ? "desc" : "asc")}
-          >
-            {dir === "asc" ? "Asc" : "Desc"}
-          </Btn>
-          <Btn small icon="download" onClick={() => window.open(exportHref, "_blank")}>
-            Export CSV
-          </Btn>
-        </div>
-      </div>
-
-      <div
-        id="orders-filter-panel"
-        ref={filterPanelRef}
-        className="cd-orders-filter-panel"
-        role="region"
-        aria-label="Order filters"
-      >
-        <div className="flex items-center gap-2.5" style={{ flexWrap: "wrap", paddingTop: 10 }}>
-          <select
-            className="cd-input"
-            aria-label="Payment status"
-            disabled={pinned === "paymentStatus"}
-            title={pinned === "paymentStatus" ? "Set by the current view tab" : undefined}
-            value={pinned === "paymentStatus" ? "unpaid" : (paymentStatus?.[0] ?? "")}
-            onChange={(e) => onFilterChange({ paymentStatus: e.target.value ? [e.target.value] : undefined })}
-            style={{ width: "auto" }}
-          >
-            {pinned === "paymentStatus" ? (
-              <option value="unpaid">Unpaid statuses</option>
-            ) : (
-              PAYMENT_STATUS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))
-            )}
-          </select>
-          <select
-            className="cd-input"
-            aria-label="Fulfillment status"
-            disabled={pinned === "fulfillmentStatus"}
-            title={
-              pinned === "fulfillmentStatus"
-                ? "Set by the current view tab"
-                : "Shopify-imported orders are excluded when this filter is set"
-            }
-            value={pinned === "fulfillmentStatus" ? "unfulfilled" : (fulfillmentStatus ?? "")}
-            onChange={(e) =>
-              onFilterChange({
-                fulfillmentStatus: (e.target.value || undefined) as OrdersListParams["fulfillmentStatus"],
-              })
-            }
-            style={{ width: "auto" }}
-          >
-            {FULFILLMENT_STATUS_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <select
-            className="cd-input"
-            aria-label="Order source"
-            value={source ?? ""}
-            onChange={(e) =>
-              onFilterChange({ source: (e.target.value || undefined) as OrdersListParams["source"] })
-            }
-            style={{ width: "auto" }}
-          >
-            {SOURCE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-          <div className="flex items-center gap-1.5">
-            <input
-              className="cd-input"
-              type="date"
-              aria-label="Date from"
-              value={isoToDateInputValue(dateFrom)}
-              onChange={(e) => onFilterChange({ dateFrom: e.target.value ? localDayStartIso(e.target.value) : undefined })}
-              style={{ width: "auto" }}
-            />
-            <span className="cd-caption">to</span>
-            <input
-              className="cd-input"
-              type="date"
-              aria-label="Date to"
-              value={isoToDateInputValue(dateTo)}
-              onChange={(e) => onFilterChange({ dateTo: e.target.value ? localDayEndIso(e.target.value) : undefined })}
-              style={{ width: "auto" }}
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2" style={{ marginTop: 10, flexWrap: "wrap" }}>
+    <div className="cd-orders-toolbar">
+      <div className="cd-orders-view-row flex items-center gap-2" style={{ flexWrap: "wrap" }}>
         <div className="cd-seg cd-seg-sm" role="tablist" aria-label="Order views">
           {SYSTEM_VIEWS.map((v) => (
             <button
@@ -382,6 +258,158 @@ export default function OrdersToolbar({
           </div>
         )}
       </div>
+
+      <div className="cd-orders-toolbar-row">
+        <div className="flex items-center gap-2" style={{ flex: "1 1 auto", minWidth: 0, flexWrap: "wrap" }}>
+          <div className="cd-orders-search">
+            <CDIcon name="search" size={14} strokeWidth={1.8} />
+            <input
+              type="text"
+              placeholder="Search orders"
+              aria-label="Search orders"
+              value={searchInput}
+              onChange={(e) => onSearchInputChange(e.target.value)}
+            />
+            {searchInput && (
+              <button
+                type="button"
+                className="cd-orders-search-clear"
+                aria-label="Clear order search"
+                onClick={() => onSearchInputChange("")}
+              >
+                <CDIcon name="x" size={12} strokeWidth={2} />
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            className="cd-btn cd-btn-secondary cd-btn-sm cd-orders-filter-toggle"
+            aria-expanded={filtersOpen}
+            aria-controls="orders-filter-panel"
+            onClick={() => setFiltersOpen((v) => !v)}
+          >
+            <CDIcon name="sliders" size={14} strokeWidth={1.9} />
+            Filters
+            {activeFilterCount > 0 && <span className="cd-orders-filter-count">{activeFilterCount}</span>}
+            <CDIcon name="chevronDown" size={13} className="cd-orders-filter-chevron" />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+          <select
+            className="cd-input cd-orders-sort"
+            aria-label="Sort by"
+            value={sort ?? "date"}
+            onChange={(e) => onSortChange(e.target.value as OrdersListParams["sort"])}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <Btn
+            small
+            className="cd-btn-icon"
+            icon={dir === "asc" ? "arrowUp" : "arrowDown"}
+            ariaLabel={dir === "asc" ? "Sort ascending" : "Sort descending"}
+            onClick={() => onDirChange(dir === "asc" ? "desc" : "asc")}
+          >
+            {""}
+          </Btn>
+          <Btn small icon="download" onClick={() => window.open(exportHref, "_blank")}>
+            Export
+          </Btn>
+        </div>
+      </div>
+
+      <div
+        id="orders-filter-panel"
+        ref={filterPanelRef}
+        className="cd-orders-filter-panel"
+        role="region"
+        aria-label="Order filters"
+      >
+        <div className="cd-orders-filter-panel-inner flex items-center gap-2.5" style={{ flexWrap: "wrap" }}>
+          <select
+            className="cd-input"
+            aria-label="Payment status"
+            disabled={pinned === "paymentStatus"}
+            title={pinned === "paymentStatus" ? "Set by the current view tab" : undefined}
+            value={pinned === "paymentStatus" ? "unpaid" : (paymentStatus?.[0] ?? "")}
+            onChange={(e) => onFilterChange({ paymentStatus: e.target.value ? [e.target.value] : undefined })}
+            style={{ width: "auto" }}
+          >
+            {pinned === "paymentStatus" ? (
+              <option value="unpaid">Unpaid statuses</option>
+            ) : (
+              PAYMENT_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))
+            )}
+          </select>
+          <select
+            className="cd-input"
+            aria-label="Fulfillment status"
+            disabled={pinned === "fulfillmentStatus"}
+            title={
+              pinned === "fulfillmentStatus"
+                ? "Set by the current view tab"
+                : "Shopify-imported orders are excluded when this filter is set"
+            }
+            value={pinned === "fulfillmentStatus" ? "unfulfilled" : (fulfillmentStatus ?? "")}
+            onChange={(e) =>
+              onFilterChange({
+                fulfillmentStatus: (e.target.value || undefined) as OrdersListParams["fulfillmentStatus"],
+              })
+            }
+            style={{ width: "auto" }}
+          >
+            {FULFILLMENT_STATUS_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="cd-input"
+            aria-label="Order source"
+            value={source ?? ""}
+            onChange={(e) =>
+              onFilterChange({ source: (e.target.value || undefined) as OrdersListParams["source"] })
+            }
+            style={{ width: "auto" }}
+          >
+            {SOURCE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <div className="flex items-center gap-1.5">
+            <input
+              className="cd-input"
+              type="date"
+              aria-label="Date from"
+              value={isoToDateInputValue(dateFrom)}
+              onChange={(e) => onFilterChange({ dateFrom: e.target.value ? localDayStartIso(e.target.value) : undefined })}
+              style={{ width: "auto" }}
+            />
+            <span className="cd-caption">to</span>
+            <input
+              className="cd-input"
+              type="date"
+              aria-label="Date to"
+              value={isoToDateInputValue(dateTo)}
+              onChange={(e) => onFilterChange({ dateTo: e.target.value ? localDayEndIso(e.target.value) : undefined })}
+              style={{ width: "auto" }}
+            />
+          </div>
+        </div>
+      </div>
+
     </div>
   );
 }

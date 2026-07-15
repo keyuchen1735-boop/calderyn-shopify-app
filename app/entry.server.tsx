@@ -174,7 +174,12 @@ export default async function handleRequest(
   addDocumentResponseHeaders(request, responseHeaders);
   applySecurityHeaders(responseHeaders, pathname, storefrontNonce);
   const userAgent = request.headers.get("user-agent");
-  const callbackName = isbot(userAgent ?? "") ? "onAllReady" : "onShellReady";
+  // The local Orders preview has no deferred content to stream. Waiting for the
+  // complete document prevents the dev module from hydrating while Remix's
+  // single-fetch transport is still appending its tail nodes.
+  const callbackName = isbot(userAgent ?? "") || pathname === "/orders-preview"
+    ? "onAllReady"
+    : "onShellReady";
 
   return new Promise((resolve, reject) => {
     const { pipe, abort } = renderToPipeableStream(
