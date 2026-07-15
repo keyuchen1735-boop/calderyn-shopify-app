@@ -15,6 +15,7 @@ import { useLoaderData, useRouteError } from "@remix-run/react";
 import { requireVerifiedSession } from "~/lib/dashboard/session.server";
 import { publicBaseUrl } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
+import { getProductTourState } from "~/lib/dashboard/product-tour.server";
 import DashboardApp from "~/components/dashboard/DashboardApp";
 import {
   DashboardErrorBoundary,
@@ -61,7 +62,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
   const session = await requireVerifiedSession(request);
   const sb = getSupabase();
-  const [shopRes, productRes] = await Promise.all([
+  const [shopRes, productRes, productTourState] = await Promise.all([
     sb
       .from("shops")
       .select("display_name, shop_domain, demo_mode, org_slug")
@@ -73,6 +74,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // authority once it lands. Probe failure defaults to "established" — the
     // setup guide must never flash at a veteran store over a blip.
     sb.from("product_dim").select("id").eq("shop_id", session.shopId).limit(1),
+    getProductTourState(session.userId),
   ]);
   const data = shopRes.data;
   const storeLabel =
@@ -93,12 +95,23 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // First-party (email / Google) accounts can self-delete from Settings;
     // legacy Shopify (shop-based) sessions have no users row and are exempt.
     canDeleteAccount: session.userId != null,
+    productTourPending: productTourState.pending,
+    productTourAvailable: productTourState.available,
   };
 }
 
 export default function DashboardRoute() {
-  const { authBase, shopDomain, storeLabel, orgSlug, demoMode, hasCatalog, canDeleteAccount } =
-    useLoaderData<typeof loader>();
+  const {
+    authBase,
+    shopDomain,
+    storeLabel,
+    orgSlug,
+    demoMode,
+    hasCatalog,
+    canDeleteAccount,
+    productTourPending,
+    productTourAvailable,
+  } = useLoaderData<typeof loader>();
   // Class boundary catches client-side render throws in the SPA subtree
   // (e.g. a partial poll row reaching `.toFixed`) and recovers in place.
   return (
@@ -111,6 +124,8 @@ export default function DashboardRoute() {
         demoMode={demoMode}
         hasCatalog={hasCatalog}
         canDeleteAccount={canDeleteAccount}
+        productTourPending={productTourPending}
+        productTourAvailable={productTourAvailable}
       />
     </DashboardErrorBoundary>
   );

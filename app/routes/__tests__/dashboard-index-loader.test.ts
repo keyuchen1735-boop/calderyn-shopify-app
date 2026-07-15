@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 
 const maybeSingle = vi.fn();
 const limit = vi.fn();
+const getProductTourState = vi.fn().mockResolvedValue({ pending: false, available: true });
 // Two loader queries ride the same stub: the shops row (…maybeSingle) and the
 // product-existence probe (…limit).
 vi.mock("~/lib/supabase.server", () => ({
@@ -12,6 +13,7 @@ vi.mock("~/lib/supabase.server", () => ({
 vi.mock("~/lib/dashboard/session.server", () => ({
   requireVerifiedSession: vi.fn().mockResolvedValue({ shopId: "shop1", shopDomain: null, userId: "u1", sessionId: "s1", emailVerified: true }),
 }));
+vi.mock("~/lib/dashboard/product-tour.server", () => ({ getProductTourState }));
 
 function stubProducts(rows: Array<{ id: string }> | null, error: unknown = null) {
   limit.mockResolvedValue({ data: rows, error });
@@ -25,6 +27,16 @@ describe("dashboard splat loader", () => {
     const res = await loader({ request: new Request("https://app.x/dashboard") } as never);
     // canDeleteAccount tracks session.userId — a first-party account here.
     expect(res).toMatchObject({ storeLabel: "Acme Goods", shopDomain: null, canDeleteAccount: true });
+  });
+
+  it("passes a new account's pending tour state into the dashboard shell", async () => {
+    getProductTourState.mockResolvedValueOnce({ pending: true, available: true });
+    maybeSingle.mockResolvedValue({ data: { display_name: "New Shop", shop_domain: null }, error: null });
+    stubProducts([]);
+    const { loader } = await import("../dashboard.$");
+    const res = await loader({ request: new Request("https://app.x/dashboard") } as never);
+    expect(getProductTourState).toHaveBeenCalledWith("u1");
+    expect(res).toMatchObject({ productTourPending: true, productTourAvailable: true });
   });
 
   it("falls back to shop_domain for a Shopify shop", async () => {
