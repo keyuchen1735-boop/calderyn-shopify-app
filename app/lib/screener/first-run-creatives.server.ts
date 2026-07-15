@@ -28,7 +28,10 @@ export function normalizeGeneratedText(value: string): string {
     .replace(/\s*[—–]\s*/g, ", ")
     .replace(/,\s*,+/g, ", ")
     .replace(/\s{2,}/g, " ")
-    .trim();
+    // A dash at the very start or end leaves a dangling ", " once replaced;
+    // strip leading/trailing commas and whitespace so copy never renders (or
+    // ships to Meta) with a stray comma.
+    .replace(/^[\s,]+|[\s,]+$/g, "");
 }
 
 function normalizeCreativeTextRecord(value: unknown): unknown {
