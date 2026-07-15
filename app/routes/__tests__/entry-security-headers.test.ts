@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { applySecurityHeaders } from "../../entry.server";
+import { applySecurityHeaders, rootLoaderNonce } from "../../entry.server";
 import { markStorefrontBundleRendered } from "../../lib/storefront-runtime/csp.server";
 
 // entry.server pulls in ./shopify.server, which calls shopifyApp() at module
@@ -19,6 +19,11 @@ const SHOPIFY_CSP =
   "frame-ancestors https://acme.myshopify.com https://admin.shopify.com https://*.spin.dev https://admin.myshopify.io https://admin.shop.dev;";
 
 describe("applySecurityHeaders", () => {
+  it("reads the strict-document nonce from root loader data", () => {
+    expect(rootLoaderNonce({ root: { nonce: "request-nonce" } })).toBe("request-nonce");
+    expect(rootLoaderNonce({ root: { nonce: null } })).toBeUndefined();
+  });
+
   it("keeps the Shopify frame-ancestors CSP intact (never clobbered)", () => {
     const headers = new Headers({ "Content-Security-Policy": SHOPIFY_CSP });
     applySecurityHeaders(headers);

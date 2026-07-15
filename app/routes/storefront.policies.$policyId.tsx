@@ -25,9 +25,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   ]);
   if (!policy) throw new Response("Policy not found", { status: 404 });
   const headers = storefrontCacheHeaders({ routeId: "policy", personalized: false, shopId });
-  markStorefrontBundleRendered(headers, randomBytes(18).toString("base64url"));
+  const nonce = randomBytes(18).toString("base64url");
+  markStorefrontBundleRendered(headers, nonce);
   return json({
     runtime: 1 as const,
+    nonce,
     policy,
     store: { name: settings.storeName, logo: settings.logoUrl },
   }, { headers });

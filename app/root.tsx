@@ -4,10 +4,39 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useMatches,
   useRouteError,
 } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { randomBytes } from "node:crypto";
 
 import { DashboardErrorFallback } from "~/components/dashboard/ErrorBoundary";
+
+export function loader({ request }: LoaderFunctionArgs) {
+  const pathname = new URL(request.url).pathname;
+  const needsNonce = pathname.startsWith("/storefront/checkout") ||
+    /^\/storefront\/account\/cards\/?$/.test(pathname);
+  return json({ nonce: needsNonce ? randomBytes(18).toString("base64url") : null });
+}
+
+function DocumentScripts({ restoreScroll = false }: { restoreScroll?: boolean }) {
+  const matches = useMatches();
+  let nonce: string | undefined;
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    const data = matches[index].data;
+    if (data !== null && typeof data === "object" && typeof (data as { nonce?: unknown }).nonce === "string") {
+      nonce = (data as { nonce: string }).nonce;
+      break;
+    }
+  }
+  return (
+    <>
+      {restoreScroll ? <ScrollRestoration nonce={nonce} /> : null}
+      <Scripts nonce={nonce} />
+    </>
+  );
+}
 
 export default function App() {
   return (
@@ -25,8 +54,7 @@ export default function App() {
       </head>
       <body>
         <Outlet />
-        <ScrollRestoration />
-        <Scripts />
+        <DocumentScripts restoreScroll />
       </body>
     </html>
   );
@@ -49,7 +77,7 @@ export function ErrorBoundary() {
       </head>
       <body>
         <DashboardErrorFallback error={error} />
-        <Scripts />
+        <DocumentScripts />
       </body>
     </html>
   );
