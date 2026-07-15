@@ -225,6 +225,27 @@ describe("compiled-node server renderer", () => {
     expect(publicHtml).toContain('data-cd-compiler-id="cd-home-');
   });
 
+  it("renders the global shell footer after the active route", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.shell.html = `<header class="global-header">Global header</header><footer>Global footer</footer>`;
+    source.shell.css = `a{color:red}.global-header~footer{color:green}`;
+    source.routes.home.html = `<main>Home content<a data-cd-route="search">Route action</a></main>`;
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle: compileBundle(source).bundle,
+      routeId: "home",
+      data,
+      nonce: "shell-order-nonce",
+      mode: "public",
+    }));
+
+    expect(html.indexOf("Global header")).toBeLessThan(html.indexOf("Home content"));
+    expect(html.indexOf("Home content")).toBeLessThan(html.indexOf("Global footer"));
+    expect(html.match(/data-cd-bundle="shell"/g)).toHaveLength(1);
+    expect(html).toContain("[data-cd-bundle=shell] a:not([data-cd-bundle-route]):not([data-cd-bundle-route] *)");
+    expect(html).toContain("[data-cd-bundle=shell] .global-header~footer:not([data-cd-bundle-route]):not([data-cd-bundle-route] *)");
+    expect(html).not.toContain("@scope");
+  });
+
   it("keeps the canonical compiler ID on repeated DOM instances", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.routes.home.html = `<main><section data-cd-repeat="featured.products"><article id="card" data-cd-key="product.id"><h2 id="title" data-cd-text="product.title"></h2></article></section></main>`;

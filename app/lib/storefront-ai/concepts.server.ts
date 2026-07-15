@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
-import { cloneElement } from "react";
+import { cloneElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { launchChromium } from "../browser/chromium.server";
-import { isCuratedFontId } from "../storefront-bundle/types";
+import { isCuratedFontId, type CompiledNode } from "../storefront-bundle/types";
 import { isCompilerIdentifier } from "../storefront-compiler/assets";
 import { assertSafeDesignTokenValue, compileCss } from "../storefront-compiler/css";
 import { compileHtml } from "../storefront-compiler/html";
 import type { RouteSource } from "../storefront-compiler/compile";
 import { storefrontDesignSystemCss } from "../storefront-runtime/curated-fonts";
-import { renderStorefrontRoute } from "../storefront-runtime/render";
+import { renderStorefrontRoute, splitShellTree } from "../storefront-runtime/render";
 import type { PublicPresentationData, PublicProduct } from "../storefront-runtime/public-data.server";
 import type {
   CompiledConcept,
@@ -141,6 +141,28 @@ export function parseConceptCandidate(value: unknown): ConceptCandidateSource {
   };
 }
 
+const ROUTE_HOST_CLASS = /(?:^|[\s_-])(?:content|outlet|route-host|page-slot|main-content|content-host)(?:$|[\s_-])/i;
+
+function assertShellIsNavigationChrome(nodes: readonly CompiledNode[], insideChrome = false, depth = 0): void {
+  if (depth === 0 && nodes.filter((node) => node.kind === "element" && node.tag === "footer").length !== 1) {
+    throw new Error("Concept shell must contain only navigation chrome and one top-level footer; route content belongs in route HTML");
+  }
+  for (const node of nodes) {
+    if (node.kind !== "element") continue;
+    if (node.tag === "main" || (node.tag === "footer" && depth > 0)) {
+      throw new Error("Concept shell must contain only navigation chrome and one top-level footer; route content belongs in route HTML");
+    }
+    if (node.tag === "footer") continue;
+    const chrome = insideChrome || node.tag === "header" || node.tag === "nav";
+    const className = node.attributes.class ?? "";
+    if (!chrome && ["div", "section", "article", "aside"].includes(node.tag) &&
+      (node.children.length === 0 || ROUTE_HOST_CLASS.test(className))) {
+      throw new Error("Concept shell must contain only navigation chrome and one top-level footer; route content hosts belong in route HTML");
+    }
+    assertShellIsNavigationChrome(node.children, chrome, depth + 1);
+  }
+}
+
 export function compileConceptCandidate(candidate: ConceptCandidateSource): CompiledConcept {
   for (const [key, value] of Object.entries(candidate.designSystem.tokens)) {
     if (!isCompilerIdentifier(key)) throw new Error(`Invalid design token ${key}`);
@@ -153,6 +175,7 @@ export function compileConceptCandidate(candidate: ConceptCandidateSource): Comp
   }
   const shellHtml = compileHtml(candidate.shell.html, { namespace: "shell", rootScopeKind: "store" });
   const homeHtml = compileHtml(candidate.home.html, { namespace: "home", rootScopeKind: "store" });
+  assertShellIsNavigationChrome(shellHtml.tree);
   const protectedNodes = [...shellHtml.protectedCssNodes, ...homeHtml.protectedCssNodes];
   const protectedSourceIds = [...shellHtml.protectedSourceIds, ...homeHtml.protectedSourceIds];
   const shellCss = compileCss(candidate.shell.css, { namespace: "shell", protectedNodes: shellHtml.protectedCssNodes, protectedSourceIds: shellHtml.protectedSourceIds });
@@ -229,6 +252,11 @@ function presentationProduct(product: MerchantStorefrontContext["products"][numb
   };
 }
 
+function judgeAssetPlaceholder(): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d8d3c7"/><stop offset="1" stop-color="#786f63"/></linearGradient></defs><rect width="1600" height="1000" fill="url(#g)"/><circle cx="1160" cy="300" r="240" fill="#31353a" fill-opacity=".72"/><path d="M80 920 500 180l420 740Z" fill="#f2eee6" fill-opacity=".72"/></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
 /** Compiler-tree render used by the visual judge. Merchant strings remain data
  * bindings and pass through React escaping; no source string interpolation. */
 export async function renderConceptWithMerchantData(input: {
@@ -260,9 +288,9 @@ export async function renderConceptWithMerchantData(input: {
     cart: null,
     notFound: null,
   };
-  const artifact = (compiled: ReturnType<typeof compileHtml>, css: string) => ({
+  const artifact = (compiled: ReturnType<typeof compileHtml>, css: string, tree: CompiledNode[] = compiled.tree) => ({
     html: compiled.html,
-    tree: compiled.tree,
+    tree,
     bindings: compiled.bindings,
     css,
     requiredData: [],
@@ -270,11 +298,19 @@ export async function renderConceptWithMerchantData(input: {
     interactions: compiled.interactions,
     trustedSlots: compiled.trustedSlots,
   });
-  const shellElement = renderStorefrontRoute({ routeId: "home", artifact: artifact(shell, compileCss(candidate.candidate.shell.css, { namespace: "shell", protectedNodes: shell.protectedCssNodes, protectedSourceIds: shell.protectedSourceIds }).css), data, nonce: "judge" }).element;
-  const shellMarkup = renderToStaticMarkup(cloneElement(shellElement, { "data-cd-bundle": "shell" }));
-  const homeMarkup = renderToStaticMarkup(renderStorefrontRoute({ routeId: "home", artifact: artifact(home, compileCss(candidate.candidate.home.css, { namespace: "home", protectedNodes: home.protectedCssNodes, protectedSourceIds: home.protectedSourceIds }).css), data, nonce: "judge" }).element);
+  const assetUrls = new Map(candidate.candidate.assetRequests.map((request) => [request.key, judgeAssetPlaceholder()]));
+  const shellTree = splitShellTree(shell.tree);
+  const shellElement = renderStorefrontRoute({ routeId: "home", artifact: artifact(shell, compileCss(candidate.candidate.shell.css, { namespace: "shell", protectedNodes: shell.protectedCssNodes, protectedSourceIds: shell.protectedSourceIds }).css, shellTree.beforeRoute), data, nonce: "judge", assetUrls }).element;
+  const homeElement = renderStorefrontRoute({ routeId: "home", artifact: artifact(home, compileCss(candidate.candidate.home.css, { namespace: "home", protectedNodes: home.protectedCssNodes, protectedSourceIds: home.protectedSourceIds }).css), data, nonce: "judge", assetUrls }).element;
+  const footerElement = shellTree.afterRoute.length > 0
+    ? renderStorefrontRoute({ routeId: "home", artifact: artifact(shell, "", shellTree.afterRoute), data, nonce: "judge", assetUrls }).element
+    : null;
+  const children = (element: typeof shellElement): ReactNode => (element.props as { children?: ReactNode }).children;
+  const shellMarkup = renderToStaticMarkup(cloneElement(shellElement, {
+    "data-cd-bundle": "shell", "data-cd-bundle-route": undefined, "data-cd-bundle-shell": "home",
+  }, children(shellElement), homeElement, footerElement ? children(footerElement) : null));
   const designCss = compileConceptJudgeDesignCss(candidate.candidate);
-  const htmlDocument = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style nonce="judge">html,body{margin:0;min-height:100%;overflow-x:hidden}${designCss}</style></head><body><div data-cd-bundle="global" data-cd-bundle-runtime="1" data-cd-bundle-source="custom">${shellMarkup}${homeMarkup}</div></body></html>`;
+  const htmlDocument = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style nonce="judge">html,body{margin:0;min-height:100%;overflow-x:hidden}${designCss}</style></head><body><div data-cd-bundle="global" data-cd-bundle-runtime="1" data-cd-bundle-source="custom">${shellMarkup}</div></body></html>`;
   if (input.signal?.aborted) throw input.signal.reason ?? new DOMException("Generation cancelled", "AbortError");
   const browserStartedAt = Date.now();
   const browser = await launchChromium({ width: 1440, height: 1000 });

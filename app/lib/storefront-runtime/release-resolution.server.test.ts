@@ -92,6 +92,34 @@ describe("storefront release resolution", () => {
     expect(catalog.getProduct).toHaveBeenCalledWith(SHOP, "missing");
   });
 
+  it("isolates persisted pre-boundary shell CSS without mutating the stored bundle", async () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    bundle.shell.css = `[data-cd-bundle=shell] a{color:red}`;
+    const live = {
+      ...version("live-pre-boundary-css", 1, "2026-07-02T00:00:00Z"),
+      artifact: { sourceKind: "custom" as const, bundle },
+    };
+    const result = await resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "home" },
+      reader: reader(live, []),
+      bundleReadEnabled: true,
+      dataDependencies: {
+        catalog: {
+          listProducts: vi.fn(async () => []),
+          listCollections: vi.fn(async () => []),
+          getProduct: vi.fn(async () => null),
+        },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
+      },
+    });
+
+    expect(result?.bundle.shell.css).toContain(":not([data-cd-bundle-route]):not([data-cd-bundle-route] *)");
+    expect(bundle.shell.css).toBe(`[data-cd-bundle=shell] a{color:red}`);
+    expect(result?.bundle.routes).toBe(bundle.routes);
+  });
+
   it("loads only verified logical custom asset URLs into presentation data", async () => {
     const sourceBundle = structuredClone(VALID_BUNDLE_SOURCE);
     sourceBundle.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];

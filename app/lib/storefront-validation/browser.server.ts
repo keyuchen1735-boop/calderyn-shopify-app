@@ -406,7 +406,8 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
         ].filter(Boolean)
       : [];
     const shell = document.querySelector<HTMLElement>("[data-cd-bundle='shell']");
-    const shellHeader = shell?.querySelector<HTMLElement>("header");
+    const belongsToShell = (element: Element): boolean => element.closest("[data-cd-bundle]") === shell;
+    const shellHeader = [...(shell?.querySelectorAll<HTMLElement>("header") ?? [])].find(belongsToShell);
     const shellNav = shellHeader?.querySelector<HTMLElement>("nav");
     const shellLink = shellNav?.querySelector<HTMLElement>("a[href]");
     const shellStyleFailures: string[] = [];
@@ -423,13 +424,13 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
       if (linkStyle.color === "rgb(0, 0, 238)") shellStyleFailures.push("nav-link-default-blue");
       if (linkStyle.textDecorationLine !== "none") shellStyleFailures.push(`nav-link-decoration:${linkStyle.textDecorationLine}`);
     }
-    for (const link of shell?.querySelectorAll<HTMLAnchorElement>("a[href]") ?? []) {
+    for (const link of [...(shell?.querySelectorAll<HTMLAnchorElement>("a[href]") ?? [])].filter(belongsToShell)) {
       const style = getComputedStyle(link);
       const label = link.textContent?.trim().slice(0, 40) || link.id || "shell-link";
       if (style.color === "rgb(0, 0, 238)") shellStyleFailures.push(`link-default-blue:${label}`);
       if (style.textDecorationLine !== "none") shellStyleFailures.push(`link-decoration:${label}:${style.textDecorationLine}`);
     }
-    const policyLinks = [...(shell?.querySelectorAll<HTMLAnchorElement>("[data-cd-platform-content='policyLinks'] a") ?? [])];
+    const policyLinks = [...(shell?.querySelectorAll<HTMLAnchorElement>("[data-cd-platform-content='policyLinks'] a") ?? [])].filter(belongsToShell);
     const policyParents = new Set(policyLinks.map((link) => link.parentElement).filter((parent): parent is HTMLElement => Boolean(parent)));
     for (const parent of policyParents) {
       const display = getComputedStyle(parent).display;
