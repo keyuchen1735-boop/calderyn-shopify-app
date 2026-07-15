@@ -229,7 +229,7 @@ function documentHtml(markup: string, title: string): string {
     "form-action 'self'",
     "base-uri 'self'",
   ].join("; ");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${csp}"><base href="${PROOF_ORIGIN}/"><link rel="icon" href="data:,"><title>${title.replace(/[<>&]/g, "")}</title><style nonce="${PROOF_NONCE}">html{background:#fff;color:#111}body{margin:0;min-height:100vh}img{max-width:100%}:focus-visible{outline:3px solid #0b57d0!important;outline-offset:3px!important}[data-cd-trusted-slot]{display:block;min-width:44px;min-height:44px}</style></head><body>${markup}</body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${csp}"><base href="${PROOF_ORIGIN}/"><link rel="icon" href="data:,"><title>${title.replace(/[<>&]/g, "")}</title><style nonce="${PROOF_NONCE}">html{background:#fff;color:#111}body{margin:0;min-height:100vh}:focus-visible{outline:3px solid #0b57d0!important;outline-offset:3px!important}[data-cd-trusted-slot]{display:block;min-width:44px;min-height:44px}</style></head><body>${markup}</body></html>`;
 }
 
 function browserRuntimeSource(): Promise<string> {
@@ -342,6 +342,7 @@ interface PageAuditResult {
   commerceFailures: string[];
   checkoutFailures: string[];
   shellStyleFailures: string[];
+  layoutFailures: string[];
   focusableCount: number;
   reducedMotion: boolean;
   cls: number;
@@ -349,10 +350,31 @@ interface PageAuditResult {
   longTask: number;
 }
 
+export interface HorizontalLayoutAudit {
+  documentWidth: number;
+  viewportWidth: number;
+  candidates: Array<{ label: string; left: number; right: number; contained: boolean }>;
+}
+
+export function detectHorizontalLayoutFailures(audit: HorizontalLayoutAudit): string[] {
+  const failures: string[] = [];
+  if (audit.documentWidth > audit.viewportWidth + 1) {
+    failures.push(`document:${audit.documentWidth}px>${audit.viewportWidth}px`);
+  }
+  for (const candidate of audit.candidates) {
+    if (candidate.contained) continue;
+    if (candidate.left < -1 || candidate.right > audit.viewportWidth + 1) {
+      failures.push(`${candidate.label}:${Math.round(candidate.left)}..${Math.round(candidate.right)}px`);
+      if (failures.length >= 12) break;
+    }
+  }
+  return failures;
+}
+
 async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: StorefrontRouteId, axe: string): Promise<PageAuditResult> {
   const route = routeId === "checkout" ? null : bundle.routes[routeId];
   await page.evaluate(axe);
-  return page.evaluate(async ({ transitions, route, supportedRoutePattern }) => {
+  const result = await page.evaluate(async ({ transitions, route, supportedRoutePattern }) => {
     const visible = (element: HTMLElement) => {
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
@@ -364,7 +386,11 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
       resultTypes: ["violations"],
     });
     const images = [...document.images];
-    const imageFailures = images.filter((image) => Boolean(image.currentSrc || image.getAttribute("src")) && image.complete && image.naturalWidth === 0).map((image) => image.currentSrc || image.src);
+    const imageFailures = images.flatMap((image) => {
+      const source = image.currentSrc || image.getAttribute("src") || "";
+      if (!source && image.hasAttribute("data-cd-bind-src")) return [`missing-src:${image.id || image.alt || "image"}`];
+      return source && image.complete && image.naturalWidth === 0 ? [source] : [];
+    });
     const allowed = new RegExp(supportedRoutePattern);
     const deadLinks = [...document.querySelectorAll<HTMLAnchorElement>("a[href]")]
       .filter((link) => !link.closest("[data-cd-platform-content='policyLinks']"))
@@ -436,6 +462,27 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
       const display = getComputedStyle(parent).display;
       if (display !== "flex" && display !== "grid") shellStyleFailures.push(`policy-layout:${display}`);
     }
+    const runtimeRoot = document.querySelector<HTMLElement>("[data-cd-bundle-runtime='1']");
+    const viewportWidth = document.documentElement.clientWidth;
+    const insideHorizontalScroller = (element: HTMLElement): boolean => {
+      for (let parent = element.parentElement; parent && parent !== runtimeRoot; parent = parent.parentElement) {
+        const overflow = getComputedStyle(parent).overflowX;
+        if (overflow === "auto" || overflow === "scroll" || overflow === "hidden" || overflow === "clip") return true;
+      }
+      return false;
+    };
+    const layoutCandidates = [...(runtimeRoot?.querySelectorAll<HTMLElement>("*") ?? [])]
+      .filter(visible)
+      .slice(0, 2_000)
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          label: element.id || element.tagName.toLowerCase(),
+          left: rect.left,
+          right: rect.right,
+          contained: insideHorizontalScroller(element),
+        };
+      });
     const lightFocusable = [...document.querySelectorAll<HTMLElement>('a[href],button,input,select,textarea,[tabindex]:not([tabindex="-1"])')].filter(visible).length;
     const shadowFocusable = [...document.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")]
       .flatMap((host) => [...(host.shadowRoot?.querySelectorAll<HTMLElement>("button,input,select,textarea") ?? [])])
@@ -459,6 +506,7 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
       commerceFailures,
       checkoutFailures,
       shellStyleFailures,
+      layout: { documentWidth: document.documentElement.scrollWidth, viewportWidth, candidates: layoutCandidates },
       focusableCount,
       reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
       cls: shifts.filter((entry) => !entry.hadRecentInput).reduce((sum, entry) => sum + (entry.value ?? 0), 0),
@@ -470,6 +518,8 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
     route: routeId,
     supportedRoutePattern: STOREFRONT_PROOF_ROUTE_RE.source,
   });
+  const { layout, ...audit } = result;
+  return { ...audit, layoutFailures: detectHorizontalLayoutFailures(layout) };
 }
 
 async function pixelDiffRatio(page: Page, current: Buffer, baseline: Buffer): Promise<number> {
@@ -710,6 +760,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       if (commerceExerciseFailures.length || audit.commerceFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "commerce.runtime", "Trusted commerce controls did not hydrate, style, or execute", { failures: [...commerceExerciseFailures, ...audit.commerceFailures] });
       if (audit.checkoutFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "checkout.boundary", "Checkout platform boundary is incomplete", { failures: audit.checkoutFailures });
       if (audit.shellStyleFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "shell.unstyled", "Storefront shell retains raw browser navigation styling", { failures: audit.shellStyleFailures });
+      if (audit.layoutFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "layout.overflow", "Storefront content escapes the viewport", { failures: audit.layoutFailures });
       if (policyRouteFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "policy.route", "Merchant policy links do not resolve to matching same-origin storefront policy pages", { failures: policyRouteFailures });
       if (audit.focusableCount === 0) addDiagnostic(diagnostics, routeId, viewport.name, "keyboard.empty", "Route has no keyboard-focusable navigation or commerce control");
       if (!audit.reducedMotion) addDiagnostic(diagnostics, routeId, viewport.name, "motion.preference", "Reduced-motion media preference was not active");

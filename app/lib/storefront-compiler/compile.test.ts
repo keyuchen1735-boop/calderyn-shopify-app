@@ -55,4 +55,28 @@ describe("compileBundle", () => {
     source.assets.entries = [{ key: "hero", contentHash: "a".repeat(16), mediaType: "image/webp", byteSize: 42 }];
     expect(() => compileBundle(source)).toThrow(/hash/i);
   });
+
+  it("rejects CSS and commerce manifests that reference missing design tokens", () => {
+    const cssSource = structuredClone(VALID_BUNDLE_SOURCE);
+    cssSource.routes.home.css = `.hero { color: var(--missing-accent) } .never-matches { --missing-accent:#f00 }`;
+    expect(() => compileBundle(cssSource)).toThrow(/missing design token/i);
+
+    const slotSource = structuredClone(VALID_BUNDLE_SOURCE);
+    slotSource.routes.cart.html = slotSource.routes.cart.html.replace(
+      `data-cd-host-size="page"`,
+      `data-cd-host-size="page" data-cd-theme-tokens="missing-commerce-token"`,
+    );
+    expect(() => compileBundle(slotSource)).toThrow(/missing design token/i);
+
+    const tokenSource = structuredClone(VALID_BUNDLE_SOURCE);
+    tokenSource.designSystem.tokens.ink = "var(--missing-accent)";
+    expect(() => compileBundle(tokenSource)).toThrow(/cannot reference/i);
+  });
+
+  it("allows compiler-owned runtime progress CSS", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.css = `.hero { opacity:var(--cd-progress) }`;
+
+    expect(compileBundle(source).report.ok).toBe(true);
+  });
 });

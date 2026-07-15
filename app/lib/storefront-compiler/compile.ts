@@ -15,7 +15,7 @@ import {
 import { CompilerError, type BindingScopeKind } from "./bindings";
 import { assertValidAssetEntry, isCompilerIdentifier } from "./assets";
 import { compileCheckout } from "./checkout";
-import { assertSafeDesignTokenValue, compileCss } from "./css";
+import { RUNTIME_CSS_CUSTOM_PROPERTY_IDS, assertSafeDesignTokenValue, compileCss, requiredCssCustomPropertyIds } from "./css";
 import { compileHtml, type ProtectedCssNode } from "./html";
 import { validateCompiledBundle, type BundleValidationReport } from "./validate";
 
@@ -233,6 +233,30 @@ export interface CompiledBundleResult {
   report: BundleValidationReport;
 }
 
+function assertDesignTokenCoverage(bundle: StorefrontBundleV1): void {
+  const tokenIds = new Set([...Object.keys(bundle.designSystem.tokens), ...RUNTIME_CSS_CUSTOM_PROPERTY_IDS]);
+  const cssArtifacts = [
+    ["designSystem.globalCss", bundle.designSystem.globalCss],
+    ["shell.css", bundle.shell.css],
+    ...Object.entries(bundle.routes).map(([routeId, route]) => [
+      `routes.${routeId}.css`,
+      routeId === "checkout" ? bundle.routes.checkout.decorativeCss : (route as StorefrontBundleV1["routes"]["home"]).css,
+    ] as const),
+  ] as const;
+  for (const [path, css] of cssArtifacts) {
+    for (const tokenId of requiredCssCustomPropertyIds(css)) {
+      if (!tokenIds.has(tokenId)) throw new CompilerError("design.token_reference", `${path} references missing design token --${tokenId}`);
+    }
+  }
+  const themeTokenIds = [bundle.shell, bundle.routes.home, bundle.routes.collection, bundle.routes.product, bundle.routes.search, bundle.routes.cart]
+    .flatMap((route) => route.trustedSlots)
+    .flatMap((slot) => slot.themeTokenIds);
+  const layoutTokenIds = [bundle.routes.checkout.layout.spacingTokenId, ...bundle.routes.checkout.layout.surfaceTokenIds];
+  for (const tokenId of [...themeTokenIds, ...layoutTokenIds]) {
+    if (!tokenIds.has(tokenId)) throw new CompilerError("design.token_reference", `Storefront manifest references missing design token --${tokenId}`);
+  }
+}
+
 export function compileBundle(source: StorefrontBundleSourceV1): CompiledBundleResult {
   const shell = compileRoute(source.shell, "shell", "store");
   const home = compileRoute(source.routes.home, "home", "store");
@@ -265,6 +289,7 @@ export function compileBundle(source: StorefrontBundleSourceV1): CompiledBundleR
     },
     assets: compileAssets(source.assets),
   };
+  assertDesignTokenCoverage(bundle);
   const report = validateCompiledBundle(bundle);
   return { bundle, hash: hashCompiledBundle(bundle), report };
 }

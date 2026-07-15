@@ -45,6 +45,15 @@ interface RenderContext {
   assetUrls: ReadonlyMap<string, string>;
 }
 
+const EMPTY_MEDIA_DATA_URL = "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 8 10%22%3E%3Crect width=%228%22 height=%2210%22 fill=%22%23e7e5e4%22/%3E%3Cpath d=%22M0 8l2.4-2.8 1.4 1.5 1.5-1.9L8 8.1V10H0z%22 fill=%22%23a8a29e%22/%3E%3Ccircle cx=%226%22 cy=%223%22 r=%221%22 fill=%22%23fafaf9%22/%3E%3C/svg%3E";
+
+function StorefrontStyle({ nonce, css, kind }: { nonce: string; css: string; kind: string }): ReactElement {
+  // CSS reaches this component only after compiler validation. Raw style text is
+  // required because HTML entities are not decoded inside a browser's style node.
+  if (/<\/style/i.test(css)) throw new Error("Unsafe storefront CSS style end tag");
+  return <style nonce={nonce} data-cd-bundle-style={kind} dangerouslySetInnerHTML={{ __html: css }} />;
+}
+
 const PATHS: Record<StorefrontRouteId | "account" | "policy", string> = {
   home: "/storefront",
   collection: "/storefront/collections",
@@ -292,6 +301,7 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
   if (node.routeTarget) props.href = targetHref(node.routeTarget, context);
 
   const nodeBindings = context.bindings.get(node.id) ?? [];
+  let missingBoundImage = false;
   let children: ReactNode[];
   if (node.attributes["data-cd-platform-content"] === "policyLinks") {
     const policyIds = new Set(["privacy", "terms", "refund", "shipping"]);
@@ -308,7 +318,14 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
     const formatted = formatBinding(binding, resolveRef(binding.ref, context));
     if (binding.kind === "text" || binding.kind === "money") children = formatted === null ? [] : [formatted];
     else if (binding.kind === "src" && formatted !== null) props.src = formatted;
+    else if (binding.kind === "src" && node.tag === "img") missingBoundImage = true;
     else if (binding.kind === "alt") props.alt = formatted ?? "";
+  }
+  if (node.tag === "img" && missingBoundImage && props.src === undefined) {
+    props.src = EMPTY_MEDIA_DATA_URL;
+    props.alt = "";
+    props["aria-hidden"] = true;
+    props["data-cd-media-fallback"] = "true";
   }
   return createElement(node.tag, props, ...children);
 }
@@ -395,7 +412,7 @@ export function renderStorefrontRoute(input: RenderStorefrontRouteInput): {
     status: 200,
     element: (
       <div data-cd-bundle={input.routeId} data-cd-bundle-route={input.routeId}>
-        {input.artifact.css ? <style nonce={input.nonce} data-cd-bundle-style={input.routeId}>{input.artifact.css}</style> : null}
+        {input.artifact.css ? <StorefrontStyle nonce={input.nonce} css={input.artifact.css} kind={input.routeId} /> : null}
         {renderTree(input.artifact.tree, input.artifact.bindings, input.artifact.trustedSlots, input.data, "public", input.assetUrls)}
       </div>
     ),
@@ -413,7 +430,7 @@ export interface RenderCheckoutRouteInput {
 export function renderCheckoutRoute({ artifact, data, nonce, platformContent, assetUrls }: RenderCheckoutRouteInput): ReactElement {
   return (
     <Fragment>
-      {artifact.decorativeCss ? <style nonce={nonce} data-cd-bundle-style="checkout">{artifact.decorativeCss}</style> : null}
+      {artifact.decorativeCss ? <StorefrontStyle nonce={nonce} css={artifact.decorativeCss} kind="checkout" /> : null}
       <div data-cd-bundle="checkout" data-cd-checkout-decoration>
         {renderTree(artifact.decorativeTree, artifact.bindings, [], data, "public", assetUrls)}
       </div>
@@ -477,17 +494,17 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
     const route: RouteArtifact = bundle.routes[routeId];
     routeResult = (
       <div data-cd-bundle={routeId} data-cd-bundle-route={routeId}>
-        {route.css ? <style nonce={nonce} data-cd-bundle-style={routeId}>{route.css}</style> : null}
+        {route.css ? <StorefrontStyle nonce={nonce} css={route.css} kind={routeId} /> : null}
         {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls)}
       </div>
     );
   }
   return (
     <div data-cd-bundle="global" data-cd-bundle-runtime="1" data-cd-bundle-source={bundle.source.kind}>
-      <style nonce={nonce} data-cd-bundle-style="tokens">{storefrontDesignSystemCss(bundle.designSystem)}</style>
-      {bundle.designSystem.globalCss ? <style nonce={nonce} data-cd-bundle-style="global">{bundle.designSystem.globalCss}</style> : null}
+      <StorefrontStyle nonce={nonce} css={storefrontDesignSystemCss(bundle.designSystem)} kind="tokens" />
+      {bundle.designSystem.globalCss ? <StorefrontStyle nonce={nonce} css={bundle.designSystem.globalCss} kind="global" /> : null}
       <div data-cd-bundle="shell" data-cd-bundle-shell={routeId}>
-        {bundle.shell.css ? <style nonce={nonce} data-cd-bundle-style="shell">{bundle.shell.css}</style> : null}
+        {bundle.shell.css ? <StorefrontStyle nonce={nonce} css={bundle.shell.css} kind="shell" /> : null}
         {renderTree(shellTree.beforeRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls)}
         {routeResult}
         {renderTree(shellTree.afterRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls)}

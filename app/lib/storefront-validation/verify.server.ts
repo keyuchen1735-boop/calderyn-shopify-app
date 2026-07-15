@@ -47,25 +47,42 @@ function editedFixtureSource(): StorefrontBundleSourceV1 {
 }
 
 function customFixtureSource(): StorefrontBundleSourceV1 {
-  const recipe = STOREFRONT_RECIPES.find((entry) => entry.config.templateId === "diagnostic-deck")!;
+  const recipe = (templateId: string) => STOREFRONT_RECIPES.find((entry) => entry.config.templateId === templateId)!;
+  const home = recipe("diagnostic-deck");
+  const search = recipe("daily-protocol").config.surfaces.search.source;
   return {
     source: { kind: "custom", generationId: "proof-custom-fixture", promptHash: "sha256:proof-custom-fixture" },
     concept: {
-    name: "Original Orbit Store",
-    rationale: "A representative original AI-authored storefront used by the browser validation matrix.",
-    noveltySignature: ["orbiting product rail", "edge index", "direct manipulation"],
+      name: "Original Orbit Store",
+      rationale: "A cross-template AI remix used to prove that independently authored surfaces remain coherent and contained when combined.",
+      noveltySignature: ["mixed surface grammar", "edge index", "direct manipulation"],
     },
-    designSystem: recipe.config.designSystem,
-    shell: recipe.config.surfaces.shell.source,
+    designSystem: {
+      ...home.config.designSystem,
+      tokens: {
+        ...recipe("custom-bench").config.designSystem.tokens,
+        ...recipe("commons-index").config.designSystem.tokens,
+        ...recipe("soft-chemistry").config.designSystem.tokens,
+        ...recipe("daily-protocol").config.designSystem.tokens,
+        ...recipe("room-modes").config.designSystem.tokens,
+        ...recipe("rep-rest").config.designSystem.tokens,
+        ...home.config.designSystem.tokens,
+        signal: recipe("custom-bench").config.designSystem.tokens.signal,
+      },
+    },
+    shell: recipe("custom-bench").config.surfaces.shell.source,
     routes: {
-      home: recipe.config.surfaces.home.source,
-      collection: recipe.config.surfaces.collection.source,
-      product: recipe.config.surfaces.product.source,
-      search: recipe.config.surfaces.search.source,
-      cart: recipe.config.surfaces.cart.source,
-      checkout: recipe.config.surfaces.checkout.source,
+      home: home.config.surfaces.home.source,
+      collection: recipe("commons-index").config.surfaces.collection.source,
+      product: recipe("soft-chemistry").config.surfaces.product.source,
+      search: {
+        ...search,
+        css: `${search.css} .protocol-query input, .protocol-query button { background:#173f8f; border-color:#101820; color:#fff }`,
+      },
+      cart: recipe("room-modes").config.surfaces.cart.source,
+      checkout: recipe("rep-rest").config.surfaces.checkout.source,
     },
-    assets: recipe.config.assets,
+    assets: home.config.assets,
   };
 }
 

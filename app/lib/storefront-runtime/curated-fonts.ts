@@ -57,5 +57,17 @@ export function storefrontDesignSystemCss(designSystem: StorefrontBundleV1["desi
     `--font-display:${fontStack(designSystem.displayFontId)}`,
     `--font-body:${fontStack(designSystem.bodyFontId)}`,
   ].join(";");
-  return `${faces}:where([data-cd-bundle-runtime]){${declarations}}`;
+  return [
+    faces,
+    `:where([data-cd-bundle-runtime]){${declarations};display:block;min-width:0;max-width:100%;overflow-x:clip;font-family:var(--font-body)}`,
+    ":where([data-cd-bundle-runtime]),:where([data-cd-bundle-runtime]) *,:where([data-cd-bundle-runtime]) *::before,:where([data-cd-bundle-runtime]) *::after{box-sizing:border-box}",
+    ":where([data-cd-bundle-runtime]) :where(header,footer,main,section,article,aside,nav,div,figure){min-width:0;max-width:100%}",
+    ":where([data-cd-bundle-runtime]) :where(img,picture,video,canvas,svg){max-width:100%}",
+    ":where([data-cd-bundle-runtime]) img{display:block;height:auto}",
+    ":where([data-cd-bundle-runtime]) figure{margin:0}",
+    ":where([data-cd-bundle-runtime]) :where(button,input,select,textarea){max-width:100%;font:inherit}",
+    ":where([data-cd-bundle-runtime]) :where(p,a,button){overflow-wrap:anywhere}",
+    ":where([data-cd-bundle-shell])>header,:where([data-cd-bundle-shell])>footer{display:flex;align-items:center;justify-content:space-between;gap:1rem;min-height:4rem;padding:1rem}",
+    "@media(max-width:720px){:where([data-cd-bundle-shell])>header,:where([data-cd-bundle-shell])>footer{align-items:flex-start;flex-wrap:wrap}}",
+  ].join("");
 }

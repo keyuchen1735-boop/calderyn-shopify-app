@@ -47,7 +47,7 @@ function productionSources(root: string): Array<{ path: string; source: string }
       return productionSources(path);
     }
     if (!/\.(?:ts|tsx)$/.test(entry.name) || /\.test\.[^.]+$/.test(entry.name)) return [];
-    return [{ path: relative(process.cwd(), path), source: readFileSync(path, "utf8") }];
+    return [{ path: relative(process.cwd(), path).replaceAll("\\", "/"), source: readFileSync(path, "utf8") }];
   });
 }
 
