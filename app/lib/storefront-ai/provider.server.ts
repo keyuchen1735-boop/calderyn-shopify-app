@@ -65,7 +65,7 @@ export function createAnthropicStructuredProvider(
           ];
       const response = await client.messages.create({
         model,
-        max_tokens: options.maxTokens ?? 16_000,
+        max_tokens: options.maxTokens ?? 21_000,
         system: request.system,
         messages: [{ role: "user", content }],
         tools: [{

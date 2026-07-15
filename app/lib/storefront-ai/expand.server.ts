@@ -12,6 +12,12 @@ import { COMPILER_SYSTEM_PROMPT, EXPANSION_GROUP_SCHEMAS, expansionPrompt } from
 
 type ExpansionGroup = "catalog" | "product" | "commerce";
 
+function normalizeHtml(value: string, field: string): string {
+  const html = value.replace(/<!--[\s\S]*?-->/g, "");
+  if (!html.trim()) throw new Error(`${field} must contain non-empty HTML`);
+  return html;
+}
+
 function object(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${field} must be an object`);
   return value as Record<string, unknown>;
@@ -23,11 +29,10 @@ function route(value: unknown, field: string): RouteSource {
   if (typeof input.css !== "string" || input.css.length > 250_000) throw new Error(`${field}.css is invalid`);
   if (!Array.isArray(input.requiredData) || !Array.isArray(input.requiredCapabilities)) throw new Error(`${field} contracts are invalid`);
   return {
-    html: input.html,
+    html: normalizeHtml(input.html, `${field}.html`),
     css: input.css,
     requiredData: input.requiredData as RouteSource["requiredData"],
     requiredCapabilities: input.requiredCapabilities as RouteSource["requiredCapabilities"],
-    ...(typeof input.rootScopeKind === "string" ? { rootScopeKind: input.rootScopeKind as RouteSource["rootScopeKind"] } : {}),
   };
 }
 
@@ -36,7 +41,7 @@ function checkout(value: unknown): CheckoutRouteSource {
   if (typeof input.html !== "string" || input.html.length > 250_000 || typeof input.css !== "string" || input.css.length > 250_000) {
     throw new Error("checkout source is invalid");
   }
-  return { html: input.html, css: input.css, layout: object(input.layout, "checkout.layout") as unknown as CheckoutRouteSource["layout"] };
+  return { html: normalizeHtml(input.html, "checkout.html"), css: input.css, layout: object(input.layout, "checkout.layout") as unknown as CheckoutRouteSource["layout"] };
 }
 
 function assetRequests(value: unknown): AssetRequest[] {

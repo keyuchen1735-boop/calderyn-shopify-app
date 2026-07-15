@@ -68,17 +68,22 @@ function numberMap(value: unknown, field: string): Record<string, number> {
   }));
 }
 
+function normalizeHtml(value: string, field: string): string {
+  const html = value.replace(/<!--[\s\S]*?-->/g, "");
+  if (!html.trim()) throw new Error(`${field} must contain non-empty HTML`);
+  return html;
+}
+
 function routeSource(value: unknown, field: string): RouteSource {
   const source = record(value, field);
   if (!Array.isArray(source.requiredData) || !Array.isArray(source.requiredCapabilities)) {
     throw new Error(`${field} must declare bounded data and capability arrays`);
   }
   return {
-    html: string(source.html, `${field}.html`, 250_000),
+    html: normalizeHtml(string(source.html, `${field}.html`, 250_000), `${field}.html`),
     css: typeof source.css === "string" && source.css.length <= 250_000 ? source.css : (() => { throw new Error(`${field}.css must be bounded`); })(),
     requiredData: source.requiredData as RouteSource["requiredData"],
     requiredCapabilities: source.requiredCapabilities as RouteSource["requiredCapabilities"],
-    ...(typeof source.rootScopeKind === "string" ? { rootScopeKind: source.rootScopeKind as RouteSource["rootScopeKind"] } : {}),
   };
 }
 
@@ -87,6 +92,7 @@ export function parseConceptCandidate(value: unknown): ConceptCandidateSource {
   const concept = record(source.concept, "concept.concept");
   const novelty = record(concept.noveltySignature, "concept.noveltySignature");
   const design = record(source.designSystem, "concept.designSystem");
+  if (design.globalCss !== "") throw new Error("Concept globalCss must be empty");
   if (!isCuratedFontId(design.displayFontId) || !isCuratedFontId(design.bodyFontId)) {
     throw new Error("Concept fonts must use curated self-hosted IDs");
   }
@@ -333,7 +339,7 @@ async function exploreOne(
     const response = await input.provider.complete({
       operation: "repairConcept",
       system: COMPILER_SYSTEM_PROMPT,
-      prompt: conceptRepairPrompt(input.context, strategy, diagnostic, raw),
+      prompt: conceptRepairPrompt(input.context, strategy, candidateId, diagnostic, raw),
       schema: CONCEPT_SCHEMA,
       signal: input.signal,
     });

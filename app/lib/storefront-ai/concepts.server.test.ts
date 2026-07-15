@@ -22,6 +22,34 @@ describe("concept exploration", () => {
     expect(() => parseConceptCandidate(concept)).toThrow("assetRequests must be a bounded array");
   });
 
+  it("removes inert HTML comments before compiler validation", () => {
+    const concept = createConcept(0);
+    concept.shell.html = `<!-- generated shell -->${concept.shell.html}`;
+    concept.home.html = `${concept.home.html}<!-- generated home -->`;
+    concept.home.rootScopeKind = "cart";
+
+    const parsed = parseConceptCandidate(concept);
+
+    expect(parsed.shell.html).not.toContain("<!--");
+    expect(parsed.home.html).not.toContain("<!--");
+    expect(parsed.home.rootScopeKind).toBeUndefined();
+    expect(() => compileConceptCandidate(parsed)).not.toThrow();
+  });
+
+  it("rejects concept HTML that is empty after comment removal", () => {
+    const concept = createConcept(0);
+    concept.home.html = "<!-- generated home -->";
+
+    expect(() => parseConceptCandidate(concept)).toThrow(/non-empty HTML/i);
+  });
+
+  it("keeps AI concept global CSS empty until all protected routes exist", () => {
+    const concept = createConcept(0);
+    concept.designSystem.globalCss = `.shared { color: red }`;
+
+    expect(() => parseConceptCandidate(concept)).toThrow(/globalCss must be empty/i);
+  });
+
   it("generates three structural briefs in parallel and repairs invalid output once", async () => {
     let active = 0;
     let maxActive = 0;
@@ -50,6 +78,27 @@ describe("concept exploration", () => {
     expect(complete.mock.calls.filter(([request]) => request.operation === "repairConcept")).toHaveLength(1);
     expect(new Set(result.candidates.map((item) => item.strategy))).toEqual(new Set(["asymmetric-commerce", "narrative-utility", "spatial-catalog"]));
     expect(new Set(result.candidates.map((item) => item.candidate.concept.noveltySignature.layoutTopology)).size).toBe(3);
+  });
+
+  it("repairs provider failures that return no prior candidate", async () => {
+    const complete = vi.fn(async (request: Parameters<StorefrontAiProvider["complete"]>[0]) => {
+      if (request.operation === "concept") throw new Error("Structured storefront output reached the token limit");
+      const candidateNumber = Number(request.prompt.match(/concept-(\d)/)?.[1] ?? 1);
+      const requestsCompleteCandidate = request.prompt.includes("Return the complete candidate object") &&
+        request.prompt.includes("never a partial patch");
+      return {
+        value: requestsCompleteCandidate ? createConcept(candidateNumber - 1) : { candidateId: `concept-${candidateNumber}` },
+        usage: { inputTokens: 1, outputTokens: 1 }, provider: "fixture", model: "fixture",
+      };
+    });
+
+    const result = await exploreConcepts({ context: createContext(), provider: { complete }, compileConcept: compileConceptCandidate });
+
+    expect(result.candidates).toHaveLength(3);
+    expect(result.repairs).toBe(3);
+    expect(complete.mock.calls.filter(([request]) => request.operation === "repairConcept").every(([request]) =>
+      request.prompt.includes("PRIOR_OUTPUT:null")
+    )).toBe(true);
   });
 
   it("rejects peer concepts with the same compiled structure even when their novelty prose differs", async () => {

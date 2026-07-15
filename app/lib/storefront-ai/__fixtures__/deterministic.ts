@@ -72,6 +72,7 @@ export function createConcept(index = 0): ConceptCandidateSource {
     : topology === 1
       ? `<main><aside><p>Chapter index</p></aside><section><h1 data-cd-text="store.name"></h1></section></main>`
       : `<main><nav><p>Zone map</p></nav><article><header><h1 data-cd-text="store.name"></h1></header></article></main>`;
+  base.designSystem.globalCss = "";
   return {
     candidateId: `concept-${index + 1}`,
     concept: {
