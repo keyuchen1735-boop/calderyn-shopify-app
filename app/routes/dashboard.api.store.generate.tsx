@@ -83,6 +83,10 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   const encoder = new TextEncoder();
   let cancelled = false;
+  const generationController = new AbortController();
+  const abortFromRequest = () => generationController.abort(request.signal.reason);
+  if (request.signal.aborted) generationController.abort(request.signal.reason);
+  else request.signal.addEventListener("abort", abortFromRequest, { once: true });
   const stream = new ReadableStream({
     async start(controller) {
       const write = (value: unknown) => {
@@ -100,6 +104,7 @@ export async function action({ request }: ActionFunctionArgs) {
           recommendedResolution: recommendedResolution(body.recommendedResolution),
           trusted: quotaTrusted(session),
           prepared,
+          signal: generationController.signal,
           onEvent: send,
         });
       } catch (err) {
@@ -107,10 +112,14 @@ export async function action({ request }: ActionFunctionArgs) {
         send({ stage: "error", ...buildFailure(err) });
       } finally {
         clearInterval(heartbeat);
+        request.signal.removeEventListener("abort", abortFromRequest);
         if (!cancelled) controller.close();
       }
     },
-    cancel() { cancelled = true; },
+    cancel() {
+      cancelled = true;
+      generationController.abort(new DOMException("Storefront generation stopped", "AbortError"));
+    },
   });
   return new Response(stream, {
     headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },

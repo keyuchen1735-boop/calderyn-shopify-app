@@ -88,7 +88,9 @@ export default function ChatRail({
   prompt,
   onPromptChange,
   onSend,
+  onStop,
   busy,
+  stoppable,
   attaching,
   onAttachFiles,
   attachments,
@@ -100,7 +102,10 @@ export default function ChatRail({
   prompt: string;
   onPromptChange: (v: string) => void;
   onSend: () => void;
+  onStop: () => void;
   busy: boolean;
+  /** True only while a prompt-driven build/edit request has an active abort controller. */
+  stoppable: boolean;
   attaching: boolean;
   onAttachFiles: (files: File[]) => void;
   /** Images staged in the composer, shown as removable chips above the textarea. */
@@ -238,15 +243,27 @@ export default function ChatRail({
               <option value="sonnet">Sonnet 5</option>
               <option value="opus">Opus 4.8</option>
             </select>
-            <button
-              type="button"
-              className="cd-composer-send"
-              aria-label="Send"
-              disabled={!canSend}
-              onClick={send}
-            >
-              <CDIcon name="arrowUp" size={14} strokeWidth={2.2} />
-            </button>
+            {stoppable ? (
+              <button
+                type="button"
+                className="cd-composer-send cd-composer-stop"
+                aria-label="Stop generation"
+                title="Stop generation"
+                onClick={onStop}
+              >
+                <span aria-hidden="true" className="cd-stop-glyph" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="cd-composer-send"
+                aria-label="Send"
+                disabled={!canSend}
+                onClick={send}
+              >
+                <CDIcon name="arrowUp" size={14} strokeWidth={2.2} />
+              </button>
+            )}
           </div>
         </div>
       </div>

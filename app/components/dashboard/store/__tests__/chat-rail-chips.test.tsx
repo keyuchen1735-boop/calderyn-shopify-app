@@ -14,7 +14,9 @@ function render(attachments: { id: string; url: string; name: string }[], prompt
       prompt,
       onPromptChange: () => {},
       onSend: () => {},
+      onStop: () => {},
       busy: false,
+      stoppable: false,
       attaching: false,
       onAttachFiles: () => {},
       attachments,
@@ -52,7 +54,9 @@ describe("live build progress card", () => {
         prompt: "",
         onPromptChange: () => {},
         onSend: () => {},
+        onStop: () => {},
         busy: true,
+        stoppable: true,
         attaching: false,
         onAttachFiles: () => {},
         attachments: [],
@@ -68,5 +72,6 @@ describe("live build progress card", () => {
     expect(html).toContain('data-st="done"');
     expect(html).toContain('data-st="run"');
     expect(html).toContain('data-st="wait"');
+    expect(html).toContain('aria-label="Stop generation"');
   });
 });

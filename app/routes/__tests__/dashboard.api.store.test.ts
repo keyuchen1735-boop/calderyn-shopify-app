@@ -301,6 +301,29 @@ describe("dashboard.api.store multipart generate", () => {
     }));
   });
 
+  it("aborts the underlying prompt edit when its stream consumer stops", async () => {
+    let editSignal: AbortSignal | undefined;
+    let finishEdit = () => {};
+    editMock.mockImplementationOnce((input: { signal?: AbortSignal }) => new Promise((resolve) => {
+      editSignal = input.signal;
+      finishEdit = () => resolve({ status: "installed" });
+    }));
+    const request = new Request(URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "edit", prompt: "Restyle every page",
+        expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
+      }),
+    });
+
+    const response = await action({ request } as ActionFunctionArgs);
+    const cancelled = response.body!.getReader().cancel();
+
+    expect(editSignal?.aborted).toBe(true);
+    finishEdit();
+    await cancelled;
+  });
+
   it("undoes an edit through the same authenticated CAS boundary", async () => {
     const request = new Request(URL, {
       method: "POST", headers: { "Content-Type": "application/json" },

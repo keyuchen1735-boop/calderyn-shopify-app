@@ -231,7 +231,18 @@ export interface StorefrontBuildInput {
   trusted?: boolean;
   referenceImages?: MerchantReferenceImage[];
   onEvent?: (event: StorefrontBuildEvent) => void | Promise<void>;
+  signal?: AbortSignal;
   prepared?: PreparedStorefrontDesignBuild;
+}
+
+function throwIfBuildAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new StorefrontBuildError(
+      "generation_cancelled",
+      "Storefront generation was stopped. Your current draft was not changed.",
+      409,
+    );
+  }
 }
 
 export interface PreparedStorefrontDesignBuild {
@@ -297,6 +308,7 @@ export async function buildStorefrontDesign(
   dependencies: StorefrontBuildDependencies = defaultDependencies,
 ): Promise<StorefrontBuildReceipt> {
   const prepared = input.prepared ?? await prepareStorefrontDesignBuild(input, dependencies);
+  throwIfBuildAborted(input.signal);
   const { request, evidence, resolution: frozenResolution, pointers, customQuotaReservationToken } = prepared;
   const recommendationChanged = input.recommendedResolution
     ? input.recommendedResolution.catalogFingerprint !== frozenResolution.catalogFingerprint
@@ -321,6 +333,7 @@ export async function buildStorefrontDesign(
       routingResolution: frozenResolution,
       ...(customQuotaReservationToken ? { quotaReservationToken: customQuotaReservationToken } : {}),
       ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
     });
     if (generated.status === "disabled") {
       throw new StorefrontBuildError(generated.code, "Original AI storefront generation is not available right now. Your current draft was not changed.", 503);
@@ -352,6 +365,8 @@ export async function buildStorefrontDesign(
     templateVersion: frozenResolution.templateVersion,
   });
   const imageryController = new AbortController();
+  const abortImagery = () => imageryController.abort(input.signal?.reason);
+  input.signal?.addEventListener("abort", abortImagery, { once: true });
   // Leave 20 seconds of the one-minute preview target for validation and draft installation.
   const imageryTimer = setTimeout(() => imageryController.abort(), 40_000);
   let recipe: StorefrontRecipeArtifact;
@@ -363,12 +378,16 @@ export async function buildStorefrontDesign(
         dependencies.prepareRecipeImages(input.shopId, imageryController.signal),
       ]),
       new Promise<never>((_resolve, reject) => imageryController.signal.addEventListener("abort", () => reject(
-        new StorefrontBuildError("storefront_recipe_imagery_timeout", "Product image generation exceeded the first-preview deadline. Your current draft was not changed.", 504),
+        input.signal?.aborted
+          ? new StorefrontBuildError("generation_cancelled", "Storefront generation was stopped. Your current draft was not changed.", 409)
+          : new StorefrontBuildError("storefront_recipe_imagery_timeout", "Product image generation exceeded the first-preview deadline. Your current draft was not changed.", 504),
       ), { once: true })),
     ]);
   } finally {
     clearTimeout(imageryTimer);
+    input.signal?.removeEventListener("abort", abortImagery);
   }
+  throwIfBuildAborted(input.signal);
   if (imagery.ready < imagery.required) {
     throw new StorefrontBuildError(
       "storefront_recipe_imagery_failed",
@@ -398,6 +417,7 @@ export async function buildStorefrontDesign(
     );
   }
   await emit(input.onEvent, { stage: "proofing" });
+  throwIfBuildAborted(input.signal);
 
   const versionId = await dependencies.createVersion({
     shopId: input.shopId,
@@ -422,6 +442,7 @@ export async function buildStorefrontDesign(
       evidence,
     },
   });
+  throwIfBuildAborted(input.signal);
   await dependencies.installDraft({
     shopId: input.shopId,
     versionId,

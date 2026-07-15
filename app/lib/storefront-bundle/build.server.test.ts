@@ -325,4 +325,22 @@ describe("runtime-1 storefront build", () => {
     }, deps)).rejects.toThrow("database unavailable");
     expect(deps.installDraft).not.toHaveBeenCalled();
   });
+
+  it("never installs a recipe draft when cancellation arrives after immutable version creation", async () => {
+    const controller = new AbortController();
+    const deps = dependencies({
+      createVersion: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        return VERSION;
+      }),
+    });
+
+    await expect(buildStorefrontDesign({
+      shopId: SHOP,
+      request: { prompt: "refills", mode: "auto" },
+      recipeBuildEnabled: true,
+      signal: controller.signal,
+    }, deps)).rejects.toMatchObject({ code: "generation_cancelled", status: 409 });
+    expect(deps.installDraft).not.toHaveBeenCalled();
+  });
 });

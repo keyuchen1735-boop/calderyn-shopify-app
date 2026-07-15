@@ -15,6 +15,7 @@ const FONT_ALIASES: Readonly<Record<string, CuratedFontId>> = {
 
 const RESET_RE = /\b(?:start\s+over|rebuild\s+(?:the\s+)?(?:whole\s+)?store|redesign\s+(?:the\s+)?(?:whole|entire)\s+store|completely\s+new\s+store|new\s+store\s+from\s+scratch|entirely\s+original\s+(?:store|storefront|design)|replace\s+the\s+entire\s+store|(?:no\s+|without\s+(?:a\s+)?)template)\b/i;
 const NEGATED_RESET_RE = /\b(?:don't|do\s+not|never)\s+(?:start\s+over|rebuild|redesign|replace)\b/gi;
+const STORE_WIDE_RE = /\b(?:entire\s+storefront|whole\s+(?:shop|storefront|design)|every\s+(?:page|route)|all\s+(?:pages|routes)|across\s+(?:the\s+)?(?:store|storefront|shop)|store[-\s]?wide|site[-\s]?wide|cohesive\s+(?:store|storefront|shop))\b/i;
 const HEX_RE = /#([0-9a-f]{6})\b/i;
 
 function normalizedFont(prompt: string): CuratedFontId | null {
@@ -60,5 +61,7 @@ export function parseEditIntent(prompt: string, context?: PreviewEditContext): P
   }
 
   if (operations.length > 0) return { kind: "deterministic", operations };
-  return context ? { kind: "structural", context } : { kind: "structural" };
+  // An explicit whole-store instruction outranks a stale canvas selection.
+  // Selection context is a precision hint, not a permanent editing prison.
+  return context && !STORE_WIDE_RE.test(clean) ? { kind: "structural", context } : { kind: "structural" };
 }

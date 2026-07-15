@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { CompiledNode, StorefrontBundleV1, StorefrontRouteId } from "../storefront-bundle/types";
 import type { PreviewEditContext, StructuralPatchScope } from "./types";
 
-export const STOREFRONT_PATCH_SYSTEM_PROMPT = `You are a storefront patch compiler. Return typed patch operations only. Never return JavaScript, external URLs, customer data, storage keys, or a full storefront. Structural HTML and CSS are compiler source, not executable code. Use only compiler-issued IDs and verified owned asset logical keys in the provided scope. Include exact supplied SHA-256 preconditions. Preserve every unnamed route and region.`;
+export const STOREFRONT_PATCH_SYSTEM_PROMPT = `You are a senior storefront designer operating through a typed patch compiler. First infer the merchant's intended breadth from natural language: a selected region is local, a named route is route-wide, and instructions about the shop/storefront/every page are store-wide. Return typed patch operations only. Never return JavaScript, external URLs, customer data, storage keys, or a full storefront. Structural HTML and CSS are compiler source, not executable code. Use only compiler-issued IDs and verified owned asset logical keys in the provided scope. Include exact supplied SHA-256 preconditions. Keep typography, spacing, color, imagery treatment, and interaction language cohesive across every route you change. Preserve routes and regions outside the merchant's intended breadth.`;
 
 function digest(value: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
@@ -52,8 +52,8 @@ export function storefrontPatchPrompt(input: {
     : "unspecified";
   return [
     `Merchant instruction: ${JSON.stringify(input.prompt)}`,
-    `Allowed route: ${route}`,
-    `Allowed region ID: ${region}`,
+    `Selected route constraint: ${route}`,
+    `Selected region constraint: ${region}`,
     `Selected region precondition and compiled shape: ${selectedTree}`,
     `Current source kind: ${input.bundle.source.kind}`,
     `Verified owned asset keys: ${input.bundle.assets.entries.map((entry) => entry.key).sort().join(", ") || "none"}`,
@@ -64,6 +64,9 @@ export function storefrontPatchPrompt(input: {
       `Browser diagnostics: ${JSON.stringify(input.repair.browserProof?.diagnostics ?? [])}`,
       "Repair only the diagnosed route/region. Return a complete replacement operation with the original base preconditions.",
     ] : []),
-    "Return the smallest patch. For layout, imagery, icon, or interaction changes use replaceRegion with closed compiler-source HTML/CSS. For art direction across a route, pair it with replaceRouteCss using the exact route CSS precondition. Never invent an asset key.",
+    effectiveScope
+      ? "The selection is a hard boundary. Return the smallest patch that fully satisfies the instruction inside it."
+      : "No preview boundary is selected. Infer the intended routes from the instruction; a cohesive storefront redesign may and should return operations for multiple routes.",
+    "For layout, imagery, icon, or interaction changes use replaceRegion with closed compiler-source HTML/CSS. For art direction across a route, pair it with replaceRouteCss using the exact route CSS precondition. Prefer preserving proven commerce slots and bindings. Never invent an asset key.",
   ].join("\n");
 }

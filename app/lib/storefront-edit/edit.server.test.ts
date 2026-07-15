@@ -453,6 +453,60 @@ describe("editStorefrontByPrompt", () => {
     expect(serialized).not.toContain("shopId");
   });
 
+  it("applies and proves one coherent store-wide patch across multiple routes", async () => {
+    const recipe = baseBundle();
+    recipe.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
+    const home = recipe.routes.home.tree[0]!;
+    const product = recipe.routes.product.tree[0]!;
+    if (home.kind !== "element" || product.kind !== "element") throw new Error("fixture roots");
+    const deps = dependencies(recipe);
+    vi.mocked(deps.compileStructuralPatch).mockResolvedValue({
+      operations: [
+        {
+          kind: "replaceTextChildren", routeId: "home", targetId: home.id, value: "A cohesive home direction",
+          expected: `sha256:${createHash("sha256").update(JSON.stringify(home)).digest("hex")}`,
+        },
+        {
+          kind: "replaceTextChildren", routeId: "product", targetId: product.id, value: "A cohesive product direction",
+          expected: `sha256:${createHash("sha256").update(JSON.stringify(product)).digest("hex")}`,
+        },
+      ],
+      provider: { kind: "ai_patch", provider: "anthropic", model: "test" },
+    });
+
+    const result = await editStorefrontByPrompt({
+      shopId: SHOP,
+      actorId: ACTOR,
+      prompt: "Take the entire storefront in a cohesive editorial direction",
+      expectedDraftVersionId: BASE,
+    }, deps);
+
+    if (result.status !== "installed") throw new Error("expected installed edit");
+    expect(result.changedScope.routes).toEqual(["home", "product"]);
+    expect(deps.prove).toHaveBeenCalledTimes(1);
+    expect(deps.editDraft).toHaveBeenCalledWith(expect.objectContaining({
+      scope: expect.objectContaining({ routes: ["home", "product"] }),
+    }));
+  });
+
+  it("never swaps the draft when cancellation arrives after immutable version creation", async () => {
+    const controller = new AbortController();
+    const deps = dependencies();
+    vi.mocked(deps.createVersion).mockImplementation(async () => {
+      controller.abort();
+      return "55555555-5555-5555-5555-555555555555";
+    });
+
+    await expect(editStorefrontByPrompt({
+      shopId: SHOP,
+      actorId: ACTOR,
+      prompt: "Make the accent #ff5500",
+      expectedDraftVersionId: BASE,
+      signal: controller.signal,
+    }, deps)).rejects.toMatchObject({ code: "storefront_edit_cancelled", status: 409 });
+    expect(deps.editDraft).not.toHaveBeenCalled();
+  });
+
   it("reports explicit start-over without editing so the caller can re-enter routing", async () => {
     const deps = dependencies();
     const result = await editStorefrontByPrompt({
@@ -508,7 +562,7 @@ describe("createDefaultStructuralPatchCompiler", () => {
     })).rejects.toMatchObject({ code: "storefront_patch_scope" });
   });
 
-  it("rejects route-wide CSS for a selected region and generic patches spanning routes", async () => {
+  it("rejects route-wide CSS for a selected region and accepts coherent unscoped patches spanning routes", async () => {
     const bundle = baseBundle();
     const target = bundle.routes.home.tree[0]!;
     if (target.kind !== "element") throw new Error("fixture root");
@@ -527,8 +581,13 @@ describe("createDefaultStructuralPatchCompiler", () => {
       ] },
       provider: "fixture", model: "fixture-model", usage: { inputTokens: 1, outputTokens: 1 },
     }) };
-    await expect(createDefaultStructuralPatchCompiler(genericProvider)({ prompt: "Change the composition", bundle }))
-      .rejects.toMatchObject({ code: "storefront_patch_scope" });
+    await expect(createDefaultStructuralPatchCompiler(genericProvider)({ prompt: "Change the composition across the storefront", bundle }))
+      .resolves.toMatchObject({
+        operations: [
+          expect.objectContaining({ kind: "replaceRegion", routeId: "home" }),
+          expect.objectContaining({ kind: "replaceRegion", routeId: "product" }),
+        ],
+      });
   });
 
   it("requires exact subtree hashes on model-authored text and visibility operations", async () => {

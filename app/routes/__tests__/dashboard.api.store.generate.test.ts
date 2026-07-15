@@ -91,11 +91,13 @@ describe("dashboard.api.store.generate streaming action", () => {
     }
   });
 
-  it("ignores late build events after the stream consumer cancels", async () => {
+  it("aborts the underlying build and ignores late events after the stream consumer cancels", async () => {
     let emit = (_event: unknown) => {};
     let finishBuild = () => {};
-    buildMock.mockImplementation((input: { onEvent?: (event: unknown) => void }) => new Promise<void>((resolve) => {
+    let buildSignal: AbortSignal | undefined;
+    buildMock.mockImplementation((input: { onEvent?: (event: unknown) => void; signal?: AbortSignal }) => new Promise<void>((resolve) => {
       emit = input.onEvent ?? emit;
+      buildSignal = input.signal;
       finishBuild = resolve;
     }));
 
@@ -103,6 +105,7 @@ describe("dashboard.api.store.generate streaming action", () => {
     const reader = res.body!.getReader();
     const cancelled = reader.cancel();
 
+    expect(buildSignal?.aborted).toBe(true);
     expect(() => emit({ stage: "compiling" })).not.toThrow();
     finishBuild();
     await cancelled;

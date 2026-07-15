@@ -102,13 +102,23 @@ async function editResponse(run: () => Promise<unknown>): Promise<Response> {
   }
 }
 
-function editStreamResponse(run: (send: (event: StorefrontEditEvent) => void) => Promise<unknown>): Response {
+function editStreamResponse(
+  requestSignal: AbortSignal,
+  run: (send: (event: StorefrontEditEvent) => void, signal: AbortSignal) => Promise<unknown>,
+): Response {
   const encoder = new TextEncoder();
+  const generationController = new AbortController();
+  let cancelled = false;
+  const abortFromRequest = () => generationController.abort(requestSignal.reason);
+  if (requestSignal.aborted) generationController.abort(requestSignal.reason);
+  else requestSignal.addEventListener("abort", abortFromRequest, { once: true });
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: StorefrontEditEvent) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      const send = (event: StorefrontEditEvent) => {
+        if (!cancelled) controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
       try {
-        const result = await run(send);
+        const result = await run(send, generationController.signal);
         if (result && typeof result === "object" && (result as { status?: unknown }).status === "start_over") {
           send({ stage: "start_over", receipt: result as { status: "start_over"; mode: "custom" } });
         }
@@ -120,8 +130,13 @@ function editStreamResponse(run: (send: (event: StorefrontEditEvent) => void) =>
           send({ stage: "error", code: "storefront_edit_failed", status: 500, message: "The storefront edit failed. Your draft was not changed." });
         }
       } finally {
-        controller.close();
+        requestSignal.removeEventListener("abort", abortFromRequest);
+        if (!cancelled) controller.close();
       }
+    },
+    cancel() {
+      cancelled = true;
+      generationController.abort(new DOMException("Storefront generation stopped", "AbortError"));
     },
   });
   return new Response(stream, {
@@ -218,6 +233,7 @@ async function runStorefrontBuild(
   mode: "auto" | "custom",
   referenceImages?: MerchantReferenceImage[],
   preparedInput?: PreparedStorefrontDesignBuild,
+  signal?: AbortSignal,
 ): Promise<{ versionId: string }> {
   try {
     const request = { prompt, mode } as const;
@@ -228,6 +244,7 @@ async function runStorefrontBuild(
       trusted: quotaTrusted(session),
       request,
       prepared,
+      signal,
       ...(referenceImages?.length ? { referenceImages } : {}),
     });
     return { versionId: receipt.versionId };
@@ -344,7 +361,7 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
     // as the JSON compatibility path. Recipe installs do not consume AI quota;
     // a custom resolution is billed inside the original compiler preflight.
     if (files.length === 0) {
-      const result = await runStorefrontBuild(session, brief ?? "", "auto");
+      const result = await runStorefrontBuild(session, brief ?? "", "auto", undefined, undefined, request.signal);
       return { runId: result.versionId, status: "draft" } satisfies StudioGenerateReceipt;
     }
 
@@ -408,7 +425,7 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
       if (intent.useAsReference) {
       let result: { versionId: string };
       try {
-        result = await runStorefrontBuild(session, customPrompt, "custom", referenceImages, prepared);
+        result = await runStorefrontBuild(session, customPrompt, "custom", referenceImages, prepared, request.signal);
       } catch (err) {
         // Products were already written; the shared 502 would discard that fact.
         // Return an honest 200 receipt carrying both: the created products AND
@@ -467,13 +484,14 @@ export async function action({ request }: ActionFunctionArgs) {
       if (!prompt || prompt.length > EDIT_PROMPT_MAX) return jsonError(422, "invalid_edit_prompt", "Keep the edit prompt under 2,000 characters.");
       if (!isUuid(expectedDraftVersionId)) return jsonError(422, "invalid_draft_version");
       if (context === null) return jsonError(422, "invalid_edit_context");
-      return editStreamResponse((onEvent) => editStorefrontByPrompt({
+      return editStreamResponse(request.signal, (onEvent, signal) => editStorefrontByPrompt({
         shopId: session.shopId,
         actorId: session.userId,
         prompt,
         expectedDraftVersionId,
         trusted: quotaTrusted(session),
         onEvent,
+        signal,
         ...(context ? { context } : {}),
       }));
     }
@@ -559,7 +577,7 @@ export async function action({ request }: ActionFunctionArgs) {
           });
         }
         const brief = rawBrief && rawBrief.trim() ? rawBrief.trim() : undefined;
-        const result = await runStorefrontBuild(session, brief ?? "", "auto");
+        const result = await runStorefrontBuild(session, brief ?? "", "auto", undefined, undefined, request.signal);
         return { runId: result.versionId, status: "draft" };
       });
     }

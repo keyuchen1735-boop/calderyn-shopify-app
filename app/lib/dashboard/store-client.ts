@@ -62,6 +62,7 @@ export async function editStudioStorefront(input: {
 export async function editStudioStorefrontStream(
   input: { prompt: string; expectedDraftVersionId: string; context?: PreviewEditContext },
   onStage: (stage: StorefrontEditStage) => void,
+  signal?: AbortSignal,
 ): Promise<StorefrontEditReceipt | { status: "start_over"; mode: "custom" }> {
   let response: Response;
   try {
@@ -73,8 +74,10 @@ export async function editStudioStorefrontStream(
         ...(typeof location !== "undefined" ? { Origin: location.origin } : {}),
       },
       body: JSON.stringify({ action: "edit", ...input }),
+      signal,
     });
   } catch (error) {
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
     throw new StudioStreamError(error instanceof Error ? error.message : "edit stream request failed");
   }
   if (!response.ok) {
@@ -126,6 +129,7 @@ export async function editStudioStorefrontStream(
     if (receipt) return receipt;
   } catch (error) {
     if (error instanceof DashboardApiError) throw error;
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
     throw new StudioStreamError(error instanceof Error ? error.message : "edit stream read failed");
   }
   throw new StudioStreamError("edit stream ended without an installed storefront");
@@ -217,6 +221,7 @@ export async function generateStudioStoreWithImages(
   files: File[],
   model: StudioDesignModel,
   intent?: "products" | "reference" | "both",
+  signal?: AbortSignal,
 ): Promise<StudioGenerateReceipt> {
   const form = new FormData();
   form.set("action", "generate");
@@ -224,7 +229,7 @@ export async function generateStudioStoreWithImages(
   form.set("model", model);
   if (intent) form.set("intent", intent);
   for (const file of files) form.append("image", file);
-  return apiSendForm<StudioGenerateReceipt>("/dashboard/api/store", form);
+  return apiSendForm<StudioGenerateReceipt>("/dashboard/api/store", form, signal);
 }
 
 /** Publish every drafted storefront page after the tenant domain is ready. The
@@ -286,6 +291,7 @@ export async function buildStudioStoreStream(
   designRequest: StoreDesignRequest,
   onStage: (stage: Runtime1BuildStage, event: ReturnType<typeof parseBuildEvent>) => void,
   recommendedResolution?: StoreDesignResolution,
+  signal?: AbortSignal,
 ): Promise<StudioBundleBuildReceipt> {
   let res: Response;
   try {
@@ -297,8 +303,10 @@ export async function buildStudioStoreStream(
         ...(typeof location !== "undefined" ? { Origin: location.origin } : {}),
       },
       body: JSON.stringify({ designRequest, ...(recommendedResolution ? { recommendedResolution } : {}) }),
+      signal,
     });
   } catch (err) {
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
     throw new StudioStreamError(err instanceof Error ? err.message : "stream request failed");
   }
   if (!res.ok) {
@@ -349,6 +357,7 @@ export async function buildStudioStoreStream(
     }
   } catch (err) {
     if (err instanceof DashboardApiError) throw err;
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
     throw new StudioStreamError(err instanceof Error ? err.message : "stream read failed");
   }
   const rest = buffer.trim();
