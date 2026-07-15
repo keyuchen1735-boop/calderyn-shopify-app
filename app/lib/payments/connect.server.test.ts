@@ -101,6 +101,13 @@ describe("paymentsReadiness", () => {
     expect(await paymentsReadiness("shop-demo")).toEqual({ ready: true, route: "platform" });
   });
 
+  it("fails closed for a demo shop when the platform key is live", async () => {
+    process.env.STRIPE_SECRET_KEY = "rk_live_x";
+    h.maybeSingle.mockResolvedValue({ data: null, error: null });
+    h.shopsMaybeSingle.mockResolvedValue({ data: { demo_mode: true }, error: null });
+    expect(await paymentsReadiness("shop-demo")).toEqual({ ready: false, reason: "no_account" });
+  });
+
   it("is not ready (no_account) for a real shop with no connected account", async () => {
     h.maybeSingle.mockResolvedValue({ data: null, error: null });
     expect(await paymentsReadiness("shop-1")).toEqual({ ready: false, reason: "no_account" });
