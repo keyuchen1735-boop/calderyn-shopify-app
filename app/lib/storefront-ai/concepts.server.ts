@@ -60,8 +60,11 @@ function numberMap(value: unknown, field: string): Record<string, number> {
   const entries = Object.entries(source);
   if (entries.length > 16) throw new Error(`${field} has too many entries`);
   return Object.fromEntries(entries.map(([key, child]) => {
-    if (typeof child !== "number" || !Number.isFinite(child)) throw new Error(`${field}.${key} must be a number`);
-    return [key, child];
+    const normalized = typeof child === "string" && /^\d+(?:\.\d+)?(?:px)?$/i.test(child.trim())
+      ? Number.parseFloat(child)
+      : child;
+    if (typeof normalized !== "number" || !Number.isFinite(normalized)) throw new Error(`${field}.${key} must be a number`);
+    return [key, normalized];
   }));
 }
 
