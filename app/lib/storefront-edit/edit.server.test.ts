@@ -551,6 +551,34 @@ describe("editStorefrontByPrompt", () => {
 });
 
 describe("createDefaultStructuralPatchCompiler", () => {
+  it("accepts store-wide patches beyond the old 12-operation compiler cap", async () => {
+    const operations = Array.from({ length: 13 }, (_, index) => ({
+      kind: "replaceTextChildren" as const,
+      routeId: "home" as const,
+      targetId: `region-${index}`,
+      value: `Copy ${index}`,
+      expected: `sha256:${"a".repeat(64)}`,
+    }));
+    const provider = { complete: vi.fn().mockResolvedValue({
+      value: { operations },
+      provider: "fixture", model: "fixture-model", usage: { inputTokens: 1, outputTokens: 1 },
+    }) };
+
+    const result = await createDefaultStructuralPatchCompiler(provider)({
+      prompt: "Revamp the whole store",
+      bundle: baseBundle(),
+    });
+
+    expect(result.operations).toHaveLength(13);
+    expect(provider.complete).toHaveBeenCalledWith(expect.objectContaining({
+      schema: expect.objectContaining({
+        properties: expect.objectContaining({
+          operations: expect.objectContaining({ maxItems: 32 }),
+        }),
+      }),
+    }));
+  });
+
   it("accepts only strict compiler-source structural operations and carries preview scope preconditions", async () => {
     const bundle = baseBundle();
     bundle.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
