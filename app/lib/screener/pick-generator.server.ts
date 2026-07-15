@@ -9,10 +9,19 @@ import { geminiImageClient, imageGenerator } from "./image-generator.server";
  *  mode uses the always-on copy generator. */
 export function pickGenerator(
   mode: string | null,
-  deps: { createMessage: CreateMessageFn; model: string },
+  deps: {
+    createMessage: CreateMessageFn;
+    model: string;
+    image?: {
+      shopId: string;
+      purpose: "campaign_initial" | "campaign_regeneration";
+      generationId: string;
+    };
+  },
 ): CreativeGenerator {
   if (mode === "image") {
-    return imageGenerator({ generateImage: geminiImageClient() });
+    if (!deps.image) throw new Error("Image generation context is required");
+    return imageGenerator({ generateImage: geminiImageClient(deps.image) });
   }
   return copyGenerator({ createMessage: deps.createMessage, model: deps.model });
 }

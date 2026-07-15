@@ -23,7 +23,7 @@ const REQ: GenerateRequest = {
   count: 2,
 };
 
-const KEYS = ["GEMINI_API_KEY"] as const;
+const KEYS = ["GEMINI_API_KEY", "GEMINI_IMAGE_GENERATION_ENABLED"] as const;
 let saved: Record<string, string | undefined>;
 beforeEach(() => {
   saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
@@ -41,10 +41,12 @@ describe("imageGenerator", () => {
     expect(imageGenerator({ generateImage: vi.fn() }).mode).toBe("image");
   });
 
-  it("available() requires the Gemini API key", () => {
+  it("available() requires both the paid-generation switch and Gemini key", () => {
     const gen = imageGenerator({ generateImage: vi.fn() });
     expect(gen.available()).toBe(false);
     process.env.GEMINI_API_KEY = "k";
+    expect(gen.available()).toBe(false);
+    process.env.GEMINI_IMAGE_GENERATION_ENABLED = "1";
     expect(gen.available()).toBe(true);
   });
 

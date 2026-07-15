@@ -99,4 +99,17 @@ describe("generateMissingListingImages", () => {
     expect(result).toBe(2);
     expect(enhance).toHaveBeenCalledTimes(2);
   });
+  it("reuses existing images and caps a build to three paid generations", async () => {
+    const enhance = vi.fn(async (_shopId: string, item: StoreProduct) => ({ productId: item.id, status: "ready" as const, url: `/generated/${item.id}.webp` }));
+    const products = [
+      product("native", "/native.webp"),
+      product("1", null),
+      product("2", null),
+      product("3", null),
+      product("4", null),
+    ];
+    const result = await generateMissingListingImages(realShop, products, enhance);
+    expect(result).toBe(3);
+    expect(enhance.mock.calls.map(([, item]) => item.id)).toEqual(["1", "2", "3"]);
+  });
 });

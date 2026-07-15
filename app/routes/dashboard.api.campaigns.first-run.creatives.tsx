@@ -111,6 +111,9 @@ export async function action({ request }: ActionFunctionArgs) {
     if (reservation.kind === "replay") {
       return normalizeFirstRunCreativePayload(reservation.result);
     }
+    const directionCount = attempt === 1 ? 3 : 1;
+    const imagePurpose =
+      attempt === 1 ? "campaign_initial" : "campaign_regeneration";
     let keepReservation = false;
     let terminalFallback: Record<string, unknown> | null = null;
     const finish = async <T extends Record<string, unknown>>(response: T) => {
@@ -204,14 +207,18 @@ export async function action({ request }: ActionFunctionArgs) {
           weakMetrics: [],
           tips: [],
           styleRefs: [],
-          count: 3,
+          count: directionCount,
         };
         const generator = createImageGenerator({
-          generateImage: geminiImageClient(),
+          generateImage: geminiImageClient({
+            shopId: session.shopId,
+            purpose: imagePurpose,
+            generationId: reservation.id,
+          }),
         });
         const imageResult = await generateFirstRunImages({
           shop: session.shopId,
-          count: 3,
+          count: directionCount,
           generator,
           request: imageOnlyRequest,
         });
@@ -228,7 +235,7 @@ export async function action({ request }: ActionFunctionArgs) {
           );
           keepReservation = true;
         }
-        if (imageResult.candidates.length === 3) {
+        if (imageResult.candidates.length === directionCount) {
           return finish({
             available: true,
             variants: imageResult.candidates.map((candidate, index) => ({
@@ -263,7 +270,14 @@ export async function action({ request }: ActionFunctionArgs) {
         DEFAULT_SPEND_CENTS,
       );
       const copyGenerator = pickGenerator("copy", claudeDeps);
-      const imageGenerator = pickGenerator("image", claudeDeps);
+      const imageGenerator = pickGenerator("image", {
+        ...claudeDeps,
+        image: {
+          shopId: session.shopId,
+          purpose: imagePurpose,
+          generationId: reservation.id,
+        },
+      });
 
       // The intended experience requires three real product-grounded images.
       // Do not spend copy/scoring work or persist a completed fallback attempt
@@ -296,20 +310,20 @@ export async function action({ request }: ActionFunctionArgs) {
         original,
         originalScorecard,
         styleRefs: calib.topAdNames,
-        count: 3,
+        count: directionCount,
       });
       const [copyCandidates, imageResult] = await Promise.all([
         copyGenerator.generate(generationRequest),
         generateFirstRunImages({
           shop: session.shopId,
-          count: 3,
+          count: directionCount,
           generator: imageGenerator,
           request: generationRequest,
         }),
       ]);
       keepReservation ||=
         imageResult.providerAttempted || copyCandidates.length > 0;
-      if (imageResult.candidates.length !== 3) {
+      if (imageResult.candidates.length !== directionCount) {
         return finish({
           available: false,
           variants: [] as CreativeVariantDTO[],
@@ -325,7 +339,7 @@ export async function action({ request }: ActionFunctionArgs) {
         original,
         copyCandidates,
         imageResult.candidates,
-        3,
+        directionCount,
       );
       if (candidates.length === 0) {
         return finish({

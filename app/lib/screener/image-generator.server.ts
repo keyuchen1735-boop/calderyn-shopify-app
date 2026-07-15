@@ -1,11 +1,17 @@
-import { generateGeminiImages } from "~/lib/storegen/imagery/gemini.server";
+import { generateGeminiImages, geminiImageGenerationEnabled } from "~/lib/storegen/imagery/gemini.server";
 import type { CreativeGenerator, GenerateRequest } from "./generate.server";
 import type { GeneratedCandidate } from "./types";
 
 export type GenerateImageFn = (args: { prompt: string; referenceImageUrl: string | null; count: number }) => Promise<string[]>;
 
-export function geminiImageClient(): GenerateImageFn {
-  return ({ prompt, referenceImageUrl, count }) => generateGeminiImages({ prompt, referenceImageUrl, count });
+export function geminiImageClient(input: {
+  shopId: string;
+  purpose: "campaign_initial" | "campaign_regeneration";
+  generationId: string;
+}): GenerateImageFn {
+  return ({ prompt, referenceImageUrl, count }) => generateGeminiImages({
+    ...input, prompt, referenceImageUrl, count,
+  });
 }
 
 export function buildImagePrompt(req: GenerateRequest): string {
@@ -39,7 +45,7 @@ export function buildImagePrompt(req: GenerateRequest): string {
 export function imageGenerator(deps: { generateImage: GenerateImageFn }): CreativeGenerator {
   return {
     mode: "image",
-    available: () => Boolean(process.env.GEMINI_API_KEY),
+    available: () => geminiImageGenerationEnabled() && Boolean(process.env.GEMINI_API_KEY),
     async generate(req): Promise<GeneratedCandidate[]> {
       const urls = await deps.generateImage({ prompt: buildImagePrompt(req), referenceImageUrl: req.input.imageUrl, count: req.count });
       const targeted = req.weakMetrics.map((m) => m.label).join(", ") || "overall creative quality";

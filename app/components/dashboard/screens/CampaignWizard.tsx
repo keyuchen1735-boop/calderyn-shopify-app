@@ -175,6 +175,13 @@ type WizardAction =
       creative: CreativeFields;
       regenerationsLeft: number;
     }
+  | {
+      type: "creativeReplacement";
+      index: number;
+      variant: FirstRunCreativeVariant;
+      creative: CreativeFields;
+      regenerationsLeft: number;
+    }
   | { type: "creativeSelection"; index: number; creative: CreativeFields }
   | { type: "regenerationsLeft"; value: number }
   /** Mint a fresh runId: the server 409s (run_input_mismatch) when a runId is
@@ -235,6 +242,18 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
         creative: action.creative,
         regenerationsLeft: action.regenerationsLeft,
       };
+    case "creativeReplacement": {
+      if (!state.creativeVariants || action.index < 0 || action.index >= state.creativeVariants.length) return state;
+      const creativeVariants = [...state.creativeVariants];
+      creativeVariants[action.index] = action.variant;
+      return {
+        ...state,
+        creativeVariants,
+        selectedCreativeIndex: action.index,
+        creative: action.creative,
+        regenerationsLeft: action.regenerationsLeft,
+      };
+    }
     case "creativeSelection":
       return {
         ...state,
@@ -1367,23 +1386,30 @@ function CreativeStep({
               : [];
         if (displayVariants.length > 0) {
           const first = displayVariants[0];
-          dispatch({
+          const nextCreative = {
+            headline: first.headline,
+            primaryText: first.primaryText,
+            cta: first.cta,
+            imageUrl: first.imageUrl ?? res.imageUrl,
+            destinationUrl: res.destinationUrl,
+            audience: "Broad, your country",
+          };
+          dispatch(isRegeneration && variants?.length ? {
+            type: "creativeReplacement",
+            index: selectedIdx,
+            variant: first,
+            regenerationsLeft: res.regenerationsLeft,
+            creative: nextCreative,
+          } : {
             type: "creativeOptions",
             variants: displayVariants,
             regenerationsLeft: res.regenerationsLeft,
-            creative: {
-              headline: first.headline,
-              primaryText: first.primaryText,
-              cta: first.cta,
-              imageUrl: first.imageUrl ?? res.imageUrl,
-              destinationUrl: res.destinationUrl,
-              audience: "Broad, your country",
-            },
+            creative: nextCreative,
           });
         } else if (isRegeneration) {
           dispatch({ type: "regenerationsLeft", value: res.regenerationsLeft });
           setRegenerationError(
-            "Couldn't create a fresh set right now. Your current options are unchanged.",
+            "Couldn't replace that direction right now. Your current options are unchanged.",
           );
         } else {
           dispatch({ type: "regenerationsLeft", value: res.regenerationsLeft });
@@ -1414,7 +1440,7 @@ function CreativeStep({
           setRegenerationError(
             error instanceof DashboardApiError
               ? error.message
-              : "Couldn't create a fresh set right now. Your current options are unchanged.",
+              : "Couldn't replace that direction right now. Your current options are unchanged.",
           );
         } else {
           setLoadError(true);
@@ -1513,7 +1539,7 @@ function CreativeStep({
             >
               {regenerating
                 ? "Generating…"
-                : `Regenerate · ${state.regenerationsLeft} left`}
+                : `Regenerate selected · 1 credit · ${state.regenerationsLeft} left`}
             </Btn>
           </div>
         )}

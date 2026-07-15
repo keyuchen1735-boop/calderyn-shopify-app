@@ -2,6 +2,7 @@
 // Cost guardrails for image generation: a per-shop and a global
 // daily cap on image generations. The limit DECISION is pure (testable); the
 // counting + reservation hit Supabase. Copy generation is unaffected.
+import { randomUUID } from "node:crypto";
 import { getSupabase, resolveShopId } from "../supabase.server";
 
 export interface ImageGenLimits {
@@ -9,8 +10,23 @@ export interface ImageGenLimits {
   globalDaily: number;
 }
 
-const DEFAULT_PER_SHOP_DAILY = 20;
-const DEFAULT_GLOBAL_DAILY = 300;
+const DEFAULT_PER_SHOP_DAILY = 9;
+const DEFAULT_GLOBAL_DAILY = 30;
+
+export interface ImageGenerationMetadata {
+  generationId?: string;
+  provider: string;
+  model: string;
+  purpose: string;
+}
+
+export interface ImageGenerationUsage {
+  providerRequestId?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  thoughtTokens?: number | null;
+  estimatedCostUsdMicros: number;
+}
 
 function positiveIntEnv(name: string, fallback: number): number {
   const n = Number(process.env[name]);
@@ -20,7 +36,10 @@ function positiveIntEnv(name: string, fallback: number): number {
 /** Daily caps, env-tunable (`IMAGE_GEN_DAILY_PER_SHOP`, `IMAGE_GEN_DAILY_GLOBAL`). */
 export function imageGenLimits(): ImageGenLimits {
   return {
-    perShopDaily: positiveIntEnv("IMAGE_GEN_DAILY_PER_SHOP", DEFAULT_PER_SHOP_DAILY),
+    perShopDaily: positiveIntEnv(
+      "IMAGE_GEN_DAILY_PER_SHOP",
+      DEFAULT_PER_SHOP_DAILY,
+    ),
     globalDaily: positiveIntEnv("IMAGE_GEN_DAILY_GLOBAL", DEFAULT_GLOBAL_DAILY),
   };
 }
@@ -60,67 +79,137 @@ export async function checkAndReserveImageGen(
   shop: string,
   now: Date = new Date(),
 ): Promise<ReserveResult> {
-  const sb = getSupabase();
-  const shopId = await resolveShopId(shop);
-  const day = now.toISOString().slice(0, 10); // UTC day
-  const { perShopDaily, globalDaily } = imageGenLimits();
-
-  const shopRes = await sb
-    .from(EVENT_TABLE)
-    .select("*", { count: "exact", head: true })
-    .eq("shop_id", shopId)
-    .eq("day", day);
-  const globalRes = await sb
-    .from(EVENT_TABLE)
-    .select("*", { count: "exact", head: true })
-    .eq("day", day);
-
-  const shopCount = Number((shopRes as { count?: number | null }).count ?? 0);
-  const globalCount = Number((globalRes as { count?: number | null }).count ?? 0);
-
-  const decision = decideImageGenLimit({ shopCount, globalCount, perShopDaily, globalDaily });
-  if (!decision.ok) return decision;
-
-  const inserted = await sb.from(EVENT_TABLE).insert({ shop_id: shopId, day }).select("id").single();
-  const eventId = ((inserted as { data?: { id?: string } | null }).data?.id as string) ?? null;
-  return { ok: true, remaining: Math.max(perShopDaily - shopCount - 1, 0), eventId };
+  const reserved = await reserveImageGenSlots(shop, 1, now);
+  if (!reserved.ok) return reserved;
+  return {
+    ok: true,
+    remaining: reserved.remaining,
+    eventId: reserved.eventIds[0] ?? null,
+  };
 }
 
 export type ReserveSlotsResult =
-  | { ok: true; eventIds: string[] }
+  | { ok: true; eventIds: string[]; generationId: string; remaining: number }
   | { ok: false; scope: "shop" | "global"; limit: number };
 
+const LEGACY_METADATA: ImageGenerationMetadata = {
+  provider: "gemini",
+  model: "gemini-3.1-flash-lite-image",
+  purpose: "legacy",
+};
+
 /**
- * Reserve `count` quota slots for a batch generation. If any slot is blocked
- * partway, the slots already reserved are released and the block is reported —
- * a blocked batch must not consume quota.
+ * Atomically reserve a complete batch. Database advisory locks cover the
+ * count-and-insert decision so concurrent instances cannot overshoot either
+ * the per-shop ceiling or the global backstop.
  */
 export async function reserveImageGenSlots(
   shop: string,
   count: number,
   now: Date = new Date(),
+  metadata: ImageGenerationMetadata = LEGACY_METADATA,
 ): Promise<ReserveSlotsResult> {
-  const eventIds: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const res = await checkAndReserveImageGen(shop, now);
-    if (!res.ok) {
-      for (const id of eventIds) await releaseImageGen(id);
-      return res;
-    }
-    if (res.eventId) eventIds.push(res.eventId);
+  if (!Number.isInteger(count) || count < 1 || count > 12) {
+    throw new Error("image generation count must be between 1 and 12");
   }
-  return { ok: true, eventIds };
+  const shopId = await resolveShopId(shop);
+  const generationId = metadata.generationId ?? randomUUID();
+  const day = now.toISOString().slice(0, 10);
+  const { perShopDaily, globalDaily } = imageGenLimits();
+  const { data, error } = await getSupabase()
+    .rpc("reserve_image_generation_slots", {
+      p_shop_id: shopId,
+      p_count: count,
+      p_per_shop_daily: perShopDaily,
+      p_global_daily: globalDaily,
+      p_day: day,
+      p_generation_id: generationId,
+      p_provider: metadata.provider,
+      p_model: metadata.model,
+      p_purpose: metadata.purpose,
+    })
+    .single();
+  if (error) throw error;
+  const row = data as {
+    event_ids: string[] | null;
+    blocked_scope: "shop" | "global" | null;
+    limit_value: number | null;
+    remaining: number;
+  };
+  if (row.blocked_scope) {
+    return {
+      ok: false,
+      scope: row.blocked_scope,
+      limit: Number(row.limit_value ?? 0),
+    };
+  }
+  const eventIds = Array.isArray(row.event_ids) ? row.event_ids : [];
+  if (eventIds.length !== count) {
+    throw new Error(
+      "image generation reservation returned the wrong slot count",
+    );
+  }
+  return {
+    ok: true,
+    eventIds,
+    generationId,
+    remaining: Number(row.remaining),
+  };
+}
+
+/** Mark the exact point at which a provider request becomes cost-bearing. */
+export async function markImageGenStarted(eventId: string): Promise<void> {
+  const { data, error } = await getSupabase()
+    .from(EVENT_TABLE)
+    .update({ provider_started_at: new Date().toISOString() })
+    .eq("id", eventId)
+    .eq("status", "reserved")
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("image generation reservation no longer exists");
+}
+
+/** Persist provider usage and the estimated USD cost for one image request. */
+export async function completeImageGen(
+  eventId: string,
+  result:
+    | { status: "succeeded"; usage: ImageGenerationUsage }
+    | { status: "failed"; errorCode: string; usage?: ImageGenerationUsage },
+): Promise<void> {
+  const usage = result.usage;
+  const { data, error } = await getSupabase()
+    .from(EVENT_TABLE)
+    .update({
+      status: result.status,
+      completed_at: new Date().toISOString(),
+      provider_request_id: usage?.providerRequestId ?? null,
+      input_tokens: usage?.inputTokens ?? null,
+      output_tokens: usage?.outputTokens ?? null,
+      thought_tokens: usage?.thoughtTokens ?? null,
+      estimated_cost_usd_micros: usage?.estimatedCostUsdMicros ?? 0,
+      error_code: result.status === "failed" ? result.errorCode : null,
+    })
+    .eq("id", eventId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("image generation event no longer exists");
 }
 
 /**
- * Release a reservation made by checkAndReserveImageGen when the generation
- * itself failed — a failed attempt must not burn the merchant's daily quota.
- * Best-effort: a release failure must never mask the original error.
+ * Release only a reservation that never reached the provider. A cost-bearing
+ * request stays in the daily ceiling even if it fails, preventing retry storms.
  */
 export async function releaseImageGen(eventId: string | null): Promise<void> {
   if (!eventId) return;
   try {
-    await getSupabase().from(EVENT_TABLE).delete().eq("id", eventId);
+    await getSupabase()
+      .from(EVENT_TABLE)
+      .delete()
+      .eq("id", eventId)
+      .eq("status", "reserved")
+      .is("provider_started_at", null);
   } catch {
     /* best-effort */
   }

@@ -3,7 +3,8 @@ import type { BundleValidationReport } from "~/lib/storefront-compiler/validate"
 import type { DefinedRecipe } from "~/lib/storefront-recipes/factory";
 import { generateOriginalStorefront } from "~/lib/storefront-ai/generate.server";
 import { reserveGenerateQuota } from "~/lib/storegen/guard.server";
-import { enhanceListing, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
+import { applyAssetOverrides, enhanceListing, generateMissingListingImages, MAX_STOREFRONT_IMAGES_PER_BUILD } from "~/lib/storegen/imagery/asset.server";
+import { geminiImageGenerationEnabled } from "~/lib/storegen/imagery/gemini.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import type {
   GenerateOriginalStorefrontInput,
@@ -197,10 +198,19 @@ const defaultDependencies: StorefrontBuildDependencies = {
   resolveDesign: (request, evidence) => resolveStoreDesign(request, evidence, STORE_TEMPLATE_REGISTRY),
   loadRecipe,
   prepareRecipeImages: async (shopId, signal) => {
+    // Local and preview builds deliberately use the recipe's own placeholder
+    // imagery unless paid generation has been explicitly enabled.
+    if (!geminiImageGenerationEnabled()) return { required: 0, ready: 0 };
     const products = await getCatalog().listProducts(shopId, { limit: 12 });
-    const required = products.length > 0 && products.every((product) => product.images.length === 0) ? products.length : 0;
-    const ready = await generateMissingListingImages(shopId, products, enhanceListing, signal);
-    return { required, ready };
+    const needsGeneratedImagery = products.length > 0 && products.every((product) => product.images.length === 0);
+    if (!needsGeneratedImagery) return { required: 0, ready: 0 };
+    const required = Math.min(products.length, MAX_STOREFRONT_IMAGES_PER_BUILD);
+    const withOwnedAssets = await applyAssetOverrides(shopId, products);
+    const existingReady = withOwnedAssets.slice(0, required).filter((product) => product.images.length > 0).length;
+    const generated = await generateMissingListingImages(
+      shopId, withOwnedAssets, enhanceListing, signal, required - existingReady,
+    );
+    return { required, ready: Math.min(required, existingReady + generated) };
   },
   assertWriteAllowed: assertStorefrontWriteAllowed,
   readPointers: readStorefrontReleasePointers,

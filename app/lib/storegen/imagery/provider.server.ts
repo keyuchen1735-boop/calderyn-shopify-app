@@ -5,10 +5,12 @@
 import { generateGeminiImages } from "./gemini.server";
 
 export interface ListingImageRequest {
+  shopId: string;
   productTitle: string;
   productDescription: string;
   sourceImageUrl: string | null;
   mode: "product_shot" | "lifestyle_scene";
+  purpose?: "storefront_product" | "storefront_design";
   signal?: AbortSignal;
 }
 export interface ImageProvider {
@@ -21,6 +23,8 @@ export function getImageProvider(): ImageProvider {
     name: "gemini",
     async generateListingImage(req) {
       const [url] = await generateGeminiImages({
+        shopId: req.shopId,
+        purpose: req.purpose ?? "storefront_product",
         prompt: `Create a clean ecommerce ${req.mode === "product_shot" ? "product photo" : "lifestyle image"} for ${req.productTitle}. ${req.productDescription}`,
         referenceImageUrl: req.sourceImageUrl,
         signal: req.signal,

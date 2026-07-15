@@ -54,6 +54,7 @@ export function buildChain(): unknown {
       return c;
     };
   for (const m of [
+    "rpc",
     "from",
     "insert",
     "update",
