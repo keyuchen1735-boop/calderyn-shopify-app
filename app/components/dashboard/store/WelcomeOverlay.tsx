@@ -268,26 +268,37 @@ export default function WelcomeOverlay({
                 </label>
                 <div className="cd-welcome-cards">
                   {recommendedTemplates.map((template) => (
-                    <button
+                    <div
                       key={template.id}
-                      type="button"
                       className="cd-welcome-card"
                       data-welcome-item=""
-                      aria-pressed={designMode === "recipe" && selectedTemplateId === template.id}
-                      onClick={() => {
-                        setDesignMode("recipe");
-                        setSelectedTemplateId(template.id);
-                      }}
+                      data-selected={designMode === "recipe" && selectedTemplateId === template.id ? "" : undefined}
                     >
                       <span className="cd-template-preview">
-                        <img src={template.previewSrc} alt="" />
+                        <iframe
+                          title={`${template.name} template preview`}
+                          src={`/dashboard/store/preview?template=${encodeURIComponent(template.id)}&route=home`}
+                          loading="lazy"
+                          sandbox="allow-same-origin"
+                          tabIndex={-1}
+                        />
                         {template.id === recommendedTemplateId && <span>Best match</span>}
                       </span>
                       <span className="cd-template-meta">
                         <strong>{template.name}</strong>
                         <small>{template.descriptor}</small>
                       </span>
-                    </button>
+                      <button
+                        type="button"
+                        className="cd-welcome-card__select"
+                        aria-label={`Select ${template.name}`}
+                        aria-pressed={designMode === "recipe" && selectedTemplateId === template.id}
+                        onClick={() => {
+                          setDesignMode("recipe");
+                          setSelectedTemplateId(template.id);
+                        }}
+                      />
+                    </div>
                   ))}
                 </div>
                 {designMode !== "custom" && previewTemplate && (

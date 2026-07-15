@@ -9,6 +9,7 @@ import type {
   RouteTarget,
   StorefrontBundleV1,
   StorefrontRouteId,
+  StoreTemplateId,
   TrustedSlotManifest,
 } from "~/lib/storefront-bundle/types";
 import { isAllowedCompiledTag } from "~/lib/storefront-compiler/html";
@@ -42,6 +43,7 @@ interface RenderContext {
   instancePath: readonly string[];
   instanceSuffix?: string;
   mode: "public" | "preview";
+  previewTemplateId?: StoreTemplateId;
   assetUrls: ReadonlyMap<string, string>;
 }
 
@@ -239,6 +241,7 @@ function targetHref(target: RouteTarget, context: RenderContext): string {
     );
     if (target.routeId === "account" || target.routeId === "policy") return "#";
     const previewRoute = new URLSearchParams({ route: target.routeId });
+    if (context.previewTemplateId) previewRoute.set("template", context.previewTemplateId);
     if (params.handle) previewRoute.set("handle", params.handle);
     if (params.query) previewRoute.set("q", params.query);
     return `/dashboard/store/preview?${previewRoute.toString()}`;
@@ -353,6 +356,7 @@ function contextFor(
   data: PublicPresentationData,
   mode: "public" | "preview" = "public",
   assetUrls: ReadonlyMap<string, string> = new Map(),
+  previewTemplateId?: StoreTemplateId,
 ): RenderContext {
   const bindings = new Map<string, CompiledBinding[]>();
   for (const binding of treeBindings) {
@@ -368,6 +372,7 @@ function contextFor(
     currentScopeId: "root",
     instancePath: [],
     mode,
+    previewTemplateId,
     assetUrls,
   };
 }
@@ -379,8 +384,9 @@ function renderTree(
   data: PublicPresentationData,
   mode: "public" | "preview" = "public",
   assetUrls: ReadonlyMap<string, string> = new Map(),
+  previewTemplateId?: StoreTemplateId,
 ): ReactNode[] {
-  const context = contextFor(bindings, trustedSlots, data, mode, assetUrls);
+  const context = contextFor(bindings, trustedSlots, data, mode, assetUrls, previewTemplateId);
   return tree.map((node, index) => renderNode(node, context, `node-${index}`));
 }
 
@@ -476,6 +482,7 @@ export function isRuntime1RenderData(value: unknown): value is {
 /** Render the immutable shell and selected route from the same resolved bundle object. */
 export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, checkoutContent, customAssetUrls }: RenderStorefrontSurfaceInput): ReactElement {
   const assetUrls = assetUrlsForBundle(bundle, customAssetUrls ?? data.storefrontAssetUrls);
+  const previewTemplateId = mode === "preview" && bundle.source.kind === "recipe" ? bundle.source.templateId : undefined;
   const shellTree = splitShellTree(bundle.shell.tree);
   let routeResult: ReactElement;
   if (routeId === "checkout") {
@@ -495,7 +502,7 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
     routeResult = (
       <div data-cd-bundle={routeId} data-cd-bundle-route={routeId}>
         {route.css ? <StorefrontStyle nonce={nonce} css={route.css} kind={routeId} /> : null}
-        {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls)}
+        {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls, previewTemplateId)}
       </div>
     );
   }
@@ -505,9 +512,9 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
       {bundle.designSystem.globalCss ? <StorefrontStyle nonce={nonce} css={bundle.designSystem.globalCss} kind="global" /> : null}
       <div data-cd-bundle="shell" data-cd-bundle-shell={routeId}>
         {bundle.shell.css ? <StorefrontStyle nonce={nonce} css={bundle.shell.css} kind="shell" /> : null}
-        {renderTree(shellTree.beforeRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls)}
+        {renderTree(shellTree.beforeRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls, previewTemplateId)}
         {routeResult}
-        {renderTree(shellTree.afterRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls)}
+        {renderTree(shellTree.afterRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls, previewTemplateId)}
       </div>
     </div>
   );

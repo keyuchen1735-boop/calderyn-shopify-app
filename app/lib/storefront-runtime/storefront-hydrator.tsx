@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { StorefrontBundleV1, StorefrontRouteId } from "~/lib/storefront-bundle/types";
+import type { StorefrontBundleV1, StorefrontRouteId, StoreTemplateId } from "~/lib/storefront-bundle/types";
 import type { PublicPresentationData } from "./public-data.server";
 import { hydrateStorefront } from "./hydrate";
 import type { StorefrontRuntimeHandle } from "./hydrate";
@@ -8,10 +8,11 @@ import type { CommerceIntent, CommerceMountContext, ResolvedRouteTarget, Runtime
 type RuntimeMode = "public" | "preview";
 export type RuntimeFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-function hrefFor(target: ResolvedRouteTarget, mode: RuntimeMode): string {
+function hrefFor(target: ResolvedRouteTarget, mode: RuntimeMode, previewTemplateId?: StoreTemplateId): string {
   if (mode === "preview") {
     if (target.routeId === "account" || target.routeId === "policy") return "#";
     const query = new URLSearchParams({ route: target.routeId });
+    if (previewTemplateId) query.set("template", previewTemplateId);
     if (typeof target.params.handle === "string") query.set("handle", target.params.handle);
     if (typeof target.params.query === "string") query.set("q", target.params.query);
     return `/dashboard/store/preview?${query.toString()}`;
@@ -104,6 +105,7 @@ function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext):
 
 export function createRuntimeAdapters(input: {
   mode: RuntimeMode;
+  previewTemplateId?: StoreTemplateId;
   data?: PublicPresentationData;
   fetcher?: RuntimeFetcher;
   refresh?: () => void;
@@ -128,7 +130,7 @@ export function createRuntimeAdapters(input: {
     if (intent.type === "variant.select") return;
     if (input.mode === "preview") {
       const body = previewCommerceBody(intent);
-      if (body) void fetcher("/dashboard/store/preview", { method: "POST", body, credentials: "same-origin" }).then(refresh);
+      if (body) void fetcher(`/dashboard/store/preview${input.previewTemplateId ? `?template=${encodeURIComponent(input.previewTemplateId)}` : ""}`, { method: "POST", body, credentials: "same-origin" }).then(refresh);
       return;
     }
     if (intent.type === "checkout.start") {
@@ -145,7 +147,7 @@ export function createRuntimeAdapters(input: {
   };
   return {
     navigate(target) {
-      const href = hrefFor(target, input.mode);
+      const href = hrefFor(target, input.mode, input.previewTemplateId);
       if (href !== "#") locationAssign(href);
     },
     search(intent) {
@@ -157,7 +159,7 @@ export function createRuntimeAdapters(input: {
       const query = intent.type === "clear"
         ? ""
         : pendingSearchQuery ?? String(intent.query ?? "").slice(0, 200);
-      locationAssign(hrefFor({ routeId: "search", params: { query } }, input.mode));
+      locationAssign(hrefFor({ routeId: "search", params: { query } }, input.mode, input.previewTemplateId));
     },
     collection(intent) {
       const url = new URL(globalThis.window?.location.href ?? "https://runtime.invalid/");
@@ -284,7 +286,11 @@ export function StorefrontHydrator(props: {
   useEffect(() => {
     const root = document.querySelector<HTMLElement>("[data-cd-bundle-runtime='1']");
     if (!root) return;
-    const adapters = createRuntimeAdapters({ mode: props.mode, data: props.data });
+    const adapters = createRuntimeAdapters({
+      mode: props.mode,
+      data: props.data,
+      previewTemplateId: props.mode === "preview" && props.bundle.source.kind === "recipe" ? props.bundle.source.templateId : undefined,
+    });
     const handles: StorefrontRuntimeHandle[] = [];
     const shell = root.querySelector<HTMLElement>("[data-cd-bundle-shell]");
     if (shell) handles.push(hydrateStorefront({ root: shell, artifact: props.bundle.shell, adapters }));

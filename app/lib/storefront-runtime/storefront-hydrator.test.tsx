@@ -70,7 +70,7 @@ describe("runtime-1 route adapters", () => {
 
   it("dispatches preview commerce only to the authenticated preview simulation action", async () => {
     const fetcher = vi.fn<RuntimeFetcher>(async () => new Response(JSON.stringify({ cart: null }), { status: 200 }));
-    const adapters = createRuntimeAdapters({ mode: "preview", fetcher, refresh: vi.fn() });
+    const adapters = createRuntimeAdapters({ mode: "preview", previewTemplateId: "atelier-nine", fetcher, refresh: vi.fn() });
     adapters.commerce?.dispatch({
       authorityKey: "cartLine:line-1",
       slotKind: "cartLineControls",
@@ -78,7 +78,7 @@ describe("runtime-1 route adapters", () => {
     });
     await vi.waitFor(() => {
       const [url, init] = fetcher.mock.calls[0];
-      expect(url).toBe("/dashboard/store/preview");
+      expect(url).toBe("/dashboard/store/preview?template=atelier-nine");
       expect(init?.body).toBeInstanceOf(FormData);
       expect((init?.body as FormData).get("intent")).toBe("remove");
     });
