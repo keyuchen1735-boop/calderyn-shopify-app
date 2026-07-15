@@ -37,7 +37,7 @@ import { STOREFRONT_AI_PROMPT_VERSION } from "./prompts";
 
 const DEFAULT_BUDGET: GenerationBudget = {
   maxCandidates: 3,
-  maxModelTokens: 180_000,
+  maxModelTokens: 300_000,
   maxImages: 6,
   maxBrowserMs: 180_000,
   maxRepairs: 8,
