@@ -63,15 +63,13 @@ const PENDING_SCORE: CampaignCalderynScore = {
 const CAMP_GRID = "minmax(0,1fr) 72px 96px 68px 54px 104px 22px";
 
 const BADGE_ACTIVE = {
-  color: "var(--green)",
-  background: "var(--green-bg)",
+  color: "var(--live)",
+  background: "color-mix(in oklch, var(--live) 13%, transparent)",
 } as const;
 const BADGE_NEUTRAL = {
   color: "var(--text-2)",
   background: "var(--gray-bg)",
 } as const;
-
-type CampaignView = "list" | "cards";
 
 function campaignPerDay(c: CampaignVM): {
   cents: number | null;
@@ -90,9 +88,9 @@ const BAND_CHIP: Record<
   CampaignCalderynScore["band"],
   { color: string; background: string }
 > = {
-  strong: { color: "var(--green)", background: "var(--green-bg)" },
-  fair: { color: "var(--orange)", background: "var(--orange-bg)" },
-  weak: { color: "var(--red)", background: "var(--red-bg)" },
+  strong: { color: "var(--live)", background: "color-mix(in oklch, var(--live) 13%, transparent)" },
+  fair: { color: "var(--text-1)", background: "var(--gray-bg)" },
+  weak: { color: "var(--text-2)", background: "var(--gray-bg)" },
   nodata: { color: "var(--text-2)", background: "var(--gray-bg)" },
 };
 
@@ -123,7 +121,7 @@ function ScoreChip({ score }: { score: CampaignCalderynScore }) {
 
 /** 75/50 band tones for score-dimension bars (matches the score-chip bands). */
 function barTone(v: number): string {
-  return v >= 75 ? "var(--green)" : v < 50 ? "var(--red)" : "var(--text-2)";
+  return v >= 75 ? "var(--live)" : v < 50 ? "var(--text-3)" : "var(--text-2)";
 }
 
 /** Label + value + tinted progress bar for one 0–100 score dimension. */
@@ -362,7 +360,7 @@ function CampaignRow({
       style={{ gridTemplateColumns: CAMP_GRID, padding: "10px 16px" }}
     >
       <div className="min-w-0 flex items-center" style={{ gap: 11 }}>
-        <PlatformMark platform={c.platform} />
+        <PlatformMark platform={c.platform} size={22} />
         <div className="min-w-0">
           <div className="cd-row-title truncate">{c.name}</div>
           <div className="cd-caption">{c.platform}</div>
@@ -392,8 +390,8 @@ function CampaignRow({
           color: !hasPerformanceData
             ? "var(--text-3)"
             : losing
-              ? "var(--red)"
-              : "var(--green)",
+              ? "var(--text-2)"
+              : "var(--live)",
         }}
       >
         {c.roas_7d.toFixed(1)}×
@@ -443,7 +441,7 @@ function DraftRow({
       }}
     >
       <div className="min-w-0 flex items-center" style={{ gap: 11 }}>
-        <PlatformMark platform={CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} />
+        <PlatformMark platform={CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} size={22} />
         <div className="min-w-0">
           <div className="cd-row-title truncate">{d.name}</div>
           <div className="cd-caption">
@@ -531,7 +529,7 @@ function CampaignCard({
     >
       <div className="cd-campaign-card-head">
         <div className="min-w-0 flex items-center" style={{ gap: 10 }}>
-          <PlatformMark platform={c.platform} />
+          <PlatformMark platform={c.platform} size={22} />
           <div className="min-w-0">
             <div className="cd-row-title truncate">{c.name}</div>
             <div className="cd-caption">{c.platform}</div>
@@ -554,8 +552,8 @@ function CampaignCard({
               color: !hasPerformanceData
                 ? "var(--text-3)"
                 : losing
-                  ? "var(--red)"
-                  : "var(--green)",
+                  ? "var(--text-2)"
+                  : "var(--live)",
             }}
           >
             {c.roas_7d.toFixed(1)}×
@@ -616,7 +614,7 @@ function DraftCard({
     <article className="cd-campaign-card cd-campaign-draft-card cd-campaign-item">
       <div className="cd-campaign-card-head">
         <div className="min-w-0 flex items-center" style={{ gap: 10 }}>
-          <PlatformMark platform={CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} />
+          <PlatformMark platform={CAMPAIGN_DRAFT_PLATFORM_LABELS[d.platform]} size={22} />
           <div className="min-w-0">
             <div className="cd-row-title truncate">{d.name}</div>
             <div className="cd-caption">
@@ -1057,7 +1055,7 @@ function CampaignDetail({
           </div>
           <b
             className="tabular-nums"
-            style={{ color: "var(--green)", fontSize: 13, flexShrink: 0 }}
+            style={{ color: "var(--live)", fontSize: 13, flexShrink: 0 }}
           >
             +{v.delta}
           </b>
@@ -1115,7 +1113,7 @@ function CampaignDetail({
               data={roasSeries}
               width={chartWidth}
               height={56}
-              stroke="var(--green)"
+              stroke="var(--live)"
               refLine={c.breakeven_roas > 0 ? c.breakeven_roas : null}
             />
           </div>
@@ -1330,7 +1328,7 @@ function CampaignDetail({
           <span className="cd-stat-label">ROAS (7d)</span>
           <span
             className="cd-stat-value tabular-nums"
-            style={{ color: losing ? "var(--red)" : "var(--green)" }}
+            style={{ color: losing ? "var(--text-2)" : "var(--live)" }}
           >
             {c.roas_7d.toFixed(1)}×
           </span>
@@ -1389,7 +1387,6 @@ function CampaignList({
   setDraftPrefill: (draft: CampaignDraftRow | null) => void;
 }) {
   const screenRef = useRef<HTMLDivElement>(null);
-  const [viewMode, setViewMode] = useState<CampaignView>("list");
   // Owned campaign drafts render alongside synced campaigns. Fetched on mount,
   // and re-fetched after a draft is deleted or a new one is saved from the
   // inline empty-state wizard (which never unmounts this component).
@@ -1420,17 +1417,6 @@ function CampaignList({
       live = false;
     };
   }, []);
-
-  useEffect(() => {
-    const saved = window.localStorage.getItem("calderyn.campaigns.view");
-    if (saved === "list" || saved === "cards") setViewMode(saved);
-  }, []);
-
-  const chooseView = (next: CampaignView) => {
-    if (next === viewMode) return;
-    setViewMode(next);
-    window.localStorage.setItem("calderyn.campaigns.view", next);
-  };
 
   // Empty-state entry point (no campaigns, no drafts) shows the first-campaign
   // wizard inline instead of the plain Placeholder. "Skip" reveals the
@@ -1537,9 +1523,9 @@ function CampaignList({
     0,
   );
   const platforms = Array.from(new Set(shown.map((c) => c.platform)));
-  // Membership/view changes animate. Routine analytics polling does not replay
+  // Membership changes animate. Routine analytics polling does not replay
   // the collection entrance and look like a page refresh.
-  const collectionSignature = `${viewMode}:${loading}`;
+  const collectionSignature = `${loading}`;
 
   useGSAP(
     () => {
@@ -1650,7 +1636,7 @@ function CampaignList({
         >
           <div className="flex items-center" style={{ gap: 5 }}>
             {platforms.map((p) => (
-              <PlatformMark key={p} platform={p} />
+              <PlatformMark key={p} platform={p} size={19} />
             ))}
           </div>
           <span>
@@ -1665,28 +1651,6 @@ function CampaignList({
             </b>
             /day budget
           </span>
-          <div
-            className="cd-campaign-view-toggle"
-            role="group"
-            aria-label="Campaign layout"
-          >
-            <button
-              type="button"
-              data-active={viewMode === "list" ? "1" : "0"}
-              aria-pressed={viewMode === "list"}
-              onClick={() => chooseView("list")}
-            >
-              <CDIcon name="list" size={14} /> List
-            </button>
-            <button
-              type="button"
-              data-active={viewMode === "cards" ? "1" : "0"}
-              aria-pressed={viewMode === "cards"}
-              onClick={() => chooseView("cards")}
-            >
-              <CDIcon name="grid" size={14} /> Cards
-            </button>
-          </div>
         </div>
       )}
       {loading || (shown.length === 0 && drafts.length === 0) ? (
@@ -1721,7 +1685,7 @@ function CampaignList({
             </div>
           )}
         </div>
-      ) : viewMode === "list" ? (
+      ) : (
         <div
           className="cd-card cd-campaign-table"
           style={{ overflow: "hidden" }}
@@ -1767,30 +1731,6 @@ function CampaignList({
               />
             ))}
           </Pan>
-        </div>
-      ) : (
-        <div className="cd-campaign-card-grid">
-          {shown.map((c) => (
-            <CampaignCard
-              key={c.id}
-              app={app}
-              c={c}
-              onClick={() => app.navigate("campaigns", c.id)}
-              onEditBudget={() => setBudgetFor(c)}
-              onChanged={(patch) => patchCampaign(c.id, patch)}
-            />
-          ))}
-          {drafts.map((d) => (
-            <DraftCard
-              key={d.id}
-              d={d}
-              onContinue={() => {
-                setDraftPrefill(d);
-                app.navigate("campaigns", "new");
-              }}
-              onDelete={() => deleteDraft(d)}
-            />
-          ))}
         </div>
       )}
       {budgetFor && (

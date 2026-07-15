@@ -556,6 +556,30 @@ interface FirstRunCreativeResponse {
   regenerationsLeft: number;
 }
 
+/** Keep the visual selection flow intact when image generation is unavailable.
+ * These are explicitly non-generated previews of the real product image. */
+export function buildFirstRunPlaceholderVariants(
+  response: Pick<FirstRunCreativeResponse, "fallback" | "imageUrl">,
+): FirstRunCreativeVariant[] {
+  const placeholderVisuals = [
+    "/campaign-placeholders/studio.svg",
+    "/campaign-placeholders/scene.svg",
+    "/campaign-placeholders/detail.svg",
+  ];
+  const rationales = [
+    "Original product framing",
+    "Alternate product crop",
+    "Closer product detail",
+  ];
+  return rationales.map((rationale, index) => ({
+    ...response.fallback,
+    rationale,
+    imageUrl: response.imageUrl ?? placeholderVisuals[index],
+    imageGenerated: false,
+    score: null,
+  }));
+}
+
 // React development remounts and fast repeated clicks can start the same
 // generation request twice before the first response arrives. Share that one
 // in-flight request so the server-side allowance is consumed exactly once.
@@ -567,7 +591,7 @@ const firstRunCreativeRequests = new Map<
 /**
  * Generate up to 3 ad directions from a chosen catalog product. `available:
  * false` means the generator is unconfigured (no API key / quota) - the wizard
- * should fall back to manual copy editing rather than treat it as an error.
+ * should retain its three-card flow using clearly labelled product placeholders.
  * destinationUrl/imageUrl are always returned (even when unavailable) — the
  * server-resolved product page link and signed image the wizard's Meta-create
  * step needs, which the browser can't derive on its own.

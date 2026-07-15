@@ -27,6 +27,8 @@ import { calibrate } from "~/lib/screener/calibrate.server";
 import {
   combineFirstRunDirections,
   generateFirstRunImages,
+  normalizeFirstRunCreativePayload,
+  normalizeGeneratedText,
 } from "~/lib/screener/first-run-creatives.server";
 import type { ScoreCard } from "~/lib/screener/types";
 import { isUuid } from "~/lib/ids";
@@ -106,7 +108,9 @@ export async function action({ request }: ActionFunctionArgs) {
         "That creative set is still being generated. Try again in a moment.",
       );
     }
-    if (reservation.kind === "replay") return reservation.result;
+    if (reservation.kind === "replay") {
+      return normalizeFirstRunCreativePayload(reservation.result);
+    }
     let keepReservation = false;
     let terminalFallback: Record<string, unknown> | null = null;
     const finish = async <T extends Record<string, unknown>>(response: T) => {
@@ -117,7 +121,7 @@ export async function action({ request }: ActionFunctionArgs) {
           response,
         );
       }
-      return response;
+      return normalizeFirstRunCreativePayload(response);
     };
 
     try {
@@ -165,13 +169,18 @@ export async function action({ request }: ActionFunctionArgs) {
       const price =
         typeof priceCents === "number" ? formatMoney(priceCents, "usd") : null;
 
-      const original = buildProductCreative({
+      const productCreative = buildProductCreative({
         title: product.title,
         description: product.description,
         imageUrl: sourceImageUrl,
         productUrl,
         price,
       });
+      const original = {
+        ...productCreative,
+        headline: normalizeGeneratedText(productCreative.headline),
+        primaryText: normalizeGeneratedText(productCreative.primaryText),
+      };
       const fallback = {
         headline: original.headline,
         primaryText: original.primaryText,
@@ -219,8 +228,8 @@ export async function action({ request }: ActionFunctionArgs) {
           return finish({
             available: true,
             variants: imageResult.candidates.map((candidate, index) => ({
-              headline: original.headline,
-              primaryText: original.primaryText,
+              headline: normalizeGeneratedText(original.headline),
+              primaryText: normalizeGeneratedText(original.primaryText),
               cta: original.cta,
               rationale: `Product-grounded visual direction ${index + 1}`,
               imageUrl: candidate.input.imageUrl,
@@ -251,6 +260,11 @@ export async function action({ request }: ActionFunctionArgs) {
       );
       const copyGenerator = pickGenerator("copy", claudeDeps);
       const imageGenerator = pickGenerator("image", claudeDeps);
+
+      // The intended experience requires three real product-grounded images.
+      // Do not spend copy/scoring work or persist a completed fallback attempt
+      // when the image provider is not configured.
+      if (!imageGenerator.available()) return terminalFallback;
 
       await markFirstRunGenerationStarted(
         session.shopId,
@@ -330,10 +344,10 @@ export async function action({ request }: ActionFunctionArgs) {
             // scoring failure must not collapse the required three choices.
           }
           return {
-            headline: candidate.input.headline,
-            primaryText: candidate.input.primaryText,
+            headline: normalizeGeneratedText(candidate.input.headline),
+            primaryText: normalizeGeneratedText(candidate.input.primaryText),
             cta: candidate.input.cta,
-            rationale: candidate.rationale,
+            rationale: normalizeGeneratedText(candidate.rationale),
             imageUrl: candidate.input.imageUrl,
             imageGenerated: candidate.imageGenerated,
             score,

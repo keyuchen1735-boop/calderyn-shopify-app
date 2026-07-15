@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" role="img" aria-label="Studio product placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#dce7f8"/>
+    </linearGradient>
+    <linearGradient id="object" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#27364d"/>
+      <stop offset="1" stop-color="#0d1522"/>
+    </linearGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="900" fill="url(#bg)"/>
+  <circle cx="948" cy="160" r="225" fill="#2f6fed" opacity=".1"/>
+  <circle cx="186" cy="690" r="280" fill="#fff" opacity=".56"/>
+  <ellipse cx="600" cy="735" rx="300" ry="55" fill="#172033" opacity=".18" filter="url(#shadow)"/>
+  <path d="M330 674h540l-48 126H378z" fill="#fff" opacity=".92"/>
+  <path d="M452 670V318c0-78 63-141 141-141h14c78 0 141 63 141 141v352z" fill="url(#object)"/>
+  <rect x="493" y="236" width="214" height="64" rx="32" fill="#fff" opacity=".1"/>
+  <path d="M486 412c76 34 152 34 228 0" fill="none" stroke="#73a2ff" stroke-width="12" stroke-linecap="round" opacity=".72"/>
+  <rect x="538" y="505" width="124" height="16" rx="8" fill="#fff" opacity=".22"/>
+</svg>

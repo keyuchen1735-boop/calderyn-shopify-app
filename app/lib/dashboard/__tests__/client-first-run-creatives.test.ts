@@ -58,4 +58,32 @@ describe("first-run creative client", () => {
     await generateFirstRunCreatives("product-1", "run-1", 1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("builds three honest product-image placeholders when generation is unavailable", async () => {
+    const { buildFirstRunPlaceholderVariants } = await import("../client");
+    const variants = buildFirstRunPlaceholderVariants({
+      imageUrl: "https://cdn.example/product.png",
+      fallback: responseBody.fallback,
+    });
+
+    expect(variants).toHaveLength(3);
+    expect(variants.map((variant) => variant.rationale)).toEqual([
+      "Original product framing",
+      "Alternate product crop",
+      "Closer product detail",
+    ]);
+    expect(variants.every((variant) => !variant.imageGenerated)).toBe(true);
+    expect(variants.every((variant) => variant.score === null)).toBe(true);
+    expect(variants.every((variant) => variant.imageUrl?.includes("product.png"))).toBe(true);
+
+    const abstract = buildFirstRunPlaceholderVariants({
+      imageUrl: null,
+      fallback: responseBody.fallback,
+    });
+    expect(abstract.map((variant) => variant.imageUrl)).toEqual([
+      "/campaign-placeholders/studio.svg",
+      "/campaign-placeholders/scene.svg",
+      "/campaign-placeholders/detail.svg",
+    ]);
+  });
 });

@@ -327,10 +327,16 @@ export function Tooltip({ content, children }: { content: string; children: Reac
   );
 }
 
-export function PlatformMark({ platform }: { platform: Platform | string }) {
+export function PlatformMark({ platform, size = 28 }: { platform: Platform | string; size?: number }) {
+  const iconSize = Math.max(12, Math.round(size * 0.64));
   return (
-    <span className="cd-platform cd-platform-logo" title={platform} data-platform={platform}>
-      <PlatformIcon platform={platform} size={18} title={platform} />
+    <span
+      className="cd-platform cd-platform-logo"
+      title={platform}
+      data-platform={platform}
+      style={{ width: size, height: size }}
+    >
+      <PlatformIcon platform={platform} size={iconSize} title={platform} />
     </span>
   );
 }
