@@ -139,6 +139,20 @@ describe("concept exploration", () => {
 });
 
 describe("novelty and visual judging", () => {
+  it("rejects runtime-owned font tokens before judge rendering", () => {
+    const concept = createConcept(0);
+    concept.designSystem.tokens["font-body"] = "Arial, sans-serif";
+
+    expect(() => compileConceptCandidate(concept)).toThrow("Reserved design token font-body");
+  });
+
+  it("applies the runtime token grammar during concept compilation", () => {
+    const concept = createConcept(0);
+    concept.designSystem.tokens["type-stack"] = '"CD Inter", Arial, sans-serif';
+
+    expect(() => compileConceptCandidate(concept)).toThrow('Unsafe storefront design token "type-stack"');
+  });
+
   it("renders the compiled design tokens, curated fonts, and global CSS in judge screenshots", () => {
     const concept = createConcept(0);
     concept.designSystem.globalCss = `.judge-accent { color: var(--ink) }`;
