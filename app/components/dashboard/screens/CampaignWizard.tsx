@@ -550,7 +550,7 @@ function PlatformStep({
     if (connecting) return;
     setConnecting(true);
     try {
-      const { url } = await startIntegrationConnect("meta");
+      const { url } = await startIntegrationConnect("meta", window.location.pathname);
       window.location.href = url;
     } catch (err) {
       const message =

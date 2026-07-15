@@ -59,18 +59,25 @@ describe("POST /dashboard/api/integrations", () => {
 
   it("connect: returns the provider consent URL with the dashboard return leg set", async () => {
     startOAuth.mockResolvedValue({ redirectUrl: "https://facebook.com/dialog?state=abc" });
-    const res = await call({ intent: "connect", provider: "meta" });
+    const res = await call({ intent: "connect", provider: "meta", returnTo: "/dashboard/campaigns/new" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ url: "https://facebook.com/dialog?state=abc" });
     // (provider, host, popup, dashboard) — the dashboard flag steers the callback
     // back to /dashboard instead of the embedded admin.
-    expect(startOAuth).toHaveBeenCalledWith("meta", null, false, true);
+    expect(startOAuth).toHaveBeenCalledWith("meta", null, false, true, "/dashboard/campaigns/new");
   });
 
   it("connect: rejects a non-OAuth provider at the boundary", async () => {
     const res = await call({ intent: "connect", provider: "easypost" });
     expect(res.status).toBe(422);
     expect(startOAuth).not.toHaveBeenCalled();
+  });
+
+  it("connect: drops an unsafe external return target", async () => {
+    startOAuth.mockResolvedValue({ redirectUrl: "https://facebook.com/dialog?state=abc" });
+    const res = await call({ intent: "connect", provider: "meta", returnTo: "//attacker.example/steal" });
+    expect(res.status).toBe(200);
+    expect(startOAuth).toHaveBeenCalledWith("meta", null, false, true, null);
   });
 
   it("connect-key: stores the pasted credential and returns refreshed rows", async () => {

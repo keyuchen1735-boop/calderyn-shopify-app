@@ -10,7 +10,7 @@
 // (integrations.list) and the pure view helpers the card renders from.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { isPaired, integrationBadge, connectionNotice, providerPaired } from "../integrations";
+import { isPaired, integrationBadge, connectionNotice, providerPaired, shouldOpenConnectorsAfterOAuth } from "../integrations";
 
 // --- Pure view helpers (no DB) -------------------------------------------
 
@@ -56,6 +56,17 @@ describe("post-OAuth connection notice", () => {
 
   it("returns null when no connection param is present", () => {
     expect(connectionNotice(new URLSearchParams("foo=bar"))).toBeNull();
+  });
+});
+
+describe("post-OAuth landing screen", () => {
+  it("keeps a deep-linked campaign wizard return in place", () => {
+    expect(shouldOpenConnectorsAfterOAuth("/dashboard/campaigns/new")).toBe(false);
+  });
+
+  it("keeps the legacy dashboard-root callback behavior", () => {
+    expect(shouldOpenConnectorsAfterOAuth("/dashboard")).toBe(true);
+    expect(shouldOpenConnectorsAfterOAuth("/dashboard/")).toBe(true);
   });
 });
 

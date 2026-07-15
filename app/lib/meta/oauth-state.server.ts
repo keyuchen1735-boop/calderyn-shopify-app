@@ -32,7 +32,25 @@ export type OAuthReturnContext = {
   shop?: string | null;
   popup?: boolean;
   dashboard?: boolean;
+  returnTo?: string | null;
 };
+
+/** Accept only a same-origin dashboard pathname supplied by the browser. */
+export function safeDashboardOAuthReturnTo(value: unknown): string | null {
+  if (typeof value !== "string" || (!value.startsWith("/dashboard/") && value !== "/dashboard")) {
+    return null;
+  }
+  if (value.includes("\\") || value.includes("//")) return null;
+  try {
+    const parsed = new URL(value, "https://dashboard.invalid");
+    if (parsed.origin !== "https://dashboard.invalid" || parsed.pathname !== value || parsed.search || parsed.hash) {
+      return null;
+    }
+    return value;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Pack the nonce together with the (non-secret) embedded return context into the
@@ -40,13 +58,15 @@ export type OAuthReturnContext = {
  * context, so old callers/flows keep producing plain-nonce states.
  */
 export function packOAuthState(nonce: string, ctx?: OAuthReturnContext): string {
-  if (!ctx?.host && !ctx?.shop && !ctx?.popup && !ctx?.dashboard) return nonce;
+  const returnTo = ctx?.dashboard ? safeDashboardOAuthReturnTo(ctx.returnTo) : null;
+  if (!ctx?.host && !ctx?.shop && !ctx?.popup && !ctx?.dashboard && !returnTo) return nonce;
   const payload = {
     n: nonce,
-    h: ctx.host ?? null,
-    s: ctx.shop ?? null,
-    p: ctx.popup ? 1 : 0,
-    d: ctx.dashboard ? 1 : 0,
+    h: ctx?.host ?? null,
+    s: ctx?.shop ?? null,
+    p: ctx?.popup ? 1 : 0,
+    d: ctx?.dashboard ? 1 : 0,
+    r: returnTo,
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
@@ -63,6 +83,7 @@ export function parseOAuthState(state: string): {
   shop: string | null;
   popup: boolean;
   dashboard: boolean;
+  returnTo?: string | null;
 } {
   try {
     const decoded = Buffer.from(state, "base64url").toString("utf8");
@@ -73,14 +94,17 @@ export function parseOAuthState(state: string): {
         s?: string | null;
         p?: number;
         d?: number;
+        r?: string | null;
       };
       if (o && typeof o.n === "string") {
+        const returnTo = safeDashboardOAuthReturnTo(o.r);
         return {
           nonce: o.n,
           host: o.h ?? null,
           shop: o.s ?? null,
           popup: o.p === 1,
           dashboard: o.d === 1,
+          ...(returnTo ? { returnTo } : {}),
         };
       }
     }
@@ -120,7 +144,7 @@ export function popupResultUrl(args: {
 export function embeddedReturnUrl(
   path: string,
   query: Record<string, string>,
-  ctx: { host: string | null; shop: string | null; dashboard?: boolean },
+  ctx: { host: string | null; shop: string | null; dashboard?: boolean; returnTo?: string | null },
 ): string {
   const params = new URLSearchParams(query);
   // Dashboard-native connect: land back on the dashboard SPA with the same
@@ -133,7 +157,8 @@ export function embeddedReturnUrl(
   // convention as dashboard.login / dashboard.auth.google.callback).
   if (ctx.dashboard) {
     const base = process.env.DASHBOARD_PUBLIC_URL || process.env.SHOPIFY_APP_URL || "";
-    return `${base}/dashboard?${params.toString()}`;
+    const returnTo = safeDashboardOAuthReturnTo(ctx.returnTo) ?? "/dashboard";
+    return `${base.replace(/\/$/, "")}${returnTo}?${params.toString()}`;
   }
   const apiKey = process.env.SHOPIFY_API_KEY;
   if (ctx.shop && apiKey) {
