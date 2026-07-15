@@ -175,7 +175,7 @@ describe("generateOriginalStorefront", () => {
           displayFontId: { enum?: readonly string[] };
           bodyFontId: { enum?: readonly string[] };
           } };
-          assetRequests: { maxItems?: number };
+          assetRequests: { maxItems?: number; items?: { properties?: { key?: { pattern?: string } } } };
         };
       }).properties;
       const fontFields = schemaFields.designSystem.properties;
@@ -183,7 +183,10 @@ describe("generateOriginalStorefront", () => {
       const constrainsFonts = JSON.stringify(fontFields.displayFontId.enum) === expectedFontIds &&
         JSON.stringify(fontFields.bodyFontId.enum) === expectedFontIds;
       const boundsAssets = schemaFields.assetRequests.maxItems === 8;
-      if (constrainsFonts && boundsAssets) return response;
+      const constrainsAssetKeys = schemaFields.assetRequests.items?.properties?.key?.pattern === "^[A-Za-z0-9_-]{1,80}$";
+      const documentsAssetRules = request.system.includes("at most 8 asset requests") &&
+        request.system.includes("^[A-Za-z0-9_-]{1,80}$");
+      if (constrainsFonts && boundsAssets && constrainsAssetKeys && documentsAssetRules) return response;
       const concept = structuredClone(response.value as ReturnType<typeof createConcept>);
       return {
         ...response,
@@ -194,11 +197,13 @@ describe("generateOriginalStorefront", () => {
             displayFontId: "unlisted-display-font",
             bodyFontId: "unlisted-body-font",
           },
-          assetRequests: boundsAssets ? concept.assetRequests : Array.from({ length: 9 }, (_, index) => ({
-            key: `asset-${index}`,
-            purpose: `Generated asset ${index}`,
-            required: false,
-          })),
+          assetRequests: boundsAssets && documentsAssetRules
+            ? [{ key: constrainsAssetKeys ? "hero" : "asset.hero", purpose: "Generated asset", required: false }]
+            : Array.from({ length: 9 }, (_, index) => ({
+              key: `asset-${index}`,
+              purpose: `Generated asset ${index}`,
+              required: false,
+            })),
         },
       };
     });
