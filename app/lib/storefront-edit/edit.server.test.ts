@@ -308,6 +308,39 @@ describe("editStorefrontByPrompt", () => {
     expect(deps.editDraft).toHaveBeenCalledTimes(1);
   });
 
+  it("repairs the failing route without dropping other routes", async () => {
+    const bundle = baseBundle();
+    const home = bundle.routes.home.tree[0]!;
+    const product = bundle.routes.product.tree[0]!;
+    if (home.kind !== "element" || product.kind !== "element") throw new Error("fixture root");
+    const hash = (node: unknown) => `sha256:${createHash("sha256").update(JSON.stringify(node)).digest("hex")}`;
+    const deps = dependencies(bundle);
+    vi.mocked(deps.compileStructuralPatch)
+      .mockResolvedValueOnce({
+        operations: [
+          { kind: "replaceRegion", routeId: "home", targetId: home.id, expected: hash(home), source: { html: "<main>New home</main>", css: "" } },
+          { kind: "replaceRegion", routeId: "product", targetId: product.id, expected: hash(product), source: { html: '<main data-cd-trusted-slot-id="bad">Broken</main>', css: "" } },
+        ],
+        provider: { kind: "ai_patch", provider: "anthropic", model: "test" },
+      })
+      .mockResolvedValueOnce({
+        operations: [{ kind: "replaceRegion", routeId: "product", targetId: product.id, expected: hash(product), source: { html: "<main>New product</main>", css: "" } }],
+        provider: { kind: "ai_patch", provider: "anthropic", model: "test" },
+      });
+
+    const result = await editStorefrontByPrompt({
+      shopId: SHOP, actorId: ACTOR, prompt: "Revamp store", expectedDraftVersionId: BASE,
+    }, deps);
+    if (result.status !== "installed") throw new Error("expected installed edit");
+
+    expect(deps.compileStructuralPatch).toHaveBeenLastCalledWith(expect.objectContaining({
+      context: { routeId: "product", regionId: product.id },
+    }));
+    expect(result.changedScope.routes).toEqual(["home", "product"]);
+    expect(result.bundle.routes.home.html).toContain("New home");
+    expect(result.bundle.routes.product.html).toContain("New product");
+  });
+
   it("clones verified logical asset references before validating an edited custom version", async () => {
     const custom = baseBundle();
     custom.assets.entries = [{ key: "hero", contentHash: "b".repeat(64), mediaType: "image/webp", byteSize: 84 }];
@@ -585,7 +618,7 @@ describe("createDefaultStructuralPatchCompiler", () => {
     expect(prompt).toContain(`data-cd-host-size="${slot.hostSize}"`);
   });
 
-  it("rejects route-wide CSS for a selected region and accepts coherent unscoped patches spanning routes", async () => {
+  it("enforces selected region scope while allowing unscoped patches spanning routes", async () => {
     const bundle = baseBundle();
     const target = bundle.routes.home.tree[0]!;
     if (target.kind !== "element") throw new Error("fixture root");
@@ -604,13 +637,8 @@ describe("createDefaultStructuralPatchCompiler", () => {
       ] },
       provider: "fixture", model: "fixture-model", usage: { inputTokens: 1, outputTokens: 1 },
     }) };
-    await expect(createDefaultStructuralPatchCompiler(genericProvider)({ prompt: "Change the composition across the storefront", bundle }))
-      .resolves.toMatchObject({
-        operations: [
-          expect.objectContaining({ kind: "replaceRegion", routeId: "home" }),
-          expect.objectContaining({ kind: "replaceRegion", routeId: "product" }),
-        ],
-      });
+    const result = await createDefaultStructuralPatchCompiler(genericProvider)({ prompt: "Revamp store", bundle });
+    expect(result.operations.map((operation) => "routeId" in operation ? operation.routeId : null)).toEqual(["home", "product"]);
   });
 
   it("requires exact subtree hashes on model-authored text and visibility operations", async () => {
