@@ -64,6 +64,8 @@ describe("merchant storefront policy route", () => {
     expect(response.headers.get("Cache-Control")).toContain("s-maxage=300");
     expect(response.headers.get("Vercel-Cache-Tag")).toBe(`storefront-shop-${SHOP}`);
     expect(response.headers.get("X-Calderyn-Storefront-Renderer")).toBe("bundle-v1");
+    expect(data.nonce).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+    expect(response.headers.get("X-Calderyn-Storefront-Nonce")).toBe(data.nonce);
   });
 
   it("returns a real 404 for an unknown or unpublished policy", async () => {

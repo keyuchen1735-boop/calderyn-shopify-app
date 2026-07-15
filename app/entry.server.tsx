@@ -17,6 +17,14 @@ import {
 
 export const streamTimeout = 5000;
 
+export function rootLoaderNonce(loaderData: unknown): string | undefined {
+  if (loaderData === null || typeof loaderData !== "object") return undefined;
+  const root = (loaderData as { root?: unknown }).root;
+  if (root === null || typeof root !== "object") return undefined;
+  const nonce = (root as { nonce?: unknown }).nonce;
+  return typeof nonce === "string" ? nonce : undefined;
+}
+
 // Paths that Shopify frames inside the admin (embedded app + OAuth). These must
 // never receive X-Frame-Options or a frame-ancestors 'none' CSP or the iframe
 // stops loading; Shopify supplies their frame-ancestors itself.
@@ -159,7 +167,9 @@ export default async function handleRequest(
 ) {
   const pathname = new URL(request.url).pathname;
   const storefrontNonce = resolveStorefrontCspSurface(responseHeaders, pathname)
-    ? resolveStorefrontBundleNonce(responseHeaders) ?? randomBytes(18).toString("base64url")
+    ? resolveStorefrontBundleNonce(responseHeaders) ??
+      rootLoaderNonce(remixContext.staticHandlerContext.loaderData) ??
+      randomBytes(18).toString("base64url")
     : undefined;
   addDocumentResponseHeaders(request, responseHeaders);
   applySecurityHeaders(responseHeaders, pathname, storefrontNonce);
