@@ -509,6 +509,22 @@ function safeStructuralContext(bundle: StorefrontBundleV1, context?: PreviewEdit
   return { ...context, regionId };
 }
 
+function failingReplacement(
+  bundle: StorefrontBundleV1,
+  operations: readonly StorefrontPatchOperation[],
+  failure: StorefrontPatchError,
+): Extract<StorefrontPatchOperation, { kind: "replaceRegion" }> | undefined {
+  for (const operation of operations) {
+    if (operation.kind !== "replaceRegion") continue;
+    try {
+      applyStorefrontPatch(bundle, [operation]);
+    } catch (error) {
+      if (error instanceof StorefrontPatchError && error.code === failure.code && error.message === failure.message) return operation;
+    }
+  }
+  return undefined;
+}
+
 export async function editStorefrontByPrompt(
   input: {
     shopId: string;
@@ -562,7 +578,9 @@ export async function editStorefrontByPrompt(
           ? applyDeterministicStorefrontEdit(base.bundle, compiledPatch.operations)
           : applyStorefrontPatch(base.bundle, compiledPatch.operations);
       } catch (error) {
-        const replacement = compiledPatch.operations.find((operation) => operation.kind === "replaceRegion");
+        const replacement = error instanceof StorefrontPatchError
+          ? failingReplacement(base.bundle, compiledPatch.operations, error)
+          : undefined;
         const repeatContext = replacement
           ? safeStructuralContext(base.bundle, { routeId: replacement.routeId, regionId: replacement.targetId })
           : undefined;
