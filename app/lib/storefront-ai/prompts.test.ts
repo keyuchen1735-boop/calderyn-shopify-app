@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createContext } from "./__fixtures__/deterministic";
-import { COMPILER_SYSTEM_PROMPT, CONCEPT_SCHEMA, EXPANSION_GROUP_SCHEMAS, conceptPrompt, conceptRepairPrompt, routeRepairPrompt } from "./prompts";
+import { COMPILER_SYSTEM_PROMPT, CONCEPT_SCHEMA, EXPANSION_GROUP_SCHEMAS, JUDGE_SCHEMA, conceptPrompt, conceptRepairPrompt, routeRepairPrompt } from "./prompts";
 
 describe("COMPILER_SYSTEM_PROMPT", () => {
   it("distinguishes repeater source attributes from compiler-owned output markers", () => {
@@ -13,6 +13,11 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
 
   it("keeps structured storefront output below the provider completion ceiling", () => {
     expect(COMPILER_SYSTEM_PROMPT).toContain("below 20,000 output tokens");
+  });
+
+  it("keeps judge rationale within the parser bound", () => {
+    const schema = JUDGE_SCHEMA as { properties: { rationale: { maxLength?: number } } };
+    expect(schema.properties.rationale.maxLength).toBe(2_000);
   });
 
   it("documents every public binding path and route values as compiler IDs", () => {
@@ -46,6 +51,8 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
     expect(COMPILER_SYSTEM_PROMPT).toContain("grid tracks are only 1fr, 1fr 1fr, 2fr 1fr, or minmax(0, 1fr) minmax(0, 1fr)");
     expect(COMPILER_SYSTEM_PROMPT).toContain("font-family is only inherit, var(--font-body), or var(--font-display)");
     expect(COMPILER_SYSTEM_PROMPT).toContain("font weight is normal, bold, 400, 500, 600, 700, 800, or 900");
+    expect(COMPILER_SYSTEM_PROMPT).toContain("font-body and font-display are runtime-owned");
+    expect(COMPILER_SYSTEM_PROMPT).toContain("Token values never contain quotes, escapes, colons, semicolons, braces, angle brackets, or line breaks");
     expect(COMPILER_SYSTEM_PROMPT).toContain("grid placement is one local identifier");
     expect(COMPILER_SYSTEM_PROMPT).toContain("Numeric state ranges span at most 10000");
     expect(COMPILER_SYSTEM_PROMPT).toContain("hidden and expanded bind only boolean states");
