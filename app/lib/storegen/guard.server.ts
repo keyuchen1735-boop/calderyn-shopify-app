@@ -18,12 +18,9 @@ const BRIEF_MAX = 4000;
  * The cheap pre-checks: an oversized brief, the per-shop burst limit (5/60s,
  * shared across both call sites), and a regeneration mid-test (would rewrite
  * the drafts a later publish pushes over arm A of the running experiment).
- * Split from the daily quota so the multipart attach path can run these BEFORE
- * its intent-classification call without touching the designer allowance —
- * checkAiQuota records a hit at check time, so a needs_intent or products-only
- * outcome (no generation) must never consume one of the day's 5 base-tier
- * slots. The classification call itself is still model spend, bounded by the
- * burst limit here — an accepted tradeoff (one cheap Haiku call per burst slot).
+ * Split from the designer cooldown so the multipart attach path can run these
+ * before intent classification without making a needs_intent response delay
+ * the merchant's follow-up generation request.
  */
 export async function assertGeneratePrechecks(
   shopId: string,
@@ -56,9 +53,8 @@ export async function assertGeneratePrechecks(
 }
 
 /**
- * The daily "designer" AI quota. checkAiQuota RECORDS the hit as it checks
- * (cooldown + daily buckets), so call this only once a generation run is
- * certain — never for classification-only or products-only outcomes.
+ * The designer AI cooldown. Call this only once a generation run is certain —
+ * never for classification-only or products-only outcomes.
  */
 export async function assertDesignerQuota(
   shopId: string,
@@ -72,10 +68,8 @@ export async function assertDesignerQuota(
 
 /**
  * Refuses a generation before any paid Anthropic call: the pre-checks above,
- * then the daily AI quota — checked last so requests refused for any other
- * reason never burn the day's allowance. Throws a CalderynError; callers map
- * it to their own response shape (dashboardJson already does this for the API
- * route).
+ * then the designer cooldown. Throws a CalderynError; callers map it to their
+ * own response shape (dashboardJson already does this for the API route).
  */
 export async function assertCanGenerate(
   shopId: string,

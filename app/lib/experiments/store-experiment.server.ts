@@ -32,8 +32,8 @@ export interface StoreExperimentSpec {
   kind: StoreExperimentKind;
   name?: string;
   /** Runs after the cheap refusals (running test, nothing published) but BEFORE any paid model
-   *  call — the route wires the daily designer quota here so a refused start never burns a slot
-   *  (quota-last invariant, see storegen/guard.server.ts). Only invoked for AI-backed kinds. */
+   *  call — the route wires the designer cooldown here so a refused start never delays a
+   *  corrected retry. Only invoked for AI-backed kinds. */
   onBeforeAiCall?: () => Promise<void>;
 }
 

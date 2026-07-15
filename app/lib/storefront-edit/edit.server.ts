@@ -134,7 +134,7 @@ const PATCH_SCHEMA: Record<string, unknown> = {
   required: ["operations"],
   properties: {
     operations: {
-      type: "array", minItems: 1, maxItems: 12,
+      type: "array", minItems: 1, maxItems: 32,
       items: {
         oneOf: [
           {
@@ -191,7 +191,7 @@ function parseProviderOperations(value: unknown, scope?: StructuralPatchScope): 
     throw new StorefrontEditError("storefront_patch_invalid", "The patch compiler returned an invalid operation list.", 502);
   }
   const operations = (value as { operations: unknown[] }).operations;
-  if (operations.length < 1 || operations.length > 12) throw new StorefrontEditError("storefront_patch_invalid", "The patch compiler returned too many operations.", 502);
+  if (operations.length < 1 || operations.length > 32) throw new StorefrontEditError("storefront_patch_invalid", "The patch compiler returned too many operations.", 502);
   const parsed = operations.map((candidate): StorefrontPatchOperation => {
     if (!candidate || typeof candidate !== "object") throw new StorefrontEditError("storefront_patch_invalid", "A patch operation was malformed.", 502);
     const op = candidate as Record<string, unknown>;

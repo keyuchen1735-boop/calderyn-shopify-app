@@ -13,6 +13,14 @@ beforeEach(() => {
 });
 
 describe("checkAiQuota", () => {
+  it("keeps the designer cooldown without enforcing a daily limit", async () => {
+    h.rateLimit.mockResolvedValue(true);
+    const verdict = await checkAiQuota({ shopId: "shop-1", feature: "designer", trusted: false });
+    expect(verdict.allowed).toBe(true);
+    expect(h.rateLimit).toHaveBeenCalledTimes(1);
+    expect(h.rateLimit).toHaveBeenCalledWith("ai:cd:designer:shop-1", 1, 20_000);
+  });
+
   it("is unmetered in local development, skipping both buckets", async () => {
     vi.stubEnv("NODE_ENV", "development");
     const verdict = await checkAiQuota({ shopId: "shop-1", feature: "designer", trusted: false });
@@ -32,17 +40,17 @@ describe("checkAiQuota", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("AI_QUOTA_BYPASS_SHOPS", "shop-a");
     h.rateLimit.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
-    const verdict = await checkAiQuota({ shopId: "shop-z", feature: "designer", trusted: false });
+    const verdict = await checkAiQuota({ shopId: "shop-z", feature: "assistant", trusted: false });
     expect(verdict).toMatchObject({ allowed: false, code: "ai_daily_limit" });
     expect(h.rateLimit).toHaveBeenCalledTimes(2);
   });
 
   it("allows when both buckets are within limits, touching cooldown then daily", async () => {
     h.rateLimit.mockResolvedValue(true);
-    const verdict = await checkAiQuota({ shopId: "shop-1", feature: "designer", trusted: false });
+    const verdict = await checkAiQuota({ shopId: "shop-1", feature: "assistant", trusted: false });
     expect(verdict.allowed).toBe(true);
-    expect(h.rateLimit).toHaveBeenNthCalledWith(1, "ai:cd:designer:shop-1", 1, 20_000);
-    expect(h.rateLimit).toHaveBeenNthCalledWith(2, "ai:day:designer:shop-1", 5, 86_400_000);
+    expect(h.rateLimit).toHaveBeenNthCalledWith(1, "ai:cd:assistant:shop-1", 1, 4_000);
+    expect(h.rateLimit).toHaveBeenNthCalledWith(2, "ai:day:assistant:shop-1", 30, 86_400_000);
   });
 
   it("blocks on cooldown without touching the daily allowance", async () => {
