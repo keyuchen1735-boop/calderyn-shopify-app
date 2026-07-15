@@ -32,7 +32,36 @@ function toRow(r: DraftDbRow): CampaignDraftRow {
   };
 }
 
-/** Newest-first drafts for a shop, capped at 50. */
+async function findCampaignDraft(
+  shopId: string,
+  column: "id" | "run_id",
+  value: string,
+): Promise<CampaignDraftRow | null> {
+  const { data, error } = await getSupabase()
+    .from("campaign_draft")
+    .select("id, name, platform, created_at, updated_at, state")
+    .eq("shop_id", shopId)
+    .eq(column, value)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toRow(data as DraftDbRow) : null;
+}
+
+export function getCampaignDraftById(
+  shopId: string,
+  id: string,
+): Promise<CampaignDraftRow | null> {
+  return findCampaignDraft(shopId, "id", id);
+}
+
+export function getCampaignDraftByRunId(
+  shopId: string,
+  runId: string,
+): Promise<CampaignDraftRow | null> {
+  return findCampaignDraft(shopId, "run_id", runId);
+}
+
+/** Most recently touched drafts for a shop, capped at 50. */
 export async function listCampaignDrafts(
   shopId: string,
 ): Promise<CampaignDraftRow[]> {
@@ -40,7 +69,7 @@ export async function listCampaignDrafts(
     .from("campaign_draft")
     .select("id, name, platform, created_at, updated_at, state")
     .eq("shop_id", shopId)
-    .order("created_at", { ascending: false })
+    .order("updated_at", { ascending: false })
     .limit(LIST_CAP);
   if (error) throw error;
   return ((data ?? []) as DraftDbRow[]).map(toRow);
@@ -51,14 +80,20 @@ export async function createCampaignDraft(
   shopId: string,
   input: CampaignDraftInput,
 ): Promise<CampaignDraftRow> {
-  const { data, error } = await getSupabase()
-    .from("campaign_draft")
-    .insert({
-      shop_id: shopId,
-      name: input.name,
-      platform: input.platform,
-      state: input.state ?? {},
-    })
+  const row = {
+    shop_id: shopId,
+    name: input.name,
+    platform: input.platform,
+    state: input.state ?? {},
+    run_id: input.state?.runId ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  const query = input.state?.runId
+    ? getSupabase()
+        .from("campaign_draft")
+        .upsert(row, { onConflict: "shop_id,run_id" })
+    : getSupabase().from("campaign_draft").insert(row);
+  const { data, error } = await query
     .select("id, name, platform, created_at, updated_at, state")
     .single();
   if (error) throw error;
@@ -77,6 +112,7 @@ export async function updateCampaignDraft(
       name: input.name,
       platform: input.platform,
       state: input.state ?? {},
+      run_id: input.state?.runId ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq("shop_id", shopId)

@@ -136,6 +136,8 @@ interface CreativeFields {
 
 interface WizardState {
   step: WizardStep;
+  /** Server-owned draft created before a generation response reaches the UI. */
+  draftId: string | null;
   /** Client-minted once at wizard mount and held stable for the wizard's whole
    *  lifetime, including retries after a failed Meta create — that's what makes
    *  a retried create idempotent server-side instead of a second campaign. */
@@ -174,6 +176,7 @@ type WizardAction =
       variants: FirstRunCreativeVariant[];
       creative: CreativeFields;
       regenerationsLeft: number;
+      draftId: string;
     }
   | {
       type: "creativeReplacement";
@@ -181,6 +184,7 @@ type WizardAction =
       variant: FirstRunCreativeVariant;
       creative: CreativeFields;
       regenerationsLeft: number;
+      draftId: string;
     }
   | { type: "creativeSelection"; index: number; creative: CreativeFields }
   | { type: "regenerationsLeft"; value: number }
@@ -241,6 +245,7 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
         selectedCreativeIndex: 0,
         creative: action.creative,
         regenerationsLeft: action.regenerationsLeft,
+        draftId: action.draftId,
       };
     case "creativeReplacement": {
       if (!state.creativeVariants || action.index < 0 || action.index >= state.creativeVariants.length) return state;
@@ -252,6 +257,7 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
         selectedCreativeIndex: action.index,
         creative: action.creative,
         regenerationsLeft: action.regenerationsLeft,
+        draftId: action.draftId,
       };
     }
     case "creativeSelection":
@@ -276,6 +282,7 @@ function initWizardState(prefill: WizardPrefill): WizardState {
   if (prefill?.state) {
     return {
       step: "review",
+      draftId: prefill.id,
       runId: prefill.state.runId,
       platform: prefill.platform,
       placement: prefill.state.placement,
@@ -301,6 +308,7 @@ function initWizardState(prefill: WizardPrefill): WizardState {
     // draft is exactly when the account may still be unconnected.
     step:
       prefill?.platform && prefill.platform !== "meta" ? "product" : "platform",
+    draftId: prefill?.id ?? null,
     runId: crypto.randomUUID(),
     platform,
     placement: defaultPlacement(platform),
@@ -1372,7 +1380,12 @@ function CreativeStep({
     setRegenerationError(null);
     if (isRegeneration) setRegenerating(true);
     const attempt = isRegeneration ? 4 - state.regenerationsLeft : 1;
-    generateFirstRunCreatives(productId, state.runId, attempt)
+    generateFirstRunCreatives(productId, state.runId, attempt, {
+      placement: state.placement,
+      budgetCents: state.budgetCents,
+      selectedCreativeIndex: selectedIdx,
+      draftId: state.draftId,
+    })
       .then((res) => {
         if (!alive) return;
         const displayVariants =
@@ -1400,11 +1413,13 @@ function CreativeStep({
             variant: first,
             regenerationsLeft: res.regenerationsLeft,
             creative: nextCreative,
+            draftId: res.draftId,
           } : {
             type: "creativeOptions",
             variants: displayVariants,
             regenerationsLeft: res.regenerationsLeft,
             creative: nextCreative,
+            draftId: res.draftId,
           });
         } else if (isRegeneration) {
           dispatch({ type: "regenerationsLeft", value: res.regenerationsLeft });
@@ -1528,6 +1543,11 @@ function CreativeStep({
       <div className="cd-cw-creative-title-row">
         <div>
           <h2 className="cd-h2">Choose your strongest direction</h2>
+          {creative && state.draftId && (
+            <span className="cd-caption flex items-center gap-1">
+              <CDIcon name="check" size={12} /> Saved to Campaigns
+            </span>
+          )}
         </div>
         {creative && Boolean(variants?.length) && (
           <div className="cd-cw-regenerate-control">
@@ -2179,8 +2199,8 @@ function ReviewStep({
       regenerationsLeft: state.regenerationsLeft,
     };
     try {
-      if (prefill?.id) {
-        await updateCampaignDraft(prefill.id, {
+      if (state.draftId) {
+        await updateCampaignDraft(state.draftId, {
           name,
           platform: state.platform,
           state: draftState,

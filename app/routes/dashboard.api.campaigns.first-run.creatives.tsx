@@ -44,6 +44,14 @@ import {
   geminiImageClient,
   imageGenerator as createImageGenerator,
 } from "~/lib/screener/image-generator.server";
+import {
+  persistGeneratedCampaignDraft,
+  type GeneratedCreativeResponse,
+} from "~/lib/ads/campaign-generation-draft.server";
+import {
+  CAMPAIGN_DRAFT_PLACEMENTS,
+  type CampaignDraftPlacement,
+} from "~/lib/ads/campaign-draft-types";
 
 interface CreativeVariantDTO {
   headline: string;
@@ -53,6 +61,24 @@ interface CreativeVariantDTO {
   imageUrl: string | null;
   imageGenerated: boolean;
   score: number | null;
+}
+
+interface CreativeRouteResponse extends GeneratedCreativeResponse {
+  available: boolean;
+}
+
+function isCreativeRouteResponse(value: unknown): value is CreativeRouteResponse {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.available === "boolean" &&
+    Array.isArray(record.variants) &&
+    typeof record.destinationUrl === "string" &&
+    (typeof record.imageUrl === "string" || record.imageUrl === null) &&
+    typeof record.fallback === "object" &&
+    record.fallback !== null &&
+    Number.isInteger(record.regenerationsLeft)
+  );
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -70,12 +96,46 @@ export async function action({ request }: ActionFunctionArgs) {
     typeof body.productId === "string" ? body.productId.trim() : "";
   const runId = typeof body.runId === "string" ? body.runId.trim() : "";
   const attempt = Number(body.attempt);
+  const placement =
+    body.placement === undefined
+      ? "facebook"
+      : CAMPAIGN_DRAFT_PLACEMENTS.includes(
+            body.placement as CampaignDraftPlacement,
+          )
+        ? (body.placement as CampaignDraftPlacement)
+        : null;
+  const budgetCents =
+    body.budgetCents === undefined ? 1500 : Number(body.budgetCents);
+  const selectedCreativeIndex =
+    body.selectedCreativeIndex === undefined
+      ? 0
+      : Number(body.selectedCreativeIndex);
+  const preferredDraftId =
+    typeof body.draftId === "string" ? body.draftId.trim() : null;
   if (!isUuid(productId))
     return jsonError(422, "invalid_product_id", "productId must be a uuid");
   if (!isUuid(runId))
     return jsonError(422, "invalid_run_id", "runId must be a uuid");
   if (!Number.isInteger(attempt) || attempt < 1 || attempt > 3) {
     return jsonError(422, "invalid_attempt", "attempt must be 1, 2, or 3");
+  }
+  if (!placement) return jsonError(422, "invalid_placement");
+  if (
+    !Number.isInteger(budgetCents) ||
+    budgetCents < 500 ||
+    budgetCents > 20_000
+  ) {
+    return jsonError(422, "invalid_budget");
+  }
+  if (
+    !Number.isInteger(selectedCreativeIndex) ||
+    selectedCreativeIndex < 0 ||
+    selectedCreativeIndex > 2
+  ) {
+    return jsonError(422, "invalid_creative_index");
+  }
+  if (preferredDraftId && !isUuid(preferredDraftId)) {
+    return jsonError(422, "invalid_draft_id");
   }
 
   return dashboardJson(async () => {
@@ -108,15 +168,35 @@ export async function action({ request }: ActionFunctionArgs) {
         "That creative set is still being generated. Try again in a moment.",
       );
     }
+    const persistDraft = async (response: CreativeRouteResponse) => {
+      const normalized = normalizeFirstRunCreativePayload(response);
+      const draft = await persistGeneratedCampaignDraft({
+        shopId: session.shopId,
+        preferredDraftId,
+        runId,
+        placement,
+        productId,
+        productTitle: product.title,
+        budgetCents,
+        selectedCreativeIndex,
+        attempt,
+        response: normalized,
+      });
+      return { ...normalized, draftId: draft.id };
+    };
     if (reservation.kind === "replay") {
-      return normalizeFirstRunCreativePayload(reservation.result);
+      const replay = normalizeFirstRunCreativePayload(reservation.result);
+      if (!isCreativeRouteResponse(replay)) {
+        throw new Error("saved creative generation result is invalid");
+      }
+      return persistDraft(replay);
     }
     const directionCount = attempt === 1 ? 3 : 1;
     const imagePurpose =
       attempt === 1 ? "campaign_initial" : "campaign_regeneration";
     let keepReservation = false;
-    let terminalFallback: Record<string, unknown> | null = null;
-    const finish = async <T extends Record<string, unknown>>(response: T) => {
+    let terminalFallback: CreativeRouteResponse | null = null;
+    const finish = async (response: CreativeRouteResponse) => {
       if (keepReservation) {
         await completeFirstRunGeneration(
           session.shopId,
@@ -124,7 +204,7 @@ export async function action({ request }: ActionFunctionArgs) {
           response,
         );
       }
-      return normalizeFirstRunCreativePayload(response);
+      return persistDraft(response);
     };
 
     try {
@@ -282,7 +362,7 @@ export async function action({ request }: ActionFunctionArgs) {
       // The intended experience requires three real product-grounded images.
       // Do not spend copy/scoring work or persist a completed fallback attempt
       // when the image provider is not configured.
-      if (!imageGenerator.available()) return terminalFallback;
+      if (!imageGenerator.available()) return finish(terminalFallback);
 
       await markFirstRunGenerationStarted(
         session.shopId,
