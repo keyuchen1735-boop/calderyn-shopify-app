@@ -36,6 +36,9 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
     expect(COMPILER_SYSTEM_PROMPT).toContain("Never emit href; every anchor uses data-cd-route");
     expect(COMPILER_SYSTEM_PROMPT).toContain("data-cd-active-value and data-cd-class-token are compiler output hooks");
     expect(COMPILER_SYSTEM_PROMPT).toContain("data-cd-key on a descendant");
+    expect(COMPILER_SYSTEM_PROMPT).toContain("Allowed data-cd-repeat values are collection.products, featured.products, related.products, search.results, cart.lines, product.images, and product.variants");
+    expect(COMPILER_SYSTEM_PROMPT).toContain('For featured.products, set data-cd-repeat="featured.products" on the parent and data-cd-key="product.id" on a descendant');
+    expect(COMPILER_SYSTEM_PROMPT).not.toContain("featured.products/product.id");
     expect(COMPILER_SYSTEM_PROMPT).toContain("Allowed data-cd-slot values are variantPicker");
     expect(COMPILER_SYSTEM_PROMPT).toContain("quickViewCommerce is unscoped only on product, or scoped inside any product repeat");
     expect(COMPILER_SYSTEM_PROMPT).toContain("data-cd-theme-tokens is a space-separated list of local identifiers");
@@ -89,6 +92,7 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
     expect(prompt).toContain("Product anchors inside featured.products require data-cd-param-handle=\"product.handle\"");
     expect(prompt).toContain("globalCss must be empty; keep concept styles in shell.css and home.css");
     expect(prompt).toContain("The repeat parent has only data-cd-repeat");
+    expect(prompt).toContain('set data-cd-repeat="featured.products" on it');
     expect(prompt).toContain("Neither shell.html nor home.html may contain the literal <slot tag or data-cd-slot");
     expect(prompt).toContain("In shell.css and home.css, never select any data-cd-* attribute (including [data-cd-key])");
     expect(prompt).toContain("Every CSS selector stays away from trusted commerce hosts because concepts contain no slots");
