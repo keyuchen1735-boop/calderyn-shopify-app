@@ -6,6 +6,7 @@ import {
   isCuratedFontId,
   type AssetManifest,
   type CheckoutLayoutManifest,
+  type CompiledNode,
   type CuratedFontId,
   type DataRequirement,
   type RuntimeCapability,
@@ -257,8 +258,20 @@ function assertDesignTokenCoverage(bundle: StorefrontBundleV1): void {
   }
 }
 
+function assertShellPolicyPlacement(nodes: readonly CompiledNode[], insideFooter = false): void {
+  for (const node of nodes) {
+    if (node.kind === "text") continue;
+    const isInsideFooter = insideFooter || node.tag === "footer";
+    if (node.attributes["data-cd-platform-content"] === "policyLinks" && !isInsideFooter) {
+      throw new CompilerError("shell.policy_placement", "Shell policy links must be contained by a footer so they render after route content");
+    }
+    assertShellPolicyPlacement(node.children, isInsideFooter);
+  }
+}
+
 export function compileBundle(source: StorefrontBundleSourceV1): CompiledBundleResult {
   const shell = compileRoute(source.shell, "shell", "store");
+  assertShellPolicyPlacement(shell.artifact.tree);
   const home = compileRoute(source.routes.home, "home", "store");
   const collection = compileRoute(source.routes.collection, "collection", "collection");
   const product = compileRoute(source.routes.product, "product", "product");

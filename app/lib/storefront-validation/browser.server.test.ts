@@ -6,8 +6,10 @@ import {
   isSupportedStorefrontProofLink,
   STOREFRONT_PROOF_VIEWPORTS,
   buildStorefrontProofCases,
+  createStorefrontProofDataForContext,
   detectHorizontalLayoutFailures,
   measureStorefrontBundle,
+  shouldWriteStorefrontPreview,
   validateStorefrontBundleBudgets,
 } from "./browser.server";
 import { createStorefrontProofData, storefrontProofContext, storefrontProofPolicies } from "./fixtures";
@@ -42,6 +44,33 @@ describe("storefront browser proof matrix", () => {
     expect(checkout.cart?.lines.length).toBeGreaterThan(0);
     expect(storefrontProofContext().products.length).toBeGreaterThan(1);
     expect(storefrontProofContext(27).products).toHaveLength(27);
+  });
+
+  it("preserves a genuinely empty catalog instead of silently substituting demo products", () => {
+    const empty = storefrontProofContext(0);
+    const home = createStorefrontProofDataForContext("home", empty);
+    const collection = createStorefrontProofDataForContext("collection", empty);
+    const product = createStorefrontProofDataForContext("product", empty);
+
+    expect(home.featuredProducts).toEqual([]);
+    expect(home.relatedProducts).toEqual([]);
+    expect(collection.collection).toMatchObject({ productCount: 0, products: [] });
+    expect(product.product).toBeNull();
+  });
+
+  it("writes generated preview assets only during an intentional baseline refresh", () => {
+    expect(shouldWriteStorefrontPreview("home", "desktop", {
+      previewFile: "preview.webp",
+      updateBaselines: false,
+    })).toBe(false);
+    expect(shouldWriteStorefrontPreview("home", "desktop", {
+      previewFile: "preview.webp",
+      updateBaselines: true,
+    })).toBe(true);
+    expect(shouldWriteStorefrontPreview("collection", "desktop", {
+      previewFile: "preview.webp",
+      updateBaselines: true,
+    })).toBe(false);
   });
 
   it("derives policy links from production-shaped merchant policy records", () => {

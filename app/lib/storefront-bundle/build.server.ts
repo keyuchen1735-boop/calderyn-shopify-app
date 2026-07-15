@@ -263,13 +263,8 @@ export async function prepareStorefrontDesignBuild(
   const evidence = await dependencies.buildEvidence(input.shopId);
   await dependencies.assertWriteAllowed(input.shopId);
   const pointers = await dependencies.readPointers(input.shopId);
-  const request: StoreDesignRequest = pointers.draftVersionId === null && input.request.mode === "custom"
-    ? { prompt: input.request.prompt, mode: "auto" }
-    : input.request;
-  let resolution = dependencies.resolveDesign(request, evidence);
-  if (pointers.draftVersionId === null && resolution.kind === "custom") {
-    resolution = dependencies.resolveDesign({ prompt: "", mode: "auto" }, evidence);
-  }
+  const request = input.request;
+  const resolution = dependencies.resolveDesign(request, evidence);
   if (resolution.kind === "recipe" && !(input.recipeBuildEnabled ?? isStorefrontRecipeBuildEnabled())) {
     throw new StorefrontBuildError(
       "storefront_recipe_build_disabled",

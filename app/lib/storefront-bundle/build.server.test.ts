@@ -150,25 +150,40 @@ describe("runtime-1 storefront build", () => {
     expect(deps.loadRecipe).toHaveBeenCalledWith("atelier-nine", 1);
   });
 
-  it("forces a first custom request through recipe matching until a draft exists", async () => {
+  it("honors an explicit custom request on the first build", async () => {
+    const customResolution: StoreDesignResolution = {
+      kind: "custom",
+      reason: "explicit_custom",
+      routingVersion: 1,
+      registryVersion: 1,
+      catalogFingerprint: "sha256:fresh",
+      breakdown: [],
+      reasons: ["Original design requested"],
+    };
     const deps = dependencies({
       readPointers: vi.fn().mockResolvedValue({ draftVersionId: null, publishedVersionId: null }),
+      resolveDesign: vi.fn().mockReturnValue(customResolution),
     });
 
-    await buildStorefrontDesign({
+    const receipt = await buildStorefrontDesign({
       shopId: SHOP,
       request: { prompt: "Create something completely new", mode: "custom" },
-      recipeBuildEnabled: true,
+      customBuildEnabled: true,
     }, deps);
 
     expect(deps.resolveDesign).toHaveBeenCalledWith(
-      { prompt: "Create something completely new", mode: "auto" },
+      { prompt: "Create something completely new", mode: "custom" },
       evidence(),
     );
-    expect(deps.generateCustom).not.toHaveBeenCalled();
+    expect(deps.generateCustom).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "Create something completely new",
+      expectedDraftVersionId: null,
+      routingResolution: customResolution,
+    }));
+    expect(receipt.resolution).toEqual(customResolution);
   });
 
-  it("keeps explicit from-scratch language on the first build out of the custom compiler", async () => {
+  it("routes explicit from-scratch language on the first build into the custom compiler", async () => {
     const deps = dependencies({
       readPointers: vi.fn().mockResolvedValue({ draftVersionId: null, publishedVersionId: null }),
       resolveDesign: (request, currentEvidence) => resolveStoreDesign(request, currentEvidence, STORE_TEMPLATE_REGISTRY),
@@ -180,8 +195,11 @@ describe("runtime-1 storefront build", () => {
       recipeBuildEnabled: true,
     }, deps);
 
-    expect(receipt.resolution.kind).toBe("recipe");
-    expect(deps.generateCustom).not.toHaveBeenCalled();
+    expect(receipt.resolution.kind).toBe("custom");
+    expect(deps.generateCustom).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "Create a completely new store from scratch",
+      expectedDraftVersionId: null,
+    }));
   });
 
   it("explains when fresh catalog evidence changes the earlier recommendation", async () => {

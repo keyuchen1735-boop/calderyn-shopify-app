@@ -14,95 +14,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "f73540b6df2c428cc1151e89d431110ce934a07aa15c3b315630a8b29b1b6d4a",
+          "sha256": "676288e5a2ab2486f1bfb5ce9d02382747a21d2063e6067294c2062b96bb71c2",
           "baseline": "public\\storefront-recipes\\custom-bench\\baselines\\v1-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "a96c641ebfcbb8e4c6c8152feb84fa880a5b0aa5bc3078a8f6019647a62cf1aa",
+          "sha256": "0d6e9a6c5b7e1a17fa36c9cc4bf52dc40f9cc4b1c699a41350ac813a62a6fb99",
           "baseline": "public\\storefront-recipes\\custom-bench\\baselines\\v1-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "ada019747ea9abffb70f594cc47d39264abfb4c7cd9dc8cdeb2bb1f8e8bd2d7e",
+          "sha256": "7f84d4e8e775087267a7d2895f7f482bbdfad7db42593d9362ed59bbe4866593",
           "baseline": "public\\storefront-recipes\\custom-bench\\baselines\\v1-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "c6a1acb5a6e6c085e118bc60b80522495dedd7a4b09432671343ded234ad9f5c"
+          "sha256": "340e234ea50c34e2559fc6aedad1f941de53f244bc0c50593549607b85ba7cc7"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "e6d218beb6e4a91855f6fdf8cdac84f833b75e0ba91f672e6ba428a9e1b98e21"
+          "sha256": "f08dddb4eaf1db1db074d11f6c2196896ddef63f08219fb2ec818fa6def8222b"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "8701d6f772a714da3797e0aa36bd8a91cfd2c74b0f90e5f1006b5a262f2f7178"
+          "sha256": "72cacee13061c0c0e292886c2f83e7a709fadb29671f906301bb86f6be632875"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "bd1b46d47887f934d5c3675154cb55a7b9ec9d2bb2b7c516c7b81d7df27e4e9e"
+          "sha256": "0e7a51f0779d389427d46d4007e761d4e6d5af5849c5179891f6f83305347275"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "e24c05650af8fbe3a418d0506aa3c95fe128bae7ea2280889d78b761d9683cc3"
+          "sha256": "4de7a62162a6b7936e15a20ee36718949f312dfca38c1b042d995dc24758a5c0"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "8de1816e382feffa4a609a5f7002d651dc69a503dee37503613beb123ee4d601"
+          "sha256": "c9cde92b976dc1796eff54461c351e4a04d9a6b7b5dabac444380bff100dfb7a"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "7ef3fe1318dad5e52d846d5393d1cf4b7ee15dfad6d136416027e92472353503"
+          "sha256": "176e6708952ebf10b9cf77a3b00ba0831e693392858a6fa55a5b2a4502bcdc2e"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "8d775344dd1b32be62fc47304031679201893b2368ca7793a63bd1ba5921707d"
+          "sha256": "2118e1b89143ac8540de68363985213581f84802de2a0fd40c15b6ed8b074c23"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "838904f4d42ff29d5ee15c9f30604e7a45faa51fb2b30729e33e9fce17e34f07"
+          "sha256": "668ef7f21501589391b84d6fc917b0cffecbfcbee92e8073f89a69d71042f757"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "63b8a650a6a5d44b8e781d6649d44aebdacabf760c80a92021a4ead9295c884d"
+          "sha256": "89618cd0771db29f1eb5677a7deeebc0b5c1401ae2bc9386ee4a3b86d72d1738"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "8ed63dff463546762161d1210180e1cda62d51d5d4754ad5e0c317f5dfcecdf8"
+          "sha256": "7e4a5fb418a9ca6d4fd68297da0a0a76cc7e941670663786506cd501d3baf42f"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "3f68475298cf62c59fd351e87300fedc48c98d77653a37001d77fe4d6872b1fa"
+          "sha256": "61bdfd6e71f6ec0576697f93977d42f768e6f96c7ad1bc804c509343f2e43412"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "99e3f518aa2471fc5f578e81bd551553a6705d11dc3ee171752debb43a94d057"
+          "sha256": "277be86845752e2e6514e0bb7b4e728adff78a2a2f6d1aa4819b07789035656f"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "02455be6c05e611050949f34cff2954629173efbb7bda0129fdc727dc28e3275"
+          "sha256": "225f323348cbedc042153eec77edc6464e6a922d0510813200b7801d617584d6"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "1912ee245cfe367f99597422c8741937ee6275d68f38c414a88fdba4e650604f"
+          "sha256": "e906ef43ab07afd83a6da5008b6a77cfe5831ebbf3e2be5b8de519244ff55232"
         }
       ]
     },
@@ -113,95 +113,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "89b8c581adf3705ebc4e9081735bcfa03155073f2421b82578bf4f935449c6f1",
+          "sha256": "b6047d16b979a4c01a71ae51cabc456f54d7ab801bee524506ce70cb8d08a359",
           "baseline": "public\\storefront-recipes\\commons-index\\baselines\\v1-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "d5bf29b2a76986770fc39cc3b15d71d6c28e4d6f31218265197fb3ebf8bc485f",
+          "sha256": "da7250b920138a9a6c6a33024a6da2d4d608eb95523a39f99706afeac8f6c5f2",
           "baseline": "public\\storefront-recipes\\commons-index\\baselines\\v1-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "bbc584cd7d9c9eee22092e15abd6eeae219e420ef13a9bd73c2defb27bd803ba",
+          "sha256": "8e72d046ecc7c8c3b3c78e4458ab9fa88572a38ce6a6388fd4b351e8dacfa330",
           "baseline": "public\\storefront-recipes\\commons-index\\baselines\\v1-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "a069d2b0cf03802f3fe752f92cfddc29520ff4dde7b167db1c9c790b644988be"
+          "sha256": "ec37106e2e206d16973775dedac3b8c710a906370ed306bc152714920b91183c"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "08c9f6e3f3c85e533ce03db60ca0a2e0c4852fc8dc1026bb3c9b5bfe9570dd31"
+          "sha256": "290ddd78f6671d563057e94e948e1e96412d432bc55232cd077ad5c594341adb"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "dd82f9a5443ef72774510e2391c7d39df26c969ac3d29dfee53facab7c269e5e"
+          "sha256": "123cfa80306a138cf6f3cd3ea8005051a8e29bbc4bf587e1d3067dadab0ddcc4"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "24c60b3287a42ddd165641ccb2e9778424931331678b32860fe8cfe4d1e3604a"
+          "sha256": "d7048daa07c0b4a2afde48e9f697f923d56f0da397d7bb4768603c5bcea89562"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "3f2b5db3a414c4c059c06877144c6d9005a69292452914a5a55a17b9db6df50c"
+          "sha256": "f54e54178729c866516ab9c68ea6e3426691be378ca32227a4dfbaa11691169b"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "e949ccdea2bab4be13e20fd62dfa1f5cd2de4ddabfd5fd6523c380dc945d38f5"
+          "sha256": "0f94f8b51324d122b707e3e044d932cd0f3b7c3f8fa86786aedc43ec6e01564f"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "ad513f8520affcec72483fbd792ad0519a7e7b219e089d8d57b833f0e2a1f04d"
+          "sha256": "7df7a509ed0885e852cc11947eb0613e909044865f07d93a18b135324999f231"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "97b789fc893a3cbb158fa5987e37e00a691cb9c86b485129ec925f54a0d59633"
+          "sha256": "c029addd4c31bf32c80d3d553a0ee99efbf5b328036f744b64c333d6e7e245dd"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "554cab058c6a6ada77b03db30a281e30e9089fa747559ef953c429219a71a921"
+          "sha256": "42f8a85ce9aa14415356797ee93a170a2ae3d4919e345016e7bb4cf75923770b"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "1cbb70b06cf4b33657dc0029ae67d0b6401a2f570a9473c9cfad17a6ca8d3b43"
+          "sha256": "522ee40d5356f47ca5eaa2e363a61ed9dda1300ae1dd731764dbca456d017c83"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "4edde64c98c18186faa7aad8995091a70f7df406ae4c781c8393da0d5dd881c6"
+          "sha256": "05db1b36e2ba76c9cdae3dcee26cd11be784551599bd796a8296f5a1421c7c5f"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "a4c94eff64c981b95ecebac86f7284bef6448c5c79c72356472734125fbc647e"
+          "sha256": "4fae48e3261f0395fdf2cea2c68181e33563cb21055f9b6ec5f49c7130165d66"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "3451d57d0a1a11f37d79ded6f549e86926734cacdeaefdf786728d6e55f4d33f"
+          "sha256": "75047dcae3a3e08d269a040177c13a16b7a2639991ddf1eef7a9027b51ec05d1"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "8b21eb1e632c51ce158cd6639552120fb70cb57bc7eada61b8472d3c3bac60bd"
+          "sha256": "9ef3d63a4a351d11ee7378a8b43a4fb7970b18b66317084e7d97e1088c2ce706"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "a1a5aff7d649602914ae645036b9a6941bbcb5a29728229fede98566842c7258"
+          "sha256": "101d257413766070f86c7ba0e755f67769b3411127c637a9d960cde3af498ad3"
         }
       ]
     },
@@ -212,95 +212,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "a9ec462ff4af6c59cde82b27b5a7800683fc209227bc0bdf6f6d7954cf93cabd",
+          "sha256": "28e45f79df63be142a803c2141a96cbdb7be1a64ce7c29f13a7b1b7c1a8d5faa",
           "baseline": "public\\storefront-recipes\\soft-chemistry\\baselines\\v1-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "4afc4421134509636aa1440186fd72a5e8c7774cebb833d357c84dae6e3ea9e1",
+          "sha256": "488bad31a20e5fab6398fa665a6197172672713b5f7ee027ca158a44c6bed7e7",
           "baseline": "public\\storefront-recipes\\soft-chemistry\\baselines\\v1-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "0bd084d4b1019f2b531afa354bf6f544a8a0055c939398685dda90504044c50e",
+          "sha256": "077607e8d5953055d86a338f456d199af03311f21ae0793da9553da4b2d9d114",
           "baseline": "public\\storefront-recipes\\soft-chemistry\\baselines\\v1-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "fc2c48a4f685f190d78b98b1cb007409ea627366f43d24dc47dd14a559f92450"
+          "sha256": "ecb374dee7d12fbda41534531de9fa953470556e15663aa180a1f2f5dd17dae2"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "94b0b7dc16e6bb62b36a1ec76628990265766530e4af45ad8bcc3ddbc88ded28"
+          "sha256": "243598ecb7ca1d94712f692b56b3e6c20e101cea3f74df37db699717fbc1490b"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "cef88e3c817e8c8ca4685548c8acd64f71fa91a732b6d83ff1db58185089d7f6"
+          "sha256": "e1938c994cf4f37e5208e65b7050844636f3a092be8e9824ec798bfc37168f5d"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "38b4824462710cec5c48264a1d06b2a15fcdccbadc543a97859e9b939d3f8b39"
+          "sha256": "be290bde46b00340d66c2f926e2944de34e37e44a99923b71d5391ae3a949b15"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "94a2a265832d2d9b60e780d0b2f599fbb9fb8cfffa7f79246e8459a2d0932fa7"
+          "sha256": "8a2fb767d1e0314c2baad5363ff0322224a18c0a6b0b949266f0607ceda1b24c"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "5bc5d4d93238fdddbd7324dec30d0d9e51ae0fddb4801afd8cf2bdd7393c8126"
+          "sha256": "23ff3c7414c6b7f25a2e6817fb78757b431b20c011b0a6c90108bc07bead8c55"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "29b0e5f39ef02ba898d814cdb0a4a69c03c787c082872126f185b51b9d5b2f18"
+          "sha256": "b74e655f3c2c57358e58200e8324dcbb0e0896d62bcca7f234d328dfc388090c"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "8d0b5634b0256d17429d5b3717b8d8542c6a47ff2b2ad3dc6a665f52dfc7edcc"
+          "sha256": "00c6a8827194f8c8ddebdc114da3e96bbd93a9b445caccd30932ad1dd1fae17a"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "109aeccd25340f209447065111157ee5aaa56e5f0c876569ae8980f018c5d557"
+          "sha256": "880930558b91f10bdd3bbad432e8639ba66fe8590a8be83903e6b2ed892e888d"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "1d63a0979953d2f7dc443af7ea7dc96dfdff942a444851036b40e60d04f48904"
+          "sha256": "e3fd3a85a64b2941fb5d4cf72541aa40636de1205cae274d6b7703179b4ee33f"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "e669ae51100baba56cdb86ca26cb57a352fb52f2e9ce37b1c0e1429e724425cd"
+          "sha256": "04442125068757cff5a589c39f5d7fe560d7f04ca077da9d409c868ae8a454d2"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "859e017ed4e96cf950caa2f0f9168136c41d284cb94559c7229d7c5c2c7d8407"
+          "sha256": "7442d30f5accd1df4683228e969c5a474e7b15c4bc6bd0f2321171157e40092c"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "a66c2679f4e8bde1d8d8afda65e2cfea01e0bddcd5b4bfa076494b887f5da3b1"
+          "sha256": "9ef4f4d888bcd60a08ec6ca90d93914f7dff2d410138bfde6f723c1676122dd0"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "27d4e0f11a8d2a1829d456ea96ee98f386c2bf0f72648272bc690d03e0664aeb"
+          "sha256": "9ebafcc36a983b8adfd3bda536e6f1fb12b83538b406676ef05f08a732191ff3"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "4b445c175521971a55bc7454d2bf6bc0112199554e8d80ff631cd1c7ea97bc9c"
+          "sha256": "45429320045f0b9079312040911fe8f3312c4d3ef52b3362c5425e8b22672ace"
         }
       ]
     },
@@ -311,95 +311,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "64e4afa80ee6d169b3602061189331c8f6eb5e470a0a809eec0fb6d4d35aae83",
+          "sha256": "39e2c0f57524eb3e4286f22f9750d46eb652b18a920e1f2846882d140883f0e2",
           "baseline": "public\\storefront-recipes\\companion-field-guide\\baselines\\v1-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "215462910c3561936fe082ad1b806ac006db62aa3ca6198c05b3307aa819d2e4",
+          "sha256": "9ccae8b90305bb78a6807cf26d479f5154480c8543cb30ce572c1915b8dcdf73",
           "baseline": "public\\storefront-recipes\\companion-field-guide\\baselines\\v1-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "635d45761ea49d222f4b47a2daebfa54daa3876c9b6e43c8bd508b7c90a4cd2c",
+          "sha256": "80db41bc1468643c99764a1a88f1087418ae13ecf8c85cd444e88a980ce5de1f",
           "baseline": "public\\storefront-recipes\\companion-field-guide\\baselines\\v1-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "20e582af9b3b91e359312d40d668a300d665a26964ae75f6b0498a72cc5d5491"
+          "sha256": "0d3bf4dae603097b76028674372e9fa4048206cc9388ed67a684b1bafc5bab92"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "d6fb850e6e5cde13878aabdb6268116947d7c13bed0d5916ee88012e840535b8"
+          "sha256": "41caf6ed15e0dd32d6bf23c2d242d17b86d7992a5d46b1f8fdc2fc85bb9fb7a8"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "e56ab78a5205f8c868ad8bc80d3bf484d0caf19318ba6d2212a89e447f206b0b"
+          "sha256": "e253b8b2dc7986859154319985fd3febff044d2bfdc4bc8ed8c100600916380c"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "99a16d8a4763e7b7362479252994c200c553856d37320f151003322a0acbac4a"
+          "sha256": "769743ce68235d0cfca0e2949873312814ee34c8edb09dac9791967104364d35"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "f1666621941e7dfe2e64c3f27eadc7ccb9b76e5400f7bc0f952d74b03555f0bf"
+          "sha256": "49c28a5ee17d71eddea0c8625f95734da2875a8215961941add465c87543737e"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "d0f793f8bc801131ca0953976da9c740826eb78afca7e075d811bdc5789f6171"
+          "sha256": "3a901a20e3e82c5b3f5a446f895714305a7eb99895b231dbd80f8f6ca4d2da68"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "7b3b3824e0c6c6290bef97496d6c784fd04a96f18821a575704374e9c6606c53"
+          "sha256": "2b296b47d83d454c89b4b2b38f62628c1e34c93b88dbaede0c75a2d52291d22f"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "ef85580dee6ef960fe7f69cca0b25eb496abb6b0c7f970e1bff9f2127f0c2230"
+          "sha256": "b7f149c91da57d093157b6c9310d6bc4e0faa5eb1b887def12db89eda367d670"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "4cca0d7b7337a7b392a268272792221655df1d72cf81f688d46e285732b41e6e"
+          "sha256": "df81ea18133524703413d507e09eb1f3a4784e9951c8fe3ee20ff189adec8ead"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "2a9a02cb1fa8192f15acb5daa964399bf54af1cbc7e882e18d4bba34ee2db7b9"
+          "sha256": "67d8f1d3393aede70a72871523c1cad095a4ee78a3f0afe6b134642226f652ce"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "bb6b0116f46ba02723a3de8e773c8368840fe7d4beca7febca19a64b4696976f"
+          "sha256": "da1e8dbc4b5af5f9071ff2358c8cb468451e2b108390ac4924b9c01507d88b11"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "171d2ed6806bd9f6f1f5d37de2afd39988e2e974157fef7842344ff362018864"
+          "sha256": "ede72c83677d40d5f9607c9d500270a8f8c4cb138cda05d65c9ab3998d904e7a"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "47ba2d24dc832a8d8e2755f7769ee66f177f65fcb398be5c6de248adcc59457c"
+          "sha256": "38fd877527c04bb2061c18ac984be79eaed7aca30945aa93717fc898df53848c"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "c9ea6f30979777246b7162091c1e9a838962598d5945cb63e81b58f6d444d234"
+          "sha256": "13de4466dbf3bffaee066a012427790be2044e52bff059b3f288920271d59505"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "cfec71cbdf5df662104ca34eaf69dbf453c72e93d13184b938724951d19137d6"
+          "sha256": "65bdefa415736c421335c53bcbba57f7e685579e3912ebfe204affa63e27fa04"
         }
       ]
     },
@@ -410,95 +410,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "a780613cc276dbb2f447f510450b680462ce9c4b13711ef5bdcbe8b783d78c9f",
+          "sha256": "f9cf6bc2fd1506aec418534b6844eed34c36678ffd619342bca6266d19a44951",
           "baseline": "public\\storefront-recipes\\daily-protocol\\baselines\\v1-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "fb11b9a4e517ac45de6fe37a5501cf9c77ab3f4033fd8ad6a5c09a82d03e6ea7",
+          "sha256": "b1c3aead92ec7f734e0257c9ec08743a437ad6f0ab3386f4f8087f2794934a78",
           "baseline": "public\\storefront-recipes\\daily-protocol\\baselines\\v1-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "68b2495e825bf8691048f924d514fe85f229eda8c2a89fea10d08f91450c1a6b",
+          "sha256": "0a2b07ae72faa3f6517ca3f66dd296acaf4c5ec7583fba67c9b41b12b16182a7",
           "baseline": "public\\storefront-recipes\\daily-protocol\\baselines\\v1-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "979101dabee52604bd9e9bb6c27a3b98f82234cafc1d3e2aa11e17b26a26459c"
+          "sha256": "75300bffb15868a9754c5aa692d765dbe7bf50f7416edc93c753adc2eec1035b"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "754b703c5e1be697968c3e8c29be5f6028ae1923e32bbfa2f77d7f7731176e74"
+          "sha256": "0499216d4a022edaa2c7adc5b56546ad71d03757e73e051339252c2f5515cfe8"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "10861f53848a7d1c2e35bfea02c0bf2d181d87a6fde64ce6ea1f4ec0030d0737"
+          "sha256": "6809a4b46d4049ebc1133c165beb917ebe2ce89b5913efb427121a21ca221ddb"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "b6944349174247e195b52aab16142adc43173e55a51878a0450bdd001ee718a5"
+          "sha256": "34ef256f46311ceba38b3609a0fa7283038c1c16552103f4d51a8261d9b56512"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "35c4a4b7202b0b9472c5ff1e91c2f3dfde61a475447c25615ebf59aae59fbd7a"
+          "sha256": "ce6118dc3e2f50c48311f21f5d291d0825e6a05fd0d4ed317118b4fcf6f48c17"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "ee14ed238b318107842b36cd474553b26fa191a5154060e516eb5da49055cbe5"
+          "sha256": "e4e3181406ff88e30ba9ccc4adb07e717bd310f6a18c81500a93a659afc4067f"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "a3dc37a986e006e900b532a69cf44d0d721a4a77db6f9d1027aa956e753b90af"
+          "sha256": "77c67953edf64b9d435096edb2f19d225e7ff5f7ca3c73a235fd184bd8cbfd7c"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "f02a0fbe43eab57400e1c659743765213ff29d9d3879f03f1578462b15245116"
+          "sha256": "a06c64cbaaad5197e9fac4dab1a1f20c3f0cdcd50c999a1dd51432e89b099620"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "2a82ab381a9c43de44f0ff419bd1a73045960e1a2fefce2f5242cb3b2b0a16fe"
+          "sha256": "60945357e819885d64b75be2c11c8b85240204d80e34842e7ffcee33b801fa28"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "57dc1fc1625cb64ef8017606d5b79e326381b0c0175d92cb279a6d7c5df586d5"
+          "sha256": "cfe4e0fb5d9dd211b7ac1eff230cae84661099f55d94ecf2e31cd6f5cfaa4a72"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "415b02b254fe340dfaa107273b0f9795e0f98dc1613f1487dfc00fe10d49f78f"
+          "sha256": "8425aed5c28b65cfffc95f03b3d4bb6b9df2b06a6be7d113433b380f233b2f86"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "6d83937ca5dd8fabdf6635ea3d17da697ff195507fda09967af963c3f10d2772"
+          "sha256": "4e4f4ab4028502072f134494ec42814e36b7339c0a642de442ae3af4466e3e93"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "fe4b02bca0c76ebc9a0dcb867e1de080c7780cef257ae4206d24e9bd1bb983b9"
+          "sha256": "51d54215b223ebc2c9bfd5588893e67c0c53b0a3933d426cc9f93c47e7a5da00"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "6d41b2006b5ab7eb0358dba1692cf3b21e01603bd122274f7dcf1982860f8f57"
+          "sha256": "3ab215d2665a3a7e16e10e879f787b5ca4830c1b1c7a61108d862e8685ef83f5"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "071a38e4d5341e91904871a1f0fb99b52f9dd0e433b5a52575d4c81cead39668"
+          "sha256": "8ca5d9bb68584cbb60d27e591fed3a39dfa4197d85f2d85fa99048abe479df1e"
         }
       ]
     },
@@ -509,95 +509,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "e9c17cccb4535f3efa90ac38076efd55ce8096f636ab52a8b7b045e00609ee36",
+          "sha256": "cf2cccc0952f6c2da353f79a862521cccfa1bb7f26f361dabaa365d40ab2aefa",
           "baseline": "public\\storefront-recipes\\room-modes\\baselines\\v1-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "5486e6832c32741df5709c2a024fffeb58e666cb1c22cf46e4d05cdda2c1ffb6",
+          "sha256": "cb0fa7cf53e0009ff4bfbeac39b60c60c98922661ce1139aad86d10807336375",
           "baseline": "public\\storefront-recipes\\room-modes\\baselines\\v1-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "9c2b4a0d2730304729fb728a3a9c49300f06899ca4611cce3431692085533608",
+          "sha256": "c4568754e6e1bec2c9070d161ddbebf07f29c7284d8a31dffba5783f7723d486",
           "baseline": "public\\storefront-recipes\\room-modes\\baselines\\v1-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "13d0e44ace6e27a75bf23571e7726eeedf41ef6690d029ae5704007d7174c65e"
+          "sha256": "829c61ad016dccec046cfcd3b57e15c9acec2760a4754056487f9613316741d7"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "79a748878a04eed8957d4e56fee6af3e25e57ffc00347c106ca79273add30e3b"
+          "sha256": "2ce62c23afbf389d3574496b01fe7c2ef826432e502f8031fb5fb2ebd16a71e9"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "8a8e4cad5bdd29bebc0d1eb7a6dc899d7444fbebc2bf4594b217a0404f6ca583"
+          "sha256": "40606834b5748cd906aecaa6eb0d95d142bd7c6f82d6bc1570acc7db332c16cd"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "55b5385a857d182a64928ab4398a8a773940c68aa0a6d72f1ef6392b1f1eb39f"
+          "sha256": "7c5b2b8deaf92006422c608c3e4eac67b7a336083219bd34ebe0f28c2475945e"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "fd0bc37cb4084a89925a68b8cfd27e8392172bd213f796df76d82a49c170239e"
+          "sha256": "23bcfe51219fe05f483ef89903c48005500349ef42ccdc3ab51091144d2e1dbf"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "3aeea9a4a08a51f05167634dd3c69b8aa564ec05ff56ca651297f102fab0fa0d"
+          "sha256": "c8cddc53b44a355b3b407bc08137574685f5de6a0c4a0436ccf8fafbc31e3c08"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "771f962c92acca0303d67f72b462df93f9412c2134c85684423d0aee3abf8b18"
+          "sha256": "08ebc07a50fddaf5c32dfb86b9456c89ed9b273aa619356a394626fd0b86bc9d"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "941921605d00237fb9c23ad564c8ef1cd376afd249bdfde09025fc8b8643c82f"
+          "sha256": "f19f13dc2a344b63c7b5bce7a8a27a973a3bace3d6ecab8bfbd7316e85f183cd"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "0363176b02a5f54b5a8e717b09afc15718cf6de58f932cef6f09671e4ce8bbf8"
+          "sha256": "2afbf635dfc3dc896fec9aa5167d14c285529d3d365277fe20e841fdb038eae0"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "c23d3cb0abb6f65505692777a4ec20f351a0529b1d0a8908fefd1bb20a2d798b"
+          "sha256": "bd4a5c3cda6e80698db4f2c27feb441d32229f8a670989b9c6b056c65341c077"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "a78a52aace482c26a13b9b59a89a700bfca5ea68ebd3eb5bbf77b5c2b141bb5f"
+          "sha256": "8be1b0acc6cc496c795bf04bf0467ea77c796badd10e4dcfe6815963856bbce8"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "481f5a717987f2e12bb85715c6d1a4984fca1da7a71013c8351835635be79e84"
+          "sha256": "46d99ccbfc1d0a770714f2a5b758f2169fe5377dd330b12843e1df8047a4e670"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "340631e627e072810d9d9aab0432296d0a8d57d7d5ea3caedc1e116bf71c3a5b"
+          "sha256": "eff520300fa95a1c7b0115114d4113bc95497e2dea8c994c7771abb0b77985e3"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "ed038d21f6f1f64dabe7e81ac06cb20175ff5f9ef1cc67ca93bd3d5089e5388b"
+          "sha256": "89f7f0a84d32c727813ef2d160c2089920914b71363d7fd738124a40063f92b2"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "1f6a6b765727eef87e16f5e74f853c2f0304e2db9c2fb0d73aa6500931afd4c1"
+          "sha256": "819da4cf4032336293b0ab3e7c40b8852b5ddcd12b73e044a7ffa2c6f7497931"
         }
       ]
     },
@@ -608,95 +608,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "02ef86a8111b719b4181dbdbbb2e7401344496ae5dac302793cfd79dc7c453d8",
+          "sha256": "4f99f41c2c4de4fee23e65e4d33748902c4708fae88f9b765894c0ae792c463f",
           "baseline": "public\\storefront-recipes\\rep-rest\\baselines\\v1-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "2a618e54ef7cb84394579fbcac8e9bf391ff96448318613e8208a66836f4e018",
+          "sha256": "84319898026fa262ad0a8dbf3e9559b41d630d437c78b98dcc29212811029f9c",
           "baseline": "public\\storefront-recipes\\rep-rest\\baselines\\v1-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "17f58e45c4c5dd0adb40a78896508ae704a9c1dd164f34195f28fd4ce230dd95",
+          "sha256": "be5271f5cba9981aada092beb726caca496e083e7105115118ee2a9edda3f888",
           "baseline": "public\\storefront-recipes\\rep-rest\\baselines\\v1-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "94828e5d66b8e846d439e18a0599c0ae28b6b46adff54de3556e5e61c975d39e"
+          "sha256": "48dc574808601b397a768bbcc3ab17e92db2b5aa5e4cf5c6718e8fc43332a157"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "912a6faaefd546f0a2f83e0940d26f64b766fb6d07d33a3b752be6904009fafc"
+          "sha256": "797b88a012d6eea3c1177e6e2d86cccca98be637fef53d99dc47be3a5721c17c"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "8b4f9d300a94789b9943399bfb0a9173349dadd458dbf92b773af2a642f37074"
+          "sha256": "7b04a502edae4e130590cf758f78ed21dd404997533a0a5f88be3753d755ef76"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "413d4c5d24eaeac851a82ddac3ca8e98405ad253323e3380bad2b6b95797a82d"
+          "sha256": "5f8783b9f0016d5923fddbe1ce5bf304c1ebebe28b80779819d7ee7e5a5aaaef"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "1cd86f903d9a3be7cc6e2690cbb10ddb51344ad0a8165e31ecd2f490c2b9e3fe"
+          "sha256": "fc7579b0442d611023a42e80134e5dd2698d4a3e9b767050783921c04703b035"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "9fc41dbf9e50ad1129853136c13ded844f0a699f7b4925e889bb84ab1118683b"
+          "sha256": "5955e4deb3104616a86ab6ee4874d616ed9dc7fa9ed1f733a6cc6ebe0a15451a"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "48831e95b71bc030a2b07b4b0740e5a1e45941f0ac8bb8165af21dd2be8bd3da"
+          "sha256": "46b7147a2298814e6e5bf854056ad4341898f8c9ec6e7ce47b2adb16cf6dd320"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "9be91963b957ebe2c9234f49da6e511efb0d1970c965aa389201ff23fdba3b95"
+          "sha256": "9c6e8f2abac1507821f525c56e886472f2fc3f95db84160210772740b9d789cb"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "b6d2786525ccc44bf69317f3c7b77791444343e362c808c32c577550ba3cd288"
+          "sha256": "2bf007d8d416e06fdc1ef6359c374eec70305d03d26bb210ae41d4600b408cac"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "25cb855eeb60b90462ee74d7482db7546897053e7f868c6777368fb8bb4458b9"
+          "sha256": "2b942ea633b46829cbc17ef324c77d0a68fa1ac092fc7843c42aabd0d664467e"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "c7b6a7bd0ec7f9179426b9a5be9ae0e2e03df30621cc6ffeb10e47268cadacc6"
+          "sha256": "179d3c366f3332bd5c52708615062c5ebc0fe1f934f9565d346ad615ad422af5"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "9e33307f4b9c1ca4ff0ac7722696cb5a0cdbd3b8f06588b735458422cb0483c5"
+          "sha256": "0a4180477eaa9d0a865c1a967ea9d5ad5bf662b9b1ab108a357ffa2e2e096750"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "0db31f455199432a87c89d041a029e4318ab519286217dbb23dfead410a02ea2"
+          "sha256": "6d0787447689db91e70869a930a926f1645b8da63517d1ce5cd37846774abf89"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "3e5aa7c8fd2beb18408e2a34bfe37adb13a0c4fbe48af4fb274a36dbba49ff3a"
+          "sha256": "e3d91524d107611af246498cd0f4e2920eee65deab3641bd521c21085b34255a"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "1a7c24f2746fc089952d55624f0e34745d3c518290d21b33b58087d61dcd0dfb"
+          "sha256": "deff7aa01685299ae3c2bbbfceaf2495c4e68b2d6cd867e6d10b4880d70ddcc1"
         }
       ]
     },
@@ -707,95 +707,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "65fb6f675392529276fc0c9bf317e1e750165da3332600302ccee8426ea425d5",
+          "sha256": "cfb2c9c8cc678124dfdb6f283631f15d71276ddf969bf07e427fb9f02627598a",
           "baseline": "public\\storefront-recipes\\diagnostic-deck\\baselines\\v1-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "b7bdd420d15b6a97765bd27ee1828da752e98b298266cfb2d08b85e603bfaa1b",
+          "sha256": "1b3c02ee3f481ebc39f22c74ff4162399ff2745964201d95082f0ef88c4b27d6",
           "baseline": "public\\storefront-recipes\\diagnostic-deck\\baselines\\v1-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "b05afc1146e9faad857577227d287028bfdb3b330fe2b8f73a18e79d6c8ad055",
+          "sha256": "16e7c16ce62bd32ec7e9c511060b19c90fe3fc1e34757b2a7d7d0ccdc66b3829",
           "baseline": "public\\storefront-recipes\\diagnostic-deck\\baselines\\v1-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "e8dc6e94efa67321a09278edd0c7393d3a9e7a3828598cf08023362549d19ce0"
+          "sha256": "af03139c602999c4abc7c560dd00a7d99d215d2aef67457484ef4cd6a3b093ef"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "4074e8e02486b7f5df2364bebc41520a4144bde0ecbfec1b0ff43fb6ef03c4b7"
+          "sha256": "c0ff80b870eaa9eecda5afef6623545a6da6781eb6bc32f98d8e80be5c2f81a8"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "8fedc20e330ec670e7eb0f789e36033483aeff352f1b7bca65190df18e9bd5db"
+          "sha256": "c127cf32a41322e40a157154536280d4f713444307673021830bd002ca37124c"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "70097fe478f7646f4ffdd9cc3b32227f9613322cbdcdb3d417d5b4267da3065a"
+          "sha256": "84b70673bc9d5a94090383bfb1b572efa830d30064b82ba34efbd0c67601bb89"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "24de0ae1bacb1382a80a389637fa1642684c0223e7e6100ee93a0a381ab1d913"
+          "sha256": "2909acc028ec2e198dbe1c3bf77c655853e51691376b39b15388c8a716423565"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "4a721f124aa0b06c6c5e941bfba4585c0c4f0254ca4657eee63b2bc0c1395e41"
+          "sha256": "fba2783899f098cde76129bf16ed05d083e1b5a2e6ca0b4b2b110c9921bc432f"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "8992c4c3a9c79428b8fe86b55370570d69c3bc144e9d99647eec24b34c6f9fb0"
+          "sha256": "bd7a5f12193f61bcfdd57c2dbaeb763ac92958b7bea6be5c8f7e7a8577698ffa"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "50e3de1f2491a318b4a488a0e5e5f67130a3bf04f4c7a710d8674e7643e81bdf"
+          "sha256": "4bbd2b1e52211bbfa0fe68c93c5d3d336276bda08682046e3c978f39c4c4a905"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "f344ec3637bf76ef8234678ee69c3d7a7d1ee8a54f1deccedc148d40a57dbe0d"
+          "sha256": "c31720d176d427f92543eb4f7c8df18d4d1bb00558801a4558a91f649c14de42"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "b09b718ed62a1eae1bfa169b4ce81a59f5b936431d9d3c95345266e781273b52"
+          "sha256": "b9ce6d42e07577b7f25f630bccfe0ab2192a5b0c7fd8472126d2de46d6f2d902"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "a3b92341c7468f4ff98d51f798d7b95dd22825637b288fd9e323c53facb3b27e"
+          "sha256": "e5791befdd55808d1a05f8fe98997a2911c0a2a442a03c23f8f7e7822834ba05"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "94cd072948791fd37c2fcfdab7727a28c006f6e741f630ea59223891cb2f7375"
+          "sha256": "502dfbc52ba0916477adf14a04e91ab252fdf3383a7b6e18695215a46c3b616d"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "99e8acbbca798d66b293f28148d25f65109f17be40c4d91cc0d8fe77b62db38f"
+          "sha256": "ab5e6e9a3e0d8c5b1febd891ca32820e9944c3a434ea0815643e3d90c85ad682"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "a30110857ec5443fa699cdebe24ef3b3cb1c5b37e2ad37654bfabce48eb45412"
+          "sha256": "b638fb14a8d6b09db5c75f81a4229261b95ba017cf029c41034c2af7c29ab2db"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "4e1b82ebada4a5eff1e07b435cd3e01ea62ed7eacbf82511a864f70a44c24d66"
+          "sha256": "6d5f38f1fe6dfbe60c470cb9675cf4b479ef1dc66fb057c3d9bd0f4af9dc1189"
         }
       ]
     },
@@ -806,95 +806,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "3f42be81fbbfeeaa4943aed203e7ce91630de681585b67d630639ffd03cd1540",
+          "sha256": "a0ce18ebb386b5296580000360144787c073010202a00e2126d922c0d03e415a",
           "baseline": "public\\storefront-recipes\\ritual-almanac\\baselines\\v1-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "fd9645018ec7233952e8ffc685b9f875761190079059741b77374229bc852109",
+          "sha256": "3f0a2f4609983a49f3a0354ee8d60cd38ee3559ff069ebae9ce3d2c66b1843e6",
           "baseline": "public\\storefront-recipes\\ritual-almanac\\baselines\\v1-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "177ff3b2cec818b794330098dda85e4eefda505f5610d01afdb78a61d94a9f3a",
+          "sha256": "a178bd155b219f50299b56afdc015e22e3a6dafe78a9cfbcd45d865cc396fdbf",
           "baseline": "public\\storefront-recipes\\ritual-almanac\\baselines\\v1-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "08e05892ac5dde0db15dc3b0a09cee5cc4b7e696a2277afb58bac5c444773392"
+          "sha256": "b441df5074bda76f3dead8c6743812421ec421384a70b5adebec1be609a065c8"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "f0882c3d80b9ff34c9ee5bb855a57662552c9a63d819a43ebb2ec45bc9c0f509"
+          "sha256": "812b53cf083630bef9e9c8623b68e2bb4c10c69625cc864412f47eb3fcbe6c92"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "a4403c53bbfc408e29d1977225e32a65cc59ce97e06360df9dfdcd2634a3ee2e"
+          "sha256": "c2c02e5436a367745e4aa3793be1d2d300850b0b99ef4be1a5b9b75ef6dec237"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "15c1d0714801b9723952d50788a6d26180ebe0605f165974d424e8c0fbeefd5b"
+          "sha256": "0d70e5d3ebcff7805ec3609bb2769de66d6f82fcb9ea4e350cf77c83156cc722"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "356547f0af892be11e6d568a7c210bf99c64663c77ebf348a75c8543107542e3"
+          "sha256": "1b3a717f4d24c7c4a29a9cb4c9c029edfc38d5ca24e843e4056599156ddccea7"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "60b3f8dd5f4daef4e24f4ab97e94228db9dc60644819e1d2260975a297cb7537"
+          "sha256": "138f0075ba4504d2fd8923ad68d859139f3b7328937490a71953493d06686253"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "cf2d75b12ead7c93417888d040386680f0ed50573139e02ebff46147e60e43b5"
+          "sha256": "439eb64ce138a5171a34b406c31c666c44b588f32f6ec36813cbd4006a49785d"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "5f0177c5ddf7b5e9c6b7a6fef3eac3d55dbf0cc892127f2161d19443ff7a31c0"
+          "sha256": "a24ff411050f481517a3afd0df3ea603826e9a58ad959591207fee55d0068ca2"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "6a3dcfddc6f8562968da4b07bd12bef7328d7a4bf275e2044fa3a99aba8ef599"
+          "sha256": "67c9b8caebc39562a86e5eebedd37a677950e8f577bc018a869b127ad0813b35"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "2443eba6f288124ac374d079ee5a1545d3e23d3c1933dbd77e16f5720efe7327"
+          "sha256": "9a45ba0465ef7c4e8a674e9b07c785470ba311ff0f2ffd21e3b24b33463c4f79"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "75cf9a2fbeb6d195440c940740b78ced98692d37010f68a4aac70110e8b8c7b9"
+          "sha256": "04f5fba4e51881fcac2df18e7e7638ef3bcde743b5801fe938bf7cc51d1aac41"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "ff03cf74be614718b4d5d464408fbd143a93f25effcb14f9cd3424df4286b6ca"
+          "sha256": "f0175eec5c7b62089bbb44a14a3ada03642debbdc9bad14365aeb1e812066ef3"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "647efedd13185b61793bffbda6d456d30bc1b1752b576bd12009c5d1462a0b6b"
+          "sha256": "734ed3f5c60c88f78ae08fadef2c09df7123ed11b320ab422056e0c249f267d5"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "3519c434f7129fc6662205a6c041e6f40348160339ebbfaad2321c1eeb6f153f"
+          "sha256": "9d3f65fb939d9391c025e87b499a8b82aba21b6879c3d0a088da5e523ca43328"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "e2010235be69aadbf7fcd08946beb927d16c5226b01dba33f2cf86baae808e80"
+          "sha256": "06dccd24c33d537616d9422e2a605f53f9e0e21b85c6be4d0662ff8e3af67f0b"
         }
       ]
     },
@@ -905,95 +905,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "78e6643b2e6f39b6d89cd616df6b67cccbebbbc0e97abd8a738fbb36a1369a34",
+          "sha256": "015e94c977d1b06260c3c92537471d3cb843172579165c02ef96225e8f48252b",
           "baseline": "public\\storefront-recipes\\broadcast-patch-bay\\baselines\\v1-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "971cdef0f6281c8b38cec484a0ac0f1cf21a3fbc423e86000417c1e14c36a166",
+          "sha256": "13b1c8bab9e8e118b13a6e67df87d89eb9e8e53f4190245206d1f7293e9ca695",
           "baseline": "public\\storefront-recipes\\broadcast-patch-bay\\baselines\\v1-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "1ef85f50d38acf072ac808d4d6d3433ede4199fef80fb9e7632e967e39c57eaa",
+          "sha256": "60be33d35b9e5ecc3a128af29c1f9f71788d1215fc74f93b60e912f65c5655d4",
           "baseline": "public\\storefront-recipes\\broadcast-patch-bay\\baselines\\v1-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "fbc289cae745da6be8df9880f9804ce990d8c1000151973af7b35e1da2c1caad"
+          "sha256": "c8100ba0bdfddb29cdbd307a4dcb27049a44f0bbd4462d304af07eddb1de0d28"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "264941230baea9aa6c8aa7338aada5b3795ab419b492e37ed6f9d7378a02758e"
+          "sha256": "760657d7e215fd37dd5ce98789db7fbd912b585dc6e75edabc18e408f7d30e2d"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "263b23b55eb2d37932092be57c9093e7793c30720ae9571f5a5508295ef34247"
+          "sha256": "698a3992d8b5a811948cdf86b206eccc37b7ade6d88d89d692025ac3980485a0"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "56bd7cfe071f5178e537e0d86cbd66af70f22b289414c34e8907f4ae8fac898d"
+          "sha256": "ef9e4e5aaeab26898014709933511fac9dc5aa36a8b2f9e841ef5272fa043980"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "4c807c1ee7ff40faeacdb57a5ce88a04ec11c9ebf20c71c236e440b3a5df0a8d"
+          "sha256": "e2ed29bee4928a5104b0b3d8dff1667478a910aff826b1dd1f03b05c2113fc4f"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "8b02bca891f1fa54985a12c6556632117b536f5800b0d1c1f6938841d3f3804d"
+          "sha256": "13a9ff4146e35e154a1ff91b47de7e2cf851f89501f7023da71b3407a570a803"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "254964992f1fe8afadbb03923804bfa1916ad061459a31ecddc19cce1afa2468"
+          "sha256": "c54c99dffbacceff2c6b7dbc1910957e6103eab5ff75e76631547cdd93d61666"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "fef374b9bbb179a37137c49fc1b4d59fb1d295ceac730c22e2a8c633a5e43922"
+          "sha256": "2ee50a90b25f6130b37b58798cecd196aedd29884d53f15212933b42b93daa92"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "19d6d7b520ffb82f1784bb4fb75ff16a21ff59023c1e75d7bea856c0d47df268"
+          "sha256": "e59ff000dc9c236675a476e74a9c5fbe2be67d7840730e1b1d71816c7a3900d6"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "e1ecd26ad064f690b3944c1d8324d3eeb8abdc569f6479e02bb94ed3d72a3fac"
+          "sha256": "7efa2eb6d5fe5b76313931a44e69714a2df2b52defad739a093c47697ebb32b0"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "191ec863f84d92bf4aced6155db227979154c6b0c465b270720403cbe25c0de3"
+          "sha256": "fd68632d7dac13c1348925f59e5d006521d9adb26f11f95d3ce7036a25b1efd5"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "80725d9a7c8cae28abf0b5116a1cc5c7244f3845406a5e3dd26aa47de647b343"
+          "sha256": "356b4b5588653a2d9ff9f61f7c66fae779218e37574c921946b1a84a880516dd"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "054e914cf771a64afb9aa7a1a73709fd40f344472b1928cfdc049bf0ec65d795"
+          "sha256": "bac9c492125a03a2767d33cb2d840b18b614f47dd60f6f801a5f21834522c267"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "52c982eb31968acd46b79aae2428f4fe34c1bfcec062b2fe03c3cba8a39b62d0"
+          "sha256": "9690b9ee092bbba86ce6069210a32d75871697f26c3062958beee391ccd2b86f"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "4d005d49e4e7d93fed01d56e5f45eaed6825acb6933ef2d33a7ebb5d68a09d35"
+          "sha256": "e51970bbb2a46afdb7c3d47ff96e77456f3a10a5181f5c52b23f79a811cce452"
         }
       ]
     },
@@ -1004,95 +1004,95 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "3ee96882daf922e5390f4e9371c992b8a53dbc0a4f551d57df5cfab2642cd355",
-          "baseline": "public\\storefront-recipes\\atelier-nine\\baselines\\v1-mobile.webp"
+          "sha256": "64ce10e9e8dd0c9992e362bfa25f06e0c0e9169cf34e0cec5575c8a332b1e137",
+          "baseline": "public\\storefront-recipes\\atelier-nine\\baselines\\v2-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "90c875a28556140f8bcfd6bdf1ba0b8ab9fcc798bb91134e18a59b6ffbf4da91",
-          "baseline": "public\\storefront-recipes\\atelier-nine\\baselines\\v1-tablet.webp"
+          "sha256": "8d5541dbd6609a1621d85fc101b62002672b234648d5880a65cdadb948ecc53d",
+          "baseline": "public\\storefront-recipes\\atelier-nine\\baselines\\v2-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "818068dfd0a1be6ea1a6984af53afc46b288f7d34155eb2e7d6220d39a9a61fd",
-          "baseline": "public\\storefront-recipes\\atelier-nine\\baselines\\v1-desktop.webp"
+          "sha256": "3c7efb6c1542b73111b5b15e35f170f343b3fe800bc7a599e16bdca229930ac8",
+          "baseline": "public\\storefront-recipes\\atelier-nine\\baselines\\v2-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "336ad4d8e208c5d2a70df4950212589a995a607be6c09412c8ae6c39c4809a07"
+          "sha256": "9e25ab9ba3a47f9738884d18e9d00ad3a4b6d89fb7fdf53db5f82ded527c05b7"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "0233b74ba012036dd0dc639db4157b1e8e415495e2e9b1cd7153439f7ff031b9"
+          "sha256": "f75e3365909bcb65ec29a071bb291c7943581fd9e974ed8d69dfa4fa48883f28"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "5b657ddbc0e0de4a35dc42771580769c174634593fdac2f5beb4c74a0f671313"
+          "sha256": "f5ef08d556167e1f0a5e224259893d26647f3137da0b68271eb054d606bd337e"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "ac0d2fc73d33a59518f0930b98381ca331469eca48ccfa245adf4b998089bb4b"
+          "sha256": "4aa9be34969871edd58648511b73e6d0ad6b06e3ebb703aa873798db4a96ef95"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "320595b0ca025302223991af9cade13724160f27c52a6c6196495fa1311fe3c9"
+          "sha256": "ad69ede4ff154a3ee349cb1da3e540992b17055078c59b181eff817eeaea50b9"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "7c3179b726bb6129c159a13dda573b884fd45ba850c2ab1d7afec0abbfcd9f99"
+          "sha256": "f3e22d272830fae3cc78c3b63dc34fc0c66c6a0b6660fa087cd7f21b6348c876"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "fb9423397c174ab274549c4a6f6418792bca0a3e7dd6bc4e5414f9d5bfee4413"
+          "sha256": "f549eca458c4cb5f22e814ffa24235cbadad17a489b51bf32ec5ad1a7b503941"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "2e1e556baf71e0a3e93ec1398eaa7cfec42df97c7fd4da27f7d1f4849067c0f0"
+          "sha256": "5be562eea2ac77d0d4d550ec73b3b4dc75fcd315be725b44732053e1255a7ab2"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "6f4c892ebf0b29fbb3acbb953fd107d3d19cb28c9cb9ce633ca956a993e25ee4"
+          "sha256": "04e3a31e73818bb1819b5ddae6ba3c5468868770e2f07af57e61d62b7edfe613"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "0d18da6f661dc88047c8b1cbe2546ad0265d8a6bed55795c6c7879e54a638856"
+          "sha256": "88985f1989121629dbc5ee1de5c865a2c97a898e1efb28d54144882873d657c6"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "12de2fb0f4fbc6acc1f44ddbcbd6fc84b24f468104d4ffac1e068d1ac812bf2e"
+          "sha256": "f9c1c7cc2e933bc256d55040a4c1aa407c7dbc331f80aadfdfd5adfca7c1974d"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "33ffd12d9f752ba07a55fa5c024eac2554e2de001950155762f4026e14cfdefd"
+          "sha256": "b7f1a7b43689dd033ac19d8cbfb1c6888f29810f798baaa80f99de786888c8b4"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "50dd63eec52fba792496c4025b0c597ee1297d843bae79275d5784e164d2c04c"
+          "sha256": "090ff787d2742d4f40a4a5af95d3f91c724e82f50716b2c544e99bf59824429d"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "cb100ed627bcfe419ae8eefd472c2df1adc30513125b1f3463bc0ffe2d25e5b2"
+          "sha256": "426dad25539e28d507399a3018985abf456cfd0ac2d0464af23b1ae17f4dbbea"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "106155de237f7b9f6057f0d999245eb8eb3d684ba861881afd9d757f4866120b"
+          "sha256": "20a99470884e279ae5d79bf1c39dcae578be9fffb578373ab126187acd06e0ce"
         }
       ]
     },
@@ -1103,92 +1103,92 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "5abd5ca81e6ffa9c200edcb65ef65473fa1d77dcc9bdd5fa2593314321da5bb3"
+          "sha256": "4003702a85055d7578dc49dd601a2d1f20f49018069d6bf5d12bccea6e550b5e"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "1ab9b6b1dff2f50180fb4d898fb87ceb1e070528efebc6bce306b3318ee7e7fb"
+          "sha256": "affd546f47f0348709511e0eb581de6c6674e6f7662a0911936bf25eefed4ba6"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "5ed7aa187467fc078a8ee29b6025cb83353aefb14f42a8c750c6755babd0f9ff"
+          "sha256": "e969faaa4b96edcee8539e23af961fa2b7db40c9237563a6047929bdb559dbc5"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "1c00d7135f6bc9822b6abf361ef29941dea51f097faaea4676c20b3c69214fe1"
+          "sha256": "02c5594a7286e42facf52ad81c0ebaf0f39937dd7e768a06aa6a03e9a6e52c24"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "f7d86b49c237369032971dd7096254b3f888cbd249ff11ffaa21c9555926973e"
+          "sha256": "029cfb25bf50fa44f5194ca8efdf731b4a82c1965ed2367b316b8be6a7cc402d"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "64b6ac2fc07fe895615843caa4d5ab26d3764661951b6bb2c14a49f3d91c28c2"
+          "sha256": "4aa666d25c240eb51881386bf7daa41a1e08a40cf25971b4cc2f8bfb541af5bc"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "5fc20c170ef6f8f254fc4bdb963194821e244ff8abad494fa070f78545c1f55e"
+          "sha256": "508e262f44227a21ace75393321e15cb53582a73d3cdbf4cfa6d1cc8f61d6ed7"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "12b52adcc3db1e3bc81a32ac0dd46857d7acce711e3411e5bb8c27618de9c9ab"
+          "sha256": "55b00eb9ac66884f18852883652c6a31f8f0e433290c78f3102a6b6deba011bb"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "2b4e370daae6cd79fab1f3a86a6afd0821953ddaa1e46d2b97954a40dee9e1cb"
+          "sha256": "d87f3401c002b3f03ac0855ca9480efd6f1e26a8e37654b4c9d694b089edc4db"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "b350db9e01d63da2aea70142a312912e847e7b602ba7ff251739a211a29b350d"
+          "sha256": "bcb2b7ac62e41d313dd8895cdabf5ed20ff4fb5ab3a2e2eeccf349bc342969aa"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "5e167e2a2e6bec8e0719ae4187f0d213c6deecc7e8c0252d84094b06a5615ed2"
+          "sha256": "df161d58380c66f5ba13d01d29ab7ceea0667efaaf6418bd114e194f6a286d89"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "260495f1eafe7e3a76ca7759c4644d1f817518ff9aecce7c3e38197be6edb7a0"
+          "sha256": "36496b407e83b361ebc1eb306cc1996494155f0f631f6f1b14594c301f8495fb"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "d15dfd73f3885673e1c456f0275391305119f4758defc7db7aa1e4813fcc6cf4"
+          "sha256": "227d333e6fafe8fe7e93c40e21d990aa5fb14182d769b25957307fa6bab68494"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "cb33d53fd937a835657d5bff955589b20c1d79c3d0577bf349eee744342bde62"
+          "sha256": "bcdd9754cce69a6e82dc3f9b609593602e3064c4287d938ac2dda542a7b0d66c"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "532b2ee9b93b0a0d75f5a4b65b09dd4edd06e948c4a158b2ab266823c20f7ab7"
+          "sha256": "f727830a7adc362953f41c3884586a6099166a285a3a2f7bbf7f9cbe1690eb03"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "579731e95cb05146da71012a49f948db59f19e4605e017c3874a903628da736d"
+          "sha256": "72f7fe0dca9b51cf04e985c9e334bd95b77179c44c9097c9b4c23b82b2376105"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "37dd0472d32c8e131ec331cc95a9fa76687357fd1dc8da47901c014b31e6386d"
+          "sha256": "31d5ae8360e678368df3caa0d0dd9f6ed638cd8543a28154549672146ca25176"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "07ccb8620c3f1dcae8c30f919eb84b0dc4088b019f3dc25a203f0f08cdc94332"
+          "sha256": "0ca5a090381213bc2039c05fd4d13aa9d77df9c76c457ab72ecc01c3318433a3"
         }
       ]
     },
@@ -1199,92 +1199,173 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "ca0ba07a1a30d86a535c6683db989cc93fbb4268b58a4d4e7f946bb1fdb5f1eb"
+          "sha256": "bae7c039dfc9af829ee455d3aef50b6df8a8c75bf252609dc7a9bf40bd8f7625"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "43e382f6e5ce0354f49f66fb1a4f36064c4b2eb0f1c0f33a196b3166f6379946"
+          "sha256": "3ee5eb7368afe460f142001ef8ba5fde1c9729b020308464d6203bbaaf1a44a4"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "b43d05f43a838bef675015e15f591408c35434aec7af6840b39e90a80da41d32"
+          "sha256": "e2008d4fadd0161ebc2eaefdecfa5faf6a46f6f3c75d08d0e985e7068098dd64"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "b4181417a0ba11bdc816c272f9b2617cf7327f9f2760bb260aaa601e80b84ec2"
+          "sha256": "ec3d548b4ce817d7245e6845294cb84210b62176a76c3b4ecc372778d474bb02"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "172043cf464c2c3600ae64d0eb8aa8c0d4c4540a40e7b3827751745ac2296bbd"
+          "sha256": "d17011fd39db504cd98b54c08539a89677db0cb93691b58df790414a7f271992"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "64877a250fbfbcbc0062b1924c1c7ff5b30f2dbc9b5d334e264757c23c3caac5"
+          "sha256": "2ec46f03fd59e6838494cd227e9fdbc6d26f6498e9b950e4278004410763b8ae"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "2ee1a87f86fcdd25b41cd450cbfc41d2e05c8342b293f98dbbf57cfdee32f7fe"
+          "sha256": "6021a768a10523fd33c499df2a8f0e7b4994d6fae45bee8b434664c03413240c"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "482fe348f53b2aa05ba42fc544960fa2d05a342cb8e22316abeab38f7d254b22"
+          "sha256": "30fc35d1683dbbade5bf890ec2e009994f19fb0229e82660c181264e5a1c206c"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "1ebb50214fb3b2a8607d51d55530ec0979942e1cf9d7b00b2dc413111d993a19"
+          "sha256": "84922c005e63232dcd0e500ec4de6416fbe5ea9a4d5918cb7f419a2ad2a71a72"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "1bd81b0c1388dd35a34c6641dd6831c4145ca3ace0999cdc3609d4da239cf9ae"
+          "sha256": "2d06571a3253516bfd65b5452a3502f1e180832a0328ec90e2f09d0e52b0e7bb"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "c7e1ff9f38f30a5b5f6c51e9c5e6383d97238b33d30a6b5ad43eb736874264b4"
+          "sha256": "49081e7ae4502175dca8822a534200cb97a288b3c6cc29ce810448368ff8631d"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "6d9ca06b020588212e7e69bc0635173f61e7f710b6857432bc2c027548e755d4"
+          "sha256": "45c8b354142ab9b5d9b41f2b3da7a0dc9087167a8bcfa47d81c46e50e91aae9a"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "d9da19773d39a6f9ba76fbbb843db3b498858db74d7dc8d5694d85476fc920e3"
+          "sha256": "8485fd7c3c82c69472536186fb24f0e9ddce170a420dde3a904abdd6d4b7e3b0"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "e8863341b0efe6481f70ee18816b299b59bf75385d51025b57055bc42b7e1e14"
+          "sha256": "89ba5ccead971917290c74c33d168219beeb3790913da134f949a4ef3a579451"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "e62164e696386d11ddf8bd6d58a24740d4c287e78b57bd5b8a6b983867001f94"
+          "sha256": "2eff3d7b5e4a71647cc0ca352ce03e94694c314e54c43a7425dd9f0db1414497"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "b8331edfd7501612b66473128ca5aac713dcca340ae43de95791c4cf31d585ab"
+          "sha256": "51158223c65b9f42273059ffe15ff6a36783fdb4cb62962eb71247f760a3429c"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "70b2fc7d6f92c0ecf8140e1c7f18f048f60c92ef560f76f57b85fe29dcb57f2e"
+          "sha256": "9255b67f6d028016b2ed1b0e69d57e5040e18663a0bfcb89dfc90d7e188420d1"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "ac9789b59375bacb9154a71d6ce51105bc04111f11bda3748140be0a465d563c"
+          "sha256": "79ead7f3a09d38adb7387311fd45b017bef56270dc0a4dc49e521c2fdaae3431"
+        }
+      ]
+    },
+    {
+      "id": "representative-empty",
+      "sourceKind": "recipe",
+      "screenshots": [
+        {
+          "routeId": "home",
+          "viewport": "mobile",
+          "sha256": "16269018c4aa87c8df2a67e32ee19a141069b56c1b7596e5c322d5ef690fb7a8"
+        },
+        {
+          "routeId": "home",
+          "viewport": "tablet",
+          "sha256": "452cebb55d31e64c498ff960519bd65aaf26137d5fc5eb7d4c3c9e3e68cd5509"
+        },
+        {
+          "routeId": "home",
+          "viewport": "desktop",
+          "sha256": "1cd8cb31fc2e8051750ee2657a38cce66dc7210cb0ee6d620df2f8eebe23add2"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "mobile",
+          "sha256": "8188c8c0310dfd746182734db4664ffbd1d4d824bd019621c35da412cf6f5601"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "tablet",
+          "sha256": "d82ab200dce055924802d4d643d14fb32bfc6e98fb91de6f324200fe08b96508"
+        },
+        {
+          "routeId": "collection",
+          "viewport": "desktop",
+          "sha256": "370ea7e895136fb3c33deee6081d1666c1e8bc1a73d617b5b2b91898686512b6"
+        },
+        {
+          "routeId": "search",
+          "viewport": "mobile",
+          "sha256": "176e6708952ebf10b9cf77a3b00ba0831e693392858a6fa55a5b2a4502bcdc2e"
+        },
+        {
+          "routeId": "search",
+          "viewport": "tablet",
+          "sha256": "2118e1b89143ac8540de68363985213581f84802de2a0fd40c15b6ed8b074c23"
+        },
+        {
+          "routeId": "search",
+          "viewport": "desktop",
+          "sha256": "668ef7f21501589391b84d6fc917b0cffecbfcbee92e8073f89a69d71042f757"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "mobile",
+          "sha256": "04f11502d69b405b80818bfe3dd2bcab9054c89c8f979a164f352098d98e43b8"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "tablet",
+          "sha256": "a34ace1dc5c4f5d34b64f697fd51b2bca3486439d198cee1f1e1833195166719"
+        },
+        {
+          "routeId": "cart",
+          "viewport": "desktop",
+          "sha256": "c8ce602d3619bdc144c3373c067ef80ea0cf9656d882b4f10400ba5d653ce78b"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "mobile",
+          "sha256": "3070031382259136b622375d139e5aa35a5e4e732d274f99fb9d6577318ca89e"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "tablet",
+          "sha256": "6375564e59011935359970a83c4601342617de14ba6cf2a49b86d04c6535f513"
+        },
+        {
+          "routeId": "checkout",
+          "viewport": "desktop",
+          "sha256": "8c4bf559d48e8eea9f2b2407b57b812fe67d21731e8a67edf3eabe799212b63a"
         }
       ]
     }

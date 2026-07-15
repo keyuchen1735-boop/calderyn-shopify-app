@@ -287,6 +287,7 @@ function routeSemanticValue<Base extends string, Pattern extends string, Route e
 
 function recipe(
   value: Omit<VersionedStoreTemplate, "activeVersion" | "versions" | "routeCapabilities" | "overrideSurface" | "previewSrc">,
+  activeVersion = 1,
 ): VersionedStoreTemplate {
   const blueprintRoot = `app/lib/storefront-recipes/${value.id}/bundle.ts`;
   const signature = RECIPE_SEMANTIC_SIGNATURES[value.id];
@@ -318,22 +319,24 @@ function recipe(
     cart: blueprint("cart"),
     checkout: blueprint("checkout"),
   } satisfies Record<StorefrontRecipeBlueprintId, StoreTemplateRouteBlueprint>;
-  const version: StoreTemplateVersionRecord = {
-    templateVersion: 1,
+  const version = (templateVersion: number): StoreTemplateVersionRecord => ({
+    templateVersion,
     baselineArtifact:
-      value.id === "atelier-nine"
+      value.id === "atelier-nine" && templateVersion === 1
         ? "public/atelier-grid/index.html"
-        : `docs/superpowers/prototypes/storefront-recipes/${value.id}.html`,
+        : templateVersion === 1
+          ? `docs/superpowers/prototypes/storefront-recipes/${value.id}.html`
+          : blueprintRoot,
     screenshots: {
-      desktop: `public/storefront-recipes/${value.id}/baselines/v1-desktop.webp`,
-      mobile: `public/storefront-recipes/${value.id}/baselines/v1-mobile.webp`,
+      desktop: `public/storefront-recipes/${value.id}/baselines/v${templateVersion}-desktop.webp`,
+      mobile: `public/storefront-recipes/${value.id}/baselines/v${templateVersion}-mobile.webp`,
     },
     routeBlueprints,
-  };
+  });
   return {
     ...value,
-    activeVersion: 1,
-    versions: [version],
+    activeVersion,
+    versions: Array.from({ length: activeVersion }, (_, index) => version(index + 1)),
     routeCapabilities: ALL_ROUTES,
     overrideSurface: DEFAULT_OVERRIDE_SURFACE,
     previewSrc: `/template-previews/${value.id}.webp`,
@@ -472,7 +475,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["fashion", "jewelry", "apparel", "quiet luxury", "fine jewelry", "designer clothing"],
     legacyVibe: "minimal",
     generationInstructions: "Use a warm-white asymmetric magazine grid, condensed display type, thin rules, vermilion accents, and restrained motion.",
-  }),
+  }, 2),
 ] as const;
 
 function normalizedKey(value: string): string {
