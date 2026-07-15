@@ -38,6 +38,8 @@ const globalCss = `
 }
 `;
 
+const globalFooterHtml = `<footer class="atelier-site-footer"><div class="atelier-shell atelier-footer"><div><h3 data-cd-text="store.name"></h3><p>A concise wardrobe for deliberate living.<br>Designed in Toronto. Made with specialist ateliers.</p></div><div><h3>Customer care</h3><div class="atelier-policy-links" data-cd-policy-links></div></div><div><h3>Private notes</h3><p>New editions, studio notes, and first access.</p><div class="newsletter"><span>Email address</span><span>&rarr;</span></div></div></div><div class="shipping-bar"><span>Complimentary shipping on all orders over $300</span><span>Shipping &nbsp; Returns &nbsp; Contact &nbsp; Terms &nbsp; Privacy</span></div></footer>`;
+
 const homeHtml = `
 <main id="top">
   <section class="atelier-shell hero" aria-labelledby="hero-title">
@@ -69,9 +71,7 @@ const homeHtml = `
     <div class="manifesto-copy"><span class="manifesto-kicker">The Atelier Standard</span><h2>Designed slowly. Worn without ceremony.</h2><p>Every piece begins with proportion: a shoulder line, a clean fall, a pocket placed exactly where the hand expects it. We use materials selected for movement, longevity, and a life beyond one season.</p><a class="arrow-link" data-cd-route="collection">Read our process <span>→</span></a></div>
     <div class="manifesto-index"><div><strong>09</strong><span>Pieces / one complete wardrobe</span></div></div>
   </section>
-</main>
-<footer class="atelier-shell atelier-footer"><div><h3 data-cd-text="store.name"></h3><p>A concise wardrobe for deliberate living.<br>Designed in Toronto. Made with specialist ateliers.</p></div><div><h3>Customer care</h3><div class="atelier-policy-links" data-cd-policy-links></div></div><div><h3>Private notes</h3><p>New editions, studio notes, and first access.</p><div class="newsletter"><span>Email address</span><span>→</span></div></div></footer>
-<div class="shipping-bar"><span>Complimentary shipping on all orders over $300</span><span>Shipping &nbsp; Returns &nbsp; Contact &nbsp; Terms &nbsp; Privacy</span></div>`;
+</main>`;
 
 const homeCss = `
 .hero { display:grid; grid-template-columns:49% 51%; min-height:680px; border-bottom:1px solid #101010 }
@@ -344,7 +344,7 @@ const checkoutCss = `
 
 const config = {
   templateId: "atelier-nine",
-  templateVersion: 1,
+  templateVersion: 2,
   concept: {
     name: "Atelier Grid",
     rationale: "A complete commerce journal that treats products as an edited fashion issue without obscuring purchase paths.",
@@ -384,7 +384,7 @@ const config = {
       signature: "canonical announcement and masthead before the route composition",
       source: {
         ...routeDefaults,
-        html: `<div class="announcement"><span>Complimentary shipping on all orders over $300</span><span>Edition 03 / Summer 2026</span></div><header class="atelier-site-header"><div class="atelier-shell header-row"><a class="atelier-wordmark atelier-link" data-cd-route="home"><span class="niche-icon niche-icon--atelier" aria-hidden="true">&#10022;</span><span data-cd-text="store.name"></span></a><nav class="atelier-nav-links" aria-label="Primary"><a class="atelier-link" data-cd-route="collection">Shop</a><a class="atelier-link" data-cd-route="collection">Collections</a><a class="atelier-link" data-cd-route="home">About</a><a class="atelier-link" data-cd-route="search">Journal</a></nav><div class="atelier-utility"><a class="atelier-link" data-cd-route="search">Search</a><a class="atelier-link" data-cd-route="account">Account</a><a class="atelier-link" data-cd-route="cart">Bag (<span data-cd-text="cart.count"></span>)</a></div></div></header><div data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div><nav class="atelier-policy-links" aria-label="Store policies" data-cd-policy-links></nav>`,
+        html: `<div class="announcement"><span>Complimentary shipping on all orders over $300</span><span>Edition 03 / Summer 2026</span></div><header class="atelier-site-header"><div class="atelier-shell header-row"><a class="atelier-wordmark atelier-link" data-cd-route="home"><span class="niche-icon niche-icon--atelier" aria-hidden="true">&#10022;</span><span data-cd-text="store.name"></span></a><nav class="atelier-nav-links" aria-label="Primary"><a class="atelier-link" data-cd-route="collection">Shop</a><a class="atelier-link" data-cd-route="collection">Collections</a><a class="atelier-link" data-cd-route="home">About</a><a class="atelier-link" data-cd-route="search">Journal</a></nav><div class="atelier-utility"><a class="atelier-link" data-cd-route="search">Search</a><a class="atelier-link" data-cd-route="account">Account</a><a class="atelier-link" data-cd-route="cart">Bag (<span data-cd-text="cart.count"></span>)</a></div></div></header><div data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div>${globalFooterHtml}`,
         css: `.niche-icon--atelier{margin-right:.35em;color:var(--accent)}.atelier-policy-links{display:flex;flex-wrap:wrap;gap:1rem}.atelier-policy-links a{color:var(--ink);text-decoration:none}@media(max-width:1120px){.header-row{grid-template-columns:200px 1fr 200px}.atelier-nav-links{gap:18px}.atelier-utility{gap:12px}}@media(max-width:760px){.announcement span:last-child{display:none}.header-row{display:flex;flex-wrap:wrap;width:calc(100vw - 20px);height:auto;min-height:58px;padding:8px 0}.atelier-wordmark{font-size:22px}.atelier-nav-links{order:3;width:100%;gap:18px;overflow-x:auto;padding:7px 0 2px}.atelier-utility{margin-left:auto}.atelier-utility .atelier-link:not(:last-child){display:none}}`,
       },
     },

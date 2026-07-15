@@ -35,4 +35,14 @@ describe("parseEditIntent", () => {
       context: { routeId: "product", regionId: "product-media" },
     });
   });
+
+  it("does not let a stale preview selection narrow an explicitly store-wide redesign", () => {
+    const selected = { routeId: "product" as const, regionId: "product-media" };
+    expect(parseEditIntent("Take the entire storefront in a warmer editorial direction", selected)).toEqual({
+      kind: "structural",
+    });
+    expect(parseEditIntent("Restyle every page so the whole shop feels cohesive", selected)).toEqual({
+      kind: "structural",
+    });
+  });
 });

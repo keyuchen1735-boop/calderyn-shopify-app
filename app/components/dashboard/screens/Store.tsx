@@ -136,6 +136,23 @@ export default function Store({ app }: { app: DashboardCtx }) {
   };
   const buildingRef = useRef(false);
   const [buildPhase, setBuildPhase] = useState<BuildPhase | null>(null);
+  const generationControllerRef = useRef<AbortController | null>(null);
+  const [stoppable, setStoppable] = useState(false);
+  const beginGeneration = (): AbortController => {
+    const controller = new AbortController();
+    generationControllerRef.current = controller;
+    setStoppable(true);
+    return controller;
+  };
+  const finishGeneration = (controller: AbortController) => {
+    if (generationControllerRef.current !== controller) return;
+    generationControllerRef.current = null;
+    if (aliveRef.current) setStoppable(false);
+  };
+  const stopGeneration = () => {
+    generationControllerRef.current?.abort(new DOMException("Storefront generation stopped", "AbortError"));
+  };
+  useEffect(() => () => generationControllerRef.current?.abort(), []);
   // Design-model picker. Ref-paired like chatBusy: builds fire from chat-action
   // closures created long before the click, so they must read the current pick.
   const [designModel, setDesignModel] = useState<StudioDesignModel>("sonnet");
@@ -365,6 +382,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
   ) => {
     if (buildingRef.current) return;
     buildingRef.current = true;
+    const generationController = beginGeneration();
     const runningPhase: BuildPhase = { kind: "running" };
     setBuildPhase(runningPhase);
     const workingId = newId();
@@ -391,6 +409,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
           }
         },
         opts?.recommendation,
+        generationController.signal,
       );
       // Re-pull the whole studio state — generation rewrites brand settings,
       // drafts and the generation audit row — then reload the preview.
@@ -401,10 +420,18 @@ export default function Store({ app }: { app: DashboardCtx }) {
       settleGeneration(workingId, "draft", { firstBuild: opts?.firstBuild, extraLines });
     } catch (err) {
       if (!aliveRef.current) return;
+      if (generationController.signal.aborted) {
+        setBuildPhase(null);
+        setMessages((messages) => messages.map((message) => message.id === workingId
+          ? { id: workingId, kind: "ai-text", text: "Stopped. Your current storefront draft was not changed." }
+          : message));
+        return;
+      }
       const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";
       failBuild(workingId, msg, { toast: true });
     } finally {
       buildingRef.current = false;
+      finishGeneration(generationController);
     }
   };
 
@@ -500,6 +527,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     const expectedDraftVersionId = data?.release.draftVersionId;
     if (!expectedDraftVersionId || chatBusyRef.current || buildingRef.current) return;
     setChatBusyBoth(true);
+    const generationController = beginGeneration();
     const thinkId = newId();
     pushMsg({ id: thinkId, kind: "ai-working", phase: { kind: "editing", stage: "compiling" } });
     try {
@@ -511,10 +539,12 @@ export default function Store({ app }: { app: DashboardCtx }) {
             ? { id: thinkId, kind: "ai-working", phase: { kind: "editing", stage } }
             : message));
         },
+        generationController.signal,
       );
       if (result.status === "start_over") {
         setMessages((messages) => messages.filter((message) => message.id !== thinkId));
         setChatBusyBoth(false);
+        finishGeneration(generationController);
         await runBuild({ prompt: text, mode: result.mode });
         return;
       }
@@ -535,10 +565,17 @@ export default function Store({ app }: { app: DashboardCtx }) {
       } : message));
     } catch (err) {
       if (!aliveRef.current) return;
+      if (generationController.signal.aborted) {
+        setMessages((messages) => messages.map((message) => message.id === thinkId
+          ? { id: thinkId, kind: "ai-text", text: "Stopped. Your current storefront draft was not changed." }
+          : message));
+        return;
+      }
       const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that storefront change.";
       setMessages((messages) => messages.map((message) => message.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : message));
     } finally {
       if (aliveRef.current) setChatBusyBoth(false);
+      finishGeneration(generationController);
     }
   };
 
@@ -821,6 +858,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
   ) => {
     if (buildingRef.current || chatBusyRef.current || attachingRef.current) return;
     buildingRef.current = true;
+    const generationController = beginGeneration();
     const runningPhase: BuildPhase = { kind: "running" };
     setBuildPhase(runningPhase);
     const workingId = newId();
@@ -835,6 +873,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
         files,
         designModelRef.current,
         intent,
+        generationController.signal,
       );
       gotReceipt = true;
       await refresh();
@@ -887,6 +926,13 @@ export default function Store({ app }: { app: DashboardCtx }) {
       if (failedCount > 0) toastProductFailures(failedCount, products.length);
     } catch (err) {
       if (!aliveRef.current) return;
+      if (generationController.signal.aborted) {
+        setBuildPhase(null);
+        setMessages((messages) => messages.map((message) => message.id === workingId
+          ? { id: workingId, kind: "ai-text", text: "Stopped. Your current storefront draft was not changed." }
+          : message));
+        return;
+      }
       const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";
       // The chips were cleared at send, so a transient failure (429/network/502)
       // must re-offer the held files — otherwise the merchant re-picks everything.
@@ -898,6 +944,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
       });
     } finally {
       buildingRef.current = false;
+      finishGeneration(generationController);
     }
   };
 
@@ -1066,7 +1113,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
           prompt={prompt}
           onPromptChange={setPrompt}
           onSend={onComposerSend}
+          onStop={stopGeneration}
           busy={chatBusy || building}
+          stoppable={stoppable}
           attaching={attaching}
           onAttachFiles={onAttachFiles}
           attachments={attachments.map((a) => ({ id: a.id, url: a.url, name: a.file.name }))}

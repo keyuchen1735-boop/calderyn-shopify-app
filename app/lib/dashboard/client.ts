@@ -156,12 +156,13 @@ export async function apiSend<T>(
  *  but WITHOUT a Content-Type header so the browser sets the multipart boundary
  *  (same rule as uploadProductImage). Errors parse to a DashboardApiError with
  *  the server's code/message, like apiSend. */
-export async function apiSendForm<T>(path: string, form: FormData): Promise<T> {
+export async function apiSendForm<T>(path: string, form: FormData, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
     credentials: "same-origin",
     headers: { Origin: location.origin },
     body: form,
+    signal,
   });
   if (res.status === 401) redirectToLogin();
   if (!res.ok) throw await toApiError(res);

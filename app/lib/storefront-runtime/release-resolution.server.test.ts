@@ -154,7 +154,7 @@ describe("storefront release resolution", () => {
       promptHash: `sha256:${"c".repeat(64)}`,
       derivedFromVersionId: "recipe-version",
       derivedFromTemplateId: "atelier-nine",
-      derivedFromTemplateVersion: 1,
+      derivedFromTemplateVersion: 2,
     };
     const live = {
       ...version("derived-assets", 1, "2026-07-02T00:00:00Z"),
@@ -187,7 +187,7 @@ describe("storefront release resolution", () => {
       generationId: "edit-generation",
       promptHash: `sha256:${"c".repeat(64)}`,
       derivedFromTemplateId: "atelier-nine",
-      derivedFromTemplateVersion: 1,
+      derivedFromTemplateVersion: 2,
     };
     bundle.assets.entries[0] = { ...bundle.assets.entries[0]!, contentHash: "d".repeat(64) };
     const live = {

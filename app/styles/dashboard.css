@@ -4810,6 +4810,8 @@
 .cd-composer-row { display: flex; align-items: center; margin-top: 4px; gap: 2px; }
 .cd-composer-send { margin-left: auto; width: 30px; height: 30px; border-radius: 999px; border: 0; cursor: pointer; background: var(--accent); color: var(--on-accent); display: inline-flex; align-items: center; justify-content: center; }
 .cd-composer-send:disabled { opacity: 0.45; cursor: default; }
+.cd-composer-stop { background: var(--text-1); }
+.cd-stop-glyph { width: 9px; height: 9px; border-radius: 2px; background: currentColor; display: block; }
 .cd-composer-tool { border: 0; background: transparent; color: var(--text-3); cursor: pointer; width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; }
 .cd-composer-tool:hover { color: var(--text-1); background: var(--hairline); }
 .cd-composer-tool:disabled { opacity: 0.45; cursor: default; }

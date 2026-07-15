@@ -28,14 +28,16 @@ describe("Atelier Grid recipe contract", () => {
       expect(recipeHtml).toContain(className);
       expect(recipeCss).toContain(`.${className}`);
     }
-    expect(ATELIER_GRID_RECIPE.config.surfaces.shell.source.html).not.toContain("<footer");
-    expect(ATELIER_GRID_RECIPE.config.surfaces.home.source.html).toContain("<footer");
+    expect(ATELIER_GRID_RECIPE.config.surfaces.shell.source.html).toContain("<footer");
+    expect(ATELIER_GRID_RECIPE.config.surfaces.shell.source.html).toContain('data-cd-policy-links');
+    expect(ATELIER_GRID_RECIPE.config.surfaces.home.source.html).not.toContain("<footer");
+    expect(ATELIER_GRID_RECIPE.config.surfaces.home.source.html).not.toContain('data-cd-policy-links');
     expect(ATELIER_GRID_RECIPE.config.surfaces.shell.source.html).toContain('data-cd-slot="cartDrawer"');
   });
 
   it("compiles the approved asymmetric editorial identity through validation profile v1", () => {
     expect(ATELIER_GRID_RECIPE.report).toMatchObject({ ok: true, profileVersion: 1 });
-    expect(ATELIER_GRID_BUNDLE.source).toEqual({ kind: "recipe", templateId: "atelier-nine", templateVersion: 1 });
+    expect(ATELIER_GRID_BUNDLE.source).toEqual({ kind: "recipe", templateId: "atelier-nine", templateVersion: 2 });
     expect(ATELIER_GRID_BUNDLE.validationProfileVersion).toBe(1);
     expect(ATELIER_GRID_BUNDLE.designSystem).toMatchObject({
       displayFontId: "archivo-narrow",
@@ -66,7 +68,7 @@ describe("Atelier Grid recipe contract", () => {
 
   it("provides merchant-bound merchandising on every browse and purchase route", () => {
     expect(bindingPaths(ATELIER_GRID_BUNDLE.shell)).toContain("store.name");
-    expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.home)).toEqual(expect.arrayContaining(["store.name", "product.title", "product.price"]));
+    expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.home)).toEqual(expect.arrayContaining(["product.title", "product.price"]));
     expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.collection)).toEqual(expect.arrayContaining(["collection.title", "collection.description", "product.title", "product.price"]));
     expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.product)).toEqual(expect.arrayContaining(["product.title", "product.description", "product.price", "product.availability"]));
     expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.search)).toEqual(expect.arrayContaining(["search.query", "product.title", "product.price"]));

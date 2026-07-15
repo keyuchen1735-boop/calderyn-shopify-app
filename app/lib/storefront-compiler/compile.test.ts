@@ -3,6 +3,13 @@ import { canonicalizeCompiledBundle, compileBundle, hashCompiledBundle } from ".
 import { VALID_BUNDLE_SOURCE } from "./__fixtures__/valid-bundle";
 
 describe("compileBundle", () => {
+  it("rejects shell policy links that would render before route content", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.shell.html = `<header>Store header</header><nav data-cd-policy-links></nav>`;
+
+    expect(() => compileBundle(source)).toThrow(/policy links.*footer/i);
+  });
+
   it("compiles and hashes the same source deterministically", async () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     const first = await compileBundle(source);

@@ -62,7 +62,16 @@ export interface ProveStorefrontBundleInput {
   timeoutMs?: number;
   browser?: Browser;
   artifacts?: StorefrontProofArtifacts;
+  routes?: readonly StorefrontRouteId[];
   onProgress?: (event: { routeId: StorefrontRouteId; viewport: StorefrontProofViewportName; completed: number; total: number }) => void;
+}
+
+export function shouldWriteStorefrontPreview(
+  routeId: StorefrontRouteId,
+  viewport: StorefrontProofViewportName,
+  artifacts?: StorefrontProofArtifacts,
+): boolean {
+  return routeId === "home" && viewport === "desktop" && Boolean(artifacts?.previewFile && artifacts.updateBaselines);
 }
 
 export interface ProveStorefrontBundleResult extends StorefrontBrowserProofReport {
@@ -75,8 +84,11 @@ export interface ProveStorefrontBundleResult extends StorefrontBrowserProofRepor
   }>;
 }
 
-export function buildStorefrontProofCases(_bundle: StorefrontBundleV1): StorefrontProofCase[] {
-  return STOREFRONT_PROOF_ROUTES.flatMap((routeId) =>
+export function buildStorefrontProofCases(
+  _bundle: StorefrontBundleV1,
+  routes: readonly StorefrontRouteId[] = STOREFRONT_PROOF_ROUTES,
+): StorefrontProofCase[] {
+  return routes.flatMap((routeId) =>
     STOREFRONT_PROOF_VIEWPORTS.map((viewport) => ({ routeId, viewport })),
   );
 }
@@ -164,17 +176,29 @@ function presentContextProduct(entry: MerchantStorefrontContext["products"][numb
   };
 }
 
-function dataForCase(routeId: StorefrontRouteId, context?: MerchantStorefrontContext): PublicPresentationData {
+export function createStorefrontProofDataForContext(
+  routeId: StorefrontRouteId,
+  context?: MerchantStorefrontContext,
+): PublicPresentationData {
   const fixture = createStorefrontProofData(routeId);
   if (!context) return fixture;
   const products = context.products.map(presentContextProduct);
-  const active = products[0] ?? fixture.product;
+  const active = products[0] ?? null;
+  const emptyCart = products.length === 0 && fixture.cart ? {
+    ...fixture.cart,
+    count: 0,
+    lines: [],
+    subtotal: { cents: 0, currency: "USD" },
+    discounts: { cents: 0, currency: "USD" },
+    total: { cents: 0, currency: "USD" },
+  } : fixture.cart;
   return {
     ...fixture,
     store: { name: context.store.name, logo: null },
     product: routeId === "product" ? active : null,
-    featuredProducts: products.length ? products.slice(0, 12) : fixture.featuredProducts,
-    relatedProducts: products.length ? products.slice(1, 9) : fixture.relatedProducts,
+    featuredProducts: products.slice(0, 12),
+    relatedProducts: products.slice(1, 9),
+    cart: emptyCart,
     collection: routeId === "collection" ? {
       ...(fixture.collection!),
       id: context.collections[0]?.id ?? "proof-collection",
@@ -639,14 +663,14 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
   page.on("requestfailed", (request) => currentFailures.push(`${request.url()}: ${request.failure()?.errorText ?? "failed"}`));
   await page.setRequestInterception(true);
   try {
-    const proofCases = buildStorefrontProofCases(input.bundle);
+    const proofCases = buildStorefrontProofCases(input.bundle, input.routes);
     for (const [caseIndex, proofCase] of proofCases.entries()) {
       assertActive();
       const { routeId, viewport } = proofCase;
       currentUnexpected = [];
       currentConsole = [];
       currentFailures = [];
-      const data = dataForCase(routeId, input.context);
+      const data = createStorefrontProofDataForContext(routeId, input.context);
       let publicMarkup: string;
       let previewMarkup: string;
       try {
@@ -789,7 +813,8 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       screenshots.push(screenshotRef);
       const manifestEntry: ProveStorefrontBundleResult["screenshotManifest"][number] = { routeId, viewport: viewport.name, sha256 };
       if (routeId === "home" && input.artifacts?.baselineDirectory) {
-        const baseline = resolve(input.artifacts.baselineDirectory, `v1-${viewport.name}.webp`);
+        const baselineVersion = input.bundle.source.kind === "recipe" ? input.bundle.source.templateVersion : 1;
+        const baseline = resolve(input.artifacts.baselineDirectory, `v${baselineVersion}-${viewport.name}.webp`);
         manifestEntry.baseline = baseline;
         await mkdir(input.artifacts.baselineDirectory, { recursive: true });
         if (input.artifacts.updateBaselines) await writeFile(baseline, image);
@@ -805,10 +830,10 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       }
       screenshotManifest.push(manifestEntry);
 
-      if (routeId === "home" && viewport.name === "desktop" && input.artifacts?.previewFile) {
+      if (shouldWriteStorefrontPreview(routeId, viewport.name, input.artifacts)) {
         await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 1 });
-        await mkdir(resolve(input.artifacts.previewFile, ".."), { recursive: true });
-        await writeFile(input.artifacts.previewFile, Buffer.from(await page.screenshot({ type: "webp", quality: 90, fullPage: false })));
+        await mkdir(resolve(input.artifacts!.previewFile!, ".."), { recursive: true });
+        await writeFile(input.artifacts!.previewFile!, Buffer.from(await page.screenshot({ type: "webp", quality: 90, fullPage: false })));
         await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
       }
 
@@ -849,7 +874,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
     screenshots,
     browserMs: Date.now() - startedAt,
     metrics,
-    cases: buildStorefrontProofCases(input.bundle).length,
+    cases: buildStorefrontProofCases(input.bundle, input.routes).length,
   });
   return { ...report, screenshotManifest };
 }

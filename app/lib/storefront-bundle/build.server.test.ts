@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StoreDesignResolution, StorefrontBundleV1 } from "./types";
+import { STORE_TEMPLATE_REGISTRY } from "./registry";
+import { resolveStoreDesign } from "./routing";
 import {
   StorefrontBuildError,
   buildStorefrontDesign,
@@ -155,7 +157,7 @@ describe("runtime-1 storefront build", () => {
     expect(deps.loadRecipe).toHaveBeenCalledWith("atelier-nine", 1);
   });
 
-  it("uses custom generation on a first build only when the request explicitly asks for it", async () => {
+  it("honors an explicit custom request on the first build", async () => {
     const customResolution: StoreDesignResolution = {
       kind: "custom",
       reason: "explicit_custom",
@@ -170,17 +172,41 @@ describe("runtime-1 storefront build", () => {
       resolveDesign: vi.fn().mockReturnValue(customResolution),
     });
 
-    await buildStorefrontDesign({
+    const receipt = await buildStorefrontDesign({
+      shopId: SHOP,
+      request: { prompt: "Create something completely new", mode: "custom" },
+      customBuildEnabled: true,
+    }, deps);
+
+    expect(deps.resolveDesign).toHaveBeenCalledWith(
+      { prompt: "Create something completely new", mode: "custom" },
+      evidence(),
+    );
+    expect(deps.generateCustom).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "Create something completely new",
+      expectedDraftVersionId: null,
+      routingResolution: customResolution,
+    }));
+    expect(receipt.resolution).toEqual(customResolution);
+  });
+
+  it("routes explicit from-scratch language on the first build into the custom compiler", async () => {
+    const deps = dependencies({
+      readPointers: vi.fn().mockResolvedValue({ draftVersionId: null, publishedVersionId: null }),
+      resolveDesign: (request, currentEvidence) => resolveStoreDesign(request, currentEvidence, STORE_TEMPLATE_REGISTRY),
+    });
+
+    const receipt = await buildStorefrontDesign({
       shopId: SHOP,
       request: { prompt: "Create a completely new store from scratch", mode: "custom" },
       recipeBuildEnabled: true,
     }, deps);
 
-    expect(deps.resolveDesign).toHaveBeenCalledWith(
-      { prompt: "Create a completely new store from scratch", mode: "custom" },
-      evidence(),
-    );
-    expect(deps.generateCustom).toHaveBeenCalledOnce();
+    expect(receipt.resolution.kind).toBe("custom");
+    expect(deps.generateCustom).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "Create a completely new store from scratch",
+      expectedDraftVersionId: null,
+    }));
     expect(deps.loadRecipe).not.toHaveBeenCalled();
   });
 
@@ -323,6 +349,24 @@ describe("runtime-1 storefront build", () => {
       request: { prompt: "refills", mode: "auto" },
       recipeBuildEnabled: true,
     }, deps)).rejects.toThrow("database unavailable");
+    expect(deps.installDraft).not.toHaveBeenCalled();
+  });
+
+  it("never installs a recipe draft when cancellation arrives after immutable version creation", async () => {
+    const controller = new AbortController();
+    const deps = dependencies({
+      createVersion: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        return VERSION;
+      }),
+    });
+
+    await expect(buildStorefrontDesign({
+      shopId: SHOP,
+      request: { prompt: "refills", mode: "auto" },
+      recipeBuildEnabled: true,
+      signal: controller.signal,
+    }, deps)).rejects.toMatchObject({ code: "generation_cancelled", status: 409 });
     expect(deps.installDraft).not.toHaveBeenCalled();
   });
 

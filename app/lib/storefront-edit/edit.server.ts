@@ -53,6 +53,7 @@ export interface StorefrontEditDependencies {
     prompt: string;
     context?: PreviewEditContext;
     bundle: StorefrontBundleV1;
+    signal?: AbortSignal;
     repair?: { attempt: 1; scope: StructuralPatchScope; staticDiagnostics?: BundleValidationReport["diagnostics"]; browserProof?: BrowserProofReport };
   }): Promise<CompiledStorefrontPatch>;
   validate(bundle: StorefrontBundleV1): BundleValidationReport;
@@ -67,6 +68,7 @@ export interface StorefrontEditDependencies {
     bundle: StorefrontBundleV1;
     context: MerchantStorefrontContext;
     persistedAssets: MaterializedAssetResult["proofAssets"];
+    signal?: AbortSignal;
   }): Promise<BrowserProofReport>;
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
   cloneAssetProvenance(input: { shopId: string; sourceVersionId: string; targetVersionId: string }): Promise<void>;
@@ -228,9 +230,6 @@ function parseProviderOperations(value: unknown, scope?: StructuralPatchScope): 
     }
     throw new StorefrontEditError("storefront_patch_invalid", "A patch operation kind was not allowed.", 502);
   });
-  if (new Set(parsed.map((operation) => "routeId" in operation ? operation.routeId : null).filter(Boolean)).size > 1) {
-    throw new StorefrontEditError("storefront_patch_scope", "A storefront edit may change only one route at a time.", 502);
-  }
   return parsed;
 }
 
@@ -239,6 +238,7 @@ export function createDefaultStructuralPatchCompiler(provider?: StorefrontAiProv
     prompt: string;
     context?: PreviewEditContext;
     bundle: StorefrontBundleV1;
+    signal?: AbortSignal;
     repair?: { attempt: 1; scope: StructuralPatchScope; staticDiagnostics?: BundleValidationReport["diagnostics"]; browserProof?: BrowserProofReport };
   }): Promise<CompiledStorefrontPatch> => {
     const response = await (provider ?? createAnthropicStructuredProvider()).complete({
@@ -246,6 +246,7 @@ export function createDefaultStructuralPatchCompiler(provider?: StorefrontAiProv
       system: STOREFRONT_PATCH_SYSTEM_PROMPT,
       prompt: storefrontPatchPrompt(input),
       schema: PATCH_SCHEMA,
+      signal: input.signal,
     });
     return {
       operations: parseProviderOperations(response.value, input.context ?? input.repair?.scope),
@@ -265,7 +266,7 @@ const defaultDependencies: StorefrontEditDependencies = {
   validate: validateCompiledBundle,
   loadProofContext: ({ shopId, prompt }) => assembleStorefrontContext({ shopId, prompt }),
   loadProofAssets: ({ shopId, versionId, manifest }) => loadVerifiedStorefrontAssetProofBytes({ shopId, bundleId: versionId, manifest }),
-  prove: ({ bundle, context, persistedAssets }) => storefrontAiBrowserProof({ bundle, context, persistedAssets }),
+  prove: ({ bundle, context, persistedAssets, signal }) => storefrontAiBrowserProof({ bundle, context, persistedAssets, signal }),
   createVersion: createStorefrontBundleVersion,
   cloneAssetProvenance: cloneStorefrontBundleAssetProvenance,
   validateVersion: validateStorefrontBundleVersion,
@@ -392,9 +393,10 @@ async function proveEditBundle(
   context: MerchantStorefrontContext,
   persistedAssets: MaterializedAssetResult["proofAssets"],
   dependencies: StorefrontEditDependencies,
+  signal?: AbortSignal,
 ): Promise<BrowserProofReport> {
   try {
-    const report = await dependencies.prove({ bundle, context, persistedAssets });
+    const report = await dependencies.prove({ bundle, context, persistedAssets, signal });
     if (!report.ok) {
       throw new StorefrontEditError(
         "storefront_edit_browser_proof_failed",
@@ -405,6 +407,7 @@ async function proveEditBundle(
     }
     return report;
   } catch (error) {
+    if (signal?.aborted) throw new StorefrontEditError("storefront_edit_cancelled", "Storefront generation was stopped. Your draft was not changed.", 409);
     if (error instanceof StorefrontEditError) throw error;
     const report = error && typeof error === "object" && "report" in error
       ? (error as { report?: unknown }).report
@@ -416,6 +419,23 @@ async function proveEditBundle(
       report,
     );
   }
+}
+
+function throwIfEditAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new StorefrontEditError("storefront_edit_cancelled", "Storefront generation was stopped. Your draft was not changed.", 409);
+  }
+}
+
+function mergeScopedRepair(
+  original: CompiledStorefrontPatch,
+  repaired: CompiledStorefrontPatch,
+  scope: StructuralPatchScope,
+): CompiledStorefrontPatch {
+  const untouched = original.operations.filter((operation) =>
+    !("routeId" in operation) || operation.routeId !== scope.routeId,
+  );
+  return { ...repaired, operations: [...untouched, ...repaired.operations] };
 }
 
 function needsOwnedProofAssets(bundle: StorefrontBundleV1): boolean {
@@ -497,6 +517,7 @@ export async function editStorefrontByPrompt(
     expectedDraftVersionId: string;
     context?: PreviewEditContext;
     trusted?: boolean;
+    signal?: AbortSignal;
     onEvent?: (event: StorefrontEditEvent) => void;
   },
   dependencies: StorefrontEditDependencies = defaultDependencies,
@@ -504,7 +525,9 @@ export async function editStorefrontByPrompt(
   const intent = parseEditIntent(input.prompt, input.context);
   if (intent.kind === "startOver") return { status: "start_over", mode: "custom" };
   try {
+    throwIfEditAborted(input.signal);
     const base = await dependencies.loadDraft(input.shopId);
+    throwIfEditAborted(input.signal);
     if (!base) throw new StorefrontEditError("storefront_edit_unavailable", "There is no runtime-1 draft to edit.", 409);
     if (base.versionId !== input.expectedDraftVersionId) {
       throw new StorefrontEditError("storefront_edit_conflict", "The storefront draft changed before this edit.", 409);
@@ -522,8 +545,9 @@ export async function editStorefrontByPrompt(
       ? { operations: intent.operations, provider: { kind: "deterministic" as const, model: null } }
       : await (async () => {
           await dependencies.preflight({ shopId: input.shopId, prompt: input.prompt, trusted: input.trusted ?? false });
-          return dependencies.compileStructuralPatch({ prompt: input.prompt, context: structuralContext, bundle: base.bundle });
+          return dependencies.compileStructuralPatch({ prompt: input.prompt, context: structuralContext, bundle: base.bundle, signal: input.signal });
         })();
+    throwIfEditAborted(input.signal);
     let applied: ReturnType<typeof applyStorefrontPatch>;
     let validation: BundleValidationReport;
     let browserProof: BrowserProofReport;
@@ -545,27 +569,33 @@ export async function editStorefrontByPrompt(
         if (intent.kind === "structural" && error instanceof StorefrontPatchError && error.code === "patch_scope_invalid" &&
             !repeatScopeAdjusted && replacement && repeatContext && repeatContext.regionId !== replacement.targetId) {
           repeatScopeAdjusted = true;
-          compiledPatch = await dependencies.compileStructuralPatch({
+          const repaired = await dependencies.compileStructuralPatch({
             prompt: input.prompt,
             context: repeatContext,
             bundle: base.bundle,
+            signal: input.signal,
             repair: { attempt: 1, scope: repeatContext },
           });
+          compiledPatch = mergeScopedRepair(compiledPatch, repaired, repeatContext);
+          throwIfEditAborted(input.signal);
           continue;
         }
         if (intent.kind === "structural" && error instanceof StorefrontPatchError && error.code === "patch_source_invalid" &&
             !repairAttempted && replacement && repeatContext) {
           repairAttempted = true;
-          compiledPatch = await dependencies.compileStructuralPatch({
+          const repaired = await dependencies.compileStructuralPatch({
             prompt: input.prompt,
             context: repeatContext,
             bundle: base.bundle,
+            signal: input.signal,
             repair: {
               attempt: 1,
               scope: repeatContext,
               staticDiagnostics: [{ code: error.code, path: "source.html", message: error.message }],
             },
           });
+          compiledPatch = mergeScopedRepair(compiledPatch, repaired, repeatContext);
+          throwIfEditAborted(input.signal);
           continue;
         }
         throw error;
@@ -600,12 +630,15 @@ export async function editStorefrontByPrompt(
         const repair = intent.kind === "structural" ? repairScopeFromStatic(validation.diagnostics, structuralContext) : null;
         if (repair && !repairAttempted) {
           repairAttempted = true;
-          compiledPatch = await dependencies.compileStructuralPatch({
+          const repaired = await dependencies.compileStructuralPatch({
             prompt: input.prompt,
             context: structuralContext,
             bundle: base.bundle,
+            signal: input.signal,
             repair: { attempt: 1, scope: repair.scope, staticDiagnostics: repair.diagnostics },
           });
+          compiledPatch = mergeScopedRepair(compiledPatch, repaired, repair.scope);
+          throwIfEditAborted(input.signal);
           continue;
         }
         throw new StorefrontEditError("storefront_edit_invalid", "The requested change did not pass storefront validation. Your draft was not changed.", 422, validation.diagnostics);
@@ -616,7 +649,7 @@ export async function editStorefrontByPrompt(
           ? await dependencies.loadProofAssets({ shopId: input.shopId, versionId: base.versionId, manifest: base.bundle.assets })
           : [];
         input.onEvent?.({ stage: "proofing" });
-        browserProof = await proveEditBundle(applied.bundle, proofContext, proofAssets, dependencies);
+        browserProof = await proveEditBundle(applied.bundle, proofContext, proofAssets, dependencies, input.signal);
         attemptAudits.push({
           attempt: attemptAudits.length + 1,
           patch: compiledPatch,
@@ -642,18 +675,22 @@ export async function editStorefrontByPrompt(
         const repair = intent.kind === "structural" && failedProof ? repairScopeFromBrowser(failedProof, structuralContext) : null;
         if (repair && !repairAttempted) {
           repairAttempted = true;
-          compiledPatch = await dependencies.compileStructuralPatch({
+          const repaired = await dependencies.compileStructuralPatch({
             prompt: input.prompt,
             context: structuralContext,
             bundle: base.bundle,
+            signal: input.signal,
             repair: { attempt: 1, scope: repair.scope, browserProof: repair.proof },
           });
+          compiledPatch = mergeScopedRepair(compiledPatch, repaired, repair.scope);
+          throwIfEditAborted(input.signal);
           continue;
         }
         throw error;
       }
     }
     input.onEvent?.({ stage: "installing" });
+    throwIfEditAborted(input.signal);
     const detached = base.bundle.source.kind === "recipe" && !patchFitsRecipeOverride(base.bundle, compiledPatch.operations);
     const artifact = { sourceKind: applied.bundle.source.kind, bundle: applied.bundle };
     const resultHash = await dependencies.hashArtifact({
@@ -673,6 +710,7 @@ export async function editStorefrontByPrompt(
       generationPrompt: input.prompt,
       resolution: { kind: "edit", baseVersionId: base.versionId, detachedFromRecipe: detached },
     }, dependencies);
+    throwIfEditAborted(input.signal);
     await dependencies.editDraft({
       shopId: input.shopId,
       baseVersionId: base.versionId,
@@ -731,6 +769,7 @@ export async function editStorefrontByPrompt(
     input.onEvent?.({ stage: "installed", receipt });
     return receipt;
   } catch (error) {
+    if (input.signal?.aborted) throwIfEditAborted(input.signal);
     mapError(error);
   }
 }

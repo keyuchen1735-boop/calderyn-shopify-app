@@ -52,7 +52,7 @@ describe("deterministic store design resolver", () => {
     expect(manual).toMatchObject({
       kind: "recipe",
       templateId: "atelier-nine",
-      templateVersion: 1,
+      templateVersion: 2,
       selectionKind: "manual_override",
       score: null,
       runnerUpScore: null,

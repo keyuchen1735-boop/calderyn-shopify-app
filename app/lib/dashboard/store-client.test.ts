@@ -136,12 +136,14 @@ describe("generateStudioStoreWithImages", () => {
   });
 
   it("includes the intent field when given, and omits an empty brief", async () => {
-    await generateStudioStoreWithImages("", [pngFile("board.png")], "sonnet", "reference");
+    const controller = new AbortController();
+    await generateStudioStoreWithImages("", [pngFile("board.png")], "sonnet", "reference", controller.signal);
     const form = formOf();
     expect(form.get("brief")).toBeNull();
     expect(form.get("model")).toBe("sonnet");
     expect(form.get("intent")).toBe("reference");
     expect(form.getAll("image")).toHaveLength(1);
+    expect(apiSendForm.mock.calls[0][2]).toBe(controller.signal);
   });
 
   it("propagates a DashboardApiError from the send (server error code/message)", async () => {
@@ -200,6 +202,23 @@ describe("generateStudioStoreStream", () => {
     const fetchMock = vi.mocked(fetch);
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     expect(JSON.parse(String(init.body))).toEqual({ designRequest: request, recommendedResolution: recommendation });
+    vi.unstubAllGlobals();
+  });
+
+  it("passes the caller abort signal to the runtime-1 build request", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new DOMException("Stopped", "AbortError")));
+
+    const pending = buildStudioStoreStream(
+      { prompt: "Try a new direction", mode: "auto" },
+      () => {},
+      undefined,
+      controller.signal,
+    );
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect((vi.mocked(fetch).mock.calls[0]?.[1] as RequestInit).signal).toBe(controller.signal);
     vi.unstubAllGlobals();
   });
 
@@ -275,6 +294,21 @@ describe("editStudioStorefrontStream", () => {
 
     expect(stages).toEqual(["compiling", "validating", "proofing", "installing"]);
     expect(receipt).toMatchObject({ status: "installed", versionId: "version-2" });
+    vi.unstubAllGlobals();
+  });
+
+  it("passes the caller abort signal to the edit request", async () => {
+    const controller = new AbortController();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new DOMException("Stopped", "AbortError")));
+
+    const pending = editStudioStorefrontStream({
+      prompt: "Make every page quieter",
+      expectedDraftVersionId: "version-1",
+    }, () => {}, controller.signal);
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect((vi.mocked(fetch).mock.calls[0]?.[1] as RequestInit).signal).toBe(controller.signal);
     vi.unstubAllGlobals();
   });
 });
