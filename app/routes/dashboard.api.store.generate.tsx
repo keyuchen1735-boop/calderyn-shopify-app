@@ -20,6 +20,8 @@ import {
 import type { StoreDesignResolution } from "~/lib/storefront-bundle/types";
 import { StorefrontReleaseError } from "~/lib/storefront-bundle/release.server";
 
+export const config = { maxDuration: 800 };
+
 function buildFailure(error: unknown): { code: string; message: string; status: number } {
   if (error instanceof StorefrontBuildError || error instanceof StorefrontReleaseError) {
     return { code: error.code, message: error.message, status: error.status };

@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import type * as HttpServer from "~/lib/dashboard/http.server";
-import { action } from "../dashboard.api.store.generate";
+import { action, config } from "../dashboard.api.store.generate";
 import { StorefrontBuildError } from "~/lib/storefront-bundle/build.server";
 
 const { sessionMock, buildMock, prepareMock, rateLimitMock } = vi.hoisted(() => ({
@@ -66,6 +66,10 @@ beforeEach(() => {
 });
 
 describe("dashboard.api.store.generate streaming action", () => {
+  it("keeps the platform deadline beyond the generator's ten-minute budget", () => {
+    expect(config.maxDuration).toBe(800);
+  });
+
   it("routes runtime-1 design requests without invoking the legacy generator or its AI quota", async () => {
     const frozen = {
       kind: "recipe",
