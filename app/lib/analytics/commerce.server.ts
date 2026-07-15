@@ -103,6 +103,9 @@ async function readWindowOrders(shopId: string, sinceIso: string): Promise<Order
       .neq("channel", "test")
       .gte("created_at", sinceIso)
       .order("created_at", { ascending: false })
+      // Stable tiebreak so pagination across the PostgREST 1000-row clamp can't
+      // skip or double-count rows that share a created_at at a page boundary.
+      .order("id", { ascending: true })
       .range(from, to),
   );
 }
@@ -115,6 +118,9 @@ async function readWindowEvents(shopId: string, sinceIso: string): Promise<Event
       .eq("shop_id", shopId)
       .gte("created_at", sinceIso)
       .order("created_at", { ascending: false })
+      // Stable tiebreak so pagination across the PostgREST 1000-row clamp can't
+      // skip or double-count rows that share a created_at at a page boundary.
+      .order("id", { ascending: true })
       .range(from, to),
   );
 }
@@ -198,6 +204,9 @@ async function readWindowNativeRefundCents(shopId: string, sinceIso: string): Pr
         .like("external_id", "gid://calderyn/%")
         .gte("processed_at", sinceIso)
         .order("processed_at", { ascending: false })
+        // Stable tiebreak so pagination across the PostgREST 1000-row clamp can't
+        // skip or double-count rows that share a processed_at at a page boundary.
+        .order("id", { ascending: true })
         .range(from, to),
   );
   return rows.reduce((s, r) => s + Number(r.subtotal_cents ?? 0), 0);

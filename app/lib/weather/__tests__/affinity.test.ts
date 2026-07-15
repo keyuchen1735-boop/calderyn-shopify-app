@@ -52,6 +52,17 @@ describe("productAffinity", () => {
     expect(productAffinity("apparel", ["apparel"], "Ridgeline Hoodie")).toBe("storm");
     expect(productAffinity("gear", ["gear"], "Basecamp Duffel 45L")).toBe("neutral");
   });
+
+  it("matches cues only at word starts, not inside unrelated words", () => {
+    // Cues must not collide mid-word: "tee"⊄steel, "tan"⊄titanium, "cap"⊄escape,
+    // "rain"⊄training. Each of these has no real weather signal → neutral.
+    expect(productAffinity(null, [], "Stainless Steel Tumbler")).toBe("neutral");
+    expect(productAffinity(null, [], "Titanium Flask")).toBe("neutral");
+    expect(productAffinity(null, [], "Escape Backpack")).toBe("neutral");
+    // Plurals/derivations still match at the word start.
+    expect(productAffinity(null, [], "Leather Sandals")).toBe("sun");
+    expect(productAffinity(null, [], "Rain Boots")).toBe("storm");
+  });
 });
 
 describe("boostByWeather", () => {

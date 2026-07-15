@@ -718,7 +718,13 @@ function CampaignDetail({
 
   useEffect(() => {
     let live = true;
+    // Clear the previous campaign's creative + regenerated variants so a switch
+    // (or an in-place id change) never shows campaign A's creative/variants under
+    // campaign B while B's fetch is in flight; variants are manual-only and would
+    // otherwise persist indefinitely.
     setCreativesLoadError(false);
+    setCreativeData(null);
+    setVariants([]);
     fetchCampaignCreatives(c.id)
       .then((d) => {
         if (live) setCreativeData(d);
