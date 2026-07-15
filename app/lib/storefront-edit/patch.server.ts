@@ -357,9 +357,12 @@ function scopeRegionCss(css: string, replacementId: string): string {
           if (nodes.slice(bundleCombinator + 1).some((node) => node.type === "combinator" && (node.value.trim() === "+" || node.value.trim() === "~"))) {
             throw new StorefrontPatchError("patch_css_scope", "Replacement CSS cannot use sibling selectors outside its region");
           }
+          const isPseudoElement = (node: (typeof nodes)[number]) => node.type === "pseudo" && node.value.startsWith("::");
           let compoundEnd = bundleCombinator + 1;
-          while (compoundEnd + 1 < nodes.length && nodes[compoundEnd + 1]!.type !== "combinator") compoundEnd += 1;
-          selector.insertAfter(nodes[compoundEnd]!, selectorParser.id({ value: replacementId }));
+          while (compoundEnd + 1 < nodes.length && nodes[compoundEnd + 1]!.type !== "combinator" && !isPseudoElement(nodes[compoundEnd + 1]!)) compoundEnd += 1;
+          const anchor = nodes[compoundEnd]!;
+          if (isPseudoElement(anchor)) selector.insertBefore(anchor, selectorParser.id({ value: replacementId }));
+          else selector.insertAfter(anchor, selectorParser.id({ value: replacementId }));
         });
       }).processSync(rule.selector, { lossless: false });
     });

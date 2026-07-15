@@ -100,6 +100,30 @@ describe("applyStorefrontPatch", () => {
     }])).toThrowError(/scope|sibling|region/i);
   });
 
+  it("keeps the region-scope id before a trailing pseudo-element and after a pseudo-class", () => {
+    const bundle = freshBundle();
+    const target = bundle.routes.home.tree[0]!;
+    if (target.kind !== "element") throw new Error("fixture root");
+    const result = applyStorefrontPatch(bundle, [{
+      kind: "replaceRegion",
+      routeId: "home",
+      targetId: target.id,
+      expected: digest(target),
+      source: {
+        html: `<main id="opening" class="opening"><p class="copy">Safe</p></main>`,
+        css: `.opening::before { content:"" } .opening:hover { opacity:0.9 }`,
+      },
+    }]);
+
+    const replacement = result.bundle.routes.home.tree[0];
+    if (replacement.kind !== "element") throw new Error("fixture root");
+    const css = result.bundle.routes.home.css;
+    expect(css).toContain(`.opening#${replacement.id}::before`);
+    expect(css).not.toContain("::before#");
+    expect(css).toContain(`.opening:hover#${replacement.id}`);
+    expect(validateCompiledBundle(result.bundle)).toMatchObject({ ok: true, diagnostics: [] });
+  });
+
   it("requires exact subtree hashes for AI-authored element operations", () => {
     const bundle = freshBundle();
     const target = bundle.routes.home.tree[0]!;
