@@ -1,11 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildChain,
-  setSupabaseResponses,
   getRecorded,
+  setSupabaseResponses,
 } from "../../__tests__/_supabase_chain_mock";
 import {
   checkAndReserveImageGen,
+  completeImageGen,
+  markImageGenStarted,
   releaseImageGen,
   reserveImageGenSlots,
 } from "../image-gen-limit.server";
@@ -16,80 +18,140 @@ vi.mock("../../supabase.server", () => ({
 }));
 
 const SHOP = "demo.myshopify.com";
-const NOW = new Date("2026-06-10T12:00:00.000Z"); // UTC day = 2026-06-10
-const count = (n: number) => ({ data: null, count: n, error: null });
+const NOW = new Date("2026-06-10T12:00:00.000Z");
 
 beforeEach(() => {
   delete process.env.IMAGE_GEN_DAILY_PER_SHOP;
   delete process.env.IMAGE_GEN_DAILY_GLOBAL;
 });
 
-describe("checkAndReserveImageGen", () => {
-  it("reserves a slot, reports remaining, and returns the event id for release", async () => {
-    setSupabaseResponses([count(5), count(100), { data: { id: "evt-1" }, error: null }]);
-    const res = await checkAndReserveImageGen(SHOP, NOW);
-    expect(res).toEqual({ ok: true, remaining: 14, eventId: "evt-1" }); // 20 - 5 - 1
+describe("atomic image generation reservations", () => {
+  it("reserves one slot through the database function", async () => {
+    setSupabaseResponses([
+      {
+        data: {
+          event_ids: ["evt-1"],
+          blocked_scope: null,
+          limit_value: null,
+          remaining: 8,
+        },
+        error: null,
+      },
+    ]);
 
-    const inserts = getRecorded("insert");
-    expect(inserts).toHaveLength(1);
-    expect(inserts[0][0]).toMatchObject({
-      shop_id: "shop-id-for-demo.myshopify.com",
-      day: "2026-06-10",
+    await expect(checkAndReserveImageGen(SHOP, NOW)).resolves.toEqual({
+      ok: true,
+      remaining: 8,
+      eventId: "evt-1",
     });
-    expect(getRecorded("eq")).toContainEqual(["day", "2026-06-10"]);
-    expect(getRecorded("eq")).toContainEqual(["shop_id", "shop-id-for-demo.myshopify.com"]);
+    expect(getRecorded("rpc")[0]).toEqual([
+      "reserve_image_generation_slots",
+      expect.objectContaining({
+        p_shop_id: "shop-id-for-demo.myshopify.com",
+        p_count: 1,
+        p_per_shop_daily: 9,
+        p_global_daily: 30,
+        p_day: "2026-06-10",
+      }),
+    ]);
   });
 
-  it("blocks at the per-shop limit and inserts nothing", async () => {
-    setSupabaseResponses([count(20), count(50)]);
-    const res = await checkAndReserveImageGen(SHOP, NOW);
-    expect(res).toEqual({ ok: false, scope: "shop", limit: 20 });
-    expect(getRecorded("insert")).toHaveLength(0);
+  it("reserves a complete batch with provider metadata", async () => {
+    setSupabaseResponses([
+      {
+        data: {
+          event_ids: ["evt-1", "evt-2"],
+          blocked_scope: null,
+          limit_value: null,
+          remaining: 7,
+        },
+        error: null,
+      },
+    ]);
+
+    await expect(
+      reserveImageGenSlots(SHOP, 2, NOW, {
+        generationId: "11111111-1111-1111-1111-111111111111",
+        provider: "gemini",
+        model: "gemini-3.1-flash-lite-image",
+        purpose: "campaign_initial",
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      eventIds: ["evt-1", "evt-2"],
+      generationId: "11111111-1111-1111-1111-111111111111",
+      remaining: 7,
+    });
+    expect(getRecorded("rpc")[0][1]).toMatchObject({
+      p_count: 2,
+      p_generation_id: "11111111-1111-1111-1111-111111111111",
+      p_provider: "gemini",
+      p_model: "gemini-3.1-flash-lite-image",
+      p_purpose: "campaign_initial",
+    });
   });
 
-  it("blocks at the global limit and inserts nothing", async () => {
-    setSupabaseResponses([count(5), count(300)]);
-    const res = await checkAndReserveImageGen(SHOP, NOW);
-    expect(res).toEqual({ ok: false, scope: "global", limit: 300 });
+  it("returns a hard global block without inserting a partial batch", async () => {
+    setSupabaseResponses([
+      {
+        data: {
+          event_ids: [],
+          blocked_scope: "global",
+          limit_value: 30,
+          remaining: 0,
+        },
+        error: null,
+      },
+    ]);
+
+    await expect(reserveImageGenSlots(SHOP, 3, NOW)).resolves.toEqual({
+      ok: false,
+      scope: "global",
+      limit: 30,
+    });
+    expect(getRecorded("rpc")).toHaveLength(1);
     expect(getRecorded("insert")).toHaveLength(0);
   });
 });
 
-describe("reserveImageGenSlots", () => {
-  it("reserves N slots and returns all event ids", async () => {
+describe("image generation cost ledger", () => {
+  it("marks provider start and stores successful usage", async () => {
     setSupabaseResponses([
-      count(0), count(0), { data: { id: "e1" }, error: null },
-      count(1), count(1), { data: { id: "e2" }, error: null },
+      { data: { id: "evt-1" }, error: null },
+      { data: { id: "evt-1" }, error: null },
     ]);
-    const res = await reserveImageGenSlots(SHOP, 2, NOW);
-    expect(res).toEqual({ ok: true, eventIds: ["e1", "e2"] });
-    expect(getRecorded("insert")).toHaveLength(2);
+
+    await markImageGenStarted("evt-1");
+    await completeImageGen("evt-1", {
+      status: "succeeded",
+      usage: {
+        providerRequestId: "int-1",
+        inputTokens: 260,
+        outputTokens: 1120,
+        thoughtTokens: 0,
+        estimatedCostUsdMicros: 33665,
+      },
+    });
+
+    expect(getRecorded("update")[0][0]).toEqual(
+      expect.objectContaining({ provider_started_at: expect.any(String) }),
+    );
+    expect(getRecorded("update")[1][0]).toEqual(
+      expect.objectContaining({
+        status: "succeeded",
+        provider_request_id: "int-1",
+        input_tokens: 260,
+        output_tokens: 1120,
+        estimated_cost_usd_micros: 33665,
+      }),
+    );
   });
 
-  it("releases already-reserved slots when blocked partway, and reports the block", async () => {
-    setSupabaseResponses([
-      count(19), count(10), { data: { id: "e1" }, error: null }, // slot 1 fits (19 -> 20)
-      count(20), count(11), // slot 2 blocked at per-shop cap
-      { data: null, error: null }, // release of e1
-    ]);
-    const res = await reserveImageGenSlots(SHOP, 2, NOW);
-    expect(res).toEqual({ ok: false, scope: "shop", limit: 20 });
-    expect(getRecorded("delete")).toHaveLength(1);
-    expect(getRecorded("eq")).toContainEqual(["id", "e1"]);
-  });
-});
-
-describe("releaseImageGen", () => {
-  it("deletes the reserved event row so a failed generation doesn't burn quota", async () => {
+  it("only releases a reservation that never reached the provider", async () => {
     setSupabaseResponses([{ data: null, error: null }]);
     await releaseImageGen("evt-1");
     expect(getRecorded("delete")).toHaveLength(1);
-    expect(getRecorded("eq")).toContainEqual(["id", "evt-1"]);
-  });
-
-  it("is a no-op without an event id", async () => {
-    setSupabaseResponses([]);
-    await releaseImageGen(null);
-    expect(getRecorded("delete")).toHaveLength(0);
+    expect(getRecorded("eq")).toContainEqual(["status", "reserved"]);
+    expect(getRecorded("is")).toContainEqual(["provider_started_at", null]);
   });
 });

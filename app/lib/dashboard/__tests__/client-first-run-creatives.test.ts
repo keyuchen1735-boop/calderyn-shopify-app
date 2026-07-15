@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const responseBody = {
   available: true,
   variants: [],
+  draftId: "33333333-3333-4333-8333-333333333333",
   destinationUrl: "https://shop.example/products/pack",
   imageUrl: null,
   fallback: {
@@ -11,6 +12,13 @@ const responseBody = {
     cta: "SHOP_NOW",
   },
   regenerationsLeft: 2,
+};
+
+const generationContext = {
+  placement: "instagram" as const,
+  budgetCents: 1500,
+  selectedCreativeIndex: 0,
+  draftId: null,
 };
 
 function ok(): Response {
@@ -36,7 +44,7 @@ describe("first-run creative client", () => {
   it("shares one in-flight generation request for the same run and product", async () => {
     let resolveFetch!: (response: Response) => void;
     const fetchMock = vi.fn(
-      () =>
+      (_input: RequestInfo | URL, _init?: RequestInit) =>
         new Promise<Response>((resolve) => {
           resolveFetch = resolve;
         }),
@@ -44,10 +52,31 @@ describe("first-run creative client", () => {
     vi.stubGlobal("fetch", fetchMock);
     const { generateFirstRunCreatives } = await import("../client");
 
-    const first = generateFirstRunCreatives("product-1", "run-1", 1);
-    const duplicate = generateFirstRunCreatives("product-1", "run-1", 1);
+    const first = generateFirstRunCreatives(
+      "product-1",
+      "run-1",
+      1,
+      generationContext,
+    );
+    const duplicate = generateFirstRunCreatives(
+      "product-1",
+      "run-1",
+      1,
+      generationContext,
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    const requestInit = fetchMock.mock.calls[0]?.[1];
+    expect(requestInit).toBeDefined();
+    if (!requestInit) throw new Error("generation request init was missing");
+    expect(JSON.parse(String(requestInit.body))).toEqual(
+      expect.objectContaining({
+        placement: "instagram",
+        budgetCents: 1500,
+        selectedCreativeIndex: 0,
+        draftId: null,
+      }),
+    );
     resolveFetch(ok());
     await expect(Promise.all([first, duplicate])).resolves.toEqual([
       responseBody,
@@ -55,7 +84,12 @@ describe("first-run creative client", () => {
     ]);
 
     fetchMock.mockResolvedValueOnce(ok());
-    await generateFirstRunCreatives("product-1", "run-1", 1);
+    await generateFirstRunCreatives(
+      "product-1",
+      "run-1",
+      1,
+      generationContext,
+    );
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

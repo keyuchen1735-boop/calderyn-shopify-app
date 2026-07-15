@@ -10,6 +10,7 @@ import { getImageProvider } from "./provider.server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SOURCE = "gemini";
+export const MAX_STOREFRONT_IMAGES_PER_BUILD = 3;
 
 export interface EnhanceResult { productId: string; status: "ready" | "failed"; url: string | null }
 
@@ -20,6 +21,7 @@ export async function enhanceListing(shopId: string, product: StoreProduct, opts
   let status: "ready" | "failed" = "failed";
   try {
     const out = await getImageProvider().generateListingImage({
+      shopId,
       productTitle: product.title, productDescription: product.description,
       sourceImageUrl: product.images[0]?.url ?? null, mode: "product_shot",
       signal: opts.signal,
@@ -53,10 +55,13 @@ export async function generateMissingListingImages(
   products: StoreProduct[],
   enhance: typeof enhanceListing = enhanceListing,
   signal?: AbortSignal,
+  limit = MAX_STOREFRONT_IMAGES_PER_BUILD,
 ): Promise<number> {
-  if (products.length === 0 || products.some((product) => product.images.length > 0)) return 0;
-  // ponytail: the first recipe renders at most 12 featured products; add queued catalog-wide generation if that ceiling changes.
-  const results = await Promise.all(products.slice(0, 12).map((product) => enhance(shopId, product, { signal })));
+  if (products.length === 0 || limit <= 0) return 0;
+  const missing = products
+    .filter((product) => product.images.length === 0)
+    .slice(0, Math.min(MAX_STOREFRONT_IMAGES_PER_BUILD, limit));
+  const results = await Promise.all(missing.map((product) => enhance(shopId, product, { signal })));
   return results.filter((result) => result.status === "ready").length;
 }
 

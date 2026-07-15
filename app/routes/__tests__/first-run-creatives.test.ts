@@ -111,7 +111,7 @@ describe("normalizeGeneratedText", () => {
 });
 
 describe("generateFirstRunImages", () => {
-  it("passes the product reference through, reserves quota, persists output, and releases unused slots", async () => {
+  it("passes the product reference through and persists provider output", async () => {
     const generate = vi.fn(async () => [
       candidate({ imageUrl: "https://provider.example/new.png" }, "generated"),
     ]);
@@ -120,11 +120,6 @@ describe("generateFirstRunImages", () => {
       available: () => true,
       generate,
     };
-    const reserve = vi.fn(async () => ({
-      ok: true as const,
-      eventIds: ["evt-1", "evt-2", "evt-3"],
-    }));
-    const release = vi.fn(async (_eventId: string | null) => undefined);
     const persist = vi.fn(async () => ({
       persisted: true as const,
       url: "https://owned.example/new.png",
@@ -135,8 +130,6 @@ describe("generateFirstRunImages", () => {
     const result = await generateFirstRunImages(
       { shop: "shop.example", count: 3, generator, request },
       {
-        reserve,
-        release,
         resolveShop: async () => "11111111-1111-1111-1111-111111111111",
         persist,
       },
@@ -148,7 +141,6 @@ describe("generateFirstRunImages", () => {
         count: 3,
       }),
     );
-    expect(reserve).toHaveBeenCalledWith("shop.example", 3);
     expect(persist).toHaveBeenCalledWith(
       "11111111-1111-1111-1111-111111111111",
       "https://provider.example/new.png",
@@ -159,11 +151,10 @@ describe("generateFirstRunImages", () => {
     expect(result.candidates[0].input.imageUrl).toBe(
       "https://owned.example/new.png",
     );
-    expect(release.mock.calls.map(([id]) => id)).toEqual(["evt-2", "evt-3"]);
   });
 
-  it("does not reserve quota when the image provider is unavailable", async () => {
-    const reserve = vi.fn();
+  it("does not invoke provider dependencies when image generation is unavailable", async () => {
+    const resolveShop = vi.fn();
     const result = await generateFirstRunImages(
       {
         shop: "shop.example",
@@ -172,19 +163,16 @@ describe("generateFirstRunImages", () => {
         request,
       },
       {
-        reserve,
-        release: vi.fn(),
-        resolveShop: vi.fn(),
+        resolveShop,
         persist: vi.fn(),
       },
     );
 
     expect(result).toEqual({ candidates: [], providerAttempted: false });
-    expect(reserve).not.toHaveBeenCalled();
+    expect(resolveShop).not.toHaveBeenCalled();
   });
 
   it("does not expose an expiring provider URL when owned persistence fails", async () => {
-    const release = vi.fn(async (_eventId: string | null) => undefined);
     const result = await generateFirstRunImages(
       {
         shop: "shop.example",
@@ -202,8 +190,6 @@ describe("generateFirstRunImages", () => {
         request,
       },
       {
-        reserve: async () => ({ ok: true, eventIds: ["evt-1"] }),
-        release,
         resolveShop: async () => "11111111-1111-1111-1111-111111111111",
         persist: async (_shopId, url) => ({
           persisted: false,
@@ -214,6 +200,5 @@ describe("generateFirstRunImages", () => {
     );
 
     expect(result).toEqual({ candidates: [], providerAttempted: true });
-    expect(release).not.toHaveBeenCalledWith("evt-1");
   });
 });

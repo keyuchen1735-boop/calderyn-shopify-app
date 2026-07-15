@@ -2,13 +2,9 @@ import {
   persistExternalImage,
   type PersistOutcome,
 } from "~/lib/assets/persist.server";
+import { ImageGenerationQuotaError } from "~/lib/storegen/imagery/gemini.server";
 import { resolveShopId } from "~/lib/supabase.server";
 import type { CreativeGenerator, GenerateRequest } from "./generate.server";
-import {
-  releaseImageGen,
-  reserveImageGenSlots,
-  type ReserveSlotsResult,
-} from "./image-gen-limit.server";
 import type { CreativeInput, GeneratedCandidate } from "./types";
 
 export interface FirstRunDirectionCandidate extends GeneratedCandidate {
@@ -64,8 +60,6 @@ export function normalizeFirstRunCreativePayload<T>(payload: T): T {
 }
 
 interface FirstRunImageDeps {
-  reserve: (shop: string, count: number) => Promise<ReserveSlotsResult>;
-  release: (eventId: string | null) => Promise<void>;
   resolveShop: (shop: string) => Promise<string>;
   persist: (
     shopId: string,
@@ -76,8 +70,6 @@ interface FirstRunImageDeps {
 }
 
 const defaultImageDeps: FirstRunImageDeps = {
-  reserve: reserveImageGenSlots,
-  release: releaseImageGen,
   resolveShop: resolveShopId,
   persist: persistExternalImage,
 };
@@ -100,10 +92,8 @@ export async function generateFirstRunImages(
     return { candidates: [], providerAttempted: false };
 
   let shopId: string;
-  let reserved: ReserveSlotsResult;
   try {
     shopId = await deps.resolveShop(args.shop);
-    reserved = await deps.reserve(args.shop, args.count);
   } catch (error) {
     console.error(
       "[first-run creatives] image quota unavailable; using product image",
@@ -111,18 +101,10 @@ export async function generateFirstRunImages(
     );
     return { candidates: [], providerAttempted: false };
   }
-  if (!reserved.ok) return { candidates: [], providerAttempted: false };
-
   try {
     const generated = (
       await args.generator.generate({ ...args.request, count: args.count })
     ).slice(0, args.count);
-    await Promise.all(
-      reserved.eventIds
-        .slice(generated.length)
-        .map((eventId) => deps.release(eventId)),
-    );
-
     const persisted = await Promise.all(
       generated.map(async (candidate): Promise<GeneratedCandidate | null> => {
         const url = candidate.input.imageUrl;
@@ -155,14 +137,14 @@ export async function generateFirstRunImages(
       providerAttempted: true,
     };
   } catch (error) {
-    await Promise.all(
-      reserved.eventIds.map((eventId) => deps.release(eventId)),
-    );
     console.error(
       "[first-run creatives] image generation failed; using product image",
       error,
     );
-    return { candidates: [], providerAttempted: true };
+    return {
+      candidates: [],
+      providerAttempted: !(error instanceof ImageGenerationQuotaError),
+    };
   }
 }
 

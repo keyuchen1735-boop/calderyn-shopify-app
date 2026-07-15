@@ -128,10 +128,12 @@ export function registerStorefrontAiBrowserProof(adapter: BrowserProofAdapter): 
 async function defaultProduceAsset(input: Parameters<GenerateDependencies["produceAsset"]>[0]) {
   const imageProvider = getImageProvider();
   const generated = await imageProvider.generateListingImage({
+    shopId: input.shopId,
     productTitle: input.context.store.name,
     productDescription: `${input.request.purpose}. ${input.context.prompt}`.slice(0, 2_000),
     sourceImageUrl: null,
     mode: "lifestyle_scene",
+    purpose: "storefront_design",
   });
   const fetched = await fetchExternalImageBytes(generated.url, { maxBytes: MAX_IMAGE_BYTES, signal: input.signal });
   if (fetched.mediaType === "image/gif") return null;

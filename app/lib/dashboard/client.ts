@@ -550,6 +550,8 @@ export interface FirstRunCreativeVariant {
 interface FirstRunCreativeResponse {
   available: boolean;
   variants: FirstRunCreativeVariant[];
+  /** Durable campaign draft created/updated before this response was returned. */
+  draftId: string;
   destinationUrl: string;
   imageUrl: string | null;
   fallback: { headline: string; primaryText: string; cta: string };
@@ -600,6 +602,12 @@ export async function generateFirstRunCreatives(
   productId: string,
   runId: string,
   attempt: number,
+  context: {
+    placement: "facebook" | "instagram" | "google" | "tiktok";
+    budgetCents: number;
+    selectedCreativeIndex: number;
+    draftId: string | null;
+  },
 ): Promise<FirstRunCreativeResponse> {
   const requestKey = `${runId}:${productId}:${attempt}`;
   const pending = firstRunCreativeRequests.get(requestKey);
@@ -612,6 +620,7 @@ export async function generateFirstRunCreatives(
       productId,
       runId,
       attempt,
+      ...context,
     },
   );
   firstRunCreativeRequests.set(requestKey, request);
