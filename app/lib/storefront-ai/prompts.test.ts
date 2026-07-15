@@ -89,6 +89,8 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
     expect(prompt).toContain("Product anchors inside featured.products require data-cd-param-handle=\"product.handle\"");
     expect(prompt).toContain("globalCss must be empty; keep concept styles in shell.css and home.css");
     expect(prompt).toContain("The repeat parent has only data-cd-repeat");
+    expect(prompt).toContain("Neither shell.html nor home.html may contain the literal <slot tag or data-cd-slot");
+    expect(prompt).toContain("In shell.css and home.css, never select any data-cd-* attribute (including [data-cd-key])");
     expect(prompt).toContain("Every CSS selector stays away from trusted commerce hosts because concepts contain no slots");
 
     const schema = CONCEPT_SCHEMA as { properties: { designSystem: { properties: { globalCss: { maxLength?: number } } } } };
@@ -96,8 +98,10 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
   });
 
   it("preserves the static concept constraints during repair", () => {
-    expect(conceptRepairPrompt(createContext(), "asymmetric-commerce", "concept-1", "invalid", {}))
-      .toContain("Concept shell/home are static compiler-safe previews");
+    const prompt = conceptRepairPrompt(createContext(), "asymmetric-commerce", "concept-1", "invalid", {});
+    expect(prompt).toContain("Concept shell/home are static compiler-safe previews");
+    expect(prompt).toContain("Fix DIAGNOSTICS, then re-check the complete candidate against every compiler rule");
+    expect(prompt).toContain("do not preserve other invalid syntax from PRIOR_OUTPUT");
   });
 
   it("requires targeted browser repairs to return a complete route object", () => {
