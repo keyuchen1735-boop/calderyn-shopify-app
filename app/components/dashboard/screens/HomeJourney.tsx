@@ -4,7 +4,7 @@ import gsap from "gsap";
 import { Card, Btn } from "../ui";
 import { CDIcon } from "../icons";
 import { reduced } from "../hero/hero-motion";
-import { journeyView, PHASE_TITLES, type MilestoneKey } from "~/lib/dashboard/journey-model";
+import { journeyView, JOURNEY_STEPS, PHASE_TITLES, type MilestoneKey } from "~/lib/dashboard/journey-model";
 import type { DashboardCtx, Screen } from "../context";
 
 // Mirrors the server's JourneyProgress shape (app/lib/onboarding/journey.server.ts)
@@ -13,6 +13,7 @@ export interface JourneyProgress {
   completed: Partial<Record<MilestoneKey, string>>;
   liveCardDismissed: boolean;
   recapDismissed: boolean;
+  activeStep: MilestoneKey | null;
   storefrontUrl: string | null;
 }
 
@@ -25,11 +26,13 @@ export function HomeJourney({
   app,
   data,
   onDismiss,
+  onSelectStep,
   onStartTestOrder,
 }: {
   app: DashboardCtx;
   data: JourneyProgress;
   onDismiss: (key: "dismiss_live_card" | "dismiss_recap") => void;
+  onSelectStep: (step: MilestoneKey) => void;
   onStartTestOrder: () => void;
 }) {
   const view = useMemo(() => journeyView(data), [data]);
@@ -90,6 +93,14 @@ export function HomeJourney({
   }
 
   const phaseSteps = view.steps.filter((s) => s.def.phase === view.phase);
+  const activeIndex = view.active
+    ? JOURNEY_STEPS.findIndex((step) => step.key === view.active)
+    : -1;
+  // Account creation happens before this card is available, so it is context,
+  // not a destination for the Back button.
+  const previousStep = activeIndex > 1 ? JOURNEY_STEPS[activeIndex - 1] : null;
+  const followingStep = activeIndex >= 0 ? JOURNEY_STEPS[activeIndex + 1] ?? null : null;
+  const activeState = view.steps.find((step) => step.def.key === view.active) ?? null;
   return (
     <div ref={rootRef}>
       {view.showLiveCard && (
@@ -138,7 +149,7 @@ export function HomeJourney({
           </span>
         </div>
         {phaseSteps.map((s) => {
-          const spotlight = s.def.key === view.next;
+          const spotlight = s.def.key === view.active;
           return (
             <div
               key={s.def.key}
@@ -151,7 +162,7 @@ export function HomeJourney({
                 <div className="cd-jr-t">{s.def.label}</div>
                 {spotlight && s.def.pitch && <div className="cd-jr-s">{s.def.pitch}</div>}
               </div>
-              {spotlight && s.def.cta && (
+              {spotlight && !s.done && s.def.cta && (
                 <Btn kind="primary" small onClick={() => go(s.def.key, s.def.screen)}>
                   {s.def.cta}
                 </Btn>
@@ -159,6 +170,20 @@ export function HomeJourney({
             </div>
           );
         })}
+        {(previousStep || followingStep) && (
+          <div className="cd-jr-nav">
+            {previousStep && (
+              <Btn small onClick={() => onSelectStep(previousStep.key)}>
+                Back
+              </Btn>
+            )}
+            {followingStep && (
+              <Btn small onClick={() => onSelectStep(followingStep.key)}>
+                {activeState?.done ? "Next" : "Skip for now"}
+              </Btn>
+            )}
+          </div>
+        )}
       </Card>
     </div>
   );

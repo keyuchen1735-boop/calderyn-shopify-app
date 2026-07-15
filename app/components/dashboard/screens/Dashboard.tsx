@@ -22,6 +22,7 @@ import { recoveredWithin } from "~/lib/recovered";
 import { sparklinePath } from "~/lib/sparkline";
 import { useLiveAnalytics } from "../use-live-analytics";
 import type { DashboardCtx } from "../context";
+import type { MilestoneKey } from "~/lib/dashboard/journey-model";
 import type { ProductSummaryVM } from "~/lib/dashboard/client";
 import type { QueueProposalVM } from "../view-models";
 
@@ -164,6 +165,23 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
         .apiSend("POST", "/dashboard/api/setup-progress", { intent: key })
         .then(() => refreshJourney())
         .catch(() => {});
+    },
+    [refreshJourney],
+  );
+  const selectJourneyStep = useCallback(
+    (step: MilestoneKey) => {
+      setJourney((current) => {
+        if (!current) return current;
+        const next = { ...current, activeStep: step };
+        cacheScreenData(SCREEN_CACHE_KEYS.setupProgress, next);
+        return next;
+      });
+      client
+        .apiSend("POST", "/dashboard/api/setup-progress", {
+          intent: "set_active_step",
+          step,
+        })
+        .catch(() => refreshJourney());
     },
     [refreshJourney],
   );
@@ -551,6 +569,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           app={app}
           data={journey}
           onDismiss={dismissJourney}
+          onSelectStep={selectJourneyStep}
           onStartTestOrder={startTestOrder}
         />
       )}
