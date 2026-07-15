@@ -13,8 +13,8 @@ const FONT_ALIASES: Readonly<Record<string, CuratedFontId>> = {
   "space grotesk": "space-grotesk",
 };
 
-const RESET_RE = /\b(?:start\s+over|rebuild\s+(?:the\s+)?(?:whole\s+)?store|redesign\s+(?:the\s+)?(?:whole|entire)\s+store|completely\s+new\s+store|new\s+store\s+from\s+scratch|entirely\s+original\s+(?:store|storefront|design)|replace\s+the\s+entire\s+store|(?:no|without\s+(?:a\s+)?)template)\b/i;
-const NEGATED_RESET_RE = /\b(?:don't|do\s+not|never)\s+(?:start\s+over|rebuild|redesign|replace)\b/i;
+const RESET_RE = /\b(?:start\s+over|rebuild\s+(?:the\s+)?(?:whole\s+)?store|redesign\s+(?:the\s+)?(?:whole|entire)\s+store|completely\s+new\s+store|new\s+store\s+from\s+scratch|entirely\s+original\s+(?:store|storefront|design)|replace\s+the\s+entire\s+store|(?:no\s+|without\s+(?:a\s+)?)template)\b/i;
+const NEGATED_RESET_RE = /\b(?:don't|do\s+not|never)\s+(?:start\s+over|rebuild|redesign|replace)\b/gi;
 const HEX_RE = /#([0-9a-f]{6})\b/i;
 
 function normalizedFont(prompt: string): CuratedFontId | null {
@@ -27,7 +27,11 @@ function normalizedFont(prompt: string): CuratedFontId | null {
 /** Pure allowlisted parser. Anything not exactly understood becomes a scoped structural edit. */
 export function parseEditIntent(prompt: string, context?: PreviewEditContext): ParsedEditIntent {
   const clean = prompt.trim();
-  if (RESET_RE.test(clean) && !NEGATED_RESET_RE.test(clean)) return { kind: "startOver" };
+  // Drop negated reset phrases ("don't rebuild", "never start over") before
+  // testing so a negation elsewhere in the prompt cannot suppress a genuine
+  // reset request ("Start over. Never rebuild it section by section.").
+  const resettable = clean.replace(NEGATED_RESET_RE, " ");
+  if (RESET_RE.test(resettable)) return { kind: "startOver" };
 
   const operations: StorefrontPatchOperation[] = [];
   const color = clean.match(HEX_RE)?.[0]?.toLowerCase();
