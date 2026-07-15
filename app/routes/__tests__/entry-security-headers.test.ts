@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { applySecurityHeaders } from "../../entry.server";
+import { applySecurityHeaders, documentReadyCallbackName } from "../../entry.server";
 import { markStorefrontBundleRendered } from "../../lib/storefront-runtime/csp.server";
 
 // entry.server pulls in ./shopify.server, which calls shopifyApp() at module
@@ -17,6 +17,13 @@ vi.mock("../../shopify.server", () => ({
 // and must add defense-in-depth directives WITHOUT clobbering frame-ancestors.
 const SHOPIFY_CSP =
   "frame-ancestors https://acme.myshopify.com https://admin.shopify.com https://*.spin.dev https://admin.myshopify.io https://admin.shop.dev;";
+
+describe("document streaming", () => {
+  it("waits for all checkout chunks before hydrating the payment form", () => {
+    expect(documentReadyCallbackName("/storefront/checkout", null)).toBe("onAllReady");
+    expect(documentReadyCallbackName("/storefront/products/shoe", null)).toBe("onShellReady");
+  });
+});
 
 describe("applySecurityHeaders", () => {
   it("keeps the Shopify frame-ancestors CSP intact (never clobbered)", () => {
