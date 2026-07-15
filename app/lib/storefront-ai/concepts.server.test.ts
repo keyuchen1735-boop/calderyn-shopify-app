@@ -155,7 +155,9 @@ describe("novelty and visual judging", () => {
       provider,
       render: async () => ({
         desktop: { key: "judge-desktop", mediaType: "image/webp", bytes: new Uint8Array([1]) },
+        desktopCatalog: { key: "judge-desktop-catalog", mediaType: "image/webp", bytes: new Uint8Array([2]) },
         mobile: { key: "judge-mobile", mediaType: "image/webp", bytes: new Uint8Array([2]) },
+        mobileCatalog: { key: "judge-mobile-catalog", mediaType: "image/webp", bytes: new Uint8Array([3]) },
         browserMs: 1,
       }),
     });
@@ -214,7 +216,9 @@ describe("novelty and visual judging", () => {
     const candidates = [0, 1, 2].map((index) => ({ ...compileConceptCandidate(createConcept(index)), strategy: "asymmetric-commerce" as const }));
     const render = vi.fn(async ({ context: received }) => ({
       desktop: { key: `judge-desktop-${received.products[0].title.length}`, mediaType: "image/webp" as const, bytes: new Uint8Array([1]) },
+      desktopCatalog: { key: "judge-desktop-catalog", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
       mobile: { key: "judge-mobile", mediaType: "image/webp" as const, bytes: new Uint8Array([2]) },
+      mobileCatalog: { key: "judge-mobile-catalog", mediaType: "image/webp" as const, bytes: new Uint8Array([3]) },
       browserMs: 12,
     }));
     const provider: StorefrontAiProvider = {
@@ -228,7 +232,12 @@ describe("novelty and visual judging", () => {
     expect(render.mock.calls[0][0].context.products[0].title).toBe("Arc Lamp");
     expect(provider.complete).toHaveBeenCalledWith(expect.objectContaining({
       operation: "judge",
-      images: [expect.objectContaining({ key: expect.stringContaining("judge-desktop") }), expect.objectContaining({ key: "judge-mobile" })],
+      images: [
+        expect.objectContaining({ key: expect.stringContaining("judge-desktop") }),
+        expect.objectContaining({ key: "judge-desktop-catalog" }),
+        expect.objectContaining({ key: "judge-mobile" }),
+        expect.objectContaining({ key: "judge-mobile-catalog" }),
+      ],
     }));
     expect(ranked.accepted).toHaveLength(2);
     expect(ranked.rejected.some((item) => item.candidate.candidate.concept.name === "Concept 2")).toBe(true);

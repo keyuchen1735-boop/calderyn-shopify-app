@@ -86,7 +86,7 @@ export async function rankConcepts(input: RankConceptsInput): Promise<RankConcep
         system: COMPILER_SYSTEM_PROMPT,
         prompt: judgePrompt(candidate, input.context),
         schema: JUDGE_SCHEMA,
-        images: [renders.desktop, renders.mobile],
+        images: [renders.desktop, renders.desktopCatalog, renders.mobile, renders.mobileCatalog],
         signal: input.signal,
       });
       input.onModelCall?.("judge", response);

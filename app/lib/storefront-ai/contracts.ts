@@ -289,7 +289,9 @@ export interface GenerateDependencies {
 
 export interface ConceptRenderEvidence {
   desktop: VisualEvidenceImage;
+  desktopCatalog: VisualEvidenceImage;
   mobile: VisualEvidenceImage;
+  mobileCatalog: VisualEvidenceImage;
   browserMs: number;
 }
 

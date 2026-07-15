@@ -104,7 +104,11 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
     expect(prompt).toContain("In shell.css and home.css, never select any data-cd-* attribute (including [data-cd-key])");
     expect(prompt).toContain("Every CSS selector stays away from trusted commerce hosts because concepts contain no slots");
     expect(prompt).toContain("responsive desktop multi-column featured.products grid");
+    expect(prompt).toContain("static grid wrapper whose direct child is the repeated product card");
+    expect(prompt).toContain("Never put data-cd-repeat on the grid wrapper");
     expect(prompt).toContain("authored CSS fallback surface when product.primaryImage or price is unavailable");
+    expect(prompt).toContain("At a 1440px viewport, at least two repeated product cards must share the first row");
+    expect(prompt).toContain("never use viewport-relative heights or min-heights for product cards");
 
     const schema = CONCEPT_SCHEMA as { properties: { designSystem: { properties: { globalCss: { maxLength?: number } } } } };
     expect(schema.properties.designSystem.properties.globalCss.maxLength).toBe(0);
@@ -119,6 +123,8 @@ describe("COMPILER_SYSTEM_PROMPT", () => {
 
     expect(prompt).toContain("Concept previews intentionally contain no buttons, trusted commerce slots, states, or interactions");
     expect(prompt).toContain("Do not penalize missing product imagery or prices when CONTEXT_DATA does not provide them");
+    expect(prompt).toContain("desktop overview, desktop catalog, mobile overview, then mobile catalog");
+    expect(prompt).toContain("never deduct for missing filters, add-to-cart, hover states, or secondary actions");
     expect(prompt).toContain("Still fail unstyled or broken layouts");
   });
 
