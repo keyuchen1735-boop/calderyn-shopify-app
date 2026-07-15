@@ -209,7 +209,18 @@ export async function action({ request }: ActionFunctionArgs) {
         const generator = createImageGenerator({
           generateImage: geminiImageClient(),
         });
-        if (generator.available()) {
+        const imageResult = await generateFirstRunImages({
+          shop: session.shopId,
+          count: 3,
+          generator,
+          request: imageOnlyRequest,
+        });
+        // Only commit the reservation once the paid provider was actually
+        // invoked. Gating on generator.available() (credentials) alone burned a
+        // merchant regeneration when the image quota was exhausted and no
+        // provider call — and no cost — occurred; this branch does no other paid
+        // work, so an unattempted run must stay releasable.
+        if (imageResult.providerAttempted) {
           await markFirstRunGenerationStarted(
             session.shopId,
             reservation.id,
@@ -217,13 +228,6 @@ export async function action({ request }: ActionFunctionArgs) {
           );
           keepReservation = true;
         }
-        const imageResult = await generateFirstRunImages({
-          shop: session.shopId,
-          count: 3,
-          generator,
-          request: imageOnlyRequest,
-        });
-        keepReservation ||= imageResult.providerAttempted;
         if (imageResult.candidates.length === 3) {
           return finish({
             available: true,

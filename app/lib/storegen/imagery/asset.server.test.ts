@@ -27,7 +27,7 @@ describe("enhanceListing", () => {
     expect(persistMock).toHaveBeenCalledWith(realShop, "data:image/png;base64,aW1hZ2U=", "generated", "generated", { signal });
     expect(out.status).toBe("ready");
     expect(out.url).toBe("https://owned.cdn/a.png");
-    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ shop_id: realShop, product_id: "1", url: "https://owned.cdn/a.png", status: "ready" }), { onConflict: "shop_id,product_id,source" });
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ shop_id: realShop, product_id: "1", url: "https://owned.cdn/a.png", status: "ready" }), { onConflict: "shop_id,product_id,source", ignoreDuplicates: false });
   });
   it("fails closed when Gemini inline-image persistence fails", async () => {
     providerMock.mockResolvedValue({ url: "data:image/png;base64,aW1hZ2U=" });
@@ -45,7 +45,9 @@ describe("enhanceListing", () => {
     const out = await enhanceListing(realShop, product("1", "/src.jpg"));
     expect(out.status).toBe("failed");
     expect(persistMock).not.toHaveBeenCalled();
-    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }), expect.anything());
+    // A failed attempt must not overwrite a previously-ready asset: it inserts
+    // only when no row exists yet (ignoreDuplicates), never downgrading a good image.
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }), { onConflict: "shop_id,product_id,source", ignoreDuplicates: true });
   });
   it("does not write an asset after the first-preview imagery deadline", async () => {
     const controller = new AbortController();
