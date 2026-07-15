@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { CompiledNode, StorefrontBundleV1, StorefrontRouteId } from "../storefront-bundle/types";
 import type { PreviewEditContext, StructuralPatchScope } from "./types";
 
-export const STOREFRONT_PATCH_SYSTEM_PROMPT = `You are a senior storefront designer operating through a typed patch compiler. First infer the merchant's intended breadth from natural language: a selected region is local, a named route is route-wide, and instructions about the shop/storefront/every page are store-wide. Return typed patch operations only. Never return JavaScript, external URLs, customer data, storage keys, or a full storefront. Structural HTML and CSS are compiler source, not executable code. Use only compiler-issued IDs and verified owned asset logical keys in the provided scope. Include exact supplied SHA-256 preconditions. Keep typography, spacing, color, imagery treatment, and interaction language cohesive across every route you change. Preserve routes and regions outside the merchant's intended breadth.`;
+export const STOREFRONT_PATCH_SYSTEM_PROMPT = `You are a senior storefront designer operating through a typed patch compiler. First infer the merchant's intended breadth from natural language: a selected region is local, a named route is route-wide, and instructions about the shop/storefront/every page are store-wide. Return typed patch operations only. Never return JavaScript, external URLs, customer data, storage keys, or a full storefront. Structural HTML and CSS are compiler source, not executable code. Replacement HTML uses authoring attributes even when the context shows compiled shape. Repeaters use data-cd-repeat with data-cd-key. Trusted commerce hosts use data-cd-slot, never data-cd-trusted-slot-id. Never emit compiler-owned output markers such as data-cd-repeat-id, data-cd-bind-text, data-cd-bind-money, data-cd-bind-src, data-cd-bind-alt, data-cd-route-target, data-cd-trusted-slot-id, data-cd-platform-content, or data-cd-asset-key. Use only compiler-issued IDs and verified owned asset logical keys in the provided scope. Include exact supplied SHA-256 preconditions. Keep typography, spacing, color, imagery treatment, and interaction language cohesive across every route you change. Preserve routes and regions outside the merchant's intended breadth.`;
 
 function digest(value: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
@@ -32,6 +32,16 @@ export function storefrontPatchPrompt(input: {
     const css = routeId === "checkout" ? input.bundle.routes.checkout.decorativeCss : input.bundle.routes[routeId].css;
     return `${routeId} (css ${digest(css)}): ${collect(tree).slice(0, 200).join(", ")}`;
   });
+  const trustedSlots = routeIds.flatMap((routeId) => {
+    if (routeId === "checkout") return [];
+    return input.bundle.routes[routeId].trustedSlots.map((slot) => {
+      const product = slot.kind === "quickViewCommerce" && slot.scopeId ? ' data-cd-product="product.id"' : "";
+      const themeTokens = slot.themeTokenIds.length > 0
+        ? ` data-cd-theme-tokens="${slot.themeTokenIds.join(" ")}"`
+        : "";
+      return `${routeId} ${slot.id}: data-cd-slot="${slot.kind}" data-cd-host-size="${slot.hostSize}"${product}${themeTokens}`;
+    });
+  });
   const selectedTree = effectiveScope?.regionId
     ? (() => {
         const tree = effectiveScope.routeId === "checkout"
@@ -57,6 +67,7 @@ export function storefrontPatchPrompt(input: {
     `Selected region precondition and compiled shape: ${selectedTree}`,
     `Current source kind: ${input.bundle.source.kind}`,
     `Verified owned asset keys: ${input.bundle.assets.entries.map((entry) => entry.key).sort().join(", ") || "none"}`,
+    `Trusted slot authoring map: ${trustedSlots.join(", ") || "none"}`,
     `Compiler-issued element IDs and exact subtree preconditions:\n${ids.join("\n")}`,
     ...(input.repair ? [
       `Targeted repair attempt: ${input.repair.attempt} of 1`,

@@ -14,7 +14,7 @@ import {
 import { compileBundle } from "../storefront-compiler/compile";
 import { materializeOwnedAssets } from "./assets.server";
 import { persistGenerationCheckpoint } from "./checkpoint.server";
-import { compileConceptCandidate, exploreConcepts, renderConceptWithMerchantData } from "./concepts.server";
+import { compileConceptCandidate, exploreConcepts } from "./concepts.server";
 import { assembleStorefrontContext } from "./context.server";
 import type {
   GenerateDependencies,
@@ -30,13 +30,12 @@ import type {
   StorefrontAiProvider,
 } from "./contracts";
 import { expandWinningConcept, expandedBundleSource } from "./expand.server";
-import { rankConcepts } from "./judge.server";
 import { createAnthropicStructuredProvider } from "./provider.server";
 import { proveAndRepairBundle, repairRouteWithProvider } from "./proof.server";
 import { STOREFRONT_AI_PROMPT_VERSION } from "./prompts";
 
 const DEFAULT_BUDGET: GenerationBudget = {
-  maxCandidates: 3,
+  maxCandidates: 1,
   maxModelTokens: 300_000,
   maxImages: 6,
   maxBrowserMs: 180_000,
@@ -229,7 +228,6 @@ export function createDefaultGenerateDependencies(): GenerateDependencies {
     loadReferenceImages: defaultLoadReferenceImages,
     provider,
     compileConcept: compileConceptCandidate,
-    renderConcept: renderConceptWithMerchantData,
     produceAsset: defaultProduceAsset,
     persistAsset: ({ shopId, bytes, signal }) => raceAbort(persistStorefrontAssetBytes({ shopId, bytes, signal }), signal),
     cleanupAsset: ({ shopId, assetKey, signal }) => raceAbort(
@@ -362,7 +360,7 @@ export async function generateOriginalStorefront(
     }), pipelineSignal);
     await checkpoint("context", { fingerprint: context.fingerprint });
 
-    meter.candidates(3);
+    meter.candidates(1);
     const explored = await exploreConcepts({
       context,
       provider: meteredProvider,
@@ -374,37 +372,7 @@ export async function generateOriginalStorefront(
     await checkpoint("concepts", { valid: explored.candidates.length, rejected: explored.rejected.length });
     if (!explored.candidates.length) throw new Error("All concept candidates failed schema or compiler validation");
 
-    const ranked = await rankConcepts({
-      candidates: explored.candidates,
-      context,
-      provider: meteredProvider,
-      render: async (renderInput) => {
-        const rendered = await raceAbort(deps.renderConcept({ ...renderInput, signal: pipelineSignal }), pipelineSignal);
-        meter.browser(rendered.browserMs);
-        return rendered;
-      },
-      signal: pipelineSignal,
-    });
-    for (const judgment of ranked.accepted) candidateScores.push({
-      candidateId: judgment.candidate.candidate.candidateId,
-      overall: judgment.overall,
-      noveltyScore: judgment.noveltyScore,
-      scores: judgment.scores,
-    });
-    for (const rejection of ranked.rejected) {
-      rejectedCandidates.push({ candidateId: rejection.candidate.candidate.candidateId, reason: rejection.reason });
-      if (rejection.judgment) candidateScores.push({
-        candidateId: rejection.candidate.candidate.candidateId,
-        overall: rejection.judgment.overall,
-        noveltyScore: rejection.judgment.noveltyScore,
-        scores: rejection.judgment.scores,
-      });
-    }
-    await checkpoint("judging", { accepted: ranked.accepted.length });
-    if (!ranked.accepted.length) throw new Error("All concepts failed novelty or visual quality gates");
-
-    for (const judgment of ranked.accepted) {
-      const winner = judgment.candidate;
+    for (const winner of explored.candidates) {
       const candidatePersisted: MaterializedAssetResult["persisted"] = [];
       try {
         const expansion = await expandWinningConcept({ winner, context, provider: meteredProvider, signal: pipelineSignal });

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StoreDesignResolution, StorefrontBundleV1 } from "./types";
-import { resolveStoreDesign } from "./routing";
 import { STORE_TEMPLATE_REGISTRY } from "./registry";
+import { resolveStoreDesign } from "./routing";
 import {
   StorefrontBuildError,
   buildStorefrontDesign,
@@ -56,6 +56,7 @@ function dependencies(overrides: Partial<StorefrontBuildDependencies> = {}): Sto
       bundle,
       report: { profileVersion: 1, ok: true, diagnostics: [] },
     }),
+    personalizeRecipe: vi.fn(async ({ recipe }) => recipe),
     assertWriteAllowed: vi.fn().mockResolvedValue(undefined),
     readPointers: vi.fn().mockResolvedValue({ draftVersionId: PRIOR_DRAFT, publishedVersionId: null }),
     createVersion: vi.fn().mockResolvedValue(VERSION),
@@ -104,6 +105,12 @@ describe("runtime-1 storefront build", () => {
     expect(receipt).toEqual({ runtime: 1, versionId: VERSION, status: "draft", resolution: resolution() });
     expect(deps.resolveDesign).toHaveBeenCalledWith(request, evidence());
     expect(deps.loadRecipe).toHaveBeenCalledWith("commons-index", 1);
+    expect(deps.personalizeRecipe).toHaveBeenCalledWith({
+      recipe: { bundle, report: { profileVersion: 1, ok: true, diagnostics: [] } },
+      prompt: request.prompt,
+      evidence: evidence(),
+      signal: expect.any(AbortSignal),
+    });
     expect(deps.prepareRecipeImages).toHaveBeenCalledWith(SHOP, expect.any(AbortSignal));
     expect(deps.createVersion).toHaveBeenCalledWith(expect.objectContaining({
       shopId: SHOP,
@@ -200,6 +207,7 @@ describe("runtime-1 storefront build", () => {
       prompt: "Create a completely new store from scratch",
       expectedDraftVersionId: null,
     }));
+    expect(deps.loadRecipe).not.toHaveBeenCalled();
   });
 
   it("explains when fresh catalog evidence changes the earlier recommendation", async () => {
@@ -360,5 +368,30 @@ describe("runtime-1 storefront build", () => {
       signal: controller.signal,
     }, deps)).rejects.toMatchObject({ code: "generation_cancelled", status: 409 });
     expect(deps.installDraft).not.toHaveBeenCalled();
+  });
+
+  it("enforces the first-preview deadline while the recipe is still loading", async () => {
+    vi.useFakeTimers();
+    try {
+      const deps = dependencies({ loadRecipe: vi.fn(() => new Promise<never>(() => undefined)) });
+      let outcome: unknown;
+      void buildStorefrontDesign({
+        shopId: SHOP,
+        request: { prompt: "refills", mode: "auto" },
+        recipeBuildEnabled: true,
+      }, deps).then(
+        (value) => { outcome = value; },
+        (error: unknown) => { outcome = error; },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(40_000);
+
+      expect(outcome).toMatchObject({ code: "storefront_recipe_imagery_timeout" });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
   });
 });

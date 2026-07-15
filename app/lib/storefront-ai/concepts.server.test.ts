@@ -70,7 +70,7 @@ describe("concept exploration", () => {
     expect(() => compileConceptCandidate(concept)).not.toThrow();
   });
 
-  it("generates three structural briefs in parallel and repairs invalid output once", async () => {
+  it("generates one structural brief and repairs invalid output once", async () => {
     let active = 0;
     let maxActive = 0;
     let conceptCalls = 0;
@@ -91,13 +91,12 @@ describe("concept exploration", () => {
       compileConcept: (candidate) => compileConceptCandidate(candidate),
     });
 
-    expect(maxActive).toBe(3);
-    expect(result.candidates).toHaveLength(3);
+    expect(maxActive).toBe(1);
+    expect(result.candidates).toHaveLength(1);
     expect(result.repairs).toBe(1);
-    expect(complete.mock.calls.filter(([request]) => request.operation === "concept")).toHaveLength(3);
+    expect(complete.mock.calls.filter(([request]) => request.operation === "concept")).toHaveLength(1);
     expect(complete.mock.calls.filter(([request]) => request.operation === "repairConcept")).toHaveLength(1);
-    expect(new Set(result.candidates.map((item) => item.strategy))).toEqual(new Set(["asymmetric-commerce", "narrative-utility", "spatial-catalog"]));
-    expect(new Set(result.candidates.map((item) => item.candidate.concept.noveltySignature.layoutTopology)).size).toBe(3);
+    expect(result.candidates[0]?.strategy).toBe("asymmetric-commerce");
   });
 
   it("repairs provider failures that return no prior candidate", async () => {
@@ -114,26 +113,11 @@ describe("concept exploration", () => {
 
     const result = await exploreConcepts({ context: createContext(), provider: { complete }, compileConcept: compileConceptCandidate });
 
-    expect(result.candidates).toHaveLength(3);
-    expect(result.repairs).toBe(3);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.repairs).toBe(1);
     expect(complete.mock.calls.filter(([request]) => request.operation === "repairConcept").every(([request]) =>
       request.prompt.includes("PRIOR_OUTPUT:null")
     )).toBe(true);
-  });
-
-  it("rejects peer concepts with the same compiled structure even when their novelty prose differs", async () => {
-    let index = 0;
-    const provider: StorefrontAiProvider = {
-      complete: vi.fn(async (request) => {
-        const candidate = createConcept(0);
-        candidate.candidateId = `concept-${(index % 3) + 1}`;
-        candidate.concept.noveltySignature = createConcept(index++ % 3).concept.noveltySignature;
-        return { value: candidate, usage: { inputTokens: 1, outputTokens: 1 }, provider: "fixture", model: "fixture" };
-      }),
-    };
-    const result = await exploreConcepts({ context: createContext(), provider, compileConcept: compileConceptCandidate });
-    expect(result.candidates).toHaveLength(1);
-    expect(result.rejected.filter((item) => /compiled structure/i.test(item.reason))).toHaveLength(2);
   });
 
   it("repairs one compiler rejection, then rejects a second invalid attempt", async () => {
@@ -152,7 +136,7 @@ describe("concept exploration", () => {
         return compileConceptCandidate(candidate);
       },
     });
-    expect(result.candidates).toHaveLength(2);
+    expect(result.candidates).toHaveLength(0);
     expect(result.rejected).toHaveLength(1);
     expect(result.repairs).toBe(1);
   });
