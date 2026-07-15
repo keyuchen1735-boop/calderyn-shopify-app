@@ -4829,7 +4829,8 @@
 
 .cd-bub { max-width: 94%; font-size: calc(13px * var(--type-scale)); line-height: 1.55; }
 .cd-bub-user { align-self: flex-end; background: var(--accent); color: var(--on-accent); padding: 9px 14px; border-radius: 15px 15px 4px 15px; font-weight: 500; }
-.cd-bub-ai { align-self: flex-start; color: var(--text-1); padding: 2px 2px; }
+.cd-bub-ai { align-self: flex-start; color: var(--text-1); padding: 11px 14px; background: var(--card-solid); border-radius: 13px; box-shadow: var(--shadow-card); }
+.cd-bub-ai .cd-work-card { margin-top: 0; background: transparent; box-shadow: none; }
 .cd-bub-img { display: block; max-width: 176px; max-height: 176px; border-radius: 10px; }
 .cd-bub-btns { display: flex; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
 .cd-think { display: flex; gap: 4px; padding: 10px 2px; }
