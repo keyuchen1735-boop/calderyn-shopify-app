@@ -303,13 +303,16 @@ describe("generateOriginalStorefront", () => {
         request.prompt.includes("Product bindings appear only inside a featured.products repeat") &&
         request.prompt.includes("Root anchors use no route parameters and never target product or collection") &&
         request.prompt.includes("Product anchors inside featured.products require data-cd-param-handle=\"product.handle\"") &&
-        request.prompt.includes("The repeat parent has only data-cd-repeat");
+        request.prompt.includes("The repeat parent has only data-cd-repeat") &&
+        request.prompt.includes('set data-cd-repeat="featured.products" on it');
+      const documentsRepeatAttributePairs = request.system.includes("Allowed data-cd-repeat values are collection.products, featured.products") &&
+        request.system.includes('For featured.products, set data-cd-repeat="featured.products" on the parent and data-cd-key="product.id" on a descendant');
       const documentsClosedCompilerGrammar = request.system.includes("Allowed CSS at-rules are") &&
         request.system.includes("Every local ID reference") &&
         request.system.includes("data-cd-key on a descendant") &&
         request.system.includes("Allowed data-cd-slot values are variantPicker") &&
         request.system.includes("Checkout is decorative only");
-      if (constrainsFonts && constrainsMotionStyle && constrainsBreakpoints && boundsAssets && constrainsAssetKeys && documentsAssetRules && documentsDescriptions && documentsBreakpoints && documentsInteractionGrammar && documentsBindingGrammar && documentsPathValueGrammar && documentsRouteGrammar && forbidsInlineStyles && documentsOutputOnlyHooks && documentsRouteAnchorGrammar && documentsScopedParams && forbidsFixedLayout && documentsClosedCompilerGrammar && constrainsConceptStage) return response;
+      if (constrainsFonts && constrainsMotionStyle && constrainsBreakpoints && boundsAssets && constrainsAssetKeys && documentsAssetRules && documentsDescriptions && documentsBreakpoints && documentsInteractionGrammar && documentsBindingGrammar && documentsPathValueGrammar && documentsRouteGrammar && forbidsInlineStyles && documentsOutputOnlyHooks && documentsRouteAnchorGrammar && documentsScopedParams && forbidsFixedLayout && documentsClosedCompilerGrammar && documentsRepeatAttributePairs && constrainsConceptStage) return response;
       const concept = structuredClone(response.value as ReturnType<typeof createConcept>);
       return {
         ...response,
@@ -344,6 +347,8 @@ describe("generateOriginalStorefront", () => {
                             ? { ...concept.home, css: `${concept.home.css}\n.dock { position: fixed; }` }
                             : !documentsClosedCompilerGrammar
                               ? { ...concept.home, html: `<main><a href="#home">Home</a></main>` }
+                              : !documentsRepeatAttributePairs
+                                ? { ...concept.home, html: `<main><div data-cd-repeat="featured.products/product.id"><article data-cd-key="product.id"><span data-cd-text="product.title"></span></article></div></main>` }
                               : !constrainsConceptStage
                                 ? { ...concept.home, html: `<main><button data-cd-on="click" data-cd-action="scroll.to" data-cd-target="other-route">Explore</button></main>` }
                                 : concept.home,
