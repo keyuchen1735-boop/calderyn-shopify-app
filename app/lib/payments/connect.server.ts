@@ -85,10 +85,15 @@ export type PaymentsReadiness =
   | { ready: true; route: "platform" }
   | { ready: false; reason: "no_account" | "onboarding_incomplete" };
 
+function isStripeTestMode(): boolean {
+  return /^(?:sk|rk)_test_/.test(process.env.STRIPE_SECRET_KEY ?? "");
+}
+
 /**
  * Whether the shop can take a buyer's money RIGHT NOW, and where a charge would settle.
  * `destination` = fully-enabled connected account (the only route for real shops);
- * `platform` = demo/showcase shop charging the platform test account. A read error on
+ * `platform` = demo/showcase shop charging the platform test account. Live and unknown
+ * key modes fail closed even for demos. A read error on
  * stripe_connected_account propagates — a charge is never routed on unknown state.
  */
 export async function paymentsReadiness(shopId: string): Promise<PaymentsReadiness> {
@@ -96,7 +101,7 @@ export async function paymentsReadiness(shopId: string): Promise<PaymentsReadine
   if (acct && isFullyEnabledAccount(acct)) {
     return { ready: true, route: "destination", account: acct };
   }
-  if (await isDemoShopFresh(shopId)) return { ready: true, route: "platform" };
+  if (isStripeTestMode() && (await isDemoShopFresh(shopId))) return { ready: true, route: "platform" };
   return { ready: false, reason: acct ? "onboarding_incomplete" : "no_account" };
 }
 
