@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { registerTenantDomain, tenantDomain } from "./vercel-domain.server";
+import {
+  isTenantDomainReachable,
+  registerTenantDomain,
+  tenantDomain,
+} from "./vercel-domain.server";
 
 const fetchMock = vi.fn();
 
@@ -64,5 +68,30 @@ describe("registerTenantDomain", () => {
     vi.stubEnv("VERCEL_TOKEN", "");
     await expect(registerTenantDomain("shop-abc123")).resolves.toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("isTenantDomainReachable", () => {
+  it("reports readiness when the tenant hostname reaches the app health check", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 200 }));
+
+    await expect(isTenantDomainReachable("shop-abc123")).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://shop-abc123.calderyncompany.com/healthz",
+      expect.objectContaining({ method: "HEAD", redirect: "manual" }),
+    );
+  });
+
+  it("reports failure when the tenant host cannot complete TLS or routing", async () => {
+    fetchMock.mockRejectedValue(new Error("TLS handshake failed"));
+
+    await expect(isTenantDomainReachable("shop-abc123")).resolves.toBe(false);
+  });
+
+  it("reports failure when the hostname does not route to the app", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 404 }));
+
+    await expect(isTenantDomainReachable("shop-abc123")).resolves.toBe(false);
   });
 });

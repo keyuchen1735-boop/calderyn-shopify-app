@@ -1,14 +1,12 @@
-// Gateless publish + readiness read model for the Store studio.
-// Publish must NEVER block: with no draft it seeds the default home doc and
-// publishes that. loadStudioState exposes what's missing (products, checkout)
-// so the UI can warn — warn, not gate.
+// Publish + readiness read model for the Store studio. With no draft, publish
+// seeds the default home doc after confirming the public tenant domain is ready.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { publishStudioStore, loadStudioState, saveStudioVibe, sectionsFromDoc, moveStudioSection, removeStudioSection, regenerateStudioSection } from "./studio.server";
 
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // mocks still apply even though they are written below them (imports-first
 // satisfies the import/first rule).
-const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock, storegenMock, bundleBuildMock, releaseMock, policiesMock } =
+const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock, storegenMock, bundleBuildMock, releaseMock, policiesMock, domainMock } =
   vi.hoisted(() => ({
     storegenMock: { regenerateHomeSection: vi.fn() },
     fromMock: vi.fn(),
@@ -42,6 +40,11 @@ const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experime
     },
     releaseMock: { publishStorefrontRelease: vi.fn() },
     policiesMock: { loadStorefrontPolicies: vi.fn() },
+    domainMock: {
+      isTenantDomainReachable: vi.fn(),
+      registerTenantDomain: vi.fn(),
+      tenantDomain: (slug: string) => `${slug}.calderyncompany.com`,
+    },
   }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
@@ -54,6 +57,7 @@ vi.mock("~/lib/storegen/generate.server", () => storegenMock);
 vi.mock("~/lib/storefront-bundle/build.server", () => bundleBuildMock);
 vi.mock("~/lib/storefront-bundle/release.server", () => releaseMock);
 vi.mock("~/lib/storefront/policies.server", () => policiesMock);
+vi.mock("~/lib/storefront/vercel-domain.server", () => domainMock);
 vi.mock("~/lib/storefront/settings.server", () => ({
   DEFAULT_PALETTE: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
   getStoreSettings: settingsMock.getStoreSettings,
@@ -96,6 +100,8 @@ beforeEach(() => {
   bundleBuildMock.isStorefrontBundlePublishEnabled.mockReturnValue(false);
   releaseMock.publishStorefrontRelease.mockResolvedValue("33333333-3333-3333-3333-333333333333");
   policiesMock.loadStorefrontPolicies.mockResolvedValue([]);
+  domainMock.isTenantDomainReachable.mockResolvedValue(true);
+  domainMock.registerTenantDomain.mockResolvedValue(true);
   for (const key of Object.keys(tableResults)) delete tableResults[key];
   upserts.length = 0;
   fromMock.mockImplementation((table: string) => {
@@ -114,7 +120,10 @@ beforeEach(() => {
   });
 });
 
-describe("publishStudioStore (gateless)", () => {
+describe("publishStudioStore", () => {
+  beforeEach(() => {
+    tableResults.shops = { data: { org_slug: "test-store" }, error: null };
+  });
   it("atomically publishes an active runtime-1 draft when bundle publishing is enabled", async () => {
     bundleBuildMock.readStorefrontReleaseState.mockResolvedValue({
       draftVersionId: "33333333-3333-3333-3333-333333333333",
@@ -126,6 +135,14 @@ describe("publishStudioStore (gateless)", () => {
 
     await publishStudioStore(shop, "22222222-2222-2222-2222-222222222222");
 
+    expect(domainMock.registerTenantDomain).toHaveBeenCalledWith("test-store");
+    expect(domainMock.isTenantDomainReachable).toHaveBeenCalledWith("test-store");
+    expect(domainMock.registerTenantDomain.mock.invocationCallOrder[0]).toBeLessThan(
+      domainMock.isTenantDomainReachable.mock.invocationCallOrder[0],
+    );
+    expect(domainMock.isTenantDomainReachable.mock.invocationCallOrder[0]).toBeLessThan(
+      releaseMock.publishStorefrontRelease.mock.invocationCallOrder[0],
+    );
     expect(releaseMock.publishStorefrontRelease).toHaveBeenCalledWith({
       shopId: shop,
       expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
@@ -151,6 +168,58 @@ describe("publishStudioStore (gateless)", () => {
     expect(releaseMock.publishStorefrontRelease).not.toHaveBeenCalled();
     expect(pageDoc.saveDraft).not.toHaveBeenCalled();
     expect(pageDoc.publishDoc).not.toHaveBeenCalled();
+  });
+
+  it("refuses to publish when the tenant domain is still unreachable after registration", async () => {
+    domainMock.isTenantDomainReachable.mockResolvedValueOnce(false);
+
+    await expect(publishStudioStore(shop)).rejects.toMatchObject({
+      code: "storefront_domain_registration_failed",
+      status: 503,
+    });
+    expect(domainMock.isTenantDomainReachable).toHaveBeenCalledWith("test-store");
+    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
+    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
+    expect(releaseMock.publishStorefrontRelease).not.toHaveBeenCalled();
+  });
+
+  it("refuses to publish when the shop has no tenant slug", async () => {
+    tableResults.shops = { data: { org_slug: null }, error: null };
+
+    await expect(publishStudioStore(shop)).rejects.toMatchObject({
+      code: "storefront_domain_missing",
+      status: 409,
+    });
+
+    expect(domainMock.registerTenantDomain).not.toHaveBeenCalled();
+    expect(domainMock.isTenantDomainReachable).not.toHaveBeenCalled();
+    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
+    expect(releaseMock.publishStorefrontRelease).not.toHaveBeenCalled();
+  });
+
+  it("keeps local publishing on the development storefront origin", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    tableResults.shops = { data: { org_slug: null }, error: null };
+
+    try {
+      await expect(publishStudioStore(shop)).resolves.toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    expect(domainMock.registerTenantDomain).not.toHaveBeenCalled();
+    expect(domainMock.isTenantDomainReachable).not.toHaveBeenCalled();
+    expect(pageDoc.publishDoc).toHaveBeenCalledWith(shop, "home");
+  });
+
+  it("publishes when registration fails transiently but the tenant domain is already reachable", async () => {
+    domainMock.registerTenantDomain.mockResolvedValueOnce(false);
+    domainMock.isTenantDomainReachable.mockResolvedValueOnce(true);
+
+    await expect(publishStudioStore(shop)).resolves.toBeUndefined();
+
+    expect(domainMock.isTenantDomainReachable).toHaveBeenCalledWith("test-store");
+    expect(pageDoc.publishDoc).toHaveBeenCalledWith(shop, "home");
   });
 
   it("publishes the default home doc when no draft exists instead of throwing", async () => {
@@ -282,6 +351,9 @@ describe("publishStudioStore demo guard", () => {
 });
 
 describe("publishStudioStore PDP buy-path integrity", () => {
+  beforeEach(() => {
+    tableResults.shops = { data: { org_slug: "test-store" }, error: null };
+  });
   it("injects the missing functional blocks from registry defaults before publishing a pdp draft", async () => {
     const pdpDraft = {
       kind: "template",

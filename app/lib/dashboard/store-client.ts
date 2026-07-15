@@ -227,8 +227,8 @@ export async function generateStudioStoreWithImages(
   return apiSendForm<StudioGenerateReceipt>("/dashboard/api/store", form);
 }
 
-/** Publish every drafted storefront page (the server seeds and publishes the
- *  default home page when nothing is drafted — publishing is never gated). */
+/** Publish every drafted storefront page after the tenant domain is ready. The
+ *  server seeds and publishes the default home page when nothing is drafted. */
 export async function publishStudioStore(): Promise<{ publishedAt: string }> {
   return apiSend<{ publishedAt: string }>("POST", "/dashboard/api/store", {
     action: "publish",

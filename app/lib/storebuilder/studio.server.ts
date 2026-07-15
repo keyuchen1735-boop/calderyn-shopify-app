@@ -4,7 +4,11 @@
 // store_settings and store_generation through the service-role client the
 // underlying libs already use.
 import { getSupabase } from "~/lib/supabase.server";
-import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
+import {
+  isTenantDomainReachable,
+  registerTenantDomain,
+  tenantDomain,
+} from "~/lib/storefront/vercel-domain.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, saveStoreSettings, DEFAULT_PALETTE } from "~/lib/storefront/settings.server";
@@ -52,6 +56,28 @@ async function refuseMidTest(shopId: string, what: string): Promise<void> {
       code: "experiment_running",
       status: 409,
       message: `An experiment is running on your store. Decide it before changing the ${what}.`,
+    });
+  }
+}
+
+async function requirePublishableTenantDomain(shopId: string): Promise<void> {
+  if (process.env.NODE_ENV === "development") return;
+  const { data, error } = await getSupabase().from("shops").select("org_slug").eq("id", shopId).maybeSingle();
+  if (error) throw error;
+  const orgSlug = typeof data?.org_slug === "string" ? data.org_slug.trim() : "";
+  if (!orgSlug) {
+    throw new CalderynError({
+      code: "storefront_domain_missing",
+      status: 409,
+      message: "Add a store URL before publishing so shoppers can reach checkout on your storefront.",
+    });
+  }
+  await registerTenantDomain(orgSlug);
+  if (!(await isTenantDomainReachable(orgSlug))) {
+    throw new CalderynError({
+      code: "storefront_domain_registration_failed",
+      status: 503,
+      message: "The storefront domain could not be prepared. Try publishing again in a moment.",
     });
   }
 }
@@ -476,8 +502,8 @@ export async function saveStudioVibe(shopId: string, vibe: StudioVibe): Promise<
 
 /** Publish every drafted page in the publishable set (home/collection/pdp),
  *  validating each draft first (page-document.server.ts caller obligation).
- *  Publishing is never gated: with nothing drafted, the default home doc is
- *  seeded as the draft and published, so the storefront always goes live. */
+ *  Once the tenant domain is ready, an empty draft set seeds and publishes the
+ *  default home doc so the storefront never goes live blank. */
 export async function publishStudioStore(shopId: string, actorId?: string | null): Promise<void> {
   // Demo/fixture shops can't persist page documents (saveDraft throws a raw
   // Error for non-uuid ids) — refuse cleanly instead of 500ing.
@@ -499,6 +525,7 @@ export async function publishStudioStore(shopId: string, actorId?: string | null
       message: "An experiment is running on your store. Decide it before publishing.",
     });
   }
+  await requirePublishableTenantDomain(shopId);
   const release = await readStorefrontReleaseState(shopId);
   if (release.draftRuntimeVersion === 1 && release.draftVersionId) {
     if (!isStorefrontBundlePublishEnabled()) {
