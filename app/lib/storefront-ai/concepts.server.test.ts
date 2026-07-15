@@ -1,10 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
 import { createConcept, createContext, PASSING_JUDGE_SCORES } from "./__fixtures__/deterministic";
-import { compileConceptCandidate, compileConceptJudgeDesignCss, exploreConcepts } from "./concepts.server";
+import { compileConceptCandidate, compileConceptJudgeDesignCss, exploreConcepts, parseConceptCandidate } from "./concepts.server";
 import { calculateNovelty, rankConcepts } from "./judge.server";
 import type { StorefrontAiProvider } from "./contracts";
 
 describe("concept exploration", () => {
+  it("normalizes numeric breakpoint strings without weakening asset bounds", () => {
+    const concept = createConcept(0) as unknown as Record<string, unknown>;
+    (concept.designSystem as Record<string, unknown>).breakpoints = { sm: "640px", lg: "1024" };
+    concept.assetRequests = Array.from({ length: 8 }, (_, index) => ({
+      key: `asset-${index}`,
+      purpose: `Generated asset ${index}`,
+      required: false,
+    }));
+
+    const parsed = parseConceptCandidate(concept);
+
+    expect(parsed.designSystem.breakpoints).toEqual({ sm: 640, lg: 1024 });
+    expect(parsed.assetRequests).toHaveLength(8);
+    (concept.assetRequests as unknown[]).push({ key: "asset-8", purpose: "Ninth asset", required: false });
+    expect(() => parseConceptCandidate(concept)).toThrow("assetRequests must be a bounded array");
+  });
+
   it("generates three structural briefs in parallel and repairs invalid output once", async () => {
     let active = 0;
     let maxActive = 0;

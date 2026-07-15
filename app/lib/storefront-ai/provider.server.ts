@@ -16,6 +16,7 @@ interface AnthropicLike {
     create(input: Record<string, unknown>, options?: { signal?: AbortSignal }): Promise<{
       content: Array<Record<string, unknown>>;
       usage?: { input_tokens?: number; output_tokens?: number };
+      stop_reason?: string | null;
     }>;
   };
 }
@@ -64,7 +65,7 @@ export function createAnthropicStructuredProvider(
           ];
       const response = await client.messages.create({
         model,
-        max_tokens: options.maxTokens ?? 12_000,
+        max_tokens: options.maxTokens ?? 16_000,
         system: request.system,
         messages: [{ role: "user", content }],
         tools: [{
@@ -74,6 +75,9 @@ export function createAnthropicStructuredProvider(
         }],
         tool_choice: { type: "tool", name: RESULT_TOOL, disable_parallel_tool_use: true },
       }, { signal: request.signal });
+      if (response.stop_reason === "max_tokens") {
+        throw new StructuredOutputError("Structured storefront output reached the token limit");
+      }
       const blocks = response.content ?? [];
       const matching = blocks.filter((block) => block.type === "tool_use" && block.name === RESULT_TOOL);
       if (matching.length !== 1 || blocks.length !== 1) {
