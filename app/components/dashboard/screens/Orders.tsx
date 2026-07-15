@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { Btn, Card, Pan, Pill, Placeholder, TableSkeleton, Tooltip } from "../ui";
+import { Btn, Card, Pan, Placeholder, TableSkeleton } from "../ui";
 import { money, timeAgo } from "../format";
 import { reduced } from "../hero/hero-motion";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -30,6 +30,7 @@ import RefundModal from "./RefundModal";
 import OrderDetailScreen from "./OrderDetail";
 import OrderComposer from "./OrderComposer";
 import OrdersToolbar from "./OrdersToolbar";
+import { CDIcon } from "../icons";
 import { fulfillmentBadge, isStuckUnfulfilled, paymentPillStyle, REFUNDABLE_ORDER_STATES, stuckDays } from "./order-status";
 import { isPrefillParam } from "./order-composer-prefill";
 import {
@@ -41,13 +42,19 @@ import {
   type ListState,
 } from "./orders-list-state";
 
-// Migrated Shopify orders whose money was captured at Shopify: Calderyn can't
-// reverse that charge, so the merchant is told, plainly, to refund it in Shopify.
-const SHOPIFY_REFUND_HINT_STATES = new Set(["paid", "partially_refunded", "partially_paid"]);
+const ORDER_SECTION_META: Record<string, { title: string; sub: string }> = {
+  orders: { title: "Orders", sub: "Storefront and Shopify orders, in one place." },
+  labels: { title: "Shipping charges", sub: "Shipping costs matched to their orders." },
+  drafts: { title: "Draft carts", sub: "Customer carts still in progress." },
+  abandoned: { title: "Abandoned checkouts", sub: "Checkouts ready for recovery." },
+};
+
+const ORDER_TABLE_COLUMNS = "36px 112px minmax(190px, 1.5fr) 96px 88px 112px 132px 88px";
 
 function PaymentPill({ status }: { status: string }) {
   const s = paymentPillStyle(status);
-  return <Pill tone={s.tone}>{s.label}</Pill>;
+  const active = status === "paid" || status === "authorized";
+  return <span className={`cd-badge${active ? " cd-order-badge-live" : ""}`}>{s.label}</span>;
 }
 
 // One display row across both origins: native Calderyn orders and migrated
@@ -138,7 +145,7 @@ function UnifiedOrdersList({
 }) {
   if (rows == null) {
     return (
-      <Card pad={false}>
+      <div className="cd-orders-table">
         {loading ? (
           <TableSkeleton />
         ) : (
@@ -148,13 +155,13 @@ function UnifiedOrdersList({
             sub="Could not load orders just now. Refresh to try again."
           />
         )}
-      </Card>
+      </div>
     );
   }
 
   if (rows.length === 0) {
     return (
-      <Card pad={false}>
+      <div className="cd-orders-table">
         <Placeholder
           icon="doc"
           title={isDefaultView ? "No orders yet" : "No orders match this view."}
@@ -164,14 +171,14 @@ function UnifiedOrdersList({
               : "Try a different search, tab, or clear your filters."
           }
         />
-      </Card>
+      </div>
     );
   }
 
-  const cols = "auto 1fr 1.2fr 0.9fr 0.9fr 0.9fr 1fr auto";
+  const cols = ORDER_TABLE_COLUMNS;
   return (
-    <Card pad={false} className="cd-orders-table">
-      <Pan min={760}>
+    <div className="cd-orders-table">
+      <Pan min={880}>
       <div className="cd-tablehd" style={{ gridTemplateColumns: cols }}>
         <span>
           {anySelectable && (
@@ -203,7 +210,8 @@ function UnifiedOrdersList({
         return (
           <div
             key={`${r.source}:${r.id}`}
-            className="cd-trow"
+            className="cd-trow cd-order-row"
+            data-selected={selectableId && selected.has(selectableId) ? "1" : "0"}
             style={{ gridTemplateColumns: cols, cursor: "pointer" }}
             role="button"
             tabIndex={0}
@@ -229,9 +237,9 @@ function UnifiedOrdersList({
                 <span className="cd-caption" aria-hidden="true" />
               )}
             </div>
-            <div>
-              <div className="cd-row-title tabular-nums">{r.ref}</div>
-              {r.source === "shopify" && <div className="cd-caption">Shopify</div>}
+            <div className="cd-order-ref-cell">
+              <span className="cd-row-title tabular-nums truncate">{r.ref}</span>
+              {r.source === "shopify" && <span className="cd-order-source-label">Shopify</span>}
             </div>
             <div className="truncate">{r.customer ?? (r.source === "shopify" ? "" : "Guest")}</div>
             <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
@@ -243,33 +251,28 @@ function UnifiedOrdersList({
             </div>
             <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap" }}>
               {fulfillment && (
-                <span className="cd-badge" style={{ color: fulfillment.tone, background: "var(--gray-bg)" }}>
-                  {fulfillment.label}
+                <span className={`cd-badge${stuckN != null ? " cd-order-badge-live" : ""}`}>
+                  {fulfillment.label}{stuckN != null ? ` · ${stuckN}d` : ""}
                 </span>
               )}
-              {stuckN != null && <Pill tone="warn">Unfulfilled {stuckN}d</Pill>}
             </div>
             <div
-              style={{ display: "flex", justifyContent: "flex-end" }}
+              className="cd-order-row-actions"
               onClick={(e) => e.stopPropagation()}
             >
               {refundable ? (
                 <Btn small icon="rotate" onClick={() => onRefund(refundable)}>
                   Refund
                 </Btn>
-              ) : r.source === "shopify" && SHOPIFY_REFUND_HINT_STATES.has(r.state) ? (
-                <Tooltip content="This order was paid through Shopify. To refund it, issue the refund from your Shopify admin.">
-                  <span className="cd-caption" style={{ cursor: "help" }}>
-                    Refund in Shopify
-                  </span>
-                </Tooltip>
-              ) : null}
+              ) : (
+                <CDIcon name="chevronRight" size={15} className="cd-order-row-chevron" />
+              )}
             </div>
           </div>
         );
       })}
       </Pan>
-    </Card>
+    </div>
   );
 }
 
@@ -755,6 +758,80 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   }, [app.nav.param, load, loadOrdersList]);
 
   const sub = app.nav.sub ?? "orders";
+  const sectionMeta = ORDER_SECTION_META[sub] ?? ORDER_SECTION_META.orders;
+  const overviewItems = useMemo<Array<{ label: string; value: string; action?: () => void }>>(() => {
+    if (sub === "orders") {
+      if (!displayRows && !ordersListPage) return [];
+      const rows = displayRows ?? [];
+      const now = Date.now();
+      const attention = rows.filter((row) =>
+        row.financialStatus === "pending" ||
+        (row.source === "calderyn" && row.createdAt && isStuckUnfulfilled(row.state, row.createdAt, now)),
+      ).length;
+      return [
+        { label: "Orders", value: (ordersListPage?.totalCount ?? rows.length).toLocaleString("en-US") },
+        { label: "Page value", value: money(rows.reduce((sum, row) => sum + row.totalCents, 0), rows[0]?.currency ?? "usd") },
+        { label: "Needs action", value: attention.toLocaleString("en-US"), action: () => selectView("unfulfilled") },
+      ];
+    }
+    if (!page) return [];
+    if (sub === "labels") {
+      return [
+        { label: "Charges", value: page.shipCharges.length.toLocaleString("en-US") },
+        { label: "Recorded cost", value: money(page.shipCharges.reduce((sum, row) => sum + row.costCents, 0)) },
+        { label: "Unmatched", value: page.shipCharges.filter((row) => !row.matched).length.toLocaleString("en-US") },
+      ];
+    }
+    if (sub === "drafts") {
+      return [
+        { label: "Carts", value: page.drafts.length.toLocaleString("en-US") },
+        { label: "Cart value", value: money(page.drafts.reduce((sum, row) => sum + row.valueCents, 0), page.drafts[0]?.currency ?? "usd") },
+        { label: "Identified", value: page.drafts.filter((row) => row.buyerEmail).length.toLocaleString("en-US") },
+      ];
+    }
+    return [
+      { label: "Checkouts", value: page.abandoned.length.toLocaleString("en-US") },
+      { label: "Potential value", value: money(page.abandoned.reduce((sum, row) => sum + row.totalCents, 0), page.abandoned[0]?.currency ?? "usd") },
+      { label: "Unsent", value: page.abandoned.filter((row) => !row.recoveryEmailSentAt).length.toLocaleString("en-US") },
+    ];
+  }, [displayRows, ordersListPage, page, selectView, sub]);
+
+  const overviewRef = useRef<HTMLDivElement>(null);
+  const overviewKey = overviewItems.map((item) => `${item.label}:${item.value}`).join("|");
+  const sectionPanelRef = useRef<HTMLDivElement>(null);
+  useGSAP(
+    () => {
+      if (reduced() || !overviewRef.current) return;
+      const items = overviewRef.current.querySelectorAll<HTMLElement>(".cd-order-readout-item");
+      gsap.fromTo(
+        items,
+        { autoAlpha: 0, y: 6, willChange: "transform,opacity" },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.28,
+          stagger: 0.045,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform,willChange",
+        },
+      );
+    },
+    { dependencies: [overviewKey], scope: overviewRef, revertOnUpdate: true },
+  );
+  useGSAP(
+    () => {
+      if (reduced() || !sectionPanelRef.current) return;
+      gsap.from(sectionPanelRef.current, {
+        autoAlpha: 0,
+        y: 5,
+        duration: 0.2,
+        ease: "power2.out",
+        willChange: "transform,opacity",
+        clearProps: "opacity,visibility,transform,willChange",
+      });
+    },
+    { dependencies: [sub], scope: sectionPanelRef, revertOnUpdate: true },
+  );
 
   // Reserved param "new" -> the Create-order composer, same idiom as Campaigns' navigate("campaigns",
   // "new"). A "new_<orderId>_<returnId>" param (order-composer-prefill.ts) is the SAME composer
@@ -792,18 +869,43 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   }
 
   return (
-    <div className="cd-screen">
-      <header className="cd-screen-head" data-screen-label="Orders">
+    <div className="cd-screen cd-orders-screen" data-screen-label="Orders" data-sub={sub}>
+      <header className="cd-screen-head cd-order-page-head">
         <div>
-          <h1 className="cd-h1">Orders</h1>
+          <h1 className="cd-h1">{sectionMeta.title}</h1>
+          <p className="cd-sub">{sectionMeta.sub}</p>
         </div>
-        <Btn kind="primary" small icon="plus" onClick={() => app.navigate("orders", "new")}>
+        <Btn kind="primary" small onClick={() => app.navigate("orders", "new")}>
           Create order
         </Btn>
       </header>
 
+      {overviewItems.length > 0 && (
+        <div ref={overviewRef} className="cd-order-readout" aria-label={`${sectionMeta.title} overview`}>
+          {overviewItems.map((item) => {
+            const content = (
+              <>
+                <strong className="tabular-nums">{item.value}</strong>
+                <span>{item.label}</span>
+                {item.action && <CDIcon name="arrowRight" size={14} strokeWidth={1.9} />}
+              </>
+            );
+            return item.action ? (
+              <button key={item.label} type="button" className="cd-order-readout-item" data-action="1" onClick={item.action}>
+                {content}
+              </button>
+            ) : (
+              <div key={item.label} className="cd-order-readout-item">
+                {content}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div ref={sectionPanelRef} className="cd-order-section-panel">
       {sub === "orders" ? (
-        <>
+        <Card pad={false} className="cd-order-workspace">
           <OrdersToolbar
             view={state.view}
             savedViews={savedViews}
@@ -904,9 +1006,9 @@ export default function Orders({ app }: { app: DashboardCtx }) {
               </div>
             </div>
           )}
-        </>
+        </Card>
       ) : !page ? (
-        <Card pad={false}>
+        <Card pad={false} className="cd-order-subtable">
           {loading ? (
             <TableSkeleton />
           ) : (
@@ -918,7 +1020,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
           )}
         </Card>
       ) : sub === "labels" ? (
-        <Card pad={false}>
+        <Card pad={false} className="cd-order-subtable">
           {page.shipCharges.length === 0 ? (
             <Placeholder
               icon="truck"
@@ -935,7 +1037,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                 <span>Status</span>
               </div>
               {page.shipCharges.map((r, i) => (
-                <div key={i} className="cd-trow" style={{ gridTemplateColumns: "1fr 1.3fr 1.6fr 0.9fr 1.1fr" }}>
+                <div key={i} className="cd-trow cd-order-subrow" data-attention={r.matched ? "0" : "1"} style={{ gridTemplateColumns: "1fr 1.3fr 1.6fr 0.9fr 1.1fr" }}>
                   <div className="cd-row-title tabular-nums">{r.orderRef}</div>
                   <div className="truncate">{r.carrier ?? "—"}</div>
                   <div className="cd-caption tabular-nums truncate">{r.tracking ?? "—"}</div>
@@ -946,8 +1048,8 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                     <span
                       className="cd-badge"
                       style={{
-                        color: r.matched ? "var(--green)" : "var(--orange)",
-                        background: "var(--gray-bg)",
+                        color: r.matched ? "var(--text-2)" : "var(--live)",
+                        background: r.matched ? "var(--gray-bg)" : "color-mix(in oklch, var(--live) 12%, transparent)",
                       }}
                     >
                       {r.matched ? "Matched" : "Unmatched"}
@@ -959,7 +1061,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
           )}
         </Card>
       ) : sub === "drafts" ? (
-        <Card pad={false}>
+        <Card pad={false} className="cd-order-subtable">
           {page.drafts.length === 0 ? (
             <Placeholder
               icon="doc"
@@ -976,7 +1078,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                 <span>Started</span>
               </div>
               {page.drafts.map((r) => (
-                <div key={r.id} className="cd-trow" style={{ gridTemplateColumns: "1fr 1.5fr 1.2fr 0.9fr 1.4fr" }}>
+                <div key={r.id} className="cd-trow cd-order-subrow" style={{ gridTemplateColumns: "1fr 1.5fr 1.2fr 0.9fr 1.4fr" }}>
                   <div className="cd-row-title tabular-nums">{r.ref}</div>
                   <div className="truncate">{r.buyerEmail ?? "Guest"}</div>
                   <div className="cd-caption">{r.itemCount} items</div>
@@ -990,7 +1092,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
           )}
         </Card>
       ) : (
-        <Card pad={false}>
+        <Card pad={false} className="cd-order-subtable">
           {page.abandoned.length === 0 ? (
             <Placeholder
               icon="clock"
@@ -1008,7 +1110,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                 <span />
               </div>
               {page.abandoned.map((r) => (
-                <div key={r.id} className="cd-trow" style={{ gridTemplateColumns: "1fr 1.6fr 0.9fr 0.8fr 1.1fr auto" }}>
+                <div key={r.id} className="cd-trow cd-order-subrow" data-attention={r.recoveryEmailSentAt ? "0" : "1"} style={{ gridTemplateColumns: "1fr 1.6fr 0.9fr 0.8fr 1.1fr auto" }}>
                   <div className="cd-row-title tabular-nums">{r.ref}</div>
                   <div className="truncate">{r.buyerEmail ?? "Guest"}</div>
                   <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
@@ -1035,6 +1137,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
           )}
         </Card>
       )}
+      </div>
 
       {refundOrder && (
         <RefundModal

@@ -149,6 +149,8 @@ export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx
   // once per composer visit (nav.param "new" -> a fresh OrderComposer instance), so this never
   // replays on line edits or draft saves.
   const screenRef = useRef<HTMLDivElement>(null);
+  const seenLineIdsRef = useRef<Set<string>>(new Set());
+  const lineKeys = lines.map((line) => line.variantId).join("|");
   useGSAP(
     () => {
       if (reduced() || !screenRef.current) return;
@@ -176,6 +178,27 @@ export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx
       }
     },
     { scope: screenRef },
+  );
+
+  useGSAP(
+    () => {
+      if (!screenRef.current) return;
+      const known = seenLineIdsRef.current;
+      const fresh = Array.from(screenRef.current.querySelectorAll<HTMLElement>(".cd-order-composer-line"))
+        .filter((row) => !known.has(row.dataset.variant ?? ""));
+      seenLineIdsRef.current = new Set(lines.map((line) => line.variantId));
+      if (reduced() || fresh.length === 0) return;
+      gsap.from(fresh, {
+        autoAlpha: 0,
+        x: -10,
+        scale: 0.985,
+        duration: 0.3,
+        stagger: 0.025,
+        ease: "power2.out",
+        clearProps: "opacity,visibility,transform",
+      });
+    },
+    { dependencies: [lineKeys], scope: screenRef },
   );
 
   const resumeDraft = (d: MerchantDraftVM) => {
@@ -244,6 +267,31 @@ export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx
   const currency = lines[0]?.currency ?? "usd";
   const hasAddress = addressHasAnyValue(address);
   const emailValid = EMAIL_RE.test(email.trim());
+  const subtotalRef = useRef<HTMLSpanElement>(null);
+  const subtotalSeenRef = useRef(false);
+  useGSAP(
+    () => {
+      if (!subtotalRef.current) return;
+      if (!subtotalSeenRef.current) {
+        subtotalSeenRef.current = true;
+        return;
+      }
+      if (reduced()) return;
+      gsap.fromTo(
+        subtotalRef.current,
+        { autoAlpha: 0.45, y: 3, willChange: "transform,opacity" },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.22,
+          ease: "power2.out",
+          overwrite: "auto",
+          clearProps: "opacity,visibility,transform,willChange",
+        },
+      );
+    },
+    { dependencies: [subtotalCents], scope: screenRef },
+  );
 
   const saveDraft = async (): Promise<MerchantDraftVM | null> => {
     if (lines.length === 0) {
@@ -340,8 +388,8 @@ export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx
   const busy = saving || sending;
 
   return (
-    <div ref={screenRef} className="cd-screen" data-screen-label="Create order">
-      <header className="cd-screen-head">
+    <div ref={screenRef} className="cd-screen cd-order-composer" data-screen-label="Create order">
+      <header className="cd-screen-head cd-order-composer-head">
         <div className="flex items-center" style={{ gap: 10 }}>
           <Btn small icon="chevronLeft" onClick={back}>Back</Btn>
           <h1 className="cd-h1" style={{ fontSize: 22 }}>Create order</h1>
@@ -359,6 +407,7 @@ export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx
       )}
 
       <div
+        className="cd-order-composer-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "minmax(0,1fr) 320px",
@@ -367,14 +416,14 @@ export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx
         }}
       >
         <div className="flex flex-col" style={{ gap: 12 }}>
-          <Card className="cd-card-tight">
+          <Card className="cd-card-tight cd-order-composer-card cd-order-composer-items">
             <div className="cd-h2" style={{ marginBottom: 8 }}>Items</div>
             {lines.length === 0 ? (
               <div className="cd-caption" style={{ marginBottom: 12 }}>No items yet. Search below to add some.</div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
                 {lines.map((l) => (
-                  <div key={l.variantId} className="flex items-center justify-between" style={{ gap: 10 }}>
+                  <div key={l.variantId} className="cd-order-composer-line flex items-center justify-between" data-variant={l.variantId} style={{ gap: 10 }}>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div className="cd-row-title truncate">{l.title}</div>
                       <div className="cd-caption">{money(l.unitPriceCents, l.currency)} each</div>
@@ -403,14 +452,14 @@ export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx
                 ))}
                 <div className="flex items-center justify-between" style={{ paddingTop: 6, borderTop: "1px solid var(--hairline)" }}>
                   <span className="cd-row-title">Subtotal</span>
-                  <span className="cd-row-num tabular-nums">{money(subtotalCents, currency)}</span>
+                  <span ref={subtotalRef} className="cd-row-num tabular-nums">{money(subtotalCents, currency)}</span>
                 </div>
               </div>
             )}
             <VariantPicker onPick={addVariant} disabled={busy} />
           </Card>
 
-          <Card className="cd-card-tight">
+          <Card className="cd-card-tight cd-order-composer-card cd-order-composer-customer">
             <div className="cd-h2" style={{ marginBottom: 8 }}>Customer</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <label className="cd-field">
@@ -424,7 +473,7 @@ export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx
                   disabled={busy}
                 />
               </label>
-              <div className="cd-caption">Shipping address (optional, enables a shipping and tax quote)</div>
+              <div className="cd-caption">Shipping address (optional)</div>
               <label className="cd-field">
                 <span>Address line 1</span>
                 <input
@@ -505,7 +554,7 @@ export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx
             </div>
           </Card>
 
-          <div className="flex items-center justify-end" style={{ gap: 8 }}>
+          <div className="cd-order-composer-actions flex items-center justify-end" style={{ gap: 8 }}>
             <Btn onClick={onSaveDraft} disabled={busy || lines.length === 0}>
               {saving ? "Saving…" : "Save draft"}
             </Btn>
@@ -516,7 +565,7 @@ export default function OrderComposer({ app, prefillParam }: { app: DashboardCtx
         </div>
 
         <div className="flex flex-col" style={{ gap: 12 }}>
-          <Card className="cd-card-tight">
+          <Card className="cd-card-tight cd-order-composer-card cd-order-drafts-card">
             <div className="cd-h2" style={{ marginBottom: 8 }}>Saved drafts</div>
             {draftsLoading ? (
               <div className="cd-caption">Loading…</div>

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import type { DashboardCtx } from "../context";
-import { Btn, Card, Pill, Placeholder, TableSkeleton, SkelBar } from "../ui";
+import { Btn, Card, Placeholder, TableSkeleton, Tooltip } from "../ui";
 import { money, timeAgo } from "../format";
 import { reduced } from "../hero/hero-motion";
 import { CDIcon } from "../icons";
@@ -58,19 +58,6 @@ export interface OrderDetailSeed {
   financialStatus: string;
 }
 
-/** Collapse the two-column detail layout to one column under this width. */
-function useNarrowViewport(maxWidth = 900): boolean {
-  const [narrow, setNarrow] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia(`(max-width: ${maxWidth}px)`);
-    const sync = () => setNarrow(mq.matches);
-    sync();
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
-  }, [maxWidth]);
-  return narrow;
-}
-
 /** The RefundModal was built against the Orders-list `OrderRow` shape; this is the only place
  *  that shape has to be reconstructed from the richer detail DTO. */
 function buildRefundRow(d: OrderDetail): OrderRow {
@@ -108,13 +95,69 @@ function TagPill({ label, onRemove }: { label: string; onRemove: () => void }) {
   );
 }
 
+function IconAction({
+  label,
+  icon,
+  onClick,
+  disabled,
+  kind = "secondary",
+}: {
+  label: string;
+  icon: string;
+  onClick: () => void;
+  disabled?: boolean;
+  kind?: "primary" | "secondary" | "danger";
+}) {
+  return (
+    <Tooltip content={label}>
+      <Btn
+        small
+        kind={kind}
+        icon={icon}
+        onClick={onClick}
+        disabled={disabled}
+        ariaLabel={label}
+        className="cd-order-icon-action"
+      >
+        {null}
+      </Btn>
+    </Tooltip>
+  );
+}
+
+function OrderDisclosure({
+  label,
+  count,
+  children,
+  className = "",
+}: {
+  label: ReactNode;
+  count?: number;
+  children: ReactNode;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`cd-order-disclosure ${className}`} data-open={open ? "1" : "0"}>
+      <button type="button" className="cd-order-disclosure-trigger" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        {label}
+        {count != null && count > 0 && <span className="cd-order-disclosure-count">{count}</span>}
+        <CDIcon name="chevronDown" size={14} />
+      </button>
+      <div className="cd-order-disclosure-viewport" aria-hidden={!open}>
+        <div className="cd-order-disclosure-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 const TIMELINE_DOT: Record<OrderDetail["timeline"][number]["kind"], string> = {
   transition: "var(--text-3)",
-  note: "var(--accent)",
-  refund: "var(--orange)",
-  fulfillment: "var(--green)",
-  edit: "var(--red)",
-  return: "var(--orange)",
+  note: "var(--live)",
+  refund: "var(--live)",
+  fulfillment: "var(--live)",
+  edit: "var(--text-2)",
+  return: "var(--live)",
 };
 
 export default function OrderDetailScreen({
@@ -160,7 +203,6 @@ export default function OrderDetailScreen({
   const [tagInput, setTagInput] = useState("");
   const [tagsSaving, setTagsSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
-  const narrow = useNarrowViewport();
   const toast = app.toast;
   const screenRef = useRef<HTMLDivElement>(null);
 
@@ -171,7 +213,9 @@ export default function OrderDetailScreen({
     () => {
       if (reduced() || !detail || !screenRef.current) return;
       const header = screenRef.current.querySelector<HTMLElement>(".cd-screen-head");
-      const cards = screenRef.current.querySelectorAll<HTMLElement>(".cd-card");
+      const cards = screenRef.current.querySelectorAll<HTMLElement>(".cd-card:not(.cd-order-visual-card)");
+      const heroCopy = screenRef.current.querySelector<HTMLElement>(".cd-order-visual-copy");
+      const parcelShadow = screenRef.current.querySelector<HTMLElement>(".cd-order-parcel-shadow");
       if (header) {
         gsap.from(header, {
           autoAlpha: 0,
@@ -192,8 +236,67 @@ export default function OrderDetailScreen({
           clearProps: "opacity,visibility,transform",
         });
       }
+      if (heroCopy) {
+        gsap.from(heroCopy, {
+          autoAlpha: 0,
+          y: 5,
+          duration: 0.3,
+          delay: 0.04,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        });
+      }
+      if (parcelShadow) {
+        gsap.from(parcelShadow, {
+          autoAlpha: 0,
+          scale: 0.72,
+          duration: 0.38,
+          delay: 0.06,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        });
+      }
     },
     { dependencies: [detail?.id], scope: screenRef },
+  );
+
+  const detailUpdateKey = detail
+    ? [
+        detail.state,
+        detail.financialStatus,
+        detail.archivedAt ?? "",
+        detail.lines.map((line) => `${line.id}:${line.quantity}:${line.fulfilledQuantity}`).join(","),
+        detail.fulfillments.length,
+        detail.returns.map((item) => `${item.id}:${item.status}`).join(","),
+        detail.timeline.length,
+        detail.tags.join(","),
+        profit?.profitCents ?? "",
+      ].join("|")
+    : "";
+  const detailUpdateSeenRef = useRef<string | null>(null);
+  useGSAP(
+    () => {
+      const previous = detailUpdateSeenRef.current;
+      detailUpdateSeenRef.current = detailUpdateKey;
+      if (!previous || !detailUpdateKey || previous === detailUpdateKey || reduced() || !screenRef.current) return;
+      const surfaces = screenRef.current.querySelectorAll<HTMLElement>(
+        ".cd-order-detail-grid .cd-card, .cd-order-journey-step, .cd-order-journey-line, .cd-order-signal-row .cd-badge, .cd-order-visual-total",
+      );
+      gsap.fromTo(
+        surfaces,
+        { autoAlpha: 0.72, y: 3, willChange: "transform,opacity" },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.24,
+          stagger: 0.018,
+          ease: "power2.out",
+          overwrite: "auto",
+          clearProps: "opacity,visibility,transform,willChange",
+        },
+      );
+    },
+    { dependencies: [detailUpdateKey], scope: screenRef },
   );
 
   const load = useCallback(
@@ -434,109 +537,108 @@ export default function OrderDetailScreen({
     }
   };
 
+  const marginDegrees = Math.max(0, Math.min(100, profit?.marginPct ?? 0)) * 3.6;
+  const marginStyle = { "--order-margin": `${marginDegrees}deg` } as CSSProperties;
+  const paymentComplete = ["paid", "authorized", "partially_refunded", "refunded"].includes(financialStatus ?? "");
+  const fulfillmentComplete = state === "fulfilled" || state === "partially_fulfilled";
+
   return (
-    <div ref={screenRef} className="cd-screen" data-screen-label="Order">
-      <header className="cd-screen-head">
-        <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
-          <Btn small icon="chevronLeft" onClick={back}>
-            Back
-          </Btn>
-          <div>
-            <div className="flex items-center" style={{ gap: 8 }}>
-              <h1 className="cd-h1" style={{ fontSize: 20 }}>{ref ?? "Order"}</h1>
-              {financialStatus && (
-                <Pill tone={paymentPillStyle(financialStatus).tone}>
-                  {paymentPillStyle(financialStatus).label}
-                </Pill>
-              )}
-              {fulfillment && (
-                <span className="cd-badge" style={{ color: fulfillment.tone, background: "var(--gray-bg)" }}>
-                  {fulfillment.label}
-                </span>
-              )}
-            </div>
-            <div className="cd-caption">
-              {createdAt ? `${timeAgo(createdAt)} · ` : ""}
-              {money(totalCents, currency)}
-              {detail?.channel ? ` · ${detail.channel}` : source === "shopify" ? " · Shopify" : ""}
-            </div>
-          </div>
-        </div>
+    <div ref={screenRef} className="cd-screen cd-order-detail" data-screen-label="Order">
+      <header className="cd-screen-head cd-order-detail-bar">
+        <Btn small icon="chevronLeft" onClick={back}>
+          Orders
+        </Btn>
         {detail && (
-          <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
+          <div className="cd-order-detail-actions flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
             {!detail.readOnly && (
               <>
                 {canFulfill && (
-                  <Btn small icon="truck" onClick={() => setShowFulfill(true)}>
+                  <Btn small kind="primary" icon="truck" onClick={() => setShowFulfill(true)}>
                     Fulfill
                   </Btn>
                 )}
                 {canRefund && (
-                  <Btn small icon="rotate" onClick={() => setRefundTarget(buildRefundRow(detail))}>
-                    Refund
-                  </Btn>
+                  <IconAction label="Refund" icon="rotate" onClick={() => setRefundTarget(buildRefundRow(detail))} />
                 )}
                 {canCancel && (
-                  <Btn small icon="ban" onClick={() => setShowCancel(true)}>
-                    Cancel
-                  </Btn>
+                  <IconAction label="Cancel order" icon="ban" onClick={() => setShowCancel(true)} kind="danger" />
                 )}
                 {canCreateReturn && (
-                  <Btn small icon="undo" onClick={() => setShowCreateReturn(true)}>
-                    Create return
-                  </Btn>
+                  <IconAction label="Create return" icon="undo" onClick={() => setShowCreateReturn(true)} />
                 )}
                 {isUnpaidInvoice && (
                   <>
                     <Btn small icon="mail" onClick={resendInvoice} disabled={resendingInvoice}>
-                      {resendingInvoice ? "Resending…" : "Re-send invoice"}
+                      <span key={resendingInvoice ? "sending" : "send"} className="cd-order-state-label">{resendingInvoice ? "Sending…" : "Send"}</span>
                     </Btn>
-                    <Btn small icon="pencil" onClick={() => setShowEditInvoice(true)}>
-                      Edit items
-                    </Btn>
-                    <Btn small kind="danger" icon="ban" onClick={voidInvoice} disabled={voidingInvoice}>
-                      {voidingInvoice ? "Voiding…" : "Void invoice"}
-                    </Btn>
+                    <IconAction label="Edit invoice items" icon="pencil" onClick={() => setShowEditInvoice(true)} />
+                    <IconAction label={voidingInvoice ? "Voiding invoice" : "Void invoice"} icon="ban" onClick={voidInvoice} disabled={voidingInvoice} kind="danger" />
                   </>
                 )}
-                <Btn small icon="archive" onClick={toggleArchived} disabled={archiving}>
-                  {detail.archivedAt ? "Unarchive" : "Archive"}
-                </Btn>
+                <IconAction label={detail.archivedAt ? "Unarchive" : "Archive"} icon="archive" onClick={toggleArchived} disabled={archiving} />
               </>
             )}
-            <Btn small icon="printer" onClick={() => printDoc("packing-slip")}>
-              Print packing slip
-            </Btn>
-            <Btn small icon="printer" onClick={() => printDoc("invoice")}>
-              Print invoice
-            </Btn>
+            <IconAction label="Print packing slip" icon="printer" onClick={() => printDoc("packing-slip")} />
+            <IconAction label="Print invoice" icon="doc" onClick={() => printDoc("invoice")} />
           </div>
         )}
       </header>
 
-      {detail &&
-        (detail.signals.repeatCustomer || detail.signals.refundRisk || detail.signals.stuckUnfulfilled) && (
-          <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
-            {detail.signals.repeatCustomer && (
-              <Pill tone="neutral">Repeat customer ({detail.signals.buyerOrderCount} orders)</Pill>
-            )}
-            {detail.signals.refundRisk && <Pill tone="warn">High refund history</Pill>}
-            {detail.signals.stuckUnfulfilled && (
-              <Pill tone="warn">
-                Unfulfilled for {detail.signals.stuckDays} day{detail.signals.stuckDays === 1 ? "" : "s"}
-              </Pill>
+      <Card className="cd-order-detail-hero cd-order-visual-card">
+        <div className="cd-order-parcel-scene" aria-hidden="true">
+          <div className="cd-order-parcel">
+            <span className="cd-order-parcel-face cd-order-parcel-front">
+              <span className="cd-order-parcel-label">{ref ?? "ORDER"}</span>
+            </span>
+            <span className="cd-order-parcel-face cd-order-parcel-back" />
+            <span className="cd-order-parcel-face cd-order-parcel-left" />
+            <span className="cd-order-parcel-face cd-order-parcel-right" />
+            <span className="cd-order-parcel-face cd-order-parcel-top" />
+            <span className="cd-order-parcel-face cd-order-parcel-bottom" />
+            <span className="cd-order-parcel-tape" />
+          </div>
+          <span className="cd-order-parcel-shadow" />
+        </div>
+        <div className="cd-order-visual-copy">
+          <div className="cd-order-visual-identity">
+            <div className="cd-order-visual-title">
+              <h1 className="cd-h1">{ref ?? "Order"}</h1>
+              {readOnly && <span className="cd-badge">Shopify managed</span>}
+            </div>
+            <div className="cd-order-visual-meta">
+              {createdAt && <span><CDIcon name="clock" size={13} />{timeAgo(createdAt)}</span>}
+              <span><CDIcon name="store" size={13} />{detail?.channel ?? (source === "shopify" ? "Shopify" : "Calderyn")}</span>
+            </div>
+          </div>
+          <div className="cd-order-visual-summary">
+            <span className="cd-caption">Total</span>
+            <strong className="cd-order-visual-total tabular-nums">{money(totalCents, currency)}</strong>
+            {detail && (detail.signals.repeatCustomer || detail.signals.refundRisk || detail.signals.stuckUnfulfilled) && (
+              <div className="cd-order-signal-row">
+                {detail.signals.repeatCustomer && <span className="cd-badge">Repeat ×{detail.signals.buyerOrderCount}</span>}
+                {detail.signals.refundRisk && <span className="cd-badge cd-order-badge-live">Refund risk</span>}
+                {detail.signals.stuckUnfulfilled && <span className="cd-badge cd-order-badge-live">Late {detail.signals.stuckDays}d</span>}
+              </div>
             )}
           </div>
-        )}
-
-      {detail?.readOnly && (
-        <Card className="cd-card-tight">
-          <span className="cd-caption">
-            This order was placed and paid on Shopify. It&apos;s shown here as part of your imported
-            history.
-          </span>
-        </Card>
-      )}
+          <div className="cd-order-journey" aria-label="Order progress">
+            <span className="cd-order-journey-step" data-complete="1">
+              <i><CDIcon name="check" size={10} strokeWidth={2.2} /></i>
+              <small>Placed</small>
+            </span>
+            <span className="cd-order-journey-line" data-complete={paymentComplete ? "1" : "0"} />
+            <span className="cd-order-journey-step" data-complete={paymentComplete ? "1" : "0"}>
+              <i>{paymentComplete && <CDIcon name="check" size={10} strokeWidth={2.2} />}</i>
+              <small>{financialStatus ? paymentPillStyle(financialStatus).label : "Payment"}</small>
+            </span>
+            <span className="cd-order-journey-line" data-complete={fulfillmentComplete ? "1" : "0"} />
+            <span className="cd-order-journey-step" data-complete={fulfillmentComplete ? "1" : "0"}>
+              <i>{fulfillmentComplete && <CDIcon name="check" size={10} strokeWidth={2.2} />}</i>
+              <small>{fulfillment?.label ?? (readOnly ? "Imported" : "Open")}</small>
+            </span>
+          </div>
+        </div>
+      </Card>
 
       {loading && !detail ? (
         <TableSkeleton />
@@ -549,181 +651,119 @@ export default function OrderDetailScreen({
           onAction={() => load()}
         />
       ) : detail ? (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: narrow ? "minmax(0,1fr)" : "minmax(0,1fr) 300px",
-            gap: 14,
-            alignItems: "start",
-          }}
-        >
-          <div className="flex flex-col" style={{ gap: 12 }}>
-            <Card className="cd-card-tight">
-              <div className="cd-h2" style={{ marginBottom: 8 }}>Items</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="cd-order-detail-grid" data-has-fulfillments={detail.fulfillments.length > 0 ? "1" : "0"}>
+          <Card className="cd-order-command-deck">
+          <div className="cd-order-detail-primary">
+            <section className="cd-order-deck-section cd-order-items-card">
+              <div className="cd-order-deck-heading">
+                <span className="cd-order-deck-heading-icon" aria-hidden="true"><CDIcon name="box" size={15} /></span>
+                <div className="cd-h2">Items</div>
+              </div>
+              <div className="cd-order-item-list">
                 {detail.lines.map((l) => (
-                  <div key={l.id} className="flex items-center justify-between" style={{ gap: 12 }}>
-                    <div style={{ minWidth: 0 }}>
+                  <div key={l.id} className="cd-order-item-row">
+                    <span className="cd-order-item-glyph" aria-hidden="true"><CDIcon name="box" size={17} /></span>
+                    <div className="cd-order-item-copy">
                       <div className="cd-row-title truncate">{l.title}</div>
-                      <div className="cd-caption">
-                        {l.sku ? `${l.sku} · ` : ""}
-                        {l.quantity} × {money(l.unitPriceCents, detail.currency)}
-                        {!detail.readOnly ? ` · Fulfilled ${l.fulfilledQuantity}/${l.quantity}` : ""}
-                      </div>
+                      <div className="cd-caption">{l.quantity} × {money(l.unitPriceCents, detail.currency)}</div>
+                      {!detail.readOnly && (
+                        <span
+                          className="cd-order-item-progress"
+                          role="progressbar"
+                          aria-label={`${l.fulfilledQuantity} of ${l.quantity} fulfilled`}
+                          aria-valuemin={0}
+                          aria-valuemax={l.quantity}
+                          aria-valuenow={l.fulfilledQuantity}
+                        >
+                          <i style={{ transform: `scaleX(${l.quantity > 0 ? l.fulfilledQuantity / l.quantity : 0})` }} />
+                        </span>
+                      )}
                     </div>
-                    <div className="cd-row-num tabular-nums" style={{ flexShrink: 0 }}>
-                      {money(l.unitPriceCents * l.quantity, detail.currency)}
-                    </div>
+                    <span className="cd-order-item-quantity tabular-nums">×{l.quantity}</span>
                     {!detail.readOnly && REDUCIBLE_ORDER_STATES.has(detail.state) && l.quantity > l.fulfilledQuantity && (
-                      <Btn small icon="reduce" onClick={() => setReduceTarget(l)}>
-                        Reduce
-                      </Btn>
+                      <IconAction label={`Reduce ${l.title}`} icon="reduce" onClick={() => setReduceTarget(l)} />
                     )}
                   </div>
                 ))}
               </div>
-            </Card>
-
-            <Card className="cd-card-tight">
-              <div className="cd-h2" style={{ marginBottom: 8 }}>Payment</div>
-              <div className="cd-kv-col">
-                <div className="cd-kv"><span>Subtotal</span><b className="ml-auto tabular-nums">{money(detail.subtotalCents, detail.currency)}</b></div>
-                <div className="cd-kv"><span>Shipping</span><b className="ml-auto tabular-nums">{money(detail.shippingCents, detail.currency)}</b></div>
-                <div className="cd-kv"><span>Tax</span><b className="ml-auto tabular-nums">{money(detail.taxCents, detail.currency)}</b></div>
-                {detail.discountCents > 0 && (
-                  <div className="cd-kv"><span>Discount</span><b className="ml-auto tabular-nums">-{money(detail.discountCents, detail.currency)}</b></div>
-                )}
-                <div className="cd-kv"><span>Total</span><b className="ml-auto tabular-nums">{money(detail.totalCents, detail.currency)}</b></div>
-                {detail.refundedCents > 0 && (
-                  <>
-                    <div className="cd-kv"><span>Refunded</span><b className="ml-auto tabular-nums">-{money(detail.refundedCents, detail.currency)}</b></div>
-                    <div className="cd-kv"><span>Net</span><b className="ml-auto tabular-nums">{money(detail.totalCents - detail.refundedCents, detail.currency)}</b></div>
-                  </>
-                )}
-              </div>
-            </Card>
-
-            {profitLoading && !profit ? (
-              <Card className="cd-card-tight">
-                <div className="cd-h2" style={{ marginBottom: 8 }}>Profit</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <SkelBar width="60%" />
-                  <SkelBar width="50%" />
-                  <SkelBar width="70%" />
-                </div>
-              </Card>
-            ) : profit ? (
-              <Card className="cd-card-tight">
-                <div className="cd-h2" style={{ marginBottom: 8 }}>Profit</div>
-                {profit.notCaptured ? (
-                  <span className="cd-caption">No payment captured yet.</span>
-                ) : (
-                  <>
-                    <div className="cd-kv-col">
-                      <div className="cd-kv"><span>Revenue</span><b className="ml-auto tabular-nums">{money(profit.revenueCents, detail.currency)}</b></div>
-                      <div className="cd-kv"><span>COGS</span><b className="ml-auto tabular-nums">-{money(profit.cogsCents, detail.currency)}</b></div>
-                      {profit.costsMissing > 0 && (
-                        <div className="cd-caption">
-                          {profit.costsMissing} line{profit.costsMissing === 1 ? "" : "s"} missing cost data
-                        </div>
-                      )}
-                      <div className="cd-kv">
-                        <span>Carrier cost</span>
-                        <b className="ml-auto tabular-nums">
-                          {profit.carrierCostCents == null ? (
-                            <span aria-hidden="true" />
-                          ) : (
-                            `-${money(profit.carrierCostCents, detail.currency)}`
-                          )}
-                        </b>
-                      </div>
-                      {profit.carrierCostCents == null && (
-                        <div className="cd-caption">No carrier cost recorded</div>
-                      )}
-                      <div className="cd-kv"><span>Payment fees</span><b className="ml-auto tabular-nums">-{money(profit.feeEstimateCents, detail.currency)}</b></div>
-                      <div className="cd-caption">Estimated at 2.9% + 30 cents</div>
-                      {profit.attributionLabel && (
-                        <div className="cd-caption">Attributed to {profit.attributionLabel}</div>
-                      )}
-                      <div className="cd-kv" style={{ marginTop: 6, paddingTop: 10, borderTop: "0.5px solid var(--hairline)" }}>
-                        <span>Profit</span>
-                        <b className="ml-auto tabular-nums">{profit.profitCents == null ? null : money(profit.profitCents, detail.currency)}</b>
-                      </div>
-                      <div className="cd-caption">
-                        {profit.marginPct == null
-                          ? "Margin unavailable"
-                          : `${profit.marginPct.toFixed(1)}% margin${profit.costsMissing > 0 || profit.carrierCostCents === null ? " (partial)" : ""}`}
-                      </div>
-                    </div>
-                    {detail.readOnly && (
-                      <div className="cd-caption" style={{ marginTop: 8 }}>
-                        Estimates: this order was placed on Shopify, so costs and fees are approximated.
-                      </div>
-                    )}
-                  </>
-                )}
-              </Card>
-            ) : null}
+            </section>
 
             {detail.fulfillments.length > 0 && (
-              <Card className="cd-card-tight">
-                <div className="cd-h2" style={{ marginBottom: 8 }}>Fulfillments</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <section className="cd-order-deck-section cd-order-fulfillments-card">
+                <div className="cd-order-fulfillments-head">
+                  <div className="cd-order-deck-heading">
+                    <span className="cd-order-deck-heading-icon" aria-hidden="true"><CDIcon name="truck" size={15} /></span>
+                    <div className="cd-h2">Delivery</div>
+                  </div>
+                </div>
+                <div className="cd-order-fulfillment-list">
                   {detail.fulfillments.map((f) => (
-                    <div key={f.id}>
-                      <div className="flex items-center justify-between">
-                        <span className="cd-row-title">{timeAgo(f.createdAt)}</span>
-                        <span className="cd-caption">{f.units} unit{f.units === 1 ? "" : "s"}</span>
-                      </div>
-                      {f.trackingNumber && (
-                        <div className="cd-code" style={{ marginTop: 6 }}>
-                          <span className="tabular-nums" style={{ minWidth: 0, wordBreak: "break-all" }}>
-                            {f.carrier ? `${f.carrier} · ` : ""}
-                            {(() => {
-                              const url = carrierTrackingUrl(f.carrier, f.trackingNumber);
-                              return url ? (
-                                <a href={url} target="_blank" rel="noreferrer">
-                                  {f.trackingNumber}
-                                </a>
-                              ) : (
-                                f.trackingNumber
-                              );
-                            })()}
+                    <div key={f.id} className="cd-order-fulfillment-row">
+                      <div className="cd-order-fulfillment-body">
+                        <div
+                          className="cd-order-fulfillment-route"
+                          aria-label={`${f.units} unit${f.units === 1 ? "" : "s"} fulfilled${f.carrier ? ` with ${f.carrier}` : ""}${f.notifiedAt ? ", customer notified" : ""}`}
+                        >
+                          <span className="cd-order-delivery-state">
+                            <i aria-hidden="true"><CDIcon name="check" size={11} strokeWidth={2.2} /></i>
+                            Fulfilled
                           </span>
-                          <button
-                            type="button"
-                            className="cd-btn cd-btn-secondary cd-btn-sm"
-                            style={{ flexShrink: 0 }}
-                            onClick={async () => {
-                              try {
-                                await navigator.clipboard.writeText(f.trackingNumber ?? "");
-                                toast("Copied to clipboard", "check");
-                              } catch {
-                                toast("Couldn't copy. Select the text manually.", "x", "critical");
-                              }
-                            }}
-                          >
-                            Copy
-                          </button>
+                          <span className="cd-order-delivery-meta">{f.units} unit{f.units === 1 ? "" : "s"}</span>
+                          {f.carrier && <span className="cd-order-delivery-meta">{f.carrier}</span>}
+                          {f.notifiedAt && (
+                            <span className="cd-order-delivery-notified">
+                              <CDIcon name="check" size={11} strokeWidth={2.2} /> Customer notified
+                            </span>
+                          )}
                         </div>
-                      )}
-                      {f.labelUrl && (
-                        <div className="cd-caption" style={{ marginTop: 4 }}>
-                          <a href={f.labelUrl} target="_blank" rel="noreferrer">
-                            Shipping label
-                          </a>
-                          {f.labelCostCents != null ? ` · ${money(f.labelCostCents)}` : ""}
-                        </div>
-                      )}
-                      {f.notifiedAt && <div className="cd-caption" style={{ marginTop: 4 }}>Customer notified</div>}
+                        {f.trackingNumber && (
+                          <div className="cd-code cd-order-tracking">
+                            <span className="tabular-nums" style={{ minWidth: 0, wordBreak: "break-all" }}>
+                              {(() => {
+                                const url = carrierTrackingUrl(f.carrier, f.trackingNumber);
+                                return url ? (
+                                  <a href={url} target="_blank" rel="noreferrer">
+                                    {f.trackingNumber}
+                                  </a>
+                                ) : (
+                                  f.trackingNumber
+                                );
+                              })()}
+                            </span>
+                            <button
+                              type="button"
+                              className="cd-btn cd-btn-secondary cd-btn-sm"
+                              style={{ flexShrink: 0 }}
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(f.trackingNumber ?? "");
+                                  toast("Copied to clipboard", "check");
+                                } catch {
+                                  toast("Couldn't copy. Select the text manually.", "x", "critical");
+                                }
+                              }}
+                            >
+                              Copy
+                            </button>
+                          </div>
+                        )}
+                        {f.labelUrl && (
+                          <div className="cd-caption cd-order-shipping-label">
+                            <a href={f.labelUrl} target="_blank" rel="noreferrer">
+                              Shipping label
+                            </a>
+                            {f.labelCostCents != null ? ` · ${money(f.labelCostCents)}` : ""}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
-              </Card>
+              </section>
             )}
 
             {detail.returns.length > 0 && (
-              <Card className="cd-card-tight">
+              <section className="cd-order-deck-section cd-order-returns-card">
                 <div className="cd-h2" style={{ marginBottom: 8 }}>Returns</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   {detail.returns.map((r) => {
@@ -737,7 +777,7 @@ export default function OrderDetailScreen({
                       <div key={r.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         <div className="flex items-center justify-between" style={{ gap: 8, flexWrap: "wrap" }}>
                           <div className="flex items-center" style={{ gap: 8 }}>
-                            <Pill tone={pill.tone}>{pill.label}</Pill>
+                            <span className={`cd-badge${isOpen ? " cd-order-badge-live" : ""}`}>{pill.label}</span>
                             <span className="cd-row-title">
                               {unitCount} unit{unitCount === 1 ? "" : "s"}
                             </span>
@@ -753,7 +793,7 @@ export default function OrderDetailScreen({
                             {isOpen && (
                               <>
                                 <Btn small icon="check" onClick={() => markReturnReceived(r)} disabled={busy}>
-                                  {busy ? "Working…" : "Mark received"}
+                                  <span key={busy ? "working" : "ready"} className="cd-order-state-label">{busy ? "Working…" : "Mark received"}</span>
                                 </Btn>
                                 <Btn small kind="danger" icon="x" onClick={() => cancelReturn(r)} disabled={busy}>
                                   Cancel return
@@ -775,54 +815,56 @@ export default function OrderDetailScreen({
                     );
                   })}
                 </div>
-              </Card>
+              </section>
             )}
 
-            <Card className="cd-card-tight">
-              <div className="cd-h2" style={{ marginBottom: 8 }}>Timeline</div>
-              {!detail.readOnly && (
-                <div className="flex items-center" style={{ gap: 8, marginBottom: 14 }}>
-                  <input
-                    className="cd-input"
-                    type="text"
-                    value={noteText}
-                    onChange={(e) => setNoteText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") addNote();
-                    }}
-                    placeholder="Add a note"
-                    style={{ flex: 1 }}
-                  />
-                  <Btn small onClick={addNote} disabled={noteSaving || !noteText.trim()}>
-                    {noteSaving ? "Adding…" : "Add note"}
-                  </Btn>
-                </div>
-              )}
-              {detail.timeline.length === 0 ? (
-                <span className="cd-caption">No activity yet.</span>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {detail.timeline.map((ev, i) => (
-                    <div key={i} className="flex items-start" style={{ gap: 10 }}>
-                      <span className="cd-dot" style={{ background: TIMELINE_DOT[ev.kind], marginTop: 5 }} />
-                      <div style={{ minWidth: 0 }}>
-                        <div className="flex items-center" style={{ gap: 8 }}>
-                          <span className="cd-row-title">{ev.title}</span>
-                          <span className="cd-caption">{timeAgo(ev.at)}</span>
-                        </div>
-                        {ev.detail && <div className="cd-caption">{ev.detail}</div>}
-                        {ev.author && <div className="cd-caption">{ev.author}</div>}
-                      </div>
+            <section className="cd-order-deck-section cd-order-timeline-card">
+              <OrderDisclosure label={<span className="cd-h2">Activity</span>} count={detail.timeline.length}>
+                  {!detail.readOnly && (
+                    <div className="flex items-center" style={{ gap: 8, marginBottom: 14 }}>
+                      <input
+                        className="cd-input"
+                        type="text"
+                        value={noteText}
+                        onChange={(e) => setNoteText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") addNote();
+                        }}
+                        placeholder="Add a note"
+                        style={{ flex: 1 }}
+                      />
+                      <Btn small onClick={addNote} disabled={noteSaving || !noteText.trim()}>
+                        <span key={noteSaving ? "adding" : "add"} className="cd-order-state-label">{noteSaving ? "Adding…" : "Add"}</span>
+                      </Btn>
                     </div>
-                  ))}
-                </div>
-              )}
-            </Card>
+                  )}
+                  {detail.timeline.length === 0 ? (
+                    <span className="cd-caption">No activity yet.</span>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {detail.timeline.map((ev, i) => (
+                        <div key={i} className="cd-order-timeline-event flex items-start" style={{ gap: 10 }}>
+                          <span className="cd-dot" style={{ background: TIMELINE_DOT[ev.kind], marginTop: 5 }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div className="flex items-center" style={{ gap: 8 }}>
+                              <span className="cd-row-title">{ev.title}</span>
+                              <span className="cd-caption">{timeAgo(ev.at)}</span>
+                            </div>
+                            {ev.detail && <div className="cd-caption">{ev.detail}</div>}
+                            {ev.author && <div className="cd-caption">{ev.author}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+              </OrderDisclosure>
+            </section>
           </div>
 
-          <div className="flex flex-col" style={{ gap: 12 }}>
-            <Card className="cd-card-tight">
-              <div className="cd-h2" style={{ marginBottom: 8 }}>Customer</div>
+          <div className="cd-order-detail-aside">
+            <section className="cd-order-deck-section cd-order-person-card">
+              <div className="cd-order-person-glyph" aria-hidden="true"><CDIcon name="user" size={20} /></div>
+              <div className="cd-h2">Customer</div>
               {detail.buyer ? (
                 <button
                   type="button"
@@ -835,55 +877,177 @@ export default function OrderDetailScreen({
               ) : (
                 <span className="cd-caption">Guest</span>
               )}
-            </Card>
-
-            <Card className="cd-card-tight">
-              <div className="cd-h2" style={{ marginBottom: 8 }}>Shipping address</div>
-              {detail.shippingAddress ? (
-                <div className="cd-caption" style={{ lineHeight: 1.6 }}>
-                  {detail.shippingAddress.name && <div>{detail.shippingAddress.name}</div>}
-                  <div>{detail.shippingAddress.line1}</div>
-                  {detail.shippingAddress.line2 && <div>{detail.shippingAddress.line2}</div>}
-                  <div>
-                    {[detail.shippingAddress.city, detail.shippingAddress.region, detail.shippingAddress.postal]
-                      .filter(Boolean)
-                      .join(", ")}
-                  </div>
-                  <div>{detail.shippingAddress.country}</div>
-                </div>
-              ) : (
-                <span className="cd-caption">No shipping address on file.</span>
+              <OrderDisclosure label="Shipping" className="cd-order-side-disclosure">
+                  {detail.shippingAddress ? (
+                    <div className="cd-caption" style={{ lineHeight: 1.6 }}>
+                      {detail.shippingAddress.name && <div>{detail.shippingAddress.name}</div>}
+                      <div>{detail.shippingAddress.line1}</div>
+                      {detail.shippingAddress.line2 && <div>{detail.shippingAddress.line2}</div>}
+                      <div>
+                        {[detail.shippingAddress.city, detail.shippingAddress.region, detail.shippingAddress.postal]
+                          .filter(Boolean)
+                          .join(", ")}
+                      </div>
+                      <div>{detail.shippingAddress.country}</div>
+                    </div>
+                  ) : <span className="cd-caption">No address.</span>}
+              </OrderDisclosure>
+              {!detail.readOnly && (
+                <OrderDisclosure label="Tags" count={detail.tags.length} className="cd-order-side-disclosure">
+                    <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                      {detail.tags.map((t) => <TagPill key={t} label={t} onRemove={() => removeTag(t)} />)}
+                    </div>
+                    <div className="cd-order-more-editor flex items-center" style={{ gap: 8 }}>
+                      <input
+                        className="cd-input"
+                        type="text"
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") addTag(); }}
+                        placeholder="Add tag"
+                        style={{ flex: 1, minWidth: 0 }}
+                      />
+                      <Btn small onClick={addTag} disabled={tagsSaving || !tagInput.trim()}>Add</Btn>
+                    </div>
+                </OrderDisclosure>
               )}
-            </Card>
+            </section>
 
-            {!detail.readOnly && (
-              <Card className="cd-card-tight">
-                <div className="cd-h2" style={{ marginBottom: 8 }}>Tags</div>
-                <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-                  {detail.tags.length === 0 && <span className="cd-caption">No tags yet.</span>}
-                  {detail.tags.map((t) => (
-                    <TagPill key={t} label={t} onRemove={() => removeTag(t)} />
-                  ))}
+            <section className="cd-order-deck-section cd-order-money-card">
+              <div className="cd-order-money-head">
+                <div className="cd-h2">Payment</div>
+                <span className={`cd-badge${detail.financialStatus === "paid" || detail.financialStatus === "authorized" ? " cd-order-badge-live" : ""}`}>
+                  {paymentPillStyle(detail.financialStatus).label}
+                </span>
+              </div>
+              <div className="cd-order-money-visual">
+                <div className="cd-order-money-total">
+                  <strong className="tabular-nums">{money(detail.totalCents, detail.currency)}</strong>
+                  {detail.refundedCents > 0 && <small>{money(detail.refundedCents, detail.currency)} refunded</small>}
                 </div>
-                <div className="flex items-center" style={{ gap: 8 }}>
-                  <input
-                    className="cd-input"
-                    type="text"
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") addTag();
-                    }}
-                    placeholder="Add a tag"
-                    style={{ flex: 1 }}
-                  />
-                  <Btn small onClick={addTag} disabled={tagsSaving || !tagInput.trim()}>
-                    Add
-                  </Btn>
+                <div className="cd-order-margin-ring" style={marginStyle} role="img" aria-label={profit?.marginPct == null ? "Margin unavailable" : `${profit.marginPct.toFixed(1)} percent margin`}>
+                  <div>
+                    <strong>{profitLoading && !profit ? "…" : profit?.marginPct == null ? "—" : `${profit.marginPct.toFixed(0)}%`}</strong>
+                    <span>margin</span>
+                  </div>
                 </div>
-              </Card>
-            )}
+              </div>
+              <OrderDisclosure label="Costs" className="cd-order-breakdown">
+                <div className="cd-order-breakdown-grid">
+                  <div className="cd-kv-col">
+                    <div className="cd-kv"><span>Subtotal</span><b className="ml-auto tabular-nums">{money(detail.subtotalCents, detail.currency)}</b></div>
+                    <div className="cd-kv"><span>Shipping</span><b className="ml-auto tabular-nums">{money(detail.shippingCents, detail.currency)}</b></div>
+                    <div className="cd-kv"><span>Tax</span><b className="ml-auto tabular-nums">{money(detail.taxCents, detail.currency)}</b></div>
+                    {detail.discountCents > 0 && <div className="cd-kv"><span>Discount</span><b className="ml-auto tabular-nums">-{money(detail.discountCents, detail.currency)}</b></div>}
+                    {detail.refundedCents > 0 && <div className="cd-kv"><span>Net</span><b className="ml-auto tabular-nums">{money(detail.totalCents - detail.refundedCents, detail.currency)}</b></div>}
+                  </div>
+                  {profit && !profit.notCaptured && (
+                    <div className="cd-kv-col">
+                      <div className="cd-kv"><span>Revenue</span><b className="ml-auto tabular-nums">{money(profit.revenueCents, detail.currency)}</b></div>
+                      <div className="cd-kv"><span>Product cost</span><b className="ml-auto tabular-nums">-{money(profit.cogsCents, detail.currency)}</b></div>
+                      <div className="cd-kv"><span>Carrier</span><b className="ml-auto tabular-nums">{profit.carrierCostCents == null ? "—" : `-${money(profit.carrierCostCents, detail.currency)}`}</b></div>
+                      <div className="cd-kv"><span>Fees</span><b className="ml-auto tabular-nums">-{money(profit.feeEstimateCents, detail.currency)}</b></div>
+                      <div className="cd-kv"><span>Profit</span><b className="ml-auto tabular-nums">{profit.profitCents == null ? "—" : money(profit.profitCents, detail.currency)}</b></div>
+                    </div>
+                  )}
+                </div>
+              </OrderDisclosure>
+            </section>
           </div>
+          <section className="cd-order-deck-section cd-order-more-card">
+            <div className="cd-order-glance-panel" aria-label="Order facts">
+              <div className="cd-order-more-grid">
+                <div className="cd-order-more-group cd-order-more-costs">
+                  <div className="cd-h2">Costs</div>
+                  <div className="cd-order-breakdown-grid">
+                    <div className="cd-kv-col">
+                      <div className="cd-kv"><span>Subtotal</span><b className="ml-auto tabular-nums">{money(detail.subtotalCents, detail.currency)}</b></div>
+                      <div className="cd-kv"><span>Shipping</span><b className="ml-auto tabular-nums">{money(detail.shippingCents, detail.currency)}</b></div>
+                      <div className="cd-kv"><span>Tax</span><b className="ml-auto tabular-nums">{money(detail.taxCents, detail.currency)}</b></div>
+                      {profit && !profit.notCaptured && <div className="cd-kv cd-order-profit-line"><span>Profit</span><b className="ml-auto tabular-nums">{profit.profitCents == null ? "—" : money(profit.profitCents, detail.currency)}</b></div>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="cd-order-more-group cd-order-more-shipping">
+                  <div className="cd-h2">Shipping</div>
+                  {detail.shippingAddress ? (
+                    <div className="cd-caption cd-order-more-copy">
+                      {detail.shippingAddress.name && <div>{detail.shippingAddress.name}</div>}
+                      <div>{detail.shippingAddress.line1}</div>
+                      {detail.shippingAddress.line2 && <div>{detail.shippingAddress.line2}</div>}
+                      <div>
+                        {[detail.shippingAddress.city, detail.shippingAddress.region, detail.shippingAddress.postal]
+                          .filter(Boolean)
+                          .join(", ")}
+                      </div>
+                      <div>{detail.shippingAddress.country}</div>
+                    </div>
+                  ) : <span className="cd-caption">No address.</span>}
+                </div>
+
+                <div className="cd-order-more-group cd-order-more-activity">
+                  <div className="cd-h2">Activity</div>
+                  {!detail.readOnly && (
+                    <div className="cd-order-more-editor flex items-center" style={{ gap: 8, marginBottom: 12 }}>
+                      <input
+                        className="cd-input"
+                        type="text"
+                        value={noteText}
+                        onChange={(e) => setNoteText(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") addNote(); }}
+                        placeholder="Add a note"
+                        style={{ flex: 1 }}
+                      />
+                      <Btn small onClick={addNote} disabled={noteSaving || !noteText.trim()}>
+                        <span key={noteSaving ? "adding" : "add"} className="cd-order-state-label">{noteSaving ? "Adding…" : "Add"}</span>
+                      </Btn>
+                    </div>
+                  )}
+                  {detail.timeline.length === 0 ? (
+                    <span className="cd-caption">No activity yet.</span>
+                  ) : (
+                    <div className="cd-order-more-events">
+                      {detail.timeline.map((ev, i) => (
+                        <div key={i} className="cd-order-timeline-event flex items-start" style={{ gap: 10 }}>
+                          <span className="cd-dot" style={{ background: TIMELINE_DOT[ev.kind], marginTop: 5 }} />
+                          <div style={{ minWidth: 0 }}>
+                            <div className="flex items-center" style={{ gap: 8 }}>
+                              <span className="cd-row-title">{ev.title}</span>
+                              <span className="cd-caption">{timeAgo(ev.at)}</span>
+                            </div>
+                            {ev.detail && <div className="cd-caption">{ev.detail}</div>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {!detail.readOnly && (
+                  <div className="cd-order-more-group cd-order-more-tags">
+                    <div className="cd-h2">Tags</div>
+                    <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                      {detail.tags.map((t) => <TagPill key={t} label={t} onRemove={() => removeTag(t)} />)}
+                    </div>
+                    <div className="cd-order-more-editor flex items-center" style={{ gap: 8 }}>
+                      <input
+                        className="cd-input"
+                        type="text"
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") addTag(); }}
+                        placeholder="Add tag"
+                        style={{ flex: 1, minWidth: 0 }}
+                      />
+                      <Btn small onClick={addTag} disabled={tagsSaving || !tagInput.trim()}>Add</Btn>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+          </Card>
         </div>
       ) : null}
 
