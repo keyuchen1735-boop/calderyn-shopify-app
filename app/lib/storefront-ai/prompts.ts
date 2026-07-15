@@ -173,7 +173,7 @@ function dataBlock(value: unknown): string {
   return `<CONTEXT_DATA>${JSON.stringify(value)}</CONTEXT_DATA>`;
 }
 
-const CONCEPT_SOURCE_CONSTRAINTS = `Concept shell/home are static compiler-safe previews. Use no buttons, trusted slots, states, bindings to state, or interaction actions. Root anchors use no route parameters and never target product or collection; route them only to home, search, cart, checkout, or account. IDs and references never cross between shell and home. Root data bindings are limited to store.name, store.logo, and cart.count. Product bindings appear only inside a featured.products repeat. Product anchors inside featured.products require data-cd-param-handle="product.handle". The repeat parent has only data-cd-repeat; set data-cd-repeat="featured.products" on it. Put data-cd-key="product.id" on a descendant and invent no helper data-cd attributes. globalCss must be empty; keep concept styles in shell.css and home.css. Every CSS selector stays away from trusted commerce hosts because concepts contain no slots.`;
+const CONCEPT_SOURCE_CONSTRAINTS = `Concept shell/home are static compiler-safe previews. Use no buttons, trusted slots, states, bindings to state, or interaction actions. Neither shell.html nor home.html may contain the literal <slot tag or data-cd-slot. Root anchors use no route parameters and never target product or collection; route them only to home, search, cart, checkout, or account. IDs and references never cross between shell and home. Root data bindings are limited to store.name, store.logo, and cart.count. Product bindings appear only inside a featured.products repeat. Product anchors inside featured.products require data-cd-param-handle="product.handle". The repeat parent has only data-cd-repeat; set data-cd-repeat="featured.products" on it. Put data-cd-key="product.id" on a descendant and invent no helper data-cd attributes. globalCss must be empty; keep concept styles in shell.css and home.css. In shell.css and home.css, never select any data-cd-* attribute (including [data-cd-key]); style repeat descendants with authored classes. Every CSS selector stays away from trusted commerce hosts because concepts contain no slots.`;
 
 export function conceptPrompt(context: MerchantStorefrontContext, strategy: ConceptStrategy, candidateId: string): string {
   return `Create shell plus home for candidate ${candidateId}. Return the complete candidate object matching the forced schema, never a partial patch. ${STRUCTURAL_CONSTRAINTS[strategy]}
@@ -190,6 +190,7 @@ export function conceptRepairPrompt(
   prior: unknown,
 ): string {
   return `Repair this candidate once for schema/compiler diagnostics. Candidate ID must remain ${candidateId}. Return the complete candidate object matching the forced schema, never a partial patch, even when PRIOR_OUTPUT is null. Keep the same structural strategy (${strategy}); do not replace it with a generic layout.
+Fix DIAGNOSTICS, then re-check the complete candidate against every compiler rule; do not preserve other invalid syntax from PRIOR_OUTPUT.
 ${CONCEPT_SOURCE_CONSTRAINTS}
 DIAGNOSTICS:${diagnostics.slice(0, 4_000)}
 PRIOR_OUTPUT:${JSON.stringify(prior ?? null).slice(0, 80_000)}

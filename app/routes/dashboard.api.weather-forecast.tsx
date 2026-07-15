@@ -10,6 +10,9 @@ import type { WeatherForecastDTO } from "~/lib/weather/types";
 // A 3-day forecast moves at most hourly; don't block every tab paint on an
 // external HTTP round trip. Keyed by point set (merchant locations differ).
 const TTL_MS = 30 * 60 * 1000;
+// Bound the cache: it is keyed by merchant point-set, so left unbounded it accumulates one
+// stale entry per distinct merchant location ever requested, for the whole process lifetime.
+const CACHE_MAX = 500;
 const cache = new Map<string, { at: number; forecasts: Awaited<ReturnType<typeof fetchRegionForecasts>> }>();
 
 async function cachedForecasts(points: ReturnType<typeof forecastPoints>) {
@@ -17,7 +20,15 @@ async function cachedForecasts(points: ReturnType<typeof forecastPoints>) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.forecasts;
   const forecasts = await fetchRegionForecasts(points);
+  // Re-insert at the end (Map preserves insertion order) so a refreshed key counts as recently
+  // used, then evict oldest past the cap.
+  cache.delete(key);
   cache.set(key, { at: Date.now(), forecasts });
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
   return forecasts;
 }
 
