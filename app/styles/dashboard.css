@@ -40,6 +40,7 @@
     0 6px 20px -10px rgba(0, 0, 0, 0.05);
   --shadow-pop: var(--ring), 0 12px 32px -10px rgba(0, 0, 0, 0.14);
   display: flex;
+  position: relative;
   height: 100vh;
   overflow: hidden;
   background: var(--bg);
@@ -95,6 +96,7 @@
     );
     padding: 14px 12px 12px;
     gap: 12px;
+    overflow-x: hidden;
   }
   .cd-side-brand { display: flex; align-items: center; gap: 9px; padding: 1px 8px; cursor: pointer; }
   .cd-logo { width: 32px; height: 32px; display: block; flex-shrink: 0; }
@@ -1972,6 +1974,114 @@
 .cd-acct-mi:hover { background: var(--gray-bg); }
 .cd-acct-mi[data-danger="1"] { color: var(--red); }
 .cd-acct-sep { height: 0.5px; background: var(--hairline); margin: 5px 6px; }
+
+/* ---- storefront focus rail ---- */
+.cd-store-focus-toggle {
+  position: absolute;
+  top: 18px;
+  left: 206px;
+  z-index: 30;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--card-solid);
+  color: var(--text-2);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease;
+}
+.cd-store-focus-toggle:hover {
+  color: var(--text-1);
+  background: color-mix(in oklch, var(--card-solid) 86%, var(--accent));
+  box-shadow: var(--shadow-pop);
+}
+.cd-store-focus-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cd-sidebar[data-compact="1"] { gap: 10px; }
+.cd-sidebar[data-compact="1"] .cd-side-brand {
+  width: 44px;
+  justify-content: center;
+  gap: 0;
+  padding-inline: 6px;
+}
+.cd-sidebar[data-compact="1"] .cd-nav-scroll {
+  width: 52px;
+  align-items: center;
+  margin-inline: 0;
+  padding-inline: 4px;
+}
+.cd-sidebar[data-compact="1"] .cd-sidebar-copy,
+.cd-sidebar[data-compact="1"] .cd-nav-caret,
+.cd-sidebar[data-compact="1"] .cd-acct-body,
+.cd-sidebar[data-compact="1"] .cd-acct-chev {
+  position: absolute;
+  pointer-events: none;
+}
+.cd-sidebar[data-compact="1"] .cd-ask-btn,
+.cd-sidebar[data-compact="1"] .cd-nav-item {
+  position: relative;
+  width: 44px !important;
+  min-width: 44px;
+  min-height: 40px;
+  justify-content: center;
+  gap: 0;
+  margin-inline: 0;
+  padding-left: 0;
+  padding-right: 0 !important;
+}
+.cd-sidebar[data-compact="1"] .cd-nav-sec { width: 44px; }
+.cd-sidebar[data-compact="1"] .cd-nav-group,
+.cd-sidebar[data-compact="1"] .cd-subnav,
+.cd-sidebar[data-compact="1"] .cd-live-row {
+  height: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.cd-sidebar[data-compact="1"] .cd-apswitch { pointer-events: none; }
+.cd-sidebar[data-compact="1"] .cd-nav-count {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  font-size: 9px;
+}
+.cd-sidebar[data-compact="1"] .cd-side-foot,
+.cd-sidebar[data-compact="1"] .cd-side-foot > div {
+  width: 100%;
+  align-items: center;
+}
+.cd-sidebar[data-compact="1"] .cd-acct-wrap {
+  width: 44px;
+  margin-top: 4px;
+  padding: 6px 0 0;
+}
+.cd-sidebar[data-compact="1"] .cd-acct {
+  justify-content: center;
+  gap: 0;
+  padding: 5px;
+}
+.cd-sidebar[data-compact="1"] .cd-acct-menu { display: none; }
+
+@media (max-width: 767px) {
+  .cd-store-focus-toggle { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cd-store-focus-toggle { transition: none; }
+}
 
 /* ---- expandable rail sub-nav ---- */
 /* A section that owns sub-views discloses them indented beneath its parent row,

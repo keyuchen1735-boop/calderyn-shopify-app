@@ -45,6 +45,11 @@ import AssistantPanel from "./AssistantPanel";
 import BugReportButton from "./BugReportButton";
 import ContactButton from "./ContactButton";
 import { parsePath, pathFor, DASHBOARD_BASE } from "./routes";
+import {
+  DASHBOARD_SIDEBAR_WIDTH,
+  STORE_SIDEBAR_COMPACT_WIDTH,
+  shouldCompactStoreSidebar,
+} from "./store-sidebar-focus";
 import ScreenDashboard from "./screens/Dashboard";
 import type { JourneyProgress } from "./screens/HomeJourney";
 import ScreenAlerts from "./screens/Alerts";
@@ -375,6 +380,11 @@ export default function DashboardApp({
   const [bugSignal, setBugSignal] = useState(0);
   // Account chip menu (sidebar foot).
   const [acctOpen, setAcctOpen] = useState(false);
+  // The builder gets a focused canvas by default, with an explicit way to
+  // restore the full rail when the merchant needs navigation context.
+  const [storeSidebarExpanded, setStoreSidebarExpanded] = useState(false);
+  const storeFocus = nav.screen === "storefront";
+  const sidebarCompact = shouldCompactStoreSidebar(nav.screen, storeSidebarExpanded);
 
   const navigate = useCallback(
     (
@@ -466,6 +476,14 @@ export default function DashboardApp({
       window.removeEventListener("pointerdown", onPress);
     };
   }, [acctOpen]);
+
+  useEffect(() => {
+    if (!storeFocus) setStoreSidebarExpanded(false);
+  }, [storeFocus]);
+
+  useEffect(() => {
+    if (sidebarCompact) setAcctOpen(false);
+  }, [sidebarCompact]);
 
   // ----- data state (fetched on mount; client.ts hits /dashboard/api/*) -----
   const [alerts, setAlerts] = useState<AlertVM[]>([]);
@@ -1313,6 +1331,9 @@ export default function DashboardApp({
   // the very first paint (loading into a task shouldn't choreograph) and under
   // prefers-reduced-motion. clearProps drops the transform afterwards so no
   // containing block lingers for fixed/absolute descendants.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const sidebarToggleRef = useRef<HTMLButtonElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const firstScreenPaint = useRef(true);
   useGSAP(
@@ -1329,6 +1350,50 @@ export default function DashboardApp({
       );
     },
     { dependencies: [nav.screen], scope: mainRef },
+  );
+
+  // Storefront focus mode trades the full navigation rail for a quiet icon
+  // strip. GSAP owns the geometry so the canvas grows continuously instead of
+  // jumping; autoAlpha also removes hidden labels from pointer interaction.
+  useGSAP(
+    () => {
+      const sidebar = sidebarRef.current;
+      if (!sidebar) return;
+
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const duration = reducedMotion ? 0 : 0.36;
+      const copy = sidebar.querySelectorAll<HTMLElement>(
+        ".cd-sidebar-copy, .cd-nav-group, .cd-subnav, .cd-apswitch, .cd-live-row, .cd-acct-body, .cd-acct-chev, .cd-nav-caret",
+      );
+
+      gsap.to(sidebar, {
+        width: sidebarCompact ? STORE_SIDEBAR_COMPACT_WIDTH : DASHBOARD_SIDEBAR_WIDTH,
+        paddingLeft: sidebarCompact ? 8 : 12,
+        paddingRight: sidebarCompact ? 8 : 12,
+        duration,
+        ease: "power3.out",
+        overwrite: "auto",
+      });
+      gsap.to(copy, {
+        autoAlpha: sidebarCompact ? 0 : 1,
+        x: sidebarCompact ? -8 : 0,
+        duration: reducedMotion ? 0 : 0.18,
+        ease: "power2.out",
+        overwrite: "auto",
+      });
+
+      if (sidebarToggleRef.current) {
+        gsap.to(sidebarToggleRef.current, {
+          x: sidebarCompact
+            ? -(DASHBOARD_SIDEBAR_WIDTH - STORE_SIDEBAR_COMPACT_WIDTH)
+            : 0,
+          duration,
+          ease: "power3.out",
+          overwrite: "auto",
+        });
+      }
+    },
+    { dependencies: [sidebarCompact, storeFocus], scope: rootRef },
   );
 
   const openCount = alerts.filter((a) => a.status === "open").length;
@@ -1369,10 +1434,11 @@ export default function DashboardApp({
             className="cd-nav-item"
             data-active={activeNav === item.id ? "1" : "0"}
             style={{ width: "100%", paddingRight: 52 }}
+            title={sidebarCompact ? item.label : undefined}
             onClick={() => navigate(item.id)}
           >
             <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-            <span>{item.label}</span>
+            <span className="cd-sidebar-copy">{item.label}</span>
           </button>
           <button
             type="button"
@@ -1412,10 +1478,11 @@ export default function DashboardApp({
             data-active={activeNav === item.id ? "1" : "0"}
             data-expanded={expanded ? "1" : "0"}
             aria-expanded={expanded}
+            title={sidebarCompact ? item.label : undefined}
             onClick={() => navigate(target.screen, null, target.sub)}
           >
             <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-            <span>{item.label}</span>
+            <span className="cd-sidebar-copy">{item.label}</span>
             <CDIcon name="chevronDown" size={15} strokeWidth={2} className="cd-nav-caret" />
           </button>
           {expanded && (
@@ -1443,10 +1510,11 @@ export default function DashboardApp({
         type="button"
         className="cd-nav-item"
         data-active={activeNav === item.id ? "1" : "0"}
+        title={sidebarCompact ? item.label : undefined}
         onClick={() => navigate(item.id)}
       >
         <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-        <span>{item.label}</span>
+        <span className="cd-sidebar-copy">{item.label}</span>
         {item.id === "alerts" && openCount > 0 && (
           <span className="cd-nav-count">{openCount}</span>
         )}
@@ -1455,9 +1523,20 @@ export default function DashboardApp({
   };
 
   return (
-    <div className={"cd-root" + (t.dark ? " cd-dark" : "")} style={vars}>
+    <div
+      ref={rootRef}
+      className={"cd-root" + (t.dark ? " cd-dark" : "")}
+      data-store-focus={storeFocus ? "1" : "0"}
+      style={vars}
+    >
       {/* Sidebar */}
-      <aside className="cd-sidebar" data-screen-label="Sidebar">
+      <aside
+        id="cd-dashboard-sidebar"
+        ref={sidebarRef}
+        className="cd-sidebar"
+        data-compact={sidebarCompact ? "1" : "0"}
+        data-screen-label="Sidebar"
+      >
         <div className="cd-side-brand" onClick={() => navigate("dashboard")}>
           <svg
             className="cd-logo cd-logo-mark"
@@ -1478,7 +1557,7 @@ export default function DashboardApp({
               strokeLinecap="round"
             />
           </svg>
-          <div>
+          <div className="cd-sidebar-copy">
             <div className="cd-brand-name">Calderyn</div>
             <div className="cd-brand-sub">{storeLabel}</div>
           </div>
@@ -1487,10 +1566,11 @@ export default function DashboardApp({
           <button
             type="button"
             className="cd-ask-btn"
+            title={sidebarCompact ? "Ask Calderyn" : undefined}
             onClick={() => setAssistantSignal((n) => n + 1)}
           >
             <CDIcon name="assist" size={18} strokeWidth={1.8} />
-            <span>Ask Calderyn</span>
+            <span className="cd-sidebar-copy">Ask Calderyn</span>
           </button>
           {NAV_GROUPS.map((group) => (
             <div key={group.label} style={{ display: "contents" }}>
@@ -1528,9 +1608,14 @@ export default function DashboardApp({
               type="button"
               className="cd-acct"
               data-open={acctOpen ? "1" : "0"}
-              aria-expanded={acctOpen}
-              aria-haspopup="menu"
-              onClick={() => setAcctOpen((v) => !v)}
+              aria-expanded={sidebarCompact ? undefined : acctOpen}
+              aria-haspopup={sidebarCompact ? undefined : "menu"}
+              aria-label={sidebarCompact ? "Account settings" : undefined}
+              title={sidebarCompact ? "Account settings" : undefined}
+              onClick={() => {
+                if (sidebarCompact) navigate("settings");
+                else setAcctOpen((v) => !v);
+              }}
             >
               <span className="cd-acct-av">{acctInitials || "C"}</span>
               <span className="cd-acct-body">
@@ -1544,6 +1629,25 @@ export default function DashboardApp({
           </div>
         </div>
       </aside>
+
+      {storeFocus && (
+        <button
+          ref={sidebarToggleRef}
+          type="button"
+          className="cd-store-focus-toggle"
+          aria-controls="cd-dashboard-sidebar"
+          aria-expanded={!sidebarCompact}
+          aria-label={sidebarCompact ? "Expand dashboard sidebar" : "Minimize dashboard sidebar"}
+          title={sidebarCompact ? "Expand sidebar" : "Minimize sidebar"}
+          onClick={() => setStoreSidebarExpanded((expanded) => !expanded)}
+        >
+          <CDIcon
+            name={sidebarCompact ? "chevronRight" : "chevronLeft"}
+            size={15}
+            strokeWidth={2.2}
+          />
+        </button>
+      )}
 
       {/* Main */}
       <main id="cd-main" className="cd-main" ref={mainRef}>
