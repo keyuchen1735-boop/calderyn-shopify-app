@@ -2028,16 +2028,31 @@
 .cd-sidebar[data-compact="1"] .cd-ask-btn,
 .cd-sidebar[data-compact="1"] .cd-nav-item {
   position: relative;
-  width: 44px !important;
-  min-width: 44px;
-  min-height: 40px;
+  width: 36px !important;
+  min-width: 36px;
   justify-content: center;
   gap: 0;
   margin-inline: 0;
   padding-left: 0;
   padding-right: 0 !important;
 }
-.cd-sidebar[data-compact="1"] .cd-nav-sec { width: 44px; }
+.cd-sidebar[data-compact="1"] .cd-ask-btn > svg,
+.cd-sidebar[data-compact="1"] .cd-nav-item > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+}
+.cd-sidebar[data-compact="1"] .cd-logo {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+}
+.cd-sidebar[data-compact="1"] .cd-acct-av {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+}
+.cd-sidebar[data-compact="1"] .cd-nav-sec { width: 36px; }
 .cd-sidebar[data-compact="1"] .cd-nav-group,
 .cd-sidebar[data-compact="1"] .cd-subnav,
 .cd-sidebar[data-compact="1"] .cd-live-row {
