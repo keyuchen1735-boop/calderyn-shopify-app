@@ -37,7 +37,7 @@ export interface ExploreConceptsResult {
   repairs: number;
 }
 
-const STRATEGIES: readonly ConceptStrategy[] = ["asymmetric-commerce", "narrative-utility", "spatial-catalog"];
+const STRATEGIES: readonly ConceptStrategy[] = ["asymmetric-commerce"];
 
 function record(value: unknown, field: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${field} must be an object`);
