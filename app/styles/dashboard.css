@@ -6469,6 +6469,15 @@
   display: flex; align-items: center; justify-content: center; padding: 16px;
 }
 .cd-modal-dialog { width: 100%; }
+.cd-modal-dialog > .cd-card {
+  background: var(--card-solid);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow:
+    0 0 0 0.5px var(--hairline-strong),
+    0 24px 72px -24px color-mix(in oklch, black 62%, transparent);
+  isolation: isolate;
+}
 
 /* ============ phone-width layout (≤767px) ============ */
 /* Customer detail: content column beside a 300px meta rail on wide screens,
