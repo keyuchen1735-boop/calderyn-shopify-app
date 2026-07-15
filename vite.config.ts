@@ -3,11 +3,13 @@ import { vercelPreset } from "@vercel/remix/vite";
 import { defineConfig, type UserConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 
-declare module "@remix-run/node" {
-  interface Future {
-    v3_singleFetch: true;
-  }
-}
+export const remixFutureFlags = {
+  v3_fetcherPersist: true,
+  v3_relativeSplatPath: true,
+  v3_throwAbortReason: true,
+  v3_lazyRouteDiscovery: true,
+  v3_routeConfig: true,
+} as const;
 
 const appUrl = new URL(process.env.SHOPIFY_APP_URL || "http://localhost");
 const host = appUrl.hostname;
@@ -64,14 +66,7 @@ export default defineConfig({
     remix({
       ignoredRouteFiles: ["**/.*"],
       presets: [vercelPreset()],
-      future: {
-        v3_fetcherPersist: true,
-        v3_relativeSplatPath: true,
-        v3_throwAbortReason: true,
-        v3_lazyRouteDiscovery: true,
-        v3_singleFetch: true,
-        v3_routeConfig: true,
-      },
+      future: remixFutureFlags,
     }),
     tsconfigPaths(),
   ],

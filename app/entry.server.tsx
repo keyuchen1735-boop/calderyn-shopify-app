@@ -17,12 +17,6 @@ import {
 
 export const streamTimeout = 5000;
 
-export function documentReadyCallbackName(pathname: string, userAgent: string | null) {
-  return pathname.startsWith("/storefront/checkout") || isbot(userAgent ?? "")
-    ? "onAllReady"
-    : "onShellReady";
-}
-
 // Paths that Shopify frames inside the admin (embedded app + OAuth). These must
 // never receive X-Frame-Options or a frame-ancestors 'none' CSP or the iframe
 // stops loading; Shopify supplies their frame-ancestors itself.
@@ -170,7 +164,7 @@ export default async function handleRequest(
   addDocumentResponseHeaders(request, responseHeaders);
   applySecurityHeaders(responseHeaders, pathname, storefrontNonce);
   const userAgent = request.headers.get("user-agent");
-  const callbackName = documentReadyCallbackName(pathname, userAgent);
+  const callbackName = isbot(userAgent ?? "") ? "onAllReady" : "onShellReady";
 
   return new Promise((resolve, reject) => {
     const { pipe, abort } = renderToPipeableStream(
