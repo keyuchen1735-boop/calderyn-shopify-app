@@ -1,10 +1,9 @@
-import { useRef, useState } from "react";
-import gsap from "gsap";
-import { useGSAP } from "@gsap/react";
+import { useState } from "react";
 import { Btn } from "../ui";
-import { CDIcon } from "../icons";
-import { reduced } from "../hero/hero-motion";
-import type { OrderViewVM, OrdersListParams } from "~/lib/dashboard/orders-client";
+import type {
+  OrderViewVM,
+  OrdersListParams,
+} from "~/lib/dashboard/orders-client";
 import {
   SYSTEM_VIEWS,
   localDayEndIso,
@@ -12,8 +11,12 @@ import {
   pinnedDimension,
   type ListFilterPatch,
 } from "./orders-list-state";
+import { OrderListToolbar, type OrderListView } from "./OrderListFamily";
 
-const SORT_OPTIONS: { value: NonNullable<OrdersListParams["sort"]>; label: string }[] = [
+const SORT_OPTIONS: {
+  value: NonNullable<OrdersListParams["sort"]>;
+  label: string;
+}[] = [
   { value: "date", label: "Date" },
   { value: "total", label: "Total" },
   { value: "customer", label: "Customer" },
@@ -31,14 +34,20 @@ const PAYMENT_STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "refunded", label: "Refunded" },
 ];
 
-const FULFILLMENT_STATUS_OPTIONS: { value: NonNullable<OrdersListParams["fulfillmentStatus"]> | ""; label: string }[] = [
+const FULFILLMENT_STATUS_OPTIONS: {
+  value: NonNullable<OrdersListParams["fulfillmentStatus"]> | "";
+  label: string;
+}[] = [
   { value: "", label: "Any" },
   { value: "unfulfilled", label: "Unfulfilled" },
   { value: "partially_fulfilled", label: "Partially fulfilled" },
   { value: "fulfilled", label: "Fulfilled" },
 ];
 
-const SOURCE_OPTIONS: { value: NonNullable<OrdersListParams["source"]> | ""; label: string }[] = [
+const SOURCE_OPTIONS: {
+  value: NonNullable<OrdersListParams["source"]> | "";
+  label: string;
+}[] = [
   { value: "", label: "All sources" },
   { value: "calderyn", label: "Calderyn" },
   { value: "shopify", label: "Shopify" },
@@ -96,7 +105,6 @@ export default function OrdersToolbar({
 }) {
   const [savingName, setSavingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
-  const [filtersOpen, setFiltersOpen] = useState(false);
 
   // A system tab that pins a filter dimension (Unfulfilled -> fulfillmentStatus, Unpaid ->
   // paymentStatus) already wins that dimension in stateToParams regardless of what's picked here —
@@ -113,59 +121,6 @@ export default function OrdersToolbar({
     (source ? 1 : 0) +
     (dateFrom || dateTo ? 1 : 0);
 
-  const filterPanelRef = useRef<HTMLDivElement>(null);
-  const filterPanelWasOpen = useRef(false);
-  useGSAP(
-    () => {
-      const el = filterPanelRef.current;
-      if (!el) return;
-      const inner = el.firstElementChild as HTMLElement | null;
-      const was = filterPanelWasOpen.current;
-      filterPanelWasOpen.current = filtersOpen;
-      if (reduced()) {
-        el.style.height = filtersOpen ? "auto" : "0px";
-        el.style.opacity = filtersOpen ? "1" : "0";
-        return;
-      }
-      if (was === filtersOpen) {
-        // First paint (or a no-op re-render): land directly on the resting state, no tween.
-        el.style.height = filtersOpen ? "auto" : "0px";
-        el.style.opacity = filtersOpen ? "1" : "0";
-        return;
-      }
-      const full = inner ? inner.offsetHeight : el.scrollHeight;
-      if (filtersOpen) {
-        gsap.set(el, { height: 0, opacity: 0, y: -4, willChange: "height,transform,opacity" });
-        gsap.to(el, {
-          height: full,
-          opacity: 1,
-          y: 0,
-          duration: 0.22,
-          ease: "power2.out",
-          onComplete: () => {
-            el.style.height = "auto";
-            el.style.removeProperty("transform");
-            el.style.removeProperty("will-change");
-          },
-        });
-      } else {
-        gsap.set(el, { willChange: "height,transform,opacity" });
-        gsap.to(el, {
-          height: 0,
-          opacity: 0,
-          y: -4,
-          duration: 0.16,
-          ease: "power2.in",
-          onComplete: () => {
-            el.style.removeProperty("transform");
-            el.style.removeProperty("will-change");
-          },
-        });
-      }
-    },
-    { dependencies: [filtersOpen] },
-  );
-
   const confirmSave = () => {
     const name = nameInput.trim();
     if (!name) return;
@@ -174,170 +129,103 @@ export default function OrdersToolbar({
     setSavingName(false);
   };
 
-  return (
-    <div className="cd-orders-toolbar">
-      <div className="cd-orders-view-row flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-        <div className="cd-seg cd-seg-sm" role="tablist" aria-label="Order views">
-          {SYSTEM_VIEWS.map((v) => (
-            <button
-              key={v.id}
-              type="button"
-              role="tab"
-              aria-selected={view === v.id}
-              className="cd-seg-btn"
-              data-active={view === v.id ? "1" : "0"}
-              onClick={() => onViewChange(v.id)}
-            >
-              {v.label}
-            </button>
-          ))}
-          {savedViews.map((v) => (
-            <span
-              key={v.id}
-              className="cd-seg-btn cd-orders-saved-view"
-              data-active={view === v.id ? "1" : "0"}
-              role="tab"
-              aria-selected={view === v.id}
-              tabIndex={0}
-              onClick={() => onViewChange(v.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") onViewChange(v.id);
-              }}
-            >
-              {v.name}
-              <button
-                type="button"
-                aria-label={`Delete view ${v.name}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteView(v.id);
-                }}
-                className="cd-orders-saved-view-x"
-              >
-                <CDIcon name="x" size={11} strokeWidth={2} />
-              </button>
-            </span>
-          ))}
-        </div>
+  const listViews: OrderListView[] = [
+    ...SYSTEM_VIEWS,
+    ...savedViews.map((saved) => ({
+      id: saved.id,
+      label: saved.name,
+    })),
+  ];
+  const activeSavedView = savedViews.find((saved) => saved.id === view);
 
-        {canSaveView && !savingName && (
-          <Btn small icon="plus" onClick={() => setSavingName(true)}>
-            Save view
-          </Btn>
-        )}
-        {savingName && (
-          <div className="flex items-center gap-2">
-            <input
-              className="cd-input"
-              autoFocus
-              placeholder="View name"
-              aria-label="New view name"
-              value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") confirmSave();
-                if (e.key === "Escape") {
-                  setSavingName(false);
-                  setNameInput("");
-                }
-              }}
-              style={{ width: 160 }}
-            />
-            <Btn small kind="primary" onClick={confirmSave} disabled={!nameInput.trim()}>
-              Save
-            </Btn>
-            <Btn
-              small
-              onClick={() => {
+  const viewExtras = (
+    <>
+      {activeSavedView && (
+        <Btn small onClick={() => onDeleteView(activeSavedView.id)}>
+          Delete view
+        </Btn>
+      )}
+      {canSaveView && !savingName && (
+        <Btn small icon="plus" onClick={() => setSavingName(true)}>
+          Save view
+        </Btn>
+      )}
+      {savingName && (
+        <div className="cd-orders-save-view">
+          <input
+            className="cd-input"
+            autoFocus
+            placeholder="View name"
+            aria-label="New view name"
+            value={nameInput}
+            onChange={(event) => setNameInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") confirmSave();
+              if (event.key === "Escape") {
                 setSavingName(false);
                 setNameInput("");
-              }}
-            >
-              Cancel
-            </Btn>
-          </div>
-        )}
-      </div>
-
-      <div className="cd-orders-toolbar-row">
-        <div className="flex items-center gap-2" style={{ flex: "1 1 auto", minWidth: 0, flexWrap: "wrap" }}>
-          <div className="cd-orders-search">
-            <CDIcon name="search" size={14} strokeWidth={1.8} />
-            <input
-              type="text"
-              placeholder="Search orders"
-              aria-label="Search orders"
-              value={searchInput}
-              onChange={(e) => onSearchInputChange(e.target.value)}
-            />
-            {searchInput && (
-              <button
-                type="button"
-                className="cd-orders-search-clear"
-                aria-label="Clear order search"
-                onClick={() => onSearchInputChange("")}
-              >
-                <CDIcon name="x" size={12} strokeWidth={2} />
-              </button>
-            )}
-          </div>
-          <button
-            type="button"
-            className="cd-btn cd-btn-secondary cd-btn-sm cd-orders-filter-toggle"
-            aria-expanded={filtersOpen}
-            aria-controls="orders-filter-panel"
-            onClick={() => setFiltersOpen((v) => !v)}
-          >
-            <CDIcon name="sliders" size={14} strokeWidth={1.9} />
-            Filters
-            {activeFilterCount > 0 && <span className="cd-orders-filter-count">{activeFilterCount}</span>}
-            <CDIcon name="chevronDown" size={13} className="cd-orders-filter-chevron" />
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
-          <select
-            className="cd-input cd-orders-sort"
-            aria-label="Sort by"
-            value={sort ?? "date"}
-            onChange={(e) => onSortChange(e.target.value as OrdersListParams["sort"])}
-          >
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
+              }
+            }}
+          />
           <Btn
             small
-            className="cd-btn-icon"
-            icon={dir === "asc" ? "arrowUp" : "arrowDown"}
-            ariaLabel={dir === "asc" ? "Sort ascending" : "Sort descending"}
-            onClick={() => onDirChange(dir === "asc" ? "desc" : "asc")}
+            kind="primary"
+            onClick={confirmSave}
+            disabled={!nameInput.trim()}
           >
-            {""}
+            Save
           </Btn>
-          <Btn small icon="download" onClick={() => window.open(exportHref, "_blank")}>
-            Export
+          <Btn
+            small
+            onClick={() => {
+              setSavingName(false);
+              setNameInput("");
+            }}
+          >
+            Cancel
           </Btn>
         </div>
-      </div>
+      )}
+    </>
+  );
 
-      <div
-        id="orders-filter-panel"
-        ref={filterPanelRef}
-        className="cd-orders-filter-panel"
-        role="region"
-        aria-label="Order filters"
-      >
-        <div className="cd-orders-filter-panel-inner flex items-center gap-2.5" style={{ flexWrap: "wrap" }}>
+  return (
+    <OrderListToolbar
+      views={listViews}
+      view={view}
+      onViewChange={onViewChange}
+      viewExtras={viewExtras}
+      searchValue={searchInput}
+      searchPlaceholder="Search orders"
+      searchAriaLabel="Search orders"
+      onSearchChange={onSearchInputChange}
+      sortOptions={SORT_OPTIONS}
+      sort={sort ?? "date"}
+      dir={dir ?? "desc"}
+      onSortChange={(next) => onSortChange(next as OrdersListParams["sort"])}
+      onDirChange={onDirChange}
+      activeFilterCount={activeFilterCount}
+      filterLabel="Order"
+      onExport={() => window.open(exportHref, "_blank")}
+      filterChildren={
+        <div className="cd-orders-filter-fields">
           <select
             className="cd-input"
             aria-label="Payment status"
             disabled={pinned === "paymentStatus"}
-            title={pinned === "paymentStatus" ? "Set by the current view tab" : undefined}
-            value={pinned === "paymentStatus" ? "unpaid" : (paymentStatus?.[0] ?? "")}
-            onChange={(e) => onFilterChange({ paymentStatus: e.target.value ? [e.target.value] : undefined })}
+            title={
+              pinned === "paymentStatus"
+                ? "Set by the current view tab"
+                : undefined
+            }
+            value={
+              pinned === "paymentStatus" ? "unpaid" : (paymentStatus?.[0] ?? "")
+            }
+            onChange={(e) =>
+              onFilterChange({
+                paymentStatus: e.target.value ? [e.target.value] : undefined,
+              })
+            }
             style={{ width: "auto" }}
           >
             {pinned === "paymentStatus" ? (
@@ -359,10 +247,15 @@ export default function OrdersToolbar({
                 ? "Set by the current view tab"
                 : "Shopify-imported orders are excluded when this filter is set"
             }
-            value={pinned === "fulfillmentStatus" ? "unfulfilled" : (fulfillmentStatus ?? "")}
+            value={
+              pinned === "fulfillmentStatus"
+                ? "unfulfilled"
+                : (fulfillmentStatus ?? "")
+            }
             onChange={(e) =>
               onFilterChange({
-                fulfillmentStatus: (e.target.value || undefined) as OrdersListParams["fulfillmentStatus"],
+                fulfillmentStatus: (e.target.value ||
+                  undefined) as OrdersListParams["fulfillmentStatus"],
               })
             }
             style={{ width: "auto" }}
@@ -378,7 +271,10 @@ export default function OrdersToolbar({
             aria-label="Order source"
             value={source ?? ""}
             onChange={(e) =>
-              onFilterChange({ source: (e.target.value || undefined) as OrdersListParams["source"] })
+              onFilterChange({
+                source: (e.target.value ||
+                  undefined) as OrdersListParams["source"],
+              })
             }
             style={{ width: "auto" }}
           >
@@ -394,7 +290,13 @@ export default function OrdersToolbar({
               type="date"
               aria-label="Date from"
               value={isoToDateInputValue(dateFrom)}
-              onChange={(e) => onFilterChange({ dateFrom: e.target.value ? localDayStartIso(e.target.value) : undefined })}
+              onChange={(e) =>
+                onFilterChange({
+                  dateFrom: e.target.value
+                    ? localDayStartIso(e.target.value)
+                    : undefined,
+                })
+              }
               style={{ width: "auto" }}
             />
             <span className="cd-caption">to</span>
@@ -403,13 +305,18 @@ export default function OrdersToolbar({
               type="date"
               aria-label="Date to"
               value={isoToDateInputValue(dateTo)}
-              onChange={(e) => onFilterChange({ dateTo: e.target.value ? localDayEndIso(e.target.value) : undefined })}
+              onChange={(e) =>
+                onFilterChange({
+                  dateTo: e.target.value
+                    ? localDayEndIso(e.target.value)
+                    : undefined,
+                })
+              }
               style={{ width: "auto" }}
             />
           </div>
         </div>
-      </div>
-
-    </div>
+      }
+    />
   );
 }

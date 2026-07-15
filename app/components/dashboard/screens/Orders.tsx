@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import { Btn, Card, Pan, Placeholder, TableSkeleton } from "../ui";
+import { Btn, Card } from "../ui";
 import { money, timeAgo } from "../format";
 import { reduced } from "../hero/hero-motion";
 import { DashboardApiError } from "~/lib/dashboard/client";
@@ -24,14 +24,30 @@ import {
   type UnifiedOrderRow,
   type UnifiedOrdersPage,
 } from "~/lib/dashboard/orders-client";
-import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
+import {
+  cacheScreenData,
+  cachedScreenData,
+  SCREEN_CACHE_KEYS,
+} from "~/lib/dashboard/screen-cache";
 import type { DashboardCtx } from "../context";
 import RefundModal from "./RefundModal";
 import OrderDetailScreen from "./OrderDetail";
 import OrderComposer from "./OrderComposer";
 import OrdersToolbar from "./OrdersToolbar";
+import OrderSubLists, { type OrderSubSection } from "./OrderSubLists";
+import {
+  OrderBulkBar,
+  OrderListPagination,
+  OrderListTable,
+} from "./OrderListFamily";
 import { CDIcon } from "../icons";
-import { fulfillmentBadge, isStuckUnfulfilled, paymentPillStyle, REFUNDABLE_ORDER_STATES, stuckDays } from "./order-status";
+import {
+  fulfillmentBadge,
+  isStuckUnfulfilled,
+  paymentPillStyle,
+  REFUNDABLE_ORDER_STATES,
+  stuckDays,
+} from "./order-status";
 import { isPrefillParam } from "./order-composer-prefill";
 import {
   isSystemView,
@@ -43,18 +59,32 @@ import {
 } from "./orders-list-state";
 
 const ORDER_SECTION_META: Record<string, { title: string; sub: string }> = {
-  orders: { title: "Orders", sub: "Storefront and Shopify orders, in one place." },
-  labels: { title: "Shipping charges", sub: "Shipping costs matched to their orders." },
+  orders: {
+    title: "Orders",
+    sub: "Storefront and Shopify orders, in one place.",
+  },
+  labels: {
+    title: "Shipping charges",
+    sub: "Shipping costs matched to their orders.",
+  },
   drafts: { title: "Draft carts", sub: "Customer carts still in progress." },
-  abandoned: { title: "Abandoned checkouts", sub: "Checkouts ready for recovery." },
+  abandoned: {
+    title: "Abandoned checkouts",
+    sub: "Checkouts ready for recovery.",
+  },
 };
 
-const ORDER_TABLE_COLUMNS = "36px 112px minmax(190px, 1.5fr) 96px 88px 112px 132px 88px";
+const ORDER_TABLE_COLUMNS =
+  "36px 112px minmax(190px, 1.5fr) 96px 88px 112px 132px 88px";
 
 function PaymentPill({ status }: { status: string }) {
   const s = paymentPillStyle(status);
   const active = status === "paid" || status === "authorized";
-  return <span className={`cd-badge${active ? " cd-order-badge-live" : ""}`}>{s.label}</span>;
+  return (
+    <span className={`cd-badge${active ? " cd-order-badge-live" : ""}`}>
+      {s.label}
+    </span>
+  );
 }
 
 // One display row across both origins: native Calderyn orders and migrated
@@ -131,6 +161,7 @@ function UnifiedOrdersList({
   onToggleAll,
   allSelected,
   anySelectable,
+  error,
 }: {
   rows: DisplayOrder[] | null;
   loading: boolean;
@@ -142,76 +173,69 @@ function UnifiedOrdersList({
   onToggleAll: () => void;
   allSelected: boolean;
   anySelectable: boolean;
+  error: string | null;
 }) {
-  if (rows == null) {
-    return (
-      <div className="cd-orders-table">
-        {loading ? (
-          <TableSkeleton />
-        ) : (
-          <Placeholder
-            icon="doc"
-            title="Orders unavailable"
-            sub="Could not load orders just now. Refresh to try again."
-          />
-        )}
-      </div>
-    );
-  }
-
-  if (rows.length === 0) {
-    return (
-      <div className="cd-orders-table">
-        <Placeholder
-          icon="doc"
-          title={isDefaultView ? "No orders yet" : "No orders match this view."}
-          sub={
-            isDefaultView
-              ? "Orders from your storefront and from AI shopping assistants land here."
-              : "Try a different search, tab, or clear your filters."
-          }
-        />
-      </div>
-    );
-  }
-
+  const resolvedRows = rows ?? [];
   const cols = ORDER_TABLE_COLUMNS;
   return (
-    <div className="cd-orders-table">
-      <Pan min={880}>
-      <div className="cd-tablehd" style={{ gridTemplateColumns: cols }}>
-        <span>
-          {anySelectable && (
-            <input
-              type="checkbox"
-              checked={allSelected}
-              onChange={onToggleAll}
-              aria-label="Select all orders on this page"
-            />
-          )}
-        </span>
-        <span>Order</span>
-        <span>Customer</span>
-        <span style={{ textAlign: "right" }}>Total</span>
-        <span>Date</span>
-        <span>Payment</span>
-        <span>Fulfillment</span>
-        <span />
-      </div>
-      {rows.map((r) => {
-        const refundable = r.refundRow && REFUNDABLE_ORDER_STATES.has(r.state) ? r.refundRow : null;
-        const fulfillment = r.source === "calderyn" ? fulfillmentBadge(r.state, r.cancelledAt) : null;
+    <OrderListTable
+      loading={loading}
+      error={error}
+      empty={resolvedRows.length === 0}
+      filtered={!isDefaultView}
+      minWidth={880}
+      columns={cols}
+      emptyIcon="doc"
+      emptyTitle="No orders yet"
+      filteredTitle="No orders match this view"
+      headers={
+        <>
+          <span>
+            {anySelectable && (
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={onToggleAll}
+                aria-label="Select all orders on this page"
+              />
+            )}
+          </span>
+          <span>Order</span>
+          <span>Customer</span>
+          <span style={{ textAlign: "right" }}>Total</span>
+          <span>Date</span>
+          <span>Payment</span>
+          <span>Fulfillment</span>
+          <span />
+        </>
+      }
+    >
+      {resolvedRows.map((r) => {
+        const refundable =
+          r.refundRow && REFUNDABLE_ORDER_STATES.has(r.state)
+            ? r.refundRow
+            : null;
+        const fulfillment =
+          r.source === "calderyn"
+            ? fulfillmentBadge(r.state, r.cancelledAt)
+            : null;
         // Stuck-unfulfilled badge: native orders only, paid > 3 days with nothing shipped.
         const now = Date.now();
-        const stuck = r.source === "calderyn" && r.createdAt ? isStuckUnfulfilled(r.state, r.createdAt, now) : false;
-        const stuckN = stuck && r.createdAt ? stuckDays(r.createdAt, now) : null;
+        const stuck =
+          r.source === "calderyn" && r.createdAt
+            ? isStuckUnfulfilled(r.state, r.createdAt, now)
+            : false;
+        const stuckN =
+          stuck && r.createdAt ? stuckDays(r.createdAt, now) : null;
         const open = () => onOpen(displayOrderSourceId(r));
         const selectableId = r.source === "calderyn" ? r.id : null;
         return (
           <div
             key={`${r.source}:${r.id}`}
             className="cd-trow cd-order-row"
-            data-selected={selectableId && selected.has(selectableId) ? "1" : "0"}
+            data-selected={
+              selectableId && selected.has(selectableId) ? "1" : "0"
+            }
             style={{ gridTemplateColumns: cols, cursor: "pointer" }}
             role="button"
             tabIndex={0}
@@ -238,21 +262,38 @@ function UnifiedOrdersList({
               )}
             </div>
             <div className="cd-order-ref-cell">
-              <span className="cd-row-title tabular-nums truncate">{r.ref}</span>
-              {r.source === "shopify" && <span className="cd-order-source-label">Shopify</span>}
+              <span className="cd-row-title tabular-nums truncate">
+                {r.ref}
+              </span>
+              {r.source === "shopify" && (
+                <span className="cd-order-source-label">Shopify</span>
+              )}
             </div>
-            <div className="truncate">{r.customer ?? (r.source === "shopify" ? "" : "Guest")}</div>
-            <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
+            <div className="truncate">
+              {r.customer ?? (r.source === "shopify" ? "" : "Guest")}
+            </div>
+            <div
+              className="cd-row-num tabular-nums"
+              style={{ textAlign: "right" }}
+            >
               {money(r.totalCents, r.currency)}
             </div>
-            <div className="cd-caption">{r.createdAt ? timeAgo(r.createdAt) : ""}</div>
+            <div className="cd-caption">
+              {r.createdAt ? timeAgo(r.createdAt) : ""}
+            </div>
             <div>
               <PaymentPill status={r.financialStatus} />
             </div>
-            <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap" }}>
+            <div
+              className="flex items-center"
+              style={{ gap: 6, flexWrap: "wrap" }}
+            >
               {fulfillment && (
-                <span className={`cd-badge${stuckN != null ? " cd-order-badge-live" : ""}`}>
-                  {fulfillment.label}{stuckN != null ? ` · ${stuckN}d` : ""}
+                <span
+                  className={`cd-badge${stuckN != null ? " cd-order-badge-live" : ""}`}
+                >
+                  {fulfillment.label}
+                  {stuckN != null ? ` · ${stuckN}d` : ""}
                 </span>
               )}
             </div>
@@ -265,14 +306,17 @@ function UnifiedOrdersList({
                   Refund
                 </Btn>
               ) : (
-                <CDIcon name="chevronRight" size={15} className="cd-order-row-chevron" />
+                <CDIcon
+                  name="chevronRight"
+                  size={15}
+                  className="cd-order-row-chevron"
+                />
               )}
             </div>
           </div>
         );
       })}
-      </Pan>
-    </div>
+    </OrderListTable>
   );
 }
 
@@ -283,12 +327,14 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     cachedScreenData<OrdersPage>(SCREEN_CACHE_KEYS.orders),
   );
   const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState<string | null>(null);
   const [refundOrder, setRefundOrder] = useState<OrderRow | null>(null);
   const toast = app.toast;
 
   const load = useCallback(
     (signal?: { alive: boolean }) => {
       setLoading(true);
+      setPageError(null);
       fetchOrdersPage()
         .then((p) => {
           cacheScreenData(SCREEN_CACHE_KEYS.orders, p);
@@ -296,7 +342,11 @@ export default function Orders({ app }: { app: DashboardCtx }) {
         })
         .catch((err: unknown) => {
           if (signal && !signal.alive) return;
-          const msg = err instanceof DashboardApiError ? err.message : "Could not load orders.";
+          const msg =
+            err instanceof DashboardApiError
+              ? err.message
+              : "Could not load orders.";
+          setPageError(msg);
           toast(msg, "warn", "critical");
         })
         .finally(() => {
@@ -324,10 +374,12 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   });
   const [searchInput, setSearchInput] = useState("");
   const [savedViews, setSavedViews] = useState<OrderViewVM[]>([]);
-  const [ordersListPage, setOrdersListPage] = useState<UnifiedOrdersPage | null>(() =>
-    cachedScreenData<UnifiedOrdersPage>(SCREEN_CACHE_KEYS.ordersList),
-  );
+  const [ordersListPage, setOrdersListPage] =
+    useState<UnifiedOrdersPage | null>(() =>
+      cachedScreenData<UnifiedOrdersPage>(SCREEN_CACHE_KEYS.ordersList),
+    );
   const [ordersListLoading, setOrdersListLoading] = useState(true);
+  const [ordersListError, setOrdersListError] = useState<string | null>(null);
 
   // Debounce the search box so each keystroke doesn't fire a request; every effective search
   // change resets to page 1 (see the offset reset below).
@@ -390,8 +442,13 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   const canSaveView = !isPlainSystemTab;
 
   const loadOrdersList = useCallback(
-    (params: OrdersListParams, isDefault: boolean, signal?: { alive: boolean }) => {
+    (
+      params: OrdersListParams,
+      isDefault: boolean,
+      signal?: { alive: boolean },
+    ) => {
       setOrdersListLoading(true);
+      setOrdersListError(null);
       fetchOrdersList(params)
         .then((p) => {
           if (isDefault) cacheScreenData(SCREEN_CACHE_KEYS.ordersList, p);
@@ -404,12 +461,19 @@ export default function Orders({ app }: { app: DashboardCtx }) {
           // only fires when we're actually past the first page, so a genuinely empty view (offset
           // already 0) can't loop.
           if (p.rows.length === 0 && p.offset > 0) {
-            setState((s) => ({ ...s, offset: Math.max(0, p.offset - p.limit) }));
+            setState((s) => ({
+              ...s,
+              offset: Math.max(0, p.offset - p.limit),
+            }));
           }
         })
         .catch((err: unknown) => {
           if (signal && !signal.alive) return;
-          const msg = err instanceof DashboardApiError ? err.message : "Could not load orders.";
+          const msg =
+            err instanceof DashboardApiError
+              ? err.message
+              : "Could not load orders.";
+          setOrdersListError(msg);
           toast(msg, "warn", "critical");
         })
         .finally(() => {
@@ -429,7 +493,10 @@ export default function Orders({ app }: { app: DashboardCtx }) {
 
   // Latest resolved filters, readable from the (rare-firing) back-from-detail effect below without
   // making that effect re-run on every keystroke/filter change.
-  const listParamsRef = useRef({ params: effectiveParams, isDefault: isDefaultView });
+  const listParamsRef = useRef({
+    params: effectiveParams,
+    isDefault: isDefaultView,
+  });
   listParamsRef.current = { params: effectiveParams, isDefault: isDefaultView };
 
   const selectView = useCallback(
@@ -481,7 +548,13 @@ export default function Orders({ app }: { app: DashboardCtx }) {
         setSavedViews((vs) => [...vs, view]);
         toast(`Saved view "${view.name}".`, "check", "success");
       } catch (err) {
-        toast(err instanceof DashboardApiError ? err.message : "Couldn't save this view.", "warn", "critical");
+        toast(
+          err instanceof DashboardApiError
+            ? err.message
+            : "Couldn't save this view.",
+          "warn",
+          "critical",
+        );
       }
     },
     [effectiveParams, toast],
@@ -495,19 +568,30 @@ export default function Orders({ app }: { app: DashboardCtx }) {
         setState((s) => (s.view === id ? { ...s, view: "all", offset: 0 } : s));
         toast("View deleted.", "check", "success");
       } catch (err) {
-        toast(err instanceof DashboardApiError ? err.message : "Couldn't delete this view.", "warn", "critical");
+        toast(
+          err instanceof DashboardApiError
+            ? err.message
+            : "Couldn't delete this view.",
+          "warn",
+          "critical",
+        );
       }
     },
     [toast],
   );
 
   const exportHref = useMemo(() => {
-    const qs = ordersListParamsToQueryString({ ...effectiveParams, offset: undefined, limit: undefined });
+    const qs = ordersListParamsToQueryString({
+      ...effectiveParams,
+      offset: undefined,
+      limit: undefined,
+    });
     return `/dashboard/api/orders/export${qs ? `?${qs}` : ""}`;
   }, [effectiveParams]);
 
   const displayRows = useMemo(
-    () => (ordersListPage ? ordersListPage.rows.map(unifiedRowToDisplayOrder) : null),
+    () =>
+      ordersListPage ? ordersListPage.rows.map(unifiedRowToDisplayOrder) : null,
     [ordersListPage],
   );
 
@@ -517,7 +601,13 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   const listRef = useRef<HTMLDivElement>(null);
   useGSAP(
     () => {
-      if (reduced() || !displayRows || displayRows.length === 0 || !listRef.current) return;
+      if (
+        reduced() ||
+        !displayRows ||
+        displayRows.length === 0 ||
+        !listRef.current
+      )
+        return;
       const rows = listRef.current.querySelectorAll<HTMLElement>(".cd-trow");
       if (!rows.length) return;
       gsap.from(rows, {
@@ -532,31 +622,17 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     { dependencies: [ordersListPage] },
   );
 
-  // A very quick fade on the "Showing X-Y of N" summary when the range or total changes — a small
-  // acknowledgement that the count just moved, never a count-up (money/counts here are exact, not
-  // animated toward).
-  const pageSummaryRef = useRef<HTMLSpanElement>(null);
-  const pageSummaryKey = ordersListPage
-    ? `${ordersListPage.offset}:${ordersListPage.rows.length}:${ordersListPage.totalCount}`
-    : null;
-  const pageSummarySeen = useRef<string | null>(null);
-  useGSAP(
-    () => {
-      const prev = pageSummarySeen.current;
-      pageSummarySeen.current = pageSummaryKey;
-      if (reduced() || !pageSummaryKey || prev === null || prev === pageSummaryKey || !pageSummaryRef.current) return;
-      gsap.fromTo(pageSummaryRef.current, { opacity: 0.35 }, { opacity: 1, duration: 0.2, ease: "power1.out" });
-    },
-    { dependencies: [pageSummaryKey] },
-  );
-
   const selectableIds = useMemo(
-    () => (displayRows ?? []).filter((r) => r.source === "calderyn").map((r) => r.id),
+    () =>
+      (displayRows ?? [])
+        .filter((r) => r.source === "calderyn")
+        .map((r) => r.id),
     [displayRows],
   );
   const refById = useMemo(() => {
     const m = new Map<string, string>();
-    for (const r of displayRows ?? []) if (r.source === "calderyn") m.set(r.id, r.ref);
+    for (const r of displayRows ?? [])
+      if (r.source === "calderyn") m.set(r.id, r.ref);
     return m;
   }, [displayRows]);
 
@@ -565,43 +641,8 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     setSelected(new Set());
   }, [ordersListPage]);
 
-  // Bulk bar slide/fade: kept mounted for the duration of its exit tween rather than vanishing the
-  // instant the selection clears, so "out" is an actual animation and not a instant unmount. The
-  // `bulkMounted && !hasSelection` bail-out below is the standard React "adjust state while
-  // rendering" pattern — it commits mount and hasSelection together in one paint, so the entrance
-  // tween's ref is never null on the frame it's meant to run.
-  const hasSelection = selected.size > 0;
-  const [bulkMounted, setBulkMounted] = useState(false);
-  if (hasSelection && !bulkMounted) setBulkMounted(true);
-  const bulkBarRef = useRef<HTMLDivElement>(null);
-  const bulkWasOpen = useRef(false);
-  useGSAP(
-    () => {
-      const el = bulkBarRef.current;
-      if (!el) return;
-      const was = bulkWasOpen.current;
-      bulkWasOpen.current = hasSelection;
-      if (reduced()) {
-        if (!hasSelection) setBulkMounted(false);
-        return;
-      }
-      if (was === hasSelection) return;
-      if (hasSelection) {
-        gsap.fromTo(el, { autoAlpha: 0, y: -8 }, { autoAlpha: 1, y: 0, duration: 0.25, ease: "power2.out" });
-      } else {
-        gsap.to(el, {
-          autoAlpha: 0,
-          y: -8,
-          duration: 0.18,
-          ease: "power2.in",
-          onComplete: () => setBulkMounted(false),
-        });
-      }
-    },
-    { dependencies: [hasSelection] },
-  );
-
-  const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+  const allSelected =
+    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
 
   const toggleRow = useCallback((id: string) => {
     setSelected((prev) => {
@@ -614,7 +655,8 @@ export default function Orders({ app }: { app: DashboardCtx }) {
 
   const toggleAll = useCallback(() => {
     setSelected((prev) => {
-      const allOn = selectableIds.length > 0 && selectableIds.every((id) => prev.has(id));
+      const allOn =
+        selectableIds.length > 0 && selectableIds.every((id) => prev.has(id));
       return new Set(allOn ? [] : selectableIds);
     });
   }, [selectableIds]);
@@ -634,9 +676,15 @@ export default function Orders({ app }: { app: DashboardCtx }) {
         toast(`${ok.length} ${verb}.`, "check", "success");
         return;
       }
-      toast(`${ok.length} of ${results.length} ${verb}. ${failed.length} failed.`, "warn", "critical");
+      toast(
+        `${ok.length} of ${results.length} ${verb}. ${failed.length} failed.`,
+        "warn",
+        "critical",
+      );
       if (failed.length <= 3) {
-        const refs = failed.map((f) => refById.get(f.orderId) ?? f.orderId).join(", ");
+        const refs = failed
+          .map((f) => refById.get(f.orderId) ?? f.orderId)
+          .join(", ");
         toast(`Failed: ${refs}`, "warn", "critical");
       } else {
         toast("Check the orders.", "warn", "critical");
@@ -651,11 +699,21 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     if (!window.confirm(`Mark ${ids.length} orders fulfilled?`)) return;
     setBulkBusy(true);
     try {
-      const { results } = await bulkFulfillOrders(ids, notifyOnFulfill, crypto.randomUUID());
+      const { results } = await bulkFulfillOrders(
+        ids,
+        notifyOnFulfill,
+        crypto.randomUUID(),
+      );
       summarizeBulk(results, "fulfilled");
       loadOrdersList(effectiveParams, isDefaultView);
     } catch (err) {
-      toast(err instanceof DashboardApiError ? err.message : "Couldn't fulfill these orders.", "warn", "critical");
+      toast(
+        err instanceof DashboardApiError
+          ? err.message
+          : "Couldn't fulfill these orders.",
+        "warn",
+        "critical",
+      );
     } finally {
       setBulkBusy(false);
     }
@@ -670,7 +728,13 @@ export default function Orders({ app }: { app: DashboardCtx }) {
       summarizeBulk(results, archived ? "archived" : "unarchived");
       loadOrdersList(effectiveParams, isDefaultView);
     } catch (err) {
-      toast(err instanceof DashboardApiError ? err.message : "Couldn't update these orders.", "warn", "critical");
+      toast(
+        err instanceof DashboardApiError
+          ? err.message
+          : "Couldn't update these orders.",
+        "warn",
+        "critical",
+      );
     } finally {
       setBulkBusy(false);
     }
@@ -680,7 +744,9 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   // generic failure) when sendOrderRecoveryEmail resolves {sent:false, reason} — the same
   // eligibility checks the automatic sweep applies (recovery.server.ts), surfaced plainly rather
   // than as an opaque error.
-  const [recoverySending, setRecoverySending] = useState<Set<string>>(new Set());
+  const [recoverySending, setRecoverySending] = useState<Set<string>>(
+    new Set(),
+  );
   const sendRecovery = async (orderId: string) => {
     if (recoverySending.has(orderId)) return;
     setRecoverySending((prev) => new Set(prev).add(orderId));
@@ -693,7 +759,9 @@ export default function Orders({ app }: { app: DashboardCtx }) {
             ? {
                 ...prev,
                 abandoned: prev.abandoned.map((r) =>
-                  r.id === orderId ? { ...r, recoveryEmailSentAt: new Date().toISOString() } : r,
+                  r.id === orderId
+                    ? { ...r, recoveryEmailSentAt: new Date().toISOString() }
+                    : r,
                 ),
               }
             : prev,
@@ -712,7 +780,13 @@ export default function Orders({ app }: { app: DashboardCtx }) {
         toast("Couldn't send the recovery email.", "warn", "critical");
       }
     } catch (err) {
-      toast(err instanceof DashboardApiError ? err.message : "Couldn't send the recovery email.", "warn", "critical");
+      toast(
+        err instanceof DashboardApiError
+          ? err.message
+          : "Couldn't send the recovery email.",
+        "warn",
+        "critical",
+      );
     } finally {
       setRecoverySending((prev) => {
         const next = new Set(prev);
@@ -733,7 +807,13 @@ export default function Orders({ app }: { app: DashboardCtx }) {
       setBulkTagInput("");
       loadOrdersList(effectiveParams, isDefaultView);
     } catch (err) {
-      toast(err instanceof DashboardApiError ? err.message : "Couldn't tag these orders.", "warn", "critical");
+      toast(
+        err instanceof DashboardApiError
+          ? err.message
+          : "Couldn't tag these orders.",
+        "warn",
+        "critical",
+      );
     } finally {
       setBulkBusy(false);
     }
@@ -753,56 +833,120 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     if (wasViewingOrder.current) {
       wasViewingOrder.current = false;
       load();
-      loadOrdersList(listParamsRef.current.params, listParamsRef.current.isDefault);
+      loadOrdersList(
+        listParamsRef.current.params,
+        listParamsRef.current.isDefault,
+      );
     }
   }, [app.nav.param, load, loadOrdersList]);
 
   const sub = app.nav.sub ?? "orders";
   const sectionMeta = ORDER_SECTION_META[sub] ?? ORDER_SECTION_META.orders;
-  const overviewItems = useMemo<Array<{ label: string; value: string; action?: () => void }>>(() => {
+  const overviewItems = useMemo<
+    Array<{ label: string; value: string; action?: () => void }>
+  >(() => {
     if (sub === "orders") {
       if (!displayRows && !ordersListPage) return [];
       const rows = displayRows ?? [];
       const now = Date.now();
-      const attention = rows.filter((row) =>
-        row.financialStatus === "pending" ||
-        (row.source === "calderyn" && row.createdAt && isStuckUnfulfilled(row.state, row.createdAt, now)),
+      const attention = rows.filter(
+        (row) =>
+          row.financialStatus === "pending" ||
+          (row.source === "calderyn" &&
+            row.createdAt &&
+            isStuckUnfulfilled(row.state, row.createdAt, now)),
       ).length;
       return [
-        { label: "Orders", value: (ordersListPage?.totalCount ?? rows.length).toLocaleString("en-US") },
-        { label: "Page value", value: money(rows.reduce((sum, row) => sum + row.totalCents, 0), rows[0]?.currency ?? "usd") },
-        { label: "Needs action", value: attention.toLocaleString("en-US"), action: () => selectView("unfulfilled") },
+        {
+          label: "Orders",
+          value: (ordersListPage?.totalCount ?? rows.length).toLocaleString(
+            "en-US",
+          ),
+        },
+        {
+          label: "Page value",
+          value: money(
+            rows.reduce((sum, row) => sum + row.totalCents, 0),
+            rows[0]?.currency ?? "usd",
+          ),
+        },
+        {
+          label: "Page alerts",
+          value: attention.toLocaleString("en-US"),
+        },
       ];
     }
     if (!page) return [];
     if (sub === "labels") {
       return [
-        { label: "Charges", value: page.shipCharges.length.toLocaleString("en-US") },
-        { label: "Recorded cost", value: money(page.shipCharges.reduce((sum, row) => sum + row.costCents, 0)) },
-        { label: "Unmatched", value: page.shipCharges.filter((row) => !row.matched).length.toLocaleString("en-US") },
+        {
+          label: "Charges",
+          value: page.shipCharges.length.toLocaleString("en-US"),
+        },
+        {
+          label: "Recorded cost",
+          value: money(
+            page.shipCharges.reduce((sum, row) => sum + row.costCents, 0),
+          ),
+        },
+        {
+          label: "Unmatched",
+          value: page.shipCharges
+            .filter((row) => !row.matched)
+            .length.toLocaleString("en-US"),
+        },
       ];
     }
     if (sub === "drafts") {
       return [
         { label: "Carts", value: page.drafts.length.toLocaleString("en-US") },
-        { label: "Cart value", value: money(page.drafts.reduce((sum, row) => sum + row.valueCents, 0), page.drafts[0]?.currency ?? "usd") },
-        { label: "Identified", value: page.drafts.filter((row) => row.buyerEmail).length.toLocaleString("en-US") },
+        {
+          label: "Cart value",
+          value: money(
+            page.drafts.reduce((sum, row) => sum + row.valueCents, 0),
+            page.drafts[0]?.currency ?? "usd",
+          ),
+        },
+        {
+          label: "Identified",
+          value: page.drafts
+            .filter((row) => row.buyerEmail)
+            .length.toLocaleString("en-US"),
+        },
       ];
     }
     return [
-      { label: "Checkouts", value: page.abandoned.length.toLocaleString("en-US") },
-      { label: "Potential value", value: money(page.abandoned.reduce((sum, row) => sum + row.totalCents, 0), page.abandoned[0]?.currency ?? "usd") },
-      { label: "Unsent", value: page.abandoned.filter((row) => !row.recoveryEmailSentAt).length.toLocaleString("en-US") },
+      {
+        label: "Checkouts",
+        value: page.abandoned.length.toLocaleString("en-US"),
+      },
+      {
+        label: "Potential value",
+        value: money(
+          page.abandoned.reduce((sum, row) => sum + row.totalCents, 0),
+          page.abandoned[0]?.currency ?? "usd",
+        ),
+      },
+      {
+        label: "Unsent",
+        value: page.abandoned
+          .filter((row) => !row.recoveryEmailSentAt)
+          .length.toLocaleString("en-US"),
+      },
     ];
-  }, [displayRows, ordersListPage, page, selectView, sub]);
+  }, [displayRows, ordersListPage, page, sub]);
 
   const overviewRef = useRef<HTMLDivElement>(null);
-  const overviewKey = overviewItems.map((item) => `${item.label}:${item.value}`).join("|");
+  const overviewKey = overviewItems
+    .map((item) => `${item.label}:${item.value}`)
+    .join("|");
   const sectionPanelRef = useRef<HTMLDivElement>(null);
   useGSAP(
     () => {
       if (reduced() || !overviewRef.current) return;
-      const items = overviewRef.current.querySelectorAll<HTMLElement>(".cd-order-readout-item");
+      const items = overviewRef.current.querySelectorAll<HTMLElement>(
+        ".cd-order-readout-item",
+      );
       gsap.fromTo(
         items,
         { autoAlpha: 0, y: 6, willChange: "transform,opacity" },
@@ -839,14 +983,25 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   // order" button) — isPrefillParam only matches that reserved shape, never a bare order sourceId.
   // Must be checked BEFORE the row-click/deep-link branch below, which otherwise treats any
   // non-null param as an order's sourceId.
-  if (app.nav.param === "new" || (app.nav.param && isPrefillParam(app.nav.param))) {
-    return <OrderComposer app={app} prefillParam={app.nav.param === "new" ? null : app.nav.param} />;
+  if (
+    app.nav.param === "new" ||
+    (app.nav.param && isPrefillParam(app.nav.param))
+  ) {
+    return (
+      <OrderComposer
+        app={app}
+        prefillParam={app.nav.param === "new" ? null : app.nav.param}
+      />
+    );
   }
 
   // Row-click / deep-link: nav.param carries the selected order's sourceId (`shopify:<id>` for
   // migrated orders, a bare id for native ones) — same idiom as Campaigns' selected-campaign branch.
   if (app.nav.param) {
-    const seedRow = (displayRows ?? []).find((r) => displayOrderSourceId(r) === app.nav.param) ?? null;
+    const seedRow =
+      (displayRows ?? []).find(
+        (r) => displayOrderSourceId(r) === app.nav.param,
+      ) ?? null;
     return (
       <OrderDetailScreen
         app={app}
@@ -869,29 +1024,51 @@ export default function Orders({ app }: { app: DashboardCtx }) {
   }
 
   return (
-    <div className="cd-screen cd-orders-screen" data-screen-label="Orders" data-sub={sub}>
+    <div
+      className="cd-screen cd-orders-screen"
+      data-screen-label="Orders"
+      data-sub={sub}
+    >
       <header className="cd-screen-head cd-order-page-head">
         <div>
           <h1 className="cd-h1">{sectionMeta.title}</h1>
-          <p className="cd-sub">{sectionMeta.sub}</p>
+          {sub === "orders" && <p className="cd-sub">{sectionMeta.sub}</p>}
         </div>
-        <Btn kind="primary" small onClick={() => app.navigate("orders", "new")}>
-          Create order
-        </Btn>
+        {(sub === "orders" || sub === "drafts") && (
+          <Btn
+            kind="primary"
+            small
+            onClick={() => app.navigate("orders", "new")}
+          >
+            Create order
+          </Btn>
+        )}
       </header>
 
       {overviewItems.length > 0 && (
-        <div ref={overviewRef} className="cd-order-readout" aria-label={`${sectionMeta.title} overview`}>
+        <div
+          ref={overviewRef}
+          className="cd-order-readout"
+          aria-label={`${sectionMeta.title} overview`}
+        >
           {overviewItems.map((item) => {
             const content = (
               <>
                 <strong className="tabular-nums">{item.value}</strong>
                 <span>{item.label}</span>
-                {item.action && <CDIcon name="arrowRight" size={14} strokeWidth={1.9} />}
+                {item.action && (
+                  <CDIcon name="arrowRight" size={14} strokeWidth={1.9} />
+                )}
               </>
             );
             return item.action ? (
-              <button key={item.label} type="button" className="cd-order-readout-item" data-action="1" onClick={item.action}>
+              <button
+                key={item.label}
+                type="button"
+                className="cd-order-readout-item"
+                data-action="1"
+                onClick={item.action}
+              >
                 {content}
               </button>
             ) : (
@@ -904,33 +1081,33 @@ export default function Orders({ app }: { app: DashboardCtx }) {
       )}
 
       <div ref={sectionPanelRef} className="cd-order-section-panel">
-      {sub === "orders" ? (
-        <Card pad={false} className="cd-order-workspace">
-          <OrdersToolbar
-            view={state.view}
-            savedViews={savedViews}
-            onViewChange={selectView}
-            onDeleteView={removeView}
-            searchInput={searchInput}
-            onSearchInputChange={setSearchInput}
-            sort={state.sort}
-            dir={state.dir}
-            onSortChange={(sort) => setState((s) => ({ ...s, sort, offset: 0 }))}
-            onDirChange={(dir) => setState((s) => ({ ...s, dir, offset: 0 }))}
-            canSaveView={canSaveView}
-            onSaveView={saveCurrentView}
-            exportHref={exportHref}
-            paymentStatus={state.paymentStatus}
-            fulfillmentStatus={state.fulfillmentStatus}
-            source={state.source}
-            dateFrom={state.dateFrom}
-            dateTo={state.dateTo}
-            onFilterChange={updateFilter}
-          />
+        {sub === "orders" ? (
+          <Card pad={false} className="cd-order-workspace">
+            <OrdersToolbar
+              view={state.view}
+              savedViews={savedViews}
+              onViewChange={selectView}
+              onDeleteView={removeView}
+              searchInput={searchInput}
+              onSearchInputChange={setSearchInput}
+              sort={state.sort}
+              dir={state.dir}
+              onSortChange={(sort) =>
+                setState((s) => ({ ...s, sort, offset: 0 }))
+              }
+              onDirChange={(dir) => setState((s) => ({ ...s, dir, offset: 0 }))}
+              canSaveView={canSaveView}
+              onSaveView={saveCurrentView}
+              exportHref={exportHref}
+              paymentStatus={state.paymentStatus}
+              fulfillmentStatus={state.fulfillmentStatus}
+              source={state.source}
+              dateFrom={state.dateFrom}
+              dateTo={state.dateTo}
+              onFilterChange={updateFilter}
+            />
 
-          {bulkMounted && (
-            <div ref={bulkBarRef} className="cd-bulkbar">
-              <span className="cd-row-title">{selected.size} selected</span>
+            <OrderBulkBar count={selected.size}>
               <label className="flex items-center gap-2 cd-caption">
                 <input
                   type="checkbox"
@@ -942,7 +1119,12 @@ export default function Orders({ app }: { app: DashboardCtx }) {
               <Btn small icon="truck" disabled={bulkBusy} onClick={bulkFulfill}>
                 Fulfill
               </Btn>
-              <Btn small icon="archive" disabled={bulkBusy} onClick={() => bulkArchive(!isArchivedView)}>
+              <Btn
+                small
+                icon="archive"
+                disabled={bulkBusy}
+                onClick={() => bulkArchive(!isArchivedView)}
+              >
                 {isArchivedView ? "Unarchive" : "Archive"}
               </Btn>
               <div className="flex items-center gap-2">
@@ -957,186 +1139,66 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                   }}
                   style={{ width: 140 }}
                 />
-                <Btn small icon="tag" disabled={bulkBusy || !bulkTagInput.trim()} onClick={bulkAddTag}>
+                <Btn
+                  small
+                  icon="tag"
+                  disabled={bulkBusy || !bulkTagInput.trim()}
+                  onClick={bulkAddTag}
+                >
                   Add tag
                 </Btn>
               </div>
-            </div>
-          )}
+            </OrderBulkBar>
 
-          <div ref={listRef}>
-            <UnifiedOrdersList
-              rows={displayRows}
-              loading={ordersListLoading}
-              isDefaultView={isDefaultView}
-              onRefund={setRefundOrder}
-              onOpen={(sourceId) => app.navigate("orders", sourceId)}
-              selected={selected}
-              onToggleRow={toggleRow}
-              onToggleAll={toggleAll}
-              allSelected={allSelected}
-              anySelectable={selectableIds.length > 0}
-            />
-          </div>
-
-          {ordersListPage && ordersListPage.totalCount > 0 && (
-            <div className="cd-orders-pagination">
-              <span ref={pageSummaryRef} className="cd-caption">
-                Showing {ordersListPage.offset + 1}-
-                {Math.min(ordersListPage.offset + ordersListPage.rows.length, ordersListPage.totalCount)} of{" "}
-                {ordersListPage.totalCount.toLocaleString("en-US")}
-              </span>
-              <div className="flex items-center gap-2">
-                <Btn
-                  small
-                  disabled={ordersListPage.offset === 0}
-                  onClick={() =>
-                    setState((s) => ({ ...s, offset: Math.max(0, s.offset - ordersListPage.limit) }))
-                  }
-                >
-                  Prev
-                </Btn>
-                <Btn
-                  small
-                  disabled={ordersListPage.offset + ordersListPage.rows.length >= ordersListPage.totalCount}
-                  onClick={() => setState((s) => ({ ...s, offset: s.offset + ordersListPage.limit }))}
-                >
-                  Next
-                </Btn>
-              </div>
+            <div ref={listRef}>
+              <UnifiedOrdersList
+                rows={displayRows}
+                loading={ordersListLoading}
+                isDefaultView={isDefaultView}
+                onRefund={setRefundOrder}
+                onOpen={(sourceId) => app.navigate("orders", sourceId)}
+                selected={selected}
+                onToggleRow={toggleRow}
+                onToggleAll={toggleAll}
+                allSelected={allSelected}
+                anySelectable={selectableIds.length > 0}
+                error={ordersListError}
+              />
             </div>
-          )}
-        </Card>
-      ) : !page ? (
-        <Card pad={false} className="cd-order-subtable">
-          {loading ? (
-            <TableSkeleton />
-          ) : (
-            <Placeholder
-              icon="doc"
-              title="Orders unavailable"
-              sub="Could not load orders just now. Refresh to try again."
-            />
-          )}
-        </Card>
-      ) : sub === "labels" ? (
-        <Card pad={false} className="cd-order-subtable">
-          {page.shipCharges.length === 0 ? (
-            <Placeholder
-              icon="truck"
-              title="No shipping charges yet"
-              sub="Carrier-invoice lines from your ship-cost imports land here, matched to orders."
-            />
-          ) : (
-            <Pan min={600}>
-              <div className="cd-tablehd" style={{ gridTemplateColumns: "1fr 1.3fr 1.6fr 0.9fr 1.1fr" }}>
-                <span>Order</span>
-                <span>Carrier</span>
-                <span>Tracking</span>
-                <span style={{ textAlign: "right" }}>Cost</span>
-                <span>Status</span>
-              </div>
-              {page.shipCharges.map((r, i) => (
-                <div key={i} className="cd-trow cd-order-subrow" data-attention={r.matched ? "0" : "1"} style={{ gridTemplateColumns: "1fr 1.3fr 1.6fr 0.9fr 1.1fr" }}>
-                  <div className="cd-row-title tabular-nums">{r.orderRef}</div>
-                  <div className="truncate">{r.carrier ?? "—"}</div>
-                  <div className="cd-caption tabular-nums truncate">{r.tracking ?? "—"}</div>
-                  <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                    {money(r.costCents)}
-                  </div>
-                  <div>
-                    <span
-                      className="cd-badge"
-                      style={{
-                        color: r.matched ? "var(--text-2)" : "var(--live)",
-                        background: r.matched ? "var(--gray-bg)" : "color-mix(in oklch, var(--live) 12%, transparent)",
-                      }}
-                    >
-                      {r.matched ? "Matched" : "Unmatched"}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </Pan>
-          )}
-        </Card>
-      ) : sub === "drafts" ? (
-        <Card pad={false} className="cd-order-subtable">
-          {page.drafts.length === 0 ? (
-            <Placeholder
-              icon="doc"
-              title="No open carts"
-              sub="In-progress baskets that haven't reached checkout show up here."
-            />
-          ) : (
-            <Pan min={600}>
-              <div className="cd-tablehd" style={{ gridTemplateColumns: "1fr 1.5fr 1.2fr 0.9fr 1.4fr" }}>
-                <span>Cart</span>
-                <span>Customer</span>
-                <span>Items</span>
-                <span style={{ textAlign: "right" }}>Value</span>
-                <span>Started</span>
-              </div>
-              {page.drafts.map((r) => (
-                <div key={r.id} className="cd-trow cd-order-subrow" style={{ gridTemplateColumns: "1fr 1.5fr 1.2fr 0.9fr 1.4fr" }}>
-                  <div className="cd-row-title tabular-nums">{r.ref}</div>
-                  <div className="truncate">{r.buyerEmail ?? "Guest"}</div>
-                  <div className="cd-caption">{r.itemCount} items</div>
-                  <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                    {money(r.valueCents, r.currency)}
-                  </div>
-                  <div className="cd-caption">{timeAgo(r.createdAt)}</div>
-                </div>
-              ))}
-            </Pan>
-          )}
-        </Card>
-      ) : (
-        <Card pad={false} className="cd-order-subtable">
-          {page.abandoned.length === 0 ? (
-            <Placeholder
-              icon="clock"
-              title="No abandoned checkouts"
-              sub="Checkouts that stall for over an hour before payment show up here."
-            />
-          ) : (
-            <Pan min={680}>
-              <div className="cd-tablehd" style={{ gridTemplateColumns: "1fr 1.6fr 0.9fr 0.8fr 1.1fr auto" }}>
-                <span>Checkout</span>
-                <span>Customer</span>
-                <span style={{ textAlign: "right" }}>Value</span>
-                <span>Stage</span>
-                <span>Started</span>
-                <span />
-              </div>
-              {page.abandoned.map((r) => (
-                <div key={r.id} className="cd-trow cd-order-subrow" data-attention={r.recoveryEmailSentAt ? "0" : "1"} style={{ gridTemplateColumns: "1fr 1.6fr 0.9fr 0.8fr 1.1fr auto" }}>
-                  <div className="cd-row-title tabular-nums">{r.ref}</div>
-                  <div className="truncate">{r.buyerEmail ?? "Guest"}</div>
-                  <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                    {money(r.totalCents, r.currency)}
-                  </div>
-                  <div className="cd-caption">Payment</div>
-                  <div className="cd-caption">{timeAgo(r.createdAt)}</div>
-                  <div className="flex items-center" style={{ gap: 8, justifyContent: "flex-end" }}>
-                    {r.recoveryEmailSentAt && (
-                      <span className="cd-caption">Sent {timeAgo(r.recoveryEmailSentAt)}</span>
-                    )}
-                    <Btn
-                      small
-                      icon="mail"
-                      disabled={recoverySending.has(r.id)}
-                      onClick={() => sendRecovery(r.id)}
-                    >
-                      {recoverySending.has(r.id) ? "Sending…" : r.recoveryEmailSentAt ? "Resend" : "Send recovery email"}
-                    </Btn>
-                  </div>
-                </div>
-              ))}
-            </Pan>
-          )}
-        </Card>
-      )}
+
+            {ordersListPage && ordersListPage.totalCount > 0 && (
+              <OrderListPagination
+                start={ordersListPage.offset + 1}
+                end={Math.min(
+                  ordersListPage.offset + ordersListPage.rows.length,
+                  ordersListPage.totalCount,
+                )}
+                total={ordersListPage.totalCount}
+                onPrevious={() =>
+                  setState((s) => ({
+                    ...s,
+                    offset: Math.max(0, s.offset - ordersListPage.limit),
+                  }))
+                }
+                onNext={() =>
+                  setState((s) => ({
+                    ...s,
+                    offset: s.offset + ordersListPage.limit,
+                  }))
+                }
+              />
+            )}
+          </Card>
+        ) : (
+          <OrderSubLists
+            section={sub as OrderSubSection}
+            page={page}
+            loading={loading}
+            error={pageError}
+            recoverySending={recoverySending}
+            onSendRecovery={sendRecovery}
+          />
+        )}
       </div>
 
       {refundOrder && (

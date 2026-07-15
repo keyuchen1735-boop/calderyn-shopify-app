@@ -5763,6 +5763,16 @@
 
 /* Toolbar's primary row: search + Filters on the left, sort + Export on the right. */
 .cd-orders-toolbar-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.cd-orders-toolbar-primary, .cd-orders-toolbar-actions, .cd-orders-filter-fields,
+.cd-orders-view-extras, .cd-orders-save-view, .cd-orders-pagination-actions {
+  display: flex; align-items: center; gap: 8px;
+}
+.cd-orders-toolbar-primary { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+.cd-orders-toolbar-actions { flex: 0 0 auto; }
+.cd-orders-filter-fields { flex-wrap: wrap; }
+.cd-orders-filter-fields .cd-input { width: auto; min-width: 138px; }
+.cd-orders-view-extras { margin-left: auto; flex-wrap: wrap; }
+.cd-orders-save-view input { width: 154px; }
 
 /* Compact search field. Its width stays fixed so focusing it never shifts nearby controls. */
 .cd-orders-search {
@@ -5849,7 +5859,7 @@
 .cd-orders-toolbar .cd-btn-sm,
 .cd-orders-toolbar .cd-input,
 .cd-orders-filter-toggle { min-height: 34px; height: 34px; }
-.cd-orders-view-row { justify-content: space-between; margin: 0 !important; padding-bottom: 10px; border-bottom: 0.5px solid var(--hairline); }
+.cd-orders-view-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 !important; padding-bottom: 10px; border-bottom: 0.5px solid var(--hairline); }
 .cd-orders-search-clear {
   position: absolute; right: 7px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
   border: 0; border-radius: 7px; background: transparent; color: var(--text-3); cursor: pointer;
@@ -5866,6 +5876,13 @@
 .cd-orders-toolbar .cd-seg-btn[data-active="1"] { color: var(--live); }
 
 .cd-orders-table { overflow: hidden; }
+.cd-orders-state { min-height: 214px; }
+.cd-orders-inline-error {
+  display: flex; align-items: center; gap: 7px; padding: 8px 16px;
+  border-bottom: 0.5px solid color-mix(in oklch, var(--orange) 28%, var(--hairline));
+  background: color-mix(in oklch, var(--orange-bg) 68%, transparent);
+  color: var(--orange); font-size: calc(12px * var(--type-scale)); font-weight: 560;
+}
 .cd-orders-table .cd-tablehd, .cd-order-subtable .cd-tablehd { background: transparent; }
 .cd-order-row, .cd-order-subrow { position: relative; }
 .cd-order-subrow[data-attention="1"]::before { content: ""; position: absolute; inset: 8px auto 8px 0; width: 2px; border-radius: 0 3px 3px 0; background: var(--live); opacity: 0.8; }
@@ -5886,6 +5903,13 @@
 .cd-order-subrow:hover { background: var(--gray-bg); }
 .cd-order-workspace .cd-bulkbar { margin: 10px 20px 0; border: 0; background: color-mix(in oklch, var(--live) 8%, var(--card-solid)); box-shadow: none; }
 .cd-order-workspace .cd-orders-pagination { padding: 10px 20px; border-top: 0.5px solid var(--hairline-strong); }
+.cd-order-family-row { transition: background 0.18s ease, box-shadow 0.18s ease; }
+.cd-order-family-row:hover { background: color-mix(in oklch, var(--live) 6%, var(--gray-bg)); }
+.cd-order-family-row[data-selected="1"] { background: color-mix(in oklch, var(--live) 9%, transparent); box-shadow: inset 2px 0 var(--live); }
+.cd-order-family-row[data-attention="1"]::before { content: ""; position: absolute; inset: 8px auto 8px 0; width: 2px; border-radius: 0 3px 3px 0; background: var(--live); opacity: 0.8; }
+.cd-order-family-row .cd-order-row-actions .cd-btn { width: auto; min-width: 106px; white-space: nowrap; }
+.cd-orders-screen input[type="checkbox"] { width: 14px; height: 14px; margin: 0; accent-color: var(--live); cursor: pointer; }
+.cd-orders-screen input[type="checkbox"]:focus-visible { outline: 2px solid color-mix(in oklch, var(--live) 72%, transparent); outline-offset: 2px; }
 
 /* Order detail: one graphical object first, then progressively disclosed operational data. */
 .cd-order-detail { gap: 8px; }
@@ -6364,6 +6388,9 @@
   .cd-order-more-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 @media (max-width: 900px) {
+  .cd-orders-toolbar-row { align-items: stretch; }
+  .cd-orders-toolbar-primary { flex-basis: 100%; }
+  .cd-orders-search { flex: 1 1 230px; width: auto; }
   .cd-order-composer-grid { grid-template-columns: 1fr !important; }
   .cd-order-visual-copy { grid-template-columns: minmax(160px,auto) minmax(130px,auto) minmax(180px,1fr); gap: 14px; }
   .cd-order-visual-summary { min-width: 128px; padding-left: 14px; }
@@ -6385,6 +6412,17 @@
   .cd-order-page-head .cd-btn { width: 100%; justify-content: center; }
   .cd-order-readout { gap: 5px 0; }
   .cd-orders-toolbar { padding: 12px; }
+  .cd-orders-view-row { align-items: flex-start; }
+  .cd-orders-view-row .cd-seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .cd-orders-view-row .cd-seg::-webkit-scrollbar { display: none; }
+  .cd-orders-view-extras { width: 100%; margin-left: 0; }
+  .cd-orders-toolbar-primary, .cd-orders-toolbar-actions { width: 100%; }
+  .cd-orders-toolbar-actions .cd-orders-sort { flex: 1 1 auto; min-width: 0; }
+  .cd-orders-toolbar-actions .cd-btn:last-child { flex: 0 0 auto; }
+  .cd-orders-filter-fields { align-items: stretch; }
+  .cd-orders-filter-fields .cd-input { flex: 1 1 150px; min-width: 0; }
+  .cd-order-workspace .cd-bulkbar { margin: 10px 12px 0; }
+  .cd-order-workspace .cd-orders-pagination { padding: 10px 12px; }
   .cd-order-detail-bar { align-items: flex-start; gap: 8px; }
   .cd-order-detail-actions { gap: 6px !important; }
   .cd-order-visual-card.cd-pad { grid-template-columns: 78px minmax(0,1fr); min-height: 126px; text-align: left; }
@@ -6403,7 +6441,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .cd-orders-search-clear, .cd-orders-filter-chevron, .cd-orders-toolbar .cd-seg-btn,
-  .cd-order-subrow, .cd-order-detail-actions .cd-btn, .cd-order-composer-line,
+  .cd-order-subrow, .cd-order-family-row, .cd-order-detail-actions .cd-btn, .cd-order-composer-line,
   .cd-order-readout-item, .cd-order-readout-item svg, .cd-order-row-chevron,
   .cd-order-parcel, .cd-order-item-row, .cd-order-item-progress i, .cd-order-margin-ring,
   .cd-order-detail-grid, .cd-order-command-deck, .cd-order-deck-heading-icon, .cd-order-route-step i, .cd-order-route-line, .cd-order-delivery-state i,
