@@ -1,13 +1,25 @@
 import type { StorefrontRouteId } from "../storefront-bundle/types";
 import type { CompiledBundleResult, StorefrontBundleSourceV1 } from "../storefront-compiler/compile";
 import type { BrowserProofReport, MerchantStorefrontContext, RouteRepair, StorefrontAiProvider, StructuredModelResponse } from "./contracts";
-import { COMPILER_SYSTEM_PROMPT, ROUTE_REPAIR_SCHEMA, routeRepairPrompt } from "./prompts";
+import { COMPILER_SYSTEM_PROMPT, routeRepairPrompt, routeRepairSchema } from "./prompts";
 
 export class BrowserProofError extends Error {
   constructor(message: string, public readonly report: BrowserProofReport) {
     super(message);
     this.name = "BrowserProofError";
   }
+}
+
+function normalizeHtml(value: string): string {
+  const html = value.replace(/<!--[\s\S]*?-->/g, "");
+  if (!html.trim()) throw new Error("Route repair must return non-empty HTML");
+  return html;
+}
+
+function normalizeRouteRepair(value: Record<string, unknown>): RouteRepair["route"] {
+  if (typeof value.html !== "string") throw new Error("Route repair must return HTML");
+  const { rootScopeKind: _rootScopeKind, ...route } = value;
+  return { ...route, html: normalizeHtml(value.html) } as unknown as RouteRepair["route"];
 }
 
 export async function repairRouteWithProvider(input: {
@@ -24,7 +36,7 @@ export async function repairRouteWithProvider(input: {
     operation: "repairRoute",
     system: COMPILER_SYSTEM_PROMPT,
     prompt: routeRepairPrompt(input.routeId, input.regionId, input.diagnostic, input.source.routes[input.routeId]),
-    schema: ROUTE_REPAIR_SCHEMA,
+    schema: routeRepairSchema(input.routeId),
     signal: input.signal,
   });
   input.onModelCall?.("repairRoute", response);
@@ -33,7 +45,10 @@ export async function repairRouteWithProvider(input: {
   if (value.routeId !== input.routeId || !value.route || typeof value.route !== "object" || Array.isArray(value.route)) {
     throw new Error("Route repair must return exactly the requested route");
   }
-  return { routeId: input.routeId, route: value.route as unknown as RouteRepair["route"] };
+  return {
+    routeId: input.routeId,
+    route: normalizeRouteRepair(value.route as Record<string, unknown>),
+  };
 }
 
 export interface ProveAndRepairBundleInput {

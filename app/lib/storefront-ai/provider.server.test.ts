@@ -47,7 +47,7 @@ describe("createAnthropicStructuredProvider", () => {
 
     await expect(provider.complete({ operation: "concept", system: "s", prompt: "p", schema: { type: "object" } }))
       .rejects.toThrow(/token limit/i);
-    expect(create.mock.calls[0][0].max_tokens).toBe(16_000);
+    expect(create.mock.calls[0][0].max_tokens).toBe(21_000);
   });
 
   it("sends bounded image bytes as opaque Anthropic image blocks without storage URLs", async () => {

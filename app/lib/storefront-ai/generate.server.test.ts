@@ -141,12 +141,22 @@ describe("generateOriginalStorefront", () => {
     deps.provider.complete = vi.fn(async (request) => {
       const response = await baseComplete(request);
       if (request.operation !== "expand") return response;
-      const documentsSlotSyntax = request.system.includes("data-cd-slot") &&
-        request.system.includes("data-cd-trusted-slot-id") &&
+      const documentsSlotSyntax = request.system.includes("Trusted commerce hosts use data-cd-slot, never data-cd-trusted-slot-id") &&
         request.system.includes("Any other data-cd-*");
-      if (documentsSlotSyntax) return response;
+      const documentsMarkupGrammar = request.system.includes("Allowed HTML tags are") &&
+        request.system.includes("Never emit <slot>") &&
+        request.system.includes("Never emit <svg>") &&
+        request.system.includes("Never set type on button") &&
+        request.system.includes("Literal URL attributes") &&
+        request.system.includes("data-cd-route");
       const expansion = structuredClone(response.value as ReturnType<typeof createExpansion>);
-      expansion.product.html = `<main><div data-cd-trusted-slot-id="cd-product-slot-1"></div></main>`;
+      if (!documentsSlotSyntax) {
+        expansion.product.html = `<main><div data-cd-trusted-slot-id="product-slot">Choose</div></main>`;
+      } else if (!documentsMarkupGrammar) {
+        expansion.product.html = `<main><a href="/products/example">Product</a><button type="button">Choose</button><svg></svg><slot data-cd-slot="variantPicker"></slot></main>`;
+      } else {
+        return response;
+      }
       return { ...response, value: expansion };
     });
 
@@ -163,6 +173,80 @@ describe("generateOriginalStorefront", () => {
     expect(result.bundle.routes.product.html).toContain("data-cd-trusted-slot-id");
   });
 
+  it("installs when the provider follows the checkout CSS value contract", async () => {
+    const deps = passingDependencies();
+    const baseComplete = deps.provider.complete;
+    deps.provider.complete = vi.fn(async (request) => {
+      const response = await baseComplete(request);
+      if (request.operation !== "expand" || !request.prompt.includes("route group commerce")) return response;
+      const documentsCheckoutValues = request.system.includes("grid tracks are only 1fr, 1fr 1fr, 2fr 1fr, or minmax(0, 1fr) minmax(0, 1fr)") &&
+        request.system.includes("font-family is only inherit, var(--font-body), or var(--font-display)") &&
+        request.system.includes("grid placement is one local identifier");
+      if (documentsCheckoutValues) return response;
+      const expansion = structuredClone(response.value as ReturnType<typeof createExpansion>);
+      expansion.checkout.css = `main { display: grid; grid-template-columns: repeat(2, 1fr); font-family: sans-serif; grid-column: 1 / 2; }`;
+      return { ...response, value: expansion };
+    });
+
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "Create an original shop",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+    }, deps);
+
+    expect(result.status).toBe("installed");
+  });
+
+  it("installs expansion routes after removing inert HTML comments", async () => {
+    const deps = passingDependencies();
+    const baseComplete = deps.provider.complete;
+    deps.provider.complete = vi.fn(async (request) => {
+      const response = await baseComplete(request);
+      if (request.operation !== "expand") return response;
+      const expansion = structuredClone(response.value as ReturnType<typeof createExpansion>);
+      expansion.product.html = `<!-- product layout -->${expansion.product.html}`;
+      expansion.product.rootScopeKind = "cart";
+      expansion.checkout.html = `<!-- checkout layout -->${expansion.checkout.html}`;
+      return { ...response, value: expansion };
+    });
+
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "Create an original product-first shop",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+    }, deps);
+
+    expect(result.status).toBe("installed");
+    if (result.status !== "installed") throw new Error("expected install");
+    expect(result.bundle.routes.product.html).not.toContain("<!--");
+  });
+
+  it("rejects expansion HTML that is empty after comment removal", async () => {
+    const deps = passingDependencies();
+    const baseComplete = deps.provider.complete;
+    deps.provider.complete = vi.fn(async (request) => {
+      const response = await baseComplete(request);
+      if (request.operation !== "expand" || !request.prompt.includes("route group product")) return response;
+      const expansion = structuredClone(response.value as ReturnType<typeof createExpansion>);
+      expansion.product.html = "<!-- generated product -->";
+      return { ...response, value: expansion };
+    });
+
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID,
+      prompt: "Create an original shop",
+      expectedDraftVersionId: null,
+      actorId: null,
+      trusted: true,
+    }, deps);
+
+    expect(result.status).toBe("failed");
+  });
+
   it("installs when the provider follows the bounded concept source contract", async () => {
     const deps = passingDependencies();
     const baseComplete = deps.provider.complete;
@@ -174,6 +258,8 @@ describe("generateOriginalStorefront", () => {
           designSystem: { properties: {
           displayFontId: { enum?: readonly string[] };
           bodyFontId: { enum?: readonly string[] };
+          motionStyle: { minLength?: number; maxLength?: number };
+          breakpoints: { additionalProperties?: { type?: string; minimum?: number; maximum?: number } };
           } };
           assetRequests: { maxItems?: number; items?: { properties?: { key?: { pattern?: string } } } };
         };
@@ -182,21 +268,85 @@ describe("generateOriginalStorefront", () => {
       const expectedFontIds = JSON.stringify(CURATED_FONT_IDS);
       const constrainsFonts = JSON.stringify(fontFields.displayFontId.enum) === expectedFontIds &&
         JSON.stringify(fontFields.bodyFontId.enum) === expectedFontIds;
+      const constrainsMotionStyle = fontFields.motionStyle.minLength === 1 && fontFields.motionStyle.maxLength === 120;
+      const constrainsBreakpoints = fontFields.breakpoints.additionalProperties?.type === "number" &&
+        fontFields.breakpoints.additionalProperties.minimum === 240 &&
+        fontFields.breakpoints.additionalProperties.maximum === 3_840;
       const boundsAssets = schemaFields.assetRequests.maxItems === 8;
       const constrainsAssetKeys = schemaFields.assetRequests.items?.properties?.key?.pattern === "^[A-Za-z0-9_-]{1,80}$";
       const documentsAssetRules = request.system.includes("at most 8 asset requests") &&
         request.system.includes("^[A-Za-z0-9_-]{1,80}$");
-      if (constrainsFonts && boundsAssets && constrainsAssetKeys && documentsAssetRules) return response;
+      const documentsDescriptions = request.system.includes("iconStyle and motionStyle must be non-empty");
+      const documentsBreakpoints = request.system.includes("Breakpoint values must be JSON numbers from 240 through 3840");
+      const documentsInteractionGrammar = request.system.includes("Allowed data-cd-on events are") &&
+        request.system.includes("Allowed data-cd-action values are") &&
+        request.system.includes("collection.filter") &&
+        request.system.includes("Do not invent interaction actions");
+      const documentsBindingGrammar = request.system.includes("Allowed data-cd-text paths are") &&
+        request.system.includes("store.name") && request.system.includes("product.price") &&
+        request.system.includes("collection.products") && request.system.includes("product.variants");
+      const documentsPathValueGrammar = request.system.includes("Path-valued data-cd attributes never contain literal record values") &&
+        request.system.includes("data-cd-product uses only product.id");
+      const documentsRouteGrammar = request.system.includes("Allowed data-cd-route values are home") &&
+        request.system.includes("never URL paths") &&
+        request.system.includes("Every product or collection route target requires data-cd-param-handle") &&
+        request.system.includes("Every policy route target requires data-cd-param-policy-id");
+      const forbidsInlineStyles = request.system.includes("inline style attributes") &&
+        request.system.includes("Every element must omit the style attribute; put all declarations in CSS");
+      const documentsOutputOnlyHooks = request.system.includes("data-cd-active-value and data-cd-class-token are compiler output hooks");
+      const documentsRouteAnchorGrammar = request.system.includes("Never emit href; every anchor uses data-cd-route");
+      const documentsScopedParams = request.system.includes("At shell/home root scope, never use data-cd-param-handle") &&
+        request.system.includes("Inside a product repeat, product links require data-cd-param-handle=\"product.handle\"") &&
+        request.system.includes("Root catalog links use search, never parameterless product or collection routes");
+      const forbidsFixedLayout = request.system.includes("Any position: fixed declaration fails compilation");
+      const constrainsConceptStage = request.prompt.includes("Concept shell/home are static compiler-safe previews") &&
+        request.prompt.includes("Product bindings appear only inside a featured.products repeat") &&
+        request.prompt.includes("Root anchors use no route parameters and never target product or collection") &&
+        request.prompt.includes("Product anchors inside featured.products require data-cd-param-handle=\"product.handle\"") &&
+        request.prompt.includes("The repeat parent has only data-cd-repeat");
+      const documentsClosedCompilerGrammar = request.system.includes("Allowed CSS at-rules are") &&
+        request.system.includes("Every local ID reference") &&
+        request.system.includes("data-cd-key on a descendant") &&
+        request.system.includes("Allowed data-cd-slot values are variantPicker") &&
+        request.system.includes("Checkout is decorative only");
+      if (constrainsFonts && constrainsMotionStyle && constrainsBreakpoints && boundsAssets && constrainsAssetKeys && documentsAssetRules && documentsDescriptions && documentsBreakpoints && documentsInteractionGrammar && documentsBindingGrammar && documentsPathValueGrammar && documentsRouteGrammar && forbidsInlineStyles && documentsOutputOnlyHooks && documentsRouteAnchorGrammar && documentsScopedParams && forbidsFixedLayout && documentsClosedCompilerGrammar && constrainsConceptStage) return response;
       const concept = structuredClone(response.value as ReturnType<typeof createConcept>);
       return {
         ...response,
         value: {
           ...concept,
-          designSystem: constrainsFonts ? concept.designSystem : {
+          designSystem: {
             ...concept.designSystem,
-            displayFontId: "unlisted-display-font",
-            bodyFontId: "unlisted-body-font",
+            ...(constrainsFonts ? {} : {
+              displayFontId: "unlisted-display-font",
+              bodyFontId: "unlisted-body-font",
+            }),
+            ...((constrainsMotionStyle && documentsDescriptions) ? {} : { motionStyle: "" }),
+            ...((constrainsBreakpoints && documentsBreakpoints) ? {} : { breakpoints: { mobile: 40 } }),
           },
+          home: !documentsInteractionGrammar
+              ? { ...concept.home, html: `<main><button id="zone" data-cd-on="click" data-cd-action="filterZone">Filter zone</button></main>` }
+              : !documentsBindingGrammar
+                ? { ...concept.home, html: `<main><span data-cd-text="apparel"></span></main>` }
+                : !documentsPathValueGrammar
+                  ? { ...concept.home, html: `<main><span data-cd-text="home-page"></span></main>` }
+                  : !documentsRouteGrammar
+                  ? { ...concept.home, html: `<main><a data-cd-route="/">Home</a></main>` }
+                  : !forbidsInlineStyles
+                    ? { ...concept.home, html: `<main style="display:grid"><p>Store</p></main>` }
+                    : !documentsOutputOnlyHooks
+                      ? { ...concept.home, html: `<main><span data-cd-active-value="gear">Gear</span></main>` }
+                      : !documentsRouteAnchorGrammar
+                        ? { ...concept.home, html: `<main><a href="#home" data-cd-route="home">Home</a></main>` }
+                        : !documentsScopedParams
+                          ? { ...concept.home, html: `<main><a data-cd-route="collection" data-cd-param-handle="collection.handle">Catalog</a></main>` }
+                          : !forbidsFixedLayout
+                            ? { ...concept.home, css: `${concept.home.css}\n.dock { position: fixed; }` }
+                            : !documentsClosedCompilerGrammar
+                              ? { ...concept.home, html: `<main><a href="#home">Home</a></main>` }
+                              : !constrainsConceptStage
+                                ? { ...concept.home, html: `<main><button data-cd-on="click" data-cd-action="scroll.to" data-cd-target="other-route">Explore</button></main>` }
+                                : concept.home,
           assetRequests: boundsAssets && documentsAssetRules
             ? [{ key: constrainsAssetKeys ? "hero" : "asset.hero", purpose: "Generated asset", required: false }]
             : Array.from({ length: 9 }, (_, index) => ({

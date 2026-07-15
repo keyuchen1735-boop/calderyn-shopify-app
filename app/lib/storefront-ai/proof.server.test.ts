@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { compileBundle } from "../storefront-compiler/compile";
-import { createFullSource } from "./__fixtures__/deterministic";
+import { createContext, createFullSource } from "./__fixtures__/deterministic";
 import { materializeOwnedAssets } from "./assets.server";
-import { proveAndRepairBundle } from "./proof.server";
+import { proveAndRepairBundle, repairRouteWithProvider } from "./proof.server";
 
 describe("materializeOwnedAssets", () => {
   it("persists immutable owned bytes and returns logical manifest keys without URLs", async () => {
@@ -85,4 +85,67 @@ describe("proveAndRepairBundle", () => {
       maxRepairs: 2,
     })).rejects.toThrow(/browser proof failed/i);
   });
+});
+
+describe("repairRouteWithProvider", () => {
+  const source = createFullSource();
+  const repair = (
+    routeId: "product" | "checkout",
+    route: unknown,
+    onSchema?: (schema: Record<string, unknown>) => void,
+  ) => repairRouteWithProvider({
+    routeId,
+    diagnostic: { routeId, code: "test", message: "test" },
+    source,
+    context: createContext(),
+    provider: {
+      complete: async (request) => {
+        onSchema?.(request.schema);
+        return { value: { routeId, route }, usage: { inputTokens: 1, outputTokens: 1 }, provider: "test", model: "test" };
+      },
+    },
+  });
+
+  it("forces a complete normal route source for non-checkout repairs", async () => {
+    let schema: Record<string, unknown> | undefined;
+    await repair("product", source.routes.product, (value) => { schema = value; });
+
+    expect(schema).toMatchObject({
+      required: ["routeId", "route"],
+      properties: {
+        routeId: { enum: ["product"] },
+        route: { additionalProperties: false, required: ["html", "css", "requiredData", "requiredCapabilities"] },
+      },
+    });
+    const normalRouteSchema = schema as { properties: { route: { properties: Record<string, unknown> } } };
+    expect(normalRouteSchema.properties.route.properties).not.toHaveProperty("rootScopeKind");
+  });
+
+  it("forces a complete checkout source for checkout repairs", async () => {
+    let schema: Record<string, unknown> | undefined;
+    await repair("checkout", source.routes.checkout, (value) => { schema = value; });
+
+    expect(schema).toMatchObject({
+      properties: {
+        routeId: { enum: ["checkout"] },
+        route: {
+          additionalProperties: false,
+          required: ["html", "css", "layout"],
+          properties: { layout: { required: ["columnMode", "sectionOrder", "spacingTokenId", "surfaceTokenIds"] } },
+        },
+      },
+    });
+  });
+
+  it("removes complete HTML comments from a repaired route", async () => {
+    const result = await repair("product", { ...source.routes.product, html: `<!-- repair note -->${source.routes.product.html}` });
+
+    expect(result.route.html).toBe(source.routes.product.html);
+  });
+
+  it("rejects repaired HTML that is empty after comment removal", async () => {
+    await expect(repair("product", { ...source.routes.product, html: "<!-- repair note -->" }))
+      .rejects.toThrow(/non-empty HTML/i);
+  });
+
 });
