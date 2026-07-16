@@ -3,10 +3,18 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, catalogCacheKey } from "~/lib/dashboard/screen-cache";
-import { Card, Btn, ClearableSearchInput, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
+import { Card, Btn, Pill } from "../ui";
 import { CDIcon } from "../icons";
 import { money } from "../format";
-import { CATALOG_SORTS, isCatalogSort, type CatalogSort } from "~/lib/catalog/catalog-sort";
+import type { CatalogSort } from "~/lib/catalog/catalog-sort";
+import {
+  OrderBulkBar,
+  OrderListTable,
+  OrderListToolbar,
+  OrderSortHeader,
+  nextSortState,
+  type OrderListView,
+} from "./OrderListFamily";
 
 type StatusFilter = "All" | "active" | "draft" | "archived";
 
@@ -16,15 +24,32 @@ const STATUS_TONE: Record<string, "success" | "neutral" | "warn"> = {
   archived: "warn",
 };
 
-const STATUS_OPTIONS = [
-  { value: "All", label: "All" },
-  { value: "active", label: "Active" },
-  { value: "draft", label: "Draft" },
-  { value: "archived", label: "Archived" },
+const STATUS_VIEWS: OrderListView[] = [
+  { id: "All", label: "All" },
+  { id: "active", label: "Active" },
+  { id: "draft", label: "Draft" },
+  { id: "archived", label: "Archived" },
 ];
 
-// Design table: checkbox / thumbnail / Product / Price / Status / Ship data.
-const GRID = "auto 36px 2fr 1fr 1fr 1fr";
+// checkbox / thumbnail / Product / Price / Status / Ship data / row chevron — same rhythm as the
+// Orders table, whose trailing cell carries the open-row affordance.
+const GRID = "36px 36px minmax(190px, 2fr) 1fr 1fr 1fr 36px";
+
+// The catalog list's default ordering (the server's "updated" sort). Header clicks cycle through
+// title A-Z / Z-A and back to this via nextSortState, same policy as the Orders tables.
+const DEFAULT_CATALOG_SORT = { sort: "updated", dir: "desc" } as const;
+
+/** CatalogSort wire value <-> the {sort, dir} shape the shared header-sort policy speaks. */
+function catalogSortToHeaderState(sort: CatalogSort): { sort: string; dir: "asc" | "desc" } {
+  if (sort === "title_asc") return { sort: "title", dir: "asc" };
+  if (sort === "title_desc") return { sort: "title", dir: "desc" };
+  return DEFAULT_CATALOG_SORT;
+}
+
+function headerStateToCatalogSort(state: { sort: string; dir: "asc" | "desc" }): CatalogSort {
+  if (state.sort === "title") return state.dir === "asc" ? "title_asc" : "title_desc";
+  return "updated";
+}
 
 /** Ship-data cell copy — "Validated · <weight>kg" only when the product truly
  * passes the activation shipping check; the weight is the heaviest recorded
@@ -262,6 +287,15 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   // else it archives (with a confirm — it removes products from the storefront).
   const isArchivedView = status === "archived";
 
+  // Header-driven sorting via the shared nextSortState policy: Title A-Z, then Z-A, then back to
+  // the default recently-updated ordering (which has no column of its own).
+  const sortByColumn = useCallback((col: string) => {
+    setSort((cur) =>
+      headerStateToCatalogSort(nextSortState(catalogSortToHeaderState(cur), col, DEFAULT_CATALOG_SORT)),
+    );
+  }, []);
+  const headerSort = catalogSortToHeaderState(sort);
+
   return (
     <div className="cd-screen">
       <header className="cd-screen-head" data-screen-label="Products">
@@ -280,104 +314,83 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
         </div>
       </header>
 
-      <div className="flex items-center gap-2.5" style={{ marginBottom: 10, flexWrap: "wrap" }}>
-        <ClearableSearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Search products"
-          ariaLabel="Search products"
+      <Card pad={false} className="cd-order-workspace">
+        <OrderListToolbar
+          views={STATUS_VIEWS}
+          view={status}
+          onViewChange={(v) => setStatus(v as StatusFilter)}
+          searchValue={search}
+          searchPlaceholder="Search products"
+          searchAriaLabel="Search products"
+          onSearchChange={setSearch}
+          filterLabel="Product"
         />
-        <Segmented small value={status} onChange={(v) => setStatus(v as StatusFilter)} options={STATUS_OPTIONS} />
-        <select
-          className="cd-input"
-          value={sort}
-          onChange={(e) => {
-            if (isCatalogSort(e.target.value)) setSort(e.target.value);
-          }}
-          aria-label="Sort products"
-          style={{ width: "auto" }}
-        >
-          {CATALOG_SORTS.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </div>
 
-      {selected.size > 0 && (
-        <Card>
-          <div className="flex items-center gap-3" style={{ flexWrap: "wrap" }}>
-            <span className="cd-row-title">{selected.size} selected</span>
-            <Btn small icon="check" disabled={bulkBusy} onClick={() => bulkStatus("active", "set to active")}>
-              Set active
+        <OrderBulkBar count={selected.size}>
+          <Btn small icon="check" disabled={bulkBusy} onClick={() => bulkStatus("active", "set to active")}>
+            Set active
+          </Btn>
+          <Btn small disabled={bulkBusy} onClick={() => bulkStatus("draft", "set to draft")}>
+            Set draft
+          </Btn>
+          {isArchivedView ? (
+            <Btn small icon="archive" disabled={bulkBusy} onClick={() => bulkStatus("draft", "unarchived to draft")}>
+              Unarchive to draft
             </Btn>
-            <Btn small disabled={bulkBusy} onClick={() => bulkStatus("draft", "set to draft")}>
-              Set draft
+          ) : (
+            <Btn
+              small
+              icon="archive"
+              disabled={bulkBusy}
+              onClick={() => bulkStatus("archived", "archived", `Archive ${selected.size} products?`)}
+            >
+              Archive
             </Btn>
-            {isArchivedView ? (
-              <Btn small icon="archive" disabled={bulkBusy} onClick={() => bulkStatus("draft", "unarchived to draft")}>
-                Unarchive to draft
-              </Btn>
-            ) : (
-              <Btn
-                small
-                icon="archive"
-                disabled={bulkBusy}
-                onClick={() => bulkStatus("archived", "archived", `Archive ${selected.size} products?`)}
-              >
-                Archive
-              </Btn>
-            )}
-            <div className="flex items-center gap-2">
-              <select
-                className="cd-input"
-                aria-label="Collection to add to"
-                value={collectionId}
-                onChange={(e) => setCollectionId(e.target.value)}
-                disabled={bulkBusy || !collections || collections.length === 0}
-                style={{ width: 190 }}
-              >
-                <option value="">
-                  {collections === null
-                    ? "Loading collections…"
-                    : collections.length === 0
-                      ? "No collections yet"
-                      : "Add to collection…"}
+          )}
+          <div className="flex items-center gap-2">
+            <select
+              className="cd-input"
+              aria-label="Collection to add to"
+              value={collectionId}
+              onChange={(e) => setCollectionId(e.target.value)}
+              disabled={bulkBusy || !collections || collections.length === 0}
+              style={{ width: 190 }}
+            >
+              <option value="">
+                {collections === null
+                  ? "Loading collections…"
+                  : collections.length === 0
+                    ? "No collections yet"
+                    : "Add to collection…"}
+              </option>
+              {(collections ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.title}
                 </option>
-                {(collections ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-              </select>
-              <Btn small icon="tag" disabled={bulkBusy || !collectionId} onClick={bulkAddToCollection}>
-                Add
-              </Btn>
-            </div>
+              ))}
+            </select>
+            <Btn small icon="tag" disabled={bulkBusy || !collectionId} onClick={bulkAddToCollection}>
+              Add
+            </Btn>
           </div>
-        </Card>
-      )}
+        </OrderBulkBar>
 
-      <Card pad={false}>
-        {loading ? (
-          <TableSkeleton />
-        ) : error ? (
-          <Placeholder icon="warn" title="Couldn't load products" sub={error} />
-        ) : products.length === 0 ? (
-          <Placeholder
-            icon="bag"
-            title={filtered ? "No matching products" : "No products yet"}
-            sub={filtered ? "Try a different search or filter." : "Create your first product to start your catalog."}
-            actionLabel={filtered ? undefined : "New product"}
-            onAction={filtered ? undefined : () => app.navigate("product-editor", "new")}
-          />
-        ) : (
-          // Six columns can't compress into a phone width — the table pans
-          // sideways inside the card instead of crushing every cell.
-          <div style={{ overflowX: "auto" }}>
-            <div style={{ minWidth: 680 }}>
-            <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
+        <OrderListTable
+          loading={loading}
+          error={error}
+          empty={products.length === 0}
+          filtered={filtered}
+          minWidth={680}
+          columns={GRID}
+          emptyIcon="bag"
+          emptyTitle="No products yet"
+          emptySub="Create your first product to start your catalog."
+          emptyActionLabel="New product"
+          onEmptyAction={() => app.navigate("product-editor", "new")}
+          filteredTitle="No matching products"
+          filteredSub="Try a different search or filter."
+          headers={
+            <>
               <span>
                 <input
                   type="checkbox"
@@ -387,96 +400,98 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
                 />
               </span>
               <span aria-hidden="true" />
-              <span>Product</span>
+              <OrderSortHeader
+                label="Product"
+                col="title"
+                sort={headerSort.sort}
+                dir={headerSort.dir}
+                onSort={sortByColumn}
+              />
               <span>Price</span>
               <span>Status</span>
               <span>Ship data</span>
-            </div>
-            {products.map((p) => (
-              // A div-with-button-semantics rather than a real <button>: each row
-              // nests an interactive checkbox, which is invalid inside <button>.
+              <span />
+            </>
+          }
+        >
+          {products.map((p) => (
+            // A div-with-button-semantics rather than a real <button>: each row
+            // nests an interactive checkbox, which is invalid inside <button>.
+            <div
+              key={p.id}
+              role="button"
+              tabIndex={0}
+              className="cd-trow cd-order-row"
+              data-selected={selected.has(p.id) ? "1" : "0"}
+              onClick={() => app.navigate("product-editor", p.id)}
+              onKeyDown={(e) => {
+                // Only when the row itself is focused — a Space keyup on the
+                // nested checkbox bubbles here and must not open the editor.
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  app.navigate("product-editor", p.id);
+                }
+              }}
+              style={{ gridTemplateColumns: GRID, cursor: "pointer" }}
+            >
+              <div onClick={(e) => e.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(p.id)}
+                  onChange={() => toggleRow(p.id)}
+                  aria-label={`Select ${p.title}`}
+                />
+              </div>
               <div
-                key={p.id}
-                role="button"
-                tabIndex={0}
-                className="cd-trow"
-                onClick={() => app.navigate("product-editor", p.id)}
-                onKeyDown={(e) => {
-                  // Only when the row itself is focused — a Space keyup on the
-                  // nested checkbox bubbles here and must not open the editor.
-                  if (e.target !== e.currentTarget) return;
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    app.navigate("product-editor", p.id);
-                  }
-                }}
                 style={{
-                  gridTemplateColumns: GRID,
-                  width: "100%",
-                  background: "none",
-                  border: 0,
-                  font: "inherit",
-                  color: "inherit",
-                  textAlign: "left",
-                  cursor: "pointer",
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  overflow: "hidden",
+                  background: "var(--gray-bg)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}
               >
-                <div onClick={(e) => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={selected.has(p.id)}
-                    onChange={() => toggleRow(p.id)}
-                    aria-label={`Select ${p.title}`}
+                {p.imageUrl ? (
+                  <img
+                    src={p.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
                   />
-                </div>
-                <div
-                  style={{
-                    width: 30,
-                    height: 30,
-                    borderRadius: 7,
-                    overflow: "hidden",
-                    background: "var(--gray-bg)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  {p.imageUrl ? (
-                    <img
-                      src={p.imageUrl}
-                      alt=""
-                      loading="lazy"
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    />
-                  ) : (
-                    <CDIcon name="bag" size={15} />
-                  )}
-                </div>
-                <div>
-                  <div className="cd-row-title truncate">{p.title}</div>
-                  {p.variantCount > 1 && (
-                    <div className="cd-caption">
-                      {p.variantCount} variant{p.variantCount === 1 ? "" : "s"}
-                    </div>
-                  )}
-                </div>
-                <div className="cd-row-num tabular-nums">
-                  {p.priceCents != null ? money(p.priceCents) : "—"}
-                </div>
-                <div>
-                  <Pill tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Pill>
-                </div>
-                <div
-                  className="cd-caption"
-                  style={p.shipDataOk ? undefined : { color: "var(--orange)" }}
-                >
-                  {shipLabel(p)}
-                </div>
+                ) : (
+                  <CDIcon name="bag" size={15} />
+                )}
               </div>
-            ))}
+              <div>
+                <div className="cd-row-title truncate">{p.title}</div>
+                {p.variantCount > 1 && (
+                  <div className="cd-caption">
+                    {p.variantCount} variant{p.variantCount === 1 ? "" : "s"}
+                  </div>
+                )}
+              </div>
+              <div className="cd-row-num tabular-nums">
+                {p.priceCents != null ? money(p.priceCents) : "—"}
+              </div>
+              <div>
+                <Pill tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Pill>
+              </div>
+              <div
+                className="cd-caption"
+                style={p.shipDataOk ? undefined : { color: "var(--orange)" }}
+              >
+                {shipLabel(p)}
+              </div>
+              <div className="cd-order-row-actions">
+                <CDIcon name="chevronRight" size={15} className="cd-order-row-chevron" />
+              </div>
             </div>
-          </div>
-        )}
+          ))}
+        </OrderListTable>
       </Card>
 
       {!loading && !error && products.length < total && (
