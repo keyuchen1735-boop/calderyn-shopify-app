@@ -2033,6 +2033,7 @@
   position: absolute;
   pointer-events: none;
 }
+.cd-sidebar[data-compact="1"] .cd-sidebar-copy { display: none; }
 .cd-sidebar[data-compact="1"] .cd-ask-btn,
 .cd-sidebar[data-compact="1"] .cd-nav-item {
   position: relative;

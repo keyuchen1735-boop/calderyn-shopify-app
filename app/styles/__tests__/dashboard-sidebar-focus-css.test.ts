@@ -26,4 +26,10 @@ describe("Store Builder compact sidebar CSS", () => {
       /\.cd-sidebar\[data-compact="1"\] \.cd-apswitch \{[^}]*display: none;/,
     );
   });
+
+  it("hides navigation labels in the compact rail before animation runs", () => {
+    expect(css).toMatch(
+      /\.cd-sidebar\[data-compact="1"\] \.cd-sidebar-copy \{[^}]*display: none;/,
+    );
+  });
 });
