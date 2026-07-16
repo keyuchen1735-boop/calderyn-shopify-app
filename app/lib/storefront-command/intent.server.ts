@@ -13,6 +13,7 @@ const PRODUCT_ID_CAP = 12;
 const PRODUCT_CANDIDATE_CAP = 100;
 const PRODUCT_TITLE_CAP = 200;
 const ROUTE_IDS: ReadonlySet<StorefrontRouteId> = new Set(["home", "collection", "product", "search", "cart", "checkout"]);
+const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
 export interface StoreIntentProductCandidate {
   id: string;
@@ -169,6 +170,21 @@ function validAttachments(value: unknown): value is StoreAttachment[] {
   return shaderCount <= 1;
 }
 
+function validatedSnapshot(input: ClassifyStoreIntentInput): ClassifyStoreIntentInput {
+  let snapshot: ClassifyStoreIntentInput;
+  try { snapshot = structuredClone(input); }
+  catch { invalid(); }
+  if (!boundedString(snapshot.prompt, INPUT_CODE_POINT_CAP)
+    || (snapshot.currentTemplateId !== undefined && !isStoreTemplateId(snapshot.currentTemplateId))
+    || (snapshot.bundle !== undefined && snapshot.currentTemplateId !== undefined
+      && (snapshot.bundle.source.kind !== "recipe" || snapshot.bundle.source.templateId !== snapshot.currentTemplateId))
+    || !validProductCandidates(snapshot.productCandidates ?? [])
+    || (snapshot.context !== undefined && (!boundedString(snapshot.context.slot, 120)
+      || typeof snapshot.context.routeId !== "string" || !ROUTE_IDS.has(snapshot.context.routeId)))
+    || !validAttachments(snapshot.attachments ?? [])) invalid();
+  return snapshot;
+}
+
 function templateId(input: ClassifyStoreIntentInput): StoreTemplateId | undefined {
   if (input.currentTemplateId) return input.currentTemplateId;
   return input.bundle?.source.kind === "recipe" ? input.bundle.source.templateId : undefined;
@@ -186,7 +202,7 @@ function parseVisualLayer(value: unknown): VisualLayerSpec | null {
   if (layer.kind !== "fragment_shader" || !hasExactKeys(layer, ["kind", "source", "colors"])
     || typeof layer.source !== "string" || !layer.source.trim() || !shaderSourceWithinCap(layer.source)
     || !Array.isArray(layer.colors) || layer.colors.length !== 3
-    || !layer.colors.every((color) => typeof color === "string" && hexToRgb(color) !== null)) return null;
+    || !layer.colors.every((color) => typeof color === "string" && HEX_COLOR.test(color) && hexToRgb(color) !== null)) return null;
   return { kind: "fragment_shader", source: layer.source, colors: layer.colors as [string, string, string] };
 }
 
@@ -199,12 +215,11 @@ function exclusions(input: ClassifyStoreIntentInput): StoreTemplateId[] {
 }
 
 function exactCommand(input: ClassifyStoreIntentInput): StoreIntent | null {
-  const prompt = input.prompt.trim();
-  switch (prompt.normalize("NFKC").toLocaleLowerCase("und").replace(/\s+/g, " ")) {
-    case "undo": return { kind: "unsupported", message: "Use Undo to restore the previous version." };
-    case "publish": return { kind: "unsupported", message: "Use Publish to publish the current version." };
-    case "start over": return { kind: "start_over", prompt };
-    case "try another": return { kind: "select_design", prompt, excludedTemplateIds: exclusions(input) };
+  switch (input.prompt) {
+    case "Undo": return { kind: "unsupported", message: "Use Undo to restore the previous version." };
+    case "Publish": return { kind: "unsupported", message: "Use Publish to publish the current version." };
+    case "Start over": return { kind: "start_over", prompt: input.prompt };
+    case "Try another": return { kind: "select_design", prompt: input.prompt, excludedTemplateIds: exclusions(input) };
     default: return null;
   }
 }
@@ -276,27 +291,20 @@ export async function classifyStoreIntent(
   input: ClassifyStoreIntentInput,
   dependencies: { provider?: StoreIntentProvider } = {},
 ): Promise<StoreIntent> {
-  if (!boundedString(input.prompt, INPUT_CODE_POINT_CAP)
-    || (input.currentTemplateId !== undefined && !isStoreTemplateId(input.currentTemplateId))
-    || (input.bundle !== undefined && input.currentTemplateId !== undefined
-      && (input.bundle.source.kind !== "recipe" || input.bundle.source.templateId !== input.currentTemplateId))
-    || !validProductCandidates(input.productCandidates ?? [])
-    || (input.context !== undefined && (!boundedString(input.context.slot, 120)
-      || typeof input.context.routeId !== "string" || !ROUTE_IDS.has(input.context.routeId)))
-    || !validAttachments(input.attachments ?? [])) invalid();
-  exclusions(input);
-  const deterministic = exactCommand(input);
+  const snapshot = validatedSnapshot(input);
+  exclusions(snapshot);
+  const deterministic = exactCommand(snapshot);
   if (deterministic) return deterministic;
 
-  const currentTemplateId = templateId(input);
+  const currentTemplateId = templateId(snapshot);
   const template = currentTemplateId ? getStoreTemplate(currentTemplateId) : null;
   const providerInput = JSON.stringify({
-    prompt: input.prompt.trim(),
-    context: input.context ?? null,
-    attachments: (input.attachments ?? []).map((attachment) => attachment.kind === "fragment_shader"
+    prompt: snapshot.prompt.trim(),
+    context: snapshot.context ?? null,
+    attachments: (snapshot.attachments ?? []).map((attachment) => attachment.kind === "fragment_shader"
       ? { kind: attachment.kind, sourceLength: attachment.source.length }
       : attachment),
-    productCandidates: (input.productCandidates ?? []).map(({ id, title }) => ({ id: id.trim(), title: title.trim() })),
+    productCandidates: (snapshot.productCandidates ?? []).map(({ id, title }) => ({ id: id.trim(), title: title.trim() })),
     allowedTextSlots: template?.overrideSurface.textSlots ?? [],
   });
   if (Buffer.byteLength(providerInput, "utf8") > PROVIDER_INPUT_BYTE_CAP) invalid();
@@ -306,5 +314,5 @@ export async function classifyStoreIntent(
     maxOutputChars: PROVIDER_OUTPUT_CHAR_CAP,
   });
   if (typeof raw !== "string") invalid();
-  return parseIntent(raw, input);
+  return parseIntent(raw, snapshot);
 }

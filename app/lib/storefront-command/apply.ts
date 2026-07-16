@@ -16,6 +16,7 @@ import type { StoreIntent } from "./types";
 const ROUTE_IDS = ["home", "collection", "product", "search", "cart", "checkout"] as const;
 const PRODUCT_ID_CAP = 12;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/; // eslint-disable-line no-control-regex
+const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 
 export class StorefrontTemplateIntegrityError extends Error {
   readonly code = "storefront_template_integrity_failed";
@@ -106,7 +107,7 @@ function textTargets(bundle: StorefrontBundleV1, slot: string): TextTarget[] {
   };
   visit("shell", tree(bundle, "shell"), false);
   visit("home", tree(bundle, "home"), false);
-  return exact.length ? exact : (roles.length ? roles : homeFallbacks).slice(0, 1);
+  return exact.length ? exact : (roles.length ? roles : homeFallbacks);
 }
 
 function slotTextNodes(element: CompiledElementNode): Array<Extract<CompiledNode, { kind: "text" }>> {
@@ -153,7 +154,7 @@ function validVisualLayer(value: unknown): value is VisualLayerSpec {
   return layer.kind === "fragment_shader" && hasExactKeys(layer, ["kind", "source", "colors"])
     && typeof layer.source === "string" && layer.source.trim().length > 0 && shaderSourceWithinCap(layer.source)
     && Array.isArray(layer.colors) && layer.colors.length === 3
-    && layer.colors.every((color) => typeof color === "string" && hexToRgb(color) !== null);
+    && layer.colors.every((color) => typeof color === "string" && HEX_COLOR.test(color) && hexToRgb(color) !== null);
 }
 
 function heroReferences(bundle: StorefrontBundleV1, key: string): string[] {
@@ -218,10 +219,10 @@ export function canApplyStoreTextSlot(
   try {
     assertBundleContract(bundle, template);
     if (!template.overrideSurface.textSlots.includes(slot)) return false;
-    const targets = textTargets(bundle, slot)
-      .filter((target) => expectedRouteId === undefined || target.blueprintId === expectedRouteId);
+    const targets = textTargets(bundle, slot);
     if (targets.length !== 1) return false;
     const target = targets[0]!;
+    if (expectedRouteId !== undefined && target.blueprintId !== expectedRouteId) return false;
     return target.blueprintId === "shell" || patchFitsRecipeOverride(bundle, [{
       kind: "setText",
       routeId: target.blueprintId,

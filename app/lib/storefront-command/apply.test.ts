@@ -40,15 +40,16 @@ describe("applyStoreIntent", () => {
     })).toThrowError(expect.objectContaining({ code: "storefront_template_integrity_failed" }));
   });
 
-  it("updates the first declared section heading without touching sibling copy", () => {
-    const result = applyStoreIntent(bundle(), template, {
+  it("rejects a section heading when multiple concrete candidates exist", () => {
+    const original = bundle();
+    expect(() => applyStoreIntent(original, template, {
       kind: "update_text",
       slot: "sectionHeading",
       value: "Made for long weekends",
-    });
+    })).toThrowError(expect.objectContaining({ code: "storefront_template_integrity_failed" }));
 
-    expect(result.bundle.routes.home.html).toContain("Made for long weekends");
-    expect(result.bundle.routes.home.html).toContain("Objects on the bench");
+    expect(original.routes.home.html).not.toContain("Made for long weekends");
+    expect(original.routes.home.html).toContain("Objects on the bench");
   });
 
   it("uses the first home heading when a design has no hero class", () => {
@@ -75,12 +76,24 @@ describe("applyStoreIntent", () => {
   });
 
   it("applies concrete slots and fails closed for absent optional slots across every design", () => {
-    const absentSlots = new Set([
+    const unresolvedSlots = new Set([
       ...STOREFRONT_RECIPES
         .filter((recipe) => recipe.config.templateId !== "atelier-nine")
         .map((recipe) => `${recipe.config.templateId}:announcement`),
+      "custom-bench:sectionHeading",
+      "commons-index:sectionHeading",
+      "soft-chemistry:sectionHeading",
+      "companion-field-guide:ctaLabel",
+      "daily-protocol:heroBody",
+      "daily-protocol:sectionHeading",
+      "daily-protocol:ctaLabel",
       "room-modes:sectionHeading",
+      "rep-rest:heroEyebrow",
+      "rep-rest:heroBody",
+      "rep-rest:sectionHeading",
       "diagnostic-deck:sectionHeading",
+      "atelier-nine:heroEyebrow",
+      "atelier-nine:sectionHeading",
     ]);
 
     for (const recipe of STOREFRONT_RECIPES) {
@@ -92,7 +105,7 @@ describe("applyStoreIntent", () => {
           value: "Replacement copy",
         });
         const key = `${recipe.config.templateId}:${slot}`;
-        if (absentSlots.has(key)) {
+        if (unresolvedSlots.has(key)) {
           expect(operation, key).toThrowError(expect.objectContaining({
             code: "storefront_template_integrity_failed",
           }));
@@ -112,6 +125,36 @@ describe("applyStoreIntent", () => {
     });
 
     expect(result.bundle.routes.home.html).toContain(value);
+  });
+
+  it("fails closed instead of choosing the first ambiguous text fallback", () => {
+    const ambiguous = bundle();
+    const root = ambiguous.routes.home.tree.find((node) => node.kind === "element" && node.tag === "main");
+    if (!root || root.kind !== "element") throw new Error("Missing home root");
+    const hero = root.children.find((node) => node.kind === "element" && node.tag === "section");
+    if (!hero || hero.kind !== "element") throw new Error("Missing home hero");
+    hero.children.push(
+      {
+        kind: "element",
+        id: "ambiguous-title-one",
+        tag: "h1",
+        attributes: {},
+        children: [{ kind: "text", value: "First" }],
+      },
+      {
+        kind: "element",
+        id: "ambiguous-title-two",
+        tag: "h1",
+        attributes: {},
+        children: [{ kind: "text", value: "Second" }],
+      },
+    );
+
+    expect(() => applyStoreIntent(ambiguous, template, {
+      kind: "update_text",
+      slot: "heroTitle",
+      value: "Do not guess",
+    })).toThrowError(expect.objectContaining({ code: "storefront_template_integrity_failed" }));
   });
 
   it("changes only featured product IDs", () => {
@@ -145,6 +188,17 @@ describe("applyStoreIntent", () => {
     expect(result.bundle.visualLayer).toEqual(visualLayer);
     expect(result.bundle.routes).toEqual(original.routes);
     expect(result.bundle.assets).toEqual(original.assets);
+  });
+
+  it("rejects padded visual-layer colors", () => {
+    expect(() => applyStoreIntent(bundle(), template, {
+      kind: "update_visual_layer",
+      visualLayer: {
+        kind: "fragment_shader",
+        source: "void main(){}",
+        colors: [" #000000", "#111111", "#222222"],
+      },
+    })).toThrowError(expect.objectContaining({ code: "storefront_template_integrity_failed" }));
   });
 
   it("fails closed when the protected hero or route contract has drifted", () => {
