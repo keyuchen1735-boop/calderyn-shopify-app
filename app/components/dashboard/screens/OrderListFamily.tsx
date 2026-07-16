@@ -75,6 +75,74 @@ export function OrderSortHeader({
   );
 }
 
+export interface OrderReadoutItem {
+  label: string;
+  value: string;
+  action?: () => void;
+}
+
+/** The stat strip under a list screen's h1 ("1,204 orders · $12k page value · 3 alerts") — shared
+ *  so every list page (orders, products, inventory, collections) carries the same header anatomy.
+ *  Items stagger-rise whenever their composition changes. */
+export function OrderPageReadout({
+  items,
+  ariaLabel,
+}: {
+  items: OrderReadoutItem[];
+  ariaLabel: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const key = items.map((item) => `${item.label}:${item.value}`).join("|");
+  useGSAP(
+    () => {
+      if (reduced() || !ref.current) return;
+      const els = ref.current.querySelectorAll<HTMLElement>(".cd-order-readout-item");
+      gsap.fromTo(
+        els,
+        { autoAlpha: 0, y: 6, willChange: "transform,opacity" },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.28,
+          stagger: 0.045,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform,willChange",
+        },
+      );
+    },
+    { dependencies: [key], scope: ref, revertOnUpdate: true },
+  );
+  if (items.length === 0) return null;
+  return (
+    <div ref={ref} className="cd-order-readout" aria-label={ariaLabel}>
+      {items.map((item) => {
+        const content = (
+          <>
+            <strong className="tabular-nums">{item.value}</strong>
+            <span>{item.label}</span>
+            {item.action && <CDIcon name="arrowRight" size={14} strokeWidth={1.9} />}
+          </>
+        );
+        return item.action ? (
+          <button
+            key={item.label}
+            type="button"
+            className="cd-order-readout-item"
+            data-action="1"
+            onClick={item.action}
+          >
+            {content}
+          </button>
+        ) : (
+          <div key={item.label} className="cd-order-readout-item">
+            {content}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function OrderListToolbar({
   views,
   view,

@@ -16,6 +16,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const url = new URL(request.url);
   const status = url.searchParams.get("status");
   const sort = url.searchParams.get("sort") ?? "";
+  // Date-range bounds pass through only when they parse as real datetimes — a
+  // malformed value degrades to "no bound", never a PostgREST 500.
+  const isoParam = (name: string): string | undefined => {
+    const raw = url.searchParams.get(name);
+    return raw && Number.isFinite(Date.parse(raw)) ? raw : undefined;
+  };
   return dashboardJson(async () => {
     const { products, total } = await listProducts(session.shopId, {
       search: url.searchParams.get("search") ?? undefined,
@@ -26,6 +32,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
         : undefined,
       offset: Number(url.searchParams.get("offset") ?? 0) || 0,
       sort: isCatalogSort(sort) ? sort : undefined,
+      updatedFrom: isoParam("updated_from"),
+      updatedTo: isoParam("updated_to"),
     });
     // Private bucket -> mint a signed URL for each product's primary image.
     const signed = await signMediaPaths(

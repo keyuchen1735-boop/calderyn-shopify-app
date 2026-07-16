@@ -1,17 +1,38 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { Card, Btn, ClearableSearchInput, Pan, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
+import {
+  OrderListTable,
+  OrderListToolbar,
+  OrderPageReadout,
+  OrderSortHeader,
+  nextSortState,
+  type OrderListView,
+} from "./OrderListFamily";
 
 // URL-only pages (/dashboard/products/collections[/<id>]): no Products subtab
 // entry, so no subtab bar renders here. app.nav.param routes between the list
 // and a single collection's detail view.
 
-const GRID = "2fr 1fr 0.6fr auto";
+// Collection / Handle / Products / actions / row chevron — same rhythm as the Orders table.
+const GRID = "2fr 1fr 0.6fr auto 36px";
 const MEMBER_GRID = "44px 2fr 1fr auto";
+
+type CollectionView = "all" | "with" | "empty";
+
+const COLLECTION_VIEWS: OrderListView[] = [
+  { id: "all", label: "All" },
+  { id: "with", label: "With products" },
+  { id: "empty", label: "Empty" },
+];
+
+// Client-side default ordering = the list as the server returns it. The whole collections list
+// is unpaged, so header sorting can safely happen in the browser.
+const DEFAULT_COLLECTION_SORT = { sort: "default", dir: "desc" } as const;
 
 const STATUS_TONE: Record<string, "success" | "neutral" | "warn"> = {
   active: "success",
@@ -49,6 +70,14 @@ function CollectionsList({ app }: { app: DashboardCtx }) {
   // Row whose title cell is currently an input; value tracks the draft text.
   const [editing, setEditing] = useState<{ id: string; value: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Toolbar state, all client-side (the list is unpaged): view tab, search, header sort.
+  const [view, setView] = useState<CollectionView>("all");
+  const [search, setSearch] = useState("");
+  const [listSort, setListSort] = useState<{ sort: string; dir: "asc" | "desc" }>(
+    DEFAULT_COLLECTION_SORT,
+  );
+  // The header's New-collection button drops focus into the toolbar's create field.
+  const createInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -122,50 +151,126 @@ function CollectionsList({ app }: { app: DashboardCtx }) {
     }
   };
 
+  // Client-side view/search/sort over the unpaged list.
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let list = items.filter((c) => {
+      if (view === "with" && c.productCount === 0) return false;
+      if (view === "empty" && c.productCount !== 0) return false;
+      if (q && !c.title.toLowerCase().includes(q) && !c.handle.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    if (listSort.sort === "title") {
+      const dir = listSort.dir === "asc" ? 1 : -1;
+      list = [...list].sort((a, b) => a.title.localeCompare(b.title) * dir);
+    } else if (listSort.sort === "products") {
+      const dir = listSort.dir === "asc" ? 1 : -1;
+      list = [...list].sort((a, b) => (a.productCount - b.productCount) * dir);
+    }
+    return list;
+  }, [items, view, search, listSort]);
+
+  const filtered = Boolean(search.trim()) || view !== "all";
+
+  const sortBy = (col: string) => {
+    setListSort((cur) => nextSortState(cur, col, DEFAULT_COLLECTION_SORT));
+  };
+
+  // Same header anatomy as Orders: h1, then the stat readout strip.
+  const readoutItems = loading
+    ? []
+    : [
+        { label: items.length === 1 ? "collection" : "collections", value: items.length.toLocaleString("en-US") },
+        {
+          label: "product memberships",
+          value: items.reduce((sum, c) => sum + c.productCount, 0).toLocaleString("en-US"),
+        },
+        {
+          label: "empty",
+          value: items.filter((c) => c.productCount === 0).length.toLocaleString("en-US"),
+        },
+      ];
+
   return (
-    <div className="cd-screen">
-      <header className="cd-screen-head" data-screen-label="Collections">
+    <div className="cd-screen cd-orders-screen" data-screen-label="Collections">
+      <header className="cd-screen-head cd-order-page-head">
         <div>
           <h1 className="cd-h1">Collections</h1>
-          <p className="cd-sub">
-            {loading ? "Loading collections…" : `${items.length} collection${items.length === 1 ? "" : "s"}`}
-          </p>
         </div>
+        <Btn kind="primary" small onClick={() => createInputRef.current?.focus()}>
+          New collection
+        </Btn>
       </header>
 
-      <div className="flex items-center gap-2.5" style={{ marginBottom: 10, flexWrap: "wrap" }}>
-        <input
-          className="cd-input"
-          placeholder="New collection name"
-          aria-label="New collection name"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") onCreate();
-          }}
-          style={{ width: "auto", minWidth: 220, flex: "1 1 220px" }}
-        />
-        <Btn kind="primary" icon="plus" disabled={creating || !title.trim()} onClick={onCreate}>
-          Create
-        </Btn>
-      </div>
+      <OrderPageReadout items={readoutItems} ariaLabel="Collections overview" />
 
-      <Card pad={false}>
-        {loading ? (
-          <TableSkeleton />
-        ) : error ? (
-          <Placeholder icon="warn" title="Couldn't load collections" sub={error} />
-        ) : items.length === 0 ? (
-          <Placeholder icon="tag" title="No collections yet" sub="Create one to group products in your storefront." />
-        ) : (
-          <Pan min={560}>
-            <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
-              <span>Collection</span>
-              <span>Handle</span>
-              <span>Products</span>
-              <span aria-hidden="true" />
+      <div className="cd-order-section-panel">
+      <Card pad={false} className="cd-order-workspace">
+        <OrderListToolbar
+          views={COLLECTION_VIEWS}
+          view={view}
+          onViewChange={(v) => setView(v as CollectionView)}
+          searchValue={search}
+          searchPlaceholder="Search collections"
+          searchAriaLabel="Search collections"
+          onSearchChange={setSearch}
+          filterLabel="Collection"
+          viewExtras={
+            <div className="flex items-center gap-2">
+              <input
+                ref={createInputRef}
+                className="cd-input"
+                placeholder="New collection name"
+                aria-label="New collection name"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onCreate();
+                }}
+                style={{ width: 180, height: 28, padding: "0 9px" }}
+              />
+              <Btn small icon="plus" disabled={creating || !title.trim()} onClick={onCreate}>
+                Create
+              </Btn>
             </div>
-            {items.map((c) => (
+          }
+        />
+
+        <OrderListTable
+          loading={loading}
+          error={error}
+          empty={visible.length === 0}
+          filtered={filtered}
+          minWidth={620}
+          columns={GRID}
+          emptyIcon="tag"
+          emptyTitle="No collections yet"
+          emptySub="Create one to group products in your storefront."
+          filteredTitle="No matching collections"
+          filteredSub="Try another view or search."
+          headers={
+            <>
+              <OrderSortHeader
+                label="Collection"
+                col="title"
+                sort={listSort.sort}
+                dir={listSort.dir}
+                onSort={sortBy}
+              />
+              <span>Handle</span>
+              <OrderSortHeader
+                label="Products"
+                col="products"
+                sort={listSort.sort}
+                dir={listSort.dir}
+                onSort={sortBy}
+              />
+              <span aria-hidden="true" />
+              <span />
+            </>
+          }
+        >
+          {visible.map((c) => (
               // Div-with-button-semantics rather than a real <button>: the row
               // nests the rename input and action buttons, which are invalid
               // inside <button>.
@@ -173,7 +278,7 @@ function CollectionsList({ app }: { app: DashboardCtx }) {
                 key={c.id}
                 role="button"
                 tabIndex={0}
-                className="cd-trow"
+                className="cd-trow cd-order-row"
                 onClick={() => app.navigate("collections", c.id)}
                 onKeyDown={(e) => {
                   if (e.target !== e.currentTarget) return;
@@ -218,11 +323,14 @@ function CollectionsList({ app }: { app: DashboardCtx }) {
                     Delete
                   </Btn>
                 </div>
+                <div className="cd-order-row-actions">
+                  <CDIcon name="chevronRight" size={15} className="cd-order-row-chevron" />
+                </div>
               </div>
             ))}
-          </Pan>
-        )}
+        </OrderListTable>
       </Card>
+      </div>
     </div>
   );
 }

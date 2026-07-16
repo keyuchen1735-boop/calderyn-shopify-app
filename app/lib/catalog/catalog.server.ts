@@ -49,6 +49,9 @@ export async function listProducts(
     limit?: number;
     offset?: number;
     sort?: CatalogSort;
+    /** ISO datetimes bounding updated_at (inclusive) — the list's date-range filter. */
+    updatedFrom?: string;
+    updatedTo?: string;
   } = {},
 ): Promise<{ products: ProductListItem[]; total: number }> {
   const sb = getSupabase();
@@ -63,6 +66,8 @@ export async function listProducts(
     .eq("shop_id", shopId);
   if (opts.status) q = q.eq("status", opts.status);
   if (opts.search) q = q.ilike("title", `%${escapeLike(opts.search)}%`);
+  if (opts.updatedFrom) q = q.gte("updated_at", opts.updatedFrom);
+  if (opts.updatedTo) q = q.lte("updated_at", opts.updatedTo);
   // Stable tiebreaker after the sort column so offset paging can't skip/duplicate
   // rows that share a value (seeded/imported in the same write).
   const order = catalogSortToOrder(opts.sort ?? "updated");

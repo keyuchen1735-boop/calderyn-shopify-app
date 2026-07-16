@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Btn, Card, ClearableSearchInput, Pill, Placeholder, Segmented, TableSkeleton } from "../ui";
+import { Btn, Card, Pill } from "../ui";
 import { CDIcon } from "../icons";
+import {
+  OrderListTable,
+  OrderListToolbar,
+  OrderPageReadout,
+  type OrderListView,
+} from "./OrderListFamily";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
@@ -9,17 +15,18 @@ import InventoryPanel from "./InventoryPanel";
 import type { DashboardCtx } from "../context";
 import { useModalChrome } from "../use-modal-chrome";
 
-// Design table: Product / On hand / Reserved / Available / Status / Autopilot.
-// Backed by the shop-wide inventory_list RPC (per-variant balance rollups), so
-// reserved/available are real ledger numbers, not zero-fill.
-const GRID = "2fr 0.7fr 0.7fr 0.7fr 1fr 1.1fr";
+// Product / On hand / Reserved / Available / Status / Autopilot / row chevron — same rhythm as
+// the Orders table, whose trailing cell carries the open-row affordance. Backed by the shop-wide
+// inventory_list RPC (per-variant balance rollups), so reserved/available are real ledger
+// numbers, not zero-fill.
+const GRID = "2fr 0.7fr 0.7fr 0.7fr 1fr 1.1fr 36px";
 
 type StockFilter = "all" | "low" | "out";
 
-const STOCK_OPTIONS = [
-  { value: "all", label: "All" },
-  { value: "low", label: "Low" },
-  { value: "out", label: "Out" },
+const STOCK_VIEWS: OrderListView[] = [
+  { id: "all", label: "All" },
+  { id: "low", label: "Low" },
+  { id: "out", label: "Out" },
 ];
 
 type InventoryPage = { rows: client.InventoryRowVM[]; total: number };
@@ -191,58 +198,70 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
   const filtered = Boolean(query) || stock !== "all";
   const shown = rows ?? [];
 
+  // Same header anatomy as Orders: h1, then the stat readout strip. Stock
+  // counts are page-scoped (like Orders' "Page value"/"Page alerts").
+  const readoutItems = loading
+    ? []
+    : [
+        { label: total === 1 ? "tracked variant" : "tracked variants", value: total.toLocaleString("en-US") },
+        {
+          label: "units on page",
+          value: shown.reduce((sum, r) => sum + r.onHand, 0).toLocaleString("en-US"),
+        },
+        {
+          label: "low or out on page",
+          value: shown.filter((r) => r.low || r.onHand <= 0).length.toLocaleString("en-US"),
+        },
+      ];
+
   return (
-    <div className="cd-screen">
-      <header className="cd-screen-head" data-screen-label="Products">
+    <div className="cd-screen cd-orders-screen" data-screen-label="Products">
+      <header className="cd-screen-head cd-order-page-head">
         <div>
           <h1 className="cd-h1">Products</h1>
-          <p className="cd-sub">
-            {loading
-              ? "Loading stock across your locations…"
-              : `${total} tracked variant${total === 1 ? "" : "s"}`}
-          </p>
         </div>
       </header>
 
-      <div className="flex items-center gap-2.5" style={{ marginBottom: 10, flexWrap: "wrap" }}>
-        <ClearableSearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Search by product, variant, or SKU"
-          ariaLabel="Search inventory"
-        />
-        <Segmented small value={stock} onChange={(v) => setStock(v as StockFilter)} options={STOCK_OPTIONS} />
-      </div>
+      <OrderPageReadout items={readoutItems} ariaLabel="Inventory overview" />
 
-      <Card pad={false}>
-        {loading ? (
-          <TableSkeleton />
-        ) : error ? (
-          <Placeholder icon="warn" title="Couldn't load inventory" sub={error} />
-        ) : shown.length === 0 ? (
-          <Placeholder
-            icon="box"
-            title={filtered ? "No matching stock" : "No tracked variants"}
-            sub={
-              filtered
-                ? "Try a different search or stock filter."
-                : "Add products with tracked inventory and their stock will appear here."
-            }
-          />
-        ) : (
-          // Six columns can't compress into a phone width — the table pans
-          // sideways inside the card instead of crushing every cell.
-          <div style={{ overflowX: "auto" }}>
-            <div style={{ minWidth: 640 }}>
-            <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
+      <div className="cd-order-section-panel">
+      <Card pad={false} className="cd-order-workspace">
+        <OrderListToolbar
+          views={STOCK_VIEWS}
+          view={stock}
+          onViewChange={(v) => setStock(v as StockFilter)}
+          searchValue={search}
+          searchPlaceholder="Search by product, variant, or SKU"
+          searchAriaLabel="Search inventory"
+          onSearchChange={setSearch}
+          filterLabel="Stock"
+        />
+
+        <OrderListTable
+          loading={loading}
+          error={error}
+          empty={shown.length === 0}
+          filtered={filtered}
+          minWidth={680}
+          columns={GRID}
+          emptyIcon="box"
+          emptyTitle="No tracked variants"
+          emptySub="Add products with tracked inventory and their stock will appear here."
+          filteredTitle="No matching stock"
+          filteredSub="Try a different search or stock filter."
+          headers={
+            <>
               <span>Product</span>
               <span>On hand</span>
               <span>Reserved</span>
               <span>Available</span>
               <span>Status</span>
               <span>Autopilot</span>
-            </div>
-            {shown.map((r) => {
+              <span />
+            </>
+          }
+        >
+          {shown.map((r) => {
               const st = stockStatus(r);
               const inlineEditable = r.locationCount === 1 && r.singleLocationId;
               return (
@@ -253,7 +272,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                   key={r.variantId}
                   role="button"
                   tabIndex={0}
-                  className="cd-trow"
+                  className="cd-trow cd-order-row"
                   onClick={() => setOpenRow(r)}
                   onKeyDown={(e) => {
                     // Only when the row itself is focused — Enter inside the
@@ -264,16 +283,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                       setOpenRow(r);
                     }
                   }}
-                  style={{
-                    gridTemplateColumns: GRID,
-                    width: "100%",
-                    background: "none",
-                    border: 0,
-                    font: "inherit",
-                    color: "inherit",
-                    textAlign: "left",
-                    cursor: "pointer",
-                  }}
+                  style={{ gridTemplateColumns: GRID, cursor: "pointer" }}
                 >
                   <div className="min-w-0">
                     <div className="cd-row-title truncate">{r.productTitle}</div>
@@ -294,7 +304,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                         defaultValue={r.onHand}
                         disabled={savingQty === r.variantId}
                         aria-label={`On hand for ${r.sku ?? r.productTitle}`}
-                        style={{ width: 72 }}
+                        style={{ width: 72, height: 26, padding: "0 8px" }}
                         onClick={(e) => e.stopPropagation()}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") e.currentTarget.blur();
@@ -356,12 +366,13 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                       </button>
                     ) : null}
                   </div>
+                  <div className="cd-order-row-actions">
+                    <CDIcon name="chevronRight" size={15} className="cd-order-row-chevron" />
+                  </div>
                 </div>
               );
             })}
-            </div>
-          </div>
-        )}
+        </OrderListTable>
       </Card>
 
       {!loading && !error && rows && rows.length < total && (
@@ -371,6 +382,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
           </Btn>
         </div>
       )}
+      </div>
 
       {openRow && (
         <div

@@ -38,6 +38,7 @@ import {
   OrderBulkBar,
   OrderListPagination,
   OrderListTable,
+  OrderPageReadout,
   OrderSortHeader,
   nextSortState,
 } from "./OrderListFamily";
@@ -947,32 +948,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     ];
   }, [displayRows, ordersListPage, page, sub]);
 
-  const overviewRef = useRef<HTMLDivElement>(null);
-  const overviewKey = overviewItems
-    .map((item) => `${item.label}:${item.value}`)
-    .join("|");
   const sectionPanelRef = useRef<HTMLDivElement>(null);
-  useGSAP(
-    () => {
-      if (reduced() || !overviewRef.current) return;
-      const items = overviewRef.current.querySelectorAll<HTMLElement>(
-        ".cd-order-readout-item",
-      );
-      gsap.fromTo(
-        items,
-        { autoAlpha: 0, y: 6, willChange: "transform,opacity" },
-        {
-          autoAlpha: 1,
-          y: 0,
-          duration: 0.28,
-          stagger: 0.045,
-          ease: "power2.out",
-          clearProps: "opacity,visibility,transform,willChange",
-        },
-      );
-    },
-    { dependencies: [overviewKey], scope: overviewRef, revertOnUpdate: true },
-  );
   useGSAP(
     () => {
       if (reduced() || !sectionPanelRef.current) return;
@@ -1055,40 +1031,7 @@ export default function Orders({ app }: { app: DashboardCtx }) {
         )}
       </header>
 
-      {overviewItems.length > 0 && (
-        <div
-          ref={overviewRef}
-          className="cd-order-readout"
-          aria-label={`${sectionMeta.title} overview`}
-        >
-          {overviewItems.map((item) => {
-            const content = (
-              <>
-                <strong className="tabular-nums">{item.value}</strong>
-                <span>{item.label}</span>
-                {item.action && (
-                  <CDIcon name="arrowRight" size={14} strokeWidth={1.9} />
-                )}
-              </>
-            );
-            return item.action ? (
-              <button
-                key={item.label}
-                type="button"
-                className="cd-order-readout-item"
-                data-action="1"
-                onClick={item.action}
-              >
-                {content}
-              </button>
-            ) : (
-              <div key={item.label} className="cd-order-readout-item">
-                {content}
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <OrderPageReadout items={overviewItems} ariaLabel={`${sectionMeta.title} overview`} />
 
       <div ref={sectionPanelRef} className="cd-order-section-panel">
         {sub === "orders" ? (
