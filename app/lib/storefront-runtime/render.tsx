@@ -75,6 +75,9 @@ function rootValue(data: PublicPresentationData, path: string): unknown {
   if (path.startsWith("collection.")) return objectValue(data.collection, path.slice("collection.".length));
   if (path.startsWith("product.")) return objectValue(data.product, path.slice("product.".length));
   if (path.startsWith("variant.")) return objectValue(data.product?.variants[0] ?? null, path.slice("variant.".length));
+  // A visitor without a cart still has a real count of zero — "Bag ()" is not a
+  // rendering option, so the missing-cart case resolves to 0 rather than null.
+  if (path === "cart.count") return data.cart?.count ?? 0;
   if (path.startsWith("cart.")) return objectValue(data.cart, path.slice("cart.".length));
   if (path.startsWith("search.")) return objectValue(data.search, path.slice("search.".length));
   return null;

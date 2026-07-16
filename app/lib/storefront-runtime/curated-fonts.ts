@@ -69,5 +69,14 @@ export function storefrontDesignSystemCss(designSystem: StorefrontBundleV1["desi
     ":where([data-cd-bundle-runtime]) :where(p,a,button){overflow-wrap:anywhere}",
     ":where([data-cd-bundle-shell])>header,:where([data-cd-bundle-shell])>footer{display:flex;align-items:center;justify-content:space-between;gap:1rem;min-height:4rem;padding:1rem}",
     "@media(max-width:720px){:where([data-cd-bundle-shell])>header,:where([data-cd-bundle-shell])>footer{align-items:flex-start;flex-wrap:wrap}}",
+    // Trusted-slot hosts and their ancestors are compiler-protected, so recipes
+    // cannot style their own quick-buy strips — layout for the two bare idioms
+    // is runtime-owned. Idiom 1: a classless section wrapping repeated
+    // classless items becomes a responsive strip grid. Idiom 2 (legacy): a
+    // repeat cloned per-product into sibling sections, each holding a single
+    // panel host, gets bounded instead of rendering as a raw full-width stack.
+    ':where([data-cd-bundle-runtime]) :where(section:not([class])):has(>:where(div:not([class]))>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"])){display:grid;grid-template-columns:repeat(auto-fill,minmax(16rem,1fr));gap:1rem;align-items:start;padding:1rem}',
+    ':where([data-cd-bundle-runtime]) :where(section:not([class]))>:where(div:not([class])):has(>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"])){min-width:0}',
+    ':where([data-cd-bundle-runtime]) :where(section:not([class]))>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"]:only-child){max-width:26rem;margin:0.35rem 1rem}',
   ].join("");
 }
