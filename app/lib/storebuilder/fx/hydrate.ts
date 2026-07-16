@@ -1,15 +1,12 @@
 // app/lib/storebuilder/fx/hydrate.ts
 // Client entry point for the rawHtml effect channels. The generator's sanitized
-// HTML fragment carries `data-fx-shader` / `data-fx-motion` attributes on its own
-// elements; this walks the freshly-rendered fragment and mounts the trusted
-// runtimes onto them. Called only from a client effect, so it is a no-op on the
+// HTML fragment carries optional motion attributes on its own elements; this
+// walks the freshly-rendered fragment and mounts that runtime. Called only from
+// a client effect, so it is a no-op on the
 // server by construction.
 //
 // The motion runtime (and its gsap dependency) loads on demand: a page whose
 // markup has no data-fx-motion host never fetches that chunk.
-import { mountShader } from "./shader";
-
-const SHADER_LIMIT = 2;
 const MOTION_LIMIT = 8;
 
 export function hydrateStoreFx(root: HTMLElement): () => void {
@@ -20,12 +17,6 @@ export function hydrateStoreFx(root: HTMLElement): () => void {
 
   const cleanups: Array<() => void> = [];
   let disposed = false;
-
-  const shaderHosts = Array.from(root.querySelectorAll<HTMLElement>("[data-fx-shader]")).slice(0, SHADER_LIMIT);
-  for (const host of shaderHosts) {
-    const cleanup = mountShader(host);
-    if (cleanup) cleanups.push(cleanup);
-  }
 
   const motionHosts = Array.from(root.querySelectorAll<HTMLElement>("[data-fx-motion]")).slice(0, MOTION_LIMIT);
   if (motionHosts.length > 0) {

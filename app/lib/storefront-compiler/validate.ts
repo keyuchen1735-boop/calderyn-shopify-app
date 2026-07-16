@@ -26,6 +26,7 @@ import {
 } from "./bindings";
 import { RUNTIME_CSS_CUSTOM_PROPERTY_IDS, assertSafeDesignTokenValue, requiredCssCustomPropertyIds, validateCompiledCss } from "./css";
 import { isAllowedCompiledTag, serializeCompiledTree, type ProtectedCssNode } from "./html";
+import { isVisualLayerSpec } from "../storebuilder/fx/shader";
 
 export const validationLimitsV1 = Object.freeze({
   routeHtmlCssBytes: 250 * 1024,
@@ -807,6 +808,9 @@ function validateBundleEnvelope(bundle: UnknownRecord, add: AddDiagnostic): void
   if (bundle.validationProfileVersion !== 1) add("bundle.profile", "validationProfileVersion", "Unsupported validation profile");
   const source = record(bundle.source);
   if (!source || (source.kind !== "recipe" && source.kind !== "custom")) add("bundle.source", "source", "Bundle source is malformed");
+  if (bundle.visualLayer !== undefined && !isVisualLayerSpec(bundle.visualLayer)) {
+    add("bundle.visual_layer", "visualLayer", "Visual layer is malformed or exceeds its source cap");
+  }
   const concept = record(bundle.concept);
   if (!concept || typeof concept.name !== "string" || typeof concept.rationale !== "string" || !Array.isArray(concept.noveltySignature) || !concept.noveltySignature.every((item) => typeof item === "string")) {
     add("bundle.concept", "concept", "Bundle concept is malformed");

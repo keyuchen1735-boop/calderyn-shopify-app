@@ -10,8 +10,11 @@ import type {
   StorefrontBundleV1,
   StorefrontRouteId,
   StoreTemplateId,
+  TemplateVisualLayer,
   TrustedSlotManifest,
+  VisualLayerSpec,
 } from "~/lib/storefront-bundle/types";
+import { getStoreTemplate, isStoreTemplateId } from "~/lib/storefront-bundle/registry";
 import { isAllowedCompiledTag } from "~/lib/storefront-compiler/html";
 import { CheckoutIslands } from "./checkout-islands";
 import { storefrontDesignSystemCss } from "./curated-fonts";
@@ -45,6 +48,17 @@ interface RenderContext {
   mode: "public" | "preview";
   previewTemplateId?: StoreTemplateId;
   assetUrls: ReadonlyMap<string, string>;
+  visualLayer?: VisualTreePlacement;
+}
+
+export interface ResolvedBundleVisualLayer {
+  declaration: TemplateVisualLayer;
+  spec: VisualLayerSpec;
+}
+
+interface VisualTreePlacement extends ResolvedBundleVisualLayer {
+  hostNodeId: string;
+  fallbackNodeId: string;
 }
 
 const EMPTY_MEDIA_DATA_URL = "data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 8 10%22%3E%3Crect width=%228%22 height=%2210%22 fill=%22%23e7e5e4%22/%3E%3Cpath d=%22M0 8l2.4-2.8 1.4 1.5 1.5-1.9L8 8.1V10H0z%22 fill=%22%23a8a29e%22/%3E%3Ccircle cx=%226%22 cy=%223%22 r=%221%22 fill=%22%23fafaf9%22/%3E%3C/svg%3E";
@@ -296,6 +310,11 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
       props[reactName] = value;
     }
   }
+  if (context.visualLayer?.hostNodeId === node.id) {
+    props["data-cd-visual-slot"] = context.visualLayer.declaration.slotId;
+    props["data-cd-visual-placement"] = context.visualLayer.declaration.placement;
+  }
+  if (context.visualLayer?.fallbackNodeId === node.id) props["data-cd-visual-fallback"] = "";
   const assetKey = node.attributes["data-cd-asset-key"];
   if ((node.tag === "img" || node.tag === "source") && assetKey) {
     const assetUrl = context.assetUrls.get(assetKey);
@@ -361,6 +380,7 @@ function contextFor(
   mode: "public" | "preview" = "public",
   assetUrls: ReadonlyMap<string, string> = new Map(),
   previewTemplateId?: StoreTemplateId,
+  visualLayer?: VisualTreePlacement,
 ): RenderContext {
   const bindings = new Map<string, CompiledBinding[]>();
   for (const binding of treeBindings) {
@@ -378,6 +398,7 @@ function contextFor(
     mode,
     previewTemplateId,
     assetUrls,
+    visualLayer,
   };
 }
 
@@ -389,9 +410,37 @@ function renderTree(
   mode: "public" | "preview" = "public",
   assetUrls: ReadonlyMap<string, string> = new Map(),
   previewTemplateId?: StoreTemplateId,
+  visualLayer?: VisualTreePlacement,
 ): ReactNode[] {
-  const context = contextFor(bindings, trustedSlots, data, mode, assetUrls, previewTemplateId);
+  const context = contextFor(bindings, trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer);
   return tree.map((node, index) => renderNode(node, context, `node-${index}`));
+}
+
+export function resolveBundleVisualLayer(bundle: StorefrontBundleV1): ResolvedBundleVisualLayer | null {
+  const source = bundle.source;
+  if (source.kind !== "recipe" || !isStoreTemplateId(source.templateId)) return null;
+  const version = getStoreTemplate(source.templateId).versions.find(
+    (candidate) => candidate.templateVersion === source.templateVersion,
+  );
+  return version ? { declaration: version.visualLayer, spec: bundle.visualLayer ?? { kind: "none" } } : null;
+}
+
+function findVisualTreePlacement(
+  nodes: readonly CompiledNode[],
+  visualLayer: ResolvedBundleVisualLayer,
+): VisualTreePlacement | null {
+  const matches: Array<{ hostNodeId: string; fallbackNodeId: string; repeated: boolean }> = [];
+  const visit = (node: CompiledNode, parentId?: string, insideRepeat = false): void => {
+    if (node.kind !== "element") return;
+    const repeated = insideRepeat || Boolean(node.repeat);
+    if (node.attributes["data-cd-asset-key"] === visualLayer.declaration.fallbackAssetKey && parentId) {
+      matches.push({ hostNodeId: parentId, fallbackNodeId: node.id, repeated });
+    }
+    node.children.forEach((child) => visit(child, node.id, repeated));
+  };
+  nodes.forEach((node) => visit(node));
+  const match = matches.length === 1 && !matches[0].repeated ? matches[0] : null;
+  return match ? { ...visualLayer, hostNodeId: match.hostNodeId, fallbackNodeId: match.fallbackNodeId } : null;
 }
 
 function PlatformNotFound({ kind }: { kind: "product" | "collection" }) {
@@ -488,6 +537,11 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
   const assetUrls = assetUrlsForBundle(bundle, customAssetUrls ?? data.storefrontAssetUrls);
   const previewTemplateId = mode === "preview" && bundle.source.kind === "recipe" ? bundle.source.templateId : undefined;
   const shellTree = splitShellTree(bundle.shell.tree);
+  const resolvedVisualLayer = resolveBundleVisualLayer(bundle);
+  const routeTree = routeId === "checkout" ? bundle.routes.checkout.decorativeTree : bundle.routes[routeId].tree;
+  const visualLayer = resolvedVisualLayer
+    ? findVisualTreePlacement([...bundle.shell.tree, ...routeTree], resolvedVisualLayer)
+    : null;
   let routeResult: ReactElement;
   if (routeId === "checkout") {
     routeResult = (
@@ -506,7 +560,7 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
     routeResult = (
       <div data-cd-bundle={routeId} data-cd-bundle-route={routeId}>
         {route.css ? <StorefrontStyle nonce={nonce} css={route.css} kind={routeId} /> : null}
-        {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls, previewTemplateId)}
+        {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined)}
       </div>
     );
   }
@@ -516,9 +570,9 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
       {bundle.designSystem.globalCss ? <StorefrontStyle nonce={nonce} css={bundle.designSystem.globalCss} kind="global" /> : null}
       <div data-cd-bundle="shell" data-cd-bundle-shell={routeId}>
         {bundle.shell.css ? <StorefrontStyle nonce={nonce} css={bundle.shell.css} kind="shell" /> : null}
-        {renderTree(shellTree.beforeRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls, previewTemplateId)}
+        {renderTree(shellTree.beforeRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined)}
         {routeResult}
-        {renderTree(shellTree.afterRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls, previewTemplateId)}
+        {renderTree(shellTree.afterRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined)}
       </div>
     </div>
   );

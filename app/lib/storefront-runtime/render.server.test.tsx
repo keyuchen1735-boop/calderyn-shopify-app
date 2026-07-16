@@ -7,6 +7,7 @@ import type { RouteArtifact, StorefrontBundleV1 } from "~/lib/storefront-bundle/
 import { CURATED_FONT_IDS } from "~/lib/storefront-bundle/types";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
+import { getStoreTemplate } from "~/lib/storefront-bundle/registry";
 import {
   renderStorefrontSurface,
   renderCheckoutRoute,
@@ -139,6 +140,54 @@ describe("compiled-node server renderer", () => {
 
     expect(html).toContain('src="/storefront-recipes/atelier-nine/hero.webp"');
     expect(html).toContain('data-cd-asset-key="hero"');
+  });
+
+  it("renders one visual host only at the registered recipe fallback", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
+    source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
+    source.routes.home.html = `<main><figure><img data-cd-asset="hero" alt="Editorial look"></figure></main>`;
+    const bundle = compileBundle(source).bundle;
+    bundle.visualLayer = { kind: "none" };
+    const declaration = getStoreTemplate("atelier-nine").versions[0].visualLayer;
+
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "visual-nonce", mode: "public",
+    }));
+
+    expect(html.match(/data-cd-visual-slot=/g)).toHaveLength(1);
+    expect(html).toContain(`data-cd-visual-slot="${declaration.slotId}"`);
+    expect(html).toContain('data-cd-asset-key="hero"');
+
+    bundle.source = { kind: "custom", generationId: "generation", promptHash: "hash" };
+    const customHtml = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "visual-nonce", mode: "public",
+    }));
+    expect(customHtml).not.toContain("data-cd-visual-slot");
+  });
+
+  it("keeps repeated recipe fallbacks static instead of declaring multiple visual hosts", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
+    source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
+    source.routes.home.html = `<main><section data-cd-repeat="featured.products"><figure data-cd-key="product.id"><img data-cd-asset="hero" alt="Editorial look"></figure></section></main>`;
+    const bundle = compileBundle(source).bundle;
+    bundle.visualLayer = { kind: "none" };
+    const products = [
+      { ...publicProduct, id: "product-a", handle: "a" },
+      { ...publicProduct, id: "product-b", handle: "b" },
+    ];
+
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle,
+      routeId: "home",
+      data: { ...data, featuredProducts: products },
+      nonce: "visual-nonce",
+      mode: "public",
+    }));
+
+    expect(html).not.toContain("data-cd-visual-slot");
+    expect(html.match(/data-cd-asset-key="hero"/g)).toHaveLength(2);
   });
 
   it("uses a server-resolved recipe asset URL when the preview host does not serve deploy assets", () => {

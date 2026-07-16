@@ -133,6 +133,19 @@ describe("validation profile v1", () => {
       ]),
     );
   });
+
+  it("rejects a persisted visual layer outside the typed source bounds", () => {
+    const bundle = compileBundle(structuredClone(VALID_BUNDLE_SOURCE)).bundle;
+    bundle.visualLayer = {
+      kind: "fragment_shader",
+      source: "x".repeat(4_001),
+      colors: ["#000000", "#111111", "#222222"],
+    };
+
+    expect(validateCompiledBundle(bundle).diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "bundle.visual_layer", path: "visualLayer" }),
+    ]));
+  });
   it("publishes the exact compiler byte/count limits", () => {
     expect(validationLimitsV1.routeHtmlCssBytes).toBe(250 * 1024);
     expect(validationLimitsV1.interactionManifestBytes).toBe(40 * 1024);

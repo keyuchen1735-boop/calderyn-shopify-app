@@ -489,6 +489,7 @@ export interface StorefrontBundleV1 {
         derivedFromTemplateId?: StoreTemplateId;
         derivedFromTemplateVersion?: number;
       };
+  visualLayer?: VisualLayerSpec;
   concept: { name: string; rationale: string; noveltySignature: string[] };
   designSystem: {
     displayFontId: CuratedFontId;
