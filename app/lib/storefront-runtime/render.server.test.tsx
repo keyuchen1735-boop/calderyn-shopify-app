@@ -363,6 +363,29 @@ describe("compiled-node server renderer", () => {
     expect(first).toBe(second);
   });
 
+  it("renders a zero cart count for visitors without a cart", () => {
+    const countArtifact = artifact({
+      tree: [{
+        kind: "element",
+        id: "cd-home-bag",
+        tag: "span",
+        attributes: {},
+        children: [],
+      }],
+      bindings: [{
+        id: "binding-bag",
+        targetId: "cd-home-bag",
+        kind: "text",
+        ref: { kind: "data", scopeId: "root", path: "cart.count" },
+      }],
+      requiredData: [],
+    });
+    const html = renderToStaticMarkup(createElement(() => renderStorefrontRoute({
+      routeId: "home", artifact: countArtifact, data: { ...data, cart: null }, nonce: "route-nonce",
+    }).element));
+    expect(html).toMatch(/<span[^>]*id="cd-home-bag"[^>]*>0<\/span>/);
+  });
+
   it("does not collide repeat IDs that only differ after a long shared prefix", () => {
     const prefix = "x".repeat(80);
     const repeatedArtifact = artifact({

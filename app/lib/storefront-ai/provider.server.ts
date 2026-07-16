@@ -1,10 +1,19 @@
 import { assistantModel, getAnthropic } from "~/lib/assistant/anthropic.server";
+import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import {
   STOREFRONT_REFERENCE_MEDIA_TYPES,
   type StorefrontAiProvider,
   type StructuredModelRequest,
   type StructuredModelResponse,
 } from "./contracts";
+
+/** Concrete model ids behind the merchant's design-model picker, mirroring the
+ *  legacy designer's allowlist: the request only ever selects a key, never a
+ *  free-form model id, so a request cannot bill an arbitrary model. */
+export const STOREFRONT_DESIGN_MODEL_IDS: Record<StudioDesignModel, string> = {
+  sonnet: "claude-sonnet-5",
+  opus: "claude-opus-4-8",
+};
 
 const RESULT_TOOL = "storefront_compiler_result";
 const MAX_IMAGE_EVIDENCE_BYTES = 5 * 1024 * 1024;
@@ -38,7 +47,9 @@ export function createAnthropicStructuredProvider(
   options: AnthropicStructuredProviderOptions = {},
 ): StorefrontAiProvider {
   const client = options.client ?? (getAnthropic() as unknown as AnthropicLike);
-  const model = options.model ?? assistantModel();
+  // The storefront compiler prompt is far more contract-heavy than assistant
+  // chat; STOREFRONT_AI_MODEL lets ops upgrade this pipeline independently.
+  const model = options.model ?? (process.env.STOREFRONT_AI_MODEL || assistantModel());
   return {
     async complete(request: StructuredModelRequest): Promise<StructuredModelResponse> {
       if (request.signal?.aborted) throw new DOMException("Generation cancelled", "AbortError");

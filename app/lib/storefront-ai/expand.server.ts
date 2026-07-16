@@ -97,10 +97,14 @@ export async function expandWinningConcept(input: ExpandWinnerInput): Promise<Ro
     throw new Error("Winner expansion did not return the complete route matrix");
   }
   const requests = new Map<string, AssetRequest>();
+  // The three group calls cannot see each other, so re-listing a shared asset
+  // key with rephrased purpose text is routine model behavior, not a defect.
+  // First occurrence wins; only `required` widens. Throwing here failed fully
+  // paid builds on wording differences.
   for (const request of outputs.flatMap((output) => output.assetRequests)) {
     const existing = requests.get(request.key);
-    if (existing && JSON.stringify(existing) !== JSON.stringify(request)) throw new Error(`Conflicting asset request ${request.key}`);
-    requests.set(request.key, request);
+    if (!existing) requests.set(request.key, { ...request });
+    else if (request.required && !existing.required) existing.required = true;
   }
   return {
     collection: catalog.collection,

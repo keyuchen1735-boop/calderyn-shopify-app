@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { MAX_IMAGE_BYTES, SHOP_ASSETS_BUCKET, fetchExternalImageBytes, sniffImageMime } from "~/lib/assets/persist.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { assertCanGenerate, consumeGenerateQuotaReservation } from "~/lib/storegen/guard.server";
+import { geminiImageGenerationEnabled } from "~/lib/storegen/imagery/gemini.server";
 import { getImageProvider } from "~/lib/storegen/imagery/provider.server";
 import {
   garbageCollectUnreferencedStorefrontAsset,
@@ -16,6 +17,7 @@ import { materializeOwnedAssets } from "./assets.server";
 import { persistGenerationCheckpoint } from "./checkpoint.server";
 import { compileConceptCandidate, exploreConcepts } from "./concepts.server";
 import { assembleStorefrontContext } from "./context.server";
+import type { StudioDesignModel } from "../storebuilder/studio-types";
 import type {
   GenerateDependencies,
   GenerateOriginalStorefrontInput,
@@ -30,7 +32,7 @@ import type {
   StorefrontAiProvider,
 } from "./contracts";
 import { expandWinningConcept, expandedBundleSource } from "./expand.server";
-import { createAnthropicStructuredProvider } from "./provider.server";
+import { createAnthropicStructuredProvider, STOREFRONT_DESIGN_MODEL_IDS } from "./provider.server";
 import { proveAndRepairBundle, repairRouteWithProvider } from "./proof.server";
 import { STOREFRONT_AI_PROMPT_VERSION } from "./prompts";
 
@@ -125,6 +127,9 @@ export function registerStorefrontAiBrowserProof(adapter: BrowserProofAdapter): 
 }
 
 async function defaultProduceAsset(input: Parameters<GenerateDependencies["produceAsset"]>[0]) {
+  // Without live image generation the request is unfulfillable; report "no
+  // asset" so optional requests degrade instead of failing the whole paid run.
+  if (!geminiImageGenerationEnabled()) return null;
   const imageProvider = getImageProvider();
   const generated = await imageProvider.generateListingImage({
     shopId: input.shopId,
@@ -213,10 +218,12 @@ async function defaultInstallValidatedBundle(input: InstallValidatedBundleInput 
   return { ...installed, artifactHash: databaseArtifactHash };
 }
 
-export function createDefaultGenerateDependencies(): GenerateDependencies {
+export function createDefaultGenerateDependencies(designModel?: StudioDesignModel): GenerateDependencies {
   let resolvedProvider: StorefrontAiProvider | null = null;
   const provider: StorefrontAiProvider = {
-    complete: (request) => (resolvedProvider ??= createAnthropicStructuredProvider()).complete(request),
+    complete: (request) => (resolvedProvider ??= createAnthropicStructuredProvider(
+      designModel ? { model: STOREFRONT_DESIGN_MODEL_IDS[designModel] } : {},
+    )).complete(request),
   };
   return {
     enabled: () => process.env.STOREFRONT_CUSTOM_BUILD === "1",
@@ -253,11 +260,14 @@ export function createDefaultGenerateDependencies(): GenerateDependencies {
 }
 
 function mergeAssetRequests(...sets: Array<readonly { key: string; purpose: string; required: boolean; aspectRatio?: number }[]>): Array<{ key: string; purpose: string; required: boolean; aspectRatio?: number }> {
+  // The expansion model routinely re-lists concept asset keys with rephrased
+  // purpose text; the concept's version wins and only `required` widens.
+  // Throwing on a textual mismatch would fail a fully paid build.
   const merged = new Map<string, { key: string; purpose: string; required: boolean; aspectRatio?: number }>();
   for (const request of sets.flat()) {
     const existing = merged.get(request.key);
-    if (existing && JSON.stringify(existing) !== JSON.stringify(request)) throw new Error(`Conflicting asset request ${request.key}`);
-    merged.set(request.key, request);
+    if (!existing) merged.set(request.key, { ...request });
+    else if (request.required && !existing.required) existing.required = true;
   }
   return [...merged.values()];
 }
@@ -271,7 +281,7 @@ export async function generateOriginalStorefront(
   input: GenerateOriginalStorefrontInput,
   dependencies?: GenerateDependencies,
 ): Promise<GenerateOriginalStorefrontResult> {
-  const deps = dependencies ?? createDefaultGenerateDependencies();
+  const deps = dependencies ?? createDefaultGenerateDependencies(input.designModel);
   if (!deps.enabled()) return { status: "disabled", code: "storefront_custom_build_disabled" };
 
   const generationId = deps.randomId();

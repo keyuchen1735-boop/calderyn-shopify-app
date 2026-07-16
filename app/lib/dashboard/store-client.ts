@@ -60,7 +60,7 @@ export async function editStudioStorefront(input: {
 }
 
 export async function editStudioStorefrontStream(
-  input: { prompt: string; expectedDraftVersionId: string; context?: PreviewEditContext },
+  input: { prompt: string; expectedDraftVersionId: string; context?: PreviewEditContext; model?: StudioDesignModel },
   onStage: (stage: StorefrontEditStage) => void,
   signal?: AbortSignal,
 ): Promise<StorefrontEditReceipt | { status: "start_over"; mode: "custom" }> {
@@ -292,6 +292,7 @@ export async function buildStudioStoreStream(
   onStage: (stage: Runtime1BuildStage, event: ReturnType<typeof parseBuildEvent>) => void,
   recommendedResolution?: StoreDesignResolution,
   signal?: AbortSignal,
+  model?: StudioDesignModel,
 ): Promise<StudioBundleBuildReceipt> {
   let res: Response;
   try {
@@ -302,7 +303,11 @@ export async function buildStudioStoreStream(
         "content-type": "application/json",
         ...(typeof location !== "undefined" ? { Origin: location.origin } : {}),
       },
-      body: JSON.stringify({ designRequest, ...(recommendedResolution ? { recommendedResolution } : {}) }),
+      body: JSON.stringify({
+        designRequest,
+        ...(recommendedResolution ? { recommendedResolution } : {}),
+        ...(model ? { model } : {}),
+      }),
       signal,
     });
   } catch (err) {
@@ -373,12 +378,15 @@ export async function buildStudioStoreStream(
  * main studio build action. */
 export async function generateStudioStoreStream(
   brief: string,
-  _model: StudioDesignModel,
+  model: StudioDesignModel,
   onStage: (stage: BuildStage) => void,
 ): Promise<StudioGenerateReceipt> {
   const receipt = await buildStudioStoreStream(
     { prompt: brief.trim(), mode: "auto" },
     (stage) => onStage(stage),
+    undefined,
+    undefined,
+    model,
   );
   return { runId: receipt.versionId, status: "draft" };
 }

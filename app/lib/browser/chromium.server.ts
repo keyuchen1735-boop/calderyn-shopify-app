@@ -10,6 +10,9 @@ export const LOCAL_CHROME_PATHS = [
   "/Applications/Chromium.app/Contents/MacOS/Chromium",
   "/usr/bin/google-chrome",
   "/usr/bin/chromium-browser",
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : undefined,
 ].filter(Boolean) as string[];
 
 export function resolveLocalChromeExecutable(paths: readonly string[] = LOCAL_CHROME_PATHS): string | null {

@@ -11,8 +11,8 @@ const globalCss = `
 .atelier-shell { width:min(calc(100% - 32px),1540px); margin-inline:auto }
 .announcement { display:flex; justify-content:space-between; padding:8px 16px; color:#fff; background:#d63821; font-size:11px; font-weight:700; text-transform:uppercase }
 .atelier-site-header { position:sticky; top:0; z-index:20; background:#f4f1eb; border-bottom:1px solid #101010 }
-.header-row { display:grid; grid-template-columns:250px 1fr 250px; align-items:center; height:67px }
-.atelier-wordmark { color:#101010; font-family:var(--font-display); font-size:27px; font-weight:900; text-transform:uppercase }
+.header-row { display:grid; grid-template-columns:minmax(0,250px) 1fr minmax(0,250px); align-items:center; min-height:67px }
+.atelier-wordmark { color:#101010; font-family:var(--font-display); font-size:clamp(15px,2vw,22px); font-weight:900; line-height:1.05; padding-block:8px; text-transform:uppercase }
 .atelier-nav-links,.atelier-utility { display:flex; align-items:center; gap:34px; font-family:var(--font-display); font-size:12px; text-transform:uppercase }
 .atelier-nav-links { justify-content:center }
 .atelier-utility { justify-content:flex-end; gap:22px }
@@ -66,7 +66,9 @@ const homeHtml = `
       </div>
     </div>
   </section>
-  <section data-cd-repeat="featured.products"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div></section>
+  <section>
+    <div data-cd-repeat="featured.products"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div></div>
+  </section>
   <section class="atelier-shell manifesto">
     <div class="manifesto-copy"><span class="manifesto-kicker">The Atelier Standard</span><h2>Designed slowly. Worn without ceremony.</h2><p>Every piece begins with proportion: a shoulder line, a clean fall, a pocket placed exactly where the hand expects it. We use materials selected for movement, longevity, and a life beyond one season.</p><a class="arrow-link" data-cd-route="collection">Read our process <span>→</span></a></div>
     <div class="manifesto-index"><div><strong>09</strong><span>Pieces / one complete wardrobe</span></div></div>
@@ -75,13 +77,13 @@ const homeHtml = `
 
 const homeCss = `
 .hero { display:grid; grid-template-columns:49% 51%; min-height:680px; border-bottom:1px solid #101010 }
-.hero-copy { display:grid; grid-template-rows:1fr auto; overflow:hidden; padding:30px 18px 18px 0 }
+.hero-copy { display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:1fr auto; overflow:hidden; padding:30px 18px 18px 0 }
 .hero-title { width:137%; margin:0; font-family:var(--font-display); font-size:144px; font-weight:900; line-height:.78; text-transform:uppercase; transform:scaleX(.73); transform-origin:top left }
 .hero-title span { display:block }
-.hero-lower { display:grid; grid-template-columns:1fr 230px; gap:24px; align-items:end }
+.hero-lower { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,230px); gap:24px; align-items:end }
 .edition { display:flex; align-items:center; gap:12px; font-size:11px }
-.edition i { width:140px; height:1px; background:#101010 }
-.hero-intro p { max-width:22ch; margin:0 0 24px; font-family:var(--font-body); font-size:18px; line-height:1.25 }
+.edition i { flex:1 1 40px; max-width:140px; height:1px; background:#101010 }
+.hero-intro p { max-width:100%; margin:0 0 24px; font-family:var(--font-body); font-size:clamp(14px,1.5vw,18px); line-height:1.3 }
 .arrow-link { display:inline-flex; align-items:center; gap:18px; padding-bottom:5px; color:#d63821; border-bottom:1px solid currentColor; font-weight:750; font-size:12px; text-decoration:none; text-transform:uppercase }
 .hero-media { position:relative; min-height:680px; overflow:hidden }
 .hero-media img { width:100%; height:100%; object-fit:cover; object-position:58% center }
@@ -157,8 +159,8 @@ const collectionHtml = `
       </a>
     </article>
   </section>
-  <section data-cd-repeat="collection.products">
-    <div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div>
+  <section>
+    <div data-cd-repeat="collection.products"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div></div>
   </section>
 </main>`;
 
@@ -251,8 +253,8 @@ const searchHtml = `
       </a>
     </article>
   </section>
-  <section data-cd-repeat="search.results">
-    <div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div>
+  <section>
+    <div data-cd-repeat="search.results"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div></div>
   </section>
 </main>`;
 
@@ -385,7 +387,7 @@ const config = {
       source: {
         ...routeDefaults,
         html: `<div class="announcement"><span>Complimentary shipping on all orders over $300</span><span>Edition 03 / Summer 2026</span></div><header class="atelier-site-header"><div class="atelier-shell header-row"><a class="atelier-wordmark atelier-link" data-cd-route="home"><span class="niche-icon niche-icon--atelier" aria-hidden="true">&#10022;</span><span data-cd-text="store.name"></span></a><nav class="atelier-nav-links" aria-label="Primary"><a class="atelier-link" data-cd-route="collection">Shop</a><a class="atelier-link" data-cd-route="collection">Collections</a><a class="atelier-link" data-cd-route="home">About</a><a class="atelier-link" data-cd-route="search">Journal</a></nav><div class="atelier-utility"><a class="atelier-link" data-cd-route="search">Search</a><a class="atelier-link" data-cd-route="account">Account</a><a class="atelier-link" data-cd-route="cart">Bag (<span data-cd-text="cart.count"></span>)</a></div></div></header><div data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div>${globalFooterHtml}`,
-        css: `.niche-icon--atelier{margin-right:.35em;color:var(--accent)}.atelier-policy-links{display:flex;flex-wrap:wrap;gap:1rem}.atelier-policy-links a{color:var(--ink);text-decoration:none}@media(max-width:1120px){.header-row{grid-template-columns:200px 1fr 200px}.atelier-nav-links{gap:18px}.atelier-utility{gap:12px}}@media(max-width:760px){.announcement span:last-child{display:none}.header-row{display:flex;flex-wrap:wrap;width:calc(100vw - 20px);height:auto;min-height:58px;padding:8px 0}.atelier-wordmark{font-size:22px}.atelier-nav-links{order:3;width:100%;gap:18px;overflow-x:auto;padding:7px 0 2px}.atelier-utility{margin-left:auto}.atelier-utility .atelier-link:not(:last-child){display:none}}`,
+        css: `.niche-icon--atelier{margin-right:.35em;color:var(--accent)}.atelier-policy-links{display:flex;flex-wrap:wrap;gap:1rem}.atelier-policy-links a{color:var(--ink);text-decoration:none}@media(max-width:1120px){.header-row{grid-template-columns:minmax(0,200px) 1fr minmax(0,200px)}.atelier-nav-links{gap:18px}.atelier-utility{gap:12px}}@media(max-width:760px){.announcement span:last-child{display:none}.header-row{display:flex;flex-wrap:wrap;width:calc(100vw - 20px);height:auto;min-height:58px;padding:8px 0}.atelier-wordmark{font-size:22px}.atelier-nav-links{order:3;width:100%;gap:18px;overflow-x:auto;padding:7px 0 2px}.atelier-utility{margin-left:auto}.atelier-utility .atelier-link:not(:last-child){display:none}}`,
       },
     },
     home: { signature: "offset cover story beside owned full-height fashion photography", source: { ...routeDefaults, html: homeHtml, css: homeCss } },

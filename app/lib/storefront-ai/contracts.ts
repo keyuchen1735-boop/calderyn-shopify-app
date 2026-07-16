@@ -1,5 +1,6 @@
 import type { AssetManifest, AssetManifestEntry, StoreDesignResolution, StorefrontBundleV1, StorefrontRouteId, StoreTemplateId } from "../storefront-bundle/types";
 import type { CompiledBundleResult, RouteSource, StorefrontBundleSourceV1 } from "../storefront-compiler/compile";
+import type { StudioDesignModel } from "../storebuilder/studio-types";
 
 export const STOREFRONT_AI_CONTRACT_VERSION = 1 as const;
 export const CONCEPT_STRATEGIES = ["asymmetric-commerce", "narrative-utility", "spatial-catalog"] as const;
@@ -305,6 +306,8 @@ export interface GenerateOriginalStorefrontInput {
   routingResolution?: StoreDesignResolution;
   signal?: AbortSignal;
   budget?: GenerationBudgetOverride;
+  /** Merchant's design-model picker key; the provider maps it to a concrete id. */
+  designModel?: StudioDesignModel;
 }
 
 export type GenerateOriginalStorefrontResult =
