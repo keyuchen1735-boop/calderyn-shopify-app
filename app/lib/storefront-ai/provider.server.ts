@@ -38,7 +38,9 @@ export function createAnthropicStructuredProvider(
   options: AnthropicStructuredProviderOptions = {},
 ): StorefrontAiProvider {
   const client = options.client ?? (getAnthropic() as unknown as AnthropicLike);
-  const model = options.model ?? assistantModel();
+  // The storefront compiler prompt is far more contract-heavy than assistant
+  // chat; STOREFRONT_AI_MODEL lets ops upgrade this pipeline independently.
+  const model = options.model ?? (process.env.STOREFRONT_AI_MODEL || assistantModel());
   return {
     async complete(request: StructuredModelRequest): Promise<StructuredModelResponse> {
       if (request.signal?.aborted) throw new DOMException("Generation cancelled", "AbortError");

@@ -74,6 +74,40 @@ describe("generateOriginalStorefront", () => {
     expect(deps.preflight).toHaveBeenCalledWith(expect.objectContaining({ reservationToken: "quota-reservation-1" }));
   });
 
+  it("merges rephrased asset requests across concept and expansion groups instead of failing the paid build", async () => {
+    const concept = createConcept(0);
+    concept.assetRequests = [{ key: "hero", purpose: "Editorial hero backdrop", required: false }];
+    // Each expansion group re-lists the same key with its own wording — routine
+    // model behavior that must merge rather than abort a paid run.
+    let expandCalls = 0;
+    const provider: StorefrontAiProvider = {
+      complete: vi.fn(async (request): Promise<StructuredModelResponse> => {
+        const usage = { inputTokens: 10, outputTokens: 20 };
+        if (request.operation === "concept" || request.operation === "repairConcept") {
+          return { value: concept, usage, provider: "fixture", model: "fixture" };
+        }
+        if (request.operation === "expand") {
+          expandCalls += 1;
+          const expansion = {
+            ...createExpansion(),
+            assetRequests: [{ key: "hero", purpose: `Hero rendition ${expandCalls}`, required: false }],
+          };
+          return { value: expansion, usage, provider: "fixture", model: "fixture" };
+        }
+        throw new Error(`unexpected ${request.operation}`);
+      }),
+    };
+    const deps = passingDependencies({ provider });
+    const result = await generateOriginalStorefront({
+      shopId: TEST_SHOP_ID, prompt: "make it original", expectedDraftVersionId: null, actorId: null, trusted: true,
+    }, deps);
+    expect(result.status).toBe("installed");
+    expect(deps.produceAsset).toHaveBeenCalledTimes(1);
+    expect(deps.produceAsset).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ key: "hero", purpose: "Editorial hero backdrop", required: false }),
+    }));
+  });
+
   it("compiles, proves, audits, and CAS-installs one complete winning bundle", async () => {
     const installValidatedBundle = vi.fn(async (input) => ({
       versionId: TEST_VERSION_ID,

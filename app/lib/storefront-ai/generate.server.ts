@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { MAX_IMAGE_BYTES, SHOP_ASSETS_BUCKET, fetchExternalImageBytes, sniffImageMime } from "~/lib/assets/persist.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { assertCanGenerate, consumeGenerateQuotaReservation } from "~/lib/storegen/guard.server";
+import { geminiImageGenerationEnabled } from "~/lib/storegen/imagery/gemini.server";
 import { getImageProvider } from "~/lib/storegen/imagery/provider.server";
 import {
   garbageCollectUnreferencedStorefrontAsset,
@@ -125,6 +126,9 @@ export function registerStorefrontAiBrowserProof(adapter: BrowserProofAdapter): 
 }
 
 async function defaultProduceAsset(input: Parameters<GenerateDependencies["produceAsset"]>[0]) {
+  // Without live image generation the request is unfulfillable; report "no
+  // asset" so optional requests degrade instead of failing the whole paid run.
+  if (!geminiImageGenerationEnabled()) return null;
   const imageProvider = getImageProvider();
   const generated = await imageProvider.generateListingImage({
     shopId: input.shopId,
@@ -253,11 +257,14 @@ export function createDefaultGenerateDependencies(): GenerateDependencies {
 }
 
 function mergeAssetRequests(...sets: Array<readonly { key: string; purpose: string; required: boolean; aspectRatio?: number }[]>): Array<{ key: string; purpose: string; required: boolean; aspectRatio?: number }> {
+  // The expansion model routinely re-lists concept asset keys with rephrased
+  // purpose text; the concept's version wins and only `required` widens.
+  // Throwing on a textual mismatch would fail a fully paid build.
   const merged = new Map<string, { key: string; purpose: string; required: boolean; aspectRatio?: number }>();
   for (const request of sets.flat()) {
     const existing = merged.get(request.key);
-    if (existing && JSON.stringify(existing) !== JSON.stringify(request)) throw new Error(`Conflicting asset request ${request.key}`);
-    merged.set(request.key, request);
+    if (!existing) merged.set(request.key, { ...request });
+    else if (request.required && !existing.required) existing.required = true;
   }
   return [...merged.values()];
 }
