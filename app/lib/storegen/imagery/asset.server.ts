@@ -9,6 +9,8 @@ import { getImageProvider } from "./provider.server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SOURCE = "gemini";
+const ASSET_PRODUCT_CHUNK_SIZE = 100;
+const POSTGREST_PAGE_SIZE = 1000;
 
 export interface EnhanceResult { productId: string; status: "ready" | "failed"; url: string | null }
 
@@ -50,11 +52,40 @@ export async function enhanceListing(shopId: string, product: StoreProduct, opts
 
 export async function applyAssetOverrides(shopId: string, products: StoreProduct[]): Promise<StoreProduct[]> {
   if (!UUID_RE.test(shopId)) return products;
-  if (products.every((product) => product.images.length > 0)) return products;
-  const { data, error } = await getSupabase().from("store_asset").select("product_id, url, status, created_at").eq("shop_id", shopId);
-  if (error) throw error;
+  const imageLessIds = [...new Set(products.filter((product) => product.images.length === 0).map((product) => product.id))];
+  if (imageLessIds.length === 0) return products;
+  const chunks: string[][] = [];
+  for (let index = 0; index < imageLessIds.length; index += ASSET_PRODUCT_CHUNK_SIZE) {
+    chunks.push(imageLessIds.slice(index, index + ASSET_PRODUCT_CHUNK_SIZE));
+  }
+  const chunkRows = await Promise.all(chunks.map(async (chunk) => {
+    const rows: Array<Record<string, unknown>> = [];
+    for (let from = 0; ; from += POSTGREST_PAGE_SIZE) {
+      const result = await getSupabase()
+        .from("store_asset")
+        .select("product_id, source, url, status, created_at")
+        .eq("shop_id", shopId)
+        .eq("status", "ready")
+        .in("product_id", chunk)
+        .order("product_id")
+        .order("created_at", { ascending: false })
+        .order("source")
+        .range(from, from + POSTGREST_PAGE_SIZE - 1);
+      if (result.error) throw result.error;
+      const page = (result.data ?? []) as Array<Record<string, unknown>>;
+      rows.push(...page);
+      if (page.length < POSTGREST_PAGE_SIZE) break;
+    }
+    return rows;
+  }));
   const ready = new Map<string, string>();
-  for (const row of [...(data ?? [])].sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))) {
+  const rows = chunkRows.flat().sort((a, b) =>
+    String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) ||
+    String(a.product_id ?? "").localeCompare(String(b.product_id ?? "")) ||
+    String(a.source ?? "").localeCompare(String(b.source ?? "")) ||
+    String(a.url ?? "").localeCompare(String(b.url ?? "")),
+  );
+  for (const row of rows) {
     if (row.status === "ready" && row.url && !ready.has(String(row.product_id))) ready.set(String(row.product_id), String(row.url));
   }
   if (ready.size === 0) return products;

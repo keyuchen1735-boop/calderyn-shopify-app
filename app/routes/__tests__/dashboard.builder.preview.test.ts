@@ -5,8 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { fixtureCatalog } from "~/lib/storefront/catalog.stub.server";
 import BuilderPreview, { loader, action } from "../dashboard.builder.preview";
 
-const { sessionMock, getCatalogMock, loadDraftMock, loaderDataRef, enhanceMock } = vi.hoisted(() => ({
-  sessionMock: vi.fn(), getCatalogMock: vi.fn(), loadDraftMock: vi.fn(), loaderDataRef: { current: null as unknown }, enhanceMock: vi.fn(),
+const { sessionMock, getCatalogMock, loadDraftMock, loaderDataRef, enhanceMock, applyAssetOverridesMock } = vi.hoisted(() => ({
+  sessionMock: vi.fn(), getCatalogMock: vi.fn(), loadDraftMock: vi.fn(), loaderDataRef: { current: null as unknown }, enhanceMock: vi.fn(), applyAssetOverridesMock: vi.fn(),
 }));
 // The route imports the storefront stylesheet as a URL; stub it like the other preview test.
 vi.mock("~/styles/storefront.css?url", () => ({ default: "/assets/storefront.css" }));
@@ -16,12 +16,13 @@ vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadDraftDoc: loadDraftMock }));
 vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderDataRef.current, Form: (p: Record<string, unknown>) => createElement("form", p) }));
 vi.mock("~/lib/storegen/imagery/detector", () => ({ findImprovableListings: () => [{ productId: "1", handle: "h-1", title: "P1", reason: "No image", severity: 2 }] }));
-vi.mock("~/lib/storegen/imagery/asset.server", () => ({ enhanceListing: enhanceMock, applyAssetOverrides: async (_s: string, ps: unknown[]) => ps }));
+vi.mock("~/lib/storegen/imagery/asset.server", () => ({ enhanceListing: enhanceMock, applyAssetOverrides: applyAssetOverridesMock }));
 
 const realShop = "11111111-1111-1111-1111-111111111111";
 beforeEach(() => {
   sessionMock.mockReset().mockResolvedValue({ shopId: realShop });
   getCatalogMock.mockReset().mockReturnValue(fixtureCatalog);
+  applyAssetOverridesMock.mockReset().mockImplementation(async (_shopId: string, products: unknown[]) => products);
   loadDraftMock.mockReset();
   loaderDataRef.current = null;
 });
@@ -63,6 +64,12 @@ describe("builder draft preview", () => {
     expect(data.candidates[0].productId).toBe("1");
     loaderDataRef.current = data;
     expect(renderToStaticMarkup(createElement(BuilderPreview))).toContain("No image");
+  });
+
+  it("uses getCatalog's asset wrapper without applying a second override", async () => {
+    loadDraftMock.mockResolvedValue(null);
+    await loader(req());
+    expect(applyAssetOverridesMock).not.toHaveBeenCalled();
   });
 
   it("loader surfaces enhanceError when the redirect param is set", async () => {

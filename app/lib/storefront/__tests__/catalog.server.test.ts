@@ -4,13 +4,23 @@ import type { StorefrontCatalog } from "../catalog";
 import { getCatalog } from "../catalog.server";
 import { fixtureCatalog } from "../catalog.stub.server";
 
-const { assetRows, fromMock, eqMock } = vi.hoisted(() => {
+const { assetRows, fromMock, eqMock, inMock, orderMock, rangeMock } = vi.hoisted(() => {
   const assetRows = { current: [] as Array<Record<string, unknown>> };
-  const eqMock = vi.fn(async () => ({ data: assetRows.current, error: null }));
+  const eqMock = vi.fn();
+  const inMock = vi.fn();
+  const orderMock = vi.fn();
+  const rangeMock = vi.fn(async () => ({ data: assetRows.current, error: null }));
+  const query = { eq: eqMock, in: inMock, order: orderMock, range: rangeMock };
+  eqMock.mockReturnValue(query);
+  inMock.mockReturnValue(query);
+  orderMock.mockReturnValue(query);
   return {
     assetRows,
     eqMock,
-    fromMock: vi.fn(() => ({ select: () => ({ eq: eqMock }) })),
+    inMock,
+    orderMock,
+    rangeMock,
+    fromMock: vi.fn(() => ({ select: () => query })),
   };
 });
 
@@ -37,6 +47,9 @@ beforeEach(() => {
   assetRows.current = [];
   fromMock.mockClear();
   eqMock.mockClear();
+  inMock.mockClear();
+  orderMock.mockClear();
+  rangeMock.mockClear();
 });
 
 // A consumer shaped exactly like the home loader: it only ever talks to the
@@ -70,7 +83,11 @@ describe("getCatalog", () => {
     const products = await getCatalog().listProducts(UUID_SHOP);
 
     expect(fromMock).toHaveBeenCalledWith("store_asset");
-    expect(eqMock).toHaveBeenCalledWith("shop_id", UUID_SHOP);
+    expect(eqMock.mock.calls).toEqual([
+      ["shop_id", UUID_SHOP],
+      ["status", "ready"],
+    ]);
+    expect(inMock).toHaveBeenCalledWith("product_id", ["owned"]);
     expect(products[0].images).toEqual([{
       url: "https://owned.example/generated.webp",
       alt: "Owned",

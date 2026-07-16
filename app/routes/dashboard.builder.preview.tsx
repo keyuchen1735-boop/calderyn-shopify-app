@@ -15,7 +15,7 @@ import { renderBlocks } from "~/lib/storebuilder/render";
 import { PdpBlockColumns } from "~/lib/storebuilder/pdp-layout";
 import type { BlockDocument, RenderData, RenderContext } from "~/lib/storebuilder/types";
 import { findImprovableListings } from "~/lib/storegen/imagery/detector";
-import { enhanceListing, applyAssetOverrides } from "~/lib/storegen/imagery/asset.server";
+import { enhanceListing } from "~/lib/storegen/imagery/asset.server";
 import type { ImprovableListing } from "~/lib/storegen/imagery/detector";
 
 // The panes render with the real storefront renderer, so they need the real storefront
@@ -26,7 +26,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireVerifiedSession(request);
   const shopId = session.shopId;
   const catalog = getCatalog();
-  const products = await applyAssetOverrides(shopId, await catalog.listProducts(shopId));
+  const products = await catalog.listProducts(shopId);
   const collections = await catalog.listCollections(shopId);
   const candidates = findImprovableListings(products);
   const url = new URL(request.url);

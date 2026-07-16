@@ -33,7 +33,7 @@ const { createMock, getCatalogMock, providerMock, db } = vi.hoisted(() => {
   };
 
   function from(table: string) {
-    const filters: Record<string, string> = {};
+    const filters: Record<string, string | string[]> = {};
     let op: "select" | "update" | null = null;
     let updatePayload: Record<string, unknown> = {};
 
@@ -42,7 +42,11 @@ const { createMock, getCatalogMock, providerMock, db } = vi.hoisted(() => {
       return null;
     };
     const readList = () => {
-      if (table === "store_asset") return [...assets.values()].filter((r) => r.shop_id === filters.shop_id);
+      if (table === "store_asset") return [...assets.values()].filter((r) =>
+        r.shop_id === filters.shop_id &&
+        (!filters.status || r.status === filters.status) &&
+        (!Array.isArray(filters.product_id) || filters.product_id.includes(String(r.product_id))),
+      );
       return [];
     };
     const applyUpdate = () => {
@@ -81,6 +85,10 @@ const { createMock, getCatalogMock, providerMock, db } = vi.hoisted(() => {
       },
       eq(col: string, val: string) {
         filters[col] = val;
+        return builder;
+      },
+      in(col: string, values: string[]) {
+        filters[col] = values;
         return builder;
       },
       order() {
