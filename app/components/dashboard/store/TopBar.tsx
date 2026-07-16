@@ -25,8 +25,6 @@ const TopBar = forwardRef<
     onPageChange: (page: PageKey) => void;
     device: Device;
     onDeviceChange: (device: Device) => void;
-    markupOn: boolean;
-    onToggleMarkup: () => void;
     onPublish: () => void;
     publishing: boolean;
     canPublish: boolean;
@@ -41,8 +39,6 @@ const TopBar = forwardRef<
     onPageChange,
     device,
     onDeviceChange,
-    markupOn,
-    onToggleMarkup,
     onPublish,
     publishing,
     canPublish,
@@ -129,9 +125,6 @@ const TopBar = forwardRef<
           <CDIcon name="phone" size={13} strokeWidth={1.9} /> Mobile
         </button>
       </div>
-      <Btn kind={markupOn ? "primary" : "secondary"} icon="pencil" onClick={onToggleMarkup}>
-        {markupOn ? "Cancel" : "Mark up"}
-      </Btn>
       <Btn kind="primary" onClick={onPublish} disabled={!canPublish || publishing || building}>
         {publishing ? "Publishing…" : "Publish"}
       </Btn>

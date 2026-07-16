@@ -16,13 +16,12 @@ describe("Store top bar", () => {
       onPageChange: () => undefined,
       device: "desktop",
       onDeviceChange: () => undefined,
-      markupOn: false,
-      onToggleMarkup: () => undefined,
       onPublish: () => undefined,
       publishing: false,
       canPublish: true,
     }));
     expect(markup).toContain("Publish");
+    expect(markup).not.toContain("Mark up");
     expect(markup).not.toMatch(/Testing|Ship|Stop early|experiment/i);
   });
 });

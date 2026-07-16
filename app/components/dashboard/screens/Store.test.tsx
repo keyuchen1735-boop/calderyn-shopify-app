@@ -101,6 +101,43 @@ afterEach(() => {
 });
 
 describe("Store command orchestration", () => {
+  it("maps page selections to runtime preview routes", async () => {
+    const { host, root } = await renderStore();
+    const previewParams = () => new URL(host.querySelector<HTMLIFrameElement>('iframe[title="Store preview"]')!.src)
+      .searchParams;
+
+    expect(Object.fromEntries(previewParams())).toMatchObject({ route: "home", page: "home" });
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.includes("Home page"))!.click();
+    });
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.includes("Product page"))!.click();
+    });
+    expect(Object.fromEntries(previewParams())).toMatchObject({ route: "product", page: "pdp" });
+
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.includes("Product page"))!.click();
+    });
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.includes("Collection"))!.click();
+    });
+    expect(Object.fromEntries(previewParams())).toMatchObject({ route: "collection", page: "collection" });
+    act(() => root.unmount());
+  });
+
+  it("does not expose disconnected preview markup controls", async () => {
+    const { host, root } = await renderStore();
+    expect(host.textContent).not.toContain("Mark up");
+    expect(host.querySelector(".cd-mark-layer")).toBeNull();
+    expect(host.querySelector(".cd-mark-capture")).toBeNull();
+    expect(host.querySelector(".cd-mark-note")).toBeNull();
+    act(() => root.unmount());
+  });
+
   it("sends a fresh prompt with an explicit null draft pointer", async () => {
     fetchStore.mockResolvedValue({
       ...structuredClone(SNAPSHOT),

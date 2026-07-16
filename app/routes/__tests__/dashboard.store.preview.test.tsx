@@ -8,7 +8,7 @@ import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 // vi.mock calls are hoisted above every import, so the mocks below still apply
 // before the route module is evaluated.
-import { action, loader, previewCompilerId, rewriteStorefrontHrefs, rewriteDocStorefrontHrefs } from "../dashboard.store.preview";
+import { action, loader, rewriteStorefrontHrefs, rewriteDocStorefrontHrefs } from "../dashboard.store.preview";
 
 // The route imports the storefront stylesheet as a URL and several server-only
 // data sources. Stub the URL import and the DB/session reads so the loader's
@@ -87,17 +87,6 @@ async function loaderData(url: string) {
 }
 
 describe("dashboard.store.preview loader", () => {
-  it("selects repeated preview DOM by canonical compiler metadata, never by parsing its suffixed DOM id", () => {
-    const repeatOwner = { dataset: { cdCompilerId: "cd-home-grid" } };
-    const selected = {
-      dataset: { cdCompilerId: "cd-home-title" },
-      closest: (selector: string) => selector === "[data-cd-repeat-owner][data-cd-compiler-id]" ? repeatOwner : null,
-    };
-    const target = { closest: () => selected } as unknown as Element;
-
-    expect(previewCompilerId(target)).toBe("cd-home-grid");
-  });
-
   it("renders a selected recipe against the authenticated merchant catalog without installing it", async () => {
     const previous = process.env.STOREFRONT_BUNDLE_READ;
     const previousAppUrl = process.env.SHOPIFY_APP_URL;

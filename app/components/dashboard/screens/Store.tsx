@@ -3,8 +3,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Btn, Placeholder } from "../ui";
 import {
@@ -35,17 +33,7 @@ import type { ChatMsg } from "../store/chat-types";
 import type { PageKey } from "~/lib/storebuilder/types";
 
 const PREVIEW_PATH = "/dashboard/store/preview";
-const PAGE_LABEL: Record<string, string> = { home: "home", pdp: "product", collection: "collection" };
 const MERCHANT_STAGES = new Set<MerchantStage>(["understanding", "preparing_products", "checking_preview"]);
-
-const clampPct = (value: number): number => Math.min(100, Math.max(0, value));
-function pctPoint(event: ReactPointerEvent<HTMLElement>): { x: number; y: number } {
-  const rect = event.currentTarget.getBoundingClientRect();
-  return {
-    x: clampPct(((event.clientX - rect.left) / rect.width) * 100),
-    y: clampPct(((event.clientY - rect.top) / rect.height) * 100),
-  };
-}
 
 export function applyStoreReceipt(state: StudioState, receipt: StoreCommandReceipt): StudioState {
   if (receipt.status === "installed") {
@@ -111,11 +99,6 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const [device, setDevice] = useState<Device>("desktop");
   const badgeRef = useRef<HTMLSpanElement>(null);
 
-  const [markupOn, setMarkupOn] = useState(false);
-  const [strokes, setStrokes] = useState<string[]>([]);
-  const drawing = useRef<string[] | null>(null);
-  const [noteOpen, setNoteOpen] = useState(false);
-  const [noteText, setNoteText] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [confirmingPublish, setConfirmingPublish] = useState(false);
 
@@ -293,47 +276,6 @@ export default function Store({ app }: { app: DashboardCtx }) {
     runPrompt(text);
   };
 
-  const exitMarkup = () => {
-    setMarkupOn(false);
-    setStrokes([]);
-    drawing.current = null;
-    setNoteOpen(false);
-    setNoteText("");
-  };
-  const onPageChange = (next: PageKey) => {
-    if (markupOn) exitMarkup();
-    setPage(next);
-  };
-  const onDeviceChange = (next: Device) => {
-    if (markupOn) exitMarkup();
-    setDevice(next);
-  };
-  const onDrawStart = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const point = pctPoint(event);
-    drawing.current = [`${point.x.toFixed(2)} ${point.y.toFixed(2)}`];
-    setStrokes((current) => [...current, `M ${point.x.toFixed(2)} ${point.y.toFixed(2)}`]);
-  };
-  const onDrawMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (!drawing.current) return;
-    const point = pctPoint(event);
-    drawing.current.push(`${point.x.toFixed(2)} ${point.y.toFixed(2)}`);
-    const points = drawing.current;
-    const path = `M ${points[0]}${points.slice(1).map((item) => ` L ${item}`).join("")}`;
-    setStrokes((current) => [...current.slice(0, -1), path]);
-  };
-  const onDrawEnd = () => {
-    if (drawing.current && strokes.length > 0) setNoteOpen(true);
-    drawing.current = null;
-  };
-  const submitMarkupNote = () => {
-    const note = noteText.trim();
-    if (!note) return;
-    const userText = `[Marked up the ${PAGE_LABEL[page] ?? "store"} page] ${note}`;
-    exitMarkup();
-    runPrompt(note, userText);
-  };
-
   const onPublishClick = () => {
     const snapshot = dataRef.current;
     if (!snapshot?.release.draftVersionId || busyRef.current) return;
@@ -392,7 +334,8 @@ export default function Store({ app }: { app: DashboardCtx }) {
     draftProductCount: data.draftProductCount,
     importInProgress: porting,
   });
-  const previewSrc = `${PREVIEW_PATH}?page=${page}&v=${previewVersion}`;
+  const previewRoute = page === "pdp" ? "product" : page === "collection" ? "collection" : "home";
+  const previewSrc = `${PREVIEW_PATH}?route=${previewRoute}&page=${page}&v=${previewVersion}`;
   const promptCanvas = showPromptCanvas(data);
   const publishPieces: MissingPiece[] = missingPieces(data);
 
@@ -422,11 +365,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
                 hasPublished={data.hasPublished}
                 building={building}
                 page={page}
-                onPageChange={onPageChange}
+                onPageChange={setPage}
                 device={device}
-                onDeviceChange={onDeviceChange}
-                markupOn={markupOn}
-                onToggleMarkup={() => markupOn ? exitMarkup() : setMarkupOn(true)}
+                onDeviceChange={setDevice}
                 onPublish={onPublishClick}
                 publishing={publishing}
                 canPublish={data.release.draftVersionId != null}
@@ -448,46 +389,6 @@ export default function Store({ app }: { app: DashboardCtx }) {
                       <div className="cd-canvas-skel__grid"><span /><span /><span /></div>
                     </div>
                   </div>
-                  <svg className="cd-mark-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                    {strokes.map((path, index) => (
-                      <path
-                        key={index}
-                        d={path}
-                        fill="none"
-                        stroke="var(--red)"
-                        strokeWidth={1.6}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        vectorEffect="non-scaling-stroke"
-                      />
-                    ))}
-                  </svg>
-                  {markupOn ? (
-                    <button
-                      type="button"
-                      className="cd-mark-capture"
-                      aria-label="Draw on the page"
-                      onPointerDown={onDrawStart}
-                      onPointerMove={onDrawMove}
-                      onPointerUp={onDrawEnd}
-                      onPointerCancel={onDrawEnd}
-                    />
-                  ) : null}
-                  {noteOpen ? (
-                    <div className="cd-mark-note">
-                      <input
-                        autoFocus
-                        value={noteText}
-                        onChange={(event) => setNoteText(event.target.value)}
-                        onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
-                          if (event.key === "Enter" && noteText.trim()) submitMarkupNote();
-                        }}
-                        placeholder="What should change here?"
-                        aria-label="Markup note"
-                      />
-                      <Btn kind="primary" small onClick={submitMarkupNote}>Send</Btn>
-                    </div>
-                  ) : null}
                   {confirmingPublish && publishPieces.length > 0 ? (
                     <div className="cd-build-float" role="alertdialog" aria-label="Before you publish">
                       <div className="cd-buildlist">
