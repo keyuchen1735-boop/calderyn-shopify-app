@@ -17,6 +17,7 @@ describe("closed runtime-1 value vocabularies", () => {
 
   it("accepts public presentation bindings and rejects internal or executable paths", () => {
     expect(PUBLIC_BINDING_PATHS).toContain("product.title");
+    expect(PUBLIC_BINDING_PATHS).toContain("collection.nextCursor");
     expect(isPublicBindingPath("product.title")).toBe(true);
     expect(isPublicBindingPath("product.shop_id")).toBe(false);
     expect(isPublicBindingPath("cart.lines[0].constructor")).toBe(false);

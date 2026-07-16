@@ -281,6 +281,7 @@ export async function renderConceptWithMerchantData(input: {
       image: products[0]?.primaryImage ?? null,
       productCount: firstCollection.productCount,
       products,
+      nextCursor: null,
     } : null,
     featuredProducts: products,
     relatedProducts: products.slice(1),

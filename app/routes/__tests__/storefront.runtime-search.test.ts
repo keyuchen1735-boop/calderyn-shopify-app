@@ -78,4 +78,19 @@ describe("runtime-1 collection route grammar", () => {
     await expect(response.json()).resolves.toMatchObject({ ok: false, error: { code: "invalid_search_request" } });
     expect(resolveRuntime1RouteMock).not.toHaveBeenCalled();
   });
+
+  it("returns a safe next-page href that preserves the validated collection controls", async () => {
+    resolveRuntime1RouteMock.mockResolvedValue({
+      ...runtimeData,
+      data: { ...runtimeData.data, collection: { title: "Featured", nextCursor: "signed.cursor" } },
+    });
+    const response = await collectionLoader({
+      request: new Request("https://demo.calderyncompany.com/storefront/collections/featured?filter.tag=vegan&sort=price_asc"),
+      params: { handle: "featured" }, context: {},
+    } as never);
+
+    await expect(response.json()).resolves.toMatchObject({
+      nextPageHref: "/storefront/collections/featured?filter.tag=vegan&sort=price_asc&cursor=signed.cursor",
+    });
+  });
 });

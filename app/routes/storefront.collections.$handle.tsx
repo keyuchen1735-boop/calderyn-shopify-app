@@ -28,6 +28,13 @@ import { decodeProductPageCursor } from "~/lib/storefront/catalog";
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Collection" }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
+function nextPageHref(request: Request, cursor: string | null): string | null {
+  if (!cursor) return null;
+  const url = new URL(request.url);
+  url.searchParams.set("cursor", cursor);
+  return `${url.pathname}?${url.searchParams.toString()}`;
+}
+
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
   const shopId = await resolveStorefrontShop(request);
@@ -47,7 +54,12 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     const headers = storefrontCacheHeaders({ routeId: "collection", personalized: false, shopId });
     markStorefrontBundleRendered(headers, nonce);
     const title = runtime1.data.collection?.title ?? "Collection";
-    return json({ ...runtime1, nonce, seoMeta: [{ title }] }, { headers });
+    return json({
+      ...runtime1,
+      nonce,
+      nextPageHref: nextPageHref(request, runtime1.data.collection?.nextCursor ?? null),
+      seoMeta: [{ title }],
+    }, { headers });
   }
   const catalog = getCatalog();
   const catalogCursor = new URL(request.url).searchParams.get("cursor");
@@ -106,17 +118,31 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
     seoMeta = [{ title }];
   }
-  return json({ handle, title, products, nextCursor: productPage.nextCursor, doc, data, record, seoMeta }, { headers: track });
+  return json({
+    handle,
+    title,
+    products,
+    nextCursor: productPage.nextCursor,
+    nextPageHref: nextPageHref(request, productPage.nextCursor),
+    doc,
+    data,
+    record,
+    seoMeta,
+  }, { headers: track });
+}
+
+function CollectionNextPage({ href }: { href: string | null }) {
+  return href ? <a className="cd-store__pagination" rel="next" href={href}>Next products</a> : null;
 }
 
 export default function StorefrontCollection() {
   const loaded = useLoaderData<typeof loader>();
   if (isRuntime1RenderData(loaded)) {
-    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "collection", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="collection" data={loaded.data} mode="public" /></>;
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "collection", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="collection" data={loaded.data} mode="public" /><CollectionNextPage href={loaded.nextPageHref} /></>;
   }
-  const { title, products, nextCursor, doc, data, record } = loaded;
+  const { title, products, nextPageHref, doc, data, record } = loaded;
   if (doc && data) {
-    return <div className="cd-store__collection">{renderBlocks(doc, { data, record })}</div>;
+    return <><div className="cd-store__collection">{renderBlocks(doc, { data, record })}</div><CollectionNextPage href={nextPageHref} /></>;
   }
   return (
     <div className="cd-store__home">
@@ -140,7 +166,7 @@ export default function StorefrontCollection() {
           );
         })}
       </div>
-      {nextCursor ? <a rel="next" href={`?cursor=${encodeURIComponent(nextCursor)}`}>Next products</a> : null}
+      <CollectionNextPage href={nextPageHref} />
     </div>
   );
 }

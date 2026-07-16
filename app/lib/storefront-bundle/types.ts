@@ -287,6 +287,7 @@ export const PUBLIC_BINDING_PATHS = [
   "collection.description",
   "collection.image",
   "collection.productCount",
+  "collection.nextCursor",
   "product.id",
   "product.handle",
   "product.title",

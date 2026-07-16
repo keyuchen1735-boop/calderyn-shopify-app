@@ -50,6 +50,7 @@ export interface PublicCollection {
   image: PublicMedia | null;
   productCount: number;
   products: PublicProduct[];
+  nextCursor: string | null;
 }
 
 export interface PublicCart {
@@ -260,6 +261,7 @@ export async function resolvePublicData(
         image: searched.products[0]?.primaryImage ?? null,
         productCount: searched.result.total,
         products: searched.products,
+        nextCursor: searched.result.nextCursor,
       };
     }
   }

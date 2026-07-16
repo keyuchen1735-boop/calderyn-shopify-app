@@ -177,6 +177,43 @@ describe("searchStorefront", () => {
     expect(second.items.map((item) => item.handle)).toEqual(["night-cream"]);
   });
 
+  it("uses product ID as the cursor tie-break for equal titles", async () => {
+    const tied = ["p-c", "p-a", "p-b"].map((id) => ({
+      ...products[0], id, handle: id, title: "Same title",
+    }));
+    catalog.listProductPage.mockResolvedValue({ items: tied, nextCursor: null });
+    const input = parseStorefrontSearchParams(new URL("https://shop.example/?sort=title_asc&limit=1").searchParams);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await searchStorefront("shop-a", { ...input, cursor });
+      seen.push(...page.items.map((item) => item.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    expect(seen).toEqual(["p-a", "p-b", "p-c"]);
+    expect(new Set(seen).size).toBe(3);
+  });
+
+  it("uses product ID as the cursor tie-break for equal prices", async () => {
+    const tied = ["p-c", "p-a", "p-b"].map((id) => ({
+      ...products[0], id, handle: id, title: id,
+      variants: [{ ...products[0].variants[0], id: `variant-${id}`, priceCents: 1200 }],
+    }));
+    catalog.listProductPage.mockResolvedValue({ items: tied, nextCursor: null });
+    const input = parseStorefrontSearchParams(new URL("https://shop.example/?sort=price_asc&limit=1").searchParams);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page = await searchStorefront("shop-a", { ...input, cursor });
+      seen.push(...page.items.map((item) => item.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    expect(seen).toEqual(["p-a", "p-b", "p-c"]);
+    expect(new Set(seen).size).toBe(3);
+  });
+
   it("uses live variant availability and prices in the public projection", async () => {
     const input = parseStorefrontSearchParams(
       new URL("https://shop.example/?available=true&sort=price_asc").searchParams,

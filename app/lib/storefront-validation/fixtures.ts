@@ -74,6 +74,7 @@ export function createStorefrontProofData(routeId: StorefrontRouteId): PublicPre
       image: active.primaryImage,
       productCount: products.length,
       products,
+      nextCursor: null,
     } : null,
     featuredProducts: products.slice(0, 4),
     relatedProducts: products.slice(1),

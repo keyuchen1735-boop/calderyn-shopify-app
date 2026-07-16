@@ -162,6 +162,28 @@ describe("runtime-1 public data plans", () => {
     expect(data.collection?.productCount).toBe(40);
   });
 
+  it("carries the cursor through runtime collection data until all 61 products are reached once", async () => {
+    const products = Array.from({ length: 61 }, (_, index) => product(index.toString().padStart(2, "0")));
+    const fake = catalog(products);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+
+    do {
+      const params = new URLSearchParams({ collection: "featured", limit: "24" });
+      if (cursor) params.set("cursor", cursor);
+      const data = await resolvePublicData({
+        shopId: SHOP,
+        requiredData: [{ kind: "currentCollection" }],
+        route: { kind: "collection", handle: "featured", searchInput: parseStorefrontSearchParams(params) },
+      }, { catalog: fake, settingsLoader });
+      seen.push(...(data.collection?.products.map((entry) => entry.id) ?? []));
+      cursor = data.collection?.nextCursor ?? null;
+    } while (cursor);
+
+    expect(seen).toEqual(products.map((entry) => entry.id));
+    expect(new Set(seen).size).toBe(61);
+  });
+
   it.each([
     ["daily wash", "description-match"],
     ["wellness", "category-match"],
