@@ -11,9 +11,68 @@ export interface OrderListView {
   label: string;
 }
 
-export interface OrderListSortOption {
-  value: string;
+/** Sort keys whose first click reads most naturally ascending (text columns, A-Z); every other
+ *  key (dates, money) starts at newest/biggest first. Shared by every screen that renders
+ *  OrderSortHeader so the same-named column never sorts in opposite first directions. */
+const ASC_FIRST_SORT_COLS = new Set(["customer", "order"]);
+
+/** State transition for a column-header click, shared by the unified list and the sub-lists so
+ *  the policy can't drift: a new column sorts by its natural first direction; the active column
+ *  flips; a third click (both directions seen) returns to the list's default ordering. That last
+ *  step is what keeps the default reachable even when it has no column of its own (the labels
+ *  list defaults to a date sort but shows no date column). */
+export function nextSortState(
+  current: { sort: string; dir: "asc" | "desc" },
+  col: string,
+  defaults: { sort: string; dir: "asc" | "desc" },
+): { sort: string; dir: "asc" | "desc" } {
+  const naturalDir: "asc" | "desc" = ASC_FIRST_SORT_COLS.has(col) ? "asc" : "desc";
+  if (current.sort !== col) return { sort: col, dir: naturalDir };
+  if (current.dir === naturalDir) {
+    return { sort: col, dir: naturalDir === "asc" ? "desc" : "asc" };
+  }
+  return defaults;
+}
+
+/** Column-header sort control: the header label itself is the button, with an up/down arrow that
+ *  reflects the live direction on the active column and sits faint on the others. The accessible
+ *  name carries the current sort state (the arrow is icon-only), standing in for the announced
+ *  state the old sort dropdown + direction button provided. */
+export function OrderSortHeader({
+  label,
+  col,
+  sort,
+  dir,
+  onSort,
+  align,
+}: {
   label: string;
+  col: string;
+  sort: string;
+  dir: "asc" | "desc";
+  onSort: (col: string) => void;
+  align?: "right";
+}) {
+  const active = sort === col;
+  const arrow = active && dir === "asc" ? "arrowUp" : "arrowDown";
+  return (
+    <span className={align === "right" ? "text-right" : undefined}>
+      <button
+        type="button"
+        className="cd-orders-sort-hd"
+        data-active={active ? "1" : "0"}
+        aria-label={
+          active
+            ? `${label}, sorted ${dir === "asc" ? "ascending" : "descending"}`
+            : `Sort by ${label.toLowerCase()}`
+        }
+        onClick={() => onSort(col)}
+      >
+        {label}
+        <CDIcon name={arrow} size={11} strokeWidth={2.2} />
+      </button>
+    </span>
+  );
 }
 
 export function OrderListToolbar({
@@ -25,11 +84,6 @@ export function OrderListToolbar({
   searchPlaceholder,
   searchAriaLabel,
   onSearchChange,
-  sortOptions,
-  sort,
-  dir,
-  onSortChange,
-  onDirChange,
   activeFilterCount,
   filterLabel,
   filterChildren,
@@ -44,11 +98,6 @@ export function OrderListToolbar({
   searchPlaceholder: string;
   searchAriaLabel: string;
   onSearchChange: (value: string) => void;
-  sortOptions: OrderListSortOption[];
-  sort: string;
-  dir: "asc" | "desc";
-  onSortChange: (sort: string) => void;
-  onDirChange: (dir: "asc" | "desc") => void;
   activeFilterCount: number;
   filterLabel: string;
   filterChildren: ReactNode;
@@ -57,100 +106,81 @@ export function OrderListToolbar({
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filterToggleRef = useRef<HTMLButtonElement>(null);
-  const filterPanelRef = useRef<HTMLDivElement>(null);
-  const filterPanelWasOpen = useRef(false);
+  const filterWrapRef = useRef<HTMLDivElement>(null);
+  const filterPopRef = useRef<HTMLDivElement>(null);
   const filterPanelId = useId();
 
+  // The filter panel is a floating popover anchored to the Filters button — it overlays the list
+  // rather than reflowing the toolbar. Close on any press outside the button+panel pair, or on
+  // Escape. Every close path restores focus to the toggle when focus was inside the panel: the
+  // popover unmounts on close, so focus left in it would otherwise drop to <body>.
   useEffect(() => {
-    const panel = filterPanelRef.current;
-    if (!panel) return;
-    if (filtersOpen) panel.removeAttribute("inert");
-    else panel.setAttribute("inert", "");
+    if (!filtersOpen) return;
+    const onDown = (event: MouseEvent) => {
+      if (
+        filterWrapRef.current &&
+        !filterWrapRef.current.contains(event.target as Node)
+      ) {
+        if (filterPopRef.current?.contains(document.activeElement)) {
+          filterToggleRef.current?.focus();
+        }
+        setFiltersOpen(false);
+      }
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (filterPopRef.current?.contains(document.activeElement)) {
+        filterToggleRef.current?.focus();
+      }
+      setFiltersOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [filtersOpen]);
 
   useGSAP(
     () => {
-      const el = filterPanelRef.current;
-      if (!el) return;
-      const inner = el.firstElementChild as HTMLElement | null;
-      const was = filterPanelWasOpen.current;
-      filterPanelWasOpen.current = filtersOpen;
-
-      if (reduced() || was === filtersOpen) {
-        el.style.height = filtersOpen ? "auto" : "0px";
-        el.style.opacity = filtersOpen ? "1" : "0";
-        return;
-      }
-
-      const full = inner ? inner.offsetHeight : el.scrollHeight;
-      if (filtersOpen) {
-        gsap.set(el, {
-          height: 0,
-          opacity: 0,
-          y: -4,
-          willChange: "height,transform,opacity",
-        });
-        gsap.to(el, {
-          height: full,
-          opacity: 1,
-          y: 0,
-          duration: 0.22,
-          ease: "power2.out",
-          onComplete: () => {
-            el.style.height = "auto";
-            el.style.removeProperty("transform");
-            el.style.removeProperty("will-change");
-          },
-        });
-      } else {
-        gsap.set(el, { willChange: "height,transform,opacity" });
-        gsap.to(el, {
-          height: 0,
-          opacity: 0,
-          y: -4,
-          duration: 0.16,
-          ease: "power2.in",
-          onComplete: () => {
-            el.style.removeProperty("transform");
-            el.style.removeProperty("will-change");
-          },
-        });
-      }
+      const el = filterPopRef.current;
+      if (!el || !filtersOpen || reduced()) return;
+      gsap.fromTo(
+        el,
+        { autoAlpha: 0, y: -6, scale: 0.98 },
+        { autoAlpha: 1, y: 0, scale: 1, duration: 0.18, ease: "power2.out" },
+      );
     },
-    { dependencies: [filtersOpen], scope: filterPanelRef },
+    { dependencies: [filtersOpen], scope: filterPopRef },
   );
 
   return (
     <div className="cd-orders-toolbar">
-      <div className="cd-orders-view-row">
-        <div
-          className="cd-seg cd-seg-sm"
-          role="tablist"
-          aria-label={`${filterLabel} views`}
-        >
-          {views.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              role="tab"
-              aria-selected={view === option.id}
-              className="cd-seg-btn"
-              data-active={view === option.id ? "1" : "0"}
-              onClick={() => onViewChange(option.id)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-        {viewExtras && (
-          <div className="cd-orders-view-extras">{viewExtras}</div>
-        )}
-      </div>
-
       <div className="cd-orders-toolbar-row">
         <div className="cd-orders-toolbar-primary">
+          <div
+            className="cd-seg cd-seg-sm"
+            role="tablist"
+            aria-label={`${filterLabel} views`}
+          >
+            {views.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                role="tab"
+                aria-selected={view === option.id}
+                className="cd-seg-btn"
+                data-active={view === option.id ? "1" : "0"}
+                onClick={() => onViewChange(option.id)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
           <div className="cd-orders-search">
-            <CDIcon name="search" size={14} strokeWidth={1.8} />
+            <CDIcon name="search" size={13} strokeWidth={1.8} />
             <input
               type="text"
               placeholder={searchPlaceholder}
@@ -169,74 +199,58 @@ export function OrderListToolbar({
               </button>
             )}
           </div>
-          <button
-            ref={filterToggleRef}
-            type="button"
-            className="cd-btn cd-btn-secondary cd-btn-sm cd-orders-filter-toggle"
-            aria-expanded={filtersOpen}
-            aria-controls={filterPanelId}
-            onClick={() => {
-              if (
-                filtersOpen &&
-                filterPanelRef.current?.contains(document.activeElement)
-              ) {
-                filterToggleRef.current?.focus();
-              }
-              setFiltersOpen((open) => !open);
-            }}
-          >
-            <CDIcon name="sliders" size={14} strokeWidth={1.9} />
-            Filters
-            {activeFilterCount > 0 && (
-              <span className="cd-orders-filter-count">
-                {activeFilterCount}
-              </span>
+
+          <div className="cd-orders-filter-wrap" ref={filterWrapRef}>
+            <button
+              ref={filterToggleRef}
+              type="button"
+              className="cd-btn cd-btn-secondary cd-btn-sm cd-orders-filter-toggle"
+              aria-expanded={filtersOpen}
+              aria-controls={filterPanelId}
+              onClick={() => {
+                if (
+                  filtersOpen &&
+                  filterPopRef.current?.contains(document.activeElement)
+                ) {
+                  filterToggleRef.current?.focus();
+                }
+                setFiltersOpen((open) => !open);
+              }}
+            >
+              <CDIcon name="sliders" size={14} strokeWidth={1.9} />
+              Filters
+              {activeFilterCount > 0 && (
+                <span className="cd-orders-filter-count">
+                  {activeFilterCount}
+                </span>
+              )}
+              <CDIcon
+                name="chevronDown"
+                size={13}
+                className="cd-orders-filter-chevron"
+              />
+            </button>
+
+            {filtersOpen && (
+              <div
+                id={filterPanelId}
+                ref={filterPopRef}
+                className="cd-orders-filter-pop"
+                role="region"
+                aria-label={`${filterLabel} filters`}
+              >
+                {filterChildren}
+              </div>
             )}
-            <CDIcon
-              name="chevronDown"
-              size={13}
-              className="cd-orders-filter-chevron"
-            />
-          </button>
+          </div>
         </div>
 
         <div className="cd-orders-toolbar-actions">
-          <select
-            className="cd-input cd-orders-sort"
-            aria-label="Sort by"
-            value={sort}
-            onChange={(event) => onSortChange(event.target.value)}
-          >
-            {sortOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <Btn
-            small
-            className="cd-btn-icon"
-            icon={dir === "asc" ? "arrowUp" : "arrowDown"}
-            ariaLabel={dir === "asc" ? "Sort ascending" : "Sort descending"}
-            onClick={() => onDirChange(dir === "asc" ? "desc" : "asc")}
-          >
-            {""}
-          </Btn>
+          {viewExtras}
           <Btn small icon="download" onClick={onExport}>
             {exportLabel}
           </Btn>
         </div>
-      </div>
-
-      <div
-        id={filterPanelId}
-        ref={filterPanelRef}
-        className="cd-orders-filter-panel"
-        role="region"
-        aria-label={`${filterLabel} filters`}
-        aria-hidden={!filtersOpen}
-      >
-        <div className="cd-orders-filter-panel-inner">{filterChildren}</div>
       </div>
     </div>
   );

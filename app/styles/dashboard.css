@@ -5885,32 +5885,29 @@
 
 /* ---- Orders: compact toolbar, list density, motion (additive — scoped to Orders only) ------ */
 
-/* Toolbar's primary row: search + Filters on the left, sort + Export on the right. */
+/* Toolbar's single row: view tabs + search + Filters on the left, Export on the right. */
 .cd-orders-toolbar-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.cd-orders-toolbar-primary, .cd-orders-toolbar-actions, .cd-orders-filter-fields,
-.cd-orders-view-extras, .cd-orders-save-view, .cd-orders-pagination-actions {
+.cd-orders-toolbar-primary, .cd-orders-toolbar-actions,
+.cd-orders-pagination-actions {
   display: flex; align-items: center; gap: 8px;
 }
 .cd-orders-toolbar-primary { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
 .cd-orders-toolbar-actions { flex: 0 0 auto; }
-.cd-orders-filter-fields { flex-wrap: wrap; }
-.cd-orders-filter-fields .cd-input { width: auto; min-width: 138px; }
-.cd-orders-view-extras { margin-left: auto; flex-wrap: wrap; }
-.cd-orders-save-view input { width: 154px; }
 
-/* Compact search field. Its width stays fixed so focusing it never shifts nearby controls. */
+/* Compact search field, sized to sit inline with the view tabs. Its width stays fixed so focusing
+   it never shifts nearby controls. */
 .cd-orders-search {
   position: relative; display: inline-flex; align-items: center;
-  width: 260px; max-width: 100%;
+  width: 200px; max-width: 100%;
 }
-.cd-orders-search > svg { position: absolute; left: 10px; color: var(--text-3); pointer-events: none; }
+.cd-orders-search > svg { position: absolute; left: 9px; color: var(--text-3); pointer-events: none; }
 .cd-orders-search > input {
-  width: 100%; height: 34px; padding: 0 10px 0 30px; border: 1px solid var(--hairline); border-radius: 9px;
+  width: 100%; height: 28px; padding: 0 9px 0 26px; border: 1px solid var(--hairline); border-radius: 8px;
   background: var(--gray-bg); color: var(--text-1); font-family: inherit;
-  font-size: calc(13.5px * var(--type-scale)); outline: none;
+  font-size: calc(12.5px * var(--type-scale)); outline: none;
   transition: box-shadow 0.15s ease, background 0.15s ease;
 }
-.cd-orders-search > input:focus { background: var(--card-solid); box-shadow: 0 0 0 3.5px color-mix(in oklch, var(--live) 24%, transparent); }
+.cd-orders-search > input:focus { background: var(--card-solid); box-shadow: 0 0 0 3px color-mix(in oklch, var(--live) 24%, transparent); }
 
 /* Filters toggle: a regular small secondary button plus a soft count badge when a filter is set. */
 .cd-orders-filter-toggle { position: relative; }
@@ -5923,24 +5920,40 @@
 }
 @keyframes cd-order-pop { from { opacity: 0; transform: scale(0.76); } to { opacity: 1; transform: scale(1); } }
 
-/* Collapsible filter row: height/opacity are driven imperatively by GSAP (see OrdersToolbar.tsx);
-   this just supplies the clip so the tween has something to animate against. */
-.cd-orders-filter-panel { overflow: hidden; height: 0; opacity: 0; }
-
-/* Saved-view chip: same seg-btn look as a system tab, plus an inline delete glyph. */
-.cd-orders-saved-view { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; animation: cd-order-pop 0.22s cubic-bezier(0.22,1,0.36,1); }
-.cd-orders-saved-view-x {
-  display: inline-flex; background: none; border: 0; padding: 0; cursor: pointer;
-  color: inherit; opacity: 0.6; transition: opacity 0.12s ease;
+/* Filters popover: a floating layer anchored under the Filters button — it overlays the list
+   instead of reflowing the toolbar. GSAP fades/slides it in on open (see OrderListFamily.tsx). */
+.cd-orders-filter-wrap { position: relative; display: inline-flex; }
+.cd-orders-filter-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+  width: min(272px, calc(100vw - 32px)); padding: 12px; border-radius: 12px;
+  background: var(--card-solid); border: 0.5px solid var(--hairline-strong);
+  box-shadow: var(--shadow-pop);
 }
-.cd-orders-saved-view-x:hover { opacity: 1; }
+.cd-orders-filter-fields { display: grid; gap: 9px; }
+.cd-orders-filter-fields label, .cd-orders-filter-daterange { display: grid; gap: 3px; }
+.cd-orders-filter-fields .cd-input { width: 100%; min-width: 0; }
+
 
 /* Tightened row rhythm + right-aligned numerics + a calm, scoped hover — the shared .cd-trow /
    .cd-tablehd rules (dashboard.css, generic tables) are used by half a dozen other screens, so
    Orders' own density lives entirely behind this ancestor class instead of touching them. */
 .cd-orders-table .cd-tablehd,
-.cd-orders-table .cd-trow { min-height: 40px; padding: 8px 16px; gap: 10px; align-items: center; }
-.cd-orders-table .cd-tablehd { padding: 10px 16px; gap: 10px; }
+.cd-orders-table .cd-trow { min-height: 34px; padding: 5px 16px; gap: 10px; align-items: center; }
+.cd-orders-table .cd-tablehd { padding: 7px 16px; gap: 10px; }
+
+/* Column-header sort buttons: the label itself is the control, inheriting the header's uppercase
+   caption styling; the direction arrow is faint until its column is the active sort. */
+.cd-orders-sort-hd {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: none; border: 0; padding: 0; margin: 0;
+  font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit;
+  cursor: pointer;
+}
+.cd-orders-sort-hd > svg { opacity: 0.35; transition: opacity 0.12s ease; }
+.cd-orders-sort-hd:hover { color: var(--text-1); }
+.cd-orders-sort-hd:hover > svg { opacity: 0.8; }
+.cd-orders-sort-hd[data-active="1"] { color: var(--text-1); }
+.cd-orders-sort-hd[data-active="1"] > svg { opacity: 1; }
 .cd-orders-table .cd-trow { font-size: calc(13px * var(--type-scale)); }
 .cd-orders-table .cd-trow[role="button"] { transition: background 0.18s ease, box-shadow 0.18s ease; }
 .cd-orders-table .cd-trow[role="button"]:hover { background: color-mix(in oklch, var(--live) 6%, var(--gray-bg)); }
@@ -5978,12 +5991,15 @@
 .cd-order-readout-item[data-action="1"]:hover { color: var(--live); }
 .cd-order-readout-item[data-action="1"]:hover svg { transform: translateX(3px); }
 .cd-order-readout-item[data-action="1"]:focus-visible { outline: 2px solid var(--live); outline-offset: 3px; border-radius: 4px; }
-.cd-order-workspace { overflow: hidden; }
-.cd-orders-toolbar { display: flex; flex-direction: column; gap: 10px; padding: 14px 20px 12px; border-bottom: 0.5px solid var(--hairline-strong); }
+/* Overflow stays visible so the toolbar's floating filter popover can extend past a short card;
+   the last child picks up the card's bottom radius so row hover backgrounds still clip cleanly. */
+.cd-order-workspace { overflow: visible; }
+.cd-order-workspace > :last-child { border-bottom-left-radius: var(--radius); border-bottom-right-radius: var(--radius); }
+.cd-orders-toolbar { padding: 10px 16px; border-bottom: 0.5px solid var(--hairline-strong); }
 .cd-orders-toolbar .cd-btn-sm,
-.cd-orders-toolbar .cd-input,
-.cd-orders-filter-toggle { min-height: 34px; height: 34px; }
-.cd-orders-view-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 !important; padding-bottom: 10px; border-bottom: 0.5px solid var(--hairline); }
+.cd-orders-filter-toggle { min-height: 28px; height: 28px; }
+.cd-orders-toolbar .cd-seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.cd-orders-toolbar .cd-seg::-webkit-scrollbar { display: none; }
 .cd-orders-search-clear {
   position: absolute; right: 7px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
   border: 0; border-radius: 7px; background: transparent; color: var(--text-3); cursor: pointer;
@@ -5994,7 +6010,6 @@
 .cd-orders-search:has(.cd-orders-search-clear) > input { padding-right: 34px; }
 .cd-orders-filter-chevron { margin-left: 1px; transition: transform 0.2s cubic-bezier(0.22,1,0.36,1); }
 .cd-orders-filter-toggle[aria-expanded="true"] .cd-orders-filter-chevron { transform: rotate(180deg); }
-.cd-orders-filter-panel-inner { padding: 8px 10px; border-radius: 10px; background: var(--gray-bg); }
 .cd-orders-toolbar .cd-seg-btn { transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease; }
 .cd-orders-toolbar .cd-seg-btn:active { transform: scale(0.97); }
 .cd-orders-toolbar .cd-seg-btn[data-active="1"] { color: var(--live); }
@@ -6536,15 +6551,12 @@
   .cd-order-page-head .cd-btn { width: 100%; justify-content: center; }
   .cd-order-readout { gap: 5px 0; }
   .cd-orders-toolbar { padding: 12px; }
-  .cd-orders-view-row { align-items: flex-start; }
-  .cd-orders-view-row .cd-seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .cd-orders-view-row .cd-seg::-webkit-scrollbar { display: none; }
-  .cd-orders-view-extras { width: 100%; margin-left: 0; }
   .cd-orders-toolbar-primary, .cd-orders-toolbar-actions { width: 100%; }
-  .cd-orders-toolbar-actions .cd-orders-sort { flex: 1 1 auto; min-width: 0; }
-  .cd-orders-toolbar-actions .cd-btn:last-child { flex: 0 0 auto; }
-  .cd-orders-filter-fields { align-items: stretch; }
-  .cd-orders-filter-fields .cd-input { flex: 1 1 150px; min-width: 0; }
+  /* Re-anchor the filter popover to the toolbar row on phones so its fixed width can't run past
+     the right edge of a narrow viewport. */
+  .cd-orders-toolbar-row { position: relative; }
+  .cd-orders-filter-wrap { position: static; }
+  .cd-orders-filter-pop { left: 0; right: 0; width: auto; }
   .cd-order-workspace .cd-bulkbar { margin: 10px 12px 0; }
   .cd-order-workspace .cd-orders-pagination { padding: 10px 12px; }
   .cd-order-detail-bar { align-items: flex-start; gap: 8px; }
@@ -6572,7 +6584,7 @@
   .cd-order-journey-step i, .cd-order-journey-line,
   .cd-order-disclosure-trigger, .cd-order-disclosure-trigger > svg,
   .cd-order-disclosure-viewport, .cd-order-disclosure-body { transition: none; }
-  .cd-orders-filter-count, .cd-orders-saved-view, .cd-order-state-label { animation: none; }
+  .cd-orders-filter-count, .cd-order-state-label { animation: none; }
   .cd-order-detail-actions .cd-htip-pop,
   .cd-order-detail-actions .cd-htip:hover .cd-htip-pop,
   .cd-order-detail-actions .cd-htip:focus-within .cd-htip-pop { transition: none; transform: none; }
