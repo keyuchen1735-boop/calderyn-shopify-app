@@ -14,6 +14,7 @@ const FONT_ALIASES: Readonly<Record<string, CuratedFontId>> = {
 };
 
 const RESET_RE = /\b(?:start\s+over|rebuild\s+(?:the\s+)?(?:whole\s+)?store|redesign\s+(?:the\s+)?(?:whole|entire)\s+store|completely\s+new\s+store|new\s+store\s+from\s+scratch|entirely\s+original\s+(?:store|storefront|design)|replace\s+the\s+entire\s+store|(?:no\s+|without\s+(?:a\s+)?)template)\b/i;
+const FRESH_BUILD_RE = /^make\s+(?:a\s+)?(?:new\s+)?(?:store|storefront)[.!]?$/i;
 const NEGATED_RESET_RE = /\b(?:don't|do\s+not|never)\s+(?:start\s+over|rebuild|redesign|replace)\b/gi;
 const STORE_WIDE_RE = /\b(?:entire\s+storefront|whole\s+(?:shop|storefront|design)|every\s+(?:page|route)|all\s+(?:pages|routes)|across\s+(?:the\s+)?(?:store|storefront|shop)|store[-\s]?wide|site[-\s]?wide|cohesive\s+(?:store|storefront|shop))\b/i;
 const HEX_RE = /#([0-9a-f]{6})\b/i;
@@ -32,7 +33,8 @@ export function parseEditIntent(prompt: string, context?: PreviewEditContext): P
   // testing so a negation elsewhere in the prompt cannot suppress a genuine
   // reset request ("Start over. Never rebuild it section by section.").
   const resettable = clean.replace(NEGATED_RESET_RE, " ");
-  if (RESET_RE.test(resettable)) return { kind: "startOver" };
+  if (FRESH_BUILD_RE.test(clean)) return { kind: "startOver", mode: "auto" };
+  if (RESET_RE.test(resettable)) return { kind: "startOver", mode: "custom" };
 
   const operations: StorefrontPatchOperation[] = [];
   const color = clean.match(HEX_RE)?.[0]?.toLowerCase();

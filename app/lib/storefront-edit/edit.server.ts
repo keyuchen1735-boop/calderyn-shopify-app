@@ -34,6 +34,7 @@ import type {
   StorefrontEditEvent,
   StorefrontEditReceipt,
   StorefrontPatchOperation,
+  StorefrontStartOverReceipt,
 } from "./types";
 
 export class StorefrontEditError extends Error {
@@ -585,9 +586,9 @@ export async function editStorefrontByPrompt(
     onEvent?: (event: StorefrontEditEvent) => void;
   },
   dependencies: StorefrontEditDependencies = defaultDependencies,
-): Promise<StorefrontEditReceipt | { status: "start_over"; mode: "custom" }> {
+): Promise<StorefrontEditReceipt | StorefrontStartOverReceipt> {
   const intent = parseEditIntent(input.prompt, input.context);
-  if (intent.kind === "startOver") return { status: "start_over", mode: "custom" };
+  if (intent.kind === "startOver") return { status: "start_over", mode: intent.mode };
   try {
     throwIfEditAborted(input.signal);
     const base = await dependencies.loadDraft(input.shopId);
