@@ -57,5 +57,5 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export default function StorefrontSearch() {
   const loaded = useLoaderData<typeof loader>();
-  return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "search", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="search" data={loaded.data} mode="public" />{loaded.nextPageHref ? <a className="cd-store__pagination" rel="next" href={loaded.nextPageHref}>Next products</a> : null}</>;
+  return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "search", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="search" data={loaded.data} mode="public" />{loaded.nextPageHref ? <a className="cd-store__pagination" rel="next" href={loaded.nextPageHref}>Next products</a> : null}</>;
 }

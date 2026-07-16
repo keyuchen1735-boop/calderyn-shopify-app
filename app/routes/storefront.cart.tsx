@@ -141,7 +141,7 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function StorefrontCart() {
   const loaded = useLoaderData<typeof loader>();
   if (isRuntime1RenderData(loaded)) {
-    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "cart", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="cart" data={loaded.data} mode="public" /></>;
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "cart", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="cart" data={loaded.data} mode="public" /></>;
   }
   const { cart, freeShipThresholdCents, error } = loaded;
 

@@ -10,11 +10,8 @@ import type {
   StorefrontBundleV1,
   StorefrontRouteId,
   StoreTemplateId,
-  TemplateVisualLayer,
   TrustedSlotManifest,
-  VisualLayerSpec,
 } from "~/lib/storefront-bundle/types";
-import { getStoreTemplate, isStoreTemplateId } from "~/lib/storefront-bundle/registry";
 import { isAllowedCompiledTag } from "~/lib/storefront-compiler/html";
 import { CheckoutIslands } from "./checkout-islands";
 import { storefrontDesignSystemCss } from "./curated-fonts";
@@ -48,15 +45,10 @@ interface RenderContext {
   mode: "public" | "preview";
   previewTemplateId?: StoreTemplateId;
   assetUrls: ReadonlyMap<string, string>;
-  visualLayer?: VisualTreePlacement;
+  visualLayer?: StorefrontVisualPlacement;
 }
 
-export interface ResolvedBundleVisualLayer {
-  declaration: TemplateVisualLayer;
-  spec: VisualLayerSpec;
-}
-
-interface VisualTreePlacement extends ResolvedBundleVisualLayer {
+export interface StorefrontVisualPlacement {
   hostNodeId: string;
   fallbackNodeId: string;
 }
@@ -311,8 +303,7 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
     }
   }
   if (context.visualLayer?.hostNodeId === node.id) {
-    props["data-cd-visual-slot"] = context.visualLayer.declaration.slotId;
-    props["data-cd-visual-placement"] = context.visualLayer.declaration.placement;
+    props["data-cd-visual-host"] = "";
   }
   if (context.visualLayer?.fallbackNodeId === node.id) props["data-cd-visual-fallback"] = "";
   const assetKey = node.attributes["data-cd-asset-key"];
@@ -380,7 +371,7 @@ function contextFor(
   mode: "public" | "preview" = "public",
   assetUrls: ReadonlyMap<string, string> = new Map(),
   previewTemplateId?: StoreTemplateId,
-  visualLayer?: VisualTreePlacement,
+  visualLayer?: StorefrontVisualPlacement,
 ): RenderContext {
   const bindings = new Map<string, CompiledBinding[]>();
   for (const binding of treeBindings) {
@@ -410,37 +401,10 @@ function renderTree(
   mode: "public" | "preview" = "public",
   assetUrls: ReadonlyMap<string, string> = new Map(),
   previewTemplateId?: StoreTemplateId,
-  visualLayer?: VisualTreePlacement,
+  visualLayer?: StorefrontVisualPlacement,
 ): ReactNode[] {
   const context = contextFor(bindings, trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer);
   return tree.map((node, index) => renderNode(node, context, `node-${index}`));
-}
-
-export function resolveBundleVisualLayer(bundle: StorefrontBundleV1): ResolvedBundleVisualLayer | null {
-  const source = bundle.source;
-  if (source.kind !== "recipe" || !isStoreTemplateId(source.templateId)) return null;
-  const version = getStoreTemplate(source.templateId).versions.find(
-    (candidate) => candidate.templateVersion === source.templateVersion,
-  );
-  return version ? { declaration: version.visualLayer, spec: bundle.visualLayer ?? { kind: "none" } } : null;
-}
-
-function findVisualTreePlacement(
-  nodes: readonly CompiledNode[],
-  visualLayer: ResolvedBundleVisualLayer,
-): VisualTreePlacement | null {
-  const matches: Array<{ hostNodeId: string; fallbackNodeId: string; repeated: boolean }> = [];
-  const visit = (node: CompiledNode, parentId?: string, insideRepeat = false): void => {
-    if (node.kind !== "element") return;
-    const repeated = insideRepeat || Boolean(node.repeat);
-    if (node.attributes["data-cd-asset-key"] === visualLayer.declaration.fallbackAssetKey && parentId) {
-      matches.push({ hostNodeId: parentId, fallbackNodeId: node.id, repeated });
-    }
-    node.children.forEach((child) => visit(child, node.id, repeated));
-  };
-  nodes.forEach((node) => visit(node));
-  const match = matches.length === 1 && !matches[0].repeated ? matches[0] : null;
-  return match ? { ...visualLayer, hostNodeId: match.hostNodeId, fallbackNodeId: match.fallbackNodeId } : null;
 }
 
 function PlatformNotFound({ kind }: { kind: "product" | "collection" }) {
@@ -506,6 +470,7 @@ export interface RenderStorefrontSurfaceInput {
   mode: "public" | "preview";
   checkoutContent?: ReactNode;
   customAssetUrls?: Readonly<Record<string, string>>;
+  visualLayerPlacement?: StorefrontVisualPlacement | null;
 }
 
 export function splitShellTree(tree: readonly CompiledNode[]): { beforeRoute: CompiledNode[]; afterRoute: CompiledNode[] } {
@@ -524,6 +489,7 @@ export function isRuntime1RenderData(value: unknown): value is {
   data: PublicPresentationData;
   nonce: string;
   routeId: StorefrontRouteId;
+  visualLayerPlacement: StorefrontVisualPlacement | null;
 } {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
@@ -533,15 +499,11 @@ export function isRuntime1RenderData(value: unknown): value is {
 }
 
 /** Render the immutable shell and selected route from the same resolved bundle object. */
-export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, checkoutContent, customAssetUrls }: RenderStorefrontSurfaceInput): ReactElement {
+export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, checkoutContent, customAssetUrls, visualLayerPlacement }: RenderStorefrontSurfaceInput): ReactElement {
   const assetUrls = assetUrlsForBundle(bundle, customAssetUrls ?? data.storefrontAssetUrls);
   const previewTemplateId = mode === "preview" && bundle.source.kind === "recipe" ? bundle.source.templateId : undefined;
   const shellTree = splitShellTree(bundle.shell.tree);
-  const resolvedVisualLayer = resolveBundleVisualLayer(bundle);
-  const routeTree = routeId === "checkout" ? bundle.routes.checkout.decorativeTree : bundle.routes[routeId].tree;
-  const visualLayer = resolvedVisualLayer
-    ? findVisualTreePlacement([...bundle.shell.tree, ...routeTree], resolvedVisualLayer)
-    : null;
+  const visualLayer = visualLayerPlacement ?? null;
   let routeResult: ReactElement;
   if (routeId === "checkout") {
     routeResult = (

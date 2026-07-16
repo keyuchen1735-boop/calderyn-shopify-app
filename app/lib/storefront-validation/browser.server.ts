@@ -12,6 +12,7 @@ import type { StorefrontBundleV1, StorefrontRouteId } from "../storefront-bundle
 import { StorefrontPolicyPage } from "../storefront/policy-page";
 import { resolveStorefrontPolicyPath, type StorefrontPolicy } from "../storefront/policies.server";
 import { renderStorefrontSurface } from "../storefront-runtime/render.server";
+import { resolveStorefrontVisualPlacement } from "../storefront-runtime/visual-layer.server";
 import type { PublicPresentationData, PublicProduct } from "../storefront-runtime/public-data.server";
 import { createStorefrontProofData, storefrontProofPolicies } from "./fixtures";
 import { verifyStorefrontPolicyRoutes } from "./policy-routes";
@@ -230,6 +231,7 @@ function routeMarkup(
     data,
     nonce: PROOF_NONCE,
     mode,
+    visualLayerPlacement: resolveStorefrontVisualPlacement(bundle, routeId),
     customAssetUrls,
     checkoutContent: routeId === "checkout" ? checkoutSimulation() : undefined,
   }));

@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import type { RouteArtifact, TemplateVisualLayer } from "~/lib/storefront-bundle/types";
+import type { RouteArtifact } from "~/lib/storefront-bundle/types";
 import { hydrateStorefront, teardownStorefront } from "./hydrate";
 
 function artifact(overrides: Partial<RouteArtifact> = {}): RouteArtifact {
@@ -49,6 +49,7 @@ function installWebGl(): void {
     STATIC_DRAW: 6,
     FLOAT: 7,
     TRIANGLES: 8,
+    NO_ERROR: 0,
     createShader: vi.fn(() => ({})),
     shaderSource: vi.fn(),
     compileShader: vi.fn(),
@@ -60,8 +61,10 @@ function installWebGl(): void {
     getProgramParameter: vi.fn(() => true),
     deleteProgram: vi.fn(),
     createBuffer: vi.fn(() => ({})),
+    deleteBuffer: vi.fn(),
     bindBuffer: vi.fn(),
     bufferData: vi.fn(),
+    getError: vi.fn(() => 0),
     getAttribLocation: vi.fn(() => 0),
     enableVertexAttribArray: vi.fn(),
     vertexAttribPointer: vi.fn(),
@@ -90,16 +93,10 @@ afterEach(() => {
 });
 
 describe("declarative storefront hydration", () => {
-  it("mounts a typed visual only at its declared slot and restores the fallback", () => {
+  it("mounts a typed visual only at the server-issued host and restores the fallback", () => {
     installWebGl();
-    const declaration: TemplateVisualLayer = {
-      slotId: "visual:atelier-nine:v1",
-      fallbackAssetKey: "hero",
-      placement: "hero-background",
-      pointerEvents: "none",
-    };
     document.body.innerHTML = `<main id="root">
-      <figure data-cd-visual-slot="${declaration.slotId}"><img data-cd-asset-key="hero" data-cd-visual-fallback></figure>
+      <figure data-cd-visual-host><img data-cd-asset-key="hero" data-cd-visual-fallback></figure>
       <figure data-cd-visual-slot="visual:unregistered" data-fx-shader="void main(){}"></figure>
     </main>`;
     const root = document.getElementById("root") as HTMLElement;
@@ -111,17 +108,14 @@ describe("declarative storefront hydration", () => {
         interactions: { version: 1, state: [], bindings: [], transitions: [] },
       }),
       visualLayer: {
-        declaration,
-        spec: {
-          kind: "fragment_shader",
-          source: "void main(){gl_FragColor=vec4(1.0);}",
-          colors: ["#000000", "#111111", "#222222"],
-        },
+        kind: "fragment_shader",
+        source: "void main(){gl_FragColor=vec4(1.0);}",
+        colors: ["#000000", "#111111", "#222222"],
       },
     });
 
     expect(runtime.hydrated).toBe(true);
-    expect(root.querySelector(`[data-cd-visual-slot='${declaration.slotId}'] canvas`)).not.toBeNull();
+    expect(root.querySelector("[data-cd-visual-host] canvas")).not.toBeNull();
     expect(root.querySelector("[data-cd-visual-slot='visual:unregistered'] canvas")).toBeNull();
     expect(fallback.style.visibility).toBe("hidden");
 
@@ -132,26 +126,17 @@ describe("declarative storefront hydration", () => {
 
   it("does not let shell hydration mount a visual owned by the nested route", () => {
     installWebGl();
-    const declaration: TemplateVisualLayer = {
-      slotId: "visual:atelier-nine:v1",
-      fallbackAssetKey: "hero",
-      placement: "hero-background",
-      pointerEvents: "none",
-    };
     document.body.innerHTML = `<main data-cd-bundle-shell="home">
       <section data-cd-bundle-route="home">
-        <figure data-cd-visual-slot="${declaration.slotId}"><img data-cd-asset-key="hero" data-cd-visual-fallback></figure>
+        <figure data-cd-visual-host><img data-cd-asset-key="hero" data-cd-visual-fallback></figure>
       </section>
     </main>`;
     const shell = document.querySelector<HTMLElement>("[data-cd-bundle-shell]")!;
     const route = document.querySelector<HTMLElement>("[data-cd-bundle-route]")!;
     const visualLayer = {
-      declaration,
-      spec: {
-        kind: "fragment_shader" as const,
-        source: "void main(){gl_FragColor=vec4(1.0);}",
-        colors: ["#000000", "#111111", "#222222"] as [string, string, string],
-      },
+      kind: "fragment_shader" as const,
+      source: "void main(){gl_FragColor=vec4(1.0);}",
+      colors: ["#000000", "#111111", "#222222"] as [string, string, string],
     };
     const emptyArtifact = artifact({
       requiredCapabilities: [],

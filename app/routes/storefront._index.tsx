@@ -97,7 +97,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export default function StorefrontHome() {
   const loaded = useLoaderData<typeof loader>();
   if (isRuntime1RenderData(loaded)) {
-    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "home", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="home" data={loaded.data} mode="public" /></>;
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "home", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="home" data={loaded.data} mode="public" /></>;
   }
   const { doc, data } = loaded;
   return <div className="cd-store__home">{renderBlocks(doc, { data })}</div>;

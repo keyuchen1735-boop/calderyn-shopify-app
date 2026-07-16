@@ -329,7 +329,7 @@ export default function StoreDraftPreview() {
     return () => document.removeEventListener("click", selectRegion, { capture: true });
   }, [loaded]);
   if (isRuntime1RenderData(loaded)) {
-    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: loaded.routeId, data: loaded.data, nonce: loaded.nonce, mode: "preview" })}<StorefrontHydrator bundle={loaded.bundle} routeId={loaded.routeId} data={loaded.data} mode="preview" /></>;
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: loaded.routeId, data: loaded.data, nonce: loaded.nonce, mode: "preview", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId={loaded.routeId} data={loaded.data} mode="preview" /></>;
   }
   const { doc, data, record, settings } = loaded;
   return (

@@ -19,13 +19,17 @@ afterEach(() => {
 function installWebGl() {
   const loseContext = vi.fn();
   const createBuffer = vi.fn<() => WebGLBuffer | null>(() => ({} as WebGLBuffer));
+  const getError = vi.fn(() => 0);
+  const deleteBuffer = vi.fn();
   const gl = {
     VERTEX_SHADER: 1, FRAGMENT_SHADER: 2, COMPILE_STATUS: 3, LINK_STATUS: 4,
     ARRAY_BUFFER: 5, STATIC_DRAW: 6, FLOAT: 7, TRIANGLES: 8,
+    NO_ERROR: 0,
     createShader: vi.fn(() => ({})), shaderSource: vi.fn(), compileShader: vi.fn(),
     getShaderParameter: vi.fn(() => true), deleteShader: vi.fn(), createProgram: vi.fn(() => ({})),
     attachShader: vi.fn(), linkProgram: vi.fn(), getProgramParameter: vi.fn(() => true), deleteProgram: vi.fn(),
-    createBuffer, bindBuffer: vi.fn(), bufferData: vi.fn(), getAttribLocation: vi.fn(() => 0),
+    createBuffer, deleteBuffer, bindBuffer: vi.fn(), bufferData: vi.fn(), getError,
+    getAttribLocation: vi.fn(() => 0),
     enableVertexAttribArray: vi.fn(), vertexAttribPointer: vi.fn(), useProgram: vi.fn(),
     getUniformLocation: vi.fn((_program, name: string) => ({ name })), uniform3fv: vi.fn(),
     uniform2f: vi.fn(), uniform1f: vi.fn(), viewport: vi.fn(), drawArrays: vi.fn(),
@@ -34,7 +38,7 @@ function installWebGl() {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(gl as never);
   vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
   vi.stubGlobal("devicePixelRatio", 2);
-  return { gl, loseContext, createBuffer };
+  return { gl, loseContext, createBuffer, deleteBuffer, getError };
 }
 
 describe("mountVisualLayer", () => {
@@ -61,7 +65,7 @@ describe("mountVisualLayer", () => {
   });
 
   it("renders a capped static layer with a fixed pointer and restores its fallback on context loss", () => {
-    const { gl, loseContext } = installWebGl();
+    const { gl, loseContext, deleteBuffer } = installWebGl();
     const host = document.createElement("div");
     const fallback = document.createElement("img");
     fallback.dataset.cdVisualFallback = "";
@@ -90,6 +94,8 @@ describe("mountVisualLayer", () => {
     canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
     expect(host.querySelector("canvas")).toBeNull();
     expect(fallback.style.visibility).toBe("");
+    expect(deleteBuffer).toHaveBeenCalledOnce();
+    expect(gl.deleteProgram).toHaveBeenCalledOnce();
     expect(loseContext).toHaveBeenCalledOnce();
     cleanup?.();
   });
@@ -112,8 +118,25 @@ describe("mountVisualLayer", () => {
     expect(fallback.style.visibility).toBe("");
   });
 
+  it("deletes resources when the context-loss extension is unavailable", () => {
+    const { gl, deleteBuffer } = installWebGl();
+    vi.mocked(gl.getExtension).mockReturnValue(null);
+    const host = document.createElement("div");
+    document.body.append(host);
+
+    const cleanup = mountVisualLayer(host, {
+      kind: "fragment_shader",
+      source: "void main(){gl_FragColor=vec4(1.0);}",
+      colors: ["#000000", "#111111", "#222222"],
+    });
+    cleanup?.();
+
+    expect(deleteBuffer).toHaveBeenCalledOnce();
+    expect(gl.deleteProgram).toHaveBeenCalledOnce();
+  });
+
   it("rolls back before returning when observer setup fails", () => {
-    installWebGl();
+    const { gl, deleteBuffer } = installWebGl();
     vi.stubGlobal("ResizeObserver", class {
       observe(): void { throw new Error("observer setup failed"); }
       disconnect(): void {}
@@ -134,6 +157,69 @@ describe("mountVisualLayer", () => {
     expect(fallback.style.visibility).toBe("");
     expect(host.style.position).toBe("");
     expect(host.style.isolation).toBe("");
+    expect(deleteBuffer).toHaveBeenCalledOnce();
+    expect(gl.deleteProgram).toHaveBeenCalledOnce();
+  });
+
+  it("releases acquired resources when setup throws", () => {
+    const { gl, deleteBuffer } = installWebGl();
+    vi.mocked(gl.bufferData).mockImplementation(() => { throw new Error("upload failed"); });
+    const host = document.createElement("div");
+    const fallback = document.createElement("img");
+    fallback.dataset.cdVisualFallback = "";
+    host.append(fallback);
+    document.body.append(host);
+
+    expect(mountVisualLayer(host, {
+      kind: "fragment_shader",
+      source: "void main(){gl_FragColor=vec4(1.0);}",
+      colors: ["#000000", "#111111", "#222222"],
+    })).toBeNull();
+    expect(host.querySelector("canvas")).toBeNull();
+    expect(fallback.style.visibility).toBe("");
+    expect(deleteBuffer).toHaveBeenCalledOnce();
+    expect(gl.deleteProgram).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the fallback when vertex upload reports a WebGL error", () => {
+    const { gl, deleteBuffer, getError } = installWebGl();
+    getError.mockReturnValueOnce(1282);
+    const host = document.createElement("div");
+    const fallback = document.createElement("img");
+    fallback.dataset.cdVisualFallback = "";
+    host.append(fallback);
+    document.body.append(host);
+
+    expect(mountVisualLayer(host, {
+      kind: "fragment_shader",
+      source: "void main(){gl_FragColor=vec4(1.0);}",
+      colors: ["#000000", "#111111", "#222222"],
+    })).toBeNull();
+    expect(host.querySelector("canvas")).toBeNull();
+    expect(fallback.style.visibility).toBe("");
+    expect(deleteBuffer).toHaveBeenCalledOnce();
+    expect(gl.deleteProgram).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the fallback when the initial draw reports a WebGL error", () => {
+    const { gl, deleteBuffer, getError } = installWebGl();
+    getError.mockReturnValueOnce(0).mockReturnValueOnce(1282);
+    const host = document.createElement("div");
+    const fallback = document.createElement("img");
+    fallback.dataset.cdVisualFallback = "";
+    host.append(fallback);
+    document.body.append(host);
+
+    expect(mountVisualLayer(host, {
+      kind: "fragment_shader",
+      source: "void main(){gl_FragColor=vec4(1.0);}",
+      colors: ["#000000", "#111111", "#222222"],
+    })).toBeNull();
+    expect(host.querySelector("canvas")).toBeNull();
+    expect(fallback.style.visibility).toBe("");
+    expect(gl.drawArrays).toHaveBeenCalledOnce();
+    expect(deleteBuffer).toHaveBeenCalledOnce();
+    expect(gl.deleteProgram).toHaveBeenCalledOnce();
   });
 });
 

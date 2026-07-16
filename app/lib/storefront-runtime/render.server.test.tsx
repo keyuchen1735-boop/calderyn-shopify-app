@@ -7,7 +7,7 @@ import type { RouteArtifact, StorefrontBundleV1 } from "~/lib/storefront-bundle/
 import { CURATED_FONT_IDS } from "~/lib/storefront-bundle/types";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
-import { getStoreTemplate } from "~/lib/storefront-bundle/registry";
+import { resolveStorefrontVisualPlacement } from "./visual-layer.server";
 import {
   renderStorefrontSurface,
   renderCheckoutRoute,
@@ -142,28 +142,59 @@ describe("compiled-node server renderer", () => {
     expect(html).toContain('data-cd-asset-key="hero"');
   });
 
-  it("renders one visual host only at the registered recipe fallback", () => {
+  it("emits no visual host for immutable bundles without an active shader", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
     source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
     source.routes.home.html = `<main><figure><img data-cd-asset="hero" alt="Editorial look"></figure></main>`;
     const bundle = compileBundle(source).bundle;
+    const absentHtml = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "visual-nonce", mode: "public",
+      visualLayerPlacement: resolveStorefrontVisualPlacement(bundle, "home"),
+    }));
+    expect(absentHtml).not.toContain("data-cd-visual-host");
+
     bundle.visualLayer = { kind: "none" };
-    const declaration = getStoreTemplate("atelier-nine").versions[0].visualLayer;
+    const noneHtml = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "visual-nonce", mode: "public",
+      visualLayerPlacement: resolveStorefrontVisualPlacement(bundle, "home"),
+    }));
+    expect(noneHtml).not.toContain("data-cd-visual-host");
+  });
+
+  it("renders one template-neutral visual host at the registered recipe fallback", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
+    source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
+    source.routes.home.html = `<main><figure><img data-cd-asset="hero" alt="Editorial look"></figure></main>`;
+    const bundle = compileBundle(source).bundle;
+    bundle.visualLayer = {
+      kind: "fragment_shader",
+      source: "void main(){gl_FragColor=vec4(1.0);}",
+      colors: ["#000000", "#111111", "#222222"],
+    };
+
+    const unresolvedHtml = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "visual-nonce", mode: "public",
+    }));
+    expect(unresolvedHtml).not.toContain("data-cd-visual-host");
 
     const html = renderToStaticMarkup(renderStorefrontSurface({
       bundle, routeId: "home", data, nonce: "visual-nonce", mode: "public",
+      visualLayerPlacement: resolveStorefrontVisualPlacement(bundle, "home"),
     }));
 
-    expect(html.match(/data-cd-visual-slot=/g)).toHaveLength(1);
-    expect(html).toContain(`data-cd-visual-slot="${declaration.slotId}"`);
+    expect(html.match(/data-cd-visual-host=/g)).toHaveLength(1);
+    expect(html).not.toContain("data-cd-visual-slot");
+    expect(html).not.toContain("visual:atelier-nine:v1");
     expect(html).toContain('data-cd-asset-key="hero"');
 
     bundle.source = { kind: "custom", generationId: "generation", promptHash: "hash" };
     const customHtml = renderToStaticMarkup(renderStorefrontSurface({
       bundle, routeId: "home", data, nonce: "visual-nonce", mode: "public",
+      visualLayerPlacement: resolveStorefrontVisualPlacement(bundle, "home"),
     }));
-    expect(customHtml).not.toContain("data-cd-visual-slot");
+    expect(customHtml).not.toContain("data-cd-visual-host");
   });
 
   it("keeps repeated recipe fallbacks static instead of declaring multiple visual hosts", () => {
@@ -172,7 +203,11 @@ describe("compiled-node server renderer", () => {
     source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
     source.routes.home.html = `<main><section data-cd-repeat="featured.products"><figure data-cd-key="product.id"><img data-cd-asset="hero" alt="Editorial look"></figure></section></main>`;
     const bundle = compileBundle(source).bundle;
-    bundle.visualLayer = { kind: "none" };
+    bundle.visualLayer = {
+      kind: "fragment_shader",
+      source: "void main(){gl_FragColor=vec4(1.0);}",
+      colors: ["#000000", "#111111", "#222222"],
+    };
     const products = [
       { ...publicProduct, id: "product-a", handle: "a" },
       { ...publicProduct, id: "product-b", handle: "b" },
@@ -184,9 +219,10 @@ describe("compiled-node server renderer", () => {
       data: { ...data, featuredProducts: products },
       nonce: "visual-nonce",
       mode: "public",
+      visualLayerPlacement: resolveStorefrontVisualPlacement(bundle, "home"),
     }));
 
-    expect(html).not.toContain("data-cd-visual-slot");
+    expect(html).not.toContain("data-cd-visual-host");
     expect(html.match(/data-cd-asset-key="hero"/g)).toHaveLength(2);
   });
 

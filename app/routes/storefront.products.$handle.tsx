@@ -187,7 +187,7 @@ export default function StorefrontProduct() {
   const initialVariantId = runtime1 ? "" : loaded.product.variants[0]?.id ?? "";
   const [selectedVariantId, setSelectedVariantId] = useState(initialVariantId);
   if (runtime1) {
-    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "product", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="product" data={loaded.data} mode="public" /></>;
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "product", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="product" data={loaded.data} mode="public" /></>;
   }
   const { product, doc, data, record, demo, unavailable } = loaded;
   const firstVariantId = product.variants[0]?.id ?? "";

@@ -4,7 +4,6 @@ import type { PublicPresentationData } from "./public-data.server";
 import { hydrateStorefront } from "./hydrate";
 import type { StorefrontRuntimeHandle } from "./hydrate";
 import type { CommerceIntent, CommerceMountContext, ResolvedRouteTarget, RuntimeAdapters } from "./actions";
-import { resolveBundleVisualLayer } from "./render";
 
 type RuntimeMode = "public" | "preview";
 export type RuntimeFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -293,7 +292,7 @@ export function StorefrontHydrator(props: {
       previewTemplateId: props.mode === "preview" && props.bundle.source.kind === "recipe" ? props.bundle.source.templateId : undefined,
     });
     const handles: StorefrontRuntimeHandle[] = [];
-    const visualLayer = resolveBundleVisualLayer(props.bundle) ?? undefined;
+    const visualLayer = props.bundle.visualLayer?.kind === "fragment_shader" ? props.bundle.visualLayer : undefined;
     const shell = root.querySelector<HTMLElement>("[data-cd-bundle-shell]");
     if (shell) handles.push(hydrateStorefront({ root: shell, artifact: props.bundle.shell, adapters, visualLayer }));
     if (props.routeId !== "checkout") {

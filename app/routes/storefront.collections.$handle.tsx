@@ -138,7 +138,7 @@ function CollectionNextPage({ href }: { href: string | null }) {
 export default function StorefrontCollection() {
   const loaded = useLoaderData<typeof loader>();
   if (isRuntime1RenderData(loaded)) {
-    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "collection", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="collection" data={loaded.data} mode="public" /><CollectionNextPage href={loaded.nextPageHref} /></>;
+    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "collection", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="collection" data={loaded.data} mode="public" /><CollectionNextPage href={loaded.nextPageHref} /></>;
   }
   const { title, products, nextPageHref, doc, data, record } = loaded;
   if (doc && data) {

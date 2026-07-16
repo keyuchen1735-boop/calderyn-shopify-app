@@ -5,6 +5,7 @@ import { isUuid } from "~/lib/ids";
 import { getStorefrontRecipe, STOREFRONT_RECIPE_BY_ID } from "~/lib/storefront-recipes";
 import { isolateCompiledShellCss } from "~/lib/storefront-compiler/css";
 import { isStorefrontBundleReadEnabled } from "./csp.server";
+import { resolveStorefrontVisualPlacement, type StorefrontVisualPlacement } from "./visual-layer.server";
 import {
   resolvePublicData,
   routeIdForPublicContext,
@@ -315,6 +316,7 @@ export interface Runtime1RouteData {
   routeId: StorefrontRouteId;
   bundle: StorefrontBundleV1;
   data: PublicPresentationData;
+  visualLayerPlacement: StorefrontVisualPlacement | null;
 }
 
 export type StorefrontAssetUrlLoader = (input: {
@@ -393,6 +395,7 @@ export async function resolveRuntime1VersionRoute(input: {
     routeId,
     bundle: resolvedBundle,
     data: Object.keys(resolvedAssetUrls).length > 0 ? { ...data, storefrontAssetUrls: resolvedAssetUrls } : data,
+    visualLayerPlacement: resolveStorefrontVisualPlacement(resolvedBundle, routeId),
   };
 }
 

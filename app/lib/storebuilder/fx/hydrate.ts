@@ -1,6 +1,6 @@
 // app/lib/storebuilder/fx/hydrate.ts
-// Client entry point for the rawHtml effect channels. The generator's sanitized
-// HTML fragment carries optional motion attributes on its own elements; this
+// Client entry point for the rawHtml effect channels. The sanitized storefront
+// fragment carries optional motion attributes on its own elements; this
 // walks the freshly-rendered fragment and mounts that runtime. Called only from
 // a client effect, so it is a no-op on the
 // server by construction.

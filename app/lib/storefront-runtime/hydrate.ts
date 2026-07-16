@@ -4,7 +4,6 @@ import type {
   RouteArtifact,
   RuntimeActionSpec,
   RuntimeCapability,
-  TemplateVisualLayer,
   TrustedSlotManifest,
   VisualLayerSpec,
 } from "~/lib/storefront-bundle/types";
@@ -39,10 +38,7 @@ export interface HydrateStorefrontOptions {
   root: HTMLElement;
   artifact: Pick<RouteArtifact, "requiredCapabilities" | "interactions" | "trustedSlots">;
   adapters?: RuntimeAdapters;
-  visualLayer?: {
-    declaration: TemplateVisualLayer;
-    spec: VisualLayerSpec;
-  };
+  visualLayer?: VisualLayerSpec;
 }
 
 export interface StorefrontRuntimeHandle {
@@ -407,22 +403,19 @@ function runCleanups(cleanups: Array<() => void>): unknown[] {
   return errors;
 }
 
-function mountDeclaredVisualLayer(
+function mountServerIssuedVisualLayer(
   root: HTMLElement,
   visualLayer: HydrateStorefrontOptions["visualLayer"],
 ): (() => void) | null {
-  if (!visualLayer || !visualLayer.declaration.slotId.startsWith("visual:") ||
-    visualLayer.declaration.pointerEvents !== "none") return null;
+  if (!visualLayer) return null;
   const routeRoot = root.matches("[data-cd-bundle-route]") ? root : null;
-  const hosts = [root, ...root.querySelectorAll<HTMLElement>("[data-cd-visual-slot]")].filter(
-    (host) => host.dataset.cdVisualSlot === visualLayer.declaration.slotId &&
+  const hosts = [root, ...root.querySelectorAll<HTMLElement>("[data-cd-visual-host]")].filter(
+    (host) => host.hasAttribute("data-cd-visual-host") &&
       host.closest<HTMLElement>("[data-cd-bundle-route]") === routeRoot,
   );
   if (hosts.length !== 1) return null;
-  const fallbacks = [...hosts[0].querySelectorAll<HTMLElement>("[data-cd-visual-fallback]")].filter(
-    (fallback) => fallback.dataset.cdAssetKey === visualLayer.declaration.fallbackAssetKey,
-  );
-  return fallbacks.length === 1 ? mountVisualLayer(hosts[0], visualLayer.spec) : null;
+  const fallbacks = hosts[0].querySelectorAll<HTMLElement>("[data-cd-visual-fallback]");
+  return fallbacks.length === 1 ? mountVisualLayer(hosts[0], visualLayer) : null;
 }
 
 export function hydrateStorefront(options: HydrateStorefrontOptions): StorefrontRuntimeHandle {
@@ -473,7 +466,7 @@ export function hydrateStorefront(options: HydrateStorefrontOptions): Storefront
   context.reducedMotion = reducedMotion;
   try {
     applyBindings(options.root, options.artifact.interactions, stateFor, journal);
-    const visualCleanup = mountDeclaredVisualLayer(options.root, options.visualLayer);
+    const visualCleanup = mountServerIssuedVisualLayer(options.root, options.visualLayer);
     if (visualCleanup) removers.push(visualCleanup);
     removers.push(...mountCommerce(options.root, options.artifact.trustedSlots, adapters));
     for (const transition of options.artifact.interactions.transitions) {

@@ -633,6 +633,7 @@ export default function StorefrontCheckout() {
       data: loaded.data,
       nonce: loaded.nonce,
       mode: "public",
+      visualLayerPlacement: loaded.visualLayerPlacement,
       checkoutContent: <CheckoutPlatform loaded={loaded} />,
     });
     return <>{surface}<StorefrontHydrator bundle={loaded.bundle} routeId="checkout" data={loaded.data} mode="public" /></>;
