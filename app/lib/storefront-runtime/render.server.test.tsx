@@ -141,6 +141,21 @@ describe("compiled-node server renderer", () => {
     expect(html).toContain('data-cd-asset-key="hero"');
   });
 
+  it("uses a server-resolved recipe asset URL when the preview host does not serve deploy assets", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
+    source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
+    source.routes.home.html = `<main><img data-cd-asset="hero" alt="Editorial look" width="1800" height="1200"></main>`;
+    const bundle = compileBundle(source).bundle;
+
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "asset-nonce", mode: "preview",
+      customAssetUrls: { hero: "https://app.example.test/storefront-recipes/atelier-nine/hero.webp" },
+    }));
+
+    expect(html).toContain('src="https://app.example.test/storefront-recipes/atelier-nine/hero.webp"');
+  });
+
   it("keeps custom assets fail-closed unless the caller supplies a separately verified URL", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];

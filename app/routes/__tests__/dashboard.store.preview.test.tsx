@@ -99,12 +99,18 @@ describe("dashboard.store.preview loader", () => {
 
   it("renders a selected recipe against the authenticated merchant catalog without installing it", async () => {
     const previous = process.env.STOREFRONT_BUNDLE_READ;
+    const previousAppUrl = process.env.SHOPIFY_APP_URL;
     process.env.STOREFRONT_BUNDLE_READ = "1";
+    process.env.SHOPIFY_APP_URL = "https://app.example.com";
     const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    bundle.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
     getRecipeMock.mockReturnValue({ bundle: { ...bundle, source: { kind: "recipe", templateId: "commons-index", templateVersion: 1 } } });
     try {
-      const result = await loaderData("https://app.example.com/dashboard/store/preview?template=commons-index&route=home");
+      const result = await loaderData("https://dashboard.example.com/dashboard/store/preview?template=commons-index&route=home");
       expect(result).toMatchObject({ runtime: 1, bundleId: "preview:commons-index", routeId: "home" });
+      expect(result.data.storefrontAssetUrls).toEqual({
+        hero: "https://app.example.com/storefront-recipes/commons-index/hero.webp",
+      });
       expect(getRecipeMock).toHaveBeenCalledWith("commons-index");
       expect(getPreviewCatalogMock).toHaveBeenCalled();
       expect(readPreviewBundleVersionMock).not.toHaveBeenCalled();
@@ -112,6 +118,8 @@ describe("dashboard.store.preview loader", () => {
     } finally {
       if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
       else process.env.STOREFRONT_BUNDLE_READ = previous;
+      if (previousAppUrl === undefined) delete process.env.SHOPIFY_APP_URL;
+      else process.env.SHOPIFY_APP_URL = previousAppUrl;
     }
   });
 

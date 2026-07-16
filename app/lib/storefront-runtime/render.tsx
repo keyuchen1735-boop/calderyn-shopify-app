@@ -163,7 +163,8 @@ function assetUrlsForBundle(
   for (const asset of bundle.assets.entries) {
     if (bundle.source.kind === "recipe") {
       if (asset.mediaType === "image/webp") {
-        urls.set(asset.key, `/storefront-recipes/${bundle.source.templateId}/${asset.key}.webp`);
+        urls.set(asset.key, safeAssetUrl(customAssetUrls?.[asset.key]) ??
+          `/storefront-recipes/${bundle.source.templateId}/${asset.key}.webp`);
       }
       continue;
     }
