@@ -3,7 +3,7 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, catalogCacheKey } from "~/lib/dashboard/screen-cache";
-import { Card, Btn, Pill } from "../ui";
+import { Card, Btn } from "../ui";
 import { CDIcon } from "../icons";
 import { money } from "../format";
 import type { CatalogSort } from "~/lib/catalog/catalog-sort";
@@ -19,12 +19,6 @@ import {
 import { localDayEndIso, localDayStartIso } from "./orders-list-state";
 
 type StatusFilter = "All" | "active" | "draft" | "archived";
-
-const STATUS_TONE: Record<string, "success" | "neutral" | "warn"> = {
-  active: "success",
-  draft: "neutral",
-  archived: "warn",
-};
 
 const STATUS_VIEWS: OrderListView[] = [
   { id: "All", label: "All" },
@@ -319,8 +313,11 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   const headerSort = catalogSortToHeaderState(sort);
 
   // Same header anatomy as Orders: h1, then the stat readout strip. The gap
-  // counts are page-scoped (like Orders' "Page value"/"Page alerts").
-  const readoutItems = loading
+  // counts are page-scoped (like Orders' "Page value"/"Page alerts"). Kept
+  // mounted with last-known values during a reload — unmounting it would shift
+  // the whole card up and back down on every tab switch. Only the very first
+  // paint (nothing loaded yet) renders without it.
+  const readoutItems = products.length === 0 && loading
     ? []
     : [
         { label: total === 1 ? "product" : "products", value: total.toLocaleString("en-US") },
@@ -545,11 +542,13 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
                 {p.priceCents != null ? money(p.priceCents) : "—"}
               </div>
               <div>
-                <Pill tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Pill>
+                <span className={`cd-badge${p.status === "active" ? " cd-order-badge-live" : ""}`}>
+                  {p.status}
+                </span>
               </div>
               <div
                 className="cd-caption"
-                style={p.shipDataOk ? undefined : { color: "var(--orange)" }}
+                style={p.shipDataOk ? undefined : { color: "var(--live)" }}
               >
                 {shipLabel(p)}
               </div>
