@@ -1547,6 +1547,8 @@ export async function fetchProducts(
     status?: string;
     offset?: number;
     sort?: CatalogSort;
+    updatedFrom?: string;
+    updatedTo?: string;
   } = {},
 ): Promise<{ products: ProductSummaryVM[]; total: number }> {
   const qs = new URLSearchParams();
@@ -1554,6 +1556,8 @@ export async function fetchProducts(
   if (opts.status) qs.set("status", opts.status);
   if (opts.offset) qs.set("offset", String(opts.offset));
   if (opts.sort && opts.sort !== "updated") qs.set("sort", opts.sort);
+  if (opts.updatedFrom) qs.set("updated_from", opts.updatedFrom);
+  if (opts.updatedTo) qs.set("updated_to", opts.updatedTo);
   const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return apiGet<{ products: ProductSummaryVM[]; total: number }>(
     `/dashboard/api/catalog/products${suffix}`,

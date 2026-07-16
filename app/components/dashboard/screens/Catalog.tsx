@@ -11,10 +11,12 @@ import {
   OrderBulkBar,
   OrderListTable,
   OrderListToolbar,
+  OrderPageReadout,
   OrderSortHeader,
   nextSortState,
   type OrderListView,
 } from "./OrderListFamily";
+import { localDayEndIso, localDayStartIso } from "./orders-list-state";
 
 type StatusFilter = "All" | "active" | "draft" | "archived";
 
@@ -43,12 +45,20 @@ const DEFAULT_CATALOG_SORT = { sort: "updated", dir: "desc" } as const;
 function catalogSortToHeaderState(sort: CatalogSort): { sort: string; dir: "asc" | "desc" } {
   if (sort === "title_asc") return { sort: "title", dir: "asc" };
   if (sort === "title_desc") return { sort: "title", dir: "desc" };
+  if (sort === "status_asc") return { sort: "status", dir: "asc" };
+  if (sort === "status_desc") return { sort: "status", dir: "desc" };
   return DEFAULT_CATALOG_SORT;
 }
 
 function headerStateToCatalogSort(state: { sort: string; dir: "asc" | "desc" }): CatalogSort {
   if (state.sort === "title") return state.dir === "asc" ? "title_asc" : "title_desc";
+  if (state.sort === "status") return state.dir === "asc" ? "status_asc" : "status_desc";
   return "updated";
+}
+
+/** ISO datetime -> the bare "YYYY-MM-DD" an <input type="date"> can display. */
+function isoToDateInputValue(iso: string | undefined): string {
+  return iso ? iso.slice(0, 10) : "";
 }
 
 /** Ship-data cell copy — "Validated · <weight>kg" only when the product truly
@@ -73,6 +83,9 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   const [status, setStatus] = useState<StatusFilter>("All");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<CatalogSort>("updated");
+  // Filters popover state: an inclusive last-updated date range.
+  const [updatedFrom, setUpdatedFrom] = useState<string | undefined>(undefined);
+  const [updatedTo, setUpdatedTo] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(() => !seeded);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -85,11 +98,12 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   }, [search]);
 
   const statusParam = status === "All" ? undefined : status;
+  const hasDateFilter = Boolean(updatedFrom || updatedTo);
 
   // Latest filter identity, read after an async load to detect a filter change
   // that happened while the request was in flight (a closure-captured copy can't,
   // since it would equal itself). Updated every render.
-  const filterToken = JSON.stringify([query, statusParam ?? "", sort]);
+  const filterToken = JSON.stringify([query, statusParam ?? "", sort, updatedFrom ?? "", updatedTo ?? ""]);
   const filterRef = useRef(filterToken);
   filterRef.current = filterToken;
 
@@ -97,10 +111,11 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   // so both paths run the exact same fetch + cache rules.
   const load = useCallback(
     (signal?: { alive: boolean }) => {
-      // Only the default sort seeds/writes the cache — a non-default sort is
-      // live-fetch-only so it never poisons the seeded default view.
+      // Only the default sort with no date filter seeds/writes the cache — any
+      // other combination is live-fetch-only so it never poisons the seeded view.
       const key = catalogCacheKey(query, statusParam);
-      const cached = sort === "updated" ? cachedScreenData<CatalogPage>(key) : undefined;
+      const cacheable = sort === "updated" && !hasDateFilter;
+      const cached = cacheable ? cachedScreenData<CatalogPage>(key) : undefined;
       if (cached) {
         // Last-known rows for this filter paint immediately — no skeleton, no
         // "Loading…" caption; the fetch below silently revalidates them.
@@ -110,9 +125,9 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
       setLoading(!cached);
       setError(null);
       client
-        .fetchProducts({ search: query || undefined, status: statusParam, sort })
+        .fetchProducts({ search: query || undefined, status: statusParam, sort, updatedFrom, updatedTo })
         .then((r) => {
-          if (sort === "updated") cacheScreenData(key, { products: r.products, total: r.total });
+          if (cacheable) cacheScreenData(key, { products: r.products, total: r.total });
           if (signal && !signal.alive) return;
           setProducts(r.products);
           setTotal(r.total);
@@ -125,7 +140,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
           if (!signal || signal.alive) setLoading(false);
         });
     },
-    [query, statusParam, sort],
+    [query, statusParam, sort, updatedFrom, updatedTo, hasDateFilter],
   );
 
   useEffect(() => {
@@ -140,7 +155,14 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
     const token = filterRef.current;
     setLoadingMore(true);
     try {
-      const r = await client.fetchProducts({ search: query || undefined, status: statusParam, sort, offset: products.length });
+      const r = await client.fetchProducts({
+        search: query || undefined,
+        status: statusParam,
+        sort,
+        updatedFrom,
+        updatedTo,
+        offset: products.length,
+      });
       // The merchant changed the filter mid-flight: discard this page so stale
       // rows from the old filter don't append to the new list.
       if (filterRef.current !== token) return;
@@ -158,7 +180,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
     }
   };
 
-  const filtered = Boolean(query) || status !== "All";
+  const filtered = Boolean(query) || status !== "All" || hasDateFilter;
 
   // --- bulk selection ---------------------------------------------------------
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -296,24 +318,36 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
   }, []);
   const headerSort = catalogSortToHeaderState(sort);
 
+  // Same header anatomy as Orders: h1, then the stat readout strip. The gap
+  // counts are page-scoped (like Orders' "Page value"/"Page alerts").
+  const readoutItems = loading
+    ? []
+    : [
+        { label: total === 1 ? "product" : "products", value: total.toLocaleString("en-US") },
+        {
+          label: "active on page",
+          value: products.filter((p) => p.status === "active").length.toLocaleString("en-US"),
+        },
+        {
+          label: "ship data gaps",
+          value: products.filter((p) => !p.shipDataOk).length.toLocaleString("en-US"),
+        },
+      ];
+
   return (
-    <div className="cd-screen">
-      <header className="cd-screen-head" data-screen-label="Products">
+    <div className="cd-screen cd-orders-screen" data-screen-label="Products">
+      <header className="cd-screen-head cd-order-page-head">
         <div>
           <h1 className="cd-h1">Products</h1>
-          <p className="cd-sub">
-            {loading ? "Loading your catalog…" : `${total} product${total === 1 ? "" : "s"} in your catalog`}
-          </p>
         </div>
-        {/* Deliberate addition over the reference table: without a create
-            entry point the catalog can never gain a product. */}
-        <div className="flex items-center gap-2.5">
-          <Btn kind="primary" icon="plus" onClick={() => app.navigate("product-editor", "new")}>
-            New product
-          </Btn>
-        </div>
+        <Btn kind="primary" small onClick={() => app.navigate("product-editor", "new")}>
+          New product
+        </Btn>
       </header>
 
+      <OrderPageReadout items={readoutItems} ariaLabel="Products overview" />
+
+      <div className="cd-order-section-panel">
       <Card pad={false} className="cd-order-workspace">
         <OrderListToolbar
           views={STATUS_VIEWS}
@@ -324,6 +358,35 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
           searchAriaLabel="Search products"
           onSearchChange={setSearch}
           filterLabel="Product"
+          activeFilterCount={hasDateFilter ? 1 : 0}
+          filterChildren={
+            <div className="cd-orders-filter-fields">
+              <div className="cd-orders-filter-daterange">
+                <span className="cd-caption">Last updated</span>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    className="cd-input"
+                    type="date"
+                    aria-label="Updated from"
+                    value={isoToDateInputValue(updatedFrom)}
+                    onChange={(e) =>
+                      setUpdatedFrom(e.target.value ? localDayStartIso(e.target.value) : undefined)
+                    }
+                  />
+                  <span className="cd-caption">to</span>
+                  <input
+                    className="cd-input"
+                    type="date"
+                    aria-label="Updated to"
+                    value={isoToDateInputValue(updatedTo)}
+                    onChange={(e) =>
+                      setUpdatedTo(e.target.value ? localDayEndIso(e.target.value) : undefined)
+                    }
+                  />
+                </div>
+              </div>
+            </div>
+          }
         />
 
         <OrderBulkBar count={selected.size}>
@@ -408,7 +471,13 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
                 onSort={sortByColumn}
               />
               <span>Price</span>
-              <span>Status</span>
+              <OrderSortHeader
+                label="Status"
+                col="status"
+                sort={headerSort.sort}
+                dir={headerSort.dir}
+                onSort={sortByColumn}
+              />
               <span>Ship data</span>
               <span />
             </>
@@ -445,9 +514,9 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
               </div>
               <div
                 style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 7,
+                  width: 24,
+                  height: 24,
+                  borderRadius: 6,
                   overflow: "hidden",
                   background: "var(--gray-bg)",
                   display: "flex",
@@ -463,15 +532,13 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
                     style={{ width: "100%", height: "100%", objectFit: "cover" }}
                   />
                 ) : (
-                  <CDIcon name="bag" size={15} />
+                  <CDIcon name="bag" size={13} />
                 )}
               </div>
-              <div>
-                <div className="cd-row-title truncate">{p.title}</div>
+              <div className="cd-order-ref-cell">
+                <span className="cd-row-title truncate">{p.title}</span>
                 {p.variantCount > 1 && (
-                  <div className="cd-caption">
-                    {p.variantCount} variant{p.variantCount === 1 ? "" : "s"}
-                  </div>
+                  <span className="cd-order-source-label">{p.variantCount} variants</span>
                 )}
               </div>
               <div className="cd-row-num tabular-nums">
@@ -501,6 +568,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
           </Btn>
         </div>
       )}
+      </div>
     </div>
   );
 }
