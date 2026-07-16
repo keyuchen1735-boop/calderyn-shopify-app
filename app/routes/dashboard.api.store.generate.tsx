@@ -87,13 +87,14 @@ export async function action({ request }: ActionFunctionArgs) {
   const abortFromRequest = () => generationController.abort(request.signal.reason);
   if (request.signal.aborted) generationController.abort(request.signal.reason);
   else request.signal.addEventListener("abort", abortFromRequest, { once: true });
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   const stream = new ReadableStream({
     async start(controller) {
       const write = (value: unknown) => {
         if (!cancelled) controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
       };
       const send = (event: StorefrontBuildEvent | { stage: "error"; code: string; status: number; message: string }) => write(event);
-      const heartbeat = setInterval(() => {
+      heartbeat = setInterval(() => {
         try { write({ stage: "heartbeat" }); } catch { clearInterval(heartbeat); }
       }, 15_000);
       try {
@@ -118,6 +119,9 @@ export async function action({ request }: ActionFunctionArgs) {
     },
     cancel() {
       cancelled = true;
+      // buildStorefrontDesign may hang on a non-abort-aware await; don't leave
+      // the interval (and the start() closure) alive behind a no-op write.
+      clearInterval(heartbeat);
       generationController.abort(new DOMException("Storefront generation stopped", "AbortError"));
     },
   });

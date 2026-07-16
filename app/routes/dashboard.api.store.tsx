@@ -112,11 +112,17 @@ function editStreamResponse(
   const abortFromRequest = () => generationController.abort(requestSignal.reason);
   if (requestSignal.aborted) generationController.abort(requestSignal.reason);
   else requestSignal.addEventListener("abort", abortFromRequest, { once: true });
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: StorefrontEditEvent) => {
+      const send = (event: StorefrontEditEvent | { stage: "heartbeat" }) => {
         if (!cancelled) controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       };
+      // Model stages can stay silent for minutes; heartbeats keep the client's
+      // idle watchdog (and any proxy timeout) from killing a healthy edit.
+      heartbeat = setInterval(() => {
+        try { send({ stage: "heartbeat" }); } catch { clearInterval(heartbeat); }
+      }, 15_000);
       try {
         const result = await run(send, generationController.signal);
         if (result && typeof result === "object" && (result as { status?: unknown }).status === "start_over") {
@@ -130,12 +136,16 @@ function editStreamResponse(
           send({ stage: "error", code: "storefront_edit_failed", status: 500, message: "The storefront edit failed. Your draft was not changed." });
         }
       } finally {
+        clearInterval(heartbeat);
         requestSignal.removeEventListener("abort", abortFromRequest);
         if (!cancelled) controller.close();
       }
     },
     cancel() {
       cancelled = true;
+      // run() may hang on a non-abort-aware await; don't leave the interval
+      // (and the whole start() closure) alive behind a no-op send.
+      clearInterval(heartbeat);
       generationController.abort(new DOMException("Storefront generation stopped", "AbortError"));
     },
   });

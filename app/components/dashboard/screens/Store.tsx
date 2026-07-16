@@ -328,11 +328,17 @@ export default function Store({ app }: { app: DashboardCtx }) {
   // wide for the TopBar badge / canvas veil / welcome overlay).
   // Flip a build's working card to a failed phase and post the message; the
   // shared error path for both the JSON and the multipart generate calls.
-  const failBuild = (workingId: number, message: string, opts?: { toast?: boolean; actions?: ChatAction[] }) => {
+  // The failed working card already displays `message`, so a separate chat
+  // bubble is posted only when it carries follow-up actions or `bubble` is set
+  // (facts that must persist in the thread, like products already created) —
+  // never as a plain duplicate of the card's own sentence.
+  const failBuild = (workingId: number, message: string, opts?: { toast?: boolean; actions?: ChatAction[]; bubble?: boolean }) => {
     const failedPhase: BuildPhase = { kind: "failed", message };
     setBuildPhase(failedPhase);
     setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: failedPhase } : x)));
-    pushMsg({ id: newId(), kind: "ai-text", text: message, actions: opts?.actions });
+    if (opts?.actions?.length || opts?.bubble) {
+      pushMsg({ id: newId(), kind: "ai-text", text: message, actions: opts?.actions });
+    }
     if (opts?.toast) toast(message, "warn", "critical");
   };
 
@@ -906,13 +912,15 @@ export default function Store({ app }: { app: DashboardCtx }) {
       }
 
       // Products were written, THEN generation threw (no runId): report both facts.
+      // The created-products fact must persist as a chat bubble — a merchant who
+      // misses it and re-attaches the same images mints duplicate products.
       if (receipt.status === "failed" && !receipt.runId) {
         failBuild(
           workingId,
           productLines.length > 0
             ? `${productLines.join(" ")} But the design generation failed — try Build again.`
             : "The design generation failed — try Build again.",
-          { toast: true },
+          { toast: true, bubble: productLines.length > 0 },
         );
         return;
       }
