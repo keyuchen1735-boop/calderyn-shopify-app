@@ -21,6 +21,7 @@ const globalCss = `
 .atelier-heading { margin:0; color:#161615; font-family:var(--font-display); font-weight:800; letter-spacing:-.035em; line-height:.88; text-transform:uppercase }
 .atelier-serif { color:#34322f; font-family:var(--font-body); line-height:1.45 }
 .atelier-price { font-family:var(--font-display); font-size:.85rem; letter-spacing:.04em }
+.atelier-card-description { display:block; grid-column:1 / -1; min-width:0; margin:0; color:#706c65; font-family:var(--font-body); font-size:.76rem; line-height:1.35; overflow-wrap:anywhere; text-transform:none }
 .atelier-media { display:block; width:100%; object-fit:cover }
 .atelier-rule { border-bottom:1px solid #2a2927 }
 .atelier-action { display:inline-flex; align-items:center; gap:.8rem; color:#d63821; font-family:var(--font-display); font-weight:700; letter-spacing:.08em; text-decoration:none; text-transform:uppercase }
@@ -60,7 +61,7 @@ const homeHtml = `
         <article class="product" data-cd-repeat="featured.products">
           <a class="atelier-link" data-cd-key="product.id" data-cd-route="product" data-cd-param-handle="product.handle">
             <div class="product-media"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="800" height="1000" loading="lazy"><span class="product-badge">Edition</span></div>
-            <div class="product-info"><span data-cd-text="product.title"></span><span class="atelier-price" data-cd-money="product.price"></span></div>
+            <div class="product-info"><span data-cd-text="product.title"></span><span class="atelier-price" data-cd-money="product.price"></span><span class="atelier-card-description" data-cd-text="product.description"></span></div>
           </a>
         </article>
       </div>
@@ -155,6 +156,7 @@ const collectionHtml = `
         <img class="atelier-media atelier-collection-image" data-cd-src="product.primaryImage" data-cd-alt="product.title" width="900" height="1125" loading="lazy">
         <span class="atelier-collection-name" data-cd-text="product.title"></span>
         <span class="atelier-price" data-cd-money="product.price"></span>
+        <span class="atelier-card-description" data-cd-text="product.description"></span>
         <span class="atelier-collection-availability" data-cd-text="product.availability"></span>
       </a>
     </article>
@@ -178,6 +180,7 @@ const collectionCss = `
 .atelier-collection-card:nth-child(4n+2) { grid-column:span 3 }
 .atelier-collection-name, .atelier-collection-card .atelier-price, .atelier-collection-availability { display:block; padding:.7rem .8rem 0 }
 .atelier-collection-card .atelier-price { padding-top:.2rem }
+.atelier-collection-card .atelier-card-description { padding:.2rem .8rem 0 }
 .atelier-collection-availability { padding:.2rem .8rem 1rem; color:#706c65; font-family:var(--font-body); font-size:.76rem }
 .atelier-collection-image { aspect-ratio:4 / 5 }
 @media (max-width:760px) {
@@ -208,6 +211,7 @@ const productHtml = `
         <img class="atelier-media" data-cd-src="product.primaryImage" data-cd-alt="product.title" width="720" height="900" loading="lazy">
         <span data-cd-text="product.title"></span>
         <span class="atelier-price" data-cd-money="product.price"></span>
+        <span class="atelier-card-description" data-cd-text="product.description"></span>
       </a>
     </article>
   </section>
@@ -250,6 +254,7 @@ const searchHtml = `
         <img class="atelier-media atelier-search-image" data-cd-src="product.primaryImage" data-cd-alt="product.title" width="680" height="850" loading="lazy">
         <span class="atelier-search-name" data-cd-text="product.title"></span>
         <span class="atelier-price" data-cd-money="product.price"></span>
+        <span class="atelier-card-description" data-cd-text="product.description"></span>
       </a>
     </article>
   </section>
@@ -269,7 +274,8 @@ const searchCss = `
 .atelier-search-list { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)) }
 .atelier-search-result { border-right:1px solid #aaa49b; border-bottom:1px solid #aaa49b }
 .atelier-search-name, .atelier-search-result .atelier-price { display:block; padding:.7rem .8rem 0 }
-.atelier-search-result .atelier-price { padding:.2rem .8rem 1rem }
+.atelier-search-result .atelier-price { padding:.2rem .8rem 0 }
+.atelier-search-result .atelier-card-description { padding:.45rem .8rem 1rem }
 .atelier-search-image { aspect-ratio:4 / 5 }
 @media (max-width:760px) {
   .atelier-search-tools { overflow-x:auto }

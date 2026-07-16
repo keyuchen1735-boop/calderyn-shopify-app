@@ -9,6 +9,7 @@ import { STOREFRONT_RECIPES, STOREFRONT_RECIPE_BY_ID } from ".";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const ROUTES = ["home", "collection", "product", "search", "cart"] as const;
+const PRODUCT_ROUTES = ["home", "collection", "product", "search"] as const;
 
 function dataPaths(route: RouteArtifact): string[] {
   return route.bindings.flatMap((binding) => binding.ref.kind === "data" ? [binding.ref.path] : []);
@@ -16,6 +17,10 @@ function dataPaths(route: RouteArtifact): string[] {
 
 function slotKinds(route: RouteArtifact): string[] {
   return route.trustedSlots.map((slot) => slot.kind);
+}
+
+function visibleText(nodes: RouteArtifact["tree"]): string {
+  return nodes.map((node) => node.kind === "text" ? node.value : visibleText(node.children)).join(" ");
 }
 
 describe("storefront recipe route matrix", () => {
@@ -102,6 +107,34 @@ describe("storefront recipe route matrix", () => {
       expect(bundle.routes.checkout.requiredData.map((plan) => plan.kind)).toEqual(
         expect.arrayContaining(["storeIdentity", "policyLinks"]),
       );
+    }
+  });
+
+  it("shows a description for every product card", () => {
+    for (const { bundle, config } of STOREFRONT_RECIPES) {
+      for (const routeId of PRODUCT_ROUTES) {
+        const route = bundle.routes[routeId];
+        const titleScopes = new Set(route.bindings.flatMap((binding) =>
+          binding.kind === "text" && binding.ref.kind === "data" && binding.ref.path === "product.title"
+            ? [binding.ref.scopeId]
+            : [],
+        ));
+        const descriptionScopes = new Set(route.bindings.flatMap((binding) =>
+          binding.kind === "text" && binding.ref.kind === "data" && binding.ref.path === "product.description"
+            ? [binding.ref.scopeId]
+            : [],
+        ));
+
+        expect([...descriptionScopes], `${config.templateId}/${routeId}`).toEqual(
+          expect.arrayContaining([...titleScopes]),
+        );
+      }
+    }
+  });
+
+  it("does not render unconditional sold-out notices below collection grids", () => {
+    for (const { bundle, config } of STOREFRONT_RECIPES) {
+      expect(visibleText(bundle.routes.collection.tree), config.templateId).not.toMatch(/\bsold(?:\s|\p{Pd})+out\b/iu);
     }
   });
 
