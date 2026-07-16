@@ -324,6 +324,35 @@ describe("dashboard.api.store multipart generate", () => {
     await cancelled;
   });
 
+  it("threads the merchant's design-model choice into the prompt edit", async () => {
+    const request = new Request(URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "edit", prompt: "Make it warmer",
+        expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
+        model: "opus",
+      }),
+    });
+    const response = await action({ request } as ActionFunctionArgs);
+    expect(response.status).toBe(200);
+    expect(editMock).toHaveBeenCalledWith(expect.objectContaining({ designModel: "opus" }));
+  });
+
+  it("rejects an unknown design-model key before any edit runs", async () => {
+    const request = new Request(URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "edit", prompt: "Make it warmer",
+        expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
+        model: "haiku",
+      }),
+    });
+    const response = await action({ request } as ActionFunctionArgs);
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "invalid_model" });
+    expect(editMock).not.toHaveBeenCalled();
+  });
+
   it("emits heartbeats on the edit stream while a stage runs long", async () => {
     vi.useFakeTimers();
     try {

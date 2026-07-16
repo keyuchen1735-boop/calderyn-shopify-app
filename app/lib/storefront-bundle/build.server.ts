@@ -11,6 +11,7 @@ import type {
   GenerateOriginalStorefrontResult,
   MerchantReferenceImage,
 } from "~/lib/storefront-ai/contracts";
+import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import { STORE_TEMPLATE_REGISTRY } from "./registry";
 import { buildCatalogRoutingEvidence } from "./routing-evidence.server";
 import { resolveStoreDesign } from "./routing";
@@ -230,6 +231,8 @@ export interface StorefrontBuildInput {
   customBuildEnabled?: boolean;
   trusted?: boolean;
   referenceImages?: MerchantReferenceImage[];
+  /** Merchant's design-model picker key, honored only on the custom path. */
+  designModel?: StudioDesignModel;
   onEvent?: (event: StorefrontBuildEvent) => void | Promise<void>;
   signal?: AbortSignal;
   prepared?: PreparedStorefrontDesignBuild;
@@ -326,6 +329,7 @@ export async function buildStorefrontDesign(
       actorId: input.actorId ?? null,
       trusted: input.trusted ?? false,
       routingResolution: frozenResolution,
+      ...(input.designModel ? { designModel: input.designModel } : {}),
       ...(customQuotaReservationToken ? { quotaReservationToken: customQuotaReservationToken } : {}),
       ...(input.referenceImages ? { referenceImages: input.referenceImages } : {}),
       ...(input.signal ? { signal: input.signal } : {}),

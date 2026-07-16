@@ -416,6 +416,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
         },
         opts?.recommendation,
         generationController.signal,
+        designModel,
       );
       // Re-pull the whole studio state — generation rewrites brand settings,
       // drafts and the generation audit row — then reload the preview.
@@ -538,7 +539,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     pushMsg({ id: thinkId, kind: "ai-working", phase: { kind: "editing", stage: "compiling" } });
     try {
       const result = await editStudioStorefrontStream(
-        { prompt: text, expectedDraftVersionId, ...(context ? { context } : {}) },
+        { prompt: text, expectedDraftVersionId, model: designModel, ...(context ? { context } : {}) },
         (stage) => {
           if (!aliveRef.current) return;
           setMessages((messages) => messages.map((message) => message.id === thinkId

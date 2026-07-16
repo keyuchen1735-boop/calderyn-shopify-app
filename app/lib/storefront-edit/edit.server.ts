@@ -4,7 +4,8 @@ import { assertCanGenerate } from "~/lib/storegen/guard.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { cloneStorefrontBundleAssetProvenance, loadVerifiedStorefrontAssetProofBytes } from "../storefront-bundle/assets.server";
 import { isStorefrontCustomBuildEnabled, isStorefrontRecipeBuildEnabled } from "../storefront-bundle/build.server";
-import { createAnthropicStructuredProvider } from "../storefront-ai/provider.server";
+import { createAnthropicStructuredProvider, STOREFRONT_DESIGN_MODEL_IDS } from "../storefront-ai/provider.server";
+import type { StudioDesignModel } from "../storebuilder/studio-types";
 import type { BrowserProofReport, MaterializedAssetResult, MerchantStorefrontContext, StorefrontAiProvider } from "../storefront-ai/contracts";
 import { assembleStorefrontContext } from "../storefront-ai/context.server";
 import {
@@ -54,6 +55,7 @@ export interface StorefrontEditDependencies {
     context?: PreviewEditContext;
     bundle: StorefrontBundleV1;
     signal?: AbortSignal;
+    designModel?: StudioDesignModel;
     repair?: { attempt: 1; scope: StructuralPatchScope; staticDiagnostics?: BundleValidationReport["diagnostics"]; browserProof?: BrowserProofReport };
   }): Promise<CompiledStorefrontPatch>;
   validate(bundle: StorefrontBundleV1): BundleValidationReport;
@@ -239,9 +241,12 @@ export function createDefaultStructuralPatchCompiler(provider?: StorefrontAiProv
     context?: PreviewEditContext;
     bundle: StorefrontBundleV1;
     signal?: AbortSignal;
+    designModel?: StudioDesignModel;
     repair?: { attempt: 1; scope: StructuralPatchScope; staticDiagnostics?: BundleValidationReport["diagnostics"]; browserProof?: BrowserProofReport };
   }): Promise<CompiledStorefrontPatch> => {
-    const response = await (provider ?? createAnthropicStructuredProvider()).complete({
+    const response = await (provider ?? createAnthropicStructuredProvider(
+      input.designModel ? { model: STOREFRONT_DESIGN_MODEL_IDS[input.designModel] } : {},
+    )).complete({
       operation: "patch",
       system: STOREFRONT_PATCH_SYSTEM_PROMPT,
       prompt: storefrontPatchPrompt(input),
@@ -534,6 +539,7 @@ export async function editStorefrontByPrompt(
     context?: PreviewEditContext;
     trusted?: boolean;
     signal?: AbortSignal;
+    designModel?: StudioDesignModel;
     onEvent?: (event: StorefrontEditEvent) => void;
   },
   dependencies: StorefrontEditDependencies = defaultDependencies,
@@ -561,7 +567,7 @@ export async function editStorefrontByPrompt(
       ? { operations: intent.operations, provider: { kind: "deterministic" as const, model: null } }
       : await (async () => {
           await dependencies.preflight({ shopId: input.shopId, prompt: input.prompt, trusted: input.trusted ?? false });
-          return dependencies.compileStructuralPatch({ prompt: input.prompt, context: structuralContext, bundle: base.bundle, signal: input.signal });
+          return dependencies.compileStructuralPatch({ prompt: input.prompt, context: structuralContext, bundle: base.bundle, signal: input.signal, designModel: input.designModel });
         })();
     throwIfEditAborted(input.signal);
     let applied: ReturnType<typeof applyStorefrontPatch>;
@@ -592,6 +598,7 @@ export async function editStorefrontByPrompt(
             context: repeatContext,
             bundle: base.bundle,
             signal: input.signal,
+            designModel: input.designModel,
             repair: { attempt: 1, scope: repeatContext },
           });
           compiledPatch = mergeScopedRepair(compiledPatch, repaired, repeatContext);
@@ -606,6 +613,7 @@ export async function editStorefrontByPrompt(
             context: repeatContext,
             bundle: base.bundle,
             signal: input.signal,
+            designModel: input.designModel,
             repair: {
               attempt: 1,
               scope: repeatContext,
@@ -653,6 +661,7 @@ export async function editStorefrontByPrompt(
             context: structuralContext,
             bundle: base.bundle,
             signal: input.signal,
+            designModel: input.designModel,
             repair: { attempt: 1, scope: repair.scope, staticDiagnostics: repair.diagnostics },
           });
           compiledPatch = mergeScopedRepair(compiledPatch, repaired, repair.scope);
@@ -698,6 +707,7 @@ export async function editStorefrontByPrompt(
             context: structuralContext,
             bundle: base.bundle,
             signal: input.signal,
+            designModel: input.designModel,
             repair: { attempt: 1, scope: repair.scope, browserProof: repair.proof },
           });
           compiledPatch = mergeScopedRepair(compiledPatch, repaired, repair.scope);

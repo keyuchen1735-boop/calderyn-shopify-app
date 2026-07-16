@@ -70,6 +70,21 @@ describe("dashboard.api.store.generate streaming action", () => {
     expect(config.maxDuration).toBe(800);
   });
 
+  it("threads the merchant's design-model choice into the storefront build", async () => {
+    buildMock.mockResolvedValue(undefined);
+    const res = await post({ designRequest: { prompt: "Build something original", mode: "custom" }, model: "opus" });
+    await res.text();
+    expect(buildMock).toHaveBeenCalledWith(expect.objectContaining({ designModel: "opus" }));
+  });
+
+  it("rejects an unknown design-model key before any build starts", async () => {
+    const res = await post({ designRequest: { prompt: "Build something original", mode: "custom" }, model: "haiku" });
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ error: "invalid_model" });
+    expect(prepareMock).not.toHaveBeenCalled();
+    expect(buildMock).not.toHaveBeenCalled();
+  });
+
   it("keeps an idle generation stream alive while model work is pending", async () => {
     vi.useFakeTimers();
     let finishBuild = () => {};

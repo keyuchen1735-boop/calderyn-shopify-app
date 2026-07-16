@@ -17,6 +17,7 @@ import { materializeOwnedAssets } from "./assets.server";
 import { persistGenerationCheckpoint } from "./checkpoint.server";
 import { compileConceptCandidate, exploreConcepts } from "./concepts.server";
 import { assembleStorefrontContext } from "./context.server";
+import type { StudioDesignModel } from "../storebuilder/studio-types";
 import type {
   GenerateDependencies,
   GenerateOriginalStorefrontInput,
@@ -31,7 +32,7 @@ import type {
   StorefrontAiProvider,
 } from "./contracts";
 import { expandWinningConcept, expandedBundleSource } from "./expand.server";
-import { createAnthropicStructuredProvider } from "./provider.server";
+import { createAnthropicStructuredProvider, STOREFRONT_DESIGN_MODEL_IDS } from "./provider.server";
 import { proveAndRepairBundle, repairRouteWithProvider } from "./proof.server";
 import { STOREFRONT_AI_PROMPT_VERSION } from "./prompts";
 
@@ -217,10 +218,12 @@ async function defaultInstallValidatedBundle(input: InstallValidatedBundleInput 
   return { ...installed, artifactHash: databaseArtifactHash };
 }
 
-export function createDefaultGenerateDependencies(): GenerateDependencies {
+export function createDefaultGenerateDependencies(designModel?: StudioDesignModel): GenerateDependencies {
   let resolvedProvider: StorefrontAiProvider | null = null;
   const provider: StorefrontAiProvider = {
-    complete: (request) => (resolvedProvider ??= createAnthropicStructuredProvider()).complete(request),
+    complete: (request) => (resolvedProvider ??= createAnthropicStructuredProvider(
+      designModel ? { model: STOREFRONT_DESIGN_MODEL_IDS[designModel] } : {},
+    )).complete(request),
   };
   return {
     enabled: () => process.env.STOREFRONT_CUSTOM_BUILD === "1",
@@ -278,7 +281,7 @@ export async function generateOriginalStorefront(
   input: GenerateOriginalStorefrontInput,
   dependencies?: GenerateDependencies,
 ): Promise<GenerateOriginalStorefrontResult> {
-  const deps = dependencies ?? createDefaultGenerateDependencies();
+  const deps = dependencies ?? createDefaultGenerateDependencies(input.designModel);
   if (!deps.enabled()) return { status: "disabled", code: "storefront_custom_build_disabled" };
 
   const generationId = deps.randomId();

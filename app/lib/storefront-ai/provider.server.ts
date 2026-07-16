@@ -1,10 +1,19 @@
 import { assistantModel, getAnthropic } from "~/lib/assistant/anthropic.server";
+import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import {
   STOREFRONT_REFERENCE_MEDIA_TYPES,
   type StorefrontAiProvider,
   type StructuredModelRequest,
   type StructuredModelResponse,
 } from "./contracts";
+
+/** Concrete model ids behind the merchant's design-model picker, mirroring the
+ *  legacy designer's allowlist: the request only ever selects a key, never a
+ *  free-form model id, so a request cannot bill an arbitrary model. */
+export const STOREFRONT_DESIGN_MODEL_IDS: Record<StudioDesignModel, string> = {
+  sonnet: "claude-sonnet-5",
+  opus: "claude-opus-4-8",
+};
 
 const RESULT_TOOL = "storefront_compiler_result";
 const MAX_IMAGE_EVIDENCE_BYTES = 5 * 1024 * 1024;

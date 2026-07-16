@@ -490,6 +490,9 @@ export async function action({ request }: ActionFunctionArgs) {
       if (!prompt || prompt.length > EDIT_PROMPT_MAX) return jsonError(422, "invalid_edit_prompt", "Keep the edit prompt under 2,000 characters.");
       if (!isUuid(expectedDraftVersionId)) return jsonError(422, "invalid_draft_version");
       if (context === null) return jsonError(422, "invalid_edit_context");
+      if (b.model !== undefined && b.model !== "sonnet" && b.model !== "opus") {
+        return jsonError(422, "invalid_model", "Model must be sonnet or opus.");
+      }
       return editStreamResponse(request.signal, (onEvent, signal) => editStorefrontByPrompt({
         shopId: session.shopId,
         actorId: session.userId,
@@ -499,6 +502,7 @@ export async function action({ request }: ActionFunctionArgs) {
         onEvent,
         signal,
         ...(context ? { context } : {}),
+        ...(b.model ? { designModel: b.model as "sonnet" | "opus" } : {}),
       }));
     }
 

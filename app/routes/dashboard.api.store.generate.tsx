@@ -18,6 +18,7 @@ import {
   type StorefrontBuildEvent,
 } from "~/lib/storefront-bundle/build.server";
 import type { StoreDesignResolution } from "~/lib/storefront-bundle/types";
+import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import { StorefrontReleaseError } from "~/lib/storefront-bundle/release.server";
 
 export const config = { maxDuration: 800 };
@@ -66,6 +67,10 @@ export async function action({ request }: ActionFunctionArgs) {
       };
   const parsed = parseStoreDesignRequest(requestInput, STORE_TEMPLATE_REGISTRY);
   if (!parsed.ok) return jsonError(422, parsed.error);
+  if (body.model !== undefined && body.model !== "sonnet" && body.model !== "opus") {
+    return jsonError(422, "invalid_model", "Model must be sonnet or opus.");
+  }
+  const designModel = body.model as StudioDesignModel | undefined;
   if (!(await rateLimit(`storefront-build:${session.shopId}`, 10, 60_000))) {
     return jsonError(429, "rate_limited", "Too many storefront builds. Please wait a moment.");
   }
@@ -104,6 +109,7 @@ export async function action({ request }: ActionFunctionArgs) {
           request: parsed.value,
           recommendedResolution: recommendedResolution(body.recommendedResolution),
           trusted: quotaTrusted(session),
+          ...(designModel ? { designModel } : {}),
           prepared,
           signal: generationController.signal,
           onEvent: send,

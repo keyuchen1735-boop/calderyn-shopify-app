@@ -247,7 +247,17 @@ describe("generateStudioStoreStream", () => {
     expect(stages).toEqual(["routing", "applying_recipe"]);
     expect(receipt).toEqual({ runId: "version-1", status: "draft" });
     const init = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
-    expect(JSON.parse(String(init.body))).toEqual({ designRequest: { prompt: "a brief", mode: "auto" } });
+    expect(JSON.parse(String(init.body))).toEqual({ designRequest: { prompt: "a brief", mode: "auto" }, model: "sonnet" });
+    vi.unstubAllGlobals();
+  });
+
+  it("sends the merchant's design-model choice with the build request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
+      '{"stage":"installed","receipt":{"runtime":1,"versionId":"version-1","status":"draft","resolution":{"kind":"custom","reason":"explicit_custom","routingVersion":1,"registryVersion":1,"catalogFingerprint":"sha256:fresh","breakdown":[],"reasons":[]}}}',
+    ])));
+    await buildStudioStoreStream({ prompt: "something original", mode: "custom" }, () => {}, undefined, undefined, "opus");
+    const init = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toEqual({ designRequest: { prompt: "something original", mode: "custom" }, model: "opus" });
     vi.unstubAllGlobals();
   });
 
@@ -294,6 +304,20 @@ describe("editStudioStorefrontStream", () => {
 
     expect(stages).toEqual(["compiling", "validating", "proofing", "installing"]);
     expect(receipt).toMatchObject({ status: "installed", versionId: "version-2" });
+    vi.unstubAllGlobals();
+  });
+
+  it("sends the merchant's design-model choice with the edit request", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
+      '{"stage":"installed","receipt":{"status":"installed","versionId":"version-2","baseVersionId":"version-1","bundle":{},"changedScope":{"designTokens":[],"routes":[]},"browserProof":{"ok":true,"diagnostics":[],"screenshots":[],"browserMs":4},"detachedFromRecipe":false,"undo":{"targetVersionId":"version-1","expectedDraftVersionId":"version-2"}}}',
+    ])));
+    await editStudioStorefrontStream({
+      prompt: "Make the hero calmer",
+      expectedDraftVersionId: "version-1",
+      model: "opus",
+    }, () => {});
+    const init = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body))).toMatchObject({ action: "edit", model: "opus" });
     vi.unstubAllGlobals();
   });
 
