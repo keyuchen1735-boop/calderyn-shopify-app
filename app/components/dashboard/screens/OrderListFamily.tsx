@@ -112,7 +112,20 @@ export function OrderPageReadout({
     },
     { dependencies: [key], scope: ref, revertOnUpdate: true },
   );
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    // First paint before any data has landed: same-height shimmer ghosts hold the strip's exact
+    // space, so the page never pushes down the moment the real numbers arrive.
+    return (
+      <div ref={ref} className="cd-order-readout" aria-label={ariaLabel} aria-busy="true">
+        {[56, 72, 48].map((w, i) => (
+          <div key={i} className="cd-order-readout-item cd-order-readout-ghost" aria-hidden="true">
+            <span className="cd-skel-bar" style={{ width: 24, height: 11 }} />
+            <span className="cd-skel-bar" style={{ width: w, height: 11 }} />
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div ref={ref} className="cd-order-readout" aria-label={ariaLabel}>
       {items.map((item) => {
