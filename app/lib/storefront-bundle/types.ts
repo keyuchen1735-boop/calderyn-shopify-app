@@ -25,6 +25,7 @@ export interface StoreDesignRequest {
   prompt: string;
   mode: StoreDesignMode;
   templateId?: StoreTemplateId;
+  excludedTemplateIds?: StoreTemplateId[];
 }
 
 export interface CatalogRoutingEvidence {
@@ -65,6 +66,10 @@ export type StoreDesignResolution =
       runnerUpScore: number | null;
       margin: number | null;
       confidenceBand: "high" | "medium" | null;
+    })
+  | (ResolutionMetadata & {
+      kind: "no_match";
+      reason: "all_designs_excluded";
     })
   | (ResolutionMetadata & {
       kind: "custom";

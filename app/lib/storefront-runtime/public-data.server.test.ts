@@ -149,6 +149,24 @@ describe("runtime-1 public data plans", () => {
     expect(data.featuredProducts[0]?.description).toBe(described.description);
   });
 
+  it("uses the immutable bundle's featured product order on home only", async () => {
+    const first = product("one");
+    const second = product("two");
+    const fake = catalog([first, second]);
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "featuredProducts", limit: 2 }],
+      route: { kind: "home" },
+      featuredProductIds: [second.id, first.id],
+    }, { catalog: fake, settingsLoader });
+
+    expect(fake.listProducts).toHaveBeenCalledWith(SHOP, {
+      ids: [second.id, first.id],
+      limit: 2,
+    });
+    expect(data.featuredProducts.map(({ id }) => id)).toEqual([second.id, first.id]);
+  });
+
   it("uses a direct collection lookup and keeps the total separate from the 24-product slice", async () => {
     const fake = catalog(Array.from({ length: 40 }, (_, index) => product(String(index))));
     const data = await resolvePublicData({

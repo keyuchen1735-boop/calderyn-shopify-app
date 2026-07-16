@@ -374,6 +374,9 @@ export async function resolveRuntime1VersionRoute(input: {
       shopId: input.shopId,
       route: input.route,
       requiredData: routeRequirements(bundle, input.route),
+      ...(input.route.kind === "home" && bundle.featuredProductIds
+        ? { featuredProductIds: bundle.featuredProductIds }
+        : {}),
     }, input.dataDependencies),
     bundle.source.kind === "custom" && derivedStaticAssets.ownedManifest.entries.length > 0
       ? (input.assetUrlLoader ?? resolveVerifiedStorefrontAssetUrls)({

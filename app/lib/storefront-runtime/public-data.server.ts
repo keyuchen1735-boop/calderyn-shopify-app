@@ -101,6 +101,7 @@ export interface ResolvePublicDataInput {
   shopId: string;
   requiredData: readonly DataRequirement[];
   route: PublicRouteContext;
+  featuredProductIds?: readonly string[];
 }
 
 export interface PublicDataDependencies {
@@ -268,10 +269,24 @@ export async function resolvePublicData(
 
   for (const requirement of input.requiredData) {
     if (requirement.kind === "featuredProducts") {
-      data.featuredProducts = (await catalog.listProducts(input.shopId, {
-        ...(requirement.collectionHandle ? { collection: requirement.collectionHandle } : {}),
-        limit: requirement.limit,
-      })).slice(0, requirement.limit).map(presentProduct);
+      const featuredIds = input.route.kind === "home"
+        ? input.featuredProductIds?.slice(0, requirement.limit)
+        : undefined;
+      const products = await catalog.listProducts(input.shopId, {
+        ...(featuredIds?.length
+          ? { ids: [...featuredIds] }
+          : requirement.collectionHandle ? { collection: requirement.collectionHandle } : {}),
+        limit: featuredIds?.length ?? requirement.limit,
+      });
+      if (featuredIds?.length) {
+        const byId = new Map(products.map((product) => [product.id, product]));
+        data.featuredProducts = featuredIds.flatMap((id) => {
+          const product = byId.get(id);
+          return product ? [presentProduct(product)] : [];
+        });
+      } else {
+        data.featuredProducts = products.slice(0, requirement.limit).map(presentProduct);
+      }
     } else if (requirement.kind === "relatedProducts") {
       if (!rawCurrentProduct) data.relatedProducts = [];
       else {

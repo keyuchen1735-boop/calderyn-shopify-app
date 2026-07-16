@@ -93,6 +93,39 @@ describe("storefront release resolution", () => {
     expect(catalog.getProduct).toHaveBeenCalledWith(SHOP, "missing");
   });
 
+  it("passes immutable featured product ids into home public-data resolution", async () => {
+    const bundle = structuredClone(ATELIER_GRID_BUNDLE);
+    bundle.featuredProductIds = ["product-b", "product-a"];
+    const live = {
+      ...version("featured", 1, "2026-07-02T00:00:00Z"),
+      sourceKind: "recipe" as const,
+      artifact: { sourceKind: "recipe" as const, bundle },
+    };
+    const listProducts = vi.fn(async () => []);
+
+    await resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "home" },
+      reader: reader(live, []),
+      bundleReadEnabled: true,
+      dataDependencies: {
+        catalog: {
+          listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })),
+          listProducts,
+          listCollections: vi.fn(async () => []),
+          getProduct: vi.fn(async () => null),
+        },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
+      },
+    });
+
+    expect(listProducts).toHaveBeenCalledWith(SHOP, {
+      ids: ["product-b", "product-a"],
+      limit: 2,
+    });
+  });
+
   it("isolates persisted pre-boundary shell CSS without mutating the stored bundle", async () => {
     const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
     bundle.shell.css = `[data-cd-bundle=shell] a{color:red}`;

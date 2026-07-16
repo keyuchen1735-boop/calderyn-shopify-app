@@ -3,9 +3,8 @@ import type { CatalogRoutingEvidence, StoreDesignMode, StoreTemplateId } from ".
 export interface RoutingCorpusFixture {
   name: string;
   prompt: string;
-  expectedKind: "recipe" | "custom";
+  expectedKind: "recipe";
   templateId?: StoreTemplateId;
-  reason?: "explicit_custom" | "low_confidence" | "ambiguous_recipe_names";
   evidence?: Partial<Omit<CatalogRoutingEvidence, "fingerprint">>;
 }
 
@@ -14,7 +13,7 @@ export const REQUIRED_ROUTING_CORPUS: readonly RoutingCorpusFixture[] = [
   { name: "clean skincare", prompt: "A clean skincare store for sensitive skin", expectedKind: "recipe", templateId: "soft-chemistry" },
   { name: "personalized gifts", prompt: "Personalized and custom engraved gifts", expectedKind: "recipe", templateId: "custom-bench" },
   { name: "explicit Atelier", prompt: "Use Atelier Grid for my jewelry label", expectedKind: "recipe", templateId: "atelier-nine" },
-  { name: "explicit custom beats niche", prompt: "Build a completely new skincare store from scratch", expectedKind: "custom", reason: "explicit_custom" },
+  { name: "from-scratch skincare remains approved", prompt: "Build a completely new skincare store from scratch", expectedKind: "recipe", templateId: "soft-chemistry" },
   { name: "negative Atelier and product uniqueness", prompt: "Do not use Atelier; create something one of a kind", expectedKind: "recipe", templateId: "custom-bench" },
   { name: "one of a kind is product language", prompt: "One-of-a-kind engraved gifts", expectedKind: "recipe", templateId: "custom-bench" },
   { name: "unique does not force custom", prompt: "Use Atelier and make it unique", expectedKind: "recipe", templateId: "atelier-nine" },
@@ -34,7 +33,7 @@ export const REQUIRED_ROUTING_CORPUS: readonly RoutingCorpusFixture[] = [
       collectionTitles: ["Pet Wellness"],
     },
   },
-  { name: "standalone original request", prompt: "Make something completely new", expectedKind: "custom", reason: "explicit_custom" },
+  { name: "standalone original request", prompt: "Make something completely new", expectedKind: "recipe", templateId: "custom-bench" },
 ] as const;
 
 export const INVALID_REQUESTS: ReadonlyArray<{

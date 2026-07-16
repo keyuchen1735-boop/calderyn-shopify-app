@@ -39,11 +39,10 @@ describe("deterministic store design resolver", () => {
       );
       expect(resolution.kind).toBe(fixture.expectedKind);
       if (resolution.kind === "recipe") expect(resolution.templateId).toBe(fixture.templateId);
-      else expect(resolution.reason).toBe(fixture.reason);
     });
   }
 
-  it("honors manual recipe and custom precedence without fabricated matcher metrics", () => {
+  it("honors manual recipe precedence and maps legacy custom requests to approved designs", () => {
     const manual = resolveStoreDesign(
       { prompt: "build from scratch", mode: "recipe", templateId: "atelier-nine" },
       evidence(),
@@ -60,11 +59,8 @@ describe("deterministic store design resolver", () => {
       confidenceBand: null,
       breakdown: [],
     });
-    expect(resolveStoreDesign({ prompt: "pet health", mode: "custom" }, evidence(), STORE_TEMPLATE_REGISTRY)).toMatchObject({
-      kind: "custom",
-      reason: "manual_override",
-      breakdown: [],
-    });
+    expect(resolveStoreDesign({ prompt: "pet health", mode: "custom" }, evidence(), STORE_TEMPLATE_REGISTRY))
+      .toMatchObject({ kind: "recipe", templateId: "companion-field-guide" });
   });
 
   it("normalizes Unicode, canonical apostrophes, and hyphens without substring matches", () => {
@@ -199,6 +195,37 @@ describe("deterministic store design resolver", () => {
       kind: "recipe",
       templateId: "custom-bench",
     });
+  });
+
+  it("filters exclusions before name and score matching", () => {
+    const result = resolveStoreDesign({
+      prompt: "Use Soft Chemistry",
+      mode: "auto",
+      excludedTemplateIds: ["soft-chemistry"],
+    }, evidence({ productTypes: ["skincare"] }), STORE_TEMPLATE_REGISTRY);
+
+    expect(result).toMatchObject({ kind: "recipe" });
+    if (result.kind === "recipe") expect(result.templateId).not.toBe("soft-chemistry");
+    expect(result.breakdown.some(({ templateId }) => templateId === "soft-chemistry")).toBe(false);
+  });
+
+  it("returns no match when every approved design is excluded", () => {
+    expect(resolveStoreDesign({
+      prompt: "Try another",
+      mode: "auto",
+      excludedTemplateIds: STORE_TEMPLATE_REGISTRY.templates.map(({ id }) => id),
+    }, evidence(), STORE_TEMPLATE_REGISTRY)).toMatchObject({
+      kind: "no_match",
+      reason: "all_designs_excluded",
+      breakdown: [],
+    });
+  });
+
+  it("routes from-scratch language to an approved design", () => {
+    expect(resolveStoreDesign({
+      prompt: "Create a completely new store from scratch",
+      mode: "custom",
+    }, evidence(), STORE_TEMPLATE_REGISTRY)).toMatchObject({ kind: "recipe" });
   });
 
   it("requires empty-prompt catalog evidence from two independent fields", () => {

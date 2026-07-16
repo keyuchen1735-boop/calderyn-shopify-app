@@ -809,6 +809,7 @@ describe("undoStorefrontEdit", () => {
     const target = baseBundle();
     target.assets.entries = [{ key: "hero", contentHash: "c".repeat(64), mediaType: "image/webp", byteSize: 3 }];
     vi.mocked(deps.loadVersion).mockResolvedValue({ versionId: BASE, artifactHash: `sha256:${"a".repeat(64)}`, bundle: target });
+    vi.mocked(deps.hashArtifact).mockResolvedValue(`sha256:${"a".repeat(64)}`);
     vi.mocked(deps.loadProofAssets).mockResolvedValue(verifiedBytes);
     const result = await undoStorefrontEdit({
       shopId: SHOP, actorId: ACTOR, expectedDraftVersionId: RESULT, targetVersionId: BASE,
@@ -833,6 +834,31 @@ describe("undoStorefrontEdit", () => {
     }));
     expect(deps.loadEditAudit).toHaveBeenCalledWith({ shopId: SHOP, resultVersionId: RESULT });
     expect(vi.mocked(deps.loadEditAudit).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(deps.prove).mock.invocationCallOrder[0]!);
+  });
+
+  it("rejects an undo when the target bundle no longer matches its immutable artifact hash", async () => {
+    const deps = dependencies();
+    vi.mocked(deps.loadDraft).mockResolvedValue({
+      versionId: RESULT,
+      artifactHash: `sha256:${"b".repeat(64)}`,
+      bundle: baseBundle(),
+    });
+    vi.mocked(deps.loadVersion).mockResolvedValue({
+      versionId: BASE,
+      artifactHash: `sha256:${"a".repeat(64)}`,
+      bundle: baseBundle(),
+    });
+    vi.mocked(deps.hashArtifact).mockResolvedValue(`sha256:${"c".repeat(64)}`);
+
+    await expect(undoStorefrontEdit({
+      shopId: SHOP,
+      actorId: ACTOR,
+      expectedDraftVersionId: RESULT,
+      targetVersionId: BASE,
+    }, deps)).rejects.toMatchObject({ code: "storefront_undo_target_invalid", status: 409 });
+
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.editDraft).not.toHaveBeenCalled();
   });
 
   it("rejects an undo target that is not the current edit audit base before proof or writes", async () => {

@@ -884,6 +884,13 @@ export async function undoStorefrontEdit(
       artifact,
       assetManifest: target.bundle.assets as unknown as Record<string, unknown>,
     });
+    if (resultHash !== target.artifactHash) {
+      throw new StorefrontEditError(
+        "storefront_undo_target_invalid",
+        "The undo version no longer matches its immutable artifact.",
+        409,
+      );
+    }
     const restoredVersionId = await createValidatedEditVersion({
       shopId: input.shopId,
       sourceVersionId: target.versionId,
