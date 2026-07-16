@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { compileBundle } from "../storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "../storefront-compiler/__fixtures__/valid-bundle";
+import { renderStorefrontSurface, type PublicPresentationData } from "../storefront-runtime/render.server";
 import { createDefaultStructuralPatchCompiler, editStorefrontByPrompt, undoStorefrontEdit, type StorefrontEditDependencies } from "./edit.server";
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
@@ -259,6 +261,44 @@ describe("editStorefrontByPrompt", () => {
       context: { routeId: "collection", regionId: repeatRoot.id },
       repair: expect.objectContaining({ scope: { routeId: "collection", regionId: repeatRoot.id } }),
     }));
+    expect(deps.editDraft).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores a known compiled text binding before applying replacement source", async () => {
+    const bundle = baseBundle();
+    const homeRoot = bundle.routes.home.tree[0];
+    const binding = bundle.routes.home.bindings[0];
+    if (homeRoot.kind !== "element" || !binding || binding.ref.kind !== "data") throw new Error("fixture binding");
+    const deps = dependencies(bundle);
+    vi.mocked(deps.compileStructuralPatch).mockResolvedValue({
+      operations: [{
+        kind: "replaceRegion",
+        routeId: "home",
+        targetId: homeRoot.id,
+        expected: `sha256:${createHash("sha256").update(JSON.stringify(homeRoot)).digest("hex")}`,
+        source: { html: `<main><h1 data-cd-bind-text="${binding.id}"></h1><p>New composition</p></main>`, css: "" },
+      }],
+      provider: { kind: "ai_patch", provider: "anthropic", model: "test" },
+    });
+
+    const result = await editStorefrontByPrompt({
+      shopId: SHOP, actorId: ACTOR, prompt: "Redesign the home hero", expectedDraftVersionId: BASE,
+    }, deps);
+    if (result.status !== "installed") throw new Error("expected installed edit");
+
+    expect(result.bundle.routes.home.bindings).toEqual([
+      expect.objectContaining({ kind: "text", ref: binding.ref }),
+    ]);
+    const data: PublicPresentationData = {
+      store: { name: "Merchant Store", logo: null }, policyLinks: [], product: null, collection: null,
+      featuredProducts: [], relatedProducts: [], search: null, cart: null, notFound: null,
+    };
+    const preview = renderToStaticMarkup(renderStorefrontSurface({
+      bundle: result.bundle, routeId: "home", data, nonce: "preview", mode: "preview",
+    }));
+    expect(preview).toContain("Merchant Store");
+    expect(deps.compileStructuralPatch).toHaveBeenCalledTimes(1);
+    expect(deps.prove).toHaveBeenCalledTimes(1);
     expect(deps.editDraft).toHaveBeenCalledTimes(1);
   });
 

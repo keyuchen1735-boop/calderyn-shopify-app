@@ -533,6 +533,29 @@ function safeStructuralContext(bundle: StorefrontBundleV1, context?: PreviewEdit
   return { ...context, regionId };
 }
 
+const COMPILED_BINDING_ATTRIBUTE = /\bdata-cd-bind-(text|money|src|alt)\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))/gi;
+
+function restoreKnownBindingSources(bundle: StorefrontBundleV1, patch: CompiledStorefrontPatch): CompiledStorefrontPatch {
+  return {
+    ...patch,
+    operations: patch.operations.map((operation) => {
+      if (operation.kind !== "replaceRegion") return operation;
+      const sourceByMarker = new Map<string, string>(bundle.routes[operation.routeId].bindings.flatMap((binding) =>
+        binding.ref.kind === "data" ? [[`${binding.kind}:${binding.id}`, binding.ref.path] as const] : [],
+      ));
+      const html = operation.source.html.replace(
+        COMPILED_BINDING_ATTRIBUTE,
+        (attribute, kind: string, doubleQuoted: string | undefined, singleQuoted: string | undefined, unquoted: string | undefined) => {
+          const bindingId = doubleQuoted ?? singleQuoted ?? unquoted;
+          const bindingPath = bindingId ? sourceByMarker.get(`${kind.toLowerCase()}:${bindingId}`) : undefined;
+          return bindingPath ? `data-cd-${kind.toLowerCase()}="${bindingPath}"` : attribute;
+        },
+      );
+      return html === operation.source.html ? operation : { ...operation, source: { ...operation.source, html } };
+    }),
+  };
+}
+
 function failingReplacement(
   bundle: StorefrontBundleV1,
   operations: readonly StorefrontPatchOperation[],
@@ -598,6 +621,7 @@ export async function editStorefrontByPrompt(
     let repeatScopeAdjusted = false;
     const attemptAudits: EditAttemptAudit[] = [];
     for (;;) {
+      if (intent.kind === "structural") compiledPatch = restoreKnownBindingSources(base.bundle, compiledPatch);
       try {
         applied = intent.kind === "deterministic"
           ? applyDeterministicStorefrontEdit(base.bundle, compiledPatch.operations)
