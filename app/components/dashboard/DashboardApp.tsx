@@ -416,7 +416,10 @@ export default function DashboardApp({
       setMoreOpen(false);
       setAcctOpen(false);
       const path = pathFor(next);
-      if (window.location.pathname !== path) {
+      // Labs is deliberately unaddressed (routes.ts maps it to the home URL).
+      // Skipping the router entirely keeps it out of history AND stops the
+      // location-sync effect below from re-deriving Home and stomping it.
+      if (screen !== "labs" && window.location.pathname !== path) {
         // Deliberately drop the query string: dashboard queries are one-shot
         // (OAuth return notices) and must not ride along to every screen.
         routerNavigate(path);
