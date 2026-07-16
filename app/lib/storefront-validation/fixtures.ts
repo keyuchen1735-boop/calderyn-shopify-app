@@ -104,14 +104,18 @@ export function createStorefrontProofData(routeId: StorefrontRouteId): PublicPre
   };
 }
 
-export function storefrontProofContext(productCount = 5): MerchantStorefrontContext {
+export function storefrontProofContext(productCount = 61): MerchantStorefrontContext {
   return {
     version: 1,
     prompt: "Create an original product-first storefront for Northline Supply & Studio",
     promptHash: "sha256:storefront-browser-proof",
     referenceImages: [],
     store: { name: "Northline Supply & Studio", logoAssetKey: null, publicBrandAssetKeys: [] },
-    collections: [{ id: "collection-001", handle: "proof-collection", title: "Objects for Everyday Rituals", productCount }],
+    collections: [
+      { id: "collection-001", handle: "proof-collection", title: "Objects for Everyday Rituals", productCount },
+      { id: "collection-002", handle: "new-studio-work", title: "New Studio Work", productCount: Math.ceil(productCount / 2) },
+      { id: "collection-003", handle: "archive-materials", title: "Archive Materials", productCount: Math.floor(productCount / 2) },
+    ],
     products: Array.from({ length: productCount }, (_, index) => ({
       id: `product-${String(index + 1).padStart(3, "0")}`,
       handle: `proof-product-${index + 1}`,
@@ -123,8 +127,10 @@ export function storefrontProofContext(productCount = 5): MerchantStorefrontCont
       priceMax: (product(index).price?.cents ?? 0) + 600,
       currency: "USD",
       availability: index === 2 ? "sold_out" : index === 0 ? "mixed" : "available",
-      collectionIds: ["collection-001"],
-      images: index === 3 ? [] : [{ assetKey: `catalog-product-${index + 1}`, aspectRatio: 1.25 }],
+      collectionIds: ["collection-001", index % 2 === 0 ? "collection-002" : "collection-003"],
+      images: (productCount === 61 ? index >= 51 : index === 3)
+        ? []
+        : [{ assetKey: `catalog-product-${index + 1}`, aspectRatio: 1.25 }],
     })),
     reusableAssets: [],
     recipeNoveltySignatures: [],

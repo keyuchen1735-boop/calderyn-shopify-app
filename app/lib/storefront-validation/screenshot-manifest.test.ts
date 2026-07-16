@@ -11,9 +11,10 @@ const RECIPE_IDS = [
 ];
 
 describe("committed storefront screenshot manifest", () => {
-  it("contains all recipes plus representative custom, edit, and empty-catalog proofs at every viewport", () => {
+  it("contains all recipes plus full-story, invalid-shader, and empty-catalog proofs at every viewport", () => {
     expect(manifest.viewports).toEqual(["390x844", "768x1024", "1440x1000"]);
-    expect(manifest.recipes.map((entry) => entry.id)).toEqual([...RECIPE_IDS, "representative-custom", "representative-edit", "representative-empty"]);
+    expect(manifest.recipes.map((entry) => entry.id)).toEqual([...RECIPE_IDS, "full-story", "full-story-invalid-shader", "representative-empty"]);
+    expect(manifest.recipes.filter((entry) => entry.id.startsWith("full-story")).every((entry) => entry.sourceKind === "recipe")).toBe(true);
     for (const entry of manifest.recipes) {
       expect(entry.screenshots).toHaveLength(entry.id === "representative-empty" ? 15 : 18);
       expect(new Set(entry.screenshots.map((shot) => shot.viewport))).toEqual(new Set(["mobile", "tablet", "desktop"]));

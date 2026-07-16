@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StoreProduct } from "./catalog";
+import { storefrontProofContext } from "../storefront-validation/fixtures";
 
 const catalog = vi.hoisted(() => ({ listProductPage: vi.fn(), listProducts: vi.fn() }));
 
@@ -95,15 +96,16 @@ describe("parseStorefrontSearchParams", () => {
 
 describe("searchStorefront", () => {
   it("returns every active product exactly once across catalog pages", async () => {
-    const ids = Array.from({ length: 61 }, (_, index) => `product-${index.toString().padStart(2, "0")}`);
-    const allProducts = ids.map((id): StoreProduct => ({
-      id,
-      handle: id,
-      title: id,
-      description: `Description ${id}`,
-      images: [],
-      variants: [],
-      collections: [],
+    const merchant = storefrontProofContext();
+    const ids = merchant.products.map(({ id }) => id);
+    const allProducts = merchant.products.map((product): StoreProduct => ({
+      id: product.id,
+      handle: product.handle,
+      title: product.title,
+      description: `Complete merchant description for ${product.title}`,
+      images: product.images.map((image) => ({ url: `https://cdn.example/${image.assetKey}.webp`, alt: product.title })),
+      variants: [{ id: `${product.id}-variant`, sku: null, title: "Default", priceCents: product.priceMin, currency: product.currency, available: product.availability !== "sold_out" }],
+      collections: ["proof-collection"],
     }));
     const pagedCatalog = {
       async listProductPage(_shopId: string, opts: { cursor?: string | null; limit: number }) {
@@ -128,7 +130,8 @@ describe("searchStorefront", () => {
       cursor = page.nextCursor;
     } while (cursor);
 
-    expect(seen).toEqual(ids);
+    expect(seen.slice().sort()).toEqual(ids.slice().sort());
+    expect(new Set(seen).size).toBe(61);
   });
 
   it("returns a capped projection and capped facets without exposing the scanned catalog", async () => {

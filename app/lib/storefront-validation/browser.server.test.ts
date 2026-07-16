@@ -8,6 +8,7 @@ import {
   buildStorefrontProofCases,
   createStorefrontProofDataForBundle,
   createStorefrontProofDataForContext,
+  detectFullStoryFailures,
   detectHorizontalLayoutFailures,
   measureStorefrontBundle,
   shouldWriteStorefrontPreview,
@@ -35,6 +36,8 @@ describe("storefront browser proof matrix", () => {
     const collection = createStorefrontProofData("collection");
     const search = createStorefrontProofData("search");
     const checkout = createStorefrontProofData("checkout");
+    const storyContext = storefrontProofContext();
+    const storyProduct = createStorefrontProofDataForContext("product", storyContext).product;
 
     expect(product.product?.description.length).toBeGreaterThan(500);
     expect(product.product?.variants.some((variant) => !variant.available)).toBe(true);
@@ -43,8 +46,41 @@ describe("storefront browser proof matrix", () => {
     expect(collection.collection?.products.length).toBeGreaterThan(2);
     expect(search.search?.results).toHaveLength(0);
     expect(checkout.cart?.lines.length).toBeGreaterThan(0);
-    expect(storefrontProofContext().products.length).toBeGreaterThan(1);
+    expect(storyContext.products).toHaveLength(61);
+    expect(storyContext.products.filter((entry) => entry.images.length === 0)).toHaveLength(10);
+    expect(storyContext.collections.length).toBeGreaterThan(1);
+    for (const collection of storyContext.collections) {
+      expect(storyContext.products.filter(({ collectionIds }) => collectionIds?.includes(collection.id) ?? false)).toHaveLength(collection.productCount);
+    }
+    expect(new Set(storyContext.products.map(({ availability }) => availability))).toEqual(new Set(["available", "sold_out", "mixed"]));
+    expect(storyProduct?.description.length).toBeGreaterThan(500);
+    expect(storyProduct?.variants.length).toBeGreaterThan(1);
+    expect(storyProduct?.variants.some(({ available }) => !available)).toBe(true);
     expect(storefrontProofContext(27).products).toHaveLength(27);
+  });
+
+  it("requires the complete PDP description and either the visual canvas or protected fallback", () => {
+    expect(detectFullStoryFailures({
+      routeId: "product",
+      expectedProductDescription: "Complete merchant description",
+      renderedText: "Complete merchant",
+      hasVisualCanvas: true,
+      hasProtectedFallback: false,
+    })).toEqual(["product-description-incomplete"]);
+    expect(detectFullStoryFailures({
+      routeId: "home",
+      expectedProductDescription: null,
+      renderedText: "",
+      hasVisualCanvas: false,
+      hasProtectedFallback: false,
+    })).toEqual(["visual-layer-or-fallback-missing"]);
+    expect(detectFullStoryFailures({
+      routeId: "product",
+      expectedProductDescription: "Complete merchant description",
+      renderedText: "Complete merchant description",
+      hasVisualCanvas: false,
+      hasProtectedFallback: true,
+    })).toEqual([]);
   });
 
   it("preserves a genuinely empty catalog instead of silently substituting demo products", () => {

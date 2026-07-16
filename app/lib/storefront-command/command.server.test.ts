@@ -1,11 +1,17 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import { applyStoreIntent } from "./apply";
 import { CUSTOM_BENCH_BUNDLE } from "../storefront-recipes/custom-bench/bundle";
+import { STOREFRONT_RECIPES } from "../storefront-recipes";
 import { StorefrontReleaseError } from "../storefront-bundle/release.server";
-import type { StoreCommand, StoreCommandEvent } from "./types";
+import { storefrontProofContext } from "../storefront-validation/fixtures";
+import type { StoreCommand, StoreCommandEvent, StoreCommandReceipt } from "./types";
 import {
   runStoreCommand,
   StoreCommandError,
+  type LoadedStoreCommandVersion,
   type StoreCommandDependencies,
+  type StoreCommandState,
 } from "./command.server";
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
@@ -20,7 +26,10 @@ const SECOND_PRODUCT_REF = "product-002";
 const HASH = `sha256:${"a".repeat(64)}`;
 const RESULT_HASH = `sha256:${"b".repeat(64)}`;
 
-const promptCommand = (expectedDraftVersionId: string | null, prompt = "Make it calm"): StoreCommand => ({
+const promptCommand = (
+  expectedDraftVersionId: string | null,
+  prompt = "Make it calm",
+): Extract<StoreCommand, { kind: "prompt" }> => ({
   kind: "prompt",
   prompt,
   expectedDraftVersionId,
@@ -681,5 +690,172 @@ describe("runStoreCommand", () => {
     expect(deps.createVersion).not.toHaveBeenCalled();
     expect(deps.install).not.toHaveBeenCalled();
     expect(JSON.stringify(events)).not.toMatch(/custom-bench|soft-chemistry|templateId/);
+  });
+
+  it("runs the 61-product merchant story through command CAS, edits, Undo, and Publish", async () => {
+    const merchant = storefrontProofContext();
+    const merchantAssembly = {
+      context: merchant,
+      references: {
+        products: Object.fromEntries(merchant.products.map(({ id, handle }) => [id, { id, handle }])),
+        collections: Object.fromEntries(merchant.collections.map(({ id, handle }) => [id, { id, handle }])),
+        assets: {},
+      },
+    };
+    const versions = new Map<string, LoadedStoreCommandVersion>();
+    let current: StoreCommandState = { draft: null, publishedVersionId: null };
+    let sequence = 0;
+    const nextVersionId = () => `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`;
+    const copyState = (): StoreCommandState => structuredClone(current);
+    const conflict = () => Object.assign(new Error("stale pointer"), { code: "storefront_draft_conflict", status: 409 });
+
+    const classify = vi.fn(async (input: Parameters<StoreCommandDependencies["classify"]>[0]) => {
+      if (input.prompt === "Update the title") return { kind: "update_text" as const, slot: "heroTitle", value: "Made for long summer days" };
+      if (input.prompt === "Feature the collection") return { kind: "update_merchandising" as const, productIds: merchant.products.slice(0, 12).map(({ id }) => id) };
+      if (input.prompt === "Generate an effect") return {
+        kind: "update_visual_layer" as const,
+        visualLayer: { kind: "fragment_shader" as const, source: "void main(){gl_FragColor=vec4(u_color1,1.0);}", colors: ["#112233", "#445566", "#778899"] as [string, string, string] },
+      };
+      if (input.prompt === "Use the merchant shader") {
+        const source = input.attachments?.find((attachment) => attachment.kind === "fragment_shader");
+        if (!source || source.kind !== "fragment_shader") throw new Error("shader attachment missing");
+        return { kind: "update_visual_layer" as const, visualLayer: { kind: "fragment_shader" as const, source: source.source, colors: ["#0a0a0a", "#1b1b1b", "#2c2c2c"] as [string, string, string] } };
+      }
+      if (input.prompt === "Unsupported structure") return { kind: "unsupported" as const, message: "Structure is protected." };
+      if (input.prompt === "Start over") return { kind: "start_over" as const, prompt: input.prompt };
+      return {
+        kind: "select_design" as const,
+        prompt: input.prompt,
+        excludedTemplateIds: [...new Set([...(input.excludedTemplateIds ?? []), ...(input.currentTemplateId ? [input.currentTemplateId] : [])])],
+      };
+    });
+    const resolveDesign = vi.fn((request: Parameters<StoreCommandDependencies["resolveDesign"]>[0]) => {
+      const selected = STOREFRONT_RECIPES.find(({ config }) => !(request.excludedTemplateIds ?? []).includes(config.templateId));
+      if (!selected) return {
+        kind: "no_match" as const,
+        reason: "all_designs_excluded" as const,
+        routingVersion: 1,
+        registryVersion: 1,
+        catalogFingerprint: "sha256:catalog",
+        breakdown: [],
+        reasons: ["none"],
+      };
+      return { ...resolution, templateId: selected.config.templateId, templateVersion: selected.config.templateVersion };
+    });
+    const deps = dependencies({
+      loadState: vi.fn(async () => copyState()),
+      loadContext: vi.fn().mockResolvedValue(merchantAssembly),
+      classify,
+      resolveDesign,
+      loadRecipe: vi.fn(async (templateId: Parameters<StoreCommandDependencies["loadRecipe"]>[0], templateVersion: number) => {
+        const selected = STOREFRONT_RECIPES.find(({ config }) => config.templateId === templateId && config.templateVersion === templateVersion);
+        if (!selected) throw new Error("recipe missing");
+        return structuredClone(selected);
+      }),
+      applyIntent: applyStoreIntent,
+      hashArtifact: vi.fn(async ({ artifact }) => `sha256:${createHash("sha256").update(JSON.stringify(artifact)).digest("hex")}`),
+      createVersion: vi.fn(async (input) => {
+        const versionId = nextVersionId();
+        const bundle = structuredClone((input.artifact as { bundle: typeof CUSTOM_BENCH_BUNDLE }).bundle);
+        versions.set(versionId, {
+          versionId,
+          artifactHash: `sha256:${createHash("sha256").update(JSON.stringify(bundle)).digest("hex")}`,
+          bundle,
+          resolution: structuredClone(input.resolution),
+        });
+        return versionId;
+      }),
+      install: vi.fn(async (input) => {
+        if ((current.draft?.versionId ?? null) !== input.expectedDraftVersionId) throw conflict();
+        current = { ...current, draft: structuredClone(versions.get(input.versionId)!) };
+        return input.versionId;
+      }),
+      edit: vi.fn(async (input) => {
+        if (current.draft?.versionId !== input.expectedDraftVersionId) throw conflict();
+        current = { ...current, draft: structuredClone(versions.get(input.resultVersionId)!) };
+        return input.resultVersionId;
+      }),
+      undo: vi.fn(async (input) => {
+        const draft = current.draft;
+        if (!draft || draft.versionId !== input.expectedDraftVersionId) throw conflict();
+        const undoneVersionId = draft.versionId;
+        current = { ...current, draft: structuredClone(versions.get(input.targetVersionId)!) };
+        return { status: "installed" as const, versionId: input.targetVersionId, undoneVersionId };
+      }),
+      publish: vi.fn(async (input) => {
+        if (current.draft?.versionId !== input.expectedDraftVersionId || current.publishedVersionId !== input.expectedPublishedVersionId) throw conflict();
+        current = { ...current, publishedVersionId: input.expectedDraftVersionId };
+        return input.expectedDraftVersionId;
+      }),
+    });
+    const prompt = async (
+      value: string,
+      command: Extract<StoreCommand, { kind: "prompt" }> = promptCommand(current.draft?.versionId ?? null, value),
+    ): Promise<Extract<StoreCommandReceipt, { status: "installed" }>> => {
+      const receipt = await runStoreCommand({ shopId: SHOP, command }, deps);
+      expect(receipt.status).toBe("installed");
+      if (receipt.status !== "installed") throw new Error("expected installed receipt");
+      return receipt;
+    };
+
+    const initial = await prompt("Build the store", promptCommand(null, "Build the store"));
+    const initialTemplateId = current.draft!.bundle.source.kind === "recipe" ? current.draft!.bundle.source.templateId : null;
+    const protectedHeroHash = current.draft!.bundle.assets.entries.find(({ key }) => key === "hero")?.contentHash;
+    expect(protectedHeroHash).toEqual(expect.any(String));
+    await prompt("Update the title");
+    expect(current.draft!.bundle.routes.home.html).toContain("Made for long summer days");
+    await prompt("Feature the collection");
+    expect(current.draft!.bundle.featuredProductIds).toEqual(merchant.products.slice(0, 12).map(({ id }) => id));
+    await prompt("Generate an effect");
+    expect(current.draft!.bundle.visualLayer).toMatchObject({ kind: "fragment_shader", source: "void main(){gl_FragColor=vec4(u_color1,1.0);}" });
+    await prompt("Use the merchant shader", {
+      ...promptCommand(current.draft!.versionId, "Use the merchant shader"),
+      attachments: [{ kind: "fragment_shader", source: "void main(){gl_FragColor=vec4(u_color2,1.0);}" }],
+    });
+    expect(current.draft!.bundle.visualLayer).toMatchObject({ kind: "fragment_shader", source: "void main(){gl_FragColor=vec4(u_color2,1.0);}" });
+    expect(current.draft!.bundle.assets.entries.find(({ key }) => key === "hero")?.contentHash).toBe(protectedHeroHash);
+
+    await prompt("Switch design");
+    const switchedTemplateId = current.draft!.bundle.source.kind === "recipe" ? current.draft!.bundle.source.templateId : null;
+    expect(switchedTemplateId).not.toBe(initialTemplateId);
+    const beforeUnsupported = current.draft!.versionId;
+    const versionsBeforeUnsupported = versions.size;
+    await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(beforeUnsupported, "Unsupported structure") }, deps))
+      .resolves.toMatchObject({ status: "unchanged" });
+    expect(current.draft!.versionId).toBe(beforeUnsupported);
+    expect(versions.size).toBe(versionsBeforeUnsupported);
+    await prompt("Try another");
+    const alternateTemplateId = current.draft!.bundle.source.kind === "recipe" ? current.draft!.bundle.source.templateId : null;
+    expect(alternateTemplateId).not.toBe(initialTemplateId);
+    expect(alternateTemplateId).not.toBe(switchedTemplateId);
+    const beforeStartOver = current.draft!.versionId;
+    const beforeStartOverHash = current.draft!.artifactHash;
+    const startedOver = await prompt("Start over");
+    const startedOverTemplateId = current.draft!.bundle.source.kind === "recipe" ? current.draft!.bundle.source.templateId : null;
+    expect(startedOverTemplateId).not.toBe(initialTemplateId);
+    expect(startedOverTemplateId).not.toBe(switchedTemplateId);
+    expect(startedOverTemplateId).not.toBe(alternateTemplateId);
+    expect(startedOver.versionId).not.toBe(beforeStartOver);
+    const startedOverRecipe = STOREFRONT_RECIPES.find(({ config }) => config.templateId === startedOverTemplateId);
+    expect(startedOverRecipe).toBeDefined();
+    expect(current.draft!.bundle).toEqual(startedOverRecipe!.bundle);
+
+    const beforeStaleAttempt = current.draft!.versionId;
+    await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(initial.versionId, "Update the title") }, deps))
+      .rejects.toMatchObject({ code: "storefront_command_conflict", status: 409 });
+    expect(current.draft!.versionId).toBe(beforeStaleAttempt);
+    const undone = await runStoreCommand({
+      shopId: SHOP,
+      command: { kind: "undo", targetVersionId: beforeStartOver, expectedDraftVersionId: startedOver.versionId },
+    }, deps);
+    expect(undone).toMatchObject({ status: "installed", versionId: beforeStartOver });
+    expect(current.draft!.artifactHash).toBe(beforeStartOverHash);
+    await expect(runStoreCommand({ shopId: SHOP, command: { kind: "publish", expectedDraftVersionId: beforeStartOver } }, deps))
+      .resolves.toEqual({ status: "published", versionId: beforeStartOver });
+    expect(current.publishedVersionId).toBe(beforeStartOver);
+    expect(merchant.products).toHaveLength(61);
+    expect(merchant.products.filter(({ images }) => images.length === 0)).toHaveLength(10);
+    expect(deps.prove).toHaveBeenCalled();
+    expect(vi.mocked(deps.prove).mock.calls.every(([input]) => input.context.products.length === 61)).toBe(true);
   });
 });

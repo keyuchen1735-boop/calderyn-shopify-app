@@ -9,6 +9,7 @@ import type { Browser, HTTPRequest, Page } from "puppeteer-core";
 import { launchChromium } from "../browser/chromium.server";
 import type { BrowserProofReport, MaterializedAssetResult, MerchantStorefrontContext } from "../storefront-ai/contracts";
 import type { StorefrontBundleV1, StorefrontRouteId } from "../storefront-bundle/types";
+import { getStoreTemplate, isStoreTemplateId } from "../storefront-bundle/registry";
 import { StorefrontPolicyPage } from "../storefront/policy-page";
 import { resolveStorefrontPolicyPath, type StorefrontPolicy } from "../storefront/policies.server";
 import { renderStorefrontSurface } from "../storefront-runtime/render.server";
@@ -94,6 +95,25 @@ export function buildStorefrontProofCases(
   );
 }
 
+export function detectFullStoryFailures(input: {
+  routeId: StorefrontRouteId;
+  expectedProductDescription: string | null;
+  renderedText: string;
+  hasVisualCanvas: boolean;
+  hasProtectedFallback: boolean;
+}): string[] {
+  const failures: string[] = [];
+  const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
+  if (input.routeId === "product" && input.expectedProductDescription
+    && !normalize(input.renderedText).includes(normalize(input.expectedProductDescription))) {
+    failures.push("product-description-incomplete");
+  }
+  if (input.routeId === "home" && !input.hasVisualCanvas && !input.hasProtectedFallback) {
+    failures.push("visual-layer-or-fallback-missing");
+  }
+  return failures;
+}
+
 function routeBytes(bundle: StorefrontBundleV1, routeId: StorefrontRouteId): number {
   const artifact = bundle.routes[routeId];
   if (routeId === "checkout") {
@@ -162,15 +182,25 @@ function presentContextProduct(entry: MerchantStorefrontContext["products"][numb
     title: entry.title,
     primaryImage: image,
     images: image ? [image] : [],
-    options: entry.optionNames.map((name) => ({ name, values: ["Default"] })),
-    variants: [{
-      id: `${entry.id}-variant`,
-      title: "Default",
-      price: { cents: entry.priceMin, currency: entry.currency },
-      compareAtPrice: entry.priceMax > entry.priceMin ? { cents: entry.priceMax, currency: entry.currency } : null,
-      availability: available ? "In stock" : "Sold out",
-      available,
-    }],
+    options: entry.optionNames.map((name) => ({ name, values: ["Natural", "Midnight"] })),
+    variants: [
+      {
+        id: `${entry.id}-variant-natural`,
+        title: "Natural",
+        price: { cents: entry.priceMin, currency: entry.currency },
+        compareAtPrice: entry.priceMax > entry.priceMin ? { cents: entry.priceMax, currency: entry.currency } : null,
+        availability: available ? "In stock" : "Sold out",
+        available,
+      },
+      {
+        id: `${entry.id}-variant-midnight`,
+        title: "Midnight",
+        price: { cents: entry.priceMax, currency: entry.currency },
+        compareAtPrice: null,
+        availability: entry.availability === "available" ? "In stock" : "Sold out",
+        available: entry.availability === "available",
+      },
+    ],
     price: { cents: entry.priceMin, currency: entry.currency },
     compareAtPrice: entry.priceMax > entry.priceMin ? { cents: entry.priceMax, currency: entry.currency } : null,
     availability: available ? "In stock" : "Sold out",
@@ -392,6 +422,7 @@ interface PageAuditResult {
   checkoutFailures: string[];
   shellStyleFailures: string[];
   layoutFailures: string[];
+  fullStoryFailures: string[];
   focusableCount: number;
   reducedMotion: boolean;
   cls: number;
@@ -420,10 +451,22 @@ export function detectHorizontalLayoutFailures(audit: HorizontalLayoutAudit): st
   return failures;
 }
 
-async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: StorefrontRouteId, axe: string): Promise<PageAuditResult> {
+async function auditPage(
+  page: Page,
+  bundle: StorefrontBundleV1,
+  routeId: StorefrontRouteId,
+  axe: string,
+  expectedProductDescription: string | null,
+): Promise<PageAuditResult> {
   const route = routeId === "checkout" ? null : bundle.routes[routeId];
+  const recipeSource = bundle.source.kind === "recipe" ? bundle.source : null;
+  const fallbackAssetKey = recipeSource && isStoreTemplateId(recipeSource.templateId)
+    ? getStoreTemplate(recipeSource.templateId).versions.find(
+      ({ templateVersion }) => templateVersion === recipeSource.templateVersion,
+    )?.visualLayer.fallbackAssetKey ?? null
+    : null;
   await page.evaluate(axe);
-  const result = await page.evaluate(async ({ transitions, route, supportedRoutePattern }) => {
+  const result = await page.evaluate(async ({ transitions, route, supportedRoutePattern, protectedFallbackKey }) => {
     const visible = (element: HTMLElement) => {
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
@@ -537,6 +580,11 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
       .flatMap((host) => [...(host.shadowRoot?.querySelectorAll<HTMLElement>("button,input,select,textarea") ?? [])])
       .filter(visible).length;
     const focusableCount = lightFocusable + shadowFocusable;
+    const protectedFallback = protectedFallbackKey
+      ? [...document.querySelectorAll<HTMLElement>("[data-cd-asset-key]")]
+        .find((element) => element.getAttribute("data-cd-asset-key") === protectedFallbackKey)
+      : null;
+    const visualCanvas = document.querySelector<HTMLElement>("[data-cd-visual-host] canvas");
     const shifts = performance.getEntriesByType("layout-shift") as Array<PerformanceEntry & { value?: number; hadRecentInput?: boolean }>;
     const paints = performance.getEntriesByType("largest-contentful-paint") as Array<PerformanceEntry & { startTime: number }>;
     const tasks = performance.getEntriesByType("longtask") as Array<PerformanceEntry & { duration: number }>;
@@ -561,14 +609,24 @@ async function auditPage(page: Page, bundle: StorefrontBundleV1, routeId: Storef
       cls: shifts.filter((entry) => !entry.hadRecentInput).reduce((sum, entry) => sum + (entry.value ?? 0), 0),
       lcp: paints.at(-1)?.startTime ?? 0,
       longTask: Math.max(0, ...tasks.map((entry) => entry.duration)),
+      fullStory: {
+        renderedText: document.body.innerText,
+        hasVisualCanvas: Boolean(visualCanvas && visible(visualCanvas)),
+        hasProtectedFallback: Boolean(protectedFallback && visible(protectedFallback)),
+      },
     };
   }, {
     transitions: route?.interactions.transitions ?? [],
     route: routeId,
     supportedRoutePattern: STOREFRONT_PROOF_ROUTE_RE.source,
+    protectedFallbackKey: fallbackAssetKey,
   });
-  const { layout, ...audit } = result;
-  return { ...audit, layoutFailures: detectHorizontalLayoutFailures(layout) };
+  const { layout, fullStory, ...audit } = result;
+  return {
+    ...audit,
+    layoutFailures: detectHorizontalLayoutFailures(layout),
+    fullStoryFailures: detectFullStoryFailures({ routeId, expectedProductDescription, ...fullStory }),
+  };
 }
 
 async function pixelDiffRatio(page: Page, current: Buffer, baseline: Buffer): Promise<number> {
@@ -773,7 +831,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
         return failures;
       });
       const consoleBeforeAxe = [...currentConsole];
-      const audit = await auditPage(page, input.bundle, routeId, axe);
+      const audit = await auditPage(page, input.bundle, routeId, axe, data.product?.description ?? null);
       assertActive();
       const policyRouteFailures = await verifyStorefrontPolicyRoutes(
         await page.$$eval("[data-cd-platform-content='policyLinks'] a[href]", (links) => links.map((link) => {
@@ -810,6 +868,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       if (audit.checkoutFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "checkout.boundary", "Checkout platform boundary is incomplete", { failures: audit.checkoutFailures });
       if (audit.shellStyleFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "shell.unstyled", "Storefront shell retains raw browser navigation styling", { failures: audit.shellStyleFailures });
       if (audit.layoutFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "layout.overflow", "Storefront content escapes the viewport", { failures: audit.layoutFailures });
+      if (audit.fullStoryFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "story.incomplete", "Full-story storefront evidence is incomplete", { failures: audit.fullStoryFailures });
       if (policyRouteFailures.length) addDiagnostic(diagnostics, routeId, viewport.name, "policy.route", "Merchant policy links do not resolve to matching same-origin storefront policy pages", { failures: policyRouteFailures });
       if (audit.focusableCount === 0) addDiagnostic(diagnostics, routeId, viewport.name, "keyboard.empty", "Route has no keyboard-focusable navigation or commerce control");
       if (!audit.reducedMotion) addDiagnostic(diagnostics, routeId, viewport.name, "motion.preference", "Reduced-motion media preference was not active");

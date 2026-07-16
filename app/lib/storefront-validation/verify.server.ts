@@ -1,7 +1,8 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, relative } from "node:path";
 import { STOREFRONT_RECIPES } from "../storefront-recipes";
-import { compileBundle, type StorefrontBundleSourceV1 } from "../storefront-compiler/compile";
+import { getStoreTemplate } from "../storefront-bundle/registry";
+import { applyStoreIntent } from "../storefront-command/apply";
 import { createBrowserProofReport, mergeBrowserProofReports } from "./report";
 import { proveStorefrontBundle } from "./browser.server";
 import { storefrontProofContext } from "./fixtures";
@@ -12,78 +13,30 @@ export interface VerifyStorefrontBundlesOptions {
   onProgress?: (message: string) => void;
 }
 
-function editedFixtureSource(): StorefrontBundleSourceV1 {
+function fullStoryBundle(invalidShader = false) {
   const recipe = STOREFRONT_RECIPES[0];
-  const source: StorefrontBundleSourceV1 = {
-    source: {
-      kind: "custom",
-      generationId: "proof-edit-fixture",
-      promptHash: "sha256:proof-edit-fixture",
-      derivedFromVersionId: "proof-base-version",
-      derivedFromTemplateId: recipe.config.templateId,
-      derivedFromTemplateVersion: recipe.config.templateVersion,
+  const template = getStoreTemplate(recipe.config.templateId);
+  let bundle = applyStoreIntent(structuredClone(recipe.bundle), template, {
+    kind: "update_text",
+    slot: "heroTitle",
+    value: "Made for long summer days",
+  }).bundle;
+  bundle = applyStoreIntent(bundle, template, {
+    kind: "update_merchandising",
+    productIds: storefrontProofContext().products.slice(0, 12).map(({ id }) => id),
+  }).bundle;
+  bundle = applyStoreIntent(bundle, template, {
+    kind: "update_visual_layer",
+    visualLayer: {
+      kind: "fragment_shader",
+      source: "void main(){gl_FragColor=vec4(mix(u_color1,u_color2,0.5),1.0);}",
+      colors: ["#102030", "#496070", "#d8c6a0"],
     },
-    concept: {
-      ...recipe.config.concept,
-      name: `${recipe.config.concept.name} — Merchant Edit`,
-      rationale: "A representative prompt edit changes a safe visual token while preserving the complete route and commerce contract.",
-    },
-    designSystem: {
-      ...recipe.config.designSystem,
-      tokens: { ...recipe.config.designSystem.tokens, signal: "#6f1bc4" },
-    },
-    shell: recipe.config.surfaces.shell.source,
-    routes: {
-      home: recipe.config.surfaces.home.source,
-      collection: recipe.config.surfaces.collection.source,
-      product: recipe.config.surfaces.product.source,
-      search: recipe.config.surfaces.search.source,
-      cart: recipe.config.surfaces.cart.source,
-      checkout: recipe.config.surfaces.checkout.source,
-    },
-    assets: recipe.config.assets,
-  };
-  return source;
-}
-
-function customFixtureSource(): StorefrontBundleSourceV1 {
-  const recipe = (templateId: string) => STOREFRONT_RECIPES.find((entry) => entry.config.templateId === templateId)!;
-  const home = recipe("diagnostic-deck");
-  const search = recipe("daily-protocol").config.surfaces.search.source;
-  return {
-    source: { kind: "custom", generationId: "proof-custom-fixture", promptHash: "sha256:proof-custom-fixture" },
-    concept: {
-      name: "Original Orbit Store",
-      rationale: "A cross-template AI remix used to prove that independently authored surfaces remain coherent and contained when combined.",
-      noveltySignature: ["mixed surface grammar", "edge index", "direct manipulation"],
-    },
-    designSystem: {
-      ...home.config.designSystem,
-      tokens: {
-        ...recipe("custom-bench").config.designSystem.tokens,
-        ...recipe("commons-index").config.designSystem.tokens,
-        ...recipe("soft-chemistry").config.designSystem.tokens,
-        ...recipe("daily-protocol").config.designSystem.tokens,
-        ...recipe("room-modes").config.designSystem.tokens,
-        ...recipe("rep-rest").config.designSystem.tokens,
-        ...home.config.designSystem.tokens,
-        signal: recipe("custom-bench").config.designSystem.tokens.signal,
-      },
-    },
-    shell: recipe("custom-bench").config.surfaces.shell.source,
-    routes: {
-      home: home.config.surfaces.home.source,
-      collection: recipe("commons-index").config.surfaces.collection.source,
-      product: recipe("soft-chemistry").config.surfaces.product.source,
-      search: {
-        ...search,
-        css: `${search.css} .protocol-query input, .protocol-query button { background:#173f8f; border-color:#101820; color:#fff }`,
-      },
-      cart: recipe("room-modes").config.surfaces.cart.source,
-      checkout: recipe("rep-rest").config.surfaces.checkout.source,
-    },
-    assets: home.config.assets,
-  };
+  }).bundle;
+  if (invalidShader && bundle.visualLayer?.kind === "fragment_shader") {
+    bundle.visualLayer.source = "x".repeat(4_001);
+  }
+  return bundle;
 }
 
 export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOptions) {
@@ -96,8 +49,8 @@ export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOp
   }> = [];
   const bundles = [
     ...STOREFRONT_RECIPES.map((recipe) => ({ id: recipe.config.templateId, bundle: recipe.bundle, baseline: true, assetTemplateId: undefined, context: storefrontProofContext(27) })),
-    { id: "representative-custom", bundle: compileBundle(customFixtureSource()).bundle, baseline: false, assetTemplateId: "diagnostic-deck", context: storefrontProofContext() },
-    { id: "representative-edit", bundle: compileBundle(editedFixtureSource()).bundle, baseline: false, assetTemplateId: STOREFRONT_RECIPES[0].config.templateId, context: storefrontProofContext(27) },
+    { id: "full-story", bundle: fullStoryBundle(), baseline: false, assetTemplateId: undefined, context: storefrontProofContext() },
+    { id: "full-story-invalid-shader", bundle: fullStoryBundle(true), baseline: false, assetTemplateId: undefined, context: storefrontProofContext() },
     {
       id: "representative-empty",
       bundle: STOREFRONT_RECIPES[0].bundle,
