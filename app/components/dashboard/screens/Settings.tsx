@@ -18,12 +18,14 @@ import {
   fetchPayoutLoginLink,
   resetDemoData,
   deleteAccount,
+  apiSend,
   DashboardApiError,
   type UnmatchedShipCharges,
   type BillingStatus,
   type ShipCostSettings,
 } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, clearScreenCache, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
+import { fetchStudio } from "~/lib/dashboard/store-client";
 import type { DashboardCtx } from "../context";
 import type { GuardrailVM, IntegrationVM, LearnedRuleVM } from "../view-models";
 import { payoutsCardState } from "../view-models";
@@ -314,6 +316,60 @@ function CodeRow({ text, app }: { text: string; app: DashboardCtx }) {
   );
 }
 
+/** Hidden switch for the from-scratch designer engine, revealed by the secret
+ *  sparkle in the footer. The Store screen and designer API read the same
+ *  per-shop flag. */
+function DesignerSwitch() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetchStudio()
+      .then((studio) => {
+        if (alive) setEnabled(studio.settings.composerEnabled === true);
+      })
+      .catch(() => {
+        if (alive) setEnabled(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const flip = async (next: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    const previous = enabled;
+    setEnabled(next);
+    try {
+      await apiSend("POST", "/dashboard/api/store", { action: "composer-enabled", enabled: next });
+    } catch {
+      setEnabled(previous);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="cd-card" style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", marginTop: 14 }}>
+      <CDIcon name="sparkle" size={16} strokeWidth={2} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600 }}>Designer engine</div>
+        <div className="cd-sub" style={{ margin: 0 }}>
+          Chat edits the store's code directly, starting from a template. Experimental.
+        </div>
+      </div>
+      <Toggle
+        value={enabled === true}
+        onChange={(next) => void flip(next)}
+        disabled={busy || enabled === null}
+        ariaLabel="Designer engine"
+      />
+    </div>
+  );
+}
+
 export default function Settings({ app }: { app: DashboardCtx }) {
   // Local editable copy of guardrails, seeded from app.guardrails and re-synced
   // whenever the shell refreshes it. Optimistic edits write here first; a failed
@@ -385,6 +441,9 @@ export default function Settings({ app }: { app: DashboardCtx }) {
   // second click runs the wipe+reseed and refreshes the whole shell.
   const [resetArmed, setResetArmed] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
+  // Second secret in the footer: the dimmed sparkle reveals the designer
+  // engine switch inline. Session-local — collapses again on reload.
+  const [designerRevealed, setDesignerRevealed] = useState(false);
   useEffect(() => {
     if (!resetArmed) return;
     const t = setTimeout(() => setResetArmed(false), 5000);
@@ -1391,8 +1450,18 @@ export default function Settings({ app }: { app: DashboardCtx }) {
           string opens the hidden "Autopilot replay" demo (screens/Labs). The
           mark is the Calderyn logo (same inline hexagon as the sidebar brand),
           not a Lucide icon. */}
+      {designerRevealed && <DesignerSwitch />}
       <div className="cd-secret-foot">
         <span>Calderyn for Shopify · v2.4.1 · build 1180</span>
+        <button
+          type="button"
+          className="cd-secret-dot"
+          onClick={() => setDesignerRevealed((open) => !open)}
+          title="Designer engine — beta"
+          aria-label="Designer beta"
+        >
+          <CDIcon name="sparkle" size={13} strokeWidth={2} />
+        </button>
         <button
           type="button"
           className="cd-secret-dot"
