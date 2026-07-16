@@ -20,4 +20,10 @@ describe("Store Builder compact sidebar CSS", () => {
     expect(block).toContain("min-width: 36px;");
     expect(block).not.toContain("min-height");
   });
+
+  it("hides the Autopilot switch so the compact rail contains icons only", () => {
+    expect(css).toMatch(
+      /\.cd-sidebar\[data-compact="1"\] \.cd-apswitch \{[^}]*display: none;/,
+    );
+  });
 });
