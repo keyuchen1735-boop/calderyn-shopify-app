@@ -789,6 +789,10 @@ export default function PurchaseOrders({ app }: { app: DashboardCtx }) {
                                 type="number"
                                 min={0}
                                 max={remaining}
+                                // A deleted-variant line can't be received (the
+                                // server refuses it, which would fail the whole
+                                // receive) — lock its input at the prefilled 0.
+                                disabled={line.variantId == null}
                                 aria-label={`Receive quantity for ${line.sku ?? line.title ?? "line"}`}
                                 style={{ width: 76, flexShrink: 0 }}
                                 value={drawer.receiveQtys[line.id] ?? ""}
