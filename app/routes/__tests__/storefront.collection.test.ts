@@ -10,6 +10,7 @@ vi.mock("@remix-run/react", () => ({ useLoaderData: () => loaderData.current }))
 
 describe("storefront collection cards", () => {
   it("renders merchant descriptions as escaped text", () => {
+    const description = `Built <strong>for daily use & travel</strong> ${"detail ".repeat(30)}complete ending`;
     loaderData.current = {
       handle: "apparel",
       title: "Apparel",
@@ -17,7 +18,7 @@ describe("storefront collection cards", () => {
         id: "product-one",
         handle: "one",
         title: "Product one",
-        description: "Built <strong>for daily use</strong>",
+        description,
         images: [],
         variants: [],
         collections: ["apparel"],
@@ -28,8 +29,10 @@ describe("storefront collection cards", () => {
     };
 
     const html = renderToStaticMarkup(createElement(StorefrontCollection));
-    expect(html).toContain("Built &lt;strong&gt;for daily use&lt;/strong&gt;");
-    expect(html).not.toContain("Built <strong>for daily use</strong>");
+    expect(html).toContain("Built &lt;strong&gt;for daily use &amp; travel&lt;/strong&gt;");
+    expect(html).toContain("…");
+    expect(html).not.toContain("Built <strong>for daily use & travel</strong>");
+    expect(html).not.toContain("complete ending");
   });
 
   it("renders the platform next-page control after runtime collection output", () => {

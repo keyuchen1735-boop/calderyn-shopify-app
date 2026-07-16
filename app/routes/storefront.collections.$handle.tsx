@@ -152,13 +152,15 @@ export default function StorefrontCollection() {
           // Price the card off the first buyable variant; a product whose variants
           // are all unpriced shows no price rather than a misleading "$0.00".
           const priced = p.variants.find((v) => v.available);
+          const description = p.description.trim();
+          const excerpt = description.length > 160 ? `${description.slice(0, 159).trimEnd()}…` : description;
           return (
             <a key={p.id} className="cd-product-card" href={`/storefront/products/${p.handle}`}>
               {p.images[0] ? (
                 <img className="cd-product-card__img" src={p.images[0].url} alt={p.images[0].alt ?? p.title} />
               ) : null}
               <span className="cd-product-card__title">{p.title}</span>
-              <span className="cd-product-card__description">{p.description}</span>
+              <span className="cd-product-card__description">{excerpt}</span>
               <span className="cd-product-card__price">
                 {priced ? formatMoney(priced.priceCents, priced.currency) : ""}
               </span>

@@ -389,6 +389,41 @@ describe("compiled-node server renderer", () => {
     expect(html.match(/data-cd-repeat-owner="true"/g)).toHaveLength(2);
   });
 
+  it("excerpts repeated product descriptions while preserving the complete PDP description", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><section data-cd-repeat="featured.products"><p class="card-description" data-cd-key="product.id" data-cd-text="product.description"></p></section></main>`;
+    source.routes.collection.html = `<main><section data-cd-repeat="collection.products"><p class="card-description" data-cd-key="product.id" data-cd-text="product.description"></p></section></main>`;
+    source.routes.search.html = `<main><section data-cd-repeat="search.results"><p class="card-description" data-cd-key="product.id" data-cd-text="product.description"></p></section></main>`;
+    source.routes.product.html = `<main><p class="pdp-description" data-cd-text="product.description"></p><section data-cd-repeat="related.products"><p class="card-description" data-cd-key="product.id" data-cd-text="product.description"></p></section></main>`;
+    const bundle = compileBundle(source).bundle;
+    const description = `<strong>Merchant & field notes</strong> ${"detail ".repeat(30)}complete ending`;
+    const product = { ...publicProduct, description };
+    const routeData: Array<["home" | "collection" | "search" | "product", PublicPresentationData]> = [
+      ["home", { ...data, featuredProducts: [product] }],
+      ["collection", { ...data, collection: { id: "collection-1", handle: "all", title: "All", description: "", image: null, productCount: 1, products: [product], nextCursor: null } }],
+      ["search", { ...data, search: { query: "field", results: [product], facets: { categories: [], tags: [], collections: [] }, total: 1, nextCursor: null } }],
+      ["product", { ...data, product, relatedProducts: [product] }],
+    ];
+
+    for (const [routeId, routeDataValue] of routeData) {
+      const html = renderToStaticMarkup(renderStorefrontSurface({
+        bundle, routeId, data: routeDataValue, nonce: `${routeId}-description`, mode: "public",
+      }));
+      const cardDescription = html.match(/class="card-description"[^>]*>([^<]*)<\/p>/)?.[1];
+      expect(cardDescription).toContain("&lt;strong&gt;Merchant &amp; field notes&lt;/strong&gt;");
+      expect(cardDescription).toContain("…");
+      expect(cardDescription).not.toContain("complete ending");
+      expect(html).not.toContain("<strong>Merchant & field notes</strong>");
+    }
+
+    const pdpHtml = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "product", data: { ...data, product }, nonce: "pdp-description", mode: "public",
+    }));
+    const pdpDescription = pdpHtml.match(/class="pdp-description"[^>]*>([^<]*)<\/p>/)?.[1];
+    expect(pdpDescription).toContain("&lt;strong&gt;Merchant &amp; field notes&lt;/strong&gt;");
+    expect(pdpDescription).toContain("complete ending");
+  });
+
   it("resolves each product.images repeat binding to that media item's URL and alt text", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.routes.product.html = `<main><div data-cd-repeat="product.images"><img data-cd-key="product.primaryImage" data-cd-src="product.primaryImage" data-cd-alt="product.title"></div></main>`;

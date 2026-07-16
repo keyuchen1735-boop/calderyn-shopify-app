@@ -145,6 +145,11 @@ function formatBinding(binding: CompiledBinding, value: unknown): string | null 
     const candidate = typeof value === "string" ? value : (value as PublicMedia | null)?.alt;
     return typeof candidate === "string" ? candidate : "";
   }
+  if (binding.kind === "text" && binding.ref.kind === "data" && binding.ref.scopeId !== "root" &&
+      binding.ref.path === "product.description" && typeof value === "string") {
+    const description = value.trim();
+    return description.length > 160 ? `${description.slice(0, 159).trimEnd()}…` : description;
+  }
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
     ? String(value)
     : null;
