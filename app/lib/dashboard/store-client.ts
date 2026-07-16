@@ -233,6 +233,16 @@ export async function generateStudioStoreWithImages(
   return apiSendForm<StudioGenerateReceipt>("/dashboard/api/store", form, signal);
 }
 
+/** One conversational turn against the hidden designer engine (Labs). The
+ *  server decides whether it's the first build or a direct code edit. */
+export async function sendDesignerMessage(input: {
+  message: string;
+  page?: string;
+  model?: StudioDesignModel;
+}): Promise<{ reply: string; changed: boolean; rejectedEdits: number }> {
+  return apiSend("POST", "/dashboard/api/designer", input);
+}
+
 /** Publish every drafted storefront page after the tenant domain is ready. The
  *  server seeds and publishes the default home page when nothing is drafted. */
 export async function publishStudioStore(): Promise<{ publishedAt: string; storefrontUrl: string }> {

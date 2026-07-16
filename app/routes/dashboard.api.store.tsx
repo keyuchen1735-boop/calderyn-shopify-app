@@ -56,6 +56,7 @@ import {
   STOREFRONT_POLICY_BODY_MAX,
   STOREFRONT_POLICY_TITLE_MAX,
 } from "~/lib/storefront/policies.server";
+import { setComposerEnabled } from "~/lib/storefront/settings.server";
 
 // Store studio read model: brand settings, home hero copy, preview products,
 // draft/published flags, and the latest generation run.
@@ -607,6 +608,19 @@ export async function action({ request }: ActionFunctionArgs) {
       return dashboardJson(async () => {
         await saveStudioVibe(session.shopId, vibe as StudioVibe);
         return { vibe };
+      });
+    }
+
+    case "composer-enabled": {
+      // Hidden Labs switch for the from-scratch designer engine. Boolean only —
+      // everything else about the engine is server-side.
+      if (typeof b.enabled !== "boolean") {
+        return jsonError(422, "invalid_composer_flag", "enabled must be true or false.");
+      }
+      const enabled = b.enabled;
+      return dashboardJson(async () => {
+        await setComposerEnabled(session.shopId, enabled);
+        return { enabled };
       });
     }
 

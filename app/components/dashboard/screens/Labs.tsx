@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CDIcon } from "../icons";
+import { Toggle } from "../ui";
+import { apiSend } from "~/lib/dashboard/client";
+import { fetchStudio } from "~/lib/dashboard/store-client";
 import type { DashboardCtx } from "../context";
 
 type Tone = "critical" | "accent";
@@ -44,6 +47,59 @@ const EVENTS: ReplayEvent[] = [
 ];
 
 const SAVED_TARGET = 1840;
+
+/** Hidden switch for the from-scratch designer engine. Lab-only by design:
+ *  the Store screen and designer API read the same per-shop flag. */
+function DesignerSwitch() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetchStudio()
+      .then((studio) => {
+        if (alive) setEnabled(studio.settings.composerEnabled === true);
+      })
+      .catch(() => {
+        if (alive) setEnabled(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const flip = async (next: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    const previous = enabled;
+    setEnabled(next);
+    try {
+      await apiSend("POST", "/dashboard/api/store", { action: "composer-enabled", enabled: next });
+    } catch {
+      setEnabled(previous);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="cd-card" style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", marginBottom: 14 }}>
+      <CDIcon name="sparkle" size={16} strokeWidth={2} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600 }}>Designer engine</div>
+        <div className="cd-sub" style={{ margin: 0 }}>
+          Chat edits the store's code directly, starting from a template. Experimental.
+        </div>
+      </div>
+      <Toggle
+        value={enabled === true}
+        onChange={(next) => void flip(next)}
+        disabled={busy || enabled === null}
+        ariaLabel="Designer engine"
+      />
+    </div>
+  );
+}
 
 export default function Labs({ app }: { app: DashboardCtx }) {
   const [step, setStep] = useState(0);
@@ -126,6 +182,8 @@ export default function Labs({ app }: { app: DashboardCtx }) {
           Exit ›
         </button>
       </div>
+
+      <DesignerSwitch />
 
       <header className="cd-screen-head">
         <div>
