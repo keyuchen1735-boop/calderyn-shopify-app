@@ -140,12 +140,24 @@ async function completeText(input: {
   signal?: AbortSignal;
 }): Promise<string> {
   const client = getAnthropic();
-  const response = await client.messages.create({
+  const request = () => client.messages.create({
     model: input.model ? STOREFRONT_DESIGN_MODEL_IDS[input.model] : STOREFRONT_DESIGN_MODEL_IDS.sonnet,
     max_tokens: MAX_TOKENS,
     system: input.system,
     messages: input.messages,
   }, { signal: input.signal });
+  let response;
+  try {
+    response = await request();
+  } catch (error) {
+    // The SDK already retried transient statuses with short backoff; a burst
+    // of API load can outlast that. One patient retry saves the whole turn.
+    const status = (error as { status?: number }).status;
+    if (status !== 529 && status !== 429) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    if (input.signal?.aborted) throw error;
+    response = await request();
+  }
   return response.content
     .map((block: { type: string; text?: string }) => (block.type === "text" ? block.text ?? "" : ""))
     .join("");

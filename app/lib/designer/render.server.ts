@@ -25,7 +25,7 @@ export function scrubDesignerHtml(html: string): string {
 }
 
 export function scrubDesignerCss(css: string): string {
-  return scrubExternalUrls(css).replace(/expression\s*\(/gi, "invalid(");
+  return scrubExternalUrls(css).replace(BLOCKED_TAGS, "").replace(/expression\s*\(/gi, "invalid(");
 }
 
 function escapeHtml(value: string): string {
