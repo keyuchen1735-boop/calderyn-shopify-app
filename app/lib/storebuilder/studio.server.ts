@@ -425,6 +425,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
       density: settings.density,
       logoUrl: settings.logoUrl,
       tagline: settings.voiceTagline,
+      composerEnabled: settings.composerEnabled,
     },
     hero: doc ? heroFromDoc(doc) : null,
     products: shaped,

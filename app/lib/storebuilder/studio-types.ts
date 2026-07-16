@@ -26,6 +26,8 @@ export interface StudioSettings {
   density?: StudioDensity;
   logoUrl: string | null;
   tagline: string | null;
+  /** Hidden Labs switch: chat builds route through the from-scratch designer. */
+  composerEnabled?: boolean;
 }
 
 /**

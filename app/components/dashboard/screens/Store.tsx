@@ -18,6 +18,7 @@ import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dash
 import {
   addProductFromImage,
   buildStudioStoreStream,
+  sendDesignerMessage,
   decideStoreExperiment,
   editStudioStorefrontStream,
   fetchStudio,
@@ -636,6 +637,27 @@ export default function Store({ app }: { app: DashboardCtx }) {
     }
   };
 
+  // Hidden Labs engine: every text message is one conversational turn against
+  // the designer's code documents — no intent parsing, no build/edit split.
+  const runDesignerChat = async (text: string) => {
+    if (chatBusyRef.current) return;
+    setChatBusyBoth(true);
+    const thinkId = newId();
+    pushMsg({ id: thinkId, kind: "ai-thinking" });
+    try {
+      const turn = await sendDesignerMessage({ message: text, page, model: designModel });
+      if (!aliveRef.current) return;
+      if (turn.changed) reloadPreview();
+      setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: turn.reply } : x)));
+    } catch (err) {
+      if (!aliveRef.current) return;
+      const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that change. Try again.";
+      setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : x)));
+    } finally {
+      if (aliveRef.current) setChatBusyBoth(false);
+    }
+  };
+
   const onComposerSend = () => {
     if (chatBusyRef.current || buildingRef.current || attachingRef.current) return;
     const text = prompt.trim();
@@ -645,11 +667,20 @@ export default function Store({ app }: { app: DashboardCtx }) {
       if (!text) return;
       setPrompt("");
       pushMsg({ id: newId(), kind: "user-text", text });
+      if (data?.settings.composerEnabled) {
+        void runDesignerChat(text);
+        return;
+      }
       if (data?.release.draftRuntime === 1 && data.release.draftVersionId) {
         void runRuntime1Edit(text, /\b(?:this|that|selected|here)\b/i.test(text) ? previewEditContext : undefined);
         return;
       }
       runChatIntent(parseChatIntent(text));
+      return;
+    }
+    if (data?.settings.composerEnabled) {
+      // Designer beta is text-only for now; never spend on a path it ignores.
+      toast("Image attachments aren't supported in the designer beta yet.", "warn");
       return;
     }
     // Attachments present → they travel with the prompt via the multipart route;
@@ -1110,9 +1141,13 @@ export default function Store({ app }: { app: DashboardCtx }) {
     draftProductCount: data.draftProductCount,
     importInProgress: porting,
   });
-  const previewSrc = `${PREVIEW_PATH}?page=${page}&v=${previewVersion}`;
+  const designerOn = data.settings.composerEnabled === true;
+  const previewSrc = designerOn
+    ? `/dashboard/designer/preview?page=${page}&v=${previewVersion}`
+    : `${PREVIEW_PATH}?page=${page}&v=${previewVersion}`;
   // Before the first build → invite a prompt; after one build the full studio takes over.
-  const promptCanvas = showPromptCanvas(data);
+  // The designer engine renders its own invite inside the preview instead.
+  const promptCanvas = !designerOn && showPromptCanvas(data);
 
   return (
     <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
@@ -1170,7 +1205,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
                 className="cd-canvas-frame"
                 title="Store preview"
                 src={previewSrc}
-                sandbox="allow-same-origin allow-scripts allow-popups"
+                // Designer documents are AI-edited markup: scripts stay off in
+                // the sandbox on top of the preview's no-script CSP.
+                sandbox={designerOn ? "allow-same-origin" : "allow-same-origin allow-scripts allow-popups"}
               />
               {showLegacySectionsPanel({ page, building, draftRuntime: data.release.draftRuntime }) && (
                 <SectionsPanel

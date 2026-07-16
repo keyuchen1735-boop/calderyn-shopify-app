@@ -1,4 +1,4 @@
-import { getSupabase } from "~/lib/supabase.server";
+﻿import { getSupabase } from "~/lib/supabase.server";
 import type { BundleValidationReport } from "~/lib/storefront-compiler/validate";
 import type { DefinedRecipe } from "~/lib/storefront-recipes/factory";
 import { generateOriginalStorefront } from "~/lib/storefront-ai/generate.server";
@@ -147,7 +147,7 @@ export async function readStorefrontReleaseState(shopId: string): Promise<Storef
   };
 }
 
-async function loadRecipe(templateId: StoreTemplateId, templateVersion: number): Promise<DefinedRecipe> {
+export async function loadRecipe(templateId: StoreTemplateId, templateVersion: number): Promise<DefinedRecipe> {
   let recipe: DefinedRecipe;
   switch (templateId) {
     case "custom-bench":
