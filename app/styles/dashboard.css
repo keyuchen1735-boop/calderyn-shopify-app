@@ -2071,7 +2071,7 @@
   overflow: hidden;
   pointer-events: none;
 }
-.cd-sidebar[data-compact="1"] .cd-apswitch { pointer-events: none; }
+.cd-sidebar[data-compact="1"] .cd-apswitch { display: none; }
 .cd-sidebar[data-compact="1"] .cd-nav-count {
   position: absolute;
   top: 2px;
