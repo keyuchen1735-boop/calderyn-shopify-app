@@ -58,20 +58,11 @@ import {
   type ListState,
 } from "./orders-list-state";
 
-const ORDER_SECTION_META: Record<string, { title: string; sub: string }> = {
-  orders: {
-    title: "Orders",
-    sub: "Storefront and Shopify orders, in one place.",
-  },
-  labels: {
-    title: "Shipping charges",
-    sub: "Shipping costs matched to their orders.",
-  },
-  drafts: { title: "Draft carts", sub: "Customer carts still in progress." },
-  abandoned: {
-    title: "Abandoned checkouts",
-    sub: "Checkouts ready for recovery.",
-  },
+const ORDER_SECTION_META: Record<string, { title: string }> = {
+  orders: { title: "Orders" },
+  labels: { title: "Shipping charges" },
+  drafts: { title: "Draft carts" },
+  abandoned: { title: "Abandoned checkouts" },
 };
 
 const ORDER_TABLE_COLUMNS =
@@ -1052,7 +1043,6 @@ export default function Orders({ app }: { app: DashboardCtx }) {
       <header className="cd-screen-head cd-order-page-head">
         <div>
           <h1 className="cd-h1">{sectionMeta.title}</h1>
-          {sub === "orders" && <p className="cd-sub">{sectionMeta.sub}</p>}
         </div>
         {(sub === "orders" || sub === "drafts") && (
           <Btn
