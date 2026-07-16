@@ -1,4 +1,3 @@
-import { isStoreTemplateId } from "./registry";
 import type {
   CatalogRoutingEvidence,
   CatalogRoutingField,
@@ -10,7 +9,6 @@ import type {
   VersionedStoreTemplateRegistry,
 } from "./types";
 
-const MAX_PROMPT_CODE_POINTS = 4_000;
 const MIN_PROMPT_SCORE = 6;
 const MIN_CATALOG_SCORE = 4;
 const MIN_MARGIN = 2;
@@ -32,32 +30,6 @@ function grammarText(value: string): string {
 
 function tokens(value: string): string[] {
   return grammarText(value).match(/[\p{L}\p{N}]+/gu) ?? [];
-}
-
-export type StoreDesignRequestParseResult =
-  | { ok: true; value: StoreDesignRequest }
-  | { ok: false; error: "invalid_design_request" };
-
-export function parseStoreDesignRequest(
-  input: unknown,
-  registry: VersionedStoreTemplateRegistry,
-): StoreDesignRequestParseResult {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return { ok: false, error: "invalid_design_request" };
-  const body = input as Record<string, unknown>;
-  if (typeof body.prompt !== "string" || !["auto", "recipe", "custom"].includes(String(body.mode))) {
-    return { ok: false, error: "invalid_design_request" };
-  }
-  const prompt = body.prompt.trim();
-  if (Array.from(prompt).length > MAX_PROMPT_CODE_POINTS) return { ok: false, error: "invalid_design_request" };
-  const mode = body.mode as StoreDesignRequest["mode"];
-  const templateId = body.templateId;
-  const registryIds = new Set(registry.templates.map((template) => template.id));
-  if (mode === "recipe") {
-    if (!isStoreTemplateId(templateId) || !registryIds.has(templateId)) return { ok: false, error: "invalid_design_request" };
-    return { ok: true, value: { prompt, mode, templateId } };
-  }
-  if (templateId !== undefined || (mode === "custom" && !prompt)) return { ok: false, error: "invalid_design_request" };
-  return { ok: true, value: { prompt, mode } };
 }
 
 interface Span {
@@ -226,24 +198,6 @@ export function resolveStoreDesign(
     templates: registry.templates.filter(({ id }) => !excluded.has(id)),
   };
   if (eligibleRegistry.templates.length === 0) return noMatch(registry, evidence);
-  if (request.mode === "recipe") {
-    const template = eligibleRegistry.templates.find((candidate) => candidate.id === request.templateId);
-    if (request.templateId && excluded.has(request.templateId)) return noMatch(registry, evidence);
-    if (!template) throw new Error(`Template ${String(request.templateId)} is not present in the supplied registry`);
-    return {
-      kind: "recipe",
-      templateId: template.id,
-      templateVersion: template.activeVersion,
-      selectionKind: "manual_override",
-      ...metadata(registry, evidence),
-      score: null,
-      runnerUpScore: null,
-      margin: null,
-      confidenceBand: null,
-      breakdown: [],
-      reasons: [`Selected ${template.name}`],
-    };
-  }
   const nameHits = explicitRecipeNames(request.prompt, eligibleRegistry);
   const breakdown = eligibleRegistry.templates.map((template) => scoreTemplate(template, request.prompt, evidence, nameHits));
   const ranked = breakdown

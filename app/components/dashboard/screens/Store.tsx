@@ -14,303 +14,163 @@ import {
   saveProduct,
   type ImportRunVM,
 } from "~/lib/dashboard/client";
+import { fetchStore, sendStoreCommand, type StudioState } from "~/lib/dashboard/store-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
-import {
-  addProductFromImage,
-  buildStudioStoreStream,
-  decideStoreExperiment,
-  editStudioStorefrontStream,
-  fetchStudio,
-  generateStudioStoreWithImages,
-  publishStudioStore,
-  saveStudioHero,
-  setStudioAccent,
-  setStudioVibe,
-  startStoreExperiment,
-  moveStoreSection,
-  removeStoreSection,
-  regenerateStoreSection,
-  type StudioSection,
-  type StudioAddedProduct,
-  type StudioDesignModel,
-  type StudioGenerateReceipt,
-  type StudioHero,
-  type StudioState,
-  type StudioVibe,
-  undoStudioStorefrontEdit,
-} from "~/lib/dashboard/store-client";
-import type { StoreDesignRequest, StoreDesignResolution } from "~/lib/storefront-bundle/types";
-import type { PreviewEditContext } from "~/lib/storefront-edit/types";
+import type { StoreCommand, StoreCommandEvent, StoreCommandReceipt } from "~/lib/storefront-command/types";
 import {
   decideWelcomeBranch,
-  isDeterministicChatIntent,
   missingPieces,
-  parseChatIntent,
   parseProductLine,
-  planStagedAttachments,
   shouldShowWelcome,
-  showLegacySectionsPanel,
   showPromptCanvas,
   type BuildPhase,
-  type BuildStage,
-  type ChatIntent,
+  type MerchantStage,
   type MissingPiece,
 } from "./store-logic";
-import type { StudioExperimentKind } from "~/lib/storebuilder/studio-types";
-import SectionsPanel from "../store/SectionsPanel";
 import type { DashboardCtx } from "../context";
 import ChatRail from "../store/ChatRail";
 import TopBar, { type Device } from "../store/TopBar";
 import WelcomeOverlay from "../store/WelcomeOverlay";
-import type { ChatAction, ChatMsg } from "../store/chat-types";
+import type { ChatMsg } from "../store/chat-types";
 import type { PageKey } from "~/lib/storebuilder/types";
 
-// The draft home document's default hero copy (app/lib/storebuilder/default-doc.ts) —
-// the seed used before a real doc loads.
-const DEFAULT_HERO: StudioHero = { headline: "Welcome", subhead: "Shop our latest" };
-
-// The studio canvas is a same-origin iframe of the server-rendered draft store
-// (see app/routes/dashboard.store.preview.tsx) — the ACTUAL generated
-// BlockDocument with the real storefront styles. A version counter in the src
-// forces a reload after every mutation.
 const PREVIEW_PATH = "/dashboard/store/preview";
-
 const PAGE_LABEL: Record<string, string> = { home: "home", pdp: "product", collection: "collection" };
-const VIBE_LABEL: Record<StudioVibe, string> = { minimal: "clean, minimal", bold: "bold, dramatic", warm: "warm, earthy" };
+const MERCHANT_STAGES = new Set<MerchantStage>(["understanding", "preparing_products", "checking_preview"]);
 
-const clampPct = (v: number): number => Math.min(100, Math.max(0, v));
-function pctPoint(e: ReactPointerEvent<HTMLElement>): { x: number; y: number } {
-  const rect = e.currentTarget.getBoundingClientRect();
+const clampPct = (value: number): number => Math.min(100, Math.max(0, value));
+function pctPoint(event: ReactPointerEvent<HTMLElement>): { x: number; y: number } {
+  const rect = event.currentTarget.getBoundingClientRect();
   return {
-    x: clampPct(((e.clientX - rect.left) / rect.width) * 100),
-    y: clampPct(((e.clientY - rect.top) / rect.height) * 100),
+    x: clampPct(((event.clientX - rect.left) / rect.width) * 100),
+    y: clampPct(((event.clientY - rect.top) / rect.height) * 100),
   };
+}
+
+export function applyStoreReceipt(state: StudioState, receipt: StoreCommandReceipt): StudioState {
+  if (receipt.status === "installed") {
+    return {
+      ...state,
+      hasDraft: true,
+      release: { ...state.release, draftVersionId: receipt.versionId, draftRuntime: 1 },
+    };
+  }
+  if (receipt.status === "published") {
+    return {
+      ...state,
+      hasPublished: true,
+      release: { ...state.release, publishedVersionId: receipt.versionId, publishedRuntime: 1 },
+    };
+  }
+  return state;
+}
+
+function isAbort(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 export default function Store({ app }: { app: DashboardCtx }) {
   const toast = app.toast;
-
-  // Seeded from the session cache so a return visit paints instantly; the
-  // mount refresh below revalidates and writes back through.
-  const [data, setData] = useState<StudioState | null>(() =>
-    cachedScreenData<StudioState>(SCREEN_CACHE_KEYS.storeStudio),
-  );
+  const [data, setData] = useState<StudioState | null>(() => cachedScreenData<StudioState>(SCREEN_CACHE_KEYS.storeStudio));
+  const dataRef = useRef(data);
   const [loading, setLoading] = useState(true);
-
   const aliveRef = useRef(true);
   useEffect(() => {
     aliveRef.current = true;
-    return () => {
-      aliveRef.current = false;
-    };
+    return () => { aliveRef.current = false; };
   }, []);
 
-  // --- chat thread ----------------------------------------------------------
+  const setSnapshot = useCallback((snapshot: StudioState) => {
+    dataRef.current = snapshot;
+    cacheScreenData(SCREEN_CACHE_KEYS.storeStudio, snapshot);
+    if (aliveRef.current) setData(snapshot);
+  }, []);
+  const refresh = useCallback(async () => {
+    const snapshot = await fetchStore();
+    setSnapshot(snapshot);
+    return snapshot;
+  }, [setSnapshot]);
+
   const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const msgSeq = useRef(0);
-  const newId = () => {
-    msgSeq.current += 1;
-    return msgSeq.current;
+  const messageSequence = useRef(0);
+  const nextMessageId = () => {
+    messageSequence.current += 1;
+    return messageSequence.current;
   };
-  const pushMsg = useCallback((msg: ChatMsg) => setMessages((m) => [...m, msg]), []);
   const [prompt, setPrompt] = useState("");
-  const [chatBusy, setChatBusy] = useState(false);
-  // Chat action buttons (Undo, "Make it bolder"…) live inside `messages` and
-  // can be clicked long after the render that created them, so the overlap
-  // guard below must read a ref (always current) rather than the `chatBusy`
-  // state closed over at creation time — the state itself only drives the
-  // composer's disabled attribute, which is always rendered fresh.
-  const chatBusyRef = useRef(false);
-  const setChatBusyBoth = (v: boolean) => {
-    chatBusyRef.current = v;
-    setChatBusy(v);
-  };
-  const [attaching, setAttaching] = useState(false);
-  // Ref-paired like chatBusy: the "Add as products" quick-reply lives inside a
-  // chat message and can be clicked long after the render that created it, so
-  // its overlap guard must read a ref, not the closed-over state.
-  const attachingRef = useRef(false);
-  const setAttachingBoth = (v: boolean) => {
-    attachingRef.current = v;
-    setAttaching(v);
-  };
-  const buildingRef = useRef(false);
+  const busyRef = useRef(false);
+  const [busy, setBusy] = useState(false);
   const [buildPhase, setBuildPhase] = useState<BuildPhase | null>(null);
-  const generationControllerRef = useRef<AbortController | null>(null);
+  const commandControllerRef = useRef<AbortController | null>(null);
   const [stoppable, setStoppable] = useState(false);
-  const beginGeneration = (): AbortController => {
-    const controller = new AbortController();
-    generationControllerRef.current = controller;
-    setStoppable(true);
-    return controller;
-  };
-  const finishGeneration = (controller: AbortController) => {
-    if (generationControllerRef.current !== controller) return;
-    generationControllerRef.current = null;
-    if (aliveRef.current) setStoppable(false);
-  };
-  const stopGeneration = () => {
-    generationControllerRef.current?.abort(new DOMException("Storefront generation stopped", "AbortError"));
-  };
-  useEffect(() => () => generationControllerRef.current?.abort(), []);
-  // Design-model picker. Ref-paired like chatBusy: builds fire from chat-action
-  // closures created long before the click, so they must read the current pick.
-  const [designModel, setDesignModel] = useState<StudioDesignModel>("sonnet");
-  const designModelRef = useRef<StudioDesignModel>("sonnet");
-  const setDesignModelBoth = (m: StudioDesignModel) => {
-    designModelRef.current = m;
-    setDesignModel(m);
-  };
+  useEffect(() => () => commandControllerRef.current?.abort(), []);
 
-  // --- composer attachments (staged with the prompt) -------------------------
-  // Images picked/dropped are STAGED as chips, not auto-converted; they travel
-  // with the next send. Each carries an object URL for its thumbnail, revoked on
-  // removal / send / unmount so a staging session leaks no blobs.
-  const [attachments, setAttachments] = useState<{ id: string; file: File; url: string }[]>([]);
-  const attachmentsRef = useRef<typeof attachments>([]);
-  useEffect(() => {
-    attachmentsRef.current = attachments;
-  }, [attachments]);
-  useEffect(
-    () => () => {
-      for (const a of attachmentsRef.current) URL.revokeObjectURL(a.url);
-    },
-    [],
-  );
-
-  // --- preview / canvas -------------------------------------------------------
   const [previewVersion, setPreviewVersion] = useState(0);
-  const reloadPreview = useCallback(() => setPreviewVersion((v) => v + 1), []);
+  const reloadPreview = useCallback(() => setPreviewVersion((version) => version + 1), []);
   const [page, setPage] = useState<PageKey>("home");
   const [device, setDevice] = useState<Device>("desktop");
-  const [previewEditContext, setPreviewEditContext] = useState<PreviewEditContext | undefined>();
   const badgeRef = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    const receivePreviewRegion = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin || !event.data || event.data.type !== "storefront-preview-region") return;
-      const { routeId, regionId } = event.data as { routeId?: unknown; regionId?: unknown };
-      if (typeof routeId !== "string" || typeof regionId !== "string" || !/^[a-zA-Z0-9_-]{1,120}$/.test(regionId)) return;
-      if (!["home", "collection", "product", "search", "cart", "checkout"].includes(routeId)) return;
-      setPreviewEditContext({ routeId: routeId as PreviewEditContext["routeId"], regionId });
-    };
-    window.addEventListener("message", receivePreviewRegion);
-    return () => window.removeEventListener("message", receivePreviewRegion);
-  }, []);
 
-  // --- markup (session-only strokes + note -> chat message) -----------------
   const [markupOn, setMarkupOn] = useState(false);
   const [strokes, setStrokes] = useState<string[]>([]);
   const drawing = useRef<string[] | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
-
-  // --- publish ----------------------------------------------------------------
   const [publishing, setPublishing] = useState(false);
-  // Reached from the "Looks good, publish it" chip stored inside a chat
-  // message (long-lived, unlike the TopBar's Publish button) — same
-  // stale-closure concern as chatBusyRef above, so the guard reads a ref.
-  const publishingRef = useRef(false);
-  const setPublishingBoth = (v: boolean) => {
-    publishingRef.current = v;
-    setPublishing(v);
-  };
   const [confirmingPublish, setConfirmingPublish] = useState(false);
 
-  // --- experiments --------------------------------------------------------------
-  const [decidingExperiment, setDecidingExperiment] = useState(false);
-
-  // --- deterministic mutation ordering ------------------------------------------
-  // Vibe/accent/hero edits and publish all race against the same store_settings
-  // row and draft doc; queuing every deterministic edit onto one chain (mirrors
-  // the old per-field heroSaveChain, generalized to all three) guarantees they
-  // land in request order and that publish always sees the last one committed.
-  const mutationChain = useRef<Promise<void>>(Promise.resolve());
-  const queueMutation = <T,>(run: () => Promise<T>): Promise<T> => {
-    const settled = mutationChain.current.then(run);
-    mutationChain.current = settled.then(
-      () => undefined,
-      () => undefined,
-    );
-    return settled;
-  };
-
-  // --- welcome overlay ---------------------------------------------------------
-  // Only evaluated after a FRESH fetch resolves — never against the cache seed,
-  // which may be stale or belong to an already-built session.
   const freshLoadedRef = useRef(false);
   const [welcomeVisible, setWelcomeVisible] = useState(false);
+  const [welcomeTerminalMessage, setWelcomeTerminalMessage] = useState<string | null>(null);
   const [importRun, setImportRun] = useState<ImportRunVM | null>(null);
   const porting = importRun != null && IMPORT_IN_PROGRESS.has(importRun.state);
-
-  const refresh = useCallback(async () => {
-    const s = await fetchStudio();
-    cacheScreenData(SCREEN_CACHE_KEYS.storeStudio, s);
-    if (!aliveRef.current) return;
-    setData(s);
-    if (!freshLoadedRef.current) {
-      freshLoadedRef.current = true;
-      if (shouldShowWelcome(s)) setWelcomeVisible(true);
-    }
-  }, []);
 
   useEffect(() => {
     setLoading(true);
     refresh()
-      .catch((err: unknown) => {
-        if (!aliveRef.current) return;
-        const msg = err instanceof DashboardApiError ? err.message : "Could not load your store.";
-        toast(msg, "warn", "critical");
+      .then((snapshot) => {
+        if (!freshLoadedRef.current) {
+          freshLoadedRef.current = true;
+          if (shouldShowWelcome(snapshot)) setWelcomeVisible(true);
+        }
+      })
+      .catch((error: unknown) => {
+        if (aliveRef.current) toast(error instanceof DashboardApiError ? error.message : "Could not load your store.", "warn", "critical");
       })
       .finally(() => {
         if (aliveRef.current) setLoading(false);
       });
   }, [refresh, toast]);
 
-  // A build/publish/import landing for real dismisses the overlay; it never
-  // re-opens once dismissed just because data changed again.
   useEffect(() => {
     if (welcomeVisible && data && !shouldShowWelcome(data)) setWelcomeVisible(false);
   }, [data, welcomeVisible]);
 
-  // Shopify port watcher: the OAuth callback auto-starts an import and lands
-  // the merchant here, so the welcome overlay shows the pull streaming in with
-  // real counts, then reloads once the run finishes. Polls only while a run is
-  // in progress; a transient poll failure retries rather than killing the watch.
   useEffect(() => {
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let sawRun = false;
-    let misses = 0;
+    let failures = 0;
     const tick = async () => {
-      let run: ImportRunVM | null;
       try {
-        run = await fetchImportStatus();
-        misses = 0;
+        const run = await fetchImportStatus();
+        failures = 0;
+        if (!alive) return;
+        setImportRun(run);
+        if (run && IMPORT_IN_PROGRESS.has(run.state)) {
+          sawRun = true;
+          timer = setTimeout(() => void tick(), 3_000);
+        } else if (sawRun && run?.state === "done") {
+          toast("Your Shopify data is in", "download");
+          void refresh().then(reloadPreview).catch(() => undefined);
+        } else if (sawRun && run?.state === "error") {
+          toast("Import didn't finish. Retry from Settings → Import.", "warn", "critical");
+        }
       } catch {
         if (!alive) return;
-        misses += 1;
-        if (misses <= 5) {
-          timer = setTimeout(() => void tick(), 3000);
-          return;
-        }
-        // 6th consecutive failure: stop polling and clear the run so the
-        // derived porting state clears instead of sticking forever — a
-        // reload restarts the watch (matches the old behavior's recovery path).
-        setImportRun(null);
-        return;
-      }
-      if (!alive) return;
-      setImportRun(run);
-      if (run && IMPORT_IN_PROGRESS.has(run.state)) {
-        sawRun = true;
-        timer = setTimeout(() => void tick(), 3000);
-        return;
-      }
-      if (sawRun && run?.state === "done") {
-        toast("Your Shopify data is in", "download");
-        void refresh().then(reloadPreview).catch(() => {});
-      } else if (sawRun && run?.state === "error") {
-        toast("Import didn't finish. Retry from Settings → Import.", "warn", "critical");
+        failures += 1;
+        if (failures <= 5) timer = setTimeout(() => void tick(), 3_000);
+        else setImportRun(null);
       }
     };
     void tick();
@@ -320,362 +180,119 @@ export default function Store({ app }: { app: DashboardCtx }) {
     };
   }, [refresh, reloadPreview, toast]);
 
-  // --- generate (chat and welcome both funnel through here) -------------------
-  // The working-card message snapshots its OWN phase (updated only by this
-  // call, via its own workingId) rather than reading the shared `buildPhase`
-  // state — otherwise a later, unrelated build would flip an older, already-
-  // finished card in the thread back to "running" (buildPhase is shared app-
-  // wide for the TopBar badge / canvas veil / welcome overlay).
-  // Flip a build's working card to a failed phase and post the message; the
-  // shared error path for both the JSON and the multipart generate calls.
-  // The failed working card already displays `message`, so a separate chat
-  // bubble is posted only when it carries follow-up actions or `bubble` is set
-  // (facts that must persist in the thread, like products already created) —
-  // never as a plain duplicate of the card's own sentence.
-  const failBuild = (workingId: number, message: string, opts?: { toast?: boolean; actions?: ChatAction[]; bubble?: boolean }) => {
-    const failedPhase: BuildPhase = { kind: "failed", message };
-    setBuildPhase(failedPhase);
-    setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: failedPhase } : x)));
-    if (opts?.actions?.length || opts?.bubble) {
-      pushMsg({ id: newId(), kind: "ai-text", text: message, actions: opts?.actions });
-    }
-    if (opts?.toast) toast(message, "warn", "critical");
+  const replaceMessage = (id: number, message: ChatMsg) => {
+    setMessages((current) => current.map((candidate) => candidate.id === id ? message : candidate));
   };
 
-  // Drop a transient working card when the outcome wasn't a generation at all
-  // (needs_intent / products-only): the card said "Generating", but nothing was
-  // — so remove it rather than flip it to a "done" that would misreport (rule 12).
-  const clearBuildCard = (workingId: number) => {
-    setBuildPhase(null);
-    setMessages((m) => m.filter((x) => x.id !== workingId));
-  };
+  const executeCommand = async (command: StoreCommand, userText: string): Promise<void> => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setPublishing(command.kind === "publish");
+    const controller = new AbortController();
+    commandControllerRef.current = controller;
+    setStoppable(command.kind === "prompt");
+    const userId = nextMessageId();
+    const workingId = nextMessageId();
+    const phase: BuildPhase = { kind: "running" };
+    setWelcomeTerminalMessage(null);
+    setBuildPhase(phase);
+    setMessages((current) => [
+      ...current,
+      { id: userId, kind: "user-text", text: userText },
+      { id: workingId, kind: "ai-working", phase },
+    ]);
 
-  // Post-receipt handling for a generation that actually RAN (draft/no_products/
-  // soft-degraded failed-with-runId). Shared by the JSON path and the multipart
-  // reference/both paths; `extraLines` append the multipart-only notes (added
-  // drafts, unread references) to the same completion message.
-  const settleGeneration = (
-    workingId: number,
-    status: "draft" | "no_products" | "failed",
-    opts?: { firstBuild?: boolean; extraLines?: string[] },
-  ) => {
-    const donePhase: BuildPhase = { kind: "done", status };
-    setBuildPhase(donePhase);
-    setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase: donePhase } : x)));
-    const base =
-      status === "failed"
-          ? // Honest failure (rule 12): the AI designer was unreachable, so this
-          // is a deterministic starter layout, not the prompted design.
-          "The AI designer is unavailable right now, so I used a starter layout instead of your prompt. Add Anthropic credits and try Build again."
-        : opts?.firstBuild
-          ? "Here's your first draft: home, collection, product, search, cart and checkout, all bound to your catalog. Tell me what to change, or publish when it feels right."
-          : "Done, it's in the preview. Tell me what to change next, or publish when it's ready.";
-    const reply = [base, ...(opts?.extraLines ?? [])].join(" ");
-    const actions: ChatAction[] | undefined =
-      status !== "failed" && opts?.firstBuild
-        ? [
-            { label: "Make it bolder", onClick: () => runChatIntent({ kind: "vibe", vibe: "bold" }) },
-            { label: "Warmer", onClick: () => runChatIntent({ kind: "vibe", vibe: "warm" }) },
-            { label: "Looks good, publish it", kind: "primary", onClick: () => onPublishClick() },
-          ]
-        : undefined;
-    pushMsg({ id: newId(), kind: "ai-text", text: reply, actions });
-  };
-
-  const runBuild = async (
-    design: string | StoreDesignRequest,
-    opts?: { firstBuild?: boolean; recommendation?: StoreDesignResolution },
-  ) => {
-    if (buildingRef.current) return;
-    buildingRef.current = true;
-    const generationController = beginGeneration();
-    const runningPhase: BuildPhase = { kind: "running" };
-    setBuildPhase(runningPhase);
-    const workingId = newId();
-    pushMsg({ id: workingId, kind: "ai-working", phase: runningPhase });
-    // Live progress: each streamed stage is a REAL server boundary; the working
-    // card advances only when the server says so.
-    const setStage = (stage: BuildStage) => {
-      if (!aliveRef.current) return;
-      const phase: BuildPhase = { kind: "running", stage };
-      setBuildPhase(phase);
-      setMessages((m) => m.map((x) => (x.id === workingId ? { ...x, phase } : x)));
+    const onEvent = (event: StoreCommandEvent) => {
+      if (!MERCHANT_STAGES.has(event.stage as MerchantStage) || !aliveRef.current) return;
+      const nextPhase: BuildPhase = { kind: "running", stage: event.stage as MerchantStage };
+      setBuildPhase(nextPhase);
+      replaceMessage(workingId, { id: workingId, kind: "ai-working", phase: nextPhase });
     };
+
     try {
-      const request: StoreDesignRequest = typeof design === "string"
-        ? { prompt: design.trim(), mode: "auto" }
-        : design;
-      let recommendationChangeReason: string | undefined;
-      await buildStudioStoreStream(
-        request,
-        (stage, event) => {
-          setStage(stage);
-          if (event?.stage === "routing" && event.recommendationChanged) {
-            recommendationChangeReason = event.recommendationChangeReason;
-          }
-        },
-        opts?.recommendation,
-        generationController.signal,
-        designModel,
-      );
-      // Re-pull the whole studio state — generation rewrites brand settings,
-      // drafts and the generation audit row — then reload the preview.
-      await refresh();
-      reloadPreview();
+      const receipt = await sendStoreCommand(command, onEvent, controller.signal);
       if (!aliveRef.current) return;
-      const extraLines = recommendationChangeReason ? [recommendationChangeReason] : [];
-      settleGeneration(workingId, "draft", { firstBuild: opts?.firstBuild, extraLines });
-    } catch (err) {
-      if (!aliveRef.current) return;
-      if (generationController.signal.aborted) {
+      if (receipt.status === "installed") {
+        const current = dataRef.current;
+        if (current) setSnapshot(applyStoreReceipt(current, receipt));
+        setWelcomeVisible(false);
+        reloadPreview();
+        replaceMessage(workingId, {
+          id: workingId,
+          kind: "ai-text",
+          text: "Done. The change is in your preview.",
+          actions: receipt.undo ? [{
+            label: "Undo",
+            onClick: () => void executeCommand({ kind: "undo", ...receipt.undo! }, "Undo"),
+          }] : undefined,
+        });
         setBuildPhase(null);
-        setMessages((messages) => messages.map((message) => message.id === workingId
-          ? { id: workingId, kind: "ai-text", text: "Stopped. Your current storefront draft was not changed." }
-          : message));
-        return;
-      }
-      const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";
-      failBuild(workingId, msg, { toast: true });
-    } finally {
-      buildingRef.current = false;
-      finishGeneration(generationController);
-    }
-  };
-
-  // --- deterministic chat edits (vibe / accent / headline) --------------------
-  const snapshotNow = (): { vibe: StudioVibe; accent: string; hero: StudioHero } => ({
-    vibe: data?.settings.vibe ?? "minimal",
-    accent: data?.settings.accent ?? "#0f766e",
-    hero: data?.hero ?? DEFAULT_HERO,
-  });
-
-  const runUndo = async (snap: { vibe: StudioVibe; accent: string; hero: StudioHero }) => {
-    if (chatBusyRef.current) return;
-    setChatBusyBoth(true);
-    try {
-      // Sequential, not parallel: vibe and accent both read-modify-write the
-      // same store_settings row, so running them concurrently risks a lost
-      // update.
-      await setStudioVibe(snap.vibe);
-      await setStudioAccent(snap.accent);
-      await saveStudioHero(snap.hero);
-      await refresh();
-      reloadPreview();
-      if (!aliveRef.current) return;
-      pushMsg({ id: newId(), kind: "ai-text", text: "Undone." });
-    } catch (err) {
-      if (!aliveRef.current) return;
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't undo that.";
-      toast(msg, "warn", "critical");
-    } finally {
-      if (aliveRef.current) setChatBusyBoth(false);
-    }
-  };
-
-  const withUndo = (snap: { vibe: StudioVibe; accent: string; hero: StudioHero }): ChatAction[] => [
-    { label: "Undo", onClick: () => void runUndo(snap) },
-  ];
-
-  const runDeterministic = async (
-    intent: Extract<ChatIntent, { kind: "vibe" | "accent" | "hero" }>,
-    opts?: { pageLabel?: string },
-  ) => {
-    if (chatBusyRef.current) return;
-    const snap = snapshotNow();
-    setChatBusyBoth(true);
-    const thinkId = newId();
-    pushMsg({ id: thinkId, kind: "ai-thinking" });
-    try {
-      let replyText: string;
-      if (intent.kind === "vibe") {
-        await queueMutation(() => setStudioVibe(intent.vibe));
-        replyText = `Switched to a ${VIBE_LABEL[intent.vibe]} look. It's in the preview now.`;
-      } else if (intent.kind === "accent") {
-        await queueMutation(() => setStudioAccent(intent.color));
-        replyText = "Updated the accent color. It's in the preview now.";
+        try {
+          await refresh();
+        } catch {
+          toast("The preview changed, but the latest store details could not be refreshed.", "warn");
+        }
+      } else if (receipt.status === "published") {
+        const current = dataRef.current;
+        if (current) setSnapshot(applyStoreReceipt(current, receipt));
+        replaceMessage(workingId, { id: workingId, kind: "ai-text", text: "Published. Opening your storefront." });
+        setBuildPhase(null);
+        window.location.assign(dataRef.current?.storefrontUrl ?? "/storefront");
       } else {
-        const saved = await queueMutation(() => saveStudioHero({ ...(data?.hero ?? DEFAULT_HERO), headline: intent.headline }));
-        replyText = `Updated the headline to "${saved.headline}".`;
+        replaceMessage(workingId, { id: workingId, kind: "ai-text", text: receipt.message });
+        setWelcomeTerminalMessage(receipt.message);
+        setBuildPhase(null);
       }
-      await refresh();
-      reloadPreview();
+    } catch (error) {
       if (!aliveRef.current) return;
-      const prefix = opts?.pageLabel ? `You marked up the ${opts.pageLabel} page: ` : "";
-      setMessages((m) =>
-        m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: prefix + replyText, actions: withUndo(snap) } : x)),
-      );
-    } catch (err) {
-      if (!aliveRef.current) return;
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that change.";
-      setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : x)));
-    } finally {
-      if (aliveRef.current) setChatBusyBoth(false);
-    }
-  };
-
-  const runBundleUndo = async (undo: { targetVersionId: string; expectedDraftVersionId: string }) => {
-    if (chatBusyRef.current || buildingRef.current) return;
-    setChatBusyBoth(true);
-    try {
-      await undoStudioStorefrontEdit(undo);
-      await refresh();
-      reloadPreview();
-      if (aliveRef.current) pushMsg({ id: newId(), kind: "ai-text", text: "Undone. The previous complete storefront version is back in preview." });
-    } catch (err) {
-      if (!aliveRef.current) return;
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't undo that storefront change.";
-      toast(msg, "warn", "critical");
-    } finally {
-      if (aliveRef.current) setChatBusyBoth(false);
-    }
-  };
-
-  const runRuntime1Edit = async (text: string, context?: PreviewEditContext) => {
-    const expectedDraftVersionId = data?.release.draftVersionId;
-    if (!expectedDraftVersionId || chatBusyRef.current || buildingRef.current) return;
-    setChatBusyBoth(true);
-    const generationController = beginGeneration();
-    const thinkId = newId();
-    pushMsg({ id: thinkId, kind: "ai-working", phase: { kind: "editing", stage: "compiling" } });
-    try {
-      const result = await editStudioStorefrontStream(
-        { prompt: text, expectedDraftVersionId, model: designModel, ...(context ? { context } : {}) },
-        (stage) => {
-          if (!aliveRef.current) return;
-          setMessages((messages) => messages.map((message) => message.id === thinkId
-            ? { id: thinkId, kind: "ai-working", phase: { kind: "editing", stage } }
-            : message));
-        },
-        generationController.signal,
-      );
-      if (result.status === "start_over") {
-        setMessages((messages) => messages.filter((message) => message.id !== thinkId));
-        setChatBusyBoth(false);
-        finishGeneration(generationController);
-        await runBuild({ prompt: text, mode: result.mode });
-        return;
+      if (isAbort(error) || controller.signal.aborted) {
+        const message = "Stopped. Check the preview before sending another change.";
+        try {
+          await refresh();
+          reloadPreview();
+        } catch {
+          // The neutral message remains truthful when reconciliation is unavailable.
+        }
+        replaceMessage(workingId, { id: workingId, kind: "ai-text", text: message });
+        setWelcomeTerminalMessage(message);
+      } else {
+        const message = error instanceof DashboardApiError ? error.message : "The storefront change could not be completed.";
+        replaceMessage(workingId, { id: workingId, kind: "ai-text", text: message });
+        setWelcomeTerminalMessage(message);
+        if (error instanceof DashboardApiError && error.code === "storefront_command_conflict") {
+          try { await refresh(); reloadPreview(); } catch { /* The original conflict remains the useful error. */ }
+        }
       }
-      await refresh();
-      reloadPreview();
-      if (!aliveRef.current) return;
-      const routeSummary = result.changedScope.routes.length > 0
-        ? ` Updated ${result.changedScope.routes.join(", ")}.`
-        : " Updated the store-wide design system.";
-      const provenance = result.detachedFromRecipe
-        ? " This version is now a custom-derived design; the rest of the store was preserved."
-        : " The recipe remains linked, so its safe overrides are still editable.";
-      setMessages((messages) => messages.map((message) => message.id === thinkId ? {
-        id: thinkId,
-        kind: "ai-text",
-        text: `Done.${routeSummary}${provenance}`,
-        actions: [{ label: "Undo", onClick: () => void runBundleUndo(result.undo) }],
-      } : message));
-    } catch (err) {
-      if (!aliveRef.current) return;
-      if (generationController.signal.aborted) {
-        setMessages((messages) => messages.map((message) => message.id === thinkId
-          ? { id: thinkId, kind: "ai-text", text: "Stopped. Your current storefront draft was not changed." }
-          : message));
-        return;
+      setBuildPhase(null);
+    } finally {
+      if (commandControllerRef.current === controller) commandControllerRef.current = null;
+      busyRef.current = false;
+      if (aliveRef.current) {
+        setBusy(false);
+        setPublishing(false);
+        setStoppable(false);
       }
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that storefront change.";
-      setMessages((messages) => messages.map((message) => message.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : message));
-    } finally {
-      if (aliveRef.current) setChatBusyBoth(false);
-      finishGeneration(generationController);
     }
   };
 
-  const runExperiment = async (expKind: StudioExperimentKind) => {
-    if (chatBusyRef.current) return;
-    setChatBusyBoth(true);
-    const thinkId = newId();
-    pushMsg({ id: thinkId, kind: "ai-thinking" });
-    try {
-      const exp = await startStoreExperiment({ kind: expKind });
-      if (!aliveRef.current) return;
-      setData((d) => (d ? { ...d, experiment: exp } : d));
-      setMessages((m) =>
-        m.map((x) =>
-          x.id === thinkId
-            ? {
-                id: thinkId,
-                kind: "ai-text",
-                text: `Started a test on your ${exp.name}. ${exp.why} I'll let you know how it's doing; check the pill up top.`,
-              }
-            : x,
-        ),
-      );
-    } catch (err) {
-      if (!aliveRef.current) return;
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't start a test right now.";
-      setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : x)));
-    } finally {
-      if (aliveRef.current) setChatBusyBoth(false);
-    }
-  };
-
-  const runChatIntent = (intent: ChatIntent) => {
-    if (data?.release.draftRuntime === 1 && data.release.draftVersionId && intent.kind !== "experiment") {
-      const instruction = intent.kind === "vibe"
-        ? `Make the storefront ${intent.vibe}`
-        : intent.kind === "accent"
-          ? `Make the accent ${intent.color}`
-          : intent.kind === "hero"
-            ? `Change the home headline to "${intent.headline}"`
-            : intent.brief;
-      void runRuntime1Edit(instruction);
-      return;
-    }
-    if (isDeterministicChatIntent(intent)) {
-      void runDeterministic(intent);
-    } else if (intent.kind === "experiment") {
-      void runExperiment(intent.expKind);
-    } else {
-      void runBuild(intent.brief);
-    }
+  const runPrompt = (text: string, userText = text) => {
+    const normalized = text.trim();
+    if (!normalized) return;
+    void executeCommand({
+      kind: "prompt",
+      prompt: normalized,
+      expectedDraftVersionId: dataRef.current?.release.draftVersionId ?? null,
+    }, userText);
   };
 
   const onComposerSend = () => {
-    if (chatBusyRef.current || buildingRef.current || attachingRef.current) return;
     const text = prompt.trim();
-    const staged = attachments;
-    // No attachments → today's exact text-only path, untouched.
-    if (staged.length === 0) {
-      if (!text) return;
-      setPrompt("");
-      pushMsg({ id: newId(), kind: "user-text", text });
-      if (data?.release.draftRuntime === 1 && data.release.draftVersionId) {
-        void runRuntime1Edit(text, /\b(?:this|that|selected|here)\b/i.test(text) ? previewEditContext : undefined);
-        return;
-      }
-      runChatIntent(parseChatIntent(text));
-      return;
-    }
-    // Attachments present → they travel with the prompt via the multipart route;
-    // deterministic vibe/accent/hero parsing does NOT apply. Show one image
-    // bubble per file, then the text, then clear the composer + chips. The File
-    // refs are captured in `files` so a needs_intent quick-reply can resubmit them.
-    const files = staged.map((a) => a.file);
-    for (const f of files) pushMsg({ id: newId(), kind: "user-image", imageUrl: URL.createObjectURL(f), caption: f.name });
-    if (text) pushMsg({ id: newId(), kind: "user-text", text });
+    if (!text || busyRef.current) return;
     setPrompt("");
-    clearStagedAttachments();
-    if (text) {
-      // Text + images → let the model decide what the images are for.
-      void runAttachmentBuild(text, files);
-    } else {
-      // Image-only → never spend without knowing intent; ask first.
-      pushMsg({
-        id: newId(),
-        kind: "ai-text",
-        text: "Want me to add these as products, or use them as a design reference?",
-        actions: attachmentIntentActions("", files),
-      });
-    }
+    runPrompt(text);
   };
 
-  // --- markup: draw on the preview, note it, send to chat ---------------------
   const exitMarkup = () => {
     setMarkupOn(false);
     setStrokes([]);
@@ -683,406 +300,75 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setNoteOpen(false);
     setNoteText("");
   };
-
-  const onToggleMarkup = () => {
+  const onPageChange = (next: PageKey) => {
     if (markupOn) exitMarkup();
-    else setMarkupOn(true);
+    setPage(next);
   };
-
-  const onPageChange = (p: PageKey) => {
-    if (markupOn) exitMarkup(); // stroke coords are relative to the frame; a page swap invalidates them
-    setPage(p);
-    setPreviewEditContext(undefined);
-  };
-  const onDeviceChange = (d: Device) => {
+  const onDeviceChange = (next: Device) => {
     if (markupOn) exitMarkup();
-    setDevice(d);
+    setDevice(next);
   };
-
-  const onDrawStart = (e: ReactPointerEvent<HTMLButtonElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const p = pctPoint(e);
-    drawing.current = [`${p.x.toFixed(2)} ${p.y.toFixed(2)}`];
-    setStrokes((s) => [...s, `M ${p.x.toFixed(2)} ${p.y.toFixed(2)}`]);
+  const onDrawStart = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const point = pctPoint(event);
+    drawing.current = [`${point.x.toFixed(2)} ${point.y.toFixed(2)}`];
+    setStrokes((current) => [...current, `M ${point.x.toFixed(2)} ${point.y.toFixed(2)}`]);
   };
-  const onDrawMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+  const onDrawMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (!drawing.current) return;
-    const p = pctPoint(e);
-    drawing.current.push(`${p.x.toFixed(2)} ${p.y.toFixed(2)}`);
-    const pts = drawing.current;
-    const d = `M ${pts[0]}` + pts.slice(1).map((pt) => ` L ${pt}`).join("");
-    setStrokes((s) => [...s.slice(0, -1), d]);
+    const point = pctPoint(event);
+    drawing.current.push(`${point.x.toFixed(2)} ${point.y.toFixed(2)}`);
+    const points = drawing.current;
+    const path = `M ${points[0]}${points.slice(1).map((item) => ` L ${item}`).join("")}`;
+    setStrokes((current) => [...current.slice(0, -1), path]);
   };
   const onDrawEnd = () => {
     if (drawing.current && strokes.length > 0) setNoteOpen(true);
     drawing.current = null;
   };
-
   const submitMarkupNote = () => {
     const note = noteText.trim();
     if (!note) return;
-    const pageLabel = PAGE_LABEL[page] ?? "store";
-    const intent = parseChatIntent(note, "note");
-    pushMsg({ id: newId(), kind: "user-text", text: `[Marked up the ${pageLabel} page] ${note}` });
+    const userText = `[Marked up the ${PAGE_LABEL[page] ?? "store"} page] ${note}`;
     exitMarkup();
-    if (data?.release.draftRuntime === 1 && data.release.draftVersionId) {
-      void runRuntime1Edit(note, previewEditContext);
-      return;
-    }
-    if (isDeterministicChatIntent(intent)) {
-      void runDeterministic(intent, { pageLabel });
-    } else {
-      // A markup scribble is a narrower channel than the composer: an
-      // unmatched note reads as "noted", never a full rebuild or a test.
-      pushMsg({
-        id: newId(),
-        kind: "ai-text",
-        text: `Noted on the ${pageLabel} page: "${note}". I'll keep it in mind; nothing's changed yet.`,
-      });
-    }
+    runPrompt(note, userText);
   };
 
-  // --- composer attachments: stage, then route on send ------------------------
-  // Screen picks against the mirrored server caps (pure planStagedAttachments),
-  // report every rejection in chat (rule 12), and stage the survivors as chips.
-  const onAttachFiles = (allFiles: File[]) => {
-    const plan = planStagedAttachments(allFiles, attachments.length);
-    if (plan.skipped.length > 0) {
-      pushMsg({
-        id: newId(),
-        kind: "ai-text",
-        text: `Skipped ${plan.skipped.map((f) => `"${f.name}"`).join(", ")} — I can only use PNG, JPEG, WebP or GIF images right now.`,
-      });
-    }
-    if (plan.oversize.length > 0) {
-      pushMsg({
-        id: newId(),
-        kind: "ai-text",
-        // "under 3.75 MB" is the merchant-facing phrasing of MAX_ATTACHMENT_BYTES, matching the server's message.
-        text: `${plan.oversize.map((f) => `"${f.name}"`).join(", ")} ${plan.oversize.length === 1 ? "is" : "are"} too large — attach images under 3.75 MB.`,
-      });
-    }
-    if (plan.overflow > 0) {
-      pushMsg({
-        id: newId(),
-        kind: "ai-text",
-        text:
-          plan.accepted.length > 0
-            ? `You can attach up to 4 images at a time, so I kept the first ${plan.accepted.length}.`
-            : "You already have 4 images attached. Remove one to add another.",
-      });
-    }
-    if (plan.accepted.length === 0) return;
-    const staged = plan.accepted.map((file) => ({ id: crypto.randomUUID(), file, url: URL.createObjectURL(file) }));
-    setAttachments((prev) => [...prev, ...staged]);
+  const onPublishClick = () => {
+    const snapshot = dataRef.current;
+    if (!snapshot?.release.draftVersionId || busyRef.current) return;
+    const pieces = missingPieces(snapshot);
+    if (pieces.length > 0) setConfirmingPublish(true);
+    else void executeCommand({ kind: "publish", expectedDraftVersionId: snapshot.release.draftVersionId }, "Publish");
   };
-
-  const onRemoveAttachment = (id: string) => {
-    setAttachments((prev) => {
-      const found = prev.find((a) => a.id === id);
-      if (found) URL.revokeObjectURL(found.url);
-      return prev.filter((a) => a.id !== id);
-    });
-  };
-
-  // Revoke the staged chips' thumbnail URLs and clear them. The user-image
-  // bubbles get their OWN long-lived URLs at send time, so this never touches
-  // anything the thread is still showing.
-  const clearStagedAttachments = () => {
-    setAttachments((prev) => {
-      for (const a of prev) URL.revokeObjectURL(a.url);
-      return [];
-    });
-  };
-
-  // One honest chat line per server-created product entry (StudioAddedProduct):
-  // created / image-attach failed / create failed.
-  const productLine = (p: StudioAddedProduct): string => {
-    if (p.error) return `Couldn't add "${p.title}": ${p.error}.`;
-    if (p.imageError) return `Added draft "${p.title}", but its image failed to upload. Add one in Products.`;
-    return `Added "${p.title}" as a draft product.`;
-  };
-
-  const toastProductFailures = (failedCount: number, total: number) => {
-    const shortSummary =
-      failedCount === total
-        ? "Couldn't add those images. See chat for details."
-        : `${failedCount} of ${total} images had a problem. See chat for details.`;
-    toast(shortSummary, "warn", "critical");
-  };
-
-  // Add held images as draft products, client-side (the "Add as products" reply).
-  // Extracted from the old auto-convert path so its per-item messaging, partial-
-  // failure toast and refresh live in one place — never silently drops an item.
-  const runAddProductsFromImages = async (files: File[]) => {
-    if (attachingRef.current) {
-      toast("Still adding the previous images. Try again in a moment.");
-      return;
-    }
-    if (chatBusyRef.current || buildingRef.current) return;
-    setAttachingBoth(true);
-    // Everything after the guard sits in one try/finally so EVERY exit (the
-    // unmount early-return included) releases the ref — a stuck true would
-    // permanently dead-end the quick-reply.
-    try {
-      const results = await Promise.allSettled(files.map((file) => addProductFromImage(file)));
-      if (!aliveRef.current) return;
-      const lines = results.map((r, i) => {
-        if (r.status === "fulfilled" && !r.value.imageError) return `Added "${r.value.title}" as a draft product.`;
-        if (r.status === "fulfilled") {
-          return `Added draft "${r.value.title}", but its image failed to upload. Add one in Products.`;
-        }
-        const msg = r.reason instanceof DashboardApiError ? r.reason.message : "upload failed";
-        return `Couldn't add "${files[i].name}": ${msg}.`;
-      });
-      pushMsg({ id: newId(), kind: "ai-text", text: lines.join(" ") });
-      const failedCount = results.filter((r) => r.status === "rejected" || (r.status === "fulfilled" && r.value.imageError)).length;
-      if (failedCount > 0) toastProductFailures(failedCount, results.length);
-      await refresh();
-      reloadPreview();
-    } finally {
-      attachingRef.current = false;
-      if (aliveRef.current) setAttaching(false);
-    }
-  };
-
-  // The two quick-reply buttons shown when intent is unresolved (an image-only
-  // send, or a needs_intent receipt). Reference resubmits WITH the original brief
-  // and an explicit intent, so the server skips re-classification (no loop).
-  const attachmentIntentActions = (brief: string, files: File[]): ChatAction[] => [
-    { label: "Add as products", kind: "primary", onClick: () => void runAddProductsFromImages(files) },
-    { label: "Use as design reference", onClick: () => void runAttachmentBuild(brief, files, "reference") },
-  ];
-
-  // Multipart generate: images travel WITH the brief. Reuses runBuild's lifecycle
-  // (working card + veil + settleGeneration), but the receipt can also be
-  // needs_intent (ask), products_added (drafts only), or products-then-generation-
-  // failure — each handled honestly rather than faked as a finished build.
-  const runAttachmentBuild = async (
-    brief: string,
-    files: File[],
-    intent?: "products" | "reference" | "both",
-  ) => {
-    if (buildingRef.current || chatBusyRef.current || attachingRef.current) return;
-    buildingRef.current = true;
-    const generationController = beginGeneration();
-    const runningPhase: BuildPhase = { kind: "running" };
-    setBuildPhase(runningPhase);
-    const workingId = newId();
-    pushMsg({ id: workingId, kind: "ai-working", phase: runningPhase });
-    // Once the server has answered, drafts may already be written — a retry from
-    // that point would re-classify and mint duplicates, so "Try again" is only
-    // offered while the failure is provably pre-receipt.
-    let gotReceipt = false;
-    try {
-      const receipt: StudioGenerateReceipt = await generateStudioStoreWithImages(
-        brief.trim(),
-        files,
-        designModelRef.current,
-        intent,
-        generationController.signal,
-      );
-      gotReceipt = true;
-      await refresh();
-      reloadPreview();
-      if (!aliveRef.current) return;
-
-      // Nothing ran — the model couldn't tell what the images were for. Drop the
-      // working card and ask, holding the same files for the quick-reply resubmit.
-      if (receipt.status === "needs_intent") {
-        clearBuildCard(workingId);
-        pushMsg({
-          id: newId(),
-          kind: "ai-text",
-          text: "I couldn't tell what to do with those images. Add them as products, or use them as a design reference?",
-          actions: attachmentIntentActions(brief, files),
-        });
-        return;
-      }
-
-      const products = receipt.products ?? [];
-      const productLines = products.map(productLine);
-      const failedCount = products.filter((p) => p.error || p.imageError).length;
-
-      // Drafts added, no generation ran.
-      if (receipt.status === "products_added") {
-        clearBuildCard(workingId);
-        if (productLines.length > 0) pushMsg({ id: newId(), kind: "ai-text", text: productLines.join(" ") });
-        if (failedCount > 0) toastProductFailures(failedCount, products.length);
-        return;
-      }
-
-      // Products were written, THEN generation threw (no runId): report both facts.
-      // The created-products fact must persist as a chat bubble — a merchant who
-      // misses it and re-attaches the same images mints duplicate products.
-      if (receipt.status === "failed" && !receipt.runId) {
-        failBuild(
-          workingId,
-          productLines.length > 0
-            ? `${productLines.join(" ")} But the design generation failed — try Build again.`
-            : "The design generation failed — try Build again.",
-          { toast: true, bubble: productLines.length > 0 },
-        );
-        return;
-      }
-
-      // A generation ran (draft / no_products / soft-degraded failed-with-runId).
-      const extraLines = [...productLines];
-      if (receipt.referencesUnread) {
-        extraLines.push("I couldn't read the attached reference images, so the design was generated without them.");
-      }
-      settleGeneration(workingId, receipt.status, { extraLines });
-      if (failedCount > 0) toastProductFailures(failedCount, products.length);
-    } catch (err) {
-      if (!aliveRef.current) return;
-      if (generationController.signal.aborted) {
-        setBuildPhase(null);
-        setMessages((messages) => messages.map((message) => message.id === workingId
-          ? { id: workingId, kind: "ai-text", text: "Stopped. Your current storefront draft was not changed." }
-          : message));
-        return;
-      }
-      const msg = err instanceof DashboardApiError ? err.message : "Store generation failed.";
-      // The chips were cleared at send, so a transient failure (429/network/502)
-      // must re-offer the held files — otherwise the merchant re-picks everything.
-      failBuild(workingId, msg, {
-        toast: true,
-        ...(gotReceipt
-          ? {}
-          : { actions: [{ label: "Try again", kind: "primary", onClick: () => void runAttachmentBuild(brief, files, intent) }] }),
-      });
-    } finally {
-      buildingRef.current = false;
-      finishGeneration(generationController);
-    }
-  };
-
-  // --- welcome overlay actions --------------------------------------------------
-  const onWelcomeBuildPlain = () => void runBuild({ prompt: "", mode: "auto" }, { firstBuild: true });
-
-  const onWelcomeBuildDesign = (request: StoreDesignRequest, recommendation?: StoreDesignResolution) => {
-    void runBuild(request, { firstBuild: true, recommendation });
+  const publishAnyway = () => {
+    const draftVersionId = dataRef.current?.release.draftVersionId;
+    if (!draftVersionId) return;
+    setConfirmingPublish(false);
+    void executeCommand({ kind: "publish", expectedDraftVersionId: draftVersionId }, "Publish");
   };
 
   const onWelcomeAddProduct = async (line: string) => {
     const parsed = parseProductLine(line);
-    // A priced product goes live in the catalog so the first build can design
-    // around it (the whole point of this branch); without a price it stays a
-    // draft, since the storefront can't sell it yet. Active physical products
-    // must ship-complete (validate.ts), so the one-liner gets standard small-
-    // parcel defaults the merchant can correct in Products.
     const active = parsed.priceCents != null;
     try {
       await saveProduct({
         title: parsed.title,
         status: active ? "active" : "draft",
-        variants: [
-          active
-            ? { retailPriceCents: parsed.priceCents ?? undefined, weightGrams: 500, lengthMm: 200, widthMm: 150, heightMm: 100 }
-            : { retailPriceCents: parsed.priceCents ?? undefined },
-        ],
+        variants: [active
+          ? { retailPriceCents: parsed.priceCents ?? undefined, weightGrams: 500, lengthMm: 200, widthMm: 150, heightMm: 100 }
+          : { retailPriceCents: parsed.priceCents ?? undefined }],
       });
-      toast(
-        active
-          ? `"${parsed.title}" added with standard parcel shipping defaults; adjust in Products.`
-          : `Draft product "${parsed.title}" created.`,
-      );
+      toast(active
+        ? `"${parsed.title}" added with standard parcel shipping defaults; adjust in Products.`
+        : `Draft product "${parsed.title}" created.`);
       await refresh();
-      void runBuild({ prompt: "", mode: "auto" }, { firstBuild: true });
-    } catch (err) {
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't create that product.";
-      toast(msg, "warn", "critical");
+      runPrompt("Build my store");
+    } catch (error) {
+      toast(error instanceof DashboardApiError ? error.message : "Couldn't create that product.", "warn", "critical");
     }
   };
 
-  // --- publish ------------------------------------------------------------------
-  const openStorefront = () => {
-    if (data) window.open(data.storefrontUrl, "_blank", "noopener");
-  };
-
-  const runPublish = async () => {
-    if (!data || publishingRef.current) return;
-    setConfirmingPublish(false);
-    setPublishingBoth(true);
-    try {
-      // Flush any in-flight deterministic edit first, so the published
-      // snapshot matches the last requested vibe/accent/hero change.
-      await mutationChain.current;
-      const { storefrontUrl } = await publishStudioStore();
-      if (!aliveRef.current) return;
-      window.location.assign(storefrontUrl);
-    } catch (err) {
-      if (!aliveRef.current) return;
-      const msg = err instanceof DashboardApiError ? err.message : "Could not publish.";
-      toast(msg, "warn", "critical");
-    } finally {
-      if (aliveRef.current) setPublishingBoth(false);
-    }
-  };
-
-  const publishPieces: MissingPiece[] = data ? missingPieces(data) : [];
-  const onPublishClick = () => {
-    if (!data || publishingRef.current) return;
-    if (publishPieces.length > 0) {
-      setConfirmingPublish(true);
-      return;
-    }
-    void runPublish();
-  };
-
-  const onDecideExperiment = async (decision: "ship" | "keep" | "stop") => {
-    if (!data?.experiment || decidingExperiment) return;
-    setDecidingExperiment(true);
-    try {
-      const exp = await decideStoreExperiment(data.experiment.id, decision);
-      if (!aliveRef.current) return;
-      setData((d) => (d ? { ...d, experiment: exp } : d));
-      reloadPreview();
-      const text =
-        decision === "ship"
-          ? `Shipped: the winning ${exp.name} is live for everyone.`
-          : decision === "keep"
-            ? "Kept the original. The idea stays in my back pocket."
-            : "Stopped the test early.";
-      pushMsg({ id: newId(), kind: "ai-text", text });
-    } catch (err) {
-      if (!aliveRef.current) return;
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't update the test.";
-      toast(msg, "warn", "critical");
-    } finally {
-      if (aliveRef.current) setDecidingExperiment(false);
-    }
-  };
-
-  // Section mutations: optimistic-free (each returns the authoritative new order),
-  // one in flight at a time, preview reloaded so the edit is visible immediately.
-  const [sectionBusyId, setSectionBusyId] = useState<string | null>(null);
-  const runSectionOp = async (id: string, op: () => Promise<StudioSection[]>, doneText?: string) => {
-    if (sectionBusyId) return;
-    setSectionBusyId(id);
-    try {
-      const sections = await op();
-      if (!aliveRef.current) return;
-      setData((d) => (d ? { ...d, sections, hasDraft: true } : d));
-      reloadPreview();
-      if (doneText) pushMsg({ id: newId(), kind: "ai-text", text: doneText });
-    } catch (err) {
-      if (!aliveRef.current) return;
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't update that section.";
-      toast(msg, "warn", "critical");
-      // Some refusals change server state anyway (a legacy block being split apart, a page
-      // that moved under the edit) — refetch so the panel and preview match reality.
-      void refresh().then(reloadPreview).catch(() => {});
-    } finally {
-      if (aliveRef.current) setSectionBusyId(null);
-    }
-  };
-  const onSectionMove = (id: string, direction: "up" | "down") => void runSectionOp(id, () => moveStoreSection(id, direction));
-  const onSectionRemove = (id: string) => void runSectionOp(id, () => removeStoreSection(id), "Section removed. Publish when you like the page.");
-  const onSectionRegenerate = (id: string, instruction?: string) =>
-    void runSectionOp(id, () => regenerateStoreSection(id, instruction), "Redid that section. It is in the preview now, publish when you like it.");
-
-  // --- render ----------------------------------------------------------------
   if (!data) {
     return (
       <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
@@ -1091,11 +377,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
             <Placeholder
               icon="store"
               title={loading ? "Loading your store" : "Store unavailable"}
-              sub={
-                loading
-                  ? "Reading your storefront draft and brand kit."
-                  : "Could not load the studio just now. Refresh to try again."
-              }
+              sub={loading ? "Reading your storefront." : "Could not load the studio just now. Refresh to try again."}
             />
           </div>
         </div>
@@ -1111,8 +393,8 @@ export default function Store({ app }: { app: DashboardCtx }) {
     importInProgress: porting,
   });
   const previewSrc = `${PREVIEW_PATH}?page=${page}&v=${previewVersion}`;
-  // Before the first build → invite a prompt; after one build the full studio takes over.
   const promptCanvas = showPromptCanvas(data);
+  const publishPieces: MissingPiece[] = missingPieces(data);
 
   return (
     <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
@@ -1122,169 +404,136 @@ export default function Store({ app }: { app: DashboardCtx }) {
           prompt={prompt}
           onPromptChange={setPrompt}
           onSend={onComposerSend}
-          onStop={stopGeneration}
-          busy={chatBusy || building}
+          onStop={() => commandControllerRef.current?.abort(new DOMException("Stopped", "AbortError"))}
+          busy={busy}
           stoppable={stoppable}
-          attaching={attaching}
-          onAttachFiles={onAttachFiles}
-          attachments={attachments.map((a) => ({ id: a.id, url: a.url, name: a.file.name }))}
-          onRemoveAttachment={onRemoveAttachment}
-          model={designModel}
-          onModelChange={setDesignModelBoth}
         />
-
         <div className="cd-stage">
           {promptCanvas ? (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Placeholder
-                icon="sparkle"
-                title="Prompt anything"
-                sub="Tell Calderyn what to build and it appears here."
-              />
+              <Placeholder icon="sparkle" title="Prompt anything" sub="Tell Calderyn what to build and it appears here." />
             </div>
           ) : (
             <>
-          <TopBar
-            ref={badgeRef}
-            storefrontUrl={data.storefrontUrl}
-            onOpenStorefront={openStorefront}
-            hasPublished={data.hasPublished}
-            building={building}
-            experiment={data.experiment}
-            onDecideExperiment={(d) => void onDecideExperiment(d)}
-            decidingExperiment={decidingExperiment}
-            page={page}
-            onPageChange={onPageChange}
-            device={device}
-            onDeviceChange={onDeviceChange}
-            markupOn={markupOn}
-            onToggleMarkup={onToggleMarkup}
-            onPublish={onPublishClick}
-            publishing={publishing}
-          />
-
-          <div className="cd-stage-page">
-            <div className="cd-canvas-frame-wrap" data-device={device}>
-              <iframe
-                key="store-preview"
-                className="cd-canvas-frame"
-                title="Store preview"
-                src={previewSrc}
-                sandbox="allow-same-origin allow-scripts allow-popups"
+              <TopBar
+                ref={badgeRef}
+                storefrontUrl={data.storefrontUrl}
+                onOpenStorefront={() => window.open(data.storefrontUrl, "_blank", "noopener")}
+                hasPublished={data.hasPublished}
+                building={building}
+                page={page}
+                onPageChange={onPageChange}
+                device={device}
+                onDeviceChange={onDeviceChange}
+                markupOn={markupOn}
+                onToggleMarkup={() => markupOn ? exitMarkup() : setMarkupOn(true)}
+                onPublish={onPublishClick}
+                publishing={publishing}
+                canPublish={data.release.draftVersionId != null}
               />
-              {showLegacySectionsPanel({ page, building, draftRuntime: data.release.draftRuntime }) && (
-                <SectionsPanel
-                  sections={data.sections ?? []}
-                  busyId={sectionBusyId}
-                  onMove={onSectionMove}
-                  onRemove={onSectionRemove}
-                  onRegenerate={onSectionRegenerate}
-                />
-              )}
-              <div className="cd-canvas-veil" data-on={building ? "1" : "0"} aria-hidden="true">
-                {/* Branded storefront skeleton: paints instantly on Build so a generation reads as
-                    the store forming, not a dimmed stale page. Tinted with the shop's primary. */}
-                <div className="cd-canvas-skel" style={{ ["--cd-skel" as string]: data.settings.accent }}>
-                  <div className="cd-canvas-skel__hero" />
-                  <div className="cd-canvas-skel__row" />
-                  <div className="cd-canvas-skel__row cd-canvas-skel__row--short" />
-                  <div className="cd-canvas-skel__grid"><span /><span /><span /></div>
+              <div className="cd-stage-page">
+                <div className="cd-canvas-frame-wrap" data-device={device}>
+                  <iframe
+                    key="store-preview"
+                    className="cd-canvas-frame"
+                    title="Store preview"
+                    src={previewSrc}
+                    sandbox="allow-same-origin allow-scripts allow-popups"
+                  />
+                  <div className="cd-canvas-veil" data-on={building ? "1" : "0"} aria-hidden="true">
+                    <div className="cd-canvas-skel" style={{ ["--cd-skel" as string]: data.settings.accent }}>
+                      <div className="cd-canvas-skel__hero" />
+                      <div className="cd-canvas-skel__row" />
+                      <div className="cd-canvas-skel__row cd-canvas-skel__row--short" />
+                      <div className="cd-canvas-skel__grid"><span /><span /><span /></div>
+                    </div>
+                  </div>
+                  <svg className="cd-mark-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                    {strokes.map((path, index) => (
+                      <path
+                        key={index}
+                        d={path}
+                        fill="none"
+                        stroke="var(--red)"
+                        strokeWidth={1.6}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    ))}
+                  </svg>
+                  {markupOn ? (
+                    <button
+                      type="button"
+                      className="cd-mark-capture"
+                      aria-label="Draw on the page"
+                      onPointerDown={onDrawStart}
+                      onPointerMove={onDrawMove}
+                      onPointerUp={onDrawEnd}
+                      onPointerCancel={onDrawEnd}
+                    />
+                  ) : null}
+                  {noteOpen ? (
+                    <div className="cd-mark-note">
+                      <input
+                        autoFocus
+                        value={noteText}
+                        onChange={(event) => setNoteText(event.target.value)}
+                        onKeyDown={(event: ReactKeyboardEvent<HTMLInputElement>) => {
+                          if (event.key === "Enter" && noteText.trim()) submitMarkupNote();
+                        }}
+                        placeholder="What should change here?"
+                        aria-label="Markup note"
+                      />
+                      <Btn kind="primary" small onClick={submitMarkupNote}>Send</Btn>
+                    </div>
+                  ) : null}
+                  {confirmingPublish && publishPieces.length > 0 ? (
+                    <div className="cd-build-float" role="alertdialog" aria-label="Before you publish">
+                      <div className="cd-buildlist">
+                        {publishPieces.map((piece) => (
+                          <div key={piece.key} className="cd-build-step">
+                            <span className="cd-build-dot" data-st="wait" style={{ background: "var(--orange)" }} />
+                            <div>
+                              <div className="cd-build-title">{piece.label}</div>
+                              <button
+                                type="button"
+                                className="cd-chip"
+                                style={{ marginTop: 6 }}
+                                onClick={() => {
+                                  setConfirmingPublish(false);
+                                  app.navigate(piece.screen);
+                                }}
+                              >
+                                {piece.action}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, padding: "0 18px 12px" }}>
+                        <Btn kind="primary" small onClick={publishAnyway} disabled={publishing || building}>Publish anyway</Btn>
+                        <Btn small onClick={() => setConfirmingPublish(false)}>Keep editing</Btn>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
-              <svg className="cd-mark-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                {strokes.map((d, i) => (
-                  <path
-                    key={i}
-                    d={d}
-                    fill="none"
-                    stroke="var(--red)"
-                    strokeWidth={1.6}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                ))}
-              </svg>
-              {markupOn && (
-                <button
-                  type="button"
-                  className="cd-mark-capture"
-                  aria-label="Draw on the page"
-                  onPointerDown={onDrawStart}
-                  onPointerMove={onDrawMove}
-                  onPointerUp={onDrawEnd}
-                  onPointerCancel={onDrawEnd}
-                />
-              )}
-              {noteOpen && (
-                <div className="cd-mark-note">
-                  <input
-                    autoFocus
-                    value={noteText}
-                    onChange={(e) => setNoteText(e.target.value)}
-                    onKeyDown={(e: ReactKeyboardEvent<HTMLInputElement>) => {
-                      if (e.key === "Enter" && noteText.trim()) submitMarkupNote();
-                    }}
-                    placeholder="What should change here?"
-                    aria-label="Markup note"
-                  />
-                  <Btn kind="primary" small onClick={submitMarkupNote}>
-                    Send
-                  </Btn>
-                </div>
-              )}
-
-              {confirmingPublish && publishPieces.length > 0 && (
-                <div className="cd-build-float" role="alertdialog" aria-label="Before you publish">
-                  <div className="cd-buildlist">
-                    {publishPieces.map((piece) => (
-                      <div key={piece.key} className="cd-build-step">
-                        <span className="cd-build-dot" data-st="wait" style={{ background: "var(--orange)" }} />
-                        <div>
-                          <div className="cd-build-title">{piece.label}</div>
-                          <button
-                            type="button"
-                            className="cd-chip"
-                            style={{ marginTop: 6 }}
-                            onClick={() => {
-                              setConfirmingPublish(false);
-                              app.navigate(piece.screen);
-                            }}
-                          >
-                            {piece.action}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, padding: "0 18px 12px" }}>
-                    <Btn kind="primary" small onClick={() => void runPublish()} disabled={publishing || building}>
-                      Publish anyway
-                    </Btn>
-                    <Btn small onClick={() => setConfirmingPublish(false)}>
-                      Keep editing
-                    </Btn>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
             </>
           )}
         </div>
-
-        {welcomeVisible && (
+        {welcomeVisible ? (
           <WelcomeOverlay
             authBase={app.authBase}
             branch={branch}
             importRun={importRun}
             buildPhase={buildPhase}
+            terminalMessage={welcomeTerminalMessage}
             productCount={data.productCount}
-            onBuildPlain={onWelcomeBuildPlain}
-            onBuildDesign={onWelcomeBuildDesign}
+            onBuildPrompt={runPrompt}
             onAddProduct={(line) => void onWelcomeAddProduct(line)}
           />
-        )}
+        ) : null}
       </div>
     </div>
   );

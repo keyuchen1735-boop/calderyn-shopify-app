@@ -1,69 +1,95 @@
-// Client fetchers for the Store studio surface. Kept in its own module (not
-// client.ts) so parallel surface work never collides on one file.
-import { apiGet, apiSend, apiSendForm, DashboardApiError, saveProduct, uploadProductImage } from "./client";
-import {
-  parseBuildEvent,
-  type BuildStage,
-  type Runtime1BuildStage,
-  type StudioBundleBuildReceipt,
-  type StudioState,
-  type StudioSettings,
-  type StudioHero,
-  type StudioProduct,
-  type StudioGeneration,
-  type StudioGenerationStatus,
-  type StudioGenerateReceipt,
-  type StudioAddedProduct,
-  type StudioDesignModel,
-  type StudioVibe,
-  type StudioExperiment,
-  type StudioExperimentReport,
-  type StudioExperimentState,
-  type StudioExperimentKind,
-  type StudioSection,
-} from "~/lib/storebuilder/studio-types";
-import type { StoreDesignRequest, StoreDesignResolution } from "~/lib/storefront-bundle/types";
-import type { PreviewEditContext, StorefrontEditReceipt, StorefrontEditStage, StorefrontStartOverReceipt } from "~/lib/storefront-edit/types";
+import { apiGet, DashboardApiError } from "./client";
+import type { StudioState } from "~/lib/storebuilder/studio-types";
+import type { StoreCommand, StoreCommandEvent, StoreCommandReceipt } from "~/lib/storefront-command/types";
 
-export type {
-  StudioState,
-  StudioSettings,
-  StudioHero,
-  StudioProduct,
-  StudioGeneration,
-  StudioGenerationStatus,
-  StudioGenerateReceipt,
-  StudioAddedProduct,
-  StudioDesignModel,
-  StudioVibe,
-  StudioExperiment,
-  StudioExperimentReport,
-  StudioExperimentState,
-  StudioSection,
-};
+export type { StudioState };
 
-export async function fetchStudio(): Promise<StudioState> {
+export async function fetchStore(): Promise<StudioState> {
   return apiGet<StudioState>("/dashboard/api/store");
 }
 
-/** Resolve prompt + current server-side catalog evidence without changing the store. */
-export async function resolveStudioDesign(request: StoreDesignRequest): Promise<StoreDesignResolution> {
-  return apiSend<StoreDesignResolution>("POST", "/dashboard/api/store/resolve", request);
+function abortReason(signal?: AbortSignal): Error {
+  return signal?.reason instanceof Error
+    ? signal.reason
+    : new DOMException("Stopped", "AbortError");
 }
 
-export async function editStudioStorefront(input: {
-  prompt: string;
-  expectedDraftVersionId: string;
-  context?: PreviewEditContext;
-}): Promise<StorefrontEditReceipt | StorefrontStartOverReceipt> {
-  return apiSend("POST", "/dashboard/api/store", { action: "edit", ...input });
+function receipt(value: unknown): StoreCommandReceipt | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.status === "unchanged" && typeof candidate.message === "string") {
+    return { status: "unchanged", message: candidate.message };
+  }
+  if (candidate.status === "published" && typeof candidate.versionId === "string") {
+    return { status: "published", versionId: candidate.versionId };
+  }
+  if (candidate.status !== "installed" || typeof candidate.versionId !== "string") return null;
+  if (candidate.undo === null) {
+    return { status: "installed", versionId: candidate.versionId, undo: null };
+  }
+  if (!candidate.undo || typeof candidate.undo !== "object" || Array.isArray(candidate.undo)) return null;
+  const undo = candidate.undo as Record<string, unknown>;
+  if (typeof undo.targetVersionId !== "string" || typeof undo.expectedDraftVersionId !== "string") return null;
+  return {
+    status: "installed",
+    versionId: candidate.versionId,
+    undo: { targetVersionId: undo.targetVersionId, expectedDraftVersionId: undo.expectedDraftVersionId },
+  };
 }
 
-export async function editStudioStorefrontStream(
-  input: { prompt: string; expectedDraftVersionId: string; context?: PreviewEditContext; model?: StudioDesignModel },
-  onStage: (stage: StorefrontEditStage) => void,
+function event(line: string): StoreCommandEvent {
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    throw new DashboardApiError(502, "storefront_command_stream_invalid", "The storefront response was invalid.");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new DashboardApiError(502, "storefront_command_stream_invalid", "The storefront response was invalid.");
+  }
+  const candidate = value as Record<string, unknown>;
+  if (["understanding", "preparing_products", "checking_preview"].includes(String(candidate.stage))) {
+    return { stage: candidate.stage as "understanding" | "preparing_products" | "checking_preview" };
+  }
+  if (candidate.stage === "ready") {
+    const parsedReceipt = receipt(candidate.receipt);
+    if (parsedReceipt) return { stage: "ready", receipt: parsedReceipt };
+  }
+  if (
+    candidate.stage === "error"
+    && typeof candidate.code === "string"
+    && typeof candidate.status === "number"
+    && typeof candidate.message === "string"
+  ) {
+    return {
+      stage: "error",
+      code: candidate.code,
+      status: candidate.status,
+      message: candidate.message,
+    };
+  }
+  throw new DashboardApiError(502, "storefront_command_stream_invalid", "The storefront response was invalid.");
+}
+
+async function httpError(response: Response): Promise<DashboardApiError> {
+  let body: { error?: unknown; message?: unknown } = {};
+  try {
+    body = await response.json() as typeof body;
+  } catch {
+    // Stable fallback below.
+  }
+  return new DashboardApiError(
+    response.status,
+    typeof body.error === "string" ? body.error : `http_${response.status}`,
+    typeof body.message === "string" ? body.message : "The storefront request failed.",
+  );
+}
+
+export async function sendStoreCommand(
+  command: StoreCommand,
+  onEvent: (event: StoreCommandEvent) => void | Promise<void>,
   signal?: AbortSignal,
-): Promise<StorefrontEditReceipt | StorefrontStartOverReceipt> {
+): Promise<StoreCommandReceipt> {
   let response: Response;
   try {
     response = await fetch("/dashboard/api/store", {
@@ -73,351 +99,58 @@ export async function editStudioStorefrontStream(
         "content-type": "application/json",
         ...(typeof location !== "undefined" ? { Origin: location.origin } : {}),
       },
-      body: JSON.stringify({ action: "edit", ...input }),
+      body: JSON.stringify(command),
       signal,
     });
-  } catch (error) {
-    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
-    throw new StudioStreamError(error instanceof Error ? error.message : "edit stream request failed");
+  } catch {
+    if (signal?.aborted) throw abortReason(signal);
+    throw new DashboardApiError(0, "storefront_command_network_error", "Could not reach the storefront service.");
   }
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
-    throw new DashboardApiError(response.status, body.error ?? "storefront_edit_failed", body.message ?? "Storefront edit failed.");
+  if (!response.ok) throw await httpError(response);
+  if (!response.body) {
+    throw new DashboardApiError(502, "storefront_command_stream_incomplete", "The storefront response ended early.");
   }
-  if (!response.body) throw new StudioStreamError("edit response had no stream body");
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  const handleLine = (line: string): StorefrontEditReceipt | StorefrontStartOverReceipt | undefined => {
-    let event: Record<string, unknown>;
-    try {
-      event = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      return undefined;
+  const handle = async (line: string): Promise<StoreCommandReceipt | null> => {
+    const parsed = event(line);
+    await onEvent(parsed);
+    if (parsed.stage === "error") {
+      throw new DashboardApiError(parsed.status, parsed.code, parsed.message);
     }
-    if (["compiling", "validating", "proofing", "installing"].includes(String(event.stage))) {
-      onStage(event.stage as StorefrontEditStage);
-    } else if (event.stage === "installed" && event.receipt && typeof event.receipt === "object") {
-      return event.receipt as StorefrontEditReceipt;
-    } else if (event.stage === "start_over") {
-      const receipt = event.receipt && typeof event.receipt === "object" ? event.receipt as Record<string, unknown> : null;
-      return { status: "start_over", mode: receipt?.mode === "auto" ? "auto" : "custom" };
-    } else if (event.stage === "error") {
-      throw new DashboardApiError(
-        typeof event.status === "number" ? event.status : 502,
-        typeof event.code === "string" ? event.code : "storefront_edit_failed",
-        typeof event.message === "string" ? event.message : "Storefront edit failed.",
-      );
-    }
-    return undefined;
+    return parsed.stage === "ready" ? parsed.receipt : null;
   };
+
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      let newline: number;
-      while ((newline = buffer.indexOf("\n")) !== -1) {
+      let newline = buffer.indexOf("\n");
+      while (newline !== -1) {
         const line = buffer.slice(0, newline).trim();
         buffer = buffer.slice(newline + 1);
-        if (!line) continue;
-        const receipt = handleLine(line);
-        if (receipt) return receipt;
+        if (line) {
+          const terminal = await handle(line);
+          if (terminal) {
+            await reader.cancel();
+            return terminal;
+          }
+        }
+        newline = buffer.indexOf("\n");
       }
     }
-    const receipt = buffer.trim() ? handleLine(buffer.trim()) : undefined;
-    if (receipt) return receipt;
+    buffer += decoder.decode();
+    if (buffer.trim()) {
+      const terminal = await handle(buffer.trim());
+      if (terminal) return terminal;
+    }
   } catch (error) {
     if (error instanceof DashboardApiError) throw error;
-    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
-    throw new StudioStreamError(error instanceof Error ? error.message : "edit stream read failed");
+    if (signal?.aborted) throw abortReason(signal);
+    throw new DashboardApiError(502, "storefront_command_stream_invalid", "The storefront response was invalid.");
   }
-  throw new StudioStreamError("edit stream ended without an installed storefront");
-}
-
-export async function undoStudioStorefrontEdit(input: {
-  targetVersionId: string;
-  expectedDraftVersionId: string;
-}): Promise<{ status: "installed"; versionId: string; undoneVersionId: string }> {
-  return apiSend("POST", "/dashboard/api/store", { action: "undo-edit", ...input });
-}
-
-/** Persist the home hero copy (headline + subhead) into the draft doc. */
-export async function saveStudioHero(hero: StudioHero): Promise<StudioHero> {
-  const data = await apiSend<{ hero: StudioHero }>("POST", "/dashboard/api/store", {
-    action: "save-hero",
-    headline: hero.headline,
-    subhead: hero.subhead,
-  });
-  return data.hero;
-}
-
-/** Set the brand palette's primary/accent color (#rrggbb). */
-export async function setStudioAccent(color: string): Promise<string> {
-  const data = await apiSend<{ accent: string }>("POST", "/dashboard/api/store", {
-    action: "accent",
-    color,
-  });
-  return data.accent;
-}
-
-/** Set the storefront design vibe (minimal | bold | warm). */
-export async function setStudioVibe(vibe: StudioVibe): Promise<StudioVibe> {
-  const data = await apiSend<{ vibe: StudioVibe }>("POST", "/dashboard/api/store", {
-    action: "vibe",
-    vibe,
-  });
-  return data.vibe;
-}
-
-/** Start a one-at-a-time home-page A/B test. The server picks the concrete
- *  challenger from its deterministic library; name is an optional override. */
-export async function startStoreExperiment(spec: {
-  kind: StudioExperimentKind;
-  name?: string;
-}): Promise<StudioExperiment> {
-  const data = await apiSend<{ experiment: StudioExperiment }>("POST", "/dashboard/api/store", {
-    action: "experiment-start",
-    kind: spec.kind,
-    ...(spec.name ? { name: spec.name } : {}),
-  });
-  return data.experiment;
-}
-
-/** Decide the running experiment: ship applies the challenger to the live
- *  store; keep/stop retain the champion. Returns the decided experiment with
- *  its final report. */
-export async function decideStoreExperiment(
-  id: string,
-  decision: "ship" | "keep" | "stop",
-): Promise<StudioExperiment> {
-  const data = await apiSend<{ experiment: StudioExperiment }>("POST", "/dashboard/api/store", {
-    action: "experiment-decide",
-    id,
-    decision,
-  });
-  return data.experiment;
-}
-
-/** Kick off a real store generation. An empty brief generates from the catalog
- *  alone. Awaits the full run — this can take several seconds. */
-export async function generateStudioStore(brief: string, model?: StudioDesignModel): Promise<StudioGenerateReceipt> {
-  return apiSend<StudioGenerateReceipt>("POST", "/dashboard/api/store", {
-    action: "generate",
-    brief,
-    ...(model ? { model } : {}),
-  });
-}
-
-/** Generate a store with the merchant's attached images travelling in the SAME
- *  request as the brief (multipart). The server decides what the images are for
- *  (add-as-products / design reference / both) UNLESS `intent` is given — the
- *  needs_intent quick-reply passes it to skip re-classification. An empty brief
- *  generates from the catalog alone. Returns the full receipt, which may be
- *  needs_intent (nothing done), products_added (drafts only, no run), a
- *  soft-degraded generation, or a partial failure carrying created drafts. */
-export async function generateStudioStoreWithImages(
-  brief: string,
-  files: File[],
-  model: StudioDesignModel,
-  intent?: "products" | "reference" | "both",
-  signal?: AbortSignal,
-): Promise<StudioGenerateReceipt> {
-  const form = new FormData();
-  form.set("action", "generate");
-  if (brief) form.set("brief", brief);
-  form.set("model", model);
-  if (intent) form.set("intent", intent);
-  for (const file of files) form.append("image", file);
-  return apiSendForm<StudioGenerateReceipt>("/dashboard/api/store", form, signal);
-}
-
-/** Publish every drafted storefront page after the tenant domain is ready. The
- *  server seeds and publishes the default home page when nothing is drafted. */
-export async function publishStudioStore(): Promise<{ publishedAt: string; storefrontUrl: string }> {
-  return apiSend<{ publishedAt: string; storefrontUrl: string }>("POST", "/dashboard/api/store", {
-    action: "publish",
-  });
-}
-
-/** "red-ceramic_mug.v2.jpg" → "Red ceramic mug v2" — a starter title for a
- *  product created from a chat-box image attachment. */
-export function productTitleFromFilename(filename: string): string {
-  const stem = filename.replace(/\.[a-z0-9]+$/i, "");
-  const words = stem.replace(/[-_.]+/g, " ").replace(/\s+/g, " ").trim();
-  if (!words) return "New product";
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
-export interface AddedProduct {
-  id: string;
-  title: string;
-  /** Set when the product was created but its image failed to attach — the
-   *  caller must surface the partial add rather than reporting total failure
-   *  (a retry would otherwise mint a duplicate product). */
-  imageError?: string;
-}
-
-/** Turn a chat-box image attachment into a catalog product: create a draft
- *  product titled from the filename, then attach the image. Draft, not active —
- *  price and shipping still need the product editor before it can sell. */
-export async function addProductFromImage(file: File): Promise<AddedProduct> {
-  const title = productTitleFromFilename(file.name);
-  const { id } = await saveProduct({ title, status: "draft", variants: [{}] });
-  try {
-    await uploadProductImage(id, file);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "image upload failed";
-    return { id, title, imageError: msg };
-  }
-  return { id, title };
-}
-
-/** Transport/parse failure of the streaming generate path — the caller may fall
- *  back to the non-streaming endpoint. Guard refusals and generation failures
- *  arrive as DashboardApiError instead and are FINAL (a fallback would re-bill). */
-export class StudioStreamError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "StudioStreamError";
-  }
-}
-
-/**
- * Runtime-1 build stream. The server reruns routing against fresh catalog
- * evidence; its routing event is authoritative and installation is terminal.
- */
-export async function buildStudioStoreStream(
-  designRequest: StoreDesignRequest,
-  onStage: (stage: Runtime1BuildStage, event: ReturnType<typeof parseBuildEvent>) => void,
-  recommendedResolution?: StoreDesignResolution,
-  signal?: AbortSignal,
-  model?: StudioDesignModel,
-): Promise<StudioBundleBuildReceipt> {
-  let res: Response;
-  try {
-    res = await fetch("/dashboard/api/store/generate", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        "content-type": "application/json",
-        ...(typeof location !== "undefined" ? { Origin: location.origin } : {}),
-      },
-      body: JSON.stringify({
-        designRequest,
-        ...(recommendedResolution ? { recommendedResolution } : {}),
-        ...(model ? { model } : {}),
-      }),
-      signal,
-    });
-  } catch (err) {
-    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
-    throw new StudioStreamError(err instanceof Error ? err.message : "stream request failed");
-  }
-  if (!res.ok) {
-    let code = "storefront_build_failed";
-    let message = "Storefront build failed.";
-    try {
-      const body = (await res.json()) as { error?: string; message?: string };
-      if (typeof body.error === "string") code = body.error;
-      if (typeof body.message === "string") message = body.message;
-    } catch {
-      // Keep the stable generic mapping.
-    }
-    throw new DashboardApiError(res.status, code, message);
-  }
-  if (!res.body) throw new StudioStreamError("response had no stream body");
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const handleLine = (line: string): StudioBundleBuildReceipt | undefined => {
-    const event = parseBuildEvent(line);
-    if (!event) return undefined;
-    if (event.stage === "installed") return event.receipt;
-    if (event.stage === "error") {
-      throw new DashboardApiError(event.status ?? 502, event.code ?? "storefront_build_failed", event.message);
-    }
-    if (["routing", "applying_recipe", "generating_original", "compiling", "validating", "proofing"].includes(event.stage)) {
-      onStage(event.stage as Runtime1BuildStage, event);
-    }
-    return undefined;
-  };
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let newline: number;
-      while ((newline = buffer.indexOf("\n")) !== -1) {
-        const line = buffer.slice(0, newline).trim();
-        buffer = buffer.slice(newline + 1);
-        if (!line) continue;
-        const receipt = handleLine(line);
-        if (receipt) {
-          reader.cancel().catch(() => {});
-          return receipt;
-        }
-      }
-    }
-  } catch (err) {
-    if (err instanceof DashboardApiError) throw err;
-    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
-    throw new StudioStreamError(err instanceof Error ? err.message : "stream read failed");
-  }
-  const rest = buffer.trim();
-  if (rest) {
-    const receipt = handleLine(rest);
-    if (receipt) return receipt;
-  }
-  throw new StudioStreamError("stream ended without an installed storefront");
-}
-
-/** Compatibility wrapper for older callers. The legacy designer no longer owns
- * this endpoint; prompts enter the same recipe/custom runtime-1 router as the
- * main studio build action. */
-export async function generateStudioStoreStream(
-  brief: string,
-  model: StudioDesignModel,
-  onStage: (stage: BuildStage) => void,
-): Promise<StudioGenerateReceipt> {
-  const receipt = await buildStudioStoreStream(
-    { prompt: brief.trim(), mode: "auto" },
-    (stage) => onStage(stage),
-    undefined,
-    undefined,
-    model,
-  );
-  return { runId: receipt.versionId, status: "draft" };
-}
-
-/** Move one home section up or down; returns the new section order. */
-export async function moveStoreSection(id: string, direction: "up" | "down"): Promise<StudioSection[]> {
-  const data = await apiSend<{ sections: StudioSection[] }>("POST", "/dashboard/api/store", {
-    action: "section-move",
-    id,
-    direction,
-  });
-  return data.sections;
-}
-
-/** Remove one home section; returns the new section order. */
-export async function removeStoreSection(id: string): Promise<StudioSection[]> {
-  const data = await apiSend<{ sections: StudioSection[] }>("POST", "/dashboard/api/store", {
-    action: "section-remove",
-    id,
-  });
-  return data.sections;
-}
-
-/** Regenerate one design section with the design model (optional instruction).
- *  Awaits the full model call — can take several seconds. */
-export async function regenerateStoreSection(id: string, instruction?: string): Promise<StudioSection[]> {
-  const data = await apiSend<{ sections: StudioSection[] }>("POST", "/dashboard/api/store", {
-    action: "section-regenerate",
-    id,
-    ...(instruction ? { instruction } : {}),
-  });
-  return data.sections;
+  throw new DashboardApiError(502, "storefront_command_stream_incomplete", "The storefront response ended early.");
 }

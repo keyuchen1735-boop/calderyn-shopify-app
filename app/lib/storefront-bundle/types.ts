@@ -19,12 +19,8 @@ export type VisualLayerSpec =
   | { kind: "none" }
   | { kind: "fragment_shader"; source: string; colors: [string, string, string] };
 
-export type StoreDesignMode = "auto" | "recipe" | "custom";
-
 export interface StoreDesignRequest {
   prompt: string;
-  mode: StoreDesignMode;
-  templateId?: StoreTemplateId;
   excludedTemplateIds?: StoreTemplateId[];
 }
 
@@ -61,7 +57,7 @@ export type StoreDesignResolution =
       kind: "recipe";
       templateId: StoreTemplateId;
       templateVersion: number;
-      selectionKind: "manual_override" | "explicit_name" | "niche_match";
+      selectionKind: "explicit_name" | "niche_match";
       score: number | null;
       runnerUpScore: number | null;
       margin: number | null;
@@ -70,10 +66,6 @@ export type StoreDesignResolution =
   | (ResolutionMetadata & {
       kind: "no_match";
       reason: "all_designs_excluded";
-    })
-  | (ResolutionMetadata & {
-      kind: "custom";
-      reason: "explicit_custom" | "low_confidence" | "ambiguous_recipe_names" | "manual_override";
     });
 
 export type StorefrontRouteId = "home" | "collection" | "product" | "search" | "cart" | "checkout";

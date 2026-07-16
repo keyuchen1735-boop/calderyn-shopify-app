@@ -4,6 +4,7 @@ import { StorefrontReleaseError } from "../storefront-bundle/release.server";
 import type { StoreCommand, StoreCommandEvent } from "./types";
 import {
   runStoreCommand,
+  StoreCommandError,
   type StoreCommandDependencies,
 } from "./command.server";
 
@@ -75,6 +76,7 @@ function dependencies(overrides: Partial<StoreCommandDependencies> = {}): StoreC
     loadState: vi.fn().mockResolvedValue({ draft: null, publishedVersionId: null }),
     assertWriteAllowed: vi.fn().mockResolvedValue(undefined),
     assertPublishable: vi.fn().mockResolvedValue(undefined),
+    readEnabled: () => true,
     recipeBuildEnabled: () => true,
     publishEnabled: () => true,
     buildEvidence: vi.fn().mockResolvedValue({
@@ -275,6 +277,11 @@ describe("runStoreCommand", () => {
   });
 
   it("enforces recipe and publish switches plus tenant publishability", async () => {
+    const readDisabled = dependencies({ readEnabled: () => false });
+    await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(null) }, readDisabled))
+      .rejects.toMatchObject({ code: "storefront_command_unavailable", status: 503 });
+    expect(readDisabled.resolveDesign).not.toHaveBeenCalled();
+
     const recipeDisabled = dependencies({ recipeBuildEnabled: () => false });
     await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(null) }, recipeDisabled))
       .rejects.toMatchObject({ code: "storefront_command_unavailable", status: 503 });
@@ -290,6 +297,16 @@ describe("runStoreCommand", () => {
     }, publishDisabled)).rejects.toMatchObject({ code: "storefront_command_unavailable", status: 503 });
     expect(publishDisabled.publish).not.toHaveBeenCalled();
 
+    const publishWithoutRecipeWrites = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      recipeBuildEnabled: () => false,
+    });
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: { kind: "publish", expectedDraftVersionId: CURRENT },
+    }, publishWithoutRecipeWrites)).rejects.toMatchObject({ code: "storefront_command_unavailable", status: 503 });
+    expect(publishWithoutRecipeWrites.publish).not.toHaveBeenCalled();
+
     const domainFailure = dependencies({
       loadState: vi.fn().mockResolvedValue(state()),
       assertPublishable: vi.fn().mockRejectedValue(Object.assign(new Error("domain"), {
@@ -301,6 +318,18 @@ describe("runStoreCommand", () => {
       command: { kind: "publish", expectedDraftVersionId: CURRENT },
     }, domainFailure)).rejects.toMatchObject({ code: "storefront_command_failed", status: 500 });
     expect(domainFailure.publish).not.toHaveBeenCalled();
+  });
+
+  it("keeps a trusted unavailable state distinct from a CAS conflict", async () => {
+    const deps = dependencies({
+      loadState: vi.fn().mockRejectedValue(new StoreCommandError(
+        "storefront_command_unavailable",
+        "This storefront draft cannot be changed with chat yet.",
+        503,
+      )),
+    });
+    await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT) }, deps))
+      .rejects.toMatchObject({ code: "storefront_command_unavailable", status: 503 });
   });
 
   it("keeps design references unchanged when they cannot be resolved deterministically", async () => {

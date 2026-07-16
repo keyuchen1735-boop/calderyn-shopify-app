@@ -1,4 +1,4 @@
-import type { CatalogRoutingEvidence, StoreDesignMode, StoreTemplateId } from "../types";
+import type { CatalogRoutingEvidence, StoreTemplateId } from "../types";
 
 export interface RoutingCorpusFixture {
   name: string;
@@ -36,21 +36,6 @@ export const REQUIRED_ROUTING_CORPUS: readonly RoutingCorpusFixture[] = [
   { name: "standalone original request", prompt: "Make something completely new", expectedKind: "recipe", templateId: "custom-bench" },
 ] as const;
 
-export const INVALID_REQUESTS: ReadonlyArray<{
-  name: string;
-  value: unknown;
-}> = [
-  { name: "non object", value: null },
-  { name: "unknown mode", value: { prompt: "x", mode: "surprise" } },
-  { name: "missing prompt", value: { mode: "auto" } },
-  { name: "recipe without id", value: { prompt: "", mode: "recipe" } },
-  { name: "recipe with unknown id", value: { prompt: "", mode: "recipe", templateId: "missing" } },
-  { name: "auto with id", value: { prompt: "x", mode: "auto", templateId: "atelier-nine" } },
-  { name: "custom with id", value: { prompt: "x", mode: "custom", templateId: "atelier-nine" } },
-  { name: "empty custom", value: { prompt: "  ", mode: "custom" } },
-  { name: "overlong prompt", value: { prompt: "x".repeat(4_001), mode: "auto" } },
-];
-
 export const EMPTY_EVIDENCE_INPUT: Omit<CatalogRoutingEvidence, "fingerprint"> = {
   productTitles: [],
   productTypes: [],
@@ -59,6 +44,6 @@ export const EMPTY_EVIDENCE_INPUT: Omit<CatalogRoutingEvidence, "fingerprint"> =
   collectionTitles: [],
 };
 
-export function request(prompt: string, mode: StoreDesignMode = "auto") {
-  return { prompt, mode } as const;
+export function request(prompt: string) {
+  return { prompt } as const;
 }

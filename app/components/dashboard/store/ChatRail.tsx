@@ -1,17 +1,9 @@
-// The 340px "Build with Calderyn" chat rail: thread + composer. Purely a
-// renderer — Store.tsx owns the message list, the composer text, and what
-// happens on send/attach. Each "ai-working" message carries its own phase
-// snapshot (see chat-types.ts), so an older, already-finished card in history
-// can never be flipped back to "running" by a later, unrelated build.
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import { CDIcon } from "../icons";
 import { buildSteps, canSendComposer } from "../screens/store-logic";
 import BuildStepsCard from "./BuildStepsCard";
 import type { ChatMsg } from "./chat-types";
-import type { StudioDesignModel } from "~/lib/dashboard/store-client";
 
-// The brand hexagon mark, matching the sidebar's inline SVG exactly (see
-// DashboardApp.tsx) — sized down for the rail header.
 function RailMark() {
   return (
     <svg className="cd-rail-mark" viewBox="0 0 32 32" fill="none" role="img" aria-label="Calderyn">
@@ -27,58 +19,33 @@ function RailMark() {
   );
 }
 
-function WorkingCard({ msg }: { msg: Extract<ChatMsg, { kind: "ai-working" }> }) {
-  const rows = buildSteps(msg.phase);
-  return <BuildStepsCard rows={rows} dimPending={rows.length > 1} />;
-}
-
-function Bubble({ msg }: { msg: ChatMsg }) {
-  if (msg.kind === "user-text") {
-    return <div className="cd-bub cd-bub-user">{msg.text}</div>;
-  }
-  if (msg.kind === "user-image") {
-    return (
-      <div className="cd-bub cd-bub-user">
-        <img className="cd-bub-img" src={msg.imageUrl} alt={msg.caption} />
-        <span style={{ display: "block", marginTop: 7, fontSize: 11.5, opacity: 0.85 }}>{msg.caption}</span>
-      </div>
-    );
-  }
-  if (msg.kind === "ai-thinking") {
+function Bubble({ message }: { message: ChatMsg }) {
+  if (message.kind === "user-text") return <div className="cd-bub cd-bub-user">{message.text}</div>;
+  if (message.kind === "ai-working") {
+    const rows = buildSteps(message.phase);
     return (
       <div className="cd-bub cd-bub-ai">
-        <div className="cd-think">
-          <i />
-          <i />
-          <i />
-        </div>
-      </div>
-    );
-  }
-  if (msg.kind === "ai-working") {
-    return (
-      <div className="cd-bub cd-bub-ai">
-        <WorkingCard msg={msg} />
+        <BuildStepsCard rows={rows} dimPending={rows.length > 1} />
       </div>
     );
   }
   return (
     <div className="cd-bub cd-bub-ai">
-      {msg.text}
-      {msg.actions && msg.actions.length > 0 && (
+      {message.text}
+      {message.actions?.length ? (
         <div className="cd-bub-btns">
-          {msg.actions.map((a, i) => (
+          {message.actions.map((action) => (
             <button
-              key={i}
+              key={action.label}
               type="button"
-              className={a.kind === "primary" ? "cd-btn cd-btn-primary cd-btn-sm" : "cd-chip"}
-              onClick={a.onClick}
+              className={action.kind === "primary" ? "cd-btn cd-btn-primary cd-btn-sm" : "cd-chip"}
+              onClick={action.onClick}
             >
-              {a.label}
+              {action.label}
             </button>
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -91,176 +58,65 @@ export default function ChatRail({
   onStop,
   busy,
   stoppable,
-  attaching,
-  onAttachFiles,
-  attachments,
-  onRemoveAttachment,
-  model,
-  onModelChange,
 }: {
   messages: ChatMsg[];
   prompt: string;
-  onPromptChange: (v: string) => void;
+  onPromptChange: (value: string) => void;
   onSend: () => void;
   onStop: () => void;
   busy: boolean;
-  /** True only while a prompt-driven build/edit request has an active abort controller. */
   stoppable: boolean;
-  attaching: boolean;
-  onAttachFiles: (files: File[]) => void;
-  /** Images staged in the composer, shown as removable chips above the textarea. */
-  attachments: { id: string; url: string; name: string }[];
-  onRemoveAttachment: (id: string) => void;
-  model: StudioDesignModel;
-  onModelChange: (m: StudioDesignModel) => void;
 }) {
   const threadRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  // Drag-and-drop target state: a counter, not a boolean, because dragenter/
-  // dragleave fire for every child crossed and a plain flag would flicker off.
-  const [dropping, setDropping] = useState(false);
-  const dragDepth = useRef(0);
-
   useEffect(() => {
-    const el = threadRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    const thread = threadRef.current;
+    if (thread) thread.scrollTop = thread.scrollHeight;
   }, [messages.length]);
 
-  const canSend = canSendComposer({ prompt, attachmentCount: attachments.length, busy, attaching });
+  const canSend = canSendComposer({ prompt, busy });
   const send = () => {
-    if (!canSend) return;
-    onSend();
-  };
-
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-  };
-
-  const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.currentTarget.files ?? []);
-    e.currentTarget.value = "";
-    if (files.length > 0) onAttachFiles(files);
-  };
-
-  const dragHasFiles = (e: DragEvent<HTMLDivElement>) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
-  const onDragEnter = (e: DragEvent<HTMLDivElement>) => {
-    if (!dragHasFiles(e)) return;
-    e.preventDefault();
-    dragDepth.current += 1;
-    setDropping(true);
-  };
-  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
-    if (dragHasFiles(e)) e.preventDefault(); // without this the browser opens the file instead
-  };
-  const onDragLeave = () => {
-    dragDepth.current = Math.max(0, dragDepth.current - 1);
-    if (dragDepth.current === 0) setDropping(false);
-  };
-  const onDrop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    dragDepth.current = 0;
-    setDropping(false);
-    const files = Array.from(e.dataTransfer?.files ?? []);
-    if (files.length > 0) onAttachFiles(files);
+    if (canSend) onSend();
   };
 
   return (
-    <div
-      className="cd-rail"
-      data-drop={dropping ? "1" : "0"}
-      onDragEnter={onDragEnter}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-    >
+    <div className="cd-rail">
       <div className="cd-rail-head">
         <RailMark />
         <b>Build with Calderyn</b>
       </div>
       <div className="cd-thread" ref={threadRef}>
-        {messages.map((m) => (
-          <Bubble key={m.id} msg={m} />
-        ))}
+        {messages.map((message) => <Bubble key={message.id} message={message} />)}
       </div>
       <div className="cd-rail-foot">
         <div className="cd-composer">
-          {attachments.length > 0 && (
-            <div className="cd-composer-chips">
-              {attachments.map((a) => (
-                <div key={a.id} className="cd-composer-chip">
-                  <img src={a.url} alt="" />
-                  <span>{a.name}</span>
-                  <button
-                    type="button"
-                    className="cd-composer-chip-x"
-                    aria-label={`Remove ${a.name}`}
-                    onClick={() => onRemoveAttachment(a.id)}
-                  >
-                    <CDIcon name="x" size={12} strokeWidth={2.2} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
           <textarea
             className="cd-composer-in"
             rows={2}
             placeholder="Tell Calderyn what to change…"
             aria-label="Tell Calderyn what to change"
             value={prompt}
-            onChange={(e) => onPromptChange(e.target.value)}
-            onKeyDown={onKeyDown}
+            onChange={(event) => onPromptChange(event.target.value)}
+            onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                send();
+              }
+            }}
           />
           <div className="cd-composer-row">
-            <button
-              type="button"
-              className="cd-composer-tool"
-              title="Add a product from a photo"
-              aria-label="Add a product from a photo"
-              disabled={attaching}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <CDIcon name="paperclip" size={15} strokeWidth={1.9} />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              multiple
-              hidden
-              onChange={onFileChange}
-            />
-            <select
-              className="cd-composer-model"
-              aria-label="Design model"
-              title="Design model"
-              value={model}
-              onChange={(e) => onModelChange(e.target.value as StudioDesignModel)}
-            >
-              <option value="sonnet">Sonnet 5</option>
-              <option value="opus">Opus 4.8</option>
-            </select>
+            <span />
             {stoppable ? (
               <button
                 type="button"
                 className="cd-composer-send cd-composer-stop"
-                aria-label="Stop generation"
-                title="Stop generation"
+                aria-label="Stop"
+                title="Stop"
                 onClick={onStop}
               >
                 <span aria-hidden="true" className="cd-stop-glyph" />
               </button>
             ) : (
-              <button
-                type="button"
-                className="cd-composer-send"
-                aria-label="Send"
-                disabled={!canSend}
-                onClick={send}
-              >
+              <button type="button" className="cd-composer-send" aria-label="Send" disabled={!canSend} onClick={send}>
                 <CDIcon name="arrowUp" size={14} strokeWidth={2.2} />
               </button>
             )}

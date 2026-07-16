@@ -2,13 +2,8 @@
 import { getSupabase } from "~/lib/supabase.server";
 import { createProduct } from "~/lib/catalog/catalog.server";
 import { rateLimit } from "~/lib/dashboard/http.server";
-import {
-  buildStorefrontDesign,
-  prepareStorefrontDesignBuild,
-  StorefrontBuildError,
-} from "~/lib/storefront-bundle/build.server";
-import { StorefrontReleaseError } from "~/lib/storefront-bundle/release.server";
-import { CalderynError } from "~/lib/calderyn.server";
+import { readStorefrontReleasePointers } from "~/lib/storefront-bundle/build.server";
+import { runStoreCommand } from "~/lib/storefront-command/command.server";
 import type { ProductInput } from "~/lib/catalog/types";
 import { suggestedRetailCents } from "./ingest.server";
 import type { DiscoverFeedItem, NormalizedSourceProduct, PickResult } from "./types";
@@ -87,7 +82,6 @@ export async function listDiscoverFeed(limit = 40): Promise<DiscoverFeedItem[]> 
 export async function pickProduct(
   shopId: string,
   sourceProductId: string,
-  opts: { trusted: boolean } = { trusted: false },
 ): Promise<PickResult> {
   const sb = getSupabase();
   const { data: src, error } = await sb
@@ -152,25 +146,29 @@ export async function pickProduct(
   });
   if (lErr) throw lErr;
 
-  // 4. Auto-build a runtime-1 draft from the now-non-empty catalog. Preflight
-  // freezes flags, experiment/write guards, release pointers and any custom AI
-  // quota before mutation; Discover has the same per-shop runtime-1 burst cap.
+  // 4. Build a runtime-1 draft only for a store that has never been built.
+  // A product pick never overwrites a merchant's existing draft.
   if (!(await rateLimit(`storefront-build:${shopId}`, 10, 60_000))) {
     return { productId, storeRunId: null, storeBuildSkipped: "rate_limited" };
   }
-  const request = { prompt: "", mode: "auto" } as const;
+
   try {
-    const prepared = await prepareStorefrontDesignBuild({ shopId, request, trusted: opts.trusted });
-    const receipt = await buildStorefrontDesign({ shopId, request, trusted: opts.trusted, prepared });
-    return { productId, storeRunId: receipt.versionId };
+    const pointers = await readStorefrontReleasePointers(shopId);
+    if (pointers.draftVersionId || pointers.publishedVersionId) {
+      return { productId, storeRunId: null, storeBuildSkipped: "existing_store" };
+    }
+    const receipt = await runStoreCommand({
+      shopId,
+      command: { kind: "prompt", prompt: "Build my store", expectedDraftVersionId: null },
+    });
+    if (receipt.status === "installed") {
+      return { productId, storeRunId: receipt.versionId };
+    }
+    return { productId, storeRunId: null, storeBuildSkipped: receipt.status };
   } catch (err) {
-    if (
-      err instanceof StorefrontBuildError ||
-      err instanceof StorefrontReleaseError ||
-      err instanceof CalderynError
-    ) {
+    if (typeof err === "object" && err !== null && "code" in err && typeof err.code === "string") {
       return { productId, storeRunId: null, storeBuildSkipped: err.code };
     }
-    throw err;
+    return { productId, storeRunId: null, storeBuildSkipped: "storefront_command_unavailable" };
   }
 }

@@ -1,641 +1,230 @@
-// Publish + readiness read model for the Store studio. With no draft, publish
-// seeds the default home doc after confirming the public tenant domain is ready.
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { publishStudioStore, loadStudioState, saveStudioVibe, sectionsFromDoc, moveStudioSection, removeStudioSection, regenerateStudioSection } from "./studio.server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { loadStudioState, requirePublishableTenantDomain, sectionsFromDoc } from "./studio.server";
 
-// vi.mock is hoisted above the imports by vitest at transform time, so the
-// mocks still apply even though they are written below them (imports-first
-// satisfies the import/first rule).
-const { fromMock, pageDoc, catalogMock, connectMock, adminListProducts, experimentsMock, settingsMock, storegenMock, bundleBuildMock, releaseMock, policiesMock, domainMock, authTenantMock } =
-  vi.hoisted(() => ({
-    storegenMock: { regenerateHomeSection: vi.fn() },
-    fromMock: vi.fn(),
-    pageDoc: {
-      loadDraftDoc: vi.fn(),
-      loadPublishedDoc: vi.fn(),
-      saveDraft: vi.fn(),
-      publishDoc: vi.fn(),
-    },
-    catalogMock: {
-      listProducts: vi.fn(),
-      listCollections: vi.fn(),
-    },
-    connectMock: {
-      getConnectedAccount: vi.fn(),
-      // Real predicate shape: the studio panel must judge readiness by the same
-      // three-flag definition the charge path routes on.
-      isFullyEnabledAccount: (a: { charges_enabled?: boolean; payouts_enabled?: boolean; details_submitted?: boolean }) =>
-        a.charges_enabled === true && a.payouts_enabled === true && a.details_submitted === true,
-    },
-    adminListProducts: vi.fn(),
-    experimentsMock: {
-      latestStudioExperiment: vi.fn(),
-      hasRunningExperiment: vi.fn(),
-      expireOverdueExperiment: vi.fn(async () => undefined),
-    },
-    settingsMock: { getStoreSettings: vi.fn(), saveStoreSettings: vi.fn() },
-    bundleBuildMock: {
-      readStorefrontReleaseState: vi.fn(),
-      isStorefrontBundlePublishEnabled: vi.fn(),
-    },
-    releaseMock: { publishStorefrontRelease: vi.fn() },
-    policiesMock: { loadStorefrontPolicies: vi.fn() },
-    domainMock: {
-      isTenantDomainReachable: vi.fn(),
-      registerTenantDomain: vi.fn(),
-      tenantDomain: (slug: string) => `${slug}.calderyncompany.com`,
-    },
-    authTenantMock: { slugify: vi.fn(() => "test-store-a1b2c3") },
-  }));
-
-vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
-vi.mock("./page-document.server", () => pageDoc);
-vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: () => catalogMock }));
-vi.mock("~/lib/payments/connect.server", () => connectMock);
-vi.mock("~/lib/catalog/catalog.server", () => ({ listProducts: adminListProducts }));
-vi.mock("~/lib/experiments/store-experiment.server", () => experimentsMock);
-vi.mock("~/lib/storegen/generate.server", () => storegenMock);
-vi.mock("~/lib/storefront-bundle/build.server", () => bundleBuildMock);
-vi.mock("~/lib/storefront-bundle/release.server", () => releaseMock);
-vi.mock("~/lib/storefront/policies.server", () => policiesMock);
-vi.mock("~/lib/storefront/vercel-domain.server", () => domainMock);
-vi.mock("~/lib/auth/tenant.server", () => authTenantMock);
-vi.mock("~/lib/storefront/settings.server", () => ({
-  DEFAULT_PALETTE: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
-  getStoreSettings: settingsMock.getStoreSettings,
-  saveStoreSettings: settingsMock.saveStoreSettings,
+const mocks = vi.hoisted(() => ({
+  from: vi.fn(),
+  listProducts: vi.fn(),
+  listCollections: vi.fn(),
+  loadDraft: vi.fn(),
+  loadPublished: vi.fn(),
+  getSettings: vi.fn(),
+  getConnectedAccount: vi.fn(),
+  adminListProducts: vi.fn(),
+  latestExperiment: vi.fn(),
+  readReleaseState: vi.fn(),
+  loadPolicies: vi.fn(),
 }));
 
-const shop = "11111111-1111-1111-1111-111111111111";
+vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: mocks.from }) }));
+vi.mock("~/lib/storefront/catalog.server", () => ({
+  getCatalog: () => ({ listProducts: mocks.listProducts, listCollections: mocks.listCollections }),
+}));
+vi.mock("./page-document.server", () => ({
+  loadDraftDoc: mocks.loadDraft,
+  loadPublishedDoc: mocks.loadPublished,
+}));
+vi.mock("~/lib/storefront/settings.server", () => ({
+  DEFAULT_PALETTE: { primary: "#0f766e", background: "#ffffff", text: "#111827" },
+  getStoreSettings: mocks.getSettings,
+}));
+vi.mock("~/lib/payments/connect.server", () => ({
+  getConnectedAccount: mocks.getConnectedAccount,
+  isFullyEnabledAccount: (account: {
+    charges_enabled?: boolean;
+    payouts_enabled?: boolean;
+    details_submitted?: boolean;
+  }) => account.charges_enabled === true && account.payouts_enabled === true && account.details_submitted === true,
+}));
+vi.mock("~/lib/catalog/catalog.server", () => ({ listProducts: mocks.adminListProducts }));
+vi.mock("~/lib/experiments/store-experiment.server", () => ({ latestStudioExperiment: mocks.latestExperiment }));
+vi.mock("~/lib/storefront-bundle/build.server", () => ({ readStorefrontReleaseState: mocks.readReleaseState }));
+vi.mock("~/lib/storefront/policies.server", () => ({ loadStorefrontPolicies: mocks.loadPolicies }));
+vi.mock("~/lib/storefront/vercel-domain.server", () => ({
+  isTenantDomainReachable: vi.fn(),
+  registerTenantDomain: vi.fn(),
+  tenantDomain: (slug: string) => `${slug}.example.test`,
+}));
+vi.mock("~/lib/auth/tenant.server", () => ({ slugify: vi.fn() }));
 
-// Per-table read results (maybeSingle) and a recorder for upsert payloads;
-// tables without a configured result read as "no row".
+const shop = "11111111-1111-1111-1111-111111111111";
 const tableResults: Record<string, { data: unknown; error: unknown }> = {};
-const upserts: Array<{ table: string; row: Record<string, unknown> }> = [];
-const updates: Array<{ table: string; row: Record<string, unknown> }> = [];
-const updateResults: Array<{ data: unknown; error: unknown }> = [];
-const readResults: Record<string, Array<{ data: unknown; error: unknown }>> = {};
 
 beforeEach(() => {
   vi.clearAllMocks();
-  catalogMock.listProducts.mockResolvedValue([]);
-  catalogMock.listCollections.mockResolvedValue([]);
-  connectMock.getConnectedAccount.mockResolvedValue(null);
-  adminListProducts.mockResolvedValue({ products: [], total: 0 });
-  pageDoc.loadDraftDoc.mockResolvedValue(null);
-  pageDoc.loadPublishedDoc.mockResolvedValue(null);
-  pageDoc.saveDraft.mockResolvedValue(undefined);
-  pageDoc.publishDoc.mockResolvedValue(undefined);
-  experimentsMock.latestStudioExperiment.mockResolvedValue(null);
-  experimentsMock.hasRunningExperiment.mockResolvedValue(false);
-  settingsMock.getStoreSettings.mockResolvedValue({
+  for (const table of Object.keys(tableResults)) delete tableResults[table];
+  mocks.from.mockImplementation((table: string) => {
+    const chain: Record<string, unknown> = {};
+    chain.select = () => chain;
+    chain.eq = () => chain;
+    chain.order = () => chain;
+    chain.limit = () => chain;
+    chain.maybeSingle = () => Promise.resolve(tableResults[table] ?? { data: null, error: null });
+    return chain;
+  });
+  mocks.listProducts.mockResolvedValue([]);
+  mocks.listCollections.mockResolvedValue([]);
+  mocks.loadDraft.mockResolvedValue(null);
+  mocks.loadPublished.mockResolvedValue(null);
+  mocks.getSettings.mockResolvedValue({
     storeName: "Test Store",
-    palette: { primary: "#0f766e" },
+    palette: { primary: "#123456" },
     logoUrl: null,
     voiceTagline: null,
     vibe: "minimal",
+    typeStyle: "classic",
+    density: "standard",
   });
-  settingsMock.saveStoreSettings.mockResolvedValue(undefined);
-  bundleBuildMock.readStorefrontReleaseState.mockResolvedValue({
+  mocks.getConnectedAccount.mockResolvedValue(null);
+  mocks.adminListProducts.mockResolvedValue({ products: [], total: 0 });
+  mocks.latestExperiment.mockResolvedValue(null);
+  mocks.readReleaseState.mockResolvedValue({
     draftVersionId: null,
     publishedVersionId: null,
     draftRuntimeVersion: null,
     publishedRuntimeVersion: null,
   });
-  bundleBuildMock.isStorefrontBundlePublishEnabled.mockReturnValue(false);
-  releaseMock.publishStorefrontRelease.mockResolvedValue("33333333-3333-3333-3333-333333333333");
-  policiesMock.loadStorefrontPolicies.mockResolvedValue([]);
-  domainMock.isTenantDomainReachable.mockResolvedValue(true);
-  domainMock.registerTenantDomain.mockResolvedValue(true);
-  for (const key of Object.keys(tableResults)) delete tableResults[key];
-  upserts.length = 0;
-  updates.length = 0;
-  updateResults.length = 0;
-  for (const key of Object.keys(readResults)) delete readResults[key];
-  fromMock.mockImplementation((table: string) => {
-    const chain: Record<string, unknown> = {};
-    let updateRow: Record<string, unknown> | null = null;
-    chain.select = () => chain;
-    chain.eq = () => chain;
-    chain.is = () => chain;
-    chain.order = () => chain;
-    chain.limit = () => chain;
-    chain.maybeSingle = () => Promise.resolve(
-      updateRow
-        ? (updateResults.shift() ?? { data: updateRow, error: null })
-        : (readResults[table]?.shift() ?? tableResults[table] ?? { data: null, error: null }),
-    );
-    chain.upsert = (row: Record<string, unknown>) => {
-      upserts.push({ table, row });
-      return Promise.resolve({ error: null });
-    };
-    chain.update = (row: Record<string, unknown>) => {
-      updates.push({ table, row });
-      updateRow = row;
-      return chain;
-    };
-    return chain;
-  });
+  mocks.loadPolicies.mockResolvedValue([]);
 });
 
-describe("publishStudioStore", () => {
-  beforeEach(() => {
-    tableResults.shops = { data: { org_slug: "test-store" }, error: null };
-  });
-  it("atomically publishes an active runtime-1 draft when bundle publishing is enabled", async () => {
-    bundleBuildMock.readStorefrontReleaseState.mockResolvedValue({
-      draftVersionId: "33333333-3333-3333-3333-333333333333",
-      publishedVersionId: "44444444-4444-4444-4444-444444444444",
-      draftRuntimeVersion: 1,
-      publishedRuntimeVersion: 1,
+afterEach(() => vi.unstubAllEnvs());
+
+describe("store snapshot", () => {
+  it("loads the demo snapshot without invoking UUID-only read models", async () => {
+    await expect(loadStudioState("demo-shop")).resolves.toMatchObject({
+      productCount: 0,
+      draftProductCount: 0,
+      checkoutReady: false,
+      hasDraft: false,
+      hasPublished: false,
+      release: { draftVersionId: null, publishedVersionId: null, draftRuntime: 0, publishedRuntime: 0 },
+      storefrontUrl: "/storefront",
+      policies: [],
     });
-    bundleBuildMock.isStorefrontBundlePublishEnabled.mockReturnValue(true);
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
 
-    await publishStudioStore(shop, "22222222-2222-2222-2222-222222222222");
-
-    expect(domainMock.registerTenantDomain).toHaveBeenCalledWith("test-store");
-    expect(domainMock.isTenantDomainReachable).toHaveBeenCalledWith("test-store");
-    expect(domainMock.registerTenantDomain.mock.invocationCallOrder[0]).toBeLessThan(
-      domainMock.isTenantDomainReachable.mock.invocationCallOrder[0],
-    );
-    expect(domainMock.isTenantDomainReachable.mock.invocationCallOrder[0]).toBeLessThan(
-      releaseMock.publishStorefrontRelease.mock.invocationCallOrder[0],
-    );
-    expect(releaseMock.publishStorefrontRelease).toHaveBeenCalledWith({
-      shopId: shop,
-      expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
-      expectedPublishedVersionId: "44444444-4444-4444-4444-444444444444",
-      actorId: "22222222-2222-2222-2222-222222222222",
+  it("preserves every merchant setting field in the read-only DTO", async () => {
+    mocks.getSettings.mockResolvedValue({
+      storeName: "Peak Pine",
+      palette: { primary: "#765432" },
+      logoUrl: "https://cdn.example/logo.png",
+      voiceTagline: "Made outside",
+      vibe: "warm",
+      typeStyle: "editorial",
+      density: "roomy",
     });
-    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
-    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
-  });
-
-  it("never falls back to per-page publishing when a runtime-1 draft exists but its publish flag is disabled", async () => {
-    bundleBuildMock.readStorefrontReleaseState.mockResolvedValue({
-      draftVersionId: "33333333-3333-3333-3333-333333333333",
-      publishedVersionId: null,
-      draftRuntimeVersion: 1,
-      publishedRuntimeVersion: null,
+    await expect(loadStudioState(shop)).resolves.toMatchObject({
+      settings: {
+        storeName: "Peak Pine",
+        accent: "#765432",
+        logoUrl: "https://cdn.example/logo.png",
+        tagline: "Made outside",
+        vibe: "warm",
+        typeStyle: "editorial",
+        density: "roomy",
+      },
     });
-
-    await expect(publishStudioStore(shop)).rejects.toMatchObject({
-      code: "storefront_bundle_publish_disabled",
-      status: 503,
-    });
-    expect(releaseMock.publishStorefrontRelease).not.toHaveBeenCalled();
-    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
-    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
   });
 
-  it("refuses to publish when the tenant domain is still unreachable after registration", async () => {
-    domainMock.isTenantDomainReachable.mockResolvedValueOnce(false);
-
-    await expect(publishStudioStore(shop)).rejects.toMatchObject({
-      code: "storefront_domain_registration_failed",
-      status: 503,
-    });
-    expect(domainMock.isTenantDomainReachable).toHaveBeenCalledWith("test-store");
-    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
-    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
-    expect(releaseMock.publishStorefrontRelease).not.toHaveBeenCalled();
-  });
-
-  it("assigns a tenant URL when a legacy shop publishes without one", async () => {
-    tableResults.shops = { data: { org_slug: null, display_name: "Account Name", shop_domain: null }, error: null };
-    settingsMock.getStoreSettings.mockResolvedValueOnce({
-      storeName: "Moonlight Ceramics",
-      palette: { primary: "#0f766e" },
-      logoUrl: null,
-      voiceTagline: null,
-      vibe: "minimal",
-    });
-    authTenantMock.slugify.mockReturnValueOnce("moonlight-ceramics-a1b2c3");
-
-    await expect(publishStudioStore(shop)).resolves.toBe(
-      "https://moonlight-ceramics-a1b2c3.calderyncompany.com/storefront",
-    );
-
-    expect(authTenantMock.slugify).toHaveBeenCalledWith("Moonlight Ceramics");
-    expect(updates).toContainEqual({ table: "shops", row: { org_slug: "moonlight-ceramics-a1b2c3" } });
-    expect(domainMock.registerTenantDomain).toHaveBeenCalledWith("moonlight-ceramics-a1b2c3");
-    expect(domainMock.isTenantDomainReachable).toHaveBeenCalledWith("moonlight-ceramics-a1b2c3");
-    expect(pageDoc.publishDoc).toHaveBeenCalledWith(shop, "home");
-  });
-
-  it("retries a colliding store-name slug", async () => {
-    tableResults.shops = { data: { org_slug: null, display_name: "Moonlight Ceramics", shop_domain: null }, error: null };
-    authTenantMock.slugify
-      .mockReturnValueOnce("moonlight-ceramics-collision")
-      .mockReturnValueOnce("moonlight-ceramics-a1b2c3");
-    updateResults.push(
-      { data: null, error: { code: "23505" } },
-      { data: { org_slug: "moonlight-ceramics-a1b2c3" }, error: null },
-    );
-
-    await expect(publishStudioStore(shop)).resolves.toBe(
-      "https://moonlight-ceramics-a1b2c3.calderyncompany.com/storefront",
-    );
-
-    expect(authTenantMock.slugify).toHaveBeenCalledTimes(2);
-  });
-
-  it("uses the slug won by a concurrent first publish", async () => {
-    readResults.shops = [
-      { data: { org_slug: null, display_name: "Moonlight Ceramics", shop_domain: null }, error: null },
-      { data: { org_slug: "moonlight-ceramics-winner" }, error: null },
-    ];
-    updateResults.push({ data: null, error: null });
-
-    await expect(publishStudioStore(shop)).resolves.toBe(
-      "https://moonlight-ceramics-winner.calderyncompany.com/storefront",
-    );
-
-    expect(domainMock.registerTenantDomain).toHaveBeenCalledWith("moonlight-ceramics-winner");
-  });
-
-  it("keeps local publishing on the development storefront origin", async () => {
-    vi.stubEnv("NODE_ENV", "development");
-    tableResults.shops = { data: { org_slug: null }, error: null };
-
-    try {
-      await expect(publishStudioStore(shop)).resolves.toBe("/storefront");
-    } finally {
-      vi.unstubAllEnvs();
-    }
-
-    expect(domainMock.registerTenantDomain).not.toHaveBeenCalled();
-    expect(domainMock.isTenantDomainReachable).not.toHaveBeenCalled();
-    expect(pageDoc.publishDoc).toHaveBeenCalledWith(shop, "home");
-  });
-
-  it("publishes when registration fails transiently but the tenant domain is already reachable", async () => {
-    domainMock.registerTenantDomain.mockResolvedValueOnce(false);
-    domainMock.isTenantDomainReachable.mockResolvedValueOnce(true);
-
-    await expect(publishStudioStore(shop)).resolves.toBe(
-      "https://test-store.calderyncompany.com/storefront",
-    );
-
-    expect(domainMock.isTenantDomainReachable).toHaveBeenCalledWith("test-store");
-    expect(pageDoc.publishDoc).toHaveBeenCalledWith(shop, "home");
-  });
-
-  it("publishes the default home doc when no draft exists instead of throwing", async () => {
-    await expect(publishStudioStore(shop)).resolves.toBe(
-      "https://test-store.calderyncompany.com/storefront",
-    );
-    // The seeded draft is the default home document (has a hero block).
-    expect(pageDoc.saveDraft).toHaveBeenCalledWith(
-      shop,
-      "home",
-      expect.objectContaining({
-        blocks: expect.arrayContaining([expect.objectContaining({ type: "hero" })]),
-      }),
-    );
-    expect(pageDoc.publishDoc).toHaveBeenCalledWith(shop, "home");
-  });
-
-  it("still publishes real drafts without seeding the default doc", async () => {
-    const draft = {
-      kind: "singleton",
-      pageKey: "home",
-      blocks: [{ id: "h", type: "hero", layout: { x: 0, y: 0, w: 12, h: 2 }, props: { headline: "Hi", subhead: "" } }],
-    };
-    pageDoc.loadDraftDoc.mockImplementation(async (_shop: string, pageKey: string) =>
-      pageKey === "home" ? draft : null,
-    );
-    await publishStudioStore(shop);
-    expect(pageDoc.publishDoc).toHaveBeenCalledTimes(1);
-    expect(pageDoc.saveDraft).toHaveBeenCalledWith(
-      shop,
-      "home",
-      expect.objectContaining({ blocks: [expect.objectContaining({ type: "hero" })] }),
-    );
-  });
-});
-
-describe("loadStudioState readiness", () => {
-  it("exposes only the merchant policies that actually exist", async () => {
-    policiesMock.loadStorefrontPolicies.mockResolvedValueOnce([{
-      id: "terms",
-      title: "Purchase terms",
-      body: "Payment is due at checkout.",
-      updatedAt: "2026-07-14T12:00:00.000Z",
-    }]);
-
+  it("reports the full product count while limiting preview products to three", async () => {
+    mocks.listProducts.mockResolvedValue(Array.from({ length: 5 }, (_, index) => ({
+      id: `p${index}`,
+      title: `Product ${index}`,
+      variants: [],
+      images: [],
+    })));
     const state = await loadStudioState(shop);
-
-    expect(policiesMock.loadStorefrontPolicies).toHaveBeenCalledWith(shop);
-    expect(state.policies).toEqual([{
-      id: "terms",
-      title: "Purchase terms",
-      body: "Payment is due at checkout.",
-      updatedAt: "2026-07-14T12:00:00.000Z",
-    }]);
+    expect(state.productCount).toBe(5);
+    expect(state.products).toHaveLength(3);
   });
 
-  it("counts immutable runtime-1 draft and published pointers in the Studio state", async () => {
-    bundleBuildMock.readStorefrontReleaseState.mockResolvedValue({
-      draftVersionId: "33333333-3333-3333-3333-333333333333",
-      publishedVersionId: "44444444-4444-4444-4444-444444444444",
-      draftRuntimeVersion: 1,
-      publishedRuntimeVersion: 1,
-    });
-    const state = await loadStudioState(shop);
-    expect(state.hasDraft).toBe(true);
-    expect(state.hasPublished).toBe(true);
-    expect(state.release).toEqual({
-      draftVersionId: "33333333-3333-3333-3333-333333333333",
-      publishedVersionId: "44444444-4444-4444-4444-444444444444",
-      draftRuntime: 1,
-      publishedRuntime: 1,
-    });
-  });
-
-  it("reports zero products and checkout not ready for a fresh shop", async () => {
-    const state = await loadStudioState(shop);
-    expect(state.productCount).toBe(0);
-    expect(state.checkoutReady).toBe(false);
-  });
-
-  it("reports the full catalog count and checkout ready for a fully-enabled account", async () => {
-    catalogMock.listProducts.mockResolvedValue(
-      Array.from({ length: 5 }, (_, i) => ({
-        id: `p${i}`,
-        title: `P${i}`,
-        variants: [],
-        images: [],
-      })),
-    );
-    connectMock.getConnectedAccount.mockResolvedValue({
+  it("uses the checkout charge path's complete three-flag readiness predicate", async () => {
+    mocks.getConnectedAccount.mockResolvedValue({
       charges_enabled: true,
       payouts_enabled: true,
       details_submitted: true,
     });
-    const state = await loadStudioState(shop);
-    expect(state.productCount).toBe(5); // full count, not the 3-product preview slice
-    expect(state.products).toHaveLength(3);
-    expect(state.checkoutReady).toBe(true);
-  });
+    await expect(loadStudioState(shop)).resolves.toMatchObject({ checkoutReady: true });
 
-  it("treats a half-onboarded account (charges only) as not ready, matching the Payments screen", async () => {
-    connectMock.getConnectedAccount.mockResolvedValue({
+    mocks.getConnectedAccount.mockResolvedValue({
       charges_enabled: true,
       payouts_enabled: false,
-      details_submitted: false,
+      details_submitted: true,
     });
-    const state = await loadStudioState(shop);
-    expect(state.checkoutReady).toBe(false);
+    await expect(loadStudioState(shop)).resolves.toMatchObject({ checkoutReady: false });
   });
 
-  it("reports not-ready instead of failing the whole studio load when the payments read errors", async () => {
-    connectMock.getConnectedAccount.mockRejectedValue(new Error("db blip"));
-    const state = await loadStudioState(shop);
-    expect(state.checkoutReady).toBe(false);
-    expect(state.storefrontUrl).toBe("/storefront"); // load survived
-  });
-
-  it("counts draft products separately so the UI can say where attachments went", async () => {
-    adminListProducts.mockResolvedValue({ products: [], total: 4 });
-    const state = await loadStudioState(shop);
-    expect(state.draftProductCount).toBe(4);
-    expect(adminListProducts).toHaveBeenCalledWith(shop, expect.objectContaining({ status: "draft" }));
-  });
-});
-
-describe("publishStudioStore demo guard", () => {
-  it("rejects non-uuid (demo/fixture) shops with a clean 422 instead of a raw 500", async () => {
-    await expect(publishStudioStore("demo-shop")).rejects.toMatchObject({ status: 422 });
-    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
-  });
-});
-
-describe("publishStudioStore PDP buy-path integrity", () => {
-  beforeEach(() => {
-    tableResults.shops = { data: { org_slug: "test-store" }, error: null };
-  });
-  it("injects the missing functional blocks from registry defaults before publishing a pdp draft", async () => {
-    const pdpDraft = {
-      kind: "template",
-      pageKey: "pdp",
-      blocks: [{ id: "g", type: "productGallery", layout: { x: 0, y: 0, w: 12, h: 4 }, props: {} }],
-    };
-    pageDoc.loadDraftDoc.mockImplementation(async (_shop: string, pageKey: string) =>
-      pageKey === "pdp" ? pdpDraft : null,
-    );
-    await publishStudioStore(shop);
-    const savedPdp = pageDoc.saveDraft.mock.calls.find((c) => c[1] === "pdp")?.[2] as {
-      blocks: Array<{ type: string }>;
-    };
-    expect(savedPdp.blocks.map((b) => b.type)).toEqual(
-      expect.arrayContaining(["productGallery", "price", "variantPicker", "addToCart"]),
-    );
-    expect(pageDoc.publishDoc).toHaveBeenCalledWith(shop, "pdp");
-  });
-});
-
-describe("loadStudioState v2 fields", () => {
-  it("defaults the vibe to minimal and reads the stored vibe from StoreSettings", async () => {
-    let state = await loadStudioState(shop);
-    expect(state.settings.vibe).toBe("minimal");
-    settingsMock.getStoreSettings.mockResolvedValue({
-      storeName: "Test Store",
-      palette: { primary: "#0f766e" },
-      logoUrl: null,
-      voiceTagline: null,
-      vibe: "bold",
+  it("falls back to not ready without failing the snapshot when payments cannot be read", async () => {
+    mocks.getConnectedAccount.mockRejectedValue(new Error("payments unavailable"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(loadStudioState(shop)).resolves.toMatchObject({
+      checkoutReady: false,
+      storefrontUrl: "/storefront",
     });
-    state = await loadStudioState(shop);
-    expect(state.settings.vibe).toBe("bold");
+    expect(error).toHaveBeenCalled();
+    error.mockRestore();
   });
 
-  it("exposes typeStyle and density from StoreSettings in the studio DTO", async () => {
-    settingsMock.getStoreSettings.mockResolvedValue({
-      storeName: "Test Store",
-      palette: { primary: "#0f766e" },
-      logoUrl: null,
-      voiceTagline: null,
-      vibe: "minimal",
-      typeStyle: "editorial",
-      density: "roomy",
+  it("counts draft products separately from the live catalog", async () => {
+    mocks.adminListProducts.mockResolvedValue({ products: [], total: 4 });
+    await expect(loadStudioState(shop)).resolves.toMatchObject({ draftProductCount: 4 });
+    expect(mocks.adminListProducts).toHaveBeenCalledWith(shop, { status: "draft", limit: 1 });
+  });
+
+  it("exposes immutable release pointers and their runtime versions", async () => {
+    mocks.readReleaseState.mockResolvedValue({
+      draftVersionId: "33333333-3333-3333-3333-333333333333",
+      publishedVersionId: "44444444-4444-4444-4444-444444444444",
+      draftRuntimeVersion: 1,
+      publishedRuntimeVersion: 1,
     });
-    const state = await loadStudioState(shop);
-    expect(state.settings.typeStyle).toBe("editorial");
-    expect(state.settings.density).toBe("roomy");
+    await expect(loadStudioState(shop)).resolves.toMatchObject({
+      hasDraft: true,
+      hasPublished: true,
+      release: {
+        draftVersionId: "33333333-3333-3333-3333-333333333333",
+        publishedVersionId: "44444444-4444-4444-4444-444444444444",
+        draftRuntime: 1,
+        publishedRuntime: 1,
+      },
+    });
   });
 
-  it("exposes orgSlug and the absolute tenant storefront URL when the shop has one", async () => {
+  it("returns only persisted merchant policies", async () => {
+    const policies = [{
+      id: "terms",
+      title: "Purchase terms",
+      body: "Payment is due at checkout.",
+      updatedAt: "2026-07-14T12:00:00.000Z",
+    }];
+    mocks.loadPolicies.mockResolvedValue(policies);
+    await expect(loadStudioState(shop)).resolves.toMatchObject({ policies });
+    expect(mocks.loadPolicies).toHaveBeenCalledWith(shop);
+  });
+
+  it("builds the public tenant URL from the shop's owned slug", async () => {
     tableResults.shops = { data: { org_slug: "peak-pine-a1b2c3" }, error: null };
-    const state = await loadStudioState(shop);
-    expect(state.orgSlug).toBe("peak-pine-a1b2c3");
-    expect(state.storefrontUrl).toBe("https://peak-pine-a1b2c3.calderyncompany.com/storefront");
-  });
-
-  it("keeps the app path for domain-keyed shops with no org_slug", async () => {
-    const state = await loadStudioState(shop);
-    expect(state.orgSlug).toBeNull();
-    expect(state.storefrontUrl).toBe("/storefront");
-  });
-
-  it("embeds the latest experiment from the experiments lib", async () => {
-    const exp = {
-      id: "22222222-2222-2222-2222-222222222222",
-      name: "Sharper headline",
-      why: "Tests a product-led hero headline against your current copy on the home page.",
-      pageKey: "home" as const,
-      state: "running" as const,
-      startedAt: "2026-07-05T00:00:00.000Z",
-      decidedAt: null,
-      report: null,
-    };
-    experimentsMock.latestStudioExperiment.mockResolvedValue(exp);
-    const state = await loadStudioState(shop);
-    expect(state.experiment).toEqual(exp);
-    expect(experimentsMock.latestStudioExperiment).toHaveBeenCalledWith(shop);
-  });
-});
-
-describe("saveStudioVibe", () => {
-  it("saves the vibe through the StoreSettings contract, preserving the other brand fields", async () => {
-    await saveStudioVibe(shop, "warm");
-    expect(settingsMock.saveStoreSettings).toHaveBeenCalledWith(
-      shop,
-      expect.objectContaining({ storeName: "Test Store", vibe: "warm", logoUrl: null }),
-    );
-  });
-
-  it("rejects non-uuid (demo/fixture) shops with a clean 422", async () => {
-    await expect(saveStudioVibe("demo-shop", "bold")).rejects.toMatchObject({ status: 422 });
-    expect(settingsMock.saveStoreSettings).not.toHaveBeenCalled();
-  });
-});
-
-describe("publishStudioStore experiment guard", () => {
-  it("409s instead of overwriting arm A while an experiment is running", async () => {
-    experimentsMock.hasRunningExperiment.mockResolvedValue(true);
-    await expect(publishStudioStore(shop)).rejects.toMatchObject({
-      status: 409,
-      code: "experiment_running",
+    await expect(loadStudioState(shop)).resolves.toMatchObject({
+      orgSlug: "peak-pine-a1b2c3",
+      storefrontUrl: "https://peak-pine-a1b2c3.example.test/storefront",
     });
-    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
-    expect(pageDoc.publishDoc).not.toHaveBeenCalled();
-  });
-});
-
-describe("studio sections", () => {
-  const WRAP = '<div class="ai-store">';
-  const STYLE = "<style>.ai-store .hero{color:#111}</style>";
-  const HOME = {
-    kind: "singleton",
-    pageKey: "home",
-    blocks: [
-      { id: "s0", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 8 }, props: { html: `${WRAP}${STYLE}<section class="hero"><h1>Big hero</h1></section></div>` } },
-      { id: "g1", type: "productGrid", layout: { x: 0, y: 1, w: 12, h: 6 }, props: { heading: "Best sellers", source: { kind: "all" } } },
-      { id: "s2", type: "rawHtml", layout: { x: 0, y: 2, w: 12, h: 8 }, props: { html: `${WRAP}${STYLE}<section class="closer"><h2>Come back soon</h2></section></div>` } },
-    ],
-  };
-
-  it("sectionsFromDoc labels sections by heading and kind", () => {
-    const sections = sectionsFromDoc(HOME as never);
-    expect(sections).toEqual([
-      { id: "s0", kind: "design", title: "Big hero" },
-      { id: "g1", kind: "products", title: "Best sellers" },
-      { id: "s2", kind: "design", title: "Come back soon" },
-    ]);
   });
 
-  it("moveStudioSection swaps neighbours, restacks y and saves the draft", async () => {
-    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
-    const sections = await moveStudioSection(shop, "g1", "up");
-    expect(sections.map((x) => x.id)).toEqual(["g1", "s0", "s2"]);
-    const saved = pageDoc.saveDraft.mock.calls[0][2] as { blocks: { id: string; layout: { y: number } }[] };
-    expect(saved.blocks.map((b) => b.layout.y)).toEqual([0, 1, 2]);
-  });
-
-  it("moveStudioSection at the edge is a no-op that saves nothing", async () => {
-    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
-    const sections = await moveStudioSection(shop, "s0", "up");
-    expect(sections.map((x) => x.id)).toEqual(["s0", "g1", "s2"]);
-    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
-  });
-
-  it("removeStudioSection deletes the block but refuses to empty the page", async () => {
-    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
-    const sections = await removeStudioSection(shop, "g1");
-    expect(sections.map((x) => x.id)).toEqual(["s0", "s2"]);
-
-    pageDoc.loadDraftDoc.mockResolvedValue({ ...HOME, blocks: [HOME.blocks[0]] });
-    await expect(removeStudioSection(shop, "s0")).rejects.toMatchObject({ status: 422, code: "last_section" });
-  });
-
-  it("section mutations refuse mid-test (arm A must not change under a running experiment)", async () => {
-    experimentsMock.hasRunningExperiment.mockResolvedValue(true);
-    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
-    await expect(moveStudioSection(shop, "g1", "up")).rejects.toMatchObject({ status: 409, code: "experiment_running" });
-    await expect(removeStudioSection(shop, "g1")).rejects.toMatchObject({ status: 409 });
-    await expect(regenerateStudioSection(shop, "s0")).rejects.toMatchObject({ status: 409 });
-  });
-
-  it("regenerateStudioSection peels the wrapper and style, then re-wraps the replacement with the SAME style", async () => {
-    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
-    storegenMock.regenerateHomeSection.mockResolvedValue('<section class="hero"><h1>Fresh hero</h1></section>');
-    await regenerateStudioSection(shop, "s0", "punchier");
-    expect(storegenMock.regenerateHomeSection).toHaveBeenCalledWith(shop, '<section class="hero"><h1>Big hero</h1></section>', "punchier");
-    const saved = pageDoc.saveDraft.mock.calls[0][2] as { blocks: { id: string; props: { html?: string } }[] };
-    const block = saved.blocks.find((b) => b.id === "s0")!;
-    expect(block.props.html).toBe(`${WRAP}${STYLE}<section class="hero"><h1>Fresh hero</h1></section></div>`);
-  });
-
-  it("labels template-vocabulary blocks as content (movable, never a dead Redo)", () => {
-    const doc = {
+  it("shapes legacy page sections as read-only preview metadata", () => {
+    expect(sectionsFromDoc({
       kind: "singleton",
       pageKey: "home",
-      blocks: [
-        { id: "h", type: "hero", layout: { x: 0, y: 0, w: 12, h: 2 }, props: { headline: "Welcome in", subhead: "" } },
-        { id: "f", type: "featureRow", layout: { x: 0, y: 2, w: 12, h: 2 }, props: { heading: "Why us", items: [] } },
-      ],
-    };
-    expect(sectionsFromDoc(doc as never)).toEqual([
-      { id: "h", kind: "content", title: "Welcome in" },
-      { id: "f", kind: "content", title: "Why us" },
-    ]);
+      blocks: [{
+        id: "products",
+        type: "productGrid",
+        props: { heading: "Featured" },
+        layout: { x: 0, y: 0, w: 12, h: 4 },
+      }],
+    })).toEqual([{ id: "products", kind: "products", title: "Featured" }]);
   });
 
-  it("regenerating a legacy multi-section block splits it apart and asks again instead of eating the page", async () => {
-    const legacy = {
-      ...HOME,
-      blocks: [
-        { id: "home-html", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html: `${WRAP}${STYLE}<section id="a">A</section><section id="b">B</section></div>` } },
-      ],
-    };
-    pageDoc.loadDraftDoc.mockResolvedValue(legacy);
-    await expect(regenerateStudioSection(shop, "home-html")).rejects.toMatchObject({ status: 409, code: "sections_split" });
-    // The split itself was persisted: two blocks now, each wrapped with the shared style.
-    expect(storegenMock.regenerateHomeSection).not.toHaveBeenCalled();
-    const saved = pageDoc.saveDraft.mock.calls[0][2] as { blocks: { id: string; props: { html?: string } }[] };
-    expect(saved.blocks).toHaveLength(2);
-    expect(saved.blocks[0].props.html).toContain('id="a"');
-    expect(saved.blocks[1].props.html).toContain('id="b"');
-    expect(saved.blocks[1].props.html).toContain("<style>");
-  });
-
-  it("refuses to apply a regeneration onto a draft that changed during the model call", async () => {
-    const changed = {
-      ...HOME,
-      blocks: HOME.blocks.map((b) => (b.id === "s0" ? { ...b, props: { html: `${WRAP}${STYLE}<section class="hero"><h1>Rebuilt meanwhile</h1></section></div>` } } : b)),
-    };
-    // First read returns the original doc; the re-read after the model call sees a rebuilt draft.
-    pageDoc.loadDraftDoc.mockResolvedValueOnce(HOME).mockResolvedValueOnce(changed);
-    storegenMock.regenerateHomeSection.mockResolvedValue('<section class="hero"><h1>Fresh</h1></section>');
-    await expect(regenerateStudioSection(shop, "s0")).rejects.toMatchObject({ status: 409, code: "section_changed" });
-    expect(pageDoc.saveDraft).not.toHaveBeenCalled();
-  });
-
-  it("regenerateStudioSection refuses catalog sections and surfaces engine failure", async () => {
-    pageDoc.loadDraftDoc.mockResolvedValue(HOME);
-    await expect(regenerateStudioSection(shop, "g1")).rejects.toMatchObject({ status: 422, code: "not_a_design_section" });
-    storegenMock.regenerateHomeSection.mockResolvedValue(null);
-    await expect(regenerateStudioSection(shop, "s0")).rejects.toMatchObject({ status: 502, code: "section_regen_failed" });
+  it("uses the local storefront route in development", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    await expect(requirePublishableTenantDomain("demo-shop")).resolves.toBe("/storefront");
   });
 });

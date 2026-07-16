@@ -1,0 +1,261 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import Store from "./Store";
+import { DashboardApiError } from "~/lib/dashboard/client";
+import type { StoreCommandEvent } from "~/lib/storefront-command/types";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+const { fetchImportStatus, fetchStore, sendStoreCommand } = vi.hoisted(() => ({
+  fetchImportStatus: vi.fn(),
+  fetchStore: vi.fn(),
+  sendStoreCommand: vi.fn(),
+}));
+
+vi.mock("@gsap/react", () => ({ useGSAP: () => undefined }));
+vi.mock("gsap", () => ({ default: { registerPlugin: vi.fn(), from: vi.fn() } }));
+vi.mock("../hero/hero-motion", () => ({ reduced: () => true }));
+vi.mock("~/lib/dashboard/screen-cache", () => ({
+  SCREEN_CACHE_KEYS: { storeStudio: "store" },
+  cachedScreenData: () => undefined,
+  cacheScreenData: vi.fn(),
+}));
+vi.mock("~/lib/dashboard/client", () => ({
+  DashboardApiError: class DashboardApiError extends Error {
+    constructor(public status: number, public code: string, message: string) { super(message); }
+  },
+  fetchImportStatus,
+  saveProduct: vi.fn(),
+  IMPORT_IN_PROGRESS: new Set(["pulling", "promoting"]),
+}));
+vi.mock("~/lib/dashboard/store-client", () => ({
+  fetchStore,
+  sendStoreCommand,
+}));
+
+const VERSION = "33333333-3333-3333-3333-333333333333";
+const RESULT = "44444444-4444-4444-4444-444444444444";
+const TARGET = "55555555-5555-5555-5555-555555555555";
+const SNAPSHOT = {
+  settings: { storeName: "Store", accent: "#112233", vibe: "minimal", logoUrl: null, tagline: null },
+  hero: null,
+  products: [],
+  productCount: 1,
+  draftProductCount: 0,
+  checkoutReady: true,
+  hasDraft: true,
+  hasPublished: false,
+  release: { draftVersionId: VERSION, publishedVersionId: null, draftRuntime: 1, publishedRuntime: 0 },
+  generation: null,
+  orgSlug: "store",
+  storefrontUrl: "/storefront",
+  experiment: null,
+  sections: [],
+  policies: [],
+};
+
+function dashboardApp() {
+  return {
+    shopDomain: null,
+    authBase: undefined,
+    toast: vi.fn(),
+    navigate: vi.fn(),
+  };
+}
+
+async function renderStore(app = dashboardApp()) {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<Store app={app as never} />);
+    await Promise.resolve();
+  });
+  return { app, host, root };
+}
+
+function typePrompt(host: HTMLElement, value: string) {
+  const input = host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Tell Calderyn what to change"]')!;
+  act(() => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+async function sendPrompt(host: HTMLElement, value: string) {
+  typePrompt(host, value);
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.click());
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  fetchStore.mockResolvedValue(structuredClone(SNAPSHOT));
+  fetchImportStatus.mockResolvedValue(null);
+});
+
+afterEach(() => {
+  document.body.innerHTML = "";
+});
+
+describe("Store command orchestration", () => {
+  it("sends a fresh prompt with an explicit null draft pointer", async () => {
+    fetchStore.mockResolvedValue({
+      ...structuredClone(SNAPSHOT),
+      hasDraft: false,
+      release: { ...SNAPSHOT.release, draftVersionId: null, draftRuntime: 0 },
+    });
+    sendStoreCommand.mockResolvedValue({ status: "unchanged", message: "Nothing changed." });
+    const { host, root } = await renderStore();
+    await sendPrompt(host, "Build a warm shop");
+    expect(sendStoreCommand.mock.calls[0]?.[0]).toEqual({
+      kind: "prompt",
+      prompt: "Build a warm shop",
+      expectedDraftVersionId: null,
+    });
+    expect(host.querySelector(".cd-welcome")?.textContent).toContain("Nothing changed.");
+    act(() => root.unmount());
+  });
+
+  it("shows the user message before work and uses the current draft pointer", async () => {
+    let finish: (value: unknown) => void = () => {};
+    sendStoreCommand.mockImplementationOnce((_command, onEvent: (event: StoreCommandEvent) => void) => new Promise((resolve) => {
+      onEvent({ stage: "understanding" });
+      finish = resolve;
+    }));
+    const { host, root } = await renderStore();
+    typePrompt(host, "Make it warmer");
+    const send = host.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!;
+    await act(async () => send.click());
+
+    expect(sendStoreCommand).toHaveBeenCalledWith(
+      { kind: "prompt", prompt: "Make it warmer", expectedDraftVersionId: VERSION },
+      expect.any(Function),
+      expect.any(AbortSignal),
+    );
+    const bubbles = [...host.querySelectorAll(".cd-thread > *")];
+    expect(bubbles[0]?.textContent).toContain("Make it warmer");
+    expect(bubbles[1]?.textContent).toMatch(/understand|request/i);
+
+    await act(async () => finish({ status: "unchanged", message: "Nothing changed." }));
+    act(() => root.unmount());
+  });
+
+  it("ignores internal command frames and maps only merchant-facing stages", async () => {
+    let finish: (value: unknown) => void = () => {};
+    sendStoreCommand.mockImplementationOnce((_command, onEvent: (event: StoreCommandEvent) => void) => new Promise((resolve) => {
+      onEvent({ stage: "compiling" } as never);
+      onEvent({ stage: "checking_preview" });
+      finish = resolve;
+    }));
+    const { host, root } = await renderStore();
+    await sendPrompt(host, "Tighten the layout");
+    expect(host.textContent).not.toMatch(/compiling/i);
+    expect(host.textContent).toMatch(/checking your preview/i);
+    await act(async () => finish({ status: "unchanged", message: "Nothing changed." }));
+    act(() => root.unmount());
+  });
+
+  it("keeps an installed receipt optimistic when the follow-up snapshot refresh fails", async () => {
+    const app = dashboardApp();
+    fetchStore.mockResolvedValueOnce(structuredClone(SNAPSHOT)).mockRejectedValueOnce(new Error("refresh failed"));
+    sendStoreCommand.mockResolvedValue({ status: "installed", versionId: RESULT, undo: null });
+    const { host, root } = await renderStore(app);
+    await sendPrompt(host, "Make it warmer");
+    expect(host.textContent).toContain("Done. The change is in your preview.");
+    expect(host.textContent).not.toMatch(/try again|could not be completed/i);
+    expect(host.querySelector<HTMLIFrameElement>('iframe[title="Store preview"]')?.src).toContain("v=1");
+    expect(app.toast).toHaveBeenCalledWith(
+      "The preview changed, but the latest store details could not be refreshed.",
+      "warn",
+    );
+    act(() => root.unmount());
+  });
+
+  it("does not reload or install when the command is unchanged", async () => {
+    sendStoreCommand.mockResolvedValue({ status: "unchanged", message: "Already matches." });
+    const { host, root } = await renderStore();
+    await sendPrompt(host, "Keep it as-is");
+    expect(host.textContent).toContain("Already matches.");
+    expect(fetchStore).toHaveBeenCalledOnce();
+    expect(host.querySelector<HTMLIFrameElement>('iframe[title="Store preview"]')?.src).toContain("v=0");
+    act(() => root.unmount());
+  });
+
+  it("publishes the latest optimistic draft pointer", async () => {
+    fetchStore.mockResolvedValueOnce(structuredClone(SNAPSHOT)).mockRejectedValueOnce(new Error("refresh failed"));
+    sendStoreCommand
+      .mockResolvedValueOnce({ status: "installed", versionId: RESULT, undo: null })
+      .mockResolvedValueOnce({ status: "unchanged", message: "Publish checked." });
+    const { host, root } = await renderStore();
+    await sendPrompt(host, "Make it warmer");
+    const publish = [...host.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Publish")!;
+    await act(async () => publish.click());
+    expect(sendStoreCommand.mock.calls[1]?.[0]).toEqual({
+      kind: "publish",
+      expectedDraftVersionId: RESULT,
+    });
+    act(() => root.unmount());
+  });
+
+  it("refreshes the snapshot and preview after a command conflict", async () => {
+    fetchStore
+      .mockResolvedValueOnce(structuredClone(SNAPSHOT))
+      .mockResolvedValueOnce({
+        ...structuredClone(SNAPSHOT),
+        release: { ...SNAPSHOT.release, draftVersionId: RESULT },
+      });
+    sendStoreCommand.mockRejectedValue(new DashboardApiError(409, "storefront_command_conflict", "Store changed elsewhere."));
+    const { host, root } = await renderStore();
+    await sendPrompt(host, "Make it warmer");
+    expect(fetchStore).toHaveBeenCalledTimes(2);
+    expect(host.textContent).toContain("Store changed elsewhere.");
+    expect(host.querySelector<HTMLIFrameElement>('iframe[title="Store preview"]')?.src).toContain("v=1");
+    act(() => root.unmount());
+  });
+
+  it("reconciles an aborted command without claiming whether its terminal write committed", async () => {
+    fetchStore
+      .mockResolvedValueOnce(structuredClone(SNAPSHOT))
+      .mockResolvedValueOnce({
+        ...structuredClone(SNAPSHOT),
+        release: { ...SNAPSHOT.release, draftVersionId: RESULT },
+      });
+    sendStoreCommand.mockRejectedValue(new DOMException("Stopped", "AbortError"));
+    const { host, root } = await renderStore();
+    await sendPrompt(host, "Make it warmer");
+    expect(host.textContent).toContain("Check the preview before sending another change.");
+    expect(host.textContent).not.toContain("was not changed");
+    expect(fetchStore).toHaveBeenCalledTimes(2);
+    act(() => root.unmount());
+  });
+
+  it("uses the returned CAS pair for Undo and the installed pointer for the next command", async () => {
+    sendStoreCommand.mockImplementation(async (command, onEvent: (event: StoreCommandEvent) => void) => {
+      if (command.kind === "prompt") {
+        const receipt = {
+          status: "installed" as const,
+          versionId: RESULT,
+          undo: { targetVersionId: TARGET, expectedDraftVersionId: RESULT },
+        };
+        onEvent({ stage: "ready", receipt });
+        return receipt;
+      }
+      const receipt = { status: "installed" as const, versionId: TARGET, undo: null };
+      onEvent({ stage: "ready", receipt });
+      return receipt;
+    });
+    const { host, root } = await renderStore();
+    typePrompt(host, "Make it warmer");
+    await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.click());
+    const undo = [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Undo")!;
+    await act(async () => undo.click());
+    expect(sendStoreCommand.mock.calls[1]?.[0]).toEqual({
+      kind: "undo", targetVersionId: TARGET, expectedDraftVersionId: RESULT,
+    });
+    act(() => root.unmount());
+  });
+});

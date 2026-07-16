@@ -185,47 +185,6 @@ export async function installStorefrontDraft(input: InstallStorefrontDraftInput)
   }, "storefront_draft_install_failed");
 }
 
-export interface InstallGeneratedStorefrontBundleInput {
-  shopId: string;
-  expectedDraftVersionId: string | null;
-  actorId?: string | null;
-  schemaVersion: number;
-  runtimeVersion: number;
-  validationProfileVersion: number;
-  artifact: Record<string, unknown>;
-  assetManifest: Record<string, unknown>;
-  validationReport: Record<string, unknown>;
-  generationPrompt: string;
-  resolution: Record<string, unknown>;
-  assetReferences: Array<{ logicalKey: string; assetKey: string }>;
-  signal?: AbortSignal;
-}
-
-/** Create, attach, validate, and CAS-install a generated bundle in one database
- * transaction. Any failed assertion rolls every candidate row/reference back. */
-export async function installGeneratedStorefrontBundle(input: InstallGeneratedStorefrontBundleInput): Promise<{
-  versionId: string;
-  installedDraftVersionId: string;
-}> {
-  await assertStorefrontWriteAllowed(input.shopId);
-  const versionId = await writeRpc<string>("install_generated_storefront_bundle", {
-    p_shop_id: input.shopId,
-    p_expected_draft_version_id: input.expectedDraftVersionId,
-    p_actor_id: input.actorId ?? null,
-    p_schema_version: input.schemaVersion,
-    p_runtime_version: input.runtimeVersion,
-    p_validation_profile_version: input.validationProfileVersion,
-    p_bundle_json: input.artifact,
-    p_asset_manifest: input.assetManifest,
-    p_validation_report: input.validationReport,
-    p_generation_prompt: input.generationPrompt,
-    p_resolution_json: input.resolution,
-    p_asset_references: input.assetReferences,
-  }, "storefront_generated_install_failed", input.signal);
-  requireUuid(versionId, "bundleVersionId");
-  return { versionId, installedDraftVersionId: versionId };
-}
-
 export interface EditStorefrontDraftInput extends StorefrontEditAuditInput {
   shopId: string;
   resultVersionId: string;

@@ -1,5 +1,5 @@
-// Catalog + storefront capabilities — writes go through the same catalog/
-// studio primitives the Products and Store Studio screens use. There is no
+// Catalog capabilities — writes go through the same catalog primitives the
+// Products screen uses. There is no
 // audited executor pipeline here (unlike campaign-actions.server.ts), so every
 // receipt carries auditId: null; set_variant_price instead echoes the prior
 // price so the merchant can ask the assistant to revert it. Money is cents.
@@ -14,19 +14,7 @@ import {
 } from "../../catalog/catalog.server";
 import { validateProductInput } from "../../catalog/validate";
 import type { ProductStatus } from "../../catalog/types";
-import {
-  saveStudioHero,
-  saveStudioAccent,
-  saveStudioVibe,
-  publishStudioStore,
-} from "../../storebuilder/studio.server";
-import type { StudioVibe } from "../../storebuilder/studio-types";
 import { updateLocationDetails, type LocationPatch } from "../../catalog/locations.server";
-import {
-  startExperiment,
-  decideExperiment,
-  type StoreExperimentKind,
-} from "../../experiments/store-experiment.server";
 import type { ActionReceipt, AssistantAction, ValidationResult } from "./registry-types";
 
 function str(v: unknown): string | null {
@@ -226,102 +214,6 @@ export const CATALOG_ACTIONS: AssistantAction[] = [
     },
   },
   {
-    name: "save_hero_copy",
-    description:
-      "Update the storefront home page hero headline/subhead copy (draft; publish_store makes it live).",
-    inputSchema: {
-      type: "object",
-      properties: { headline: { type: "string" }, subhead: { type: "string" } },
-      required: ["headline"],
-    },
-    tier: "execute",
-    undoable: false,
-    validate: (i): ValidationResult => {
-      const headline = str(i.headline);
-      if (!headline || headline.length > 300) return { ok: false, message: "headline is required (max 300 chars)" };
-      if (i.subhead !== undefined && (typeof i.subhead !== "string" || i.subhead.length > 300)) {
-        return { ok: false, message: "subhead must be a string of at most 300 chars" };
-      }
-      return { ok: true, value: { headline, subhead: str(i.subhead) ?? "" } };
-    },
-    run: async (ctx, i): Promise<ActionReceipt> => {
-      await saveStudioHero(ctx.shopId, { headline: String(i.headline), subhead: String(i.subhead ?? "") });
-      return {
-        action: "save_hero_copy",
-        summary: "Updated the home page hero copy",
-        auditId: null,
-        undoable: false,
-      };
-    },
-  },
-  {
-    name: "save_accent_color",
-    description: "Set the storefront's accent/brand color as a 6-digit hex code, e.g. #1c8a55.",
-    inputSchema: { type: "object", properties: { color: { type: "string" } }, required: ["color"] },
-    tier: "execute",
-    undoable: false,
-    validate: (i): ValidationResult => {
-      const color = str(i.color);
-      if (!color || !/^#[0-9a-fA-F]{6}$/.test(color)) {
-        return { ok: false, message: "color must be a 6-digit hex code, e.g. #1c8a55" };
-      }
-      return { ok: true, value: { color } };
-    },
-    run: async (ctx, i): Promise<ActionReceipt> => {
-      await saveStudioAccent(ctx.shopId, String(i.color));
-      return {
-        action: "save_accent_color",
-        summary: `Set the accent color to ${String(i.color)}`,
-        auditId: null,
-        undoable: false,
-      };
-    },
-  },
-  {
-    name: "save_vibe",
-    description: "Set the storefront's design vibe: minimal, bold, or warm.",
-    inputSchema: {
-      type: "object",
-      properties: { vibe: { type: "string", enum: ["minimal", "bold", "warm"] } },
-      required: ["vibe"],
-    },
-    tier: "execute",
-    undoable: false,
-    validate: (i): ValidationResult => {
-      if (i.vibe !== "minimal" && i.vibe !== "bold" && i.vibe !== "warm") {
-        return { ok: false, message: "vibe must be minimal, bold, or warm" };
-      }
-      return { ok: true, value: { vibe: i.vibe } };
-    },
-    run: async (ctx, i): Promise<ActionReceipt> => {
-      await saveStudioVibe(ctx.shopId, i.vibe as StudioVibe);
-      return {
-        action: "save_vibe",
-        summary: `Set the storefront vibe to ${String(i.vibe)}`,
-        auditId: null,
-        undoable: false,
-      };
-    },
-  },
-  {
-    name: "publish_store",
-    description: "Publish every drafted storefront page (home/collection/pdp). Requires confirmation.",
-    inputSchema: { type: "object", properties: {}, required: [] },
-    tier: "confirm",
-    undoable: false,
-    validate: (): ValidationResult => ({ ok: true, value: {} }),
-    confirmSummary: async () => "Publish the draft store — changes go live to buyers immediately",
-    run: async (ctx): Promise<ActionReceipt> => {
-      await publishStudioStore(ctx.shopId);
-      return {
-        action: "publish_store",
-        summary: "Published the store",
-        auditId: null,
-        undoable: false,
-      };
-    },
-  },
-  {
     name: "set_location_details",
     description:
       "Update a fulfillment location's address, priority, or geocoordinates. location_id comes from catalog/location reads. priority is an integer (lower ranks first for allocation); lat/lng are numbers, or null to clear them; street1/street2/city/region/postal_code/country are plain strings. At least one field besides location_id is required.",
@@ -384,97 +276,6 @@ export const CATALOG_ACTIONS: AssistantAction[] = [
         auditId: null,
         undoable: false,
         detail: { location_id: locationId, patch },
-      };
-    },
-  },
-  {
-    name: "start_experiment",
-    description:
-      "Start a home-page A/B experiment (headline copy or design vibe) against the currently published store. Only one experiment can run at a time; decide_experiment or ship_experiment closes it.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        kind: { type: "string", enum: ["headline", "vibe"] },
-        name: { type: "string" },
-      },
-      required: ["kind"],
-    },
-    tier: "execute",
-    undoable: false,
-    validate: (i): ValidationResult => {
-      if (i.kind !== "headline" && i.kind !== "vibe") {
-        return { ok: false, message: "kind must be headline or vibe" };
-      }
-      if (i.name !== undefined && (typeof i.name !== "string" || i.name.length > 80)) {
-        return { ok: false, message: "name must be a string of at most 80 chars" };
-      }
-      return { ok: true, value: { kind: i.kind, name: str(i.name) ?? undefined } };
-    },
-    run: async (ctx, i): Promise<ActionReceipt> => {
-      const kind = i.kind as StoreExperimentKind;
-      await startExperiment(ctx.shopId, { kind, name: i.name as string | undefined });
-      return {
-        action: "start_experiment",
-        summary: `Started a ${kind} experiment`,
-        auditId: null,
-        undoable: false,
-      };
-    },
-  },
-  {
-    name: "decide_experiment",
-    description:
-      "Close a running home-page experiment by keeping the current published page (keep) or discarding the challenger (stop). To publish the winning variant live, use ship_experiment instead (requires confirmation).",
-    inputSchema: {
-      type: "object",
-      properties: {
-        experiment_id: { type: "string" },
-        decision: { type: "string", enum: ["keep", "stop"] },
-      },
-      required: ["experiment_id", "decision"],
-    },
-    tier: "execute",
-    undoable: false,
-    validate: (i): ValidationResult => {
-      const experimentId = str(i.experiment_id);
-      if (!experimentId) return { ok: false, message: "experiment_id is required" };
-      if (i.decision !== "keep" && i.decision !== "stop") {
-        return { ok: false, message: "decision must be keep or stop (use ship_experiment to publish live)" };
-      }
-      return { ok: true, value: { experiment_id: experimentId, decision: i.decision } };
-    },
-    run: async (ctx, i): Promise<ActionReceipt> => {
-      const decision = i.decision as "keep" | "stop";
-      await decideExperiment(ctx.shopId, String(i.experiment_id), decision);
-      return {
-        action: "decide_experiment",
-        summary: `Closed the experiment (${decision})`,
-        auditId: null,
-        undoable: false,
-      };
-    },
-  },
-  {
-    name: "ship_experiment",
-    description:
-      "Publish the winning variant of a home-page experiment live to the storefront. Requires confirmation.",
-    inputSchema: { type: "object", properties: { experiment_id: { type: "string" } }, required: ["experiment_id"] },
-    tier: "confirm",
-    undoable: false,
-    validate: (i): ValidationResult => {
-      const experimentId = str(i.experiment_id);
-      return experimentId
-        ? { ok: true, value: { experiment_id: experimentId } }
-        : { ok: false, message: "experiment_id is required" };
-    },
-    confirmSummary: async () => "Ship the winning variant — publishes it live to your storefront",
-    run: async (ctx, i): Promise<ActionReceipt> => {
-      await decideExperiment(ctx.shopId, String(i.experiment_id), "ship");
-      return {
-        action: "ship_experiment",
-        summary: "Shipped the experiment — the winning variant is now live",
-        auditId: null,
-        undoable: false,
       };
     },
   },

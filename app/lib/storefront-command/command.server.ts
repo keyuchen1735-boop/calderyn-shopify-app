@@ -33,7 +33,8 @@ import type {
   VersionedStoreTemplate,
 } from "~/lib/storefront-bundle/types";
 import { validateCompiledBundle, type BundleValidationReport } from "~/lib/storefront-compiler/validate";
-import { StorefrontEditError, undoStorefrontEdit } from "~/lib/storefront-edit/edit.server";
+import { StorefrontUndoError, undoStorefrontEdit } from "~/lib/storefront-edit/undo.server";
+import { isStorefrontBundleReadEnabled } from "~/lib/storefront-runtime/csp.server";
 import { requirePublishableTenantDomain } from "~/lib/storebuilder/studio.server";
 import { storefrontAiBrowserProof } from "~/lib/storefront-validation/browser.server";
 import { applyStoreIntent } from "./apply";
@@ -56,6 +57,7 @@ export interface StoreCommandDependencies {
   loadState(shopId: string): Promise<StoreCommandState>;
   assertWriteAllowed(shopId: string): Promise<void>;
   assertPublishable(shopId: string): Promise<void>;
+  readEnabled(): boolean;
   recipeBuildEnabled(): boolean;
   publishEnabled(): boolean;
   buildEvidence(shopId: string): Promise<CatalogRoutingEvidence>;
@@ -137,7 +139,7 @@ async function loadState(shopId: string): Promise<StoreCommandState> {
     throw new StoreCommandError(
       "storefront_command_unavailable",
       "This storefront draft cannot be changed with chat yet.",
-      409,
+      503,
     );
   }
   const resolution = row.resolution_json && typeof row.resolution_json === "object" && !Array.isArray(row.resolution_json)
@@ -158,6 +160,7 @@ const defaultDependencies: StoreCommandDependencies = {
   loadState,
   assertWriteAllowed: assertStorefrontWriteAllowed,
   assertPublishable: async (shopId) => { await requirePublishableTenantDomain(shopId); },
+  readEnabled: isStorefrontBundleReadEnabled,
   recipeBuildEnabled: isStorefrontRecipeBuildEnabled,
   publishEnabled: isStorefrontBundlePublishEnabled,
   buildEvidence: buildCatalogRoutingEvidence,
@@ -211,7 +214,12 @@ function publicError(code: string): StoreCommandError {
       422,
     );
   }
-  if (code === "storefront_recipe_build_disabled" || code === "storefront_bundle_publish_disabled") {
+  if (
+    code === "storefront_bundle_read_disabled"
+    || code === "storefront_recipe_build_disabled"
+    || code === "storefront_bundle_publish_disabled"
+    || code === "storefront_command_unavailable"
+  ) {
     return new StoreCommandError(
       "storefront_command_unavailable",
       "Storefront changes are temporarily unavailable. Your current draft was not changed.",
@@ -229,7 +237,7 @@ function normalizedError(error: unknown, signal?: AbortSignal): StoreCommandErro
   if (signal?.aborted) return abortError();
   const trusted = error instanceof StoreCommandError
     || error instanceof StorefrontReleaseError
-    || error instanceof StorefrontEditError;
+    || error instanceof StorefrontUndoError;
   if (trusted && error.status === 409) return publicError("storefront_command_conflict");
   const candidate = error && typeof error === "object" ? error as { code?: unknown } : null;
   const safe = publicError(typeof candidate?.code === "string" ? candidate.code : "storefront_command_failed");
@@ -265,7 +273,7 @@ function unchanged(message: string): StoreCommandReceipt {
 
 function artifact(bundle: StorefrontBundleV1): { sourceKind: "recipe"; bundle: StorefrontBundleV1 } {
   if (bundle.source.kind !== "recipe") {
-    throw new StoreCommandError("storefront_command_unavailable", "This storefront draft cannot be changed with chat yet.", 409);
+    throw new StoreCommandError("storefront_command_unavailable", "This storefront draft cannot be changed with chat yet.", 503);
   }
   return { sourceKind: "recipe", bundle };
 }
@@ -322,6 +330,13 @@ export async function runStoreCommand(
 
     const actorId = input.actorId ?? null;
     if (input.command.kind === "undo") {
+      if (!dependencies.readEnabled() || !dependencies.recipeBuildEnabled()) {
+        throw new StoreCommandError(
+          dependencies.readEnabled() ? "storefront_recipe_build_disabled" : "storefront_bundle_read_disabled",
+          "Storefront changes are temporarily unavailable. Your current draft was not changed.",
+          503,
+        );
+      }
       const result = await dependencies.undo({
         shopId: input.shopId,
         actorId,
@@ -337,9 +352,13 @@ export async function runStoreCommand(
     }
 
     if (input.command.kind === "publish") {
-      if (!dependencies.publishEnabled()) {
+      if (!dependencies.readEnabled() || !dependencies.recipeBuildEnabled() || !dependencies.publishEnabled()) {
         throw new StoreCommandError(
-          "storefront_bundle_publish_disabled",
+          !dependencies.readEnabled()
+            ? "storefront_bundle_read_disabled"
+            : !dependencies.recipeBuildEnabled()
+              ? "storefront_recipe_build_disabled"
+              : "storefront_bundle_publish_disabled",
           "Publishing is temporarily unavailable. Your draft is unchanged.",
           503,
         );
@@ -360,9 +379,9 @@ export async function runStoreCommand(
     if (input.command.attachments?.some(({ kind }) => kind === "design_reference")) {
       return ready(input, unchanged("That design reference could not be matched safely, so your draft was left unchanged."));
     }
-    if (!dependencies.recipeBuildEnabled()) {
+    if (!dependencies.readEnabled() || !dependencies.recipeBuildEnabled()) {
       throw new StoreCommandError(
-        "storefront_recipe_build_disabled",
+        dependencies.readEnabled() ? "storefront_recipe_build_disabled" : "storefront_bundle_read_disabled",
         "Storefront changes are temporarily unavailable. Your current draft was not changed.",
         503,
       );
@@ -382,7 +401,6 @@ export async function runStoreCommand(
       const evidence = await dependencies.buildEvidence(input.shopId);
       designResolution = dependencies.resolveDesign({
         prompt: input.command.prompt,
-        mode: "auto",
         excludedTemplateIds: [],
       }, evidence);
       nextExclusions = [];
@@ -390,7 +408,7 @@ export async function runStoreCommand(
         return ready(input, unchanged("No other approved design is available, so your draft was left unchanged."));
       }
       if (designResolution.kind !== "recipe") {
-        throw new StoreCommandError("storefront_command_unavailable", "No approved storefront design is available.", 409);
+        throw new StoreCommandError("storefront_command_unavailable", "No approved storefront design is available.", 503);
       }
       const recipe = await loadSelectedRecipe(designResolution, dependencies);
       nextBundle = recipe.bundle;
@@ -418,7 +436,6 @@ export async function runStoreCommand(
         const evidence = await dependencies.buildEvidence(input.shopId);
         designResolution = dependencies.resolveDesign({
           prompt: intent.prompt,
-          mode: "auto",
           excludedTemplateIds: selectedExclusions,
         }, evidence);
         nextExclusions = selectedExclusions;
@@ -426,7 +443,7 @@ export async function runStoreCommand(
           return ready(input, unchanged("No other approved design is available, so your draft was left unchanged."));
         }
         if (designResolution.kind !== "recipe") {
-          throw new StoreCommandError("storefront_command_unavailable", "No approved storefront design is available.", 409);
+          throw new StoreCommandError("storefront_command_unavailable", "No approved storefront design is available.", 503);
         }
         const recipe = await loadSelectedRecipe(designResolution, dependencies);
         nextBundle = recipe.bundle;
@@ -476,7 +493,7 @@ export async function runStoreCommand(
 
     const versionArtifact = artifact(nextBundle);
     if (nextBundle.source.kind !== "recipe") {
-      throw new StoreCommandError("storefront_command_unavailable", "This storefront draft cannot be changed with chat yet.", 409);
+      throw new StoreCommandError("storefront_command_unavailable", "This storefront draft cannot be changed with chat yet.", 503);
     }
     const resultArtifactHash = await dependencies.hashArtifact({
       schemaVersion: nextBundle.schemaVersion,
