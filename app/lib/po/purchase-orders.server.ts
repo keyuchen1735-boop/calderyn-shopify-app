@@ -45,6 +45,10 @@ const PO_STATUSES: ReadonlySet<string> = new Set([
 
 const MAX_LINE_QTY = 1_000_000;
 const MAX_PO_LINES = 100;
+// unit_cost_cents is a Postgres `int` column; a larger value passes JS integer
+// checks but overflows the column (22003) as an unhandled 500. Cap at the int4
+// ceiling so an out-of-range cost fails cleanly at the boundary instead.
+const MAX_UNIT_COST_CENTS = 2_147_483_647;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function invalid(code: string, message: string, status = 422): never {
@@ -102,7 +106,7 @@ function validateLines(raw: unknown): PoLineInput[] {
     let unitCostCents: number | null = null;
     if (line.unitCostCents != null && line.unitCostCents !== "") {
       const cost = Number(line.unitCostCents);
-      if (!Number.isInteger(cost) || cost < 0) {
+      if (!Number.isInteger(cost) || cost < 0 || cost > MAX_UNIT_COST_CENTS) {
         invalid("invalid_po", "Unit costs must be zero or more, in cents.");
       }
       unitCostCents = cost;
@@ -113,7 +117,14 @@ function validateLines(raw: unknown): PoLineInput[] {
 
 function validateExpectedAt(raw: unknown): string | null {
   if (raw == null || raw === "") return null;
-  if (typeof raw !== "string" || !DATE_RE.test(raw) || !Number.isFinite(Date.parse(`${raw}T00:00:00Z`))) {
+  if (typeof raw !== "string" || !DATE_RE.test(raw)) {
+    invalid("invalid_po", "The expected date must be a valid date.");
+  }
+  // Date.parse rolls impossible days over ("2026-02-30" → Mar 2) and still
+  // returns a finite value, so the raw string would reach the Postgres `date`
+  // column and 500. Round-trip through UTC and require the day to survive.
+  const t = Date.parse(`${raw}T00:00:00Z`);
+  if (!Number.isFinite(t) || new Date(t).toISOString().slice(0, 10) !== raw) {
     invalid("invalid_po", "The expected date must be a valid date.");
   }
   return raw;
@@ -694,7 +705,14 @@ const REPROJECT_CONCURRENCY = 8;
 
 /** Re-project inventory_level_fact for every (variant, destination) a po_*
  *  function touched — same post-mutation pattern as the inventory engine.
- *  Bounded-parallel: a 100-line PO would take ~2 RTTs per variant serially. */
+ *  Bounded-parallel: a 100-line PO would take ~2 RTTs per variant serially.
+ *
+ *  Best-effort: the po_* function has already committed the authoritative
+ *  balance/ledger change, so a projection blip here must NOT bubble up and make
+ *  a committed action look failed — the status has advanced and a retry would
+ *  raise po_not_draft/po_not_receivable. A failed projection is logged and left
+ *  for the next projection pass to repair (the SQL returns the touched variants
+ *  precisely so recovery stays possible). */
 async function reprojectFromRpc(shopId: string, payload: unknown): Promise<void> {
   if (payload === null || typeof payload !== "object") return;
   const result = payload as { variantIds?: unknown; locationId?: unknown };
@@ -703,9 +721,11 @@ async function reprojectFromRpc(shopId: string, payload: unknown): Promise<void>
   const variantIds = [...new Set(result.variantIds.map((raw) => String(raw)))];
   for (let i = 0; i < variantIds.length; i += REPROJECT_CONCURRENCY) {
     await Promise.all(
-      variantIds
-        .slice(i, i + REPROJECT_CONCURRENCY)
-        .map((variantId) => projectLevelFact(shopId, variantId, locationId)),
+      variantIds.slice(i, i + REPROJECT_CONCURRENCY).map((variantId) =>
+        projectLevelFact(shopId, variantId, locationId).catch((err) => {
+          console.error("[po] level-fact re-projection failed", { variantId, locationId }, err);
+        }),
+      ),
     );
   }
 }
