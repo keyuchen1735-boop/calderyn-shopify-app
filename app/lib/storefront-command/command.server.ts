@@ -15,6 +15,7 @@ import {
   hashStorefrontArtifact,
   installStorefrontDraft,
   publishStorefrontRelease,
+  StorefrontReleaseError,
   type CreateStorefrontBundleVersionInput,
   type EditStorefrontDraftInput,
   type HashStorefrontArtifactInput,
@@ -32,7 +33,7 @@ import type {
   VersionedStoreTemplate,
 } from "~/lib/storefront-bundle/types";
 import { validateCompiledBundle, type BundleValidationReport } from "~/lib/storefront-compiler/validate";
-import { undoStorefrontEdit } from "~/lib/storefront-edit/edit.server";
+import { StorefrontEditError, undoStorefrontEdit } from "~/lib/storefront-edit/edit.server";
 import { requirePublishableTenantDomain } from "~/lib/storebuilder/studio.server";
 import { storefrontAiBrowserProof } from "~/lib/storefront-validation/browser.server";
 import { applyStoreIntent } from "./apply";
@@ -226,6 +227,10 @@ function publicError(code: string): StoreCommandError {
 
 function normalizedError(error: unknown, signal?: AbortSignal): StoreCommandError {
   if (signal?.aborted) return abortError();
+  const trusted = error instanceof StoreCommandError
+    || error instanceof StorefrontReleaseError
+    || error instanceof StorefrontEditError;
+  if (trusted && error.status === 409) return publicError("storefront_command_conflict");
   const candidate = error && typeof error === "object" ? error as { code?: unknown } : null;
   const safe = publicError(typeof candidate?.code === "string" ? candidate.code : "storefront_command_failed");
   return new StoreCommandError(safe.code, safe.message, safe.status, error);
@@ -324,7 +329,6 @@ export async function runStoreCommand(
         expectedDraftVersionId: input.command.expectedDraftVersionId,
         ...(input.signal ? { signal: input.signal } : {}),
       });
-      throwIfAborted(input.signal);
       return ready(input, {
         status: "installed",
         versionId: result.versionId,
@@ -349,7 +353,6 @@ export async function runStoreCommand(
         expectedPublishedVersionId: state.publishedVersionId,
         ...(input.signal ? { signal: input.signal } : {}),
       });
-      throwIfAborted(input.signal);
       return ready(input, { status: "published", versionId });
     }
 
@@ -505,17 +508,15 @@ export async function runStoreCommand(
       },
       ...(input.signal ? { signal: input.signal } : {}),
     });
-    throwIfAborted(input.signal);
 
     if (!state.draft) {
+      throwIfAborted(input.signal);
       await dependencies.install({
         shopId: input.shopId,
         versionId,
         expectedDraftVersionId: input.command.expectedDraftVersionId,
         actorId,
-        ...(input.signal ? { signal: input.signal } : {}),
       });
-      throwIfAborted(input.signal);
       return ready(input, { status: "installed", versionId, undo: null });
     }
 
@@ -523,6 +524,7 @@ export async function runStoreCommand(
     if (!expectedDraftVersionId) {
       throw new StoreCommandError("storefront_command_conflict", "The storefront draft changed before this request.", 409);
     }
+    throwIfAborted(input.signal);
     await dependencies.edit({
       shopId: input.shopId,
       baseVersionId: expectedDraftVersionId,
@@ -536,9 +538,7 @@ export async function runStoreCommand(
       patch: { operation: internalOperation },
       provider: { kind: "bounded_classification" },
       validation: { static: validation, browserProof },
-      ...(input.signal ? { signal: input.signal } : {}),
     });
-    throwIfAborted(input.signal);
     return ready(input, {
       status: "installed",
       versionId,

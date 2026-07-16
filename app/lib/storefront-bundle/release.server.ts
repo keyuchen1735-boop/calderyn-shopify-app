@@ -176,12 +176,13 @@ export async function installStorefrontDraft(input: InstallStorefrontDraftInput)
   await assertStorefrontWriteAllowed(input.shopId);
   throwIfReleaseAborted(input.signal);
   requireUuid(input.versionId, "versionId");
+  throwIfReleaseAborted(input.signal);
   return writeRpc<string>("install_storefront_draft", {
     p_shop_id: input.shopId,
     p_validated_version_id: input.versionId,
     p_expected_draft_version_id: input.expectedDraftVersionId,
     p_actor_id: input.actorId ?? null,
-  }, "storefront_draft_install_failed", input.signal);
+  }, "storefront_draft_install_failed");
 }
 
 export interface InstallGeneratedStorefrontBundleInput {
@@ -240,6 +241,7 @@ export async function editStorefrontDraft(input: EditStorefrontDraftInput): Prom
   throwIfReleaseAborted(input.signal);
   requireUuid(input.baseVersionId, "baseVersionId");
   requireUuid(input.resultVersionId, "resultVersionId");
+  throwIfReleaseAborted(input.signal);
   return writeRpc<string>("edit_storefront_draft", {
     p_shop_id: input.shopId,
     p_base_version_id: input.baseVersionId,
@@ -247,7 +249,7 @@ export async function editStorefrontDraft(input: EditStorefrontDraftInput): Prom
     p_expected_draft_version_id: input.expectedDraftVersionId,
     p_actor_id: input.actorId ?? null,
     ...editAuditRpcParams(input),
-  }, "storefront_edit_failed", input.signal);
+  }, "storefront_edit_failed");
 }
 
 export interface PublishStorefrontReleaseInput {
@@ -314,7 +316,7 @@ export async function publishStorefrontRelease(input: PublishStorefrontReleaseIn
     p_legacy_artifact_hash: legacyPayload?.artifactHash ?? null,
     p_legacy_validation_report: legacyPayload?.validationReport ?? null,
     p_legacy_capture_token: legacyPayload?.captureToken ?? null,
-  }, "storefront_publish_failed", input.signal);
+  }, "storefront_publish_failed");
 }
 
 export interface RollbackStorefrontReleaseInput {

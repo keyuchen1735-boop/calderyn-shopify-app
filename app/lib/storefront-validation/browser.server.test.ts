@@ -6,6 +6,7 @@ import {
   isSupportedStorefrontProofLink,
   STOREFRONT_PROOF_VIEWPORTS,
   buildStorefrontProofCases,
+  createStorefrontProofDataForBundle,
   createStorefrontProofDataForContext,
   detectHorizontalLayoutFailures,
   measureStorefrontBundle,
@@ -67,6 +68,17 @@ describe("storefront browser proof matrix", () => {
 
     expect(home.featuredProducts.map(({ id }) => id)).toEqual(selected.slice(0, 1));
     expect(collection.featuredProducts.map(({ id }) => id)).toEqual(catalog.products.map(({ id }) => id));
+  });
+
+  it("wires immutable bundle featured products into browser-proof data", () => {
+    const catalog = storefrontProofContext(3);
+    const bundle = compileBundle(structuredClone(VALID_BUNDLE_SOURCE)).bundle;
+    bundle.featuredProductIds = [catalog.products[2]!.id, catalog.products[0]!.id];
+    bundle.routes.home.requiredData = [{ kind: "featuredProducts", limit: 1 }];
+
+    const home = createStorefrontProofDataForBundle("home", bundle, catalog);
+
+    expect(home.featuredProducts.map(({ id }) => id)).toEqual([catalog.products[2]!.id]);
   });
 
   it("writes generated preview assets only during an intentional baseline refresh", () => {

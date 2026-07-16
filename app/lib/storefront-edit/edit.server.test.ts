@@ -823,6 +823,9 @@ describe("undoStorefrontEdit", () => {
     expect(deps.cloneAssetProvenance).toHaveBeenCalledWith({ shopId: SHOP, sourceVersionId: BASE, targetVersionId: RESTORED });
     expect(deps.loadProofAssets).toHaveBeenCalledWith({ shopId: SHOP, versionId: BASE, manifest: target.assets });
     expect(deps.prove).toHaveBeenCalledWith(expect.objectContaining({ persistedAssets: verifiedBytes }));
+    const hashedArtifact = vi.mocked(deps.hashArtifact).mock.calls[0]![0].artifact;
+    expect(hashedArtifact).toEqual({ sourceKind: target.source.kind, bundle: target });
+    expect(vi.mocked(deps.createVersion).mock.calls[0]![0].artifact).toBe(hashedArtifact);
     expect(vi.mocked(deps.prove).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(deps.createVersion).mock.invocationCallOrder[0]!);
     expect(deps.validateVersion).toHaveBeenCalledWith(expect.objectContaining({ versionId: RESTORED }));
     expect(deps.editDraft).toHaveBeenCalledWith(expect.objectContaining({
@@ -952,5 +955,25 @@ describe("undoStorefrontEdit", () => {
 
     expect(deps.cloneAssetProvenance).not.toHaveBeenCalled();
     expect(deps.editDraft).not.toHaveBeenCalled();
+  });
+
+  it("returns committed success when cancellation races with the terminal Undo CAS", async () => {
+    const controller = new AbortController();
+    const deps = dependencies();
+    vi.mocked(deps.loadDraft).mockResolvedValue({ versionId: RESULT, artifactHash: `sha256:${"b".repeat(64)}`, bundle: baseBundle() });
+    vi.mocked(deps.hashArtifact).mockResolvedValue(`sha256:${"a".repeat(64)}`);
+    vi.mocked(deps.createVersion).mockResolvedValue(RESTORED);
+    vi.mocked(deps.editDraft).mockImplementation(async () => {
+      controller.abort();
+      return RESTORED;
+    });
+
+    await expect(undoStorefrontEdit({
+      shopId: SHOP,
+      expectedDraftVersionId: RESULT,
+      targetVersionId: BASE,
+      signal: controller.signal,
+    }, deps)).resolves.toEqual({ status: "installed", versionId: RESTORED, undoneVersionId: RESULT });
+    expect(deps.editDraft).toHaveBeenCalledWith(expect.not.objectContaining({ signal: expect.anything() }));
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CUSTOM_BENCH_BUNDLE } from "../storefront-recipes/custom-bench/bundle";
+import { StorefrontReleaseError } from "../storefront-bundle/release.server";
 import type { StoreCommand, StoreCommandEvent } from "./types";
 import {
   runStoreCommand,
@@ -58,7 +59,12 @@ function state(excludedTemplateIds = ["soft-chemistry" as const]) {
       versionId: CURRENT,
       artifactHash: HASH,
       bundle: structuredClone(CUSTOM_BENCH_BUNDLE),
-      resolution: { excludedTemplateIds },
+      resolution: {
+        kind: "undo",
+        restoredFromVersionId: TARGET,
+        undoneVersionId: RESULT,
+        excludedTemplateIds,
+      },
     },
     publishedVersionId: TARGET,
   };
@@ -135,7 +141,7 @@ describe("runStoreCommand", () => {
     expect(deps.createVersion).not.toHaveBeenCalled();
   });
 
-  it("loads persisted exclusions and audited-CAS switches an existing design", async () => {
+  it("feeds persisted Undo exclusions into the next design selection", async () => {
     const deps = dependencies({
       loadState: vi.fn().mockResolvedValue(state()),
       classify: vi.fn().mockResolvedValue({
@@ -371,6 +377,84 @@ describe("runStoreCommand", () => {
     expect(deps.edit).not.toHaveBeenCalled();
   });
 
+  it("returns committed success when cancellation races with fresh terminal install", async () => {
+    const controller = new AbortController();
+    const events: StoreCommandEvent[] = [];
+    const deps = dependencies({
+      install: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        return RESULT;
+      }),
+    });
+
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: promptCommand(null),
+      signal: controller.signal,
+      onEvent: (event) => { events.push(event); },
+    }, deps)).resolves.toEqual({ status: "installed", versionId: RESULT, undo: null });
+    expect(events.at(-1)).toEqual({
+      stage: "ready",
+      receipt: { status: "installed", versionId: RESULT, undo: null },
+    });
+  });
+
+  it("returns committed success when cancellation races with existing terminal edit", async () => {
+    const controller = new AbortController();
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      classify: vi.fn().mockResolvedValue({ kind: "update_merchandising", productIds: ["product-a"] }),
+      edit: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        return RESULT;
+      }),
+    });
+
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: promptCommand(CURRENT),
+      signal: controller.signal,
+    }, deps)).resolves.toEqual({
+      status: "installed",
+      versionId: RESULT,
+      undo: { targetVersionId: CURRENT, expectedDraftVersionId: RESULT },
+    });
+  });
+
+  it("returns committed success when cancellation races with terminal Undo", async () => {
+    const controller = new AbortController();
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      undo: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        return { status: "installed" as const, versionId: RESULT, undoneVersionId: CURRENT };
+      }),
+    });
+
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: { kind: "undo", targetVersionId: TARGET, expectedDraftVersionId: CURRENT },
+      signal: controller.signal,
+    }, deps)).resolves.toMatchObject({ status: "installed", versionId: RESULT });
+  });
+
+  it("returns committed success when cancellation races with terminal Publish", async () => {
+    const controller = new AbortController();
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      publish: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        return CURRENT;
+      }),
+    });
+
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: { kind: "publish", expectedDraftVersionId: CURRENT },
+      signal: controller.signal,
+    }, deps)).resolves.toEqual({ status: "published", versionId: CURRENT });
+  });
+
   it("maps unknown upstream failures to one fixed merchant-safe stream error", async () => {
     const events: StoreCommandEvent[] = [];
     const deps = dependencies({
@@ -426,10 +510,42 @@ describe("runStoreCommand", () => {
     expect(JSON.stringify(events)).not.toMatch(/private\.release|storefront_publish_conflict/);
   });
 
-  it("rejects a recipe whose immutable source does not match the selected resolution", async () => {
+  it("maps a trusted 409 fallback from SQLSTATE 40001 to the fixed public conflict", async () => {
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      publish: vi.fn().mockRejectedValue(new StorefrontReleaseError(
+        "storefront_publish_failed",
+        "serialization failure in private release row",
+        409,
+        { code: "40001" },
+      )),
+    });
+
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: { kind: "publish", expectedDraftVersionId: CURRENT },
+    }, deps)).rejects.toMatchObject({
+      code: "storefront_command_conflict",
+      status: 409,
+      message: "The storefront changed before this request. Refresh and try again.",
+    });
+  });
+
+  it.each([
+    ["template ID", (bundle: typeof CUSTOM_BENCH_BUNDLE) => {
+      if (bundle.source.kind !== "recipe") throw new Error("recipe fixture required");
+      bundle.source.templateId = "soft-chemistry";
+    }],
+    ["template version", (bundle: typeof CUSTOM_BENCH_BUNDLE) => {
+      if (bundle.source.kind !== "recipe") throw new Error("recipe fixture required");
+      bundle.source.templateVersion = 2;
+    }],
+    ["source kind", (bundle: typeof CUSTOM_BENCH_BUNDLE) => {
+      bundle.source = { kind: "custom", generationId: "mismatch", promptHash: "sha256:mismatch" };
+    }],
+  ] as const)("rejects a recipe whose immutable %s does not match the selected resolution", async (_case, mutate) => {
     const mismatched = structuredClone(CUSTOM_BENCH_BUNDLE);
-    if (mismatched.source.kind !== "recipe") throw new Error("recipe fixture required");
-    mismatched.source.templateId = "soft-chemistry";
+    mutate(mismatched);
     const events: StoreCommandEvent[] = [];
     const deps = dependencies({
       loadRecipe: vi.fn().mockResolvedValue({

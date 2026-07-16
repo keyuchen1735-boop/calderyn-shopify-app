@@ -219,6 +219,21 @@ export function createStorefrontProofDataForContext(
   };
 }
 
+export function createStorefrontProofDataForBundle(
+  routeId: StorefrontRouteId,
+  bundle: StorefrontBundleV1,
+  context?: MerchantStorefrontContext,
+): PublicPresentationData {
+  const featuredProductLimit = [...bundle.shell.requiredData, ...bundle.routes.home.requiredData]
+    .find((requirement) => requirement.kind === "featuredProducts")?.limit ?? 12;
+  return createStorefrontProofDataForContext(
+    routeId,
+    context,
+    bundle.featuredProductIds,
+    featuredProductLimit,
+  );
+}
+
 function checkoutSimulation() {
   return createElement(Fragment, null,
     createElement("label", null, "Email", createElement("input", { type: "email", name: "email", autoComplete: "email" })),
@@ -680,14 +695,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       currentUnexpected = [];
       currentConsole = [];
       currentFailures = [];
-      const featuredProductLimit = [...input.bundle.shell.requiredData, ...input.bundle.routes.home.requiredData]
-        .find((requirement) => requirement.kind === "featuredProducts")?.limit ?? 12;
-      const data = createStorefrontProofDataForContext(
-        routeId,
-        input.context,
-        input.bundle.featuredProductIds,
-        featuredProductLimit,
-      );
+      const data = createStorefrontProofDataForBundle(routeId, input.bundle, input.context);
       let publicMarkup: string;
       let previewMarkup: string;
       try {

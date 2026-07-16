@@ -865,6 +865,7 @@ export async function undoStorefrontEdit(
   input: { shopId: string; actorId?: string | null; expectedDraftVersionId: string; targetVersionId: string; signal?: AbortSignal },
   dependencies: StorefrontEditDependencies = defaultDependencies,
 ): Promise<{ status: "installed"; versionId: string; undoneVersionId: string }> {
+  let terminalDispatched = false;
   try {
     throwIfEditAborted(input.signal);
     const current = await dependencies.loadDraft(input.shopId);
@@ -932,6 +933,7 @@ export async function undoStorefrontEdit(
       signal: input.signal,
     }, dependencies);
     throwIfEditAborted(input.signal);
+    terminalDispatched = true;
     await dependencies.editDraft({
       shopId: input.shopId,
       baseVersionId: current.versionId,
@@ -945,12 +947,10 @@ export async function undoStorefrontEdit(
       patch: { operations: [{ kind: "restoreVersion", versionId: target.versionId }] },
       provider: { kind: "deterministic", model: null },
       validation: auditJson({ static: validation, browserProof }),
-      signal: input.signal,
     });
-    throwIfEditAborted(input.signal);
     return { status: "installed", versionId: restoredVersionId, undoneVersionId: current.versionId };
   } catch (error) {
-    if (input.signal?.aborted) throwIfEditAborted(input.signal);
+    if (!terminalDispatched && input.signal?.aborted) throwIfEditAborted(input.signal);
     mapError(error);
   }
 }

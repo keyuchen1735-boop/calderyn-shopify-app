@@ -133,6 +133,18 @@ describe("storefront bundle release repository", () => {
       .rejects.toEqual(expect.objectContaining<Partial<StorefrontReleaseError>>({ code: "storefront_draft_conflict", status: 409 }));
   });
 
+  it("preserves a generic SQLSTATE 40001 as a trusted 409 fallback conflict", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "serialization failure", code: "40001" } });
+    await expect(publishStorefrontRelease({
+      shopId: SHOP,
+      expectedDraftVersionId: VERSION,
+      expectedPublishedVersionId: BASE,
+    })).rejects.toEqual(expect.objectContaining<Partial<StorefrontReleaseError>>({
+      code: "storefront_publish_failed",
+      status: 409,
+    }));
+  });
+
   it("passes compare-and-swap pointers to install, publish, and rollback RPCs", async () => {
     await installStorefrontDraft({ shopId: SHOP, versionId: VERSION, expectedDraftVersionId: BASE, actorId: null });
     await publishStorefrontRelease({ shopId: SHOP, expectedDraftVersionId: VERSION, expectedPublishedVersionId: BASE, actorId: null });
@@ -204,6 +216,36 @@ describe("storefront bundle release repository", () => {
 
     expect(abortSignal).toHaveBeenCalledWith(controller.signal);
     expect(rpc).not.toHaveBeenCalledWith("publish_storefront_release", expect.anything());
+  });
+
+  it("returns fresh install success when cancellation races with the terminal CAS", async () => {
+    const controller = new AbortController();
+    rpc.mockImplementation(async (name: string) => {
+      if (name === "install_storefront_draft") controller.abort();
+      return { data: VERSION, error: null };
+    });
+
+    await expect(installStorefrontDraft({
+      shopId: SHOP,
+      versionId: VERSION,
+      expectedDraftVersionId: null,
+      signal: controller.signal,
+    })).resolves.toBe(VERSION);
+  });
+
+  it("returns publish success when cancellation races with the terminal CAS", async () => {
+    const controller = new AbortController();
+    rpc.mockImplementation(async (name: string) => {
+      if (name === "publish_storefront_release") controller.abort();
+      return { data: VERSION, error: null };
+    });
+
+    await expect(publishStorefrontRelease({
+      shopId: SHOP,
+      expectedDraftVersionId: VERSION,
+      expectedPublishedVersionId: BASE,
+      signal: controller.signal,
+    })).resolves.toBe(VERSION);
   });
 
   it("sends the complete replayable edit audit to the atomic edit RPC", async () => {
