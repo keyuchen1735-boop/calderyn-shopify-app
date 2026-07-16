@@ -15,6 +15,10 @@ export type StoreTemplateId =
   | "broadcast-patch-bay"
   | "atelier-nine";
 
+export type VisualLayerSpec =
+  | { kind: "none" }
+  | { kind: "fragment_shader"; source: string; colors: [string, string, string] };
+
 export type StoreDesignMode = "auto" | "recipe" | "custom";
 
 export interface StoreDesignRequest {
