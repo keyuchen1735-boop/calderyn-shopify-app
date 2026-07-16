@@ -74,7 +74,7 @@ export interface StoreCommandDependencies {
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
   install(input: InstallStorefrontDraftInput): Promise<string>;
   edit(input: EditStorefrontDraftInput): Promise<string>;
-  undo(input: { shopId: string; actorId?: string | null; expectedDraftVersionId: string; targetVersionId: string }): Promise<{
+  undo(input: { shopId: string; actorId?: string | null; expectedDraftVersionId: string; targetVersionId: string; signal?: AbortSignal }): Promise<{
     status: "installed";
     versionId: string;
     undoneVersionId: string;
@@ -187,21 +187,48 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw abortError();
 }
 
-function normalizedError(error: unknown, signal?: AbortSignal): StoreCommandError {
-  if (signal?.aborted) return abortError();
-  if (error instanceof StoreCommandError) return error;
-  if (error && typeof error === "object") {
-    const candidate = error as { code?: unknown; message?: unknown; status?: unknown };
-    if (typeof candidate.code === "string" && typeof candidate.message === "string" && typeof candidate.status === "number") {
-      return new StoreCommandError(candidate.code, candidate.message, candidate.status, error);
-    }
+const PUBLIC_CONFLICT_CODES = new Set([
+  "storefront_command_conflict",
+  "storefront_draft_conflict",
+  "storefront_edit_conflict",
+  "storefront_publish_conflict",
+]);
+
+function publicError(code: string): StoreCommandError {
+  if (code === "generation_cancelled") return abortError();
+  if (PUBLIC_CONFLICT_CODES.has(code)) {
+    return new StoreCommandError(
+      "storefront_command_conflict",
+      "The storefront changed before this request. Refresh and try again.",
+      409,
+    );
+  }
+  if (code === "storefront_command_invalid" || code === "storefront_command_proof_failed") {
+    return new StoreCommandError(
+      "storefront_command_rejected",
+      "That storefront change could not be applied safely. Your current draft was not changed.",
+      422,
+    );
+  }
+  if (code === "storefront_recipe_build_disabled" || code === "storefront_bundle_publish_disabled") {
+    return new StoreCommandError(
+      "storefront_command_unavailable",
+      "Storefront changes are temporarily unavailable. Your current draft was not changed.",
+      503,
+    );
   }
   return new StoreCommandError(
     "storefront_command_failed",
     "The storefront change could not be completed. Your current draft was not changed.",
     500,
-    error,
   );
+}
+
+function normalizedError(error: unknown, signal?: AbortSignal): StoreCommandError {
+  if (signal?.aborted) return abortError();
+  const candidate = error && typeof error === "object" ? error as { code?: unknown } : null;
+  const safe = publicError(typeof candidate?.code === "string" ? candidate.code : "storefront_command_failed");
+  return new StoreCommandError(safe.code, safe.message, safe.status, error);
 }
 
 async function emit(input: RunStoreCommandInput, event: StoreCommandEvent): Promise<void> {
@@ -236,6 +263,23 @@ function artifact(bundle: StorefrontBundleV1): { sourceKind: "recipe"; bundle: S
     throw new StoreCommandError("storefront_command_unavailable", "This storefront draft cannot be changed with chat yet.", 409);
   }
   return { sourceKind: "recipe", bundle };
+}
+
+async function loadSelectedRecipe(
+  resolution: Extract<StoreDesignResolution, { kind: "recipe" }>,
+  dependencies: StoreCommandDependencies,
+): Promise<StorefrontRecipeArtifact> {
+  const recipe = await dependencies.loadRecipe(resolution.templateId, resolution.templateVersion);
+  if (recipe.bundle.source.kind !== "recipe"
+    || recipe.bundle.source.templateId !== resolution.templateId
+    || recipe.bundle.source.templateVersion !== resolution.templateVersion) {
+    throw new StoreCommandError(
+      "storefront_recipe_source_mismatch",
+      "The selected recipe did not match its immutable source.",
+      500,
+    );
+  }
+  return recipe;
 }
 
 function sameBundle(left: StorefrontBundleV1, right: StorefrontBundleV1): boolean {
@@ -278,7 +322,9 @@ export async function runStoreCommand(
         actorId,
         targetVersionId: input.command.targetVersionId,
         expectedDraftVersionId: input.command.expectedDraftVersionId,
+        ...(input.signal ? { signal: input.signal } : {}),
       });
+      throwIfAborted(input.signal);
       return ready(input, {
         status: "installed",
         versionId: result.versionId,
@@ -301,7 +347,9 @@ export async function runStoreCommand(
         actorId,
         expectedDraftVersionId: input.command.expectedDraftVersionId,
         expectedPublishedVersionId: state.publishedVersionId,
+        ...(input.signal ? { signal: input.signal } : {}),
       });
+      throwIfAborted(input.signal);
       return ready(input, { status: "published", versionId });
     }
 
@@ -341,7 +389,7 @@ export async function runStoreCommand(
       if (designResolution.kind !== "recipe") {
         throw new StoreCommandError("storefront_command_unavailable", "No approved storefront design is available.", 409);
       }
-      const recipe = await dependencies.loadRecipe(designResolution.templateId, designResolution.templateVersion);
+      const recipe = await loadSelectedRecipe(designResolution, dependencies);
       nextBundle = recipe.bundle;
     } else {
       proofContext = await dependencies.loadContext({ shopId: input.shopId, prompt: input.command.prompt });
@@ -357,7 +405,9 @@ export async function runStoreCommand(
       });
       throwIfAborted(input.signal);
 
-      if (intent.kind === "unsupported") return ready(input, unchanged(intent.message));
+      if (intent.kind === "unsupported") {
+        return ready(input, unchanged("I couldn't apply that request safely, so your draft was left unchanged."));
+      }
       if (intent.kind === "select_design" || intent.kind === "start_over") {
         const selectedExclusions = intent.kind === "select_design"
           ? intent.excludedTemplateIds
@@ -375,7 +425,7 @@ export async function runStoreCommand(
         if (designResolution.kind !== "recipe") {
           throw new StoreCommandError("storefront_command_unavailable", "No approved storefront design is available.", 409);
         }
-        const recipe = await dependencies.loadRecipe(designResolution.templateId, designResolution.templateVersion);
+        const recipe = await loadSelectedRecipe(designResolution, dependencies);
         nextBundle = recipe.bundle;
       } else {
         if (!currentTemplateId) {
@@ -453,6 +503,7 @@ export async function runStoreCommand(
         excludedTemplateIds: nextExclusions,
         ...(designResolution ? { designResolution } : {}),
       },
+      ...(input.signal ? { signal: input.signal } : {}),
     });
     throwIfAborted(input.signal);
 
@@ -462,7 +513,9 @@ export async function runStoreCommand(
         versionId,
         expectedDraftVersionId: input.command.expectedDraftVersionId,
         actorId,
+        ...(input.signal ? { signal: input.signal } : {}),
       });
+      throwIfAborted(input.signal);
       return ready(input, { status: "installed", versionId, undo: null });
     }
 
@@ -483,7 +536,9 @@ export async function runStoreCommand(
       patch: { operation: internalOperation },
       provider: { kind: "bounded_classification" },
       validation: { static: validation, browserProof },
+      ...(input.signal ? { signal: input.signal } : {}),
     });
+    throwIfAborted(input.signal);
     return ready(input, {
       status: "installed",
       versionId,

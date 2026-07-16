@@ -11,12 +11,13 @@ import type { StorefrontReleaseError } from "./release.server";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 
-const { rpc, from, versionResult, hasRunningExperiment, prepareLegacyCapturePayload } = vi.hoisted(() => ({
+const { rpc, from, versionResult, hasRunningExperiment, prepareLegacyCapturePayload, abortSignal } = vi.hoisted(() => ({
   rpc: vi.fn(),
   from: vi.fn(),
   versionResult: { current: { data: null as unknown, error: null as unknown } },
   hasRunningExperiment: vi.fn(),
   prepareLegacyCapturePayload: vi.fn(),
+  abortSignal: vi.fn(),
 }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ rpc, from }) }));
@@ -45,6 +46,8 @@ beforeEach(() => {
   chain.select = () => chain;
   chain.eq = () => chain;
   chain.maybeSingle = () => Promise.resolve(versionResult.current);
+  chain.abortSignal = abortSignal;
+  abortSignal.mockImplementation(() => chain);
   from.mockReturnValue(chain);
   versionResult.current = {
     data: {
@@ -177,6 +180,30 @@ describe("storefront bundle release repository", () => {
       p_legacy_validation_report: { valid: true, legacyAdapter: "validated" },
       p_legacy_capture_token: `sha256:${"c".repeat(64)}`,
     }));
+  });
+
+  it("cuts off publish after an abort during legacy preparation and never calls the publish RPC", async () => {
+    const controller = new AbortController();
+    prepareLegacyCapturePayload.mockImplementation(async () => {
+      controller.abort();
+      return {
+        snapshot: { runtimeVersion: 0 },
+        assetManifest: { entries: [] },
+        artifactHash: `sha256:${"b".repeat(64)}`,
+        validationReport: { valid: true },
+        captureToken: `sha256:${"c".repeat(64)}`,
+      };
+    });
+
+    await expect(publishStorefrontRelease({
+      shopId: SHOP,
+      expectedDraftVersionId: VERSION,
+      expectedPublishedVersionId: null,
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: "AbortError" });
+
+    expect(abortSignal).toHaveBeenCalledWith(controller.signal);
+    expect(rpc).not.toHaveBeenCalledWith("publish_storefront_release", expect.anything());
   });
 
   it("sends the complete replayable edit audit to the atomic edit RPC", async () => {

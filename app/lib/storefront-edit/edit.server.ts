@@ -18,6 +18,7 @@ import {
   type EditStorefrontDraftInput,
   type ValidateStorefrontBundleVersionInput,
 } from "../storefront-bundle/release.server";
+import { isStoreTemplateId } from "../storefront-bundle/registry";
 import type { CompiledNode, StorefrontBundleV1, StorefrontRouteId } from "../storefront-bundle/types";
 import { validateCompiledBundle, type BundleValidationReport } from "../storefront-compiler/validate";
 import { storefrontAiBrowserProof } from "../storefront-validation/browser.server";
@@ -82,6 +83,7 @@ export interface StorefrontEditDependencies {
     validationProfileVersion: number;
     artifact: Record<string, unknown>;
     assetManifest: Record<string, unknown>;
+    signal?: AbortSignal;
   }): Promise<string>;
   editDraft(input: EditStorefrontDraftInput): Promise<string>;
   randomId(): string;
@@ -101,7 +103,7 @@ function extractBundle(artifact: unknown): StorefrontBundleV1 | null {
 async function loadVersion(shopId: string, versionId?: string): Promise<LoadedStorefrontDraft | null> {
   let query = getSupabase()
     .from("storefront_bundle_version")
-    .select("id, artifact_hash, bundle_json, runtime_version, status")
+    .select("id, artifact_hash, bundle_json, resolution_json, runtime_version, status")
     .eq("shop_id", shopId);
   if (versionId) query = query.eq("id", versionId);
   const result = await query.maybeSingle();
@@ -109,7 +111,15 @@ async function loadVersion(shopId: string, versionId?: string): Promise<LoadedSt
   const row = result.data as Record<string, unknown> | null;
   const bundle = extractBundle(row?.bundle_json);
   if (!row || row.status !== "validated" || Number(row.runtime_version) !== 1 || !bundle) return null;
-  return { versionId: String(row.id), artifactHash: String(row.artifact_hash), bundle };
+  const resolution = row.resolution_json && typeof row.resolution_json === "object" && !Array.isArray(row.resolution_json)
+    ? row.resolution_json as Record<string, unknown>
+    : {};
+  return { versionId: String(row.id), artifactHash: String(row.artifact_hash), bundle, resolution };
+}
+
+function persistedTemplateExclusions(version: LoadedStorefrontDraft): string[] {
+  const value = version.resolution?.excludedTemplateIds;
+  return Array.isArray(value) ? [...new Set(value.filter(isStoreTemplateId))] : [];
 }
 
 async function loadDraft(shopId: string): Promise<LoadedStorefrontDraft | null> {
@@ -476,6 +486,7 @@ async function createValidatedEditVersion(input: {
   validation: BundleValidationReport;
   generationPrompt: string;
   resolution: Record<string, unknown>;
+  signal?: AbortSignal;
 }, dependencies: StorefrontEditDependencies): Promise<string> {
   const custom = input.bundle.source.kind === "custom";
   const validationReport = databaseValidationReport(input.validation);
@@ -491,19 +502,23 @@ async function createValidatedEditVersion(input: {
     validationReport: custom ? null : validationReport,
     generationPrompt: input.generationPrompt,
     resolution: input.resolution,
+    signal: input.signal,
   });
+  throwIfEditAborted(input.signal);
   if (custom) {
     await dependencies.cloneAssetProvenance({
       shopId: input.shopId,
       sourceVersionId: input.sourceVersionId,
       targetVersionId: versionId,
     });
+    throwIfEditAborted(input.signal);
     await dependencies.validateVersion({
       shopId: input.shopId,
       versionId,
       artifactHash: input.artifactHash,
       validationReport,
     });
+    throwIfEditAborted(input.signal);
   }
   return versionId;
 }
@@ -847,19 +862,23 @@ export async function editStorefrontByPrompt(
 }
 
 export async function undoStorefrontEdit(
-  input: { shopId: string; actorId?: string | null; expectedDraftVersionId: string; targetVersionId: string },
+  input: { shopId: string; actorId?: string | null; expectedDraftVersionId: string; targetVersionId: string; signal?: AbortSignal },
   dependencies: StorefrontEditDependencies = defaultDependencies,
 ): Promise<{ status: "installed"; versionId: string; undoneVersionId: string }> {
   try {
+    throwIfEditAborted(input.signal);
     const current = await dependencies.loadDraft(input.shopId);
+    throwIfEditAborted(input.signal);
     if (!current || current.versionId !== input.expectedDraftVersionId) {
       throw new StorefrontEditError("storefront_edit_conflict", "The storefront draft changed before undo.", 409);
     }
     const audit = await dependencies.loadEditAudit({ shopId: input.shopId, resultVersionId: current.versionId });
+    throwIfEditAborted(input.signal);
     if (!audit || audit.resultVersionId !== current.versionId || audit.baseVersionId !== input.targetVersionId) {
       throw new StorefrontEditError("storefront_undo_target_invalid", "The requested version is not the recorded base of the current storefront edit.", 409);
     }
     const target = await dependencies.loadVersion(input.shopId, input.targetVersionId);
+    throwIfEditAborted(input.signal);
     if (!target) throw new StorefrontEditError("storefront_undo_target_missing", "The undo version is no longer available.", 409);
     assertEditWriterEnabled(target.bundle.source.kind, dependencies);
     const validation = dependencies.validate(target.bundle);
@@ -872,10 +891,13 @@ export async function undoStorefrontEdit(
       );
     }
     const proofContext = await dependencies.loadProofContext({ shopId: input.shopId, prompt: "Undo storefront edit" });
+    throwIfEditAborted(input.signal);
     const proofAssets = needsOwnedProofAssets(target.bundle)
       ? await dependencies.loadProofAssets({ shopId: input.shopId, versionId: target.versionId, manifest: target.bundle.assets })
       : [];
-    const browserProof = await proveEditBundle(target.bundle, proofContext, proofAssets, dependencies);
+    throwIfEditAborted(input.signal);
+    const browserProof = await proveEditBundle(target.bundle, proofContext, proofAssets, dependencies, input.signal);
+    throwIfEditAborted(input.signal);
     const artifact = { sourceKind: target.bundle.source.kind, bundle: target.bundle };
     const resultHash = await dependencies.hashArtifact({
       schemaVersion: target.bundle.schemaVersion,
@@ -883,7 +905,9 @@ export async function undoStorefrontEdit(
       validationProfileVersion: target.bundle.validationProfileVersion,
       artifact,
       assetManifest: target.bundle.assets as unknown as Record<string, unknown>,
+      signal: input.signal,
     });
+    throwIfEditAborted(input.signal);
     if (resultHash !== target.artifactHash) {
       throw new StorefrontEditError(
         "storefront_undo_target_invalid",
@@ -899,8 +923,15 @@ export async function undoStorefrontEdit(
       artifactHash: resultHash,
       validation,
       generationPrompt: "Undo storefront edit",
-      resolution: { kind: "undo", restoredFromVersionId: target.versionId, undoneVersionId: current.versionId },
+      resolution: {
+        kind: "undo",
+        restoredFromVersionId: target.versionId,
+        undoneVersionId: current.versionId,
+        excludedTemplateIds: persistedTemplateExclusions(target),
+      },
+      signal: input.signal,
     }, dependencies);
+    throwIfEditAborted(input.signal);
     await dependencies.editDraft({
       shopId: input.shopId,
       baseVersionId: current.versionId,
@@ -914,9 +945,12 @@ export async function undoStorefrontEdit(
       patch: { operations: [{ kind: "restoreVersion", versionId: target.versionId }] },
       provider: { kind: "deterministic", model: null },
       validation: auditJson({ static: validation, browserProof }),
+      signal: input.signal,
     });
+    throwIfEditAborted(input.signal);
     return { status: "installed", versionId: restoredVersionId, undoneVersionId: current.versionId };
   } catch (error) {
+    if (input.signal?.aborted) throwIfEditAborted(input.signal);
     mapError(error);
   }
 }

@@ -70,6 +70,7 @@ export interface LoadedStorefrontDraft {
   versionId: string;
   artifactHash: string;
   bundle: StorefrontBundleV1;
+  resolution?: Record<string, unknown>;
 }
 
 export interface StorefrontChangedScope {

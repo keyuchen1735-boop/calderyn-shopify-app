@@ -58,6 +58,17 @@ describe("storefront browser proof matrix", () => {
     expect(product.product).toBeNull();
   });
 
+  it("selects home proof products by the immutable featured-product order", () => {
+    const catalog = storefrontProofContext(3);
+    const selected = [catalog.products[2]!.id, catalog.products[0]!.id];
+
+    const home = createStorefrontProofDataForContext("home", catalog, selected, 1);
+    const collection = createStorefrontProofDataForContext("collection", catalog, selected);
+
+    expect(home.featuredProducts.map(({ id }) => id)).toEqual(selected.slice(0, 1));
+    expect(collection.featuredProducts.map(({ id }) => id)).toEqual(catalog.products.map(({ id }) => id));
+  });
+
   it("writes generated preview assets only during an intentional baseline refresh", () => {
     expect(shouldWriteStorefrontPreview("home", "desktop", {
       previewFile: "preview.webp",

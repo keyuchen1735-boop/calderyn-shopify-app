@@ -23,6 +23,10 @@ function requireUuid(value: string, field: string): void {
   if (!isUuid(value)) throw new StorefrontReleaseError("invalid_storefront_release", `${field} must be a UUID`, 422);
 }
 
+function throwIfReleaseAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw signal.reason ?? new DOMException("Storefront write cancelled", "AbortError");
+}
+
 export async function assertStorefrontWriteAllowed(shopId: string): Promise<void> {
   requireUuid(shopId, "shopId");
   if (await hasRunningExperiment(shopId)) {
@@ -72,9 +76,11 @@ export interface CreateStorefrontBundleVersionInput {
   validationReport?: Record<string, unknown> | null;
   generationPrompt?: string | null;
   resolution: Record<string, unknown>;
+  signal?: AbortSignal;
 }
 
 export async function createStorefrontBundleVersion(input: CreateStorefrontBundleVersionInput): Promise<string> {
+  throwIfReleaseAborted(input.signal);
   if (input.sourceKind === "legacy") {
     throw new StorefrontReleaseError(
       "legacy_source_requires_capture",
@@ -83,13 +89,16 @@ export async function createStorefrontBundleVersion(input: CreateStorefrontBundl
     );
   }
   await assertStorefrontWriteAllowed(input.shopId);
+  throwIfReleaseAborted(input.signal);
   const artifactHash = await hashStorefrontArtifact({
     schemaVersion: input.schemaVersion,
     runtimeVersion: input.runtimeVersion,
     validationProfileVersion: input.validationProfileVersion,
     artifact: input.artifact,
     assetManifest: input.assetManifest,
+    signal: input.signal,
   });
+  throwIfReleaseAborted(input.signal);
   const id = await writeRpc<string>("create_storefront_bundle_version", {
     p_shop_id: input.shopId,
     p_source_kind: input.sourceKind,
@@ -105,7 +114,7 @@ export async function createStorefrontBundleVersion(input: CreateStorefrontBundl
     p_validation_report: input.validationReport ?? null,
     p_generation_prompt: input.generationPrompt ?? null,
     p_resolution_json: input.resolution,
-  }, "storefront_bundle_create_failed");
+  }, "storefront_bundle_create_failed", input.signal);
   requireUuid(id, "bundleVersionId");
   return id;
 }
@@ -159,17 +168,20 @@ export interface InstallStorefrontDraftInput {
   versionId: string;
   expectedDraftVersionId: string | null;
   actorId?: string | null;
+  signal?: AbortSignal;
 }
 
 export async function installStorefrontDraft(input: InstallStorefrontDraftInput): Promise<string> {
+  throwIfReleaseAborted(input.signal);
   await assertStorefrontWriteAllowed(input.shopId);
+  throwIfReleaseAborted(input.signal);
   requireUuid(input.versionId, "versionId");
   return writeRpc<string>("install_storefront_draft", {
     p_shop_id: input.shopId,
     p_validated_version_id: input.versionId,
     p_expected_draft_version_id: input.expectedDraftVersionId,
     p_actor_id: input.actorId ?? null,
-  }, "storefront_draft_install_failed");
+  }, "storefront_draft_install_failed", input.signal);
 }
 
 export interface InstallGeneratedStorefrontBundleInput {
@@ -219,10 +231,13 @@ export interface EditStorefrontDraftInput extends StorefrontEditAuditInput {
   baseVersionId: string;
   expectedDraftVersionId: string;
   actorId?: string | null;
+  signal?: AbortSignal;
 }
 
 export async function editStorefrontDraft(input: EditStorefrontDraftInput): Promise<string> {
+  throwIfReleaseAborted(input.signal);
   await assertStorefrontWriteAllowed(input.shopId);
+  throwIfReleaseAborted(input.signal);
   requireUuid(input.baseVersionId, "baseVersionId");
   requireUuid(input.resultVersionId, "resultVersionId");
   return writeRpc<string>("edit_storefront_draft", {
@@ -232,7 +247,7 @@ export async function editStorefrontDraft(input: EditStorefrontDraftInput): Prom
     p_expected_draft_version_id: input.expectedDraftVersionId,
     p_actor_id: input.actorId ?? null,
     ...editAuditRpcParams(input),
-  }, "storefront_edit_failed");
+  }, "storefront_edit_failed", input.signal);
 }
 
 export interface PublishStorefrontReleaseInput {
@@ -240,15 +255,17 @@ export interface PublishStorefrontReleaseInput {
   expectedDraftVersionId: string;
   expectedPublishedVersionId: string | null;
   actorId?: string | null;
+  signal?: AbortSignal;
 }
 
-async function assertDraftPassesCurrentValidation(shopId: string, versionId: string): Promise<void> {
-  const result = await getSupabase()
+async function assertDraftPassesCurrentValidation(shopId: string, versionId: string, signal?: AbortSignal): Promise<void> {
+  let query = getSupabase()
     .from("storefront_bundle_version")
     .select("runtime_version, status, bundle_json")
     .eq("shop_id", shopId)
-    .eq("id", versionId)
-    .maybeSingle();
+    .eq("id", versionId);
+  if (signal) query = query.abortSignal(signal);
+  const result = await query.maybeSingle();
   if (result.error) {
     throw new StorefrontReleaseError(
       "storefront_bundle_revalidation_failed",
@@ -278,11 +295,15 @@ async function assertDraftPassesCurrentValidation(shopId: string, versionId: str
 }
 
 export async function publishStorefrontRelease(input: PublishStorefrontReleaseInput): Promise<string> {
+  throwIfReleaseAborted(input.signal);
   await assertStorefrontWriteAllowed(input.shopId);
-  await assertDraftPassesCurrentValidation(input.shopId, input.expectedDraftVersionId);
+  throwIfReleaseAborted(input.signal);
+  await assertDraftPassesCurrentValidation(input.shopId, input.expectedDraftVersionId, input.signal);
+  throwIfReleaseAborted(input.signal);
   const legacyPayload = input.expectedPublishedVersionId === null
     ? await (await import("./legacy.server")).prepareLegacyCapturePayload(input.shopId)
     : null;
+  throwIfReleaseAborted(input.signal);
   return writeRpc<string>("publish_storefront_release", {
     p_shop_id: input.shopId,
     p_expected_draft_version_id: input.expectedDraftVersionId,
@@ -293,7 +314,7 @@ export async function publishStorefrontRelease(input: PublishStorefrontReleaseIn
     p_legacy_artifact_hash: legacyPayload?.artifactHash ?? null,
     p_legacy_validation_report: legacyPayload?.validationReport ?? null,
     p_legacy_capture_token: legacyPayload?.captureToken ?? null,
-  }, "storefront_publish_failed");
+  }, "storefront_publish_failed", input.signal);
 }
 
 export interface RollbackStorefrontReleaseInput {

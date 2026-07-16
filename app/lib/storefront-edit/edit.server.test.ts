@@ -818,7 +818,7 @@ describe("undoStorefrontEdit", () => {
     expect(deps.createVersion).toHaveBeenCalledWith(expect.objectContaining({
       sourceKind: "custom",
       status: "candidate",
-      resolution: { kind: "undo", restoredFromVersionId: BASE, undoneVersionId: RESULT },
+      resolution: { kind: "undo", restoredFromVersionId: BASE, undoneVersionId: RESULT, excludedTemplateIds: [] },
     }));
     expect(deps.cloneAssetProvenance).toHaveBeenCalledWith({ shopId: SHOP, sourceVersionId: BASE, targetVersionId: RESTORED });
     expect(deps.loadProofAssets).toHaveBeenCalledWith({ shopId: SHOP, versionId: BASE, manifest: target.assets });
@@ -834,6 +834,39 @@ describe("undoStorefrontEdit", () => {
     }));
     expect(deps.loadEditAudit).toHaveBeenCalledWith({ shopId: SHOP, resultVersionId: RESULT });
     expect(vi.mocked(deps.loadEditAudit).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(deps.prove).mock.invocationCallOrder[0]!);
+  });
+
+  it("preserves the target B exclusions when undoing C so the next design cannot return to A", async () => {
+    const deps = dependencies();
+    vi.mocked(deps.loadDraft).mockResolvedValue({
+      versionId: RESULT,
+      artifactHash: `sha256:${"b".repeat(64)}`,
+      bundle: baseBundle(),
+      resolution: { excludedTemplateIds: ["atelier-nine", "soft-chemistry"] },
+    });
+    vi.mocked(deps.loadVersion).mockResolvedValue({
+      versionId: BASE,
+      artifactHash: `sha256:${"a".repeat(64)}`,
+      bundle: baseBundle(),
+      resolution: { excludedTemplateIds: ["atelier-nine"] },
+    });
+    vi.mocked(deps.hashArtifact).mockResolvedValue(`sha256:${"a".repeat(64)}`);
+    vi.mocked(deps.createVersion).mockResolvedValue(RESTORED);
+
+    await undoStorefrontEdit({
+      shopId: SHOP,
+      expectedDraftVersionId: RESULT,
+      targetVersionId: BASE,
+    }, deps);
+
+    expect(deps.createVersion).toHaveBeenCalledWith(expect.objectContaining({
+      resolution: {
+        kind: "undo",
+        restoredFromVersionId: BASE,
+        undoneVersionId: RESULT,
+        excludedTemplateIds: ["atelier-nine"],
+      },
+    }));
   });
 
   it("rejects an undo when the target bundle no longer matches its immutable artifact hash", async () => {
@@ -875,6 +908,49 @@ describe("undoStorefrontEdit", () => {
     expect(deps.loadVersion).not.toHaveBeenCalled();
     expect(deps.prove).not.toHaveBeenCalled();
     expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.editDraft).not.toHaveBeenCalled();
+  });
+
+  it("stops an undo after browser proof observes cancellation", async () => {
+    const controller = new AbortController();
+    const deps = dependencies();
+    vi.mocked(deps.loadDraft).mockResolvedValue({ versionId: RESULT, artifactHash: `sha256:${"b".repeat(64)}`, bundle: baseBundle() });
+    vi.mocked(deps.prove).mockImplementation(async () => {
+      controller.abort();
+      return { ok: true, diagnostics: [], screenshots: ["proof"], browserMs: 1 };
+    });
+
+    await expect(undoStorefrontEdit({
+      shopId: SHOP,
+      expectedDraftVersionId: RESULT,
+      targetVersionId: BASE,
+      signal: controller.signal,
+    }, deps)).rejects.toMatchObject({ code: "storefront_edit_cancelled", status: 409 });
+
+    expect(deps.prove).toHaveBeenCalledWith(expect.objectContaining({ signal: controller.signal }));
+    expect(deps.hashArtifact).not.toHaveBeenCalled();
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.editDraft).not.toHaveBeenCalled();
+  });
+
+  it("never performs the undo CAS when cancellation follows version creation", async () => {
+    const controller = new AbortController();
+    const deps = dependencies();
+    vi.mocked(deps.loadDraft).mockResolvedValue({ versionId: RESULT, artifactHash: `sha256:${"b".repeat(64)}`, bundle: baseBundle() });
+    vi.mocked(deps.hashArtifact).mockResolvedValue(`sha256:${"a".repeat(64)}`);
+    vi.mocked(deps.createVersion).mockImplementation(async () => {
+      controller.abort();
+      return RESTORED;
+    });
+
+    await expect(undoStorefrontEdit({
+      shopId: SHOP,
+      expectedDraftVersionId: RESULT,
+      targetVersionId: BASE,
+      signal: controller.signal,
+    }, deps)).rejects.toMatchObject({ code: "storefront_edit_cancelled", status: 409 });
+
+    expect(deps.cloneAssetProvenance).not.toHaveBeenCalled();
     expect(deps.editDraft).not.toHaveBeenCalled();
   });
 });

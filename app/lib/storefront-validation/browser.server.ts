@@ -180,10 +180,18 @@ function presentContextProduct(entry: MerchantStorefrontContext["products"][numb
 export function createStorefrontProofDataForContext(
   routeId: StorefrontRouteId,
   context?: MerchantStorefrontContext,
+  featuredProductIds?: readonly string[],
+  featuredProductLimit = 12,
 ): PublicPresentationData {
   const fixture = createStorefrontProofData(routeId);
   if (!context) return fixture;
   const products = context.products.map(presentContextProduct);
+  const proofFeaturedProducts = routeId === "home" && featuredProductIds?.length
+    ? featuredProductIds.slice(0, featuredProductLimit).flatMap((id) => {
+        const product = products.find((entry) => entry.id === id);
+        return product ? [product] : [];
+      })
+    : products.slice(0, featuredProductLimit);
   const active = products[0] ?? null;
   const emptyCart = products.length === 0 && fixture.cart ? {
     ...fixture.cart,
@@ -197,7 +205,7 @@ export function createStorefrontProofDataForContext(
     ...fixture,
     store: { name: context.store.name, logo: null },
     product: routeId === "product" ? active : null,
-    featuredProducts: products.slice(0, 12),
+    featuredProducts: proofFeaturedProducts,
     relatedProducts: products.slice(1, 9),
     cart: emptyCart,
     collection: routeId === "collection" ? {
@@ -672,7 +680,14 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       currentUnexpected = [];
       currentConsole = [];
       currentFailures = [];
-      const data = createStorefrontProofDataForContext(routeId, input.context);
+      const featuredProductLimit = [...input.bundle.shell.requiredData, ...input.bundle.routes.home.requiredData]
+        .find((requirement) => requirement.kind === "featuredProducts")?.limit ?? 12;
+      const data = createStorefrontProofDataForContext(
+        routeId,
+        input.context,
+        input.bundle.featuredProductIds,
+        featuredProductLimit,
+      );
       let publicMarkup: string;
       let previewMarkup: string;
       try {
