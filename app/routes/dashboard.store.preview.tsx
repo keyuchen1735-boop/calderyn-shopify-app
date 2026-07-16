@@ -25,7 +25,11 @@ import { defaultHomeDocument } from "~/lib/storebuilder/default-doc";
 import { fallbackDoc } from "~/lib/storegen/fallback";
 import type { BlockDocument, PageKey, RenderContext } from "~/lib/storebuilder/types";
 import { isStorefrontBundleReadEnabled } from "~/lib/storefront-runtime/csp.server";
-import { resolveRuntime1VersionRoute } from "~/lib/storefront-runtime/release-resolution.server";
+import {
+  resolveRuntime1VersionRoute,
+  type Runtime1RouteData,
+  type StorefrontVersionRecord,
+} from "~/lib/storefront-runtime/release-resolution.server";
 import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-runtime/render";
 import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import {
@@ -38,7 +42,6 @@ import type { PublicRouteContext } from "~/lib/storefront-runtime/public-data.se
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 import { getStorefrontRecipe } from "~/lib/storefront-recipes";
 import { isStoreTemplateId, STORE_TEMPLATE_REGISTRY } from "~/lib/storefront-bundle/registry";
-import type { StorefrontVersionRecord } from "~/lib/storefront-runtime/release-resolution.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
@@ -123,6 +126,30 @@ async function previewRouteContext(request: Request, shopId: string): Promise<Pu
   return { kind: "home" };
 }
 
+function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteData): Runtime1RouteData {
+  const configuredOrigin = process.env.SHOPIFY_APP_URL || new URL(request.url).origin;
+  let assetOrigin: string;
+  try {
+    assetOrigin = new URL(configuredOrigin).origin;
+  } catch {
+    assetOrigin = new URL(request.url).origin;
+  }
+  const urls: Record<string, string> = { ...runtime1.data.storefrontAssetUrls };
+  if (runtime1.bundle.source.kind === "recipe") {
+    for (const asset of runtime1.bundle.assets.entries) {
+      if (asset.mediaType === "image/webp") {
+        urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.key}.webp`;
+      }
+    }
+  }
+  for (const [key, value] of Object.entries(urls)) {
+    if (value.startsWith("/storefront-recipes/")) urls[key] = new URL(value, assetOrigin).toString();
+  }
+  return Object.keys(urls).length === 0
+    ? runtime1
+    : { ...runtime1, data: { ...runtime1.data, storefrontAssetUrls: urls } };
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   const shopId = session.shopId;
@@ -156,7 +183,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");
         const headers = storefrontCacheHeaders({ routeId: "preview", personalized: true });
-        return json({ ...runtime1, nonce }, { headers });
+        return json({ ...withPreviewRecipeAssetUrls(request, runtime1), nonce }, { headers });
       }
     }
     const version = await readPreviewBundleVersion(shopId);
@@ -172,7 +199,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");
         const headers = storefrontCacheHeaders({ routeId: "preview", personalized: true });
-        return json({ ...runtime1, nonce }, { headers });
+        return json({ ...withPreviewRecipeAssetUrls(request, runtime1), nonce }, { headers });
       }
     }
   }
