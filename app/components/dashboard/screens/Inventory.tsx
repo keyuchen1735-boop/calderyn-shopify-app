@@ -285,11 +285,11 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                   }}
                   style={{ gridTemplateColumns: GRID, cursor: "pointer" }}
                 >
-                  <div className="min-w-0">
-                    <div className="cd-row-title truncate">{r.productTitle}</div>
-                    <div className="cd-caption truncate">
+                  <div className="cd-order-ref-cell">
+                    <span className="cd-row-title truncate">{r.productTitle}</span>
+                    <span className="cd-order-source-label truncate">
                       {[r.sku, r.variantTitle].filter(Boolean).join(" · ") || "—"}
-                    </div>
+                    </span>
                   </div>
                   <div>
                     {inlineEditable ? (
@@ -304,7 +304,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                         defaultValue={r.onHand}
                         disabled={savingQty === r.variantId}
                         aria-label={`On hand for ${r.sku ?? r.productTitle}`}
-                        style={{ width: 72, height: 26, padding: "0 8px" }}
+                        style={{ width: 72, height: 24, padding: "0 8px" }}
                         onClick={(e) => e.stopPropagation()}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") e.currentTarget.blur();
@@ -324,15 +324,15 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                         }}
                       />
                     ) : (
-                      <>
-                        <div
+                      <div className="cd-order-ref-cell">
+                        <span
                           className="cd-row-num tabular-nums"
                           style={r.onHand <= 0 ? { color: "var(--red)" } : undefined}
                         >
                           {r.onHand}
-                        </div>
-                        <div className="cd-caption">{r.locationCount} locations</div>
-                      </>
+                        </span>
+                        <span className="cd-order-source-label">{r.locationCount} loc</span>
+                      </div>
                     )}
                   </div>
                   <div className="cd-row-num tabular-nums">{r.reserved}</div>
