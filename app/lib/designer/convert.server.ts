@@ -74,8 +74,10 @@ function convertMarkup(html: string, templateId: string): string {
     account: "/storefront/account", policy: "/storefront/policies/privacy",
   };
   out = out.replace(/\sdata-cd-route="(\w+)"/g, (match, route) => ` href="${ROUTE_HREFS[route] ?? "/storefront"}"`);
-  // Anchors can end up with two hrefs when the recipe authored both; keep the first.
+  // Elements can end up with two hrefs/srcs when the recipe authored a literal
+  // one alongside a binding; keep the first (the binding lands first).
   out = out.replace(/(href="[^"]*")([^>]*)\shref="[^"]*"/g, "$1$2");
+  out = out.replace(/(src="[^"]*")([^>]*)\ssrc="[^"]*"/g, "$1$2");
 
   // Trusted commerce hosts become a plain add-to-cart button the model can style.
   out = out.replace(/<(\w+)([^>]*)\sdata-cd-slot="quickViewCommerce"[^>]*><\/\1>/g,

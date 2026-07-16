@@ -60,7 +60,9 @@ export function applyDesignerEdits(files: Record<string, string>, edits: Designe
       continue;
     }
     if (current.includes(edit.search)) {
-      next[edit.file] = current.replace(edit.search, edit.replace);
+      // Function replacer: the replacement is model text, so $-patterns
+      // ($&, $1, $') in it must land literally, never as match references.
+      next[edit.file] = current.replace(edit.search, () => edit.replace);
       applied += 1;
       continue;
     }

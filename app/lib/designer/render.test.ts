@@ -71,6 +71,16 @@ describe("renderDesignerDocument", () => {
     expect(out).toContain("<b></b>");
   });
 
+  it("escapes single quotes so titles cannot break out of single-quoted attributes", () => {
+    const withQuote: DesignerStoreData = {
+      ...data,
+      products: [{ ...data.products[0], title: "Kids' Pack" }],
+    };
+    const out = renderDesignerDocument({ html: "{{#products}}<img alt='{{product.title}}'>{{/products}}", css: "", data: withQuote });
+    expect(out).toContain("Kids&#39; Pack");
+    expect(out).not.toContain("alt='Kids' Pack'");
+  });
+
   it("respects maxProducts", () => {
     const out = renderDesignerDocument({ html: "{{#products}}<li>{{product.title}}</li>{{/products}}", css: "", data, maxProducts: 1 });
     expect((out.match(/<li>/g) ?? []).length).toBe(1);

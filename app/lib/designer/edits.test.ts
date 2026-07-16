@@ -91,6 +91,14 @@ describe("applyDesignerEdits", () => {
     expect(result.files["home.html"]).toBe("<p>hi</p>");
   });
 
+  it("keeps $-patterns in the replacement literal instead of as match references", () => {
+    const result = applyDesignerEdits(
+      { "home.html": "<p>Old copy</p>" },
+      [{ file: "home.html", search: "<p>Old copy</p>", replace: "<p>Sale: $& and $' off</p>" }],
+    );
+    expect(result.files["home.html"]).toBe("<p>Sale: $& and $' off</p>");
+  });
+
   it("applies later edits on top of earlier ones in the same batch", () => {
     const result = applyDesignerEdits(
       { "home.html": "<h1>One</h1>" },

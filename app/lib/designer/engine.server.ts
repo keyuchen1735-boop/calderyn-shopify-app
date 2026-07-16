@@ -9,6 +9,7 @@ import { getCatalog } from "../storefront/catalog.server";
 import { getStoreSettings } from "../storefront/settings.server";
 import { STORE_TEMPLATE_REGISTRY } from "../storefront-bundle/registry";
 import { STOREFRONT_DESIGN_MODEL_IDS } from "../storefront-ai/provider.server";
+import type { StoreTemplateId } from "../storefront-bundle/types";
 import type { StudioDesignModel } from "../storebuilder/studio-types";
 import { convertTemplateToDocuments, DESIGNER_ROUTES } from "./convert.server";
 import { applyDesignerEdits, parseDesignerReply, type DesignerEdit } from "./edits";
@@ -164,8 +165,8 @@ async function completeText(input: {
 }
 
 /** Model picks the template from the registry menu; deterministic fallback. */
-export async function pickTemplate(brief: string, model?: StudioDesignModel, signal?: AbortSignal): Promise<string> {
-  const known = new Set(STORE_TEMPLATE_REGISTRY.templates.map((template) => template.id));
+export async function pickTemplate(brief: string, model?: StudioDesignModel, signal?: AbortSignal): Promise<StoreTemplateId> {
+  const known = new Set<string>(STORE_TEMPLATE_REGISTRY.templates.map((template) => template.id));
   try {
     const raw = await completeText({
       model,
@@ -174,7 +175,8 @@ export async function pickTemplate(brief: string, model?: StudioDesignModel, sig
       signal,
     });
     const id = raw.trim().split(/\s/)[0];
-    if (known.has(id as never)) return id;
+    // Membership in the registry's id set proves the narrowing.
+    if (known.has(id)) return id as StoreTemplateId;
   } catch {
     // Fall through to the default below.
   }
@@ -256,7 +258,7 @@ export async function designerTurn(input: {
   if (!documents) {
     firstBuild = true;
     const templateId = await pickTemplate(input.message, input.model, input.signal);
-    const converted = await convertTemplateToDocuments(templateId as never);
+    const converted = await convertTemplateToDocuments(templateId);
     const files: Record<string, string> = { "base.css": converted.baseCss };
     for (const document of converted.documents) {
       files[`${document.route}.html`] = document.html;
