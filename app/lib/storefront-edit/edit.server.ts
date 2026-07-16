@@ -244,18 +244,37 @@ export function createDefaultStructuralPatchCompiler(provider?: StorefrontAiProv
     designModel?: StudioDesignModel;
     repair?: { attempt: 1; scope: StructuralPatchScope; staticDiagnostics?: BundleValidationReport["diagnostics"]; browserProof?: BrowserProofReport };
   }): Promise<CompiledStorefrontPatch> => {
-    const response = await (provider ?? createAnthropicStructuredProvider(
+    const structuredProvider = provider ?? createAnthropicStructuredProvider(
       input.designModel ? { model: STOREFRONT_DESIGN_MODEL_IDS[input.designModel] } : {},
-    )).complete({
+    );
+    const request = {
       operation: "patch",
       system: STOREFRONT_PATCH_SYSTEM_PROMPT,
       prompt: storefrontPatchPrompt(input),
       schema: PATCH_SCHEMA,
       signal: input.signal,
-    });
+    } as const;
+    let response = await structuredProvider.complete(request);
+    let usage = response.usage;
+    let operations: StorefrontPatchOperation[];
+    try {
+      operations = parseProviderOperations(response.value, input.context ?? input.repair?.scope);
+    } catch (error) {
+      if (!(error instanceof StorefrontEditError) || error.code !== "storefront_patch_invalid") throw error;
+      const retryResponse = await structuredProvider.complete({
+        ...request,
+        prompt: `${request.prompt}\nYour previous result did not match the required operations object. Return exactly one object with a non-empty operations array that matches the supplied schema.`,
+      });
+      usage = {
+        inputTokens: usage.inputTokens + retryResponse.usage.inputTokens,
+        outputTokens: usage.outputTokens + retryResponse.usage.outputTokens,
+      };
+      response = retryResponse;
+      operations = parseProviderOperations(response.value, input.context ?? input.repair?.scope);
+    }
     return {
-      operations: parseProviderOperations(response.value, input.context ?? input.repair?.scope),
-      provider: { kind: "ai_patch", provider: response.provider, model: response.model, usage: response.usage },
+      operations,
+      provider: { kind: "ai_patch", provider: response.provider, model: response.model, usage },
     };
   };
 }
