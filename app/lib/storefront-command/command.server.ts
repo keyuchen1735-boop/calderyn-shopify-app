@@ -1,6 +1,9 @@
 import { getSupabase } from "~/lib/supabase.server";
 import type { BrowserProofReport, MerchantStorefrontContext } from "~/lib/storefront-ai/contracts";
-import { assembleStorefrontContext } from "~/lib/storefront-ai/context.server";
+import {
+  assembleStorefrontContextWithReferences,
+  type StorefrontContextAssembly,
+} from "~/lib/storefront-ai/context.server";
 import {
   isStorefrontBundlePublishEnabled,
   isStorefrontRecipeBuildEnabled,
@@ -61,7 +64,7 @@ export interface StoreCommandDependencies {
   recipeBuildEnabled(): boolean;
   publishEnabled(): boolean;
   buildEvidence(shopId: string): Promise<CatalogRoutingEvidence>;
-  loadContext(input: { shopId: string; prompt: string }): Promise<MerchantStorefrontContext>;
+  loadContext(input: { shopId: string; prompt: string }): Promise<StorefrontContextAssembly>;
   classify(input: Parameters<typeof classifyStoreIntent>[0]): Promise<StoreIntent>;
   resolveDesign(request: StoreDesignRequest, evidence: CatalogRoutingEvidence): StoreDesignResolution;
   loadRecipe(templateId: StoreTemplateId, templateVersion: number): Promise<StorefrontRecipeArtifact>;
@@ -164,7 +167,7 @@ const defaultDependencies: StoreCommandDependencies = {
   recipeBuildEnabled: isStorefrontRecipeBuildEnabled,
   publishEnabled: isStorefrontBundlePublishEnabled,
   buildEvidence: buildCatalogRoutingEvidence,
-  loadContext: assembleStorefrontContext,
+  loadContext: assembleStorefrontContextWithReferences,
   classify: classifyStoreIntent,
   resolveDesign: (request, evidence) => resolveStoreDesign(request, evidence, STORE_TEMPLATE_REGISTRY),
   loadRecipe: loadStorefrontRecipe,
@@ -299,6 +302,28 @@ function sameBundle(left: StorefrontBundleV1, right: StorefrontBundleV1): boolea
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function ownedProductId(reference: string, assembly: StorefrontContextAssembly): string {
+  const product = assembly.references.products[reference];
+  if (!product) {
+    throw new StoreCommandError(
+      "storefront_command_invalid",
+      "That product selection could not be resolved safely.",
+      422,
+    );
+  }
+  return product.id;
+}
+
+function proofContext(assembly: StorefrontContextAssembly): MerchantStorefrontContext {
+  return {
+    ...assembly.context,
+    products: assembly.context.products.map((product) => ({
+      ...product,
+      id: ownedProductId(product.id, assembly),
+    })),
+  };
+}
+
 function operationAudit(intent: StoreIntent | null, resolution: StoreDesignResolution | null): Record<string, unknown> {
   if (intent?.kind === "update_text") return { kind: intent.kind, slot: intent.slot };
   if (intent?.kind === "update_merchandising") return { kind: intent.kind, productIds: intent.productIds };
@@ -391,7 +416,7 @@ export async function runStoreCommand(
     const currentTemplateId = state.draft?.bundle.source.kind === "recipe"
       ? state.draft.bundle.source.templateId
       : undefined;
-    let proofContext: MerchantStorefrontContext | null = null;
+    let contextAssembly: StorefrontContextAssembly | null = null;
     let intent: StoreIntent | null = null;
     let designResolution: StoreDesignResolution | null = null;
     let nextExclusions = priorExclusions;
@@ -413,14 +438,15 @@ export async function runStoreCommand(
       const recipe = await loadSelectedRecipe(designResolution, dependencies);
       nextBundle = recipe.bundle;
     } else {
-      proofContext = await dependencies.loadContext({ shopId: input.shopId, prompt: input.command.prompt });
+      const classificationAssembly = await dependencies.loadContext({ shopId: input.shopId, prompt: input.command.prompt });
+      contextAssembly = classificationAssembly;
       throwIfAborted(input.signal);
       intent = await dependencies.classify({
         prompt: input.command.prompt,
         ...(currentTemplateId ? { currentTemplateId } : {}),
         excludedTemplateIds: priorExclusions,
         bundle: state.draft.bundle,
-        productCandidates: proofContext.products.slice(0, 100).map(({ id, title }) => ({ id, title })),
+        productCandidates: classificationAssembly.context.products.slice(0, 100).map(({ id, title }) => ({ id, title })),
         ...(input.command.context ? { context: input.command.context } : {}),
         ...(input.command.attachments ? { attachments: input.command.attachments } : {}),
       });
@@ -451,6 +477,12 @@ export async function runStoreCommand(
         if (!currentTemplateId) {
           return ready(input, unchanged("That change is not available for this storefront yet."));
         }
+        if (intent.kind === "update_merchandising") {
+          intent = {
+            ...intent,
+            productIds: intent.productIds.map((reference) => ownedProductId(reference, classificationAssembly)),
+          };
+        }
         nextBundle = dependencies.applyIntent(
           state.draft.bundle,
           getStoreTemplate(currentTemplateId),
@@ -472,12 +504,12 @@ export async function runStoreCommand(
         validation.diagnostics,
       );
     }
-    proofContext ??= await dependencies.loadContext({ shopId: input.shopId, prompt: input.command.prompt });
+    contextAssembly ??= await dependencies.loadContext({ shopId: input.shopId, prompt: input.command.prompt });
     throwIfAborted(input.signal);
     await emit(input, { stage: "checking_preview" });
     const browserProof = await dependencies.prove({
       bundle: nextBundle,
-      context: proofContext,
+      context: proofContext(contextAssembly),
       persistedAssets: [],
       ...(input.signal ? { signal: input.signal } : {}),
     });

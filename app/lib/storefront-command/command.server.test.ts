@@ -13,6 +13,10 @@ const USER = "22222222-2222-2222-2222-222222222222";
 const CURRENT = "33333333-3333-3333-3333-333333333333";
 const RESULT = "44444444-4444-4444-4444-444444444444";
 const TARGET = "55555555-5555-5555-5555-555555555555";
+const PRODUCT = "66666666-6666-4666-8666-666666666666";
+const PRODUCT_REF = "product-001";
+const SECOND_PRODUCT = "77777777-7777-4777-8777-777777777777";
+const SECOND_PRODUCT_REF = "product-002";
 const HASH = `sha256:${"a".repeat(64)}`;
 const RESULT_HASH = `sha256:${"b".repeat(64)}`;
 
@@ -54,6 +58,36 @@ const context = {
   fingerprint: "sha256:context",
 };
 
+const contextAssembly = {
+  context,
+  references: {
+    products: { "product-a": { id: "product-a", handle: "a" } },
+    collections: {},
+    assets: {},
+  },
+};
+
+function referencedContextAssembly() {
+  const opaqueContext = {
+    ...context,
+    products: [
+      { ...context.products[0]!, id: PRODUCT_REF },
+      { ...context.products[0]!, id: SECOND_PRODUCT_REF, handle: "b", title: "B" },
+    ],
+  };
+  return {
+    context: opaqueContext,
+    references: {
+      products: {
+        [PRODUCT_REF]: { id: PRODUCT, handle: "a" },
+        [SECOND_PRODUCT_REF]: { id: SECOND_PRODUCT, handle: "b" },
+      },
+      collections: {},
+      assets: {},
+    },
+  };
+}
+
 function state(excludedTemplateIds = ["soft-chemistry" as const]) {
   return {
     draft: {
@@ -82,7 +116,7 @@ function dependencies(overrides: Partial<StoreCommandDependencies> = {}): StoreC
     buildEvidence: vi.fn().mockResolvedValue({
       productTitles: [], productTypes: [], productTags: [], optionNames: [], collectionTitles: [], fingerprint: "sha256:catalog",
     }),
-    loadContext: vi.fn().mockResolvedValue(context),
+    loadContext: vi.fn().mockResolvedValue(contextAssembly),
     classify: vi.fn().mockResolvedValue({ kind: "unsupported", message: "No safe change." }),
     resolveDesign: vi.fn().mockReturnValue(resolution),
     loadRecipe: vi.fn().mockResolvedValue({
@@ -237,6 +271,61 @@ describe("runStoreCommand", () => {
     expect(deps.validate).toHaveBeenCalledBefore(vi.mocked(deps.prove));
     expect(vi.mocked(deps.prove).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(deps.createVersion).mock.invocationCallOrder[0]!);
     expect(deps.edit).toHaveBeenCalledOnce();
+  });
+
+  it("persists owned product IDs after classifying opaque product references", async () => {
+    const contextAssembly = referencedContextAssembly();
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      loadContext: vi.fn().mockResolvedValue(contextAssembly),
+      classify: vi.fn().mockResolvedValue({
+        kind: "update_merchandising",
+        productIds: [SECOND_PRODUCT_REF, PRODUCT_REF],
+      }),
+      applyIntent: vi.fn((bundle, _template, intent) => ({
+        bundle: {
+          ...structuredClone(bundle),
+          featuredProductIds: intent.kind === "update_merchandising" ? intent.productIds : [],
+        },
+      })),
+    });
+
+    await runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT) }, deps);
+
+    expect(deps.classify).toHaveBeenCalledWith(expect.objectContaining({
+      productCandidates: [
+        { id: PRODUCT_REF, title: "A" },
+        { id: SECOND_PRODUCT_REF, title: "B" },
+      ],
+    }));
+    expect(deps.applyIntent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      { kind: "update_merchandising", productIds: [SECOND_PRODUCT, PRODUCT] },
+    );
+    expect(vi.mocked(deps.prove).mock.calls[0]![0]).toMatchObject({
+      bundle: { featuredProductIds: [SECOND_PRODUCT, PRODUCT] },
+      context: { products: [{ id: PRODUCT }, { id: SECOND_PRODUCT }] },
+    });
+    expect(vi.mocked(deps.createVersion).mock.calls[0]![0].artifact).toMatchObject({
+      bundle: { featuredProductIds: [SECOND_PRODUCT, PRODUCT] },
+    });
+  });
+
+  it("rejects an unmapped product reference before proof or persistence", async () => {
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      loadContext: vi.fn().mockResolvedValue(referencedContextAssembly()),
+      classify: vi.fn().mockResolvedValue({ kind: "update_merchandising", productIds: ["product-999"] }),
+    });
+
+    await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT) }, deps))
+      .rejects.toMatchObject({ code: "storefront_command_rejected", status: 422 });
+
+    expect(deps.applyIntent).not.toHaveBeenCalled();
+    expect(deps.prove).not.toHaveBeenCalled();
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.edit).not.toHaveBeenCalled();
   });
 
   it("routes Start over through recipe selection and Undo/Publish through release primitives", async () => {
