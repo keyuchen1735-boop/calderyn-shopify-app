@@ -14,7 +14,7 @@ export interface OrderListView {
 /** Sort keys whose first click reads most naturally ascending (text columns, A-Z); every other
  *  key (dates, money) starts at newest/biggest first. Shared by every screen that renders
  *  OrderSortHeader so the same-named column never sorts in opposite first directions. */
-const ASC_FIRST_SORT_COLS = new Set(["customer", "order"]);
+const ASC_FIRST_SORT_COLS = new Set(["customer", "order", "title"]);
 
 /** State transition for a column-header click, shared by the unified list and the sub-lists so
  *  the policy can't drift: a new column sorts by its natural first direction; the active column
@@ -84,7 +84,7 @@ export function OrderListToolbar({
   searchPlaceholder,
   searchAriaLabel,
   onSearchChange,
-  activeFilterCount,
+  activeFilterCount = 0,
   filterLabel,
   filterChildren,
   exportLabel = "Export",
@@ -98,11 +98,13 @@ export function OrderListToolbar({
   searchPlaceholder: string;
   searchAriaLabel: string;
   onSearchChange: (value: string) => void;
-  activeFilterCount: number;
+  activeFilterCount?: number;
   filterLabel: string;
-  filterChildren: ReactNode;
+  // Omitting filterChildren omits the Filters button entirely; omitting onExport omits Export —
+  // lists without extra filters (e.g. the product catalog) share the rest of the toolbar.
+  filterChildren?: ReactNode;
   exportLabel?: string;
-  onExport: () => void;
+  onExport?: () => void;
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filterToggleRef = useRef<HTMLButtonElement>(null);
@@ -200,6 +202,7 @@ export function OrderListToolbar({
             )}
           </div>
 
+          {filterChildren != null && (
           <div className="cd-orders-filter-wrap" ref={filterWrapRef}>
             <button
               ref={filterToggleRef}
@@ -243,14 +246,19 @@ export function OrderListToolbar({
               </div>
             )}
           </div>
+          )}
         </div>
 
-        <div className="cd-orders-toolbar-actions">
-          {viewExtras}
-          <Btn small icon="download" onClick={onExport}>
-            {exportLabel}
-          </Btn>
-        </div>
+        {(viewExtras || onExport) && (
+          <div className="cd-orders-toolbar-actions">
+            {viewExtras}
+            {onExport && (
+              <Btn small icon="download" onClick={onExport}>
+                {exportLabel}
+              </Btn>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -267,6 +275,8 @@ export function OrderListTable({
   emptyIcon,
   emptyTitle,
   emptySub,
+  emptyActionLabel,
+  onEmptyAction,
   filteredTitle = "No results match this view",
   filteredSub = "Try another view, search, or filter.",
   children,
@@ -281,6 +291,10 @@ export function OrderListTable({
   emptyIcon: string;
   emptyTitle: string;
   emptySub?: string;
+  // Optional call-to-action on the unfiltered empty state (e.g. "New product" on an empty
+  // catalog); never shown on the filtered empty state, where clearing filters is the way out.
+  emptyActionLabel?: string;
+  onEmptyAction?: () => void;
   filteredTitle?: string;
   filteredSub?: string;
   children: ReactNode;
@@ -308,6 +322,8 @@ export function OrderListTable({
           icon={filtered ? "search" : emptyIcon}
           title={filtered ? filteredTitle : emptyTitle}
           sub={filtered ? filteredSub : emptySub}
+          actionLabel={filtered ? undefined : emptyActionLabel}
+          onAction={filtered ? undefined : onEmptyAction}
         />
       </div>
     );
