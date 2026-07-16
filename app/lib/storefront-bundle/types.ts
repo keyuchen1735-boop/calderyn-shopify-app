@@ -500,6 +500,10 @@ export interface StorefrontBundleV1 {
     motionStyle: string;
     globalCss: string;
   };
+  /** Optional home curation; absent keeps the catalog's default featured order. */
+  featuredProductIds?: string[];
+  /** Optional content for the registry-owned visual host; absent renders its fallback. */
+  visualLayer?: VisualLayerSpec;
   shell: RouteArtifact;
   routes: {
     home: RouteArtifact;
