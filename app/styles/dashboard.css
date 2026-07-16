@@ -5989,6 +5989,9 @@
   line-height: 1.4; text-align: left; transition: color 0.18s ease;
 }
 .cd-order-readout-item + .cd-order-readout-item::before { content: ""; width: 3px; height: 3px; margin: 0 11px; border-radius: 50%; background: var(--text-3); }
+/* Loading ghost: matches the text line box exactly so the strip's height is identical before and
+   after the numbers land (no layout push on first paint). */
+.cd-order-readout-ghost { min-height: calc(12.5px * var(--type-scale) * 1.4); }
 .cd-order-readout-item strong { color: var(--text-1); font-weight: 620; }
 .cd-order-readout-item svg { color: var(--live); transition: transform 0.2s cubic-bezier(0.22,1,0.36,1); }
 .cd-order-readout-item[data-action="1"] { cursor: pointer; }
