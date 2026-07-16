@@ -86,10 +86,13 @@ export function renderDesignerDocument(input: {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css.replace(/<\/style/gi, "")}</style></head><body>${filled}</body></html>`;
 }
 
+// img-src allows https: because catalog imagery is injected server-side after
+// the scrub (signed Supabase URLs, promoted Shopify CDN hotlinks); documents
+// themselves can never carry an external src — the scrub strips those.
 export const DESIGNER_PREVIEW_CSP = [
   "default-src 'none'",
   "style-src 'unsafe-inline'",
-  "img-src 'self' data:",
+  "img-src 'self' data: https:",
   "font-src 'self'",
   "base-uri 'none'",
   "form-action 'none'",
