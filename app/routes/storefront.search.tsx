@@ -17,6 +17,13 @@ export const meta: MetaFunction = () => [
 ];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
+function nextPageHref(request: Request, cursor: string | null): string | null {
+  if (!cursor) return null;
+  const url = new URL(request.url);
+  url.searchParams.set("cursor", cursor);
+  return `${url.pathname}?${url.searchParams.toString()}`;
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   let searchInput;
@@ -39,12 +46,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const nonce = randomBytes(18).toString("base64url");
     const headers = storefrontCacheHeaders({ routeId: "search", personalized: true });
     markStorefrontBundleRendered(headers, nonce);
-    return json({ ...runtime1, nonce }, { headers });
+    return json({
+      ...runtime1,
+      nonce,
+      nextPageHref: nextPageHref(request, runtime1.data.search?.nextCursor ?? null),
+    }, { headers });
   }
   throw new Response(null, { status: 404 });
 }
 
 export default function StorefrontSearch() {
   const loaded = useLoaderData<typeof loader>();
-  return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "search", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="search" data={loaded.data} mode="public" /></>;
+  return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "search", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="search" data={loaded.data} mode="public" />{loaded.nextPageHref ? <a className="cd-store__pagination" rel="next" href={loaded.nextPageHref}>Next products</a> : null}</>;
 }
