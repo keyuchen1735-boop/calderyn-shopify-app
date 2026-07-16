@@ -13,15 +13,22 @@ import type {
   StoreVariant,
   StoreCollection,
 } from "./catalog";
+import {
+  decodeProductPageCursor,
+  encodeProductPageCursor,
+  MAX_PUBLIC_PRODUCT_PAGE_SIZE,
+} from "./catalog";
 
 type Supa = ReturnType<typeof getSupabase>;
 type Row = Record<string, unknown>;
 
 const DEFAULT_CURRENCY = "USD";
-// Hard cap so a large catalog can't assemble every product (+ sign every image) on
-// one SSR render. The storefront has no pager yet; proper cursor pagination through
-// the loaders is a follow-up. Until then this bounds the per-request cost.
+// Hard cap for bounded/curated reads. Public catalog traversal uses listProductPage.
 const MAX_STOREFRONT_PRODUCTS = 250;
+
+function postgrestLiteral(value: string): string {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
 
 function pushInto<T>(map: Map<string, T[]>, key: string, value: T): void {
   const arr = map.get(key);
@@ -209,6 +216,54 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
 }
 
 export const ownedCatalog: StorefrontCatalog = {
+  async listProductPage(shopId, opts) {
+    const sb = getSupabase();
+    let collectionId: string | null = null;
+    if (opts.collection) {
+      const { data, error } = await sb
+        .from("collection_dim")
+        .select("id")
+        .eq("shop_id", shopId)
+        .eq("handle", opts.collection)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return { items: [], nextCursor: null };
+      collectionId = String(data.id);
+    }
+
+    const products = sb.from("product_dim");
+    let q = (collectionId
+      ? products.select("id, handle, title, description, category, tags, product_collection!inner(collection_id)")
+      : products.select("id, handle, title, description, category, tags"))
+      .eq("shop_id", shopId)
+      .eq("status", "active");
+    if (collectionId) q = q.eq("product_collection.collection_id", collectionId);
+    if (opts.query) {
+      const literal = opts.query
+        .replaceAll("\\", "\\\\")
+        .replaceAll("%", "\\%")
+        .replaceAll("_", "\\_");
+      q = q.ilike("title", `%${literal}%`);
+    }
+    if (opts.cursor) {
+      const cursor = decodeProductPageCursor(opts.cursor);
+      const title = postgrestLiteral(cursor.title);
+      q = q.or(`title.gt.${title},and(title.eq.${title},id.gt.${postgrestLiteral(cursor.id)})`);
+    }
+    const requested = Number.isFinite(opts.limit) ? Math.trunc(opts.limit) : 1;
+    const limit = Math.min(Math.max(requested, 1), MAX_PUBLIC_PRODUCT_PAGE_SIZE);
+    const { data, error } = await q.order("title").order("id").limit(limit + 1);
+    if (error) throw error;
+    const rows = ((data ?? []) as unknown as Row[]).slice(0, limit);
+    const last = rows.at(-1);
+    return {
+      items: await assemble(sb, shopId, rows),
+      nextCursor: last && (data ?? []).length > limit
+        ? encodeProductPageCursor(String(last.title), String(last.id))
+        : null,
+    };
+  },
+
   async listProducts(shopId, opts) {
     const sb = getSupabase();
 

@@ -64,6 +64,7 @@ describe("storefront release resolution", () => {
     };
     const source = reader(live, []);
     const catalog = {
+      listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })),
       listProducts: vi.fn(async () => []),
       listCollections: vi.fn(async () => []),
       getProduct: vi.fn(async () => null),
@@ -106,6 +107,7 @@ describe("storefront release resolution", () => {
       bundleReadEnabled: true,
       dataDependencies: {
         catalog: {
+          listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })),
           listProducts: vi.fn(async () => []),
           listCollections: vi.fn(async () => []),
           getProduct: vi.fn(async () => null),
@@ -136,7 +138,7 @@ describe("storefront release resolution", () => {
       bundleReadEnabled: true,
       assetUrlLoader,
       dataDependencies: {
-        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        catalog: { listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
         policyLoader: async () => [],
       },
@@ -168,7 +170,7 @@ describe("storefront release resolution", () => {
       bundleReadEnabled: true,
       assetUrlLoader,
       dataDependencies: {
-        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        catalog: { listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
         policyLoader: async () => [],
       },
@@ -202,7 +204,7 @@ describe("storefront release resolution", () => {
       bundleReadEnabled: true,
       assetUrlLoader,
       dataDependencies: {
-        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        catalog: { listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
         policyLoader: async () => [],
       },
@@ -233,7 +235,7 @@ describe("storefront release resolution", () => {
       bundleReadEnabled: true,
       assetUrlLoader,
       dataDependencies: {
-        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        catalog: { listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
         policyLoader: async () => [],
       },
@@ -264,7 +266,7 @@ describe("storefront release resolution", () => {
       ...shared,
       route: { kind: "home" },
       dataDependencies: {
-        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        catalog: { listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
         policyLoader: async () => [],
       },

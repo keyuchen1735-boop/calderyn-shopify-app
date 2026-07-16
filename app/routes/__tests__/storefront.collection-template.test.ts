@@ -22,6 +22,31 @@ beforeEach(() => {
 const args = (handle: string) => ({ request: new Request("https://demo.calderyncompany.com/storefront/collections/" + handle), params: { handle }, context: {} } as never);
 
 describe("collection route on the block spine", () => {
+  it("keeps a published collection template on the 24-product public page", async () => {
+    const products = Array.from({ length: 30 }, (_, index) => ({
+      id: `product-${index}`,
+      handle: `product-${index}`,
+      title: `Product ${index}`,
+      description: `Description ${index}`,
+      images: [], variants: [], collections: ["apparel"],
+    }));
+    getCatalogMock.mockReturnValue({
+      listCollections: async () => [{ handle: "apparel", title: "Apparel" }],
+      listProductPage: async () => ({ items: products.slice(0, 24), nextCursor: "next-page" }),
+      listProducts: async () => { throw new Error("collection template must use the bounded page"); },
+      getProduct: async () => null,
+    });
+    loadPublishedMock.mockResolvedValue({
+      kind: "template", pageKey: "collection",
+      blocks: [{ id: "cg", type: "collectionGrid", layout: { x: 0, y: 0, w: 12, h: 6 }, props: {} }],
+    });
+
+    const data = requireLegacyLoaderData(await (await loader(args("apparel"))).json());
+    expect(data.data).not.toBeNull();
+    expect(data.data!.productsByCollection.apparel).toHaveLength(24);
+    expect(data.nextCursor).toBe("next-page");
+  });
+
   it("renders a published collection template against the record", async () => {
     loadPublishedMock.mockResolvedValue({
       kind: "template", pageKey: "collection",

@@ -29,6 +29,7 @@ describe("StorefrontCatalog contract", () => {
     };
 
     const cat: StorefrontCatalog = {
+      listProductPage: async (_shopId, opts) => ({ items: [product].slice(0, opts.limit), nextCursor: null }),
       listProducts: async (shopId, opts) => {
         expect(typeof shopId).toBe("string");
         return opts?.collection ? [product].filter((p) => p.collections.includes(opts.collection!)) : [product];
@@ -38,6 +39,7 @@ describe("StorefrontCatalog contract", () => {
     };
 
     expect((await cat.listProducts("demo-shop")).length).toBe(1);
+    expect((await cat.listProductPage("demo-shop", { limit: 24 })).items).toEqual([product]);
     expect((await cat.listProducts("demo-shop", { collection: "apparel" })).length).toBe(1);
     expect(await cat.getProduct("demo-shop", "tee")).toEqual(product);
     expect(await cat.getProduct("demo-shop", "nope")).toBeNull();

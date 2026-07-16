@@ -2,7 +2,6 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import type { StorefrontCatalog, StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 
-const MAX_SCAN = 250;
 const MAX_RESULTS = 24;
 const MAX_FACETS = 20;
 const SORTS = ["relevance", "title_asc", "title_desc", "price_asc", "price_desc"] as const;
@@ -20,7 +19,7 @@ export interface StorefrontSearchInput {
   cursor: string | null;
 }
 
-interface CursorPayload { v: 1; offset: number; fingerprint: string }
+interface CursorPayload { v: 2; sortValue: string | number; productId: string; fingerprint: string }
 
 export class InvalidSearchRequestError extends Error {
   constructor() {
@@ -54,9 +53,11 @@ function decodeCursor(token: string): CursorPayload {
     const value: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
     const row = value as Record<string, unknown>;
-    if (row.v !== 1 || !Number.isInteger(row.offset) || Number(row.offset) < 0
+    if (row.v !== 2 || (typeof row.sortValue !== "string" && typeof row.sortValue !== "number")
+      || (typeof row.sortValue === "number" && !Number.isFinite(row.sortValue))
+      || typeof row.productId !== "string" || row.productId.length === 0
       || typeof row.fingerprint !== "string" || row.fingerprint.length !== 64) throw new Error();
-    return { v: 1, offset: Number(row.offset), fingerprint: row.fingerprint };
+    return { v: 2, sortValue: row.sortValue, productId: row.productId, fingerprint: row.fingerprint };
   } catch {
     throw new InvalidSearchRequestError();
   }
@@ -134,6 +135,29 @@ function variantFor(product: StoreProduct): StoreVariant | null {
 }
 function available(product: StoreProduct): boolean { return product.variants.some((variant) => variant.available); }
 function price(product: StoreProduct): number { return variantFor(product)?.priceCents ?? Number.MAX_SAFE_INTEGER; }
+function sortValue(product: StoreProduct, sort: StorefrontSearchSort): string | number {
+  return sort === "price_asc" || sort === "price_desc" ? price(product) : product.title;
+}
+
+function compareProducts(a: StoreProduct, b: StoreProduct, sort: StorefrontSearchSort): number {
+  if (sort === "title_desc") return b.title.localeCompare(a.title) || a.id.localeCompare(b.id);
+  if (sort === "price_asc") return price(a) - price(b) || a.id.localeCompare(b.id);
+  if (sort === "price_desc") return price(b) - price(a) || a.id.localeCompare(b.id);
+  return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+}
+
+function compareProductToCursor(product: StoreProduct, cursor: CursorPayload, sort: StorefrontSearchSort): number {
+  const value = sortValue(product, sort);
+  if (typeof value !== typeof cursor.sortValue) throw new InvalidSearchRequestError();
+  if (typeof value === "number" && typeof cursor.sortValue === "number") {
+    const order = sort === "price_desc" ? cursor.sortValue - value : value - cursor.sortValue;
+    return order || product.id.localeCompare(cursor.productId);
+  }
+  const title = String(value);
+  const cursorTitle = String(cursor.sortValue);
+  const order = sort === "title_desc" ? cursorTitle.localeCompare(title) : title.localeCompare(cursorTitle);
+  return order || product.id.localeCompare(cursor.productId);
+}
 
 function fingerprint(shopId: string, input: StorefrontSearchInput): string {
   return createHash("sha256").update(JSON.stringify({
@@ -161,7 +185,19 @@ export async function searchStorefront(
   input: StorefrontSearchInput,
   catalog: StorefrontCatalog = getCatalog(),
 ) {
-  const products = await catalog.listProducts(shopId, { limit: MAX_SCAN });
+  // ponytail: full traversal preserves full-field facets and sorting; move those
+  // operations into the catalog query only when catalog-scale latency warrants it.
+  const products: StoreProduct[] = [];
+  let catalogCursor: string | null = null;
+  do {
+    const page = await catalog.listProductPage(shopId, {
+      ...(input.collection ? { collection: input.collection } : {}),
+      cursor: catalogCursor,
+      limit: MAX_RESULTS,
+    });
+    products.push(...page.items);
+    catalogCursor = page.nextCursor;
+  } while (catalogCursor);
   const query = lower(input.query);
   let filtered = products.filter((product) => {
     if (query && !lower(`${product.title} ${product.description} ${product.category ?? ""} ${(product.tags ?? []).join(" ")}`).includes(query)) return false;
@@ -176,20 +212,15 @@ export async function searchStorefront(
     tags: facet(filtered.flatMap((product) => product.tags ?? [])),
     collections: facet(filtered.flatMap((product) => product.collections)),
   };
-  filtered = filtered.slice().sort((a, b) => {
-    if (input.sort === "title_asc") return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
-    if (input.sort === "title_desc") return b.title.localeCompare(a.title) || a.id.localeCompare(b.id);
-    if (input.sort === "price_asc") return price(a) - price(b) || a.id.localeCompare(b.id);
-    if (input.sort === "price_desc") return price(b) - price(a) || a.id.localeCompare(b.id);
-    return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
-  });
+  filtered = filtered.slice().sort((a, b) => compareProducts(a, b, input.sort));
   const expectedFingerprint = fingerprint(shopId, input);
   const cursor = input.cursor ? decodeCursor(input.cursor) : null;
   if (cursor && cursor.fingerprint !== expectedFingerprint) throw new InvalidSearchRequestError();
-  const offset = cursor?.offset ?? 0;
-  if (offset > filtered.length) throw new InvalidSearchRequestError();
-  const page = filtered.slice(offset, offset + input.limit);
-  const nextOffset = offset + page.length;
+  const remaining = cursor
+    ? filtered.filter((product) => compareProductToCursor(product, cursor, input.sort) > 0)
+    : filtered;
+  const page = remaining.slice(0, input.limit);
+  const last = page.at(-1);
   return {
     items: page.map((product) => {
       const variant = variantFor(product);
@@ -207,8 +238,13 @@ export async function searchStorefront(
     }),
     facets,
     total: filtered.length,
-    nextCursor: nextOffset < filtered.length
-      ? encodeCursor({ v: 1, offset: nextOffset, fingerprint: expectedFingerprint })
+    nextCursor: last && page.length < remaining.length
+      ? encodeCursor({
+          v: 2,
+          sortValue: sortValue(last, input.sort),
+          productId: last.id,
+          fingerprint: expectedFingerprint,
+        })
       : null,
   };
 }

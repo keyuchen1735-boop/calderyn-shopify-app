@@ -19,6 +19,7 @@ function pick(shopId: string): StorefrontCatalog {
 }
 
 const routingCatalog: StorefrontCatalog = {
+  listProductPage: (shopId, opts) => pick(shopId).listProductPage(shopId, opts),
   listProducts: (shopId, opts) => pick(shopId).listProducts(shopId, opts),
   getProduct: (shopId, handle) => pick(shopId).getProduct(shopId, handle),
   getVariantById: (shopId, variantId) => pick(shopId).getVariantById?.(shopId, variantId) ?? Promise.resolve(null),
@@ -28,6 +29,10 @@ const routingCatalog: StorefrontCatalog = {
 
 const previewCatalog: StorefrontCatalog = {
   ...routingCatalog,
+  listProductPage: async (shopId, opts) => {
+    const page = await routingCatalog.listProductPage(shopId, opts);
+    return { ...page, items: await applyAssetOverrides(shopId, page.items) };
+  },
   listProducts: async (shopId, opts) => applyAssetOverrides(shopId, await routingCatalog.listProducts(shopId, opts)),
   getProduct: async (shopId, handle) => {
     const product = await routingCatalog.getProduct(shopId, handle);

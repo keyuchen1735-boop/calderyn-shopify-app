@@ -18,6 +18,7 @@ vi.mock("~/lib/storefront/handle-redirect.server", () => ({ listRedirectOldHandl
 const realShop = "11111111-1111-1111-1111-111111111111";
 const product = (id: string): StoreProduct => ({ id, handle: `h-${id}`, title: `P${id}`, description: "", images: [], variants: [{ id: `v-${id}`, sku: null, title: "D", priceCents: 1000, currency: "USD", available: true }], collections: ["summer"] });
 const catalog = (): StorefrontCatalog => ({
+  listProductPage: async () => ({ items: [product("1")], nextCursor: null }),
   listProducts: async () => [product("1")],
   getProduct: async (_s, h) => product(h.replace("h-", "")),
   listCollections: async () => [{ handle: "summer", title: "Summer" }],

@@ -13,6 +13,7 @@ vi.mock("~/lib/storegen/imagery/asset.server", () => ({ applyAssetOverrides }));
 
 vi.mock("../catalog.owned.server", () => ({
   ownedCatalog: {
+    listProductPage: vi.fn(async (shopId: string) => ({ items: [{ handle: `owned-for-${shopId}` }], nextCursor: null })),
     listProducts: vi.fn(async (shopId: string) => [{ handle: `owned-for-${shopId}` }]),
     getProduct: vi.fn(async () => null),
     listCollections: vi.fn(async () => [{ handle: "owned", title: "Owned" }]),
@@ -37,6 +38,12 @@ async function loadHome(cat: StorefrontCatalog, shopId: string) {
 }
 
 describe("getCatalog", () => {
+  it("routes public product pages through the tenant seam", async () => {
+    await getCatalog().listProductPage(UUID_SHOP, { limit: 24 });
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    expect(ownedCatalog.listProductPage).toHaveBeenCalledWith(UUID_SHOP, { limit: 24 });
+  });
+
   it("routes a real (uuid) tenant to the owned catalog", async () => {
     const products = await getCatalog().listProducts(UUID_SHOP);
     expect(products[0].handle).toBe(`owned-for-${UUID_SHOP}`);
@@ -75,6 +82,9 @@ describe("getCatalog", () => {
       collections: ["books"],
     };
     const secondFake: StorefrontCatalog = {
+      async listProductPage() {
+        return { items: [novel], nextCursor: null };
+      },
       async listCollections() {
         return [{ handle: "books", title: "Books" }];
       },

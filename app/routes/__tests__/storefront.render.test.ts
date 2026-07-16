@@ -184,10 +184,20 @@ describe("storefront collection", () => {
     ).rejects.toMatchObject({ status: 404 });
   });
 
+  it("rejects a malformed public page cursor without a server error", async () => {
+    await expect(collectionLoader({
+      request: req("https://demo.calderyncompany.com/storefront/collections/apparel?cursor=not-json"),
+      params: { handle: "apparel" }, context: {},
+    })).rejects.toMatchObject({ status: 404 });
+  });
+
   it("renders a real but empty collection instead of 404ing", async () => {
     getCatalogMock.mockReturnValue({
       async listCollections() {
         return [{ handle: "spring", title: "Spring" }];
+      },
+      async listProductPage() {
+        return { items: [], nextCursor: null };
       },
       async listProducts() {
         return [];
@@ -273,6 +283,12 @@ describe("storefront swap seam (criterion 2)", () => {
       collections: ["books"],
     };
     const secondFake: StorefrontCatalog = {
+      async listProductPage(_shopId, opts) {
+        return {
+          items: (!opts.collection || opts.collection === "books" ? [novel] : []).slice(0, opts.limit),
+          nextCursor: null,
+        };
+      },
       async listCollections() {
         return [{ handle: "books", title: "Books" }];
       },

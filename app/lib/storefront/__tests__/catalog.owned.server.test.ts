@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Records the .eq() filters applied to each table so we can assert scoping.
 const eqCalls: Record<string, Array<[string, unknown]>> = {};
 const ilikeCalls: Record<string, Array<[string, string]>> = {};
+const orCalls: Record<string, string[]> = {};
 // Canned rows per table for a query that resolves to a list.
 let tableRows: Record<string, unknown[]> = {};
 // Canned single-row result per table (for maybeSingle()).
@@ -26,6 +27,10 @@ function builder(table: string) {
     },
     ilike: (col: string, val: string) => {
       (ilikeCalls[table] ??= []).push([col, val]);
+      return b;
+    },
+    or: (value: string) => {
+      (orCalls[table] ??= []).push(value);
       return b;
     },
     in: chain,
@@ -48,9 +53,33 @@ vi.mock("~/lib/catalog/sign-media.server", () => ({
 beforeEach(() => {
   for (const k of Object.keys(eqCalls)) delete eqCalls[k];
   for (const k of Object.keys(ilikeCalls)) delete ilikeCalls[k];
+  for (const k of Object.keys(orCalls)) delete orCalls[k];
   tableRows = {};
   tableSingle = {};
   tableCount = {};
+});
+
+describe("ownedCatalog.listProductPage", () => {
+  it("caps public pages and continues from the stable title-plus-id cursor", async () => {
+    tableRows = {
+      product_dim: Array.from({ length: 25 }, (_, index) => ({
+        id: `product-${index.toString().padStart(2, "0")}`,
+        handle: `product-${index}`,
+        title: `Product ${index.toString().padStart(2, "0")}`,
+        description: `Description ${index}`,
+      })),
+      variant_dim: [], product_media: [], product_collection: [], product_option: [],
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const first = await ownedCatalog.listProductPage("shop-1", { limit: 99 });
+    expect(first.items).toHaveLength(24);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    expect(eqCalls.product_dim).toEqual(expect.arrayContaining([["shop_id", "shop-1"], ["status", "active"]]));
+
+    await ownedCatalog.listProductPage("shop-1", { cursor: first.nextCursor, limit: 24 });
+    expect(orCalls.product_dim.at(-1)).toContain("title.gt.");
+    expect(orCalls.product_dim.at(-1)).toContain("id.gt.");
+  });
 });
 
 describe("ownedCatalog.listProducts", () => {

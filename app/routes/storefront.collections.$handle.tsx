@@ -23,6 +23,7 @@ import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 import { InvalidSearchRequestError, parseStorefrontCollectionParams } from "~/lib/storefront/search.server";
 import { storefrontError } from "~/lib/storefront/cart-api.server";
+import { decodeProductPageCursor } from "~/lib/storefront/catalog";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Collection" }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
@@ -49,11 +50,20 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     return json({ ...runtime1, nonce, seoMeta: [{ title }] }, { headers });
   }
   const catalog = getCatalog();
+  const catalogCursor = new URL(request.url).searchParams.get("cursor");
+  if (catalogCursor) {
+    try {
+      decodeProductPageCursor(catalogCursor);
+    } catch {
+      throw new Response(null, { status: 404 });
+    }
+  }
   // Manual shop_id scoping: shopId is the first arg of every read.
-  const [collections, products] = await Promise.all([
+  const [collections, productPage] = await Promise.all([
     catalog.listCollections(shopId),
-    catalog.listProducts(shopId, { collection: handle }),
+    catalog.listProductPage(shopId, { collection: handle, cursor: catalogCursor, limit: 24 }),
   ]);
+  const products = productPage.items;
   // 404 only when the handle isn't a real collection. A real but empty collection
   // (all its products archived, or none assigned yet) renders an empty state rather
   // than a hard 404 that would break the shareable URL.
@@ -70,7 +80,14 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   ]);
   const record = { collection: { handle, title } };
   const weatherCondition = await storefrontWeatherCondition(request, shopId);
-  const data = doc ? await resolveRenderData(doc, shopId, catalog, record, weatherCondition) : null;
+  const pageCatalog = {
+    ...catalog,
+    listProducts: (scopedShopId: string, opts?: Parameters<typeof catalog.listProducts>[1]) =>
+      opts?.collection === handle && !opts.ids && !opts.query
+        ? Promise.resolve(opts.limit === undefined ? products : products.slice(0, opts.limit))
+        : catalog.listProducts(scopedShopId, opts),
+  };
+  const data = doc ? await resolveRenderData(doc, shopId, pageCatalog, record, weatherCondition) : null;
   const track = await trackStorefrontEvent(request, shopId, "page_view", {
     experimentId: exposure.experimentId,
     variantKey: exposure.variantKey,
@@ -89,7 +106,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
     seoMeta = [{ title }];
   }
-  return json({ handle, title, products, doc, data, record, seoMeta }, { headers: track });
+  return json({ handle, title, products, nextCursor: productPage.nextCursor, doc, data, record, seoMeta }, { headers: track });
 }
 
 export default function StorefrontCollection() {
@@ -97,7 +114,7 @@ export default function StorefrontCollection() {
   if (isRuntime1RenderData(loaded)) {
     return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "collection", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="collection" data={loaded.data} mode="public" /></>;
   }
-  const { title, products, doc, data, record } = loaded;
+  const { title, products, nextCursor, doc, data, record } = loaded;
   if (doc && data) {
     return <div className="cd-store__collection">{renderBlocks(doc, { data, record })}</div>;
   }
@@ -115,6 +132,7 @@ export default function StorefrontCollection() {
                 <img className="cd-product-card__img" src={p.images[0].url} alt={p.images[0].alt ?? p.title} />
               ) : null}
               <span className="cd-product-card__title">{p.title}</span>
+              <span className="cd-product-card__description">{p.description}</span>
               <span className="cd-product-card__price">
                 {priced ? formatMoney(priced.priceCents, priced.currency) : ""}
               </span>
@@ -122,6 +140,7 @@ export default function StorefrontCollection() {
           );
         })}
       </div>
+      {nextCursor ? <a rel="next" href={`?cursor=${encodeURIComponent(nextCursor)}`}>Next products</a> : null}
     </div>
   );
 }

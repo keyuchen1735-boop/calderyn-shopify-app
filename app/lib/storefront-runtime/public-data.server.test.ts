@@ -32,6 +32,15 @@ function product(handle: string, imageUrl = "https://media.example/one.jpg"): St
 
 function catalog(products = [product("one"), product("two")]): StorefrontCatalog {
   return {
+    listProductPage: vi.fn(async (_shopId, opts) => {
+      const selected = opts.collection
+        ? products.filter((entry) => entry.collections.includes(opts.collection!))
+        : products;
+      const offset = opts.cursor ? Number(opts.cursor) : 0;
+      const items = selected.slice(offset, offset + opts.limit);
+      const next = offset + items.length;
+      return { items, nextCursor: next < selected.length ? String(next) : null };
+    }),
     listProducts: vi.fn(async (_shopId, opts) => {
       const selected = opts?.ids
         ? products.filter((entry) => opts.ids!.includes(entry.id))
@@ -106,12 +115,12 @@ describe("runtime-1 public data plans", () => {
       route: { kind: "search", query: "title" },
     }, { catalog: fake, settingsLoader });
     expect(fake.listProducts).toHaveBeenNthCalledWith(1, SHOP, { collection: "featured", limit: 12 });
-    expect(fake.listProducts).toHaveBeenNthCalledWith(2, SHOP, { limit: 250 });
-    expect(fake.listProducts).toHaveBeenNthCalledWith(3, SHOP, {
+    expect(fake.listProductPage).toHaveBeenCalledWith(SHOP, { cursor: null, limit: 24 });
+    expect(fake.listProducts).toHaveBeenNthCalledWith(2, SHOP, {
       ids: expect.any(Array),
       limit: 24,
     });
-    expect(vi.mocked(fake.listProducts).mock.calls[2]?.[1]?.ids).toHaveLength(24);
+    expect(vi.mocked(fake.listProducts).mock.calls[1]?.[1]?.ids).toHaveLength(24);
     expect(data.featuredProducts).toHaveLength(12);
     expect(data.search?.results).toHaveLength(24);
   });
@@ -126,6 +135,18 @@ describe("runtime-1 public data plans", () => {
     expect(data.notFound).toEqual({ kind: "product", handle: "missing" });
     expect(data.product).toBeNull();
     expect(data.relatedProducts).toEqual([]);
+  });
+
+  it("keeps the complete merchant description on runtime product and card data", async () => {
+    const described = { ...product("one"), description: "First <detail> through the complete ending." };
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "currentProduct" }, { kind: "featuredProducts", limit: 1 }],
+      route: { kind: "product", handle: "one" },
+    }, { catalog: catalog([described]), settingsLoader });
+
+    expect(data.product?.description).toBe(described.description);
+    expect(data.featuredProducts[0]?.description).toBe(described.description);
   });
 
   it("uses a direct collection lookup and keeps the total separate from the 24-product slice", async () => {
@@ -202,6 +223,7 @@ describe("runtime-1 public data plans", () => {
       .mockResolvedValueOnce([product("one", "https://signed.example/first")])
       .mockResolvedValueOnce([product("one", "https://signed.example/second")]);
     const fake: StorefrontCatalog = {
+      listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })),
       listProducts,
       getProduct: vi.fn(async () => null),
       getCollection: vi.fn(async () => null),

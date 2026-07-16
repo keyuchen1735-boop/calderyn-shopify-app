@@ -7,6 +7,11 @@ import type {
   StoreCollection,
   StoreProduct,
 } from "./catalog";
+import {
+  decodeProductPageCursor,
+  encodeProductPageCursor,
+  MAX_PUBLIC_PRODUCT_PAGE_SIZE,
+} from "./catalog";
 
 const COLLECTIONS: StoreCollection[] = [
   { handle: "apparel", title: "Apparel" },
@@ -68,6 +73,27 @@ const PRODUCTS: StoreProduct[] = [
 // but the fixture carries one tenant's data, so it cannot leak across shops. The
 // owned impl MUST .eq('shop_id', shopId) on every query.
 export const fixtureCatalog: StorefrontCatalog = {
+  async listProductPage(_shopId, opts) {
+    let products = [...PRODUCTS];
+    if (opts.collection) products = products.filter((product) => product.collections.includes(opts.collection!));
+    if (opts.query) {
+      const query = opts.query.toLocaleLowerCase();
+      products = products.filter((product) => `${product.title} ${product.description}`.toLocaleLowerCase().includes(query));
+    }
+    products.sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+    const cursor = opts.cursor ? decodeProductPageCursor(opts.cursor) : null;
+    const remaining = cursor
+      ? products.filter((product) => product.title.localeCompare(cursor.title) > 0 ||
+          (product.title === cursor.title && product.id.localeCompare(cursor.id) > 0))
+      : products;
+    const limit = Math.min(Math.max(Math.trunc(opts.limit), 1), MAX_PUBLIC_PRODUCT_PAGE_SIZE);
+    const items = remaining.slice(0, limit);
+    const last = items.at(-1);
+    return {
+      items,
+      nextCursor: last && remaining.length > items.length ? encodeProductPageCursor(last.title, last.id) : null,
+    };
+  },
   async listProducts(_shopId, opts) {
     let products = opts?.ids ? PRODUCTS.filter((p) => opts.ids!.includes(p.id)) : PRODUCTS;
     if (opts?.collection) products = products.filter((p) => p.collections.includes(opts.collection!));

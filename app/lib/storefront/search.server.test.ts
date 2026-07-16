@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StoreProduct } from "./catalog";
 
-const catalog = vi.hoisted(() => ({ listProducts: vi.fn() }));
+const catalog = vi.hoisted(() => ({ listProductPage: vi.fn(), listProducts: vi.fn() }));
 
 vi.mock("~/lib/storefront/catalog.server", () => ({
-  getCatalog: () => ({ listProducts: catalog.listProducts }),
+  getCatalog: () => ({ listProductPage: catalog.listProductPage, listProducts: catalog.listProducts }),
 }));
 
 // eslint-disable-next-line import/first -- import follows the hoisted catalog fake
@@ -53,6 +53,7 @@ const products: StoreProduct[] = [
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.SHOPIFY_API_SECRET = "search-cursor-secret-0000000000000000000000";
+  catalog.listProductPage.mockResolvedValue({ items: products, nextCursor: null });
   catalog.listProducts.mockImplementation(async (_shopId: string, opts?: { query?: string }) => {
     if (!opts?.query) return products;
     const query = opts.query.toLocaleLowerCase();
@@ -93,11 +94,48 @@ describe("parseStorefrontSearchParams", () => {
 });
 
 describe("searchStorefront", () => {
+  it("returns every active product exactly once across catalog pages", async () => {
+    const ids = Array.from({ length: 61 }, (_, index) => `product-${index.toString().padStart(2, "0")}`);
+    const allProducts = ids.map((id): StoreProduct => ({
+      id,
+      handle: id,
+      title: id,
+      description: `Description ${id}`,
+      images: [],
+      variants: [],
+      collections: [],
+    }));
+    const pagedCatalog = {
+      async listProductPage(_shopId: string, opts: { cursor?: string | null; limit: number }) {
+        const offset = opts.cursor ? Number(opts.cursor) : 0;
+        const items = allProducts.slice(offset, offset + opts.limit);
+        const next = offset + items.length;
+        return { items, nextCursor: next < allProducts.length ? String(next) : null };
+      },
+      async listProducts() { return allProducts.slice(0, 24); },
+      async getProduct() { return null; },
+      async listCollections() { return []; },
+    };
+    const seen: string[] = [];
+    let cursor: string | null = null;
+
+    do {
+      const page = await searchStorefront("shop-a", {
+        query: "", collection: null, category: null, tag: null, available: null,
+        sort: "relevance", cursor, limit: 24,
+      }, pagedCatalog);
+      seen.push(...page.items.map((item) => item.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    expect(seen).toEqual(ids);
+  });
+
   it("returns a capped projection and capped facets without exposing the scanned catalog", async () => {
     const input = parseStorefrontSearchParams(new URL("https://shop.example/?limit=2").searchParams);
     const result = await searchStorefront("shop-a", input);
 
-    expect(catalog.listProducts).toHaveBeenCalledWith("shop-a", { limit: 250 });
+    expect(catalog.listProductPage).toHaveBeenCalledWith("shop-a", { cursor: null, limit: 24 });
     expect(result.items).toHaveLength(2);
     expect(result.items[0]).not.toHaveProperty("description");
     expect(result.total).toBe(3);
@@ -126,6 +164,19 @@ describe("searchStorefront", () => {
     );
   });
 
+  it("keeps pagination stable when a product is inserted before the cursor", async () => {
+    const input = parseStorefrontSearchParams(new URL("https://shop.example/?sort=title_asc&limit=1").searchParams);
+    const first = await searchStorefront("shop-a", input);
+    expect(first.items.map((item) => item.handle)).toEqual(["cloud-cleanser"]);
+
+    catalog.listProductPage.mockResolvedValue({
+      items: [{ ...products[0], id: "p-0", handle: "alpha", title: "Alpha" }, ...products],
+      nextCursor: null,
+    });
+    const second = await searchStorefront("shop-a", { ...input, cursor: first.nextCursor });
+    expect(second.items.map((item) => item.handle)).toEqual(["night-cream"]);
+  });
+
   it("uses live variant availability and prices in the public projection", async () => {
     const input = parseStorefrontSearchParams(
       new URL("https://shop.example/?available=true&sort=price_asc").searchParams,
@@ -144,7 +195,7 @@ describe("searchStorefront", () => {
   ])("matches description/category/tag text without a title-only database prefilter: %s", async (query, handles) => {
     const input = parseStorefrontSearchParams(new URL(`https://shop.example/?q=${encodeURIComponent(query)}`).searchParams);
     const result = await searchStorefront("shop-a", input);
-    expect(catalog.listProducts).toHaveBeenCalledWith("shop-a", { limit: 250 });
+    expect(catalog.listProductPage).toHaveBeenCalledWith("shop-a", { cursor: null, limit: 24 });
     expect(result.items.map((item) => item.handle)).toEqual(handles);
   });
 });

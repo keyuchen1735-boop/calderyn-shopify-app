@@ -5,6 +5,16 @@ import { fixtureCatalog } from "../catalog.stub.server";
 const SHOP = "demo-shop";
 
 describe("fixtureCatalog", () => {
+  it("pages the complete fixture catalog with a stable cursor", async () => {
+    const first = await fixtureCatalog.listProductPage(SHOP, { limit: 2 });
+    const second = await fixtureCatalog.listProductPage(SHOP, { cursor: first.nextCursor, limit: 2 });
+    expect([...first.items, ...second.items].map((product) => product.id)).toEqual([
+      "p-cap", "p-tote", "p-tee", "p-hoodie",
+    ]);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    expect(second.nextCursor).toBeNull();
+  });
+
   it("lists all fixture products", async () => {
     expect((await fixtureCatalog.listProducts(SHOP)).length).toBe(4);
   });

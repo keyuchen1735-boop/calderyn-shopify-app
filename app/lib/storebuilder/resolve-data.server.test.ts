@@ -8,6 +8,10 @@ const p = (id: string, collection: string): StoreProduct => ({
   id, handle: `h-${id}`, title: `P${id}`, description: "", images: [], variants: [], collections: [collection],
 });
 const fakeCatalog = (): StorefrontCatalog => ({
+  listProductPage: async (_s, opts) => ({
+    items: (opts.collection ? [p("1", opts.collection)] : [p("1", "summer"), p("2", "winter")]).slice(0, opts.limit),
+    nextCursor: null,
+  }),
   listCollections: async () => [{ handle: "summer", title: "Summer" }, { handle: "winter", title: "Winter" }],
   listProducts: async (_s, opts) => (opts?.collection ? [p("1", opts.collection)] : [p("1", "summer"), p("2", "winter")]),
   getProduct: async (_s, handle) => p(handle.replace("h-", ""), "summer"),
@@ -61,6 +65,10 @@ describe("resolveRenderData", () => {
       id, handle: `h-${id}`, title, description: "", images: [], variants: [], collections: [],
     });
     const catalog: StorefrontCatalog = {
+      listProductPage: async (_s, opts) => ({
+        items: [prod("mug", "Coffee Mug"), prod("rain", "Rain Jacket")].slice(0, opts.limit),
+        nextCursor: null,
+      }),
       listCollections: async () => [],
       listProducts: async () => [prod("mug", "Coffee Mug"), prod("rain", "Rain Jacket")], // neutral first by default
       getProduct: async () => prod("mug", "Coffee Mug"),

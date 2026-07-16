@@ -138,6 +138,7 @@ vi.mock("~/lib/assets/persist.server", () => ({
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const EMPTY_CATALOG: StorefrontCatalog = {
+  listProductPage: async () => ({ items: [], nextCursor: null }),
   listProducts: async () => [],
   getProduct: async () => null,
   listCollections: async () => [],
