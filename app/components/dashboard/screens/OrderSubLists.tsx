@@ -16,7 +16,8 @@ import {
   OrderListPagination,
   OrderListTable,
   OrderListToolbar,
-  type OrderListSortOption,
+  OrderSortHeader,
+  nextSortState,
   type OrderListView,
 } from "./OrderListFamily";
 
@@ -82,23 +83,9 @@ const VIEWS: Record<OrderSubSection, OrderListView[]> = {
   ],
 };
 
-const SORTS: Record<OrderSubSection, OrderListSortOption[]> = {
-  labels: [
-    { value: "date", label: "Date" },
-    { value: "cost", label: "Cost" },
-    { value: "order", label: "Order" },
-  ],
-  drafts: [
-    { value: "date", label: "Started" },
-    { value: "value", label: "Value" },
-    { value: "customer", label: "Customer" },
-  ],
-  abandoned: [
-    { value: "date", label: "Started" },
-    { value: "value", label: "Value" },
-    { value: "customer", label: "Customer" },
-  ],
-};
+// Every sub-list defaults to newest-first; nextSortState cycles a header back here on its third
+// click, which is also the only way back to date order on the labels list (it has no date column).
+const SUB_LIST_DEFAULT_SORT = { sort: "date", dir: "desc" } as const;
 
 const LABELS_COLUMNS =
   "36px 108px minmax(132px,1fr) minmax(190px,1.5fr) 96px 104px";
@@ -190,6 +177,28 @@ export default function OrderSubLists({
       setSelected((current) => ({ ...current, [section]: new Set() }));
     }
   };
+
+  // Header-driven sorting via the shared nextSortState policy (OrderListFamily.tsx).
+  const sortBy = (col: string) => {
+    updateState(
+      nextSortState(
+        { sort: state.sort, dir: state.dir },
+        col,
+        SUB_LIST_DEFAULT_SORT,
+      ),
+    );
+  };
+
+  const sortHd = (label: string, col: string, align?: "right") => (
+    <OrderSortHeader
+      label={label}
+      col={col}
+      sort={state.sort}
+      dir={state.dir}
+      onSort={sortBy}
+      align={align}
+    />
+  );
 
   const carriers = useMemo(
     () =>
@@ -517,11 +526,6 @@ export default function OrderSubLists({
         }
         searchAriaLabel={`Search ${label.toLowerCase()}s`}
         onSearchChange={(search) => updateState({ search })}
-        sortOptions={SORTS[section]}
-        sort={state.sort}
-        dir={state.dir}
-        onSortChange={(sort) => updateState({ sort })}
-        onDirChange={(dir) => updateState({ dir })}
         activeFilterCount={activeFilterCount}
         filterLabel={label}
         filterChildren={filterChildren}
@@ -576,10 +580,10 @@ export default function OrderSubLists({
                     aria-label="Select all shipping charges on this page"
                   />
                 </span>
-                <span>Order</span>
+                {sortHd("Order", "order")}
                 <span>Carrier</span>
                 <span>Tracking</span>
-                <span className="text-right">Cost</span>
+                {sortHd("Cost", "cost", "right")}
                 <span>Status</span>
               </>
             }
@@ -638,10 +642,10 @@ export default function OrderSubLists({
                   />
                 </span>
                 <span>Cart</span>
-                <span>Customer</span>
+                {sortHd("Customer", "customer")}
                 <span>Items</span>
-                <span className="text-right">Value</span>
-                <span>Started</span>
+                {sortHd("Value", "value", "right")}
+                {sortHd("Started", "date")}
               </>
             }
           >
@@ -692,10 +696,10 @@ export default function OrderSubLists({
                   />
                 </span>
                 <span>Checkout</span>
-                <span>Customer</span>
-                <span className="text-right">Value</span>
+                {sortHd("Customer", "customer")}
+                {sortHd("Value", "value", "right")}
                 <span>Recovery</span>
-                <span>Started</span>
+                {sortHd("Started", "date")}
                 <span />
               </>
             }

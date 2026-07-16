@@ -9,7 +9,6 @@ import {
   bulkAddOrderTags,
   bulkArchiveOrders,
   bulkFulfillOrders,
-  createOrderView,
   deleteOrderView,
   fetchOrderViews,
   fetchOrdersList,
@@ -39,6 +38,8 @@ import {
   OrderBulkBar,
   OrderListPagination,
   OrderListTable,
+  OrderSortHeader,
+  nextSortState,
 } from "./OrderListFamily";
 import { CDIcon } from "../icons";
 import {
@@ -51,7 +52,6 @@ import {
 import { isPrefillParam } from "./order-composer-prefill";
 import {
   isSystemView,
-  paramsToViewFilters,
   stateToParams,
   viewFiltersToParams,
   type ListFilterPatch,
@@ -76,6 +76,11 @@ const ORDER_SECTION_META: Record<string, { title: string; sub: string }> = {
 
 const ORDER_TABLE_COLUMNS =
   "36px 112px minmax(190px, 1.5fr) 96px 88px 112px 132px 88px";
+
+// The server's default ordering when the list request carries no explicit sort/dir. Header
+// clicks that land back on this exact ordering normalize to undefined (see sortByColumn) so the
+// default view keeps its screen-cache write-through.
+const DEFAULT_ORDER_SORT = { sort: "date", dir: "desc" } as const;
 
 function PaymentPill({ status }: { status: string }) {
   const s = paymentPillStyle(status);
@@ -162,6 +167,9 @@ function UnifiedOrdersList({
   allSelected,
   anySelectable,
   error,
+  sort,
+  dir,
+  onSort,
 }: {
   rows: DisplayOrder[] | null;
   loading: boolean;
@@ -174,9 +182,26 @@ function UnifiedOrdersList({
   allSelected: boolean;
   anySelectable: boolean;
   error: string | null;
+  sort: OrdersListParams["sort"];
+  dir: OrdersListParams["dir"];
+  onSort: (col: string) => void;
 }) {
   const resolvedRows = rows ?? [];
   const cols = ORDER_TABLE_COLUMNS;
+  // sort/dir undefined means the server default — resolve once so the header arrows always
+  // reflect the ordering actually in effect.
+  const effSort = sort ?? DEFAULT_ORDER_SORT.sort;
+  const effDir = dir ?? DEFAULT_ORDER_SORT.dir;
+  const sortHd = (label: string, col: string, align?: "right") => (
+    <OrderSortHeader
+      label={label}
+      col={col}
+      sort={effSort}
+      dir={effDir}
+      onSort={onSort}
+      align={align}
+    />
+  );
   return (
     <OrderListTable
       loading={loading}
@@ -201,9 +226,9 @@ function UnifiedOrdersList({
             )}
           </span>
           <span>Order</span>
-          <span>Customer</span>
-          <span style={{ textAlign: "right" }}>Total</span>
-          <span>Date</span>
+          {sortHd("Customer", "customer")}
+          {sortHd("Total", "total", "right")}
+          {sortHd("Date", "date")}
           <span>Payment</span>
           <span>Fulfillment</span>
           <span />
@@ -413,8 +438,8 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     [state, savedViews],
   );
 
-  // Whether any of the manually-picked toolbar filter controls (Fix 3) carry a value — used both
-  // to widen isDefaultView/isPlainSystemTab below and to gate the Save view button.
+  // Whether any of the manually-picked toolbar filter controls carry a value — widens
+  // isDefaultView below so a filtered page never writes through the screen cache.
   const hasManualFilters =
     !!state.paymentStatus?.length ||
     !!state.fulfillmentStatus ||
@@ -433,13 +458,6 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     state.dir === undefined &&
     !hasManualFilters;
   const isArchivedView = effectiveParams.archived === true;
-  const isPlainSystemTab =
-    isSystemView(state.view) &&
-    !state.search &&
-    state.sort === undefined &&
-    state.dir === undefined &&
-    !hasManualFilters;
-  const canSaveView = !isPlainSystemTab;
 
   const loadOrdersList = useCallback(
     (
@@ -540,25 +558,27 @@ export default function Orders({ app }: { app: DashboardCtx }) {
     }));
   }, []);
 
-  const saveCurrentView = useCallback(
-    async (name: string) => {
-      const filtersToSave = paramsToViewFilters(effectiveParams);
-      try {
-        const view = await createOrderView(name, filtersToSave);
-        setSavedViews((vs) => [...vs, view]);
-        toast(`Saved view "${view.name}".`, "check", "success");
-      } catch (err) {
-        toast(
-          err instanceof DashboardApiError
-            ? err.message
-            : "Couldn't save this view.",
-          "warn",
-          "critical",
-        );
-      }
-    },
-    [effectiveParams, toast],
-  );
+  // Header-driven sorting via the shared nextSortState policy (OrderListFamily.tsx). A result
+  // equal to the server default normalizes back to undefined so the bare default view keeps its
+  // screen-cache write-through (isDefaultView checks sort/dir === undefined) and default fetches
+  // keep the bare param shape.
+  const sortByColumn = useCallback((col: string) => {
+    setState((s) => {
+      const next = nextSortState(
+        { sort: s.sort ?? DEFAULT_ORDER_SORT.sort, dir: s.dir ?? DEFAULT_ORDER_SORT.dir },
+        col,
+        DEFAULT_ORDER_SORT,
+      );
+      const isDefault =
+        next.sort === DEFAULT_ORDER_SORT.sort && next.dir === DEFAULT_ORDER_SORT.dir;
+      return {
+        ...s,
+        sort: isDefault ? undefined : (next.sort as NonNullable<OrdersListParams["sort"]>),
+        dir: isDefault ? undefined : next.dir,
+        offset: 0,
+      };
+    });
+  }, []);
 
   const removeView = useCallback(
     async (id: string) => {
@@ -1090,14 +1110,6 @@ export default function Orders({ app }: { app: DashboardCtx }) {
               onDeleteView={removeView}
               searchInput={searchInput}
               onSearchInputChange={setSearchInput}
-              sort={state.sort}
-              dir={state.dir}
-              onSortChange={(sort) =>
-                setState((s) => ({ ...s, sort, offset: 0 }))
-              }
-              onDirChange={(dir) => setState((s) => ({ ...s, dir, offset: 0 }))}
-              canSaveView={canSaveView}
-              onSaveView={saveCurrentView}
               exportHref={exportHref}
               paymentStatus={state.paymentStatus}
               fulfillmentStatus={state.fulfillmentStatus}
@@ -1163,6 +1175,9 @@ export default function Orders({ app }: { app: DashboardCtx }) {
                 allSelected={allSelected}
                 anySelectable={selectableIds.length > 0}
                 error={ordersListError}
+                sort={state.sort}
+                dir={state.dir}
+                onSort={sortByColumn}
               />
             </div>
 

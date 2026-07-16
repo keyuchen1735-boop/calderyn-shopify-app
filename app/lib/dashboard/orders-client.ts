@@ -421,13 +421,6 @@ export async function fetchOrderViews(): Promise<OrderViewVM[]> {
   return data.views;
 }
 
-/** Save the current toolbar filters as a named view. 409s (DashboardApiError) on a duplicate
- *  name; 422s past the per-shop saved-view cap. */
-export async function createOrderView(name: string, filters: Record<string, unknown>): Promise<OrderViewVM> {
-  const data = await apiSend<{ view: OrderViewVM }>("POST", "/dashboard/api/orders/views", { name, filters });
-  return data.view;
-}
-
 /** Delete a saved view by id. */
 export async function deleteOrderView(id: string): Promise<void> {
   await apiSend<{ deleted: true }>("DELETE", `/dashboard/api/orders/views?id=${encodeURIComponent(id)}`);
