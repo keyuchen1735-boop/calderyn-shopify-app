@@ -181,6 +181,7 @@ export type RecipeCardTopology = `${RecipeCardIdentity}.${RouteCardPattern}.${St
 export type ProtectedStorefrontSlot =
   | "variantPicker"
   | "addToCart"
+  | "productDescription"
   | "cartLineControls"
   | "cartSummary"
   | "cartDrawer"
@@ -206,6 +207,13 @@ export interface StoreTemplateRouteBlueprint {
   forbiddenGenericStructures: readonly string[];
 }
 
+export interface TemplateVisualLayer {
+  slotId: `visual:${string}`;
+  fallbackAssetKey: string;
+  placement: "hero-background" | "section-background";
+  pointerEvents: "none";
+}
+
 export interface StoreTemplateVersionRecord {
   templateVersion: number;
   baselineArtifact: string;
@@ -213,6 +221,8 @@ export interface StoreTemplateVersionRecord {
     desktop: string;
     mobile: string;
   }>;
+  visualLayer: TemplateVisualLayer;
+  productPlaceholderAssetKey: string;
   routeBlueprints: Readonly<Record<StorefrontRecipeBlueprintId, StoreTemplateRouteBlueprint>>;
 }
 

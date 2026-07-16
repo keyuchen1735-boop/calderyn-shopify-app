@@ -4,6 +4,7 @@ import {
   createStoreTemplateRegistry,
   getStoreTemplate,
 } from "./registry";
+import { CUSTOM_BENCH_ASSETS } from "../storefront-recipes/custom-bench/assets";
 
 describe("versioned storefront recipe registry", () => {
   it("registers all eleven stable recipe IDs with complete route and override metadata", () => {
@@ -88,6 +89,90 @@ describe("versioned storefront recipe registry", () => {
     });
     expect(new Set(semanticSignatures).size).toBe(STORE_TEMPLATE_REGISTRY.templates.length);
     expect(getStoreTemplate("atelier-nine").name).toBe("Atelier Grid");
+  });
+
+  it("requires descriptions, placeholders, heroes, and one visual surface", () => {
+    for (const template of STORE_TEMPLATE_REGISTRY.templates) {
+      const version = template.versions.find((candidate) => candidate.templateVersion === template.activeVersion);
+      expect(version?.visualLayer.slotId).toMatch(/^visual:/);
+      expect(version?.visualLayer.fallbackAssetKey).toBeTruthy();
+      expect(version?.productPlaceholderAssetKey).toBeTruthy();
+      expect(version?.routeBlueprints.product.protectedSlotPlacement).toContainEqual(
+        expect.objectContaining({ slot: "productDescription" }),
+      );
+    }
+  });
+
+  it("rejects duplicate or unresolved visual and product assets", () => {
+    const base = STORE_TEMPLATE_REGISTRY.templates[0];
+    const second = STORE_TEMPLATE_REGISTRY.templates[1];
+    expect(() =>
+      createStoreTemplateRegistry([
+        base,
+        {
+          ...second,
+          versions: second.versions.map((version) => ({
+            ...version,
+            visualLayer: { ...version.visualLayer, slotId: base.versions[0].visualLayer.slotId },
+          })),
+        },
+      ]),
+    ).toThrow(/duplicate visual slot/i);
+    expect(() =>
+      createStoreTemplateRegistry([
+        {
+          ...base,
+          versions: base.versions.map((version) => ({
+            ...version,
+            visualLayer: { ...version.visualLayer, fallbackAssetKey: "missing" },
+          })),
+        },
+      ]),
+    ).toThrow(/owned visual fallback/i);
+    expect(() =>
+      createStoreTemplateRegistry([
+        {
+          ...base,
+          versions: base.versions.map((version) => ({ ...version, productPlaceholderAssetKey: "missing" })),
+        },
+      ]),
+    ).toThrow(/owned product placeholder/i);
+  });
+
+  it("rejects a registry fallback removed from its recipe manifest", () => {
+    const entries = CUSTOM_BENCH_ASSETS.entries.splice(0);
+    try {
+      expect(() => createStoreTemplateRegistry([STORE_TEMPLATE_REGISTRY.templates[0]])).toThrow(
+        /owned visual fallback/i,
+      );
+    } finally {
+      CUSTOM_BENCH_ASSETS.entries.push(...entries);
+    }
+  });
+
+  it("rejects collection or product blueprints without protected descriptions", () => {
+    const base = STORE_TEMPLATE_REGISTRY.templates[0];
+    for (const routeId of ["collection", "product"] as const) {
+      expect(() =>
+        createStoreTemplateRegistry([
+          {
+            ...base,
+            versions: base.versions.map((version) => ({
+              ...version,
+              routeBlueprints: {
+                ...version.routeBlueprints,
+                [routeId]: {
+                  ...version.routeBlueprints[routeId],
+                  protectedSlotPlacement: version.routeBlueprints[routeId].protectedSlotPlacement.filter(
+                    (placement) => placement.slot !== "productDescription",
+                  ),
+                },
+              },
+            })),
+          },
+        ]),
+      ).toThrow(/product description placement/i);
+    }
   });
 
   it("rejects duplicate IDs, globally ambiguous aliases, and duplicate dictionaries", () => {
