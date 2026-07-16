@@ -12,7 +12,10 @@ import {
 import { isStoreTemplateId } from "~/lib/storefront-bundle/registry";
 import type { StorefrontBundleV1 } from "~/lib/storefront-bundle/types";
 import { validateCompiledBundle, type BundleValidationReport } from "~/lib/storefront-compiler/validate";
-import { assembleStorefrontContext } from "~/lib/storefront-ai/context.server";
+import {
+  assembleStorefrontContextWithReferences,
+  type StorefrontContextAssembly,
+} from "~/lib/storefront-ai/context.server";
 import { storefrontAiBrowserProof } from "~/lib/storefront-validation/browser.server";
 
 interface LoadedStorefrontVersion {
@@ -34,7 +37,7 @@ export interface StorefrontUndoDependencies {
   loadVersion(shopId: string, versionId: string): Promise<LoadedStorefrontVersion | null>;
   loadEditAudit(input: { shopId: string; resultVersionId: string }): Promise<{ baseVersionId: string; resultVersionId: string } | null>;
   validate(bundle: StorefrontBundleV1): BundleValidationReport;
-  loadProofContext(input: { shopId: string; prompt: string }): Promise<MerchantStorefrontContext>;
+  loadProofContext(input: { shopId: string; prompt: string }): Promise<StorefrontContextAssembly>;
   prove(input: { bundle: StorefrontBundleV1; context: MerchantStorefrontContext; persistedAssets: []; signal?: AbortSignal }): Promise<BrowserProofReport>;
   hashArtifact(input: HashStorefrontArtifactInput): Promise<string>;
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
@@ -97,7 +100,7 @@ const defaultDependencies: StorefrontUndoDependencies = {
   loadVersion,
   loadEditAudit,
   validate: validateCompiledBundle,
-  loadProofContext: assembleStorefrontContext,
+  loadProofContext: assembleStorefrontContextWithReferences,
   prove: storefrontAiBrowserProof,
   hashArtifact: hashStorefrontArtifact,
   createVersion: createStorefrontBundleVersion,
@@ -113,6 +116,21 @@ function throwIfAborted(signal?: AbortSignal): void {
 function exclusions(version: LoadedStorefrontVersion): string[] {
   const value = version.resolution.excludedTemplateIds;
   return Array.isArray(value) ? [...new Set(value.filter(isStoreTemplateId))] : [];
+}
+
+function ownedProofContext(assembly: StorefrontContextAssembly, featuredProductIds: string[]): MerchantStorefrontContext {
+  const products = assembly.context.products.map((product) => {
+    const owned = assembly.references.products[product.id];
+    if (!owned) {
+      throw new StorefrontUndoError("storefront_command_invalid", "That product selection could not be resolved safely.", 422);
+    }
+    return { ...product, id: owned.id };
+  });
+  const availableIds = new Set(products.map(({ id }) => id));
+  if (featuredProductIds.some((id) => !availableIds.has(id))) {
+    throw new StorefrontUndoError("storefront_command_invalid", "That product selection could not be resolved safely.", 422);
+  }
+  return { ...assembly.context, products };
 }
 
 function mapError(error: unknown): never {
@@ -150,11 +168,11 @@ export async function undoStorefrontEdit(
     if (!validation.ok) {
       throw new StorefrontUndoError("storefront_undo_target_invalid", "The undo version no longer passes storefront validation.", 409, validation.diagnostics);
     }
-    const context = await dependencies.loadProofContext({ shopId: input.shopId, prompt: "Undo storefront edit" });
+    const contextAssembly = await dependencies.loadProofContext({ shopId: input.shopId, prompt: "Undo storefront edit" });
     throwIfAborted(input.signal);
     const browserProof = await dependencies.prove({
       bundle: target.bundle,
-      context,
+      context: ownedProofContext(contextAssembly, target.bundle.featuredProductIds ?? []),
       persistedAssets: [],
       ...(input.signal ? { signal: input.signal } : {}),
     });
