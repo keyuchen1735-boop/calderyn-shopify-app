@@ -5929,8 +5929,11 @@
   background: var(--card-solid); border: 0.5px solid var(--hairline-strong);
   box-shadow: var(--shadow-pop);
 }
-.cd-orders-filter-fields { display: grid; gap: 9px; }
-.cd-orders-filter-fields label, .cd-orders-filter-daterange { display: grid; gap: 3px; }
+/* minmax(0, 1fr) everywhere: a bare auto grid track sizes to its widest item's intrinsic width
+   (the payment select's longest option), overflowing the fixed-width popover — clamping every
+   level to the container is what keeps the fields inside the panel at any type scale. */
+.cd-orders-filter-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; }
+.cd-orders-filter-fields label, .cd-orders-filter-daterange { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; }
 .cd-orders-filter-fields .cd-input { width: 100%; min-width: 0; }
 
 
