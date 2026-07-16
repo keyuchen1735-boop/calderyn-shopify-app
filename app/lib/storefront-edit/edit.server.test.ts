@@ -551,6 +551,28 @@ describe("editStorefrontByPrompt", () => {
 });
 
 describe("createDefaultStructuralPatchCompiler", () => {
+  it("retries one malformed structured result and accounts for both calls", async () => {
+    const operation = {
+      kind: "replaceTextChildren" as const,
+      routeId: "home" as const,
+      targetId: "region-1",
+      value: "Updated copy",
+      expected: `sha256:${"a".repeat(64)}`,
+    };
+    const provider = { complete: vi.fn()
+      .mockResolvedValueOnce({ value: {}, provider: "fixture", model: "fixture-model", usage: { inputTokens: 4, outputTokens: 2 } })
+      .mockResolvedValueOnce({ value: { operations: [operation] }, provider: "fixture", model: "fixture-model", usage: { inputTokens: 5, outputTokens: 3 } }) };
+
+    const result = await createDefaultStructuralPatchCompiler(provider)({
+      prompt: "Rewrite the section",
+      bundle: baseBundle(),
+    });
+
+    expect(result.operations).toEqual([operation]);
+    expect(result.provider.usage).toEqual({ inputTokens: 9, outputTokens: 5 });
+    expect(provider.complete).toHaveBeenCalledTimes(2);
+  });
+
   it("accepts store-wide patches beyond the old 12-operation compiler cap", async () => {
     const operations = Array.from({ length: 13 }, (_, index) => ({
       kind: "replaceTextChildren" as const,
