@@ -26,7 +26,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.log(
       `[cron.assets] rehosted ${rehost.rehosted}/${rehost.scanned} ` +
         `(${rehost.failed} failed, ${rehost.orphaned} orphaned, ${rehost.deduped} deduped); ` +
-        `generated ${generation.ready}/${generation.claimed} (${generation.failed} failed) ` +
+        `generated ${generation.ready}/${generation.claimed} (${generation.failed} failed, ${generation.skipped} skipped) ` +
         `in ${Date.now() - startedAt}ms`,
     );
     return json({ rehost, generation });

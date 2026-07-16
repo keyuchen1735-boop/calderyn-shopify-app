@@ -98,6 +98,7 @@ begin
       where sbv.shop_id = sa.shop_id
     ) v on true
     where sa.source = 'gemini'
+      and p.status = 'active'
       and sa.status in ('pending', 'failed')
       and (sa.next_attempt_at is null or sa.next_attempt_at <= now())
       and (sa.lease_expires_at is null or sa.lease_expires_at <= now())

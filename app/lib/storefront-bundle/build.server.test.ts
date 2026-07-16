@@ -60,7 +60,6 @@ function dependencies(overrides: Partial<StorefrontBuildDependencies> = {}): Sto
     readPointers: vi.fn().mockResolvedValue({ draftVersionId: PRIOR_DRAFT, publishedVersionId: null }),
     createVersion: vi.fn().mockResolvedValue(VERSION),
     installDraft: vi.fn().mockResolvedValue(VERSION),
-    prepareRecipeImages: vi.fn().mockResolvedValue({ required: 2, ready: 2 }),
     customBuildEnabled: () => true,
     reserveCustomBuild: vi.fn().mockResolvedValue("quota-reservation-1"),
     generateCustom: vi.fn().mockResolvedValue({
@@ -104,7 +103,6 @@ describe("runtime-1 storefront build", () => {
     expect(receipt).toEqual({ runtime: 1, versionId: VERSION, status: "draft", resolution: resolution() });
     expect(deps.resolveDesign).toHaveBeenCalledWith(request, evidence());
     expect(deps.loadRecipe).toHaveBeenCalledWith("commons-index", 1);
-    expect(deps.prepareRecipeImages).toHaveBeenCalledWith(SHOP, expect.any(AbortSignal));
     expect(deps.createVersion).toHaveBeenCalledWith(expect.objectContaining({
       shopId: SHOP,
       sourceKind: "recipe",
@@ -251,15 +249,20 @@ describe("runtime-1 storefront build", () => {
     expect(invalid.installDraft).not.toHaveBeenCalled();
   });
 
-  it("does not install an image-less first recipe when required generation fails", async () => {
-    const deps = dependencies({ prepareRecipeImages: vi.fn().mockResolvedValue({ required: 2, ready: 0 }) });
+  it("installs an image-less first recipe without waiting for provider generation", async () => {
+    const providerGeneration = vi.fn().mockRejectedValue(new Error("provider down"));
+    const deps = Object.assign(dependencies(), { prepareRecipeImages: providerGeneration });
     await expect(buildStorefrontDesign({
       shopId: SHOP,
       request: { prompt: "refills", mode: "auto" },
       recipeBuildEnabled: true,
-    }, deps)).rejects.toMatchObject({ code: "storefront_recipe_imagery_failed", status: 502 });
-    expect(deps.createVersion).not.toHaveBeenCalled();
-    expect(deps.installDraft).not.toHaveBeenCalled();
+    }, deps)).resolves.toMatchObject({ status: "draft", versionId: VERSION });
+    expect(providerGeneration).not.toHaveBeenCalled();
+    expect(deps.createVersion).toHaveBeenCalledWith(expect.objectContaining({
+      artifact: { sourceKind: "recipe", bundle },
+      assetManifest: bundle.assets,
+    }));
+    expect(deps.installDraft).toHaveBeenCalledOnce();
   });
 
   it("preflights build switches and write conflicts before any streamed build work", async () => {

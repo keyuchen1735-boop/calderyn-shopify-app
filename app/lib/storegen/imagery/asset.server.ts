@@ -10,7 +10,6 @@ import { getImageProvider } from "./provider.server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SOURCE = "gemini";
-export const MAX_STOREFRONT_IMAGES_PER_BUILD = 3;
 
 export interface EnhanceResult { productId: string; status: "ready" | "failed"; url: string | null }
 
@@ -48,21 +47,6 @@ export async function enhanceListing(shopId: string, product: StoreProduct, opts
   );
   if (error) throw error;
   return { productId: product.id, status, url };
-}
-
-export async function generateMissingListingImages(
-  shopId: string,
-  products: StoreProduct[],
-  enhance: typeof enhanceListing = enhanceListing,
-  signal?: AbortSignal,
-  limit = MAX_STOREFRONT_IMAGES_PER_BUILD,
-): Promise<number> {
-  if (products.length === 0 || limit <= 0) return 0;
-  const missing = products
-    .filter((product) => product.images.length === 0)
-    .slice(0, Math.min(MAX_STOREFRONT_IMAGES_PER_BUILD, limit));
-  const results = await Promise.all(missing.map((product) => enhance(shopId, product, { signal })));
-  return results.filter((result) => result.status === "ready").length;
 }
 
 export async function applyAssetOverrides(shopId: string, products: StoreProduct[]): Promise<StoreProduct[]> {

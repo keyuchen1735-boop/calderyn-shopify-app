@@ -30,14 +30,14 @@ describe("cron.assets", () => {
 
   it("runs rehosting and missing-image generation together", async () => {
     sweepPendingMedia.mockResolvedValue({ scanned: 1, rehosted: 1, failed: 0, orphaned: 0, deduped: 0 });
-    generateMissingProductImages.mockResolvedValue({ claimed: 2, ready: 1, failed: 1 });
+    generateMissingProductImages.mockResolvedValue({ claimed: 2, ready: 1, failed: 1, skipped: 0 });
 
     const response = await loader({ request: request("Bearer s3cret") } as never);
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       rehost: { scanned: 1, rehosted: 1, failed: 0, orphaned: 0, deduped: 0 },
-      generation: { claimed: 2, ready: 1, failed: 1 },
+      generation: { claimed: 2, ready: 1, failed: 1, skipped: 0 },
     });
     expect(sweepPendingMedia).toHaveBeenCalledOnce();
     expect(generateMissingProductImages).toHaveBeenCalledOnce();

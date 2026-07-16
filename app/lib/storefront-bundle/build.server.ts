@@ -3,9 +3,6 @@ import type { BundleValidationReport } from "~/lib/storefront-compiler/validate"
 import type { DefinedRecipe } from "~/lib/storefront-recipes/factory";
 import { generateOriginalStorefront } from "~/lib/storefront-ai/generate.server";
 import { reserveGenerateQuota } from "~/lib/storegen/guard.server";
-import { applyAssetOverrides, enhanceListing, generateMissingListingImages, MAX_STOREFRONT_IMAGES_PER_BUILD } from "~/lib/storegen/imagery/asset.server";
-import { geminiImageGenerationEnabled } from "~/lib/storegen/imagery/gemini.server";
-import { getCatalog } from "~/lib/storefront/catalog.server";
 import type {
   GenerateOriginalStorefrontInput,
   GenerateOriginalStorefrontResult,
@@ -79,7 +76,6 @@ export interface StorefrontBuildDependencies {
   buildEvidence(shopId: string): Promise<CatalogRoutingEvidence>;
   resolveDesign(request: StoreDesignRequest, evidence: CatalogRoutingEvidence): StoreDesignResolution;
   loadRecipe(templateId: StoreTemplateId, templateVersion: number): Promise<StorefrontRecipeArtifact>;
-  prepareRecipeImages(shopId: string, signal: AbortSignal): Promise<{ required: number; ready: number }>;
   assertWriteAllowed(shopId: string): Promise<void>;
   readPointers(shopId: string): Promise<StorefrontReleasePointers>;
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
@@ -198,21 +194,6 @@ const defaultDependencies: StorefrontBuildDependencies = {
   buildEvidence: buildCatalogRoutingEvidence,
   resolveDesign: (request, evidence) => resolveStoreDesign(request, evidence, STORE_TEMPLATE_REGISTRY),
   loadRecipe,
-  prepareRecipeImages: async (shopId, signal) => {
-    // Local and preview builds deliberately use the recipe's own placeholder
-    // imagery unless paid generation has been explicitly enabled.
-    if (!geminiImageGenerationEnabled()) return { required: 0, ready: 0 };
-    const products = await getCatalog().listProducts(shopId, { limit: 12 });
-    const needsGeneratedImagery = products.length > 0 && products.every((product) => product.images.length === 0);
-    if (!needsGeneratedImagery) return { required: 0, ready: 0 };
-    const required = Math.min(products.length, MAX_STOREFRONT_IMAGES_PER_BUILD);
-    const withOwnedAssets = await applyAssetOverrides(shopId, products);
-    const existingReady = withOwnedAssets.slice(0, required).filter((product) => product.images.length > 0).length;
-    const generated = await generateMissingListingImages(
-      shopId, withOwnedAssets, enhanceListing, signal, required - existingReady,
-    );
-    return { required, ready: Math.min(required, existingReady + generated) };
-  },
   assertWriteAllowed: assertStorefrontWriteAllowed,
   readPointers: readStorefrontReleasePointers,
   createVersion: createStorefrontBundleVersion,
@@ -363,37 +344,26 @@ export async function buildStorefrontDesign(
     templateId: frozenResolution.templateId,
     templateVersion: frozenResolution.templateVersion,
   });
-  const imageryController = new AbortController();
-  const abortImagery = () => imageryController.abort(input.signal?.reason);
-  input.signal?.addEventListener("abort", abortImagery, { once: true });
+  const recipeController = new AbortController();
+  const abortRecipe = () => recipeController.abort(input.signal?.reason);
+  input.signal?.addEventListener("abort", abortRecipe, { once: true });
   // Leave 20 seconds of the one-minute preview target for validation and draft installation.
-  const imageryTimer = setTimeout(() => imageryController.abort(), 40_000);
+  const recipeTimer = setTimeout(() => recipeController.abort(), 40_000);
   let recipe: StorefrontRecipeArtifact;
-  let imagery: { required: number; ready: number };
   try {
-    [recipe, imagery] = await Promise.race([
-      Promise.all([
-        dependencies.loadRecipe(frozenResolution.templateId, frozenResolution.templateVersion),
-        dependencies.prepareRecipeImages(input.shopId, imageryController.signal),
-      ]),
-      new Promise<never>((_resolve, reject) => imageryController.signal.addEventListener("abort", () => reject(
+    recipe = await Promise.race([
+      dependencies.loadRecipe(frozenResolution.templateId, frozenResolution.templateVersion),
+      new Promise<never>((_resolve, reject) => recipeController.signal.addEventListener("abort", () => reject(
         input.signal?.aborted
           ? new StorefrontBuildError("generation_cancelled", "Storefront generation was stopped. Your current draft was not changed.", 409)
           : new StorefrontBuildError("storefront_recipe_imagery_timeout", "Storefront recipe preparation exceeded the first-preview deadline. Your current draft was not changed.", 504),
       ), { once: true })),
     ]);
   } finally {
-    clearTimeout(imageryTimer);
-    input.signal?.removeEventListener("abort", abortImagery);
+    clearTimeout(recipeTimer);
+    input.signal?.removeEventListener("abort", abortRecipe);
   }
   throwIfBuildAborted(input.signal);
-  if (imagery.ready < imagery.required) {
-    throw new StorefrontBuildError(
-      "storefront_recipe_imagery_failed",
-      "Product images could not be generated for this preview. Your current draft was not changed.",
-      502,
-    );
-  }
   if (
     recipe.bundle.source.kind !== "recipe" ||
     recipe.bundle.source.templateId !== frozenResolution.templateId ||

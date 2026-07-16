@@ -10,8 +10,8 @@ describe("generateMissingProductImages", () => {
   it("claims a bounded batch and reports ready and failed results", async () => {
     const rpc = vi.fn().mockResolvedValue({
       data: [
-        { shop_id: SHOP_ID, product_id: "a", title: "A", description: "" },
-        { shop_id: SHOP_ID, product_id: "b", title: "B", description: "" },
+        { shop_id: SHOP_ID, product_id: "a", title: "A", description: "", attempt_count: 1, lease_expires_at: "2026-07-16T00:05:00.000Z" },
+        { shop_id: SHOP_ID, product_id: "b", title: "B", description: "", attempt_count: 1, lease_expires_at: "2026-07-16T00:05:00.000Z" },
       ],
       error: null,
     });
@@ -19,7 +19,7 @@ describe("generateMissingProductImages", () => {
       .fn()
       .mockResolvedValueOnce({ url: "owned://a" })
       .mockRejectedValueOnce(new Error("provider down"));
-    const update = vi.fn().mockResolvedValue({ error: null });
+    const update = vi.fn().mockResolvedValue({ data: [{ shop_id: SHOP_ID }], error: null });
 
     await expect(
       generateMissingProductImages(2, {
@@ -28,7 +28,7 @@ describe("generateMissingProductImages", () => {
         update,
         now: () => new Date("2026-07-16T00:00:00.000Z"),
       }),
-    ).resolves.toEqual({ claimed: 2, ready: 1, failed: 1 });
+    ).resolves.toEqual({ claimed: 2, ready: 1, failed: 1, skipped: 0 });
 
     expect(rpc).toHaveBeenCalledWith(2);
     expect(update).toHaveBeenCalledWith(
@@ -53,13 +53,39 @@ describe("generateMissingProductImages", () => {
     await expect(
       generateMissingProductImages(1, {
         rpc: vi.fn().mockResolvedValue({
-          data: [{ shop_id: SHOP_ID, product_id: "a", title: "A", description: "" }],
+          data: [{ shop_id: SHOP_ID, product_id: "a", title: "A", description: "", attempt_count: 1, lease_expires_at: "2026-07-16T00:05:00.000Z" }],
           error: null,
         }),
         generate: vi.fn().mockResolvedValue({ url: "owned://a" }),
-        update: vi.fn().mockResolvedValue({ error: new Error("write failed") }),
+        update: vi.fn().mockResolvedValue({ data: null, error: new Error("write failed") }),
       }),
     ).rejects.toThrow("write failed");
+  });
+
+  it.each([
+    ["success", vi.fn().mockResolvedValue({ url: "owned://a" }), "ready"],
+    ["failure", vi.fn().mockRejectedValue(new Error("provider down")), "failed"],
+  ])("reports a lost %s finalization race as skipped", async (_case, generate, status) => {
+    const update = vi.fn().mockResolvedValue({ data: [], error: null });
+    await expect(generateMissingProductImages(1, {
+      rpc: vi.fn().mockResolvedValue({
+        data: [{
+          shop_id: SHOP_ID,
+          product_id: "a",
+          title: "A",
+          description: "",
+          attempt_count: 1,
+          lease_expires_at: "2026-07-16T00:05:00.000Z",
+        }],
+        error: null,
+      }),
+      generate,
+      update,
+    })).resolves.toEqual({ claimed: 1, ready: 0, failed: 0, skipped: 1 });
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ lease_expires_at: "2026-07-16T00:05:00.000Z" }),
+      expect.objectContaining({ status }),
+    );
   });
 });
 
@@ -74,6 +100,7 @@ describe("store asset generation claim migration", () => {
 
   it("atomically claims only missing imagery with leases and bounded retries", () => {
     const seed = sql.match(/with missing as materialized \(([\s\S]+?)\), seeded as/)?.[1] ?? "";
+    const candidates = sql.match(/return query\s+with candidates as materialized \(([\s\S]+?)\), claimed as/)?.[1] ?? "";
     expect(sql).toMatch(/status[^;]+pending[^;]+ready[^;]+failed/);
     expect(sql).toContain("attempt_count");
     expect(sql).toContain("next_attempt_at");
@@ -86,6 +113,7 @@ describe("store asset generation claim migration", () => {
     expect(sql).toMatch(/order by[^;]+latest_version_at desc nulls last/s);
     expect(seed).toMatch(/not exists[^;]+public\.store_asset queued[^;]+queued\.source = 'gemini'/s);
     expect(seed).not.toMatch(/coalesce\(v\.latest_version_at/);
+    expect(candidates).toMatch(/p\.status = 'active'/);
   });
 
   it("exposes the invoker RPC only to service_role", () => {

@@ -1,7 +1,7 @@
 // app/lib/storegen/imagery/asset.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StoreProduct } from "~/lib/storefront/catalog";
-import { enhanceListing, applyAssetOverrides, generateMissingListingImages } from "./asset.server";
+import { enhanceListing, applyAssetOverrides } from "./asset.server";
 
 const { fromMock, providerMock, persistMock } = vi.hoisted(() => ({ fromMock: vi.fn(), providerMock: vi.fn(), persistMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
@@ -89,27 +89,5 @@ describe("applyAssetOverrides", () => {
     fromMock.mockReturnValue({ select: () => ({ eq }) });
     const out = await applyAssetOverrides(realShop, [product("1", null)]);
     expect(out[0].images[0].url).toBe("https://img/new.png");
-  });
-});
-
-describe("generateMissingListingImages", () => {
-  it("generates the first recipe's product imagery only when the catalog has none", async () => {
-    const enhance = vi.fn(async (_shopId: string, item: StoreProduct) => ({ productId: item.id, status: "ready" as const, url: `/generated/${item.id}.webp` }));
-    const result = await generateMissingListingImages(realShop, [product("1", null), product("2", null)], enhance);
-    expect(result).toBe(2);
-    expect(enhance).toHaveBeenCalledTimes(2);
-  });
-  it("reuses existing images and caps a build to three paid generations", async () => {
-    const enhance = vi.fn(async (_shopId: string, item: StoreProduct) => ({ productId: item.id, status: "ready" as const, url: `/generated/${item.id}.webp` }));
-    const products = [
-      product("native", "/native.webp"),
-      product("1", null),
-      product("2", null),
-      product("3", null),
-      product("4", null),
-    ];
-    const result = await generateMissingListingImages(realShop, products, enhance);
-    expect(result).toBe(3);
-    expect(enhance.mock.calls.map(([, item]) => item.id)).toEqual(["1", "2", "3"]);
   });
 });

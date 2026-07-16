@@ -13,7 +13,7 @@ interface Claim {
   title?: string;
   description?: string;
   attempt_count?: number;
-  lease_expires_at?: string;
+  lease_expires_at: string;
 }
 
 interface StatePatch {
@@ -26,7 +26,7 @@ interface StatePatch {
 interface Dependencies {
   rpc(limit: number): Promise<{ data: Claim[] | null; error: unknown }>;
   generate(claim: Claim): Promise<{ url: string }>;
-  update(claim: Claim, patch: StatePatch): Promise<{ error: unknown }>;
+  update(claim: Claim, patch: StatePatch): Promise<{ data: unknown[] | null; error: unknown }>;
   now?: () => Date;
 }
 
@@ -58,10 +58,11 @@ function dependencies(): Dependencies {
         .update(patch)
         .eq("shop_id", claim.shop_id)
         .eq("product_id", claim.product_id)
-        .eq("source", SOURCE);
-      return claim.lease_expires_at
-        ? query.eq("lease_expires_at", claim.lease_expires_at)
-        : query;
+        .eq("source", SOURCE)
+        .eq("status", "pending")
+        .eq("lease_expires_at", claim.lease_expires_at)
+        .select("shop_id");
+      return query;
     },
   };
 }
@@ -82,12 +83,13 @@ function throwError(error: unknown): void {
 export async function generateMissingProductImages(
   limit = DEFAULT_LIMIT,
   deps: Dependencies = dependencies(),
-): Promise<{ claimed: number; ready: number; failed: number }> {
+): Promise<{ claimed: number; ready: number; failed: number; skipped: number }> {
   const claimResult = await deps.rpc(limit);
   throwError(claimResult.error);
   const claims = claimResult.data ?? [];
   let ready = 0;
   let failed = 0;
+  let skipped = 0;
 
   const outcomes = await mapWithConcurrency(claims, CONCURRENCY, async (claim) => {
     let generated: { url: string };
@@ -101,7 +103,8 @@ export async function generateMissingProductImages(
         lease_expires_at: null,
       });
       throwError(result.error);
-      return "failed" as const;
+      if ((result.data?.length ?? 0) > 1) throw new Error("store asset finalization matched multiple rows");
+      return result.data?.length === 1 ? "failed" as const : "skipped" as const;
     }
 
     const result = await deps.update(claim, {
@@ -111,13 +114,15 @@ export async function generateMissingProductImages(
       lease_expires_at: null,
     });
     throwError(result.error);
-    return "ready" as const;
+    if ((result.data?.length ?? 0) > 1) throw new Error("store asset finalization matched multiple rows");
+    return result.data?.length === 1 ? "ready" as const : "skipped" as const;
   });
 
   for (const outcome of outcomes) {
     if (!outcome.ok) throwError(outcome.error);
     else if (outcome.value === "ready") ready++;
-    else failed++;
+    else if (outcome.value === "failed") failed++;
+    else skipped++;
   }
-  return { claimed: claims.length, ready, failed };
+  return { claimed: claims.length, ready, failed, skipped };
 }
