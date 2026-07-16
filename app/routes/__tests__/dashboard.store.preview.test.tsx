@@ -57,6 +57,7 @@ const settings = {
   density: "roomy",
 };
 const catalog = {
+  listProductPage: async () => ({ items: [], nextCursor: null }),
   listProducts: async () => [],
   listCollections: async () => [],
   getProduct: async () => null,

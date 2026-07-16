@@ -1,8 +1,7 @@
 // app/lib/storegen/imagery/asset.server.ts
-// store_asset repo + the catalog override. enhanceListing generates ONE conversion image for a
-// selected product via the seam and records it (ready/failed, rule 12). applyAssetOverrides swaps
-// a product's primary image with its latest ready asset. It is wired into the draft PREVIEW this
-// cycle; the live storefront read path adopts it with the publish flow (editor, sub-project 2).
+// store_asset repo + the catalog fallback. enhanceListing generates ONE conversion image for a
+// selected product via the seam and records it (ready/failed, rule 12). applyAssetOverrides fills
+// missing product media with the latest ready asset without replacing merchant-owned imagery.
 import { getSupabase } from "~/lib/supabase.server";
 import type { StoreProduct } from "~/lib/storefront/catalog";
 import { persistExternalImage } from "~/lib/assets/persist.server";
@@ -51,6 +50,7 @@ export async function enhanceListing(shopId: string, product: StoreProduct, opts
 
 export async function applyAssetOverrides(shopId: string, products: StoreProduct[]): Promise<StoreProduct[]> {
   if (!UUID_RE.test(shopId)) return products;
+  if (products.every((product) => product.images.length > 0)) return products;
   const { data, error } = await getSupabase().from("store_asset").select("product_id, url, status, created_at").eq("shop_id", shopId);
   if (error) throw error;
   const ready = new Map<string, string>();
@@ -60,7 +60,7 @@ export async function applyAssetOverrides(shopId: string, products: StoreProduct
   if (ready.size === 0) return products;
   return products.map((p) => {
     const url = ready.get(p.id);
-    if (!url) return p;
-    return { ...p, images: [{ url, alt: p.images[0]?.alt ?? p.title }, ...p.images.slice(1)] };
+    if (!url || p.images.length > 0) return p;
+    return { ...p, images: [{ url, alt: p.title }] };
   });
 }

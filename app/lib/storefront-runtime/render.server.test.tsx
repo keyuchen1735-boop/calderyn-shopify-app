@@ -265,20 +265,30 @@ describe("compiled-node server renderer", () => {
     expect(unsafe).not.toContain("ghost.webp");
   });
 
-  it("uses server-resolved custom asset URLs carried by runtime presentation data", () => {
+  it("keeps protected design assets separate from generated catalog media", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/png", byteSize: 42 }];
-    source.routes.home.html = `<main><img data-cd-asset="hero" alt="Merchant campaign" width="1200" height="800"></main>`;
+    source.routes.home.html = `<main><img data-cd-asset="hero" alt="Merchant campaign" width="1200" height="800"><section data-cd-repeat="featured.products"><img data-cd-key="product.id" data-cd-src="product.primaryImage" data-cd-alt="product.title"></section></main>`;
     const bundle = compileBundle(source).bundle;
+    const generatedProduct = {
+      ...publicProduct,
+      primaryImage: { url: "https://assets.example.test/generated-product", alt: "Generated product" },
+      images: [{ url: "https://assets.example.test/generated-product", alt: "Generated product" }],
+    };
     const html = renderToStaticMarkup(renderStorefrontSurface({
       bundle,
       routeId: "home",
-      data: { ...data, storefrontAssetUrls: { hero: "https://assets.example.test/signed-hero" } },
+      data: {
+        ...data,
+        featuredProducts: [generatedProduct],
+        storefrontAssetUrls: { hero: "https://assets.example.test/signed-hero" },
+      },
       nonce: "asset-nonce",
       mode: "public",
     }));
 
     expect(html).toContain('src="https://assets.example.test/signed-hero"');
+    expect(html).toContain('src="https://assets.example.test/generated-product"');
   });
 
   it("renders shell and route artifacts from one immutable bundle with identical compiled keys", () => {

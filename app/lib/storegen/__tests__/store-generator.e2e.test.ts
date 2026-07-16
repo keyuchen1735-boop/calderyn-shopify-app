@@ -349,10 +349,12 @@ describe("store generator e2e", () => {
     blocks: [{ id: "g", type: "productGallery", props: { maxImages: 6 }, layout: { x: 0, y: 0, w: 6, h: 6 } }],
   };
 
-  it("6a. imagery happy path: detect → enhance (ready) → override → new image renders in the gallery", async () => {
-    const products = await fixtureCatalog.listProducts(SHOP);
+  it("6a. imagery happy path: detect → enhance (ready) → fill missing image → render in the gallery", async () => {
+    const products = (await fixtureCatalog.listProducts(SHOP)).map((entry) =>
+      entry.id === "p-tee" ? { ...entry, images: [] } : entry,
+    );
 
-    // Detector flags weak listings (every fixture product has a single image → severity 1).
+    // Detector flags the deliberately image-less listing.
     const improvable = findImprovableListings(products);
     expect(improvable.length).toBeGreaterThan(0);
     const flagged = improvable.find((l) => l.productId === "p-tee");

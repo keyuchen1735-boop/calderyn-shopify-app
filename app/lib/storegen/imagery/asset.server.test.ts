@@ -63,11 +63,11 @@ describe("enhanceListing", () => {
 });
 
 describe("applyAssetOverrides", () => {
-  it("replaces a product's first image with the ready generated asset", async () => {
+  it("keeps real product_media ahead of ready generated imagery", async () => {
     const eq = vi.fn().mockResolvedValue({ data: [{ product_id: "1", url: "https://img/new.png", status: "ready" }], error: null });
     fromMock.mockReturnValue({ select: () => ({ eq }) });
     const out = await applyAssetOverrides(realShop, [product("1", "/old.jpg"), product("2", "/keep.jpg")]);
-    expect(out[0].images[0].url).toBe("https://img/new.png");
+    expect(out[0].images[0].url).toBe("/old.jpg");
     expect(out[1].images[0].url).toBe("/keep.jpg");
   });
   it("returns products unchanged for a non-uuid (demo) shop without hitting the DB", async () => {
@@ -80,6 +80,15 @@ describe("applyAssetOverrides", () => {
     fromMock.mockReturnValue({ select: () => ({ eq }) });
     const out = await applyAssetOverrides(realShop, [product("1", null)]);
     expect(out[0].images).toEqual([{ url: "https://img/new.png", alt: "P1" }]);
+  });
+  it("never renders pending or failed generated imagery", async () => {
+    const eq = vi.fn().mockResolvedValue({ data: [
+      { product_id: "1", url: "https://img/pending.png", status: "pending" },
+      { product_id: "2", url: "https://img/failed.png", status: "failed" },
+    ], error: null });
+    fromMock.mockReturnValue({ select: () => ({ eq }) });
+    const out = await applyAssetOverrides(realShop, [product("1", null), product("2", null)]);
+    expect(out.map((entry) => entry.images)).toEqual([[], []]);
   });
   it("prefers the newest ready generated asset when legacy rows remain", async () => {
     const eq = vi.fn().mockResolvedValue({ data: [

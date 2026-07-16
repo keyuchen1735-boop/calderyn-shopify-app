@@ -27,7 +27,7 @@ const routingCatalog: StorefrontCatalog = {
   getCollection: (shopId, handle) => pick(shopId).getCollection?.(shopId, handle) ?? Promise.resolve(null),
 };
 
-const previewCatalog: StorefrontCatalog = {
+const catalogWithReadyAssets: StorefrontCatalog = {
   ...routingCatalog,
   listProductPage: async (shopId, opts) => {
     const page = await routingCatalog.listProductPage(shopId, opts);
@@ -41,9 +41,9 @@ const previewCatalog: StorefrontCatalog = {
 };
 
 export function getCatalog(): StorefrontCatalog {
-  return routingCatalog;
+  return catalogWithReadyAssets;
 }
 
 export function getPreviewCatalog(): StorefrontCatalog {
-  return previewCatalog;
+  return catalogWithReadyAssets;
 }
