@@ -588,6 +588,16 @@ describe("editStorefrontByPrompt", () => {
     expect(result).toEqual({ status: "start_over", mode: "custom" });
     expect(deps.loadDraft).not.toHaveBeenCalled();
   });
+
+  it("routes a fresh build command back through automatic template selection", async () => {
+    const deps = dependencies();
+    const result = await editStorefrontByPrompt({
+      shopId: SHOP, actorId: ACTOR, prompt: "make store", expectedDraftVersionId: BASE,
+    }, deps);
+    expect(result).toEqual({ status: "start_over", mode: "auto" });
+    expect(deps.loadDraft).not.toHaveBeenCalled();
+    expect(deps.compileStructuralPatch).not.toHaveBeenCalled();
+  });
 });
 
 describe("createDefaultStructuralPatchCompiler", () => {

@@ -23,7 +23,7 @@ import {
   type StudioSection,
 } from "~/lib/storebuilder/studio-types";
 import type { StoreDesignRequest, StoreDesignResolution } from "~/lib/storefront-bundle/types";
-import type { PreviewEditContext, StorefrontEditReceipt, StorefrontEditStage } from "~/lib/storefront-edit/types";
+import type { PreviewEditContext, StorefrontEditReceipt, StorefrontEditStage, StorefrontStartOverReceipt } from "~/lib/storefront-edit/types";
 
 export type {
   StudioState,
@@ -55,7 +55,7 @@ export async function editStudioStorefront(input: {
   prompt: string;
   expectedDraftVersionId: string;
   context?: PreviewEditContext;
-}): Promise<StorefrontEditReceipt | { status: "start_over"; mode: "custom" }> {
+}): Promise<StorefrontEditReceipt | StorefrontStartOverReceipt> {
   return apiSend("POST", "/dashboard/api/store", { action: "edit", ...input });
 }
 
@@ -63,7 +63,7 @@ export async function editStudioStorefrontStream(
   input: { prompt: string; expectedDraftVersionId: string; context?: PreviewEditContext; model?: StudioDesignModel },
   onStage: (stage: StorefrontEditStage) => void,
   signal?: AbortSignal,
-): Promise<StorefrontEditReceipt | { status: "start_over"; mode: "custom" }> {
+): Promise<StorefrontEditReceipt | StorefrontStartOverReceipt> {
   let response: Response;
   try {
     response = await fetch("/dashboard/api/store", {
@@ -89,7 +89,7 @@ export async function editStudioStorefrontStream(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  const handleLine = (line: string): StorefrontEditReceipt | { status: "start_over"; mode: "custom" } | undefined => {
+  const handleLine = (line: string): StorefrontEditReceipt | StorefrontStartOverReceipt | undefined => {
     let event: Record<string, unknown>;
     try {
       event = JSON.parse(line) as Record<string, unknown>;
@@ -101,7 +101,8 @@ export async function editStudioStorefrontStream(
     } else if (event.stage === "installed" && event.receipt && typeof event.receipt === "object") {
       return event.receipt as StorefrontEditReceipt;
     } else if (event.stage === "start_over") {
-      return { status: "start_over", mode: "custom" };
+      const receipt = event.receipt && typeof event.receipt === "object" ? event.receipt as Record<string, unknown> : null;
+      return { status: "start_over", mode: receipt?.mode === "auto" ? "auto" : "custom" };
     } else if (event.stage === "error") {
       throw new DashboardApiError(
         typeof event.status === "number" ? event.status : 502,

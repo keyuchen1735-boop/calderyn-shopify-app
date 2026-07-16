@@ -32,7 +32,7 @@ import {
   StorefrontEditError,
   undoStorefrontEdit,
 } from "~/lib/storefront-edit/edit.server";
-import type { PreviewEditContext, StorefrontEditEvent } from "~/lib/storefront-edit/types";
+import type { PreviewEditContext, StorefrontEditEvent, StorefrontStartOverReceipt } from "~/lib/storefront-edit/types";
 import {
   buildStorefrontDesign,
   prepareStorefrontDesignBuild,
@@ -126,7 +126,7 @@ function editStreamResponse(
       try {
         const result = await run(send, generationController.signal);
         if (result && typeof result === "object" && (result as { status?: unknown }).status === "start_over") {
-          send({ stage: "start_over", receipt: result as { status: "start_over"; mode: "custom" } });
+          send({ stage: "start_over", receipt: result as StorefrontStartOverReceipt });
         }
       } catch (error) {
         if (error instanceof StorefrontEditError) {

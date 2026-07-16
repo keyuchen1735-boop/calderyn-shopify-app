@@ -50,7 +50,9 @@ export type StorefrontPatchOperation =
 export type ParsedEditIntent =
   | { kind: "deterministic"; operations: StorefrontPatchOperation[] }
   | { kind: "structural"; context?: PreviewEditContext }
-  | { kind: "startOver" };
+  | { kind: "startOver"; mode: "auto" | "custom" };
+
+export type StorefrontStartOverReceipt = { status: "start_over"; mode: "auto" | "custom" };
 
 export interface StorefrontPatchProviderAudit {
   kind: "deterministic" | "ai_patch";
@@ -104,7 +106,7 @@ export type StorefrontEditStage = "compiling" | "validating" | "proofing" | "ins
 export type StorefrontEditEvent =
   | { stage: StorefrontEditStage }
   | { stage: "installed"; receipt: StorefrontEditReceipt }
-  | { stage: "start_over"; receipt: { status: "start_over"; mode: "custom" } }
+  | { stage: "start_over"; receipt: StorefrontStartOverReceipt }
   | { stage: "error"; code: string; status: number; message: string };
 
 export interface RecipeDerivation {

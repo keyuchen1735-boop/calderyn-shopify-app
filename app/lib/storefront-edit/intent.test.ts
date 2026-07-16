@@ -21,12 +21,14 @@ describe("parseEditIntent", () => {
     });
   });
 
-  it("requires an explicit reset phrase before leaving edit mode", () => {
-    expect(parseEditIntent("Make a completely new store from scratch")).toEqual({ kind: "startOver" });
-    expect(parseEditIntent("Redesign the entire store from scratch")).toEqual({ kind: "startOver" });
-    expect(parseEditIntent("Create an entirely original storefront with no template")).toEqual({ kind: "startOver" });
+  it("routes a bare fresh-build command through auto selection while explicit resets stay custom", () => {
+    expect(parseEditIntent("make store")).toEqual({ kind: "startOver", mode: "auto" });
+    expect(parseEditIntent("Make a completely new store from scratch")).toEqual({ kind: "startOver", mode: "custom" });
+    expect(parseEditIntent("Redesign the entire store from scratch")).toEqual({ kind: "startOver", mode: "custom" });
+    expect(parseEditIntent("Create an entirely original storefront with no template")).toEqual({ kind: "startOver", mode: "custom" });
     expect(parseEditIntent("Don't redesign the entire store").kind).toBe("structural");
     expect(parseEditIntent("Make the hero completely new").kind).toBe("structural");
+    expect(parseEditIntent("Make store more minimal").kind).toBe("structural");
   });
 
   it("carries compiler-issued route and region context into structural requests", () => {

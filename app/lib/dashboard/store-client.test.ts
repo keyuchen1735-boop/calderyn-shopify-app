@@ -287,6 +287,20 @@ describe("generateStudioStoreStream", () => {
 });
 
 describe("editStudioStorefrontStream", () => {
+  it("preserves an automatic fresh-build route from the edit stream", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
+      '{"stage":"start_over","receipt":{"status":"start_over","mode":"auto"}}',
+    ])));
+
+    const receipt = await editStudioStorefrontStream({
+      prompt: "make store",
+      expectedDraftVersionId: "version-1",
+    }, () => {});
+
+    expect(receipt).toEqual({ status: "start_over", mode: "auto" });
+    vi.unstubAllGlobals();
+  });
+
   it("forwards real edit stages and resolves only after the preview version is installed", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ndjsonResponse([
       '{"stage":"compiling"}',

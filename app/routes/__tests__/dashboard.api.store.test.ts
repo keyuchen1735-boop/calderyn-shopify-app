@@ -301,6 +301,24 @@ describe("dashboard.api.store multipart generate", () => {
     }));
   });
 
+  it("streams the automatic fresh-build route without downgrading it to custom", async () => {
+    editMock.mockResolvedValueOnce({ status: "start_over", mode: "auto" });
+    const request = new Request(URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "edit", prompt: "make store",
+        expectedDraftVersionId: "33333333-3333-3333-3333-333333333333",
+      }),
+    });
+
+    const response = await action({ request } as ActionFunctionArgs);
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse((await response.text()).trim())).toEqual({
+      stage: "start_over", receipt: { status: "start_over", mode: "auto" },
+    });
+  });
+
   it("aborts the underlying prompt edit when its stream consumer stops", async () => {
     let editSignal: AbortSignal | undefined;
     let finishEdit = () => {};
