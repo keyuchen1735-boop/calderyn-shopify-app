@@ -3,7 +3,7 @@ import type { DashboardCtx } from "../context";
 import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
-import { Card, Btn, ClearableSearchInput, Pan, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
+import { Card, Btn, ClearableSearchInput, Pan, Placeholder, SectionTitle, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
 import {
   OrderListTable,
@@ -34,11 +34,15 @@ const COLLECTION_VIEWS: OrderListView[] = [
 // is unpaged, so header sorting can safely happen in the browser.
 const DEFAULT_COLLECTION_SORT = { sort: "default", dir: "desc" } as const;
 
-const STATUS_TONE: Record<string, "success" | "neutral" | "warn"> = {
-  active: "success",
-  draft: "neutral",
-  archived: "warn",
-};
+/** Product-status badge in the Orders visual language (black/gray/blue only):
+ *  active carries the live-blue tint, everything else stays neutral. */
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span className={`cd-badge${status === "active" ? " cd-order-badge-live" : ""}`}>
+      {status}
+    </span>
+  );
+}
 
 /** Patch the cached collections list (when present) so a back-navigation paints
  *  the count the detail view just changed, instead of the stale snapshot. */
@@ -511,7 +515,7 @@ function CollectionDetail({ app, id }: { app: DashboardCtx; id: string }) {
                 </div>
                 <div className="cd-row-title truncate">{m.title}</div>
                 <div>
-                  <Pill tone={STATUS_TONE[m.status] ?? "neutral"}>{m.status}</Pill>
+                  <StatusBadge status={m.status} />
                 </div>
                 <div>
                   <Btn small icon="x" disabled={removing === m.id} onClick={() => onRemove(m)}>
@@ -570,7 +574,7 @@ function CollectionDetail({ app, id }: { app: DashboardCtx; id: string }) {
                   </div>
                   <div className="cd-row-title truncate">{p.title}</div>
                   <div>
-                    <Pill tone={STATUS_TONE[p.status] ?? "neutral"}>{p.status}</Pill>
+                    <StatusBadge status={p.status} />
                   </div>
                   <div>
                     <Btn small icon="plus" disabled={adding === p.id} onClick={() => onAdd(p)}>

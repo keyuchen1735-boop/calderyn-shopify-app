@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Btn, Card, Pill } from "../ui";
+import { Btn, Card } from "../ui";
 import { CDIcon } from "../icons";
 import {
   OrderListTable,
@@ -31,14 +31,16 @@ const STOCK_VIEWS: OrderListView[] = [
 
 type InventoryPage = { rows: client.InventoryRowVM[]; total: number };
 
-type StockStatus = { label: string; tone: "success" | "warn" | "critical" };
+type StockStatus = { label: string; live: boolean };
 
 /** Stock badge from real signals only: zero on hand is out of stock; "Low"
- * rides the per-location reorder-point flag the RPC rolls up. */
+ * rides the per-location reorder-point flag the RPC rolls up. Needs-attention
+ * states carry the live-blue badge (the Orders language) — the palette here is
+ * black/gray/blue only. */
 function stockStatus(r: client.InventoryRowVM): StockStatus {
-  if (r.onHand <= 0) return { label: "Out of stock", tone: "critical" };
-  if (r.low) return { label: "Low", tone: "warn" };
-  return { label: "Healthy", tone: "success" };
+  if (r.onHand <= 0) return { label: "Out of stock", live: true };
+  if (r.low) return { label: "Low", live: true };
+  return { label: "Healthy", live: false };
 }
 
 export default function Inventory({ app }: { app: DashboardCtx }) {
@@ -199,8 +201,11 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
   const shown = rows ?? [];
 
   // Same header anatomy as Orders: h1, then the stat readout strip. Stock
-  // counts are page-scoped (like Orders' "Page value"/"Page alerts").
-  const readoutItems = loading
+  // counts are page-scoped (like Orders' "Page value"/"Page alerts"). Kept
+  // mounted with last-known values during a reload — unmounting it would shift
+  // the whole card up and back down on every tab switch. Only the very first
+  // paint (nothing loaded yet) renders without it.
+  const readoutItems = shown.length === 0 && loading
     ? []
     : [
         { label: total === 1 ? "tracked variant" : "tracked variants", value: total.toLocaleString("en-US") },
@@ -327,7 +332,7 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                       <div className="cd-order-ref-cell">
                         <span
                           className="cd-row-num tabular-nums"
-                          style={r.onHand <= 0 ? { color: "var(--red)" } : undefined}
+                          style={r.onHand <= 0 ? { color: "var(--live)" } : undefined}
                         >
                           {r.onHand}
                         </span>
@@ -338,12 +343,14 @@ export default function Inventory({ app }: { app: DashboardCtx }) {
                   <div className="cd-row-num tabular-nums">{r.reserved}</div>
                   <div
                     className="cd-row-num tabular-nums"
-                    style={r.available <= 0 ? { color: "var(--red)" } : undefined}
+                    style={r.available <= 0 ? { color: "var(--live)" } : undefined}
                   >
                     {r.available}
                   </div>
                   <div>
-                    <Pill tone={st.tone}>{st.label}</Pill>
+                    <span className={`cd-badge${st.live ? " cd-order-badge-live" : ""}`}>
+                      {st.label}
+                    </span>
                   </div>
                   <div>
                     {r.restock && (r.low || r.onHand <= 0) ? (
