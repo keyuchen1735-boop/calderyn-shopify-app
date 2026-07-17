@@ -28,6 +28,10 @@ export type QboClient = {
   queryItems(): Promise<unknown>;
   /** The company's home currency (e.g. "USD"), or null if it can't be determined. */
   queryHomeCurrency(): Promise<string | null>;
+  queryReport(
+    report: "ProfitAndLoss" | "CashFlow",
+    params: { startDate: string; endDate: string; accountingMethod: "Accrual" | "Cash"; summarizeBy?: "Days" },
+  ): Promise<unknown>;
 };
 export type QboConnection = { client: QboClient; realmId: string };
 
@@ -108,6 +112,29 @@ export async function quickbooksClientForShop(
     return json;
   }
 
+  async function runReport(
+    report: "ProfitAndLoss" | "CashFlow",
+    params: { startDate: string; endDate: string; accountingMethod: "Accrual" | "Cash"; summarizeBy?: "Days" },
+  ): Promise<unknown> {
+    const query = new URLSearchParams({
+      start_date: params.startDate,
+      end_date: params.endDate,
+      accounting_method: params.accountingMethod,
+      minorversion: "65",
+    });
+    if (params.summarizeBy) query.set("summarize_column_by", params.summarizeBy);
+    const u = `${base}/v3/company/${realmId}/reports/${report}?${query}`;
+    const res = await httpFetch(u, {
+      headers: { Authorization: `Bearer ${tok.accessToken}`, Accept: "application/json" },
+    });
+    const json = (await res.json()) as unknown;
+    if (!res.ok) {
+      const msg = (json as QboFaultBody)?.Fault?.Error?.[0]?.Message;
+      throw new Error(`QuickBooks API error: ${msg ?? `HTTP ${res.status}`}`);
+    }
+    return json;
+  }
+
   const client: QboClient = {
     async queryItems(): Promise<unknown> {
       const all: unknown[] = [];
@@ -133,6 +160,7 @@ export async function quickbooksClientForShop(
         return null;
       }
     },
+    queryReport: runReport,
   };
   return { client, realmId };
 }

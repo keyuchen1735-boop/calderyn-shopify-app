@@ -11,6 +11,8 @@ import type {
 } from "~/lib/analytics/commerce-types";
 import type { DashboardCtx } from "../context";
 import AnalyticsLive from "./AnalyticsLive";
+import OperatingPnl from "./OperatingPnl";
+import { canViewOperatingPnl } from "~/lib/dashboard/analytics-access";
 
 type Range = "7d" | "14d" | "30d";
 
@@ -323,7 +325,12 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
   const [range, setRange] = useState<Range>("30d");
   // Performance ↔ Live rides the URL (/dashboard/analytics vs /analytics/live)
   // so both subtabs are deep-linkable and back-button friendly.
-  const view: "performance" | "live" = app.nav.sub === "live" ? "live" : "performance";
+  const pnlEnabled = canViewOperatingPnl(app.integrations);
+  const view: "performance" | "live" | "pnl" = app.nav.sub === "live"
+    ? "live"
+    : app.nav.sub === "pnl" && pnlEnabled
+      ? "pnl"
+      : "performance";
   // Seeded from the session cache (default 30d — the mount state) so a return
   // visit paints the last numbers instantly; the effect below revalidates per
   // range and writes back through. loading must derive from the seed too —
@@ -384,6 +391,8 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
       </div>
     );
   }
+
+  if (view === "pnl") return <OperatingPnl />;
 
   if (loading) {
     return (
