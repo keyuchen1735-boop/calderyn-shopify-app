@@ -246,6 +246,14 @@ describe("storefront bundle persistence migrations", () => {
     expect(RUNTIME1_CUTOVER).toContain("runtime1_cutover_backfill_incomplete");
   });
 
+  it("preserves unpublished legacy drafts without publishing them", () => {
+    expect(RUNTIME1_CUTOVER).toMatch(/draft_json is not null/);
+    expect(RUNTIME1_CUTOVER).toMatch(/legacy_draft\.shop_id is not null/);
+    expect(RUNTIME1_CUTOVER).toMatch(
+      /legacy_public\.shop_id is not null\s+or release\.published_version_id is not null as requires_published_version/,
+    );
+  });
+
   it("publishes only an existing published pointer, publish history, or the canonical seed", () => {
     expect(RUNTIME1_CUTOVER).toMatch(/operation\s+in\s*\('publish',\s*'rollback'\)/);
     expect(RUNTIME1_CUTOVER).not.toMatch(

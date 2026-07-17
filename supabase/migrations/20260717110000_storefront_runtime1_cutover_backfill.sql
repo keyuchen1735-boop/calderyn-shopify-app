@@ -6,6 +6,7 @@ create temporary table storefront_runtime1_cutover_shop_ids on commit drop as
 select page.shop_id
 from public.page_document page
 where page.published_json is not null
+  or page.draft_json is not null
 union
 select publication.shop_id
 from public.designer_publications publication
@@ -37,6 +38,10 @@ with legacy_public as (
   union
   select publication.shop_id
   from public.designer_publications publication
+), legacy_draft as (
+  select page.shop_id
+  from public.page_document page
+  where page.draft_json is not null
 )
 select
   candidate.shop_id,
@@ -47,6 +52,8 @@ select
 from storefront_runtime1_cutover_shop_ids candidate
 left join legacy_public
   on legacy_public.shop_id = candidate.shop_id
+left join legacy_draft
+  on legacy_draft.shop_id = candidate.shop_id
 left join public.storefront_release release
   on release.shop_id = candidate.shop_id
 left join public.storefront_bundle_version draft
@@ -67,7 +74,7 @@ where (
     )
   )
   or (
-    release.draft_version_id is not null
+    (legacy_draft.shop_id is not null or release.draft_version_id is not null)
     and (
       draft.id is null
       or draft.status <> 'validated'
@@ -366,6 +373,23 @@ begin
       or published.runtime_version <> 1
       or published.validation_profile_version <> 1
       or published.source_kind not in ('recipe', 'custom')
+  ) or exists (
+    select 1
+    from public.page_document page
+    left join public.storefront_release release
+      on release.shop_id = page.shop_id
+    left join public.storefront_bundle_version draft
+      on draft.shop_id = release.shop_id
+      and draft.id = release.draft_version_id
+    where page.draft_json is not null
+      and (
+        draft.id is null
+        or draft.status <> 'validated'
+        or draft.schema_version <> 1
+        or draft.runtime_version <> 1
+        or draft.validation_profile_version <> 1
+        or draft.source_kind not in ('recipe', 'custom')
+      )
   ) then
     raise exception using
       errcode = '55000',
