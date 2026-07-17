@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
+import axeSourceText from "axe-core/axe.min.js?raw";
 import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { build } from "esbuild";
@@ -739,8 +739,7 @@ async function serveProofRequest(
 }
 
 async function axeSource(): Promise<string> {
-  const require = createRequire(import.meta.url);
-  return readFile(require.resolve("axe-core/axe.min.js"), "utf8");
+  return axeSourceText;
 }
 
 interface PageAuditResult {
