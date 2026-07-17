@@ -35,11 +35,22 @@ const REJECT_CHIPS: { label: string; reason: RejectReason; note?: string }[] = [
   { label: "Doesn't fit", reason: "other", note: "Doesn't fit my brand" },
 ];
 
-/** Calibration split panel: a slim gauge rail on the left and the pending
- *  queue on the right, clustered by move type into compact expandable rows.
- *  Shown only while calibration is incomplete; the feature switchboard card
- *  below carries the unlock progress and the per-feature toggles. */
-function CalibrationTrainer({
+export function actionStreamWindow<T>(items: readonly T[], start: number, size: number): T[] {
+  if (items.length === 0 || size <= 0) return [];
+  const first = ((start % items.length) + items.length) % items.length;
+  return Array.from(
+    { length: Math.min(size, items.length) },
+    (_, index) => items[(first + index) % items.length],
+  );
+}
+
+const STREAM_SIZE = 4;
+const STREAM_INTERVAL_MS = 3200;
+const STREAM_EXIT_MS = 360;
+
+/** Calibration split panel: the real score and dollars at risk on the left,
+ *  with a rotating action window and full static review list on the right. */
+export function CalibrationTrainer({
   app,
   pct,
   onReview,
@@ -55,14 +66,65 @@ function CalibrationTrainer({
   const [openRow, setOpenRow] = useState<string | null>(null);
   // Group-level approve-all in flight: items remaining, null when idle.
   const [batchLeft, setBatchLeft] = useState<number | null>(null);
+  const [streamStart, setStreamStart] = useState(0);
+  const [streamExiting, setStreamExiting] = useState(false);
+  const [showAll, setShowAll] = useState(false);
 
   const queue = app.actionQueue;
-  const ptsToGo = Math.max(0, 100 - Math.round(pct));
   const atStake = queue.reduce((n, p) => n + (p.dollar_impact > 0 ? p.dollar_impact : 0), 0);
   // ONE teaching signal at a time, across both verbs: an in-flight approve
   // locks reject (and vice versa) so a single decision can never send the
   // calibration engine contradictory feedback.
   const teachingBusy = approving !== null || rejectBusy || batchLeft !== null;
+  const visibleQueue = actionStreamWindow(queue, streamStart, STREAM_SIZE);
+
+  useEffect(() => {
+    setStreamStart((current) => (queue.length === 0 ? 0 : current % queue.length));
+  }, [queue.length]);
+
+  useEffect(() => {
+    if (
+      queue.length <= STREAM_SIZE ||
+      showAll ||
+      teachingBusy ||
+      openRow !== null ||
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+
+    let exitTimer: ReturnType<typeof setTimeout> | undefined;
+    const interval = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      setStreamExiting(true);
+      exitTimer = setTimeout(() => {
+        setStreamStart((current) => (current - 1 + queue.length) % queue.length);
+        setStreamExiting(false);
+      }, STREAM_EXIT_MS);
+    }, STREAM_INTERVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+      if (exitTimer) {
+        clearTimeout(exitTimer);
+        setStreamExiting(false);
+      }
+    };
+  }, [openRow, queue.length, showAll, teachingBusy]);
+
+  const closeAll = () => {
+    setShowAll(false);
+    setOpenRow(null);
+  };
+
+  useEffect(() => {
+    if (!showAll) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeAll();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [showAll]);
 
   // Cluster the queue by move type so nine cards read as three decisions;
   // groups keep the queue's own ordering inside themselves.
@@ -157,181 +219,244 @@ function CalibrationTrainer({
     sayLine(p.action_kind, p.title) ??
     `${featureLabel(p.detector_id, p.action_kind as ActionKind)}: ${p.title}`;
 
+  const renderActionRow = (
+    p: QueueProposalVM,
+    mode: "stream" | "static",
+    index = 0,
+  ) => {
+    const open = openRow === p.alertId;
+    const r = reasonLines(p.reasoning, p.detector_id);
+    const whyId = `cd-apq-why-${mode}-${p.alertId}`;
+    const stream = mode === "stream";
+
+    return (
+      <div
+        key={p.alertId}
+        className={stream ? "cd-ap-stream-row" : "cd-ap-stream-static-row"}
+        data-alert-id={p.alertId}
+        data-entering={stream && index === 0 && !streamExiting ? "1" : "0"}
+        data-exiting={stream && streamExiting && index === visibleQueue.length - 1 ? "1" : "0"}
+      >
+        <div className="cd-apq-row" data-open={open ? "1" : "0"}>
+          <button
+            type="button"
+            className="cd-apq-main"
+            aria-expanded={open}
+            aria-controls={whyId}
+            onClick={() => {
+              setOpenRow((current) => (current === p.alertId ? null : p.alertId));
+              setNote("");
+            }}
+          >
+            <span className="cd-apq-ico">
+              <CDIcon
+                name={CD_ACTION_ICON[p.action_kind] ?? "bolt"}
+                size={15}
+                strokeWidth={1.8}
+              />
+            </span>
+            <span className="cd-apq-say">{rowTitle(p)}</span>
+            {p.dollar_impact !== 0 && (
+              <span
+                className="cd-apq-money"
+                title={`${moneyVerb(p.action_kind)} about ${money(p.dollar_impact)}`}
+              >
+                <b className="tabular-nums">~{moneyK(p.dollar_impact)}</b>
+              </span>
+            )}
+            <span className="cd-apq-conf tabular-nums" title="How sure Calderyn is">
+              {p.confidence}%
+            </span>
+            <CDIcon name="chevronDown" size={14} className="cd-apq-chev" />
+          </button>
+          <div className="cd-apq-acts">
+            <button
+              type="button"
+              className="cd-btn cd-btn-secondary cd-btn-sm"
+              disabled={teachingBusy}
+              onClick={() => {
+                setOpenRow(p.alertId);
+                setNote("");
+              }}
+            >
+              Reject
+            </button>
+            <Btn kind="primary" small disabled={teachingBusy} onClick={() => approve(p)}>
+              {approving === p.alertId ? "Doing…" : canOneClick(p) ? "Accept" : "Review"}
+            </Btn>
+          </div>
+        </div>
+
+        {open && (
+          <div className="cd-apq-why" id={whyId}>
+            <div className="cd-apq-why-line">
+              <b>{r.category}.</b>
+              {r.narrative ? ` ${r.narrative}` : ""}
+            </div>
+            <div className="cd-apq-rej">
+              {REJECT_CHIPS.map((c) => (
+                <button
+                  key={c.label}
+                  type="button"
+                  className="cd-reject-chip"
+                  disabled={teachingBusy}
+                  onClick={() => reject(p, c.reason, c.note)}
+                >
+                  {c.label}
+                </button>
+              ))}
+              <input
+                className="cd-input"
+                type="text"
+                placeholder="Other reason"
+                aria-label="Other reason"
+                value={note}
+                disabled={teachingBusy}
+                onChange={(e) => setNote(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && note.trim()) reject(p, "other", note.trim());
+                }}
+                style={{ flex: 1, minWidth: 130, padding: "6px 10px", fontSize: 12.5 }}
+              />
+              <Btn
+                kind="primary"
+                small
+                disabled={teachingBusy || !note.trim()}
+                onClick={() => reject(p, "other", note.trim())}
+              >
+                Send
+              </Btn>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    // overflow: clip (not hidden) keeps the rounded-corner clipping without
-    // creating a scroll container, so the gauge rail's position: sticky works.
-    <div className="cd-card" style={{ overflow: "clip" }}>
-      <div className="cd-calib-split">
-        <div className="cd-calib-left">
-          <div className="cd-calib-rail">
-            <TickGauge pct={pct} size={148} />
-            {/* The screen-header pill already reads "N% calibrated"; the rail
-                doesn't repeat it. */}
-            <div className="cd-calib-stats">
-              <div className="cd-calib-stat">
-                <b className="tabular-nums">{ptsToGo}</b>
-                <span>to full auto</span>
-              </div>
-              <div className="cd-calib-stat">
-                <b className="tabular-nums">{queue.length}</b>
-                <span>waiting</span>
-              </div>
-              {atStake > 0 && (
-                <div className="cd-calib-stat">
-                  <b className="tabular-nums">{moneyK(atStake)}</b>
-                  <span>at stake</span>
-                </div>
+    <>
+      <div className="cd-card cd-ap-stream-card">
+        <div className="cd-calib-split">
+          <div className="cd-calib-left cd-ap-stream-kpis">
+            <TickGauge pct={pct} size={176} />
+            <span className="cd-ap-stream-calibrated">calibrated</span>
+            <div className="cd-ap-stream-risk">
+              <b className="tabular-nums">{moneyK(atStake)}</b>
+              <span>dollars at risk across waiting actions</span>
+            </div>
+          </div>
+
+          <div className="cd-calib-right">
+            <div className="cd-ap-stream-head">
+              <span className="cd-ap-stream-live">
+                <span className="cd-live-dot on" />
+                Scanning live
+              </span>
+              <strong>Action stream</strong>
+              <button
+                type="button"
+                className="cd-btn cd-btn-secondary cd-btn-sm"
+                aria-label="Expand all actions"
+                onClick={() => setShowAll(true)}
+              >
+                Expand all actions
+                <CDIcon name="arrowUpRight" size={13} />
+              </button>
+            </div>
+
+            <div className="cd-ap-stream" data-exiting={streamExiting ? "1" : "0"}>
+              {visibleQueue.map((proposal, index) =>
+                renderActionRow(proposal, "stream", index),
+              )}
+              {queue.length === 0 && (
+                <div className="cd-nc-empty">Nothing waiting. Calderyn is scanning.</div>
               )}
             </div>
           </div>
         </div>
-
-        <div className="cd-calib-right">
-          <div className="cd-apq-head">
-            <div className="cd-anh" style={{ margin: 0 }}>
-              <CDIcon name="sparkle" size={15} strokeWidth={1.9} />
-              Approve to train
-            </div>
-          </div>
-
-          {groups.map((g) => {
-            const allOneClick = g.items.every((p) => oneClickKind(p.action_kind) && canOneClick(p));
-            return (
-              <Fragment key={g.key}>
-                <div className="cd-apq-grp">
-                  <span className="cd-apq-grp-ico">
-                    <CDIcon name={g.icon} size={13} strokeWidth={2} />
-                  </span>
-                  <span className="cd-apq-grp-name">{g.label}</span>
-                  <span className="cd-apq-grp-n tabular-nums">{g.items.length}</span>
-                  <span className="cd-apq-grp-spacer" />
-                  {g.totalImpact > 0 && (
-                    <span className="cd-apq-grp-money tabular-nums">~{moneyK(g.totalImpact)}</span>
-                  )}
-                  {allOneClick && g.items.length > 1 && (
-                    <button
-                      type="button"
-                      className="cd-btn cd-btn-secondary cd-btn-sm"
-                      disabled={teachingBusy}
-                      onClick={() => void approveAll(g.items)}
-                    >
-                      {batchLeft !== null ? `Approving… ${batchLeft} left` : `Approve all ${g.items.length}`}
-                    </button>
-                  )}
+      </div>
+      {showAll && (
+        <div className="cd-modal-overlay" role="presentation" onClick={closeAll}>
+          <div
+            className="cd-modal-dialog cd-ap-stream-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="All waiting actions"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Card>
+              <div className="cd-ap-stream-modal-head">
+                <div>
+                  <div className="cd-h2">All waiting actions</div>
+                  <div className="cd-caption">Static review mode. The live stream is paused.</div>
                 </div>
-
-                {g.items.map((p) => {
-                  const open = openRow === p.alertId;
-                  const r = reasonLines(p.reasoning, p.detector_id);
+                <button
+                  type="button"
+                  className="cd-btn cd-btn-secondary cd-btn-icon"
+                  aria-label="Close all actions"
+                  autoFocus
+                  onClick={closeAll}
+                >
+                  <CDIcon name="x" size={16} />
+                </button>
+              </div>
+              <div className="cd-ap-stream-modal-kpis">
+                <div>
+                  <b className="tabular-nums">{Math.round(pct)}%</b>
+                  <span>calibrated</span>
+                </div>
+                <div>
+                  <b className="tabular-nums">{moneyK(atStake)}</b>
+                  <span>dollars at risk</span>
+                </div>
+              </div>
+              <div className="cd-ap-stream-static">
+                {groups.map((group) => {
+                  const allOneClick = group.items.every(
+                    (proposal) =>
+                      oneClickKind(proposal.action_kind) && canOneClick(proposal),
+                  );
                   return (
-                    <Fragment key={p.alertId}>
-                      <div className="cd-apq-row" data-open={open ? "1" : "0"}>
-                        <button
-                          type="button"
-                          className="cd-apq-main"
-                          aria-expanded={open}
-                          aria-controls={`cd-apq-why-${p.alertId}`}
-                          onClick={() => {
-                            setOpenRow((cur) => (cur === p.alertId ? null : p.alertId));
-                            setNote("");
-                          }}
-                        >
-                          <span className="cd-apq-ico">
-                            <CDIcon
-                              name={CD_ACTION_ICON[p.action_kind] ?? "bolt"}
-                              size={15}
-                              strokeWidth={1.8}
-                            />
+                    <Fragment key={group.key}>
+                      <div className="cd-apq-grp">
+                        <span className="cd-apq-grp-ico">
+                          <CDIcon name={group.icon} size={13} strokeWidth={2} />
+                        </span>
+                        <span className="cd-apq-grp-name">{group.label}</span>
+                        <span className="cd-apq-grp-n tabular-nums">
+                          {group.items.length}
+                        </span>
+                        <span className="cd-apq-grp-spacer" />
+                        {group.totalImpact > 0 && (
+                          <span className="cd-apq-grp-money tabular-nums">
+                            ~{moneyK(group.totalImpact)}
                           </span>
-                          <span className="cd-apq-say">{rowTitle(p)}</span>
-                          {p.dollar_impact !== 0 && (
-                            <span
-                              className="cd-apq-money"
-                              title={`${moneyVerb(p.action_kind)} about ${money(p.dollar_impact)}`}
-                            >
-                              <b className="tabular-nums">~{moneyK(p.dollar_impact)}</b>
-                            </span>
-                          )}
-                          <span className="cd-apq-conf tabular-nums" title="How sure Calderyn is">
-                            {p.confidence}%
-                          </span>
-                          <CDIcon name="chevronDown" size={14} className="cd-apq-chev" />
-                        </button>
-                        <div className="cd-apq-acts">
+                        )}
+                        {allOneClick && group.items.length > 1 && (
                           <button
                             type="button"
                             className="cd-btn cd-btn-secondary cd-btn-sm"
                             disabled={teachingBusy}
-                            onClick={() => {
-                              setOpenRow(p.alertId);
-                              setNote("");
-                            }}
+                            onClick={() => void approveAll(group.items)}
                           >
-                            Not now
+                            {batchLeft !== null
+                              ? `Approving… ${batchLeft} left`
+                              : `Approve all ${group.items.length}`}
                           </button>
-                          <Btn kind="primary" small disabled={teachingBusy} onClick={() => approve(p)}>
-                            {approving === p.alertId ? "Doing…" : canOneClick(p) ? "Do it" : "Review"}
-                          </Btn>
-                        </div>
+                        )}
                       </div>
-
-                      {open && (
-                        <div className="cd-apq-why" id={`cd-apq-why-${p.alertId}`}>
-                          <div className="cd-apq-why-line">
-                            <b>{r.category}.</b>
-                            {r.narrative ? ` ${r.narrative}` : ""}
-                          </div>
-                          <div className="cd-apq-rej">
-                            {REJECT_CHIPS.map((c) => (
-                              <button
-                                key={c.label}
-                                type="button"
-                                className="cd-reject-chip"
-                                disabled={teachingBusy}
-                                onClick={() => reject(p, c.reason, c.note)}
-                              >
-                                {c.label}
-                              </button>
-                            ))}
-                            <input
-                              className="cd-input"
-                              type="text"
-                              placeholder="Other reason"
-                              aria-label="Other reason"
-                              value={note}
-                              disabled={teachingBusy}
-                              onChange={(e) => setNote(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" && note.trim()) reject(p, "other", note.trim());
-                              }}
-                              style={{ flex: 1, minWidth: 130, padding: "6px 10px", fontSize: 12.5 }}
-                            />
-                            <Btn
-                              kind="primary"
-                              small
-                              disabled={teachingBusy || !note.trim()}
-                              onClick={() => reject(p, "other", note.trim())}
-                            >
-                              Send
-                            </Btn>
-                          </div>
-                        </div>
+                      {group.items.map((proposal) =>
+                        renderActionRow(proposal, "static"),
                       )}
                     </Fragment>
                   );
                 })}
-              </Fragment>
-            );
-          })}
-
-          {queue.length === 0 && (
-            <div className="cd-nc-empty" style={{ flex: 1 }}>
-              Nothing waiting. Calderyn is scanning.
-            </div>
-          )}
+              </div>
+            </Card>
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+    </>
   );
 }
 
