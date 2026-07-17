@@ -455,9 +455,14 @@ async function handleMultipartGenerate(request: Request, session: DashboardSessi
     // Products only — no generation ran, no designer cooldown started.
       return { status: "products_added", intent, products } satisfies StudioGenerateReceipt;
     } finally {
+      // Best-effort cleanup: a throw here would replace the returned receipt and
+      // report a fully-successful generate (products already created, storefront
+      // installed) as a 500 — prompting a retry that mints duplicate products.
       await Promise.all(referenceAssetKeys.map((assetKey) => garbageCollectUnreferencedStorefrontAsset({
         shopId: session.shopId,
         assetKey,
+      }).catch((err) => {
+        console.error("garbageCollectUnreferencedStorefrontAsset failed", assetKey, err);
       })));
     }
   });
