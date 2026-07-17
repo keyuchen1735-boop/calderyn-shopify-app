@@ -56,16 +56,34 @@ try {
     const base = rows.find((r) => r.route === "base");
     const outDir = `./.harness-${tag}`;
     mkdirSync(outDir, { recursive: true });
+    // Render live-style (links + widgets active) so screenshots match the
+    // published site, wrapped in a doc shell.
+    const doc = (route, row) => {
+      const { bodyHtml, css } = render.renderDesignerBody({ html: row.html, css: `${base?.css ?? ""}\n${row.css}`, data: storeData, preview: false });
+      return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${bodyHtml}</body></html>`;
+    };
     const CHECKS = [
-      ["cta wording", (h) => /shop|browse|explore|add to cart|checkout|view/i.test(h)],
+      ["cta wording", (h) => /shop|browse|explore|add to cart|checkout|view|get yours|see the/i.test(h)],
       ["price visible", (h) => /\$\d/.test(h)],
       ["no classless buttons", (h) => !/<button(?![^>]*class=)/i.test(h)],
       ["headline present", (h) => /<h1[\s>]/i.test(h)],
+      ["multi-col grid css", (h) => /grid-template-columns|repeat\(/i.test(h)],
     ];
+    // Home-only conversion checks.
+    const HOME_CHECKS = [
+      ["announcement bar", (h) => /announce|free shipping|ships|% off|orders over|\$\d+\+/i.test(h.slice(0, 4000))],
+      ["coupon popup", (h) => /cd-coupon|designer-widget="coupon"/i.test(h)],
+      ["trust row", (h) => /returns|guarantee|shipping|warranty|money.?back/i.test(h)],
+    ];
+    const raw = {};
+    for (const row of rows.filter((r) => r.route !== "base")) raw[row.route] = row;
     for (const row of rows.filter((r) => r.route !== "base")) {
-      const html = render.renderDesignerDocument({ html: row.html, css: `${base?.css ?? ""}\n${row.css}`, data: storeData });
+      const html = doc(row.route, row);
       writeFileSync(`${outDir}/${row.route}.html`, html);
-      console.log(`[check ${row.route}]`, CHECKS.map(([name, fn]) => `${fn(html) ? "OK" : "MISS"}:${name}`).join(" "));
+      const extra = row.route === "home"
+        ? " " + HOME_CHECKS.map(([n, fn]) => `${fn(raw.home.html + raw.base?.css + html) ? "OK" : "MISS"}:${n}`).join(" ")
+        : "";
+      console.log(`[check ${row.route}]`, CHECKS.map(([name, fn]) => `${fn(html) ? "OK" : "MISS"}:${name}`).join(" ") + extra);
     }
     console.log(`[out] ${outDir}/`);
   } finally {

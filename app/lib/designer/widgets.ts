@@ -16,6 +16,7 @@ export interface DesignerWidgetSpec {
 }
 
 const MARKER_RE = /<div\b[^>]*\bdata-designer-widget\s*=\s*["']coupon["'][^>]*><\/div>/i;
+const MARKER_RE_ALL = /<div\b[^>]*\bdata-designer-widget\s*=\s*["']coupon["'][^>]*><\/div>/gi;
 
 function attr(tag: string, name: string): string {
   const m = new RegExp(`\\bdata-${name}\\s*=\\s*"([^"]*)"`, "i").exec(tag);
@@ -86,7 +87,9 @@ export function expandCouponWidget(html: string, opts: { preview: boolean }): { 
     headline: attr(tag, "headline") || "10% off your first order",
     sub: attr(tag, "sub") || "Join the list for early access and member pricing.",
   };
-  const expanded = html.replace(MARKER_RE, markup(spec, opts));
+  // Expand the first declaration; drop any duplicates so a second marker never
+  // renders as a stray empty div. Only one popup per page.
+  const expanded = html.replace(MARKER_RE, markup(spec, opts)).replace(MARKER_RE_ALL, "");
   return { html: expanded, css: COUPON_WIDGET_CSS, script: opts.preview ? "" : COUPON_WIDGET_SCRIPT };
 }
 
