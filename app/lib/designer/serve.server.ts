@@ -13,6 +13,7 @@ import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
 import { renderDesignerBody } from "./render.server";
 import { loadDesignerAssets } from "./imagery.server";
+import { CART_DRAWER_CSS, CART_DRAWER_MARKUP, CART_DRAWER_SCRIPT } from "./widgets";
 import type { DesignerPublicPage, DesignerStoreData } from "./types";
 
 export type DesignerPublicContext =
@@ -21,9 +22,8 @@ export type DesignerPublicContext =
   | { kind: "collection"; handle: string }
   | { kind: "search"; query: string };
 
-/** Runtime-owned (never model-authored): wires the designer's add-to-cart
- *  buttons to the real cart API, then hands off to the functional cart page. */
-const CART_SCRIPT = `document.addEventListener("click",async function(e){var b=e.target&&e.target.closest?e.target.closest(".designer-add-to-cart"):null;if(!b)return;e.preventDefault();var v=b.getAttribute("data-variant-id");if(!v){location.href="/storefront/cart";return}b.disabled=true;try{var r=await fetch("/storefront/api/cart/add",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify({variantId:v,quantity:1})});location.href=r.ok?"/storefront/cart":location.pathname}finally{b.disabled=false}});`;
+// Runtime-owned cart chrome (never model-authored): the drawer markup, its
+// styling, and the script that wires add-to-cart into it live in widgets.ts.
 
 const ROUTE_FOR_KIND = { home: "home", product: "product", collection: "collection", search: "search" } as const;
 const PRODUCT_LIMIT = 12;
@@ -115,9 +115,10 @@ export async function resolveDesignerPublicPage(
       `class="designer-add-to-cart" data-variant-id="${data.contextVariantId}"`,
     );
   }
-  // The cart wiring is always live; the coupon widget's behavior only when the
-  // page actually declared one (rendered.widgetScript is empty otherwise).
-  const runtimeScript = `${CART_SCRIPT}\n${rendered.widgetScript}`;
+  // The cart drawer is always live chrome; the coupon widget's behavior only
+  // when the page declared one (rendered.widgetScript is empty otherwise).
+  bodyHtml = `${bodyHtml}\n${CART_DRAWER_MARKUP}`;
+  const runtimeScript = `${CART_DRAWER_SCRIPT}\n${rendered.widgetScript}`;
   const nonce = randomBytes(18).toString("base64url");
   const headers = storefrontCacheHeaders({ routeId: ROUTE_FOR_KIND[context.kind], personalized: false, shopId });
   headers.set("cache-control", "no-store");
@@ -126,7 +127,7 @@ export async function resolveDesignerPublicPage(
     page: {
       designer: true,
       bodyHtml,
-      css: rendered.css,
+      css: `${rendered.css}\n${CART_DRAWER_CSS}`,
       nonce,
       cartScript: runtimeScript,
       seoMeta: [{ title: data.storeName }],
