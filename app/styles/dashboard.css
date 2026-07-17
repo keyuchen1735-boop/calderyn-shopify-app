@@ -5669,9 +5669,10 @@
 .cd-jr-recap .cd-btn { margin-top: 10px; }
 
 /* ============ First-run product tour (cd-tour-*) ============
-   The spotlight is a real hole: one oversized shadow dims the application
-   while leaving the anchored control crisp. A transparent blocker beneath it
-   prevents accidental navigation until the merchant advances the tour. */
+   The spotlight is a real hole: an SVG shade with even-odd cutouts dims the
+   application while leaving every anchored surface crisp — the nav control
+   AND the panel/screen a step is demonstrating. A transparent blocker beneath
+   it prevents accidental navigation until the merchant advances the tour. */
 .cd-tour { position: fixed; inset: 0; z-index: 150; pointer-events: none; isolation: isolate; }
 .cd-tour-blocker { position: fixed; inset: 0; z-index: 1; pointer-events: auto; }
 .cd-tour-backdrop {
@@ -5679,12 +5680,15 @@
   background: rgba(4, 6, 10, 0.72);
   backdrop-filter: blur(3px);
 }
+.cd-tour-shade {
+  position: fixed; inset: 0; z-index: 2;
+  fill: rgba(4, 6, 10, 0.72);
+}
 .cd-tour-focus {
   position: fixed; z-index: 2;
   border: 1.5px solid rgba(255, 255, 255, 0.88);
   background: transparent;
   box-shadow:
-    0 0 0 9999px rgba(4, 6, 10, 0.72),
     0 0 0 5px rgba(255, 255, 255, 0.10),
     0 8px 32px rgba(0, 0, 0, 0.32);
   transition: top 0.28s cubic-bezier(0.22, 1, 0.36, 1), left 0.28s cubic-bezier(0.22, 1, 0.36, 1), width 0.28s cubic-bezier(0.22, 1, 0.36, 1), height 0.28s cubic-bezier(0.22, 1, 0.36, 1);

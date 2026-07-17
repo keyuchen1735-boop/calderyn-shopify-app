@@ -9,7 +9,7 @@ import { CalderynError } from "../calderyn.server";
 // The limiter moved to a shared Postgres-backed store so it enforces across
 // serverless instances (the old in-memory version only damped abuse per
 // instance). Re-exported so existing dashboard imports keep their path.
-export { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
+export { rateLimit, releaseRateLimit, clientIpKey } from "~/lib/rate-limit.server";
 
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",

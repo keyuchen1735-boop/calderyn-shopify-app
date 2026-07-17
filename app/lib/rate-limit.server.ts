@@ -19,6 +19,21 @@ import { getSupabase } from "./supabase.server";
  * Signature mirrors the old in-memory limiter (key, limit, windowMs) so call
  * sites only gain an `await`. `client` is injectable for tests.
  */
+/** Frees a limiter bucket early (e.g. a build lock released when the build
+ *  finishes or fails, instead of blocking retries for the full window).
+ *  Best-effort: a failure just means the window expires naturally. */
+export async function releaseRateLimit(key: string, client?: SupabaseClient): Promise<void> {
+  try {
+    const sb = client ?? getSupabase();
+    await sb.from("rate_limit_hits").delete().eq("bucket", key);
+  } catch (e) {
+    console.error("[rate-limit] release failed (window will expire naturally)", {
+      key,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
 export async function rateLimit(
   key: string,
   limit: number,

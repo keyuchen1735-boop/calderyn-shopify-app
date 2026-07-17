@@ -24,7 +24,7 @@ describe("OnboardingTour", () => {
   it("walks forward and back while announcing progress", () => {
     act(() => root.render(<OnboardingTour open onOutcome={() => {}} />));
     expect(host.textContent).toContain("Meet your command center.");
-    expect(host.textContent).toContain("Watch a few quick actions.");
+    expect(host.textContent).toContain("places you'll use every day");
     expect(
       host.querySelector(".cd-tour-progress")?.getAttribute("aria-label"),
     ).toBe("Step 1 of 7");
@@ -33,7 +33,7 @@ describe("OnboardingTour", () => {
       host.querySelector<HTMLButtonElement>(".cd-tour-btn--primary")?.click(),
     );
     expect(host.textContent).toContain("Start here.");
-    expect(host.textContent).toContain("open Home and scan what needs you");
+    expect(host.textContent).toContain("your setup steps and today's numbers");
     expect(
       host.querySelector(".cd-tour-progress")?.getAttribute("aria-label"),
     ).toBe("Step 2 of 7");

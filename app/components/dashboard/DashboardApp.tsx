@@ -1726,7 +1726,7 @@ export default function DashboardApp({
       )}
 
       {/* Main */}
-      <main id="cd-main" className="cd-main" ref={mainRef}>
+      <main id="cd-main" className="cd-main" ref={mainRef} data-tour-anchor="screen">
         <Screen app={app} />
       </main>
 
