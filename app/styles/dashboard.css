@@ -5180,7 +5180,36 @@
    stack as .cd-main so the chromeless overlay is seamless in both themes. */
 .cd-welcome { position: absolute; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; overflow: auto; background: radial-gradient(120% 80% at 82% -6%, color-mix(in oklch, var(--live) 9%, transparent), transparent 60%), var(--bg); }
 .cd-root.cd-dark .cd-welcome { background: radial-gradient(120% 80% at 82% -6%, color-mix(in oklch, var(--live) 18%, transparent), transparent 58%), radial-gradient(90% 70% at 0% 112%, rgba(255, 255, 255, 0.03), transparent 55%), #0E0F12; }
-.cd-welcome-inner { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 32px 40px; max-width: 620px; }
+.cd-welcome-inner { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; text-align: center; padding: 0 32px 40px; max-width: 620px; }
+
+/* Building backdrop: blurred template silhouettes drifting up behind the step
+   card — layout work made visible while a build runs. Decorative only. */
+.cd-welcome-loom { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.cd-welcome-loom span {
+  position: absolute;
+  width: clamp(240px, 26vw, 360px);
+  aspect-ratio: 3 / 4;
+  border-radius: 26px;
+  opacity: 0;
+  filter: blur(22px) saturate(1.2);
+  background:
+    linear-gradient(180deg, color-mix(in oklch, var(--accent) 32%, transparent) 0 18%, transparent 18% 30%, color-mix(in oklch, var(--live) 26%, transparent) 30% 58%, transparent 58% 70%, color-mix(in oklch, var(--accent) 18%, transparent) 70% 100%);
+  animation: cd-loom 13s ease-in-out infinite;
+}
+.cd-welcome-loom span:nth-child(1) { left: 6%; top: 12%; animation-delay: 0s; }
+.cd-welcome-loom span:nth-child(2) { right: 7%; top: 20%; animation-delay: 3.2s; background: linear-gradient(180deg, color-mix(in oklch, var(--live) 30%, transparent) 0 34%, transparent 34% 46%, color-mix(in oklch, var(--accent) 24%, transparent) 46% 78%, transparent 78% 100%); }
+.cd-welcome-loom span:nth-child(3) { left: 16%; bottom: -6%; animation-delay: 6.4s; }
+.cd-welcome-loom span:nth-child(4) { right: 18%; bottom: -12%; animation-delay: 9.6s; background: linear-gradient(180deg, color-mix(in oklch, var(--accent) 26%, transparent) 0 22%, transparent 22% 36%, color-mix(in oklch, var(--live) 22%, transparent) 36% 64%, transparent 64% 100%); }
+@keyframes cd-loom {
+  0% { opacity: 0; transform: translateY(34px) rotate(-4deg) scale(0.95); }
+  16% { opacity: 0.4; }
+  34% { opacity: 0.34; transform: translateY(-4px) rotate(1deg) scale(1); }
+  52%, 100% { opacity: 0; transform: translateY(-42px) rotate(4deg) scale(1.03); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cd-welcome-loom span { animation: none; opacity: 0.18; transform: none; }
+}
+.cd-welcome-eta { font-size: calc(12px * var(--type-scale)); color: var(--text-3); margin-top: 12px; max-width: 380px; }
 .cd-welcome[data-stage="styles"] { align-items: flex-start; }
 .cd-welcome[data-stage="styles"] .cd-welcome-inner { width: min(1120px, 100%); max-width: none; margin: auto; padding-top: 28px; }
 .cd-welcome[data-stage="styles"] .cd-welcome-script { width: min(230px, 42%); }
