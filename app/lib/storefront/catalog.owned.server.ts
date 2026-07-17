@@ -25,6 +25,7 @@ type Row = Record<string, unknown>;
 const DEFAULT_CURRENCY = "USD";
 // Hard cap for bounded/curated reads. Public catalog traversal uses listProductPage.
 const MAX_STOREFRONT_PRODUCTS = 250;
+const POSTGREST_PAGE_SIZE = 1000;
 
 function postgrestLiteral(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
@@ -34,6 +35,19 @@ function pushInto<T>(map: Map<string, T[]>, key: string, value: T): void {
   const arr = map.get(key);
   if (arr) arr.push(value);
   else map.set(key, [value]);
+}
+
+async function pagedRows(
+  query: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>,
+): Promise<Row[]> {
+  const rows: Row[] = [];
+  for (let from = 0; ; from += POSTGREST_PAGE_SIZE) {
+    const result = await query(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    const page = (result.data ?? []) as Row[];
+    rows.push(...page);
+    if (page.length < POSTGREST_PAGE_SIZE) return rows;
+  }
 }
 
 function toVariant(v: Row, ledgerSellable?: number): StoreVariant {
@@ -112,43 +126,40 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   const ids = products.map((p) => String(p.id));
   if (!ids.length) return [];
 
-  const [{ data: variants, error: vErr }, { data: media, error: mErr }, { data: pc, error: pcErr }, { data: options, error: oErr }] =
-    await Promise.all([
-      sb
+  const [variants, media, pc, options] = await Promise.all([
+    pagedRows((from, to) => sb
         .from("variant_dim")
         .select("id, product_id, sku, title, retail_price_cents, compare_at_price_cents, currency, inventory_tracked, inventory_on_hand, position")
         .eq("shop_id", shopId)
         .in("product_id", ids)
-        .order("position"),
-      sb
+        .order("position").order("product_id").order("id").range(from, to)),
+    pagedRows((from, to) => sb
         .from("product_media")
-        .select("product_id, storage_path, external_url, alt, position, is_primary")
+        .select("id, product_id, storage_path, external_url, alt, position, is_primary")
         .in("product_id", ids)
-        .order("position"),
-      sb.from("product_collection").select("product_id, collection_id").in("product_id", ids),
-      sb
+        .order("position").order("product_id").order("id").range(from, to)),
+    pagedRows((from, to) => sb.from("product_collection").select("product_id, collection_id")
+      .in("product_id", ids).order("product_id").order("collection_id").range(from, to)),
+    pagedRows((from, to) => sb
         .from("product_option")
-        .select("product_id, name, position, product_option_value(value, position)")
+        .select("id, product_id, name, position, product_option_value(value, position)")
         .in("product_id", ids)
-        .order("position"),
-    ]);
-  if (vErr) throw vErr;
-  if (mErr) throw mErr;
-  if (pcErr) throw pcErr;
-  if (oErr) throw oErr;
+        .order("position").order("product_id").order("id").range(from, to)),
+  ]);
 
   // Resolve collection ids -> handles, scoped to the shop so a foreign id can't
   // surface another tenant's collection handle.
-  const collectionIds = [...new Set((pc ?? []).map((r: Row) => String(r.collection_id)))];
+  const collectionIds = [...new Set(pc.map((r) => String(r.collection_id)))];
   const handleByCollectionId = new Map<string, string>();
   if (collectionIds.length) {
-    const { data: colls, error: cErr } = await sb
+    const colls = await pagedRows((from, to) => sb
       .from("collection_dim")
       .select("id, handle")
       .eq("shop_id", shopId)
-      .in("id", collectionIds);
-    if (cErr) throw cErr;
-    for (const c of (colls ?? []) as Row[]) handleByCollectionId.set(String(c.id), String(c.handle));
+      .in("id", collectionIds)
+      .order("id")
+      .range(from, to));
+    for (const c of colls) handleByCollectionId.set(String(c.id), String(c.handle));
   }
 
   // Ledger stock needs the variant ids, so it starts right after the variant fetch
@@ -156,16 +167,16 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   const sellablePromise = sellableByVariant(
     sb,
     shopId,
-    ((variants ?? []) as Row[]).map((v) => String(v.id)),
+    variants.map((v) => String(v.id)),
   );
 
   const signed = await signMediaPaths(
-    ((media ?? []) as Row[]).filter((m) => m.storage_path).map((m) => String(m.storage_path)),
+    media.filter((m) => m.storage_path).map((m) => String(m.storage_path)),
   );
   const sellable = await sellablePromise;
 
   const variantsByProduct = new Map<string, StoreVariant[]>();
-  for (const v of (variants ?? []) as Row[])
+  for (const v of variants)
     pushInto(variantsByProduct, String(v.product_id), toVariant(v, sellable.get(String(v.id))));
 
   // Primary image leads, then by position. A promoted mirror image carries an
@@ -173,7 +184,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   // image carries a private-bucket storage_path resolved through a signed url.
   // Rows that resolve to neither are dropped.
   const imagesByProduct = new Map<string, { url: string; alt: string | null }[]>();
-  const orderedMedia = [...((media ?? []) as Row[])].sort(
+  const orderedMedia = media.slice().sort(
     (a, b) => Number(Boolean(b.is_primary)) - Number(Boolean(a.is_primary)) || Number(a.position ?? 0) - Number(b.position ?? 0),
   );
   for (const m of orderedMedia) {
@@ -184,13 +195,13 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   }
 
   const handlesByProduct = new Map<string, string[]>();
-  for (const r of (pc ?? []) as Row[]) {
+  for (const r of pc) {
     const handle = handleByCollectionId.get(String(r.collection_id));
     if (handle) pushInto(handlesByProduct, String(r.product_id), handle);
   }
 
   const optionsByProduct = new Map<string, Array<{ name: string; values: string[] }>>();
-  for (const option of (options ?? []) as Row[]) {
+  for (const option of options) {
     const values = ((option.product_option_value as Row[] | null) ?? [])
       .slice()
       .sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0))

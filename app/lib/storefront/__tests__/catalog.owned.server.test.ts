@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const eqCalls: Record<string, Array<[string, unknown]>> = {};
 const ilikeCalls: Record<string, Array<[string, string]>> = {};
 const orCalls: Record<string, string[]> = {};
+const rangeCalls: Record<string, Array<[number, number]>> = {};
 // Canned rows per table for a query that resolves to a list.
 let tableRows: Record<string, unknown[]> = {};
 // Canned single-row result per table (for maybeSingle()).
@@ -18,6 +19,7 @@ let tableCount: Record<string, number> = {};
 
 function builder(table: string) {
   const b: Record<string, unknown> = {};
+  let requestedRange: [number, number] | null = null;
   const chain = () => b;
   Object.assign(b, {
     select: chain,
@@ -36,11 +38,19 @@ function builder(table: string) {
     in: chain,
     order: chain,
     limit: chain,
-    range: chain,
+    range: (from: number, to: number) => {
+      requestedRange = [from, to];
+      (rangeCalls[table] ??= []).push([from, to]);
+      return b;
+    },
     maybeSingle: () => Promise.resolve({ data: tableSingle[table] ?? null, error: null }),
-    then: (resolve: (v: unknown) => unknown) => Promise.resolve({
-      data: tableRows[table] ?? [], error: null, count: tableCount[table] ?? null,
-    }).then(resolve),
+    then: (resolve: (v: unknown) => unknown) => {
+      const rows = tableRows[table] ?? [];
+      const [from, to] = requestedRange ?? [0, 999];
+      return Promise.resolve({
+        data: rows.slice(from, to + 1), error: null, count: tableCount[table] ?? null,
+      }).then(resolve);
+    },
   });
   return b;
 }
@@ -54,6 +64,7 @@ beforeEach(() => {
   for (const k of Object.keys(eqCalls)) delete eqCalls[k];
   for (const k of Object.keys(ilikeCalls)) delete ilikeCalls[k];
   for (const k of Object.keys(orCalls)) delete orCalls[k];
+  for (const k of Object.keys(rangeCalls)) delete rangeCalls[k];
   tableRows = {};
   tableSingle = {};
   tableCount = {};
@@ -79,6 +90,41 @@ describe("ownedCatalog.listProductPage", () => {
     await ownedCatalog.listProductPage("shop-1", { cursor: first.nextCursor, limit: 24 });
     expect(orCalls.product_dim.at(-1)).toContain("title.gt.");
     expect(orCalls.product_dim.at(-1)).toContain("id.gt.");
+  });
+
+  it("assembles child rows beyond the PostgREST page boundary", async () => {
+    tableRows = {
+      product_dim: [{ id: "p1", handle: "complete", title: "Complete", description: "All child rows" }],
+      variant_dim: Array.from({ length: 1001 }, (_, index) => ({
+        id: `v${index}`, product_id: "p1", sku: `SKU-${index}`, title: `Variant ${index}`,
+        retail_price_cents: 1000 + index, currency: "USD", inventory_tracked: false, inventory_on_hand: 0, position: index,
+      })),
+      product_media: Array.from({ length: 1001 }, (_, index) => ({
+        product_id: "p1", storage_path: `shop-1/p1/${index}.png`, alt: `Image ${index}`, position: index, is_primary: index === 0,
+      })),
+      product_collection: Array.from({ length: 1001 }, (_, index) => ({ product_id: "p1", collection_id: `c${index}` })),
+      product_option: Array.from({ length: 1001 }, (_, index) => ({
+        product_id: "p1", name: `Option ${index}`, position: index, product_option_value: [],
+      })),
+      collection_dim: Array.from({ length: 1001 }, (_, index) => ({ id: `c${index}`, handle: `collection-${index}` })),
+      inventory_balance: [],
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+
+    const page = await ownedCatalog.listProductPage("shop-1", { limit: 24 });
+    const product = page.items[0]!;
+
+    expect(product.variants).toHaveLength(1001);
+    expect(product.variants.at(-1)).toMatchObject({ title: "Variant 1000", priceCents: 2000, available: true });
+    expect(product.images).toHaveLength(1001);
+    expect(product.images.at(-1)?.url).toBe("signed:shop-1/p1/1000.png");
+    expect(product.collections).toHaveLength(1001);
+    expect(product.collections.at(-1)).toBe("collection-1000");
+    expect(product.options).toHaveLength(1001);
+    expect(product.options?.at(-1)?.name).toBe("Option 1000");
+    for (const table of ["variant_dim", "product_media", "product_collection", "product_option", "collection_dim"]) {
+      expect(rangeCalls[table]).toEqual([[0, 999], [1000, 1999]]);
+    }
   });
 });
 
