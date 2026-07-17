@@ -16,6 +16,23 @@ export interface DesignerStoreData {
 
 export type DesignerRoute = "home" | "collection" | "product" | "search" | "cart" | "checkout";
 
+/** Loader payload for a PUBLISHED designer page served on the public
+ *  storefront. Client-safe: route components render it bare (no layout
+ *  chrome) with the nonce'd runtime cart script. */
+export interface DesignerPublicPage {
+  designer: true;
+  bodyHtml: string;
+  css: string;
+  nonce: string;
+  cartScript: string;
+  seoMeta: Array<{ title: string }>;
+}
+
+/** Narrow a storefront loader payload to the designer branch. */
+export function isDesignerPublicPage(value: unknown): value is DesignerPublicPage {
+  return Boolean(value && typeof value === "object" && (value as { designer?: unknown }).designer === true);
+}
+
 export interface DesignerReply {
   /** The assistant's one-or-two sentence chat reply. */
   reply: string;

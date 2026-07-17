@@ -84,14 +84,14 @@ function rootValue(data: DesignerStoreData, path: string): string {
 /** Interprets the document's placeholder vocabulary: {{path}} substitutions
  *  plus one construct, {{#products}}...{{/products}}, repeated per product.
  *  Loose product placeholders (the product page is a single-product view, no
- *  loop) preview against a representative product — the first in the catalog —
- *  so the document renders real data instead of empty attributes. */
-export function renderDesignerDocument(input: {
+ *  loop) render against a representative product — the first in the list —
+ *  so the document shows real data instead of empty attributes. */
+export function renderDesignerBody(input: {
   html: string;
   css: string;
   data: DesignerStoreData;
   maxProducts?: number;
-}): string {
+}): { bodyHtml: string; css: string } {
   const scrubbedHtml = scrubDesignerHtml(input.html);
   const products = input.data.products.slice(0, input.maxProducts ?? 12);
   const contextProduct = products[0];
@@ -103,8 +103,18 @@ export function renderDesignerDocument(input: {
     path.startsWith("product.")
       ? (contextProduct ? productValue(contextProduct, path) : "")
       : rootValue(input.data, path));
-  const css = scrubDesignerCss(input.css);
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css.replace(/<\/style/gi, "")}</style></head><body>${filled}</body></html>`;
+  return { bodyHtml: filled, css: scrubDesignerCss(input.css).replace(/<\/style/gi, "") };
+}
+
+/** Full standalone document for the sandboxed preview iframe. */
+export function renderDesignerDocument(input: {
+  html: string;
+  css: string;
+  data: DesignerStoreData;
+  maxProducts?: number;
+}): string {
+  const { bodyHtml, css } = renderDesignerBody(input);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${bodyHtml}</body></html>`;
 }
 
 // img-src allows https: because catalog imagery is injected server-side after

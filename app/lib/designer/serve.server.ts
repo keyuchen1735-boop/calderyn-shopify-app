@@ -2,15 +2,17 @@
 // publication rows mean the caller falls through to the runtime renderer, so
 // shops that never touched the designer are completely unaffected.
 //
-// Safety on the live page mirrors the preview: the stored documents were
-// scrubbed on save (no scripts, no external references), and the response CSP
-// only allows the single runtime-owned cart script below via nonce.
+// The page ships as loader DATA (body html + css + a nonce'd cart script) that
+// the route component renders bare — the same shape runtime-1 uses — and the
+// CSP rides the same header markers, so the one script allowed is ours.
 import { randomBytes } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
-import { renderDesignerDocument } from "./render.server";
-import type { DesignerStoreData } from "./types";
+import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
+import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
+import { renderDesignerBody } from "./render.server";
+import type { DesignerPublicPage, DesignerStoreData } from "./types";
 
 export type DesignerPublicContext =
   | { kind: "home" }
@@ -22,19 +24,8 @@ export type DesignerPublicContext =
  *  buttons to the real cart API, then hands off to the functional cart page. */
 const CART_SCRIPT = `document.addEventListener("click",async function(e){var b=e.target&&e.target.closest?e.target.closest(".designer-add-to-cart"):null;if(!b)return;e.preventDefault();var v=b.getAttribute("data-variant-id");if(!v){location.href="/storefront/cart";return}b.disabled=true;try{var r=await fetch("/storefront/api/cart/add",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify({variantId:v,quantity:1})});location.href=r.ok?"/storefront/cart":location.pathname}finally{b.disabled=false}});`;
 
-function liveCsp(nonce: string): string {
-  return [
-    "default-src 'none'",
-    `script-src 'nonce-${nonce}'`,
-    "style-src 'unsafe-inline'",
-    "img-src 'self' data: https:",
-    "font-src 'self'",
-    "connect-src 'self'",
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-  ].join("; ");
-}
+const ROUTE_FOR_KIND = { home: "home", product: "product", collection: "collection", search: "search" } as const;
+const PRODUCT_LIMIT = 12;
 
 async function loadPublication(shopId: string, route: "home" | "collection" | "product" | "search") {
   const { data, error } = await getSupabase()
@@ -48,9 +39,10 @@ async function loadPublication(shopId: string, route: "home" | "collection" | "p
   return page ? { baseCss: String(base?.css ?? ""), html: String(page.html), css: String(page.css) } : null;
 }
 
-const PRODUCT_LIMIT = 12;
-
-async function storeDataFor(shopId: string, context: DesignerPublicContext): Promise<DesignerStoreData | null> {
+async function storeDataFor(
+  shopId: string,
+  context: DesignerPublicContext,
+): Promise<(DesignerStoreData & { contextVariantId: string | null }) | null> {
   const catalog = getCatalog();
   const settings = await getStoreSettings(shopId);
   const toProduct = (p: Awaited<ReturnType<typeof catalog.listProducts>>[number]) => ({
@@ -62,18 +54,18 @@ async function storeDataFor(shopId: string, context: DesignerPublicContext): Pro
     compareAtPriceCents: p.variants[0]?.compareAtPriceCents ?? null,
     available: true,
     imageUrl: p.images[0]?.url ?? null,
-    variantId: p.variants[0]?.id ?? null,
   });
 
   if (context.kind === "product") {
     const product = await catalog.getProduct(shopId, context.handle);
-    if (!product) return null; // unknown handle → let the runtime 404 properly
+    if (!product) return null; // unknown handle → the runtime's 404 handling runs
     const rest = (await catalog.listProducts(shopId, { limit: PRODUCT_LIMIT })).filter((p) => p.id !== product.id);
     return {
       storeName: settings.storeName,
       tagline: settings.voiceTagline,
       logoUrl: settings.logoUrl,
       products: [product, ...rest].map(toProduct),
+      contextVariantId: product.variants[0]?.id ?? null,
     };
   }
   const options =
@@ -86,16 +78,17 @@ async function storeDataFor(shopId: string, context: DesignerPublicContext): Pro
     tagline: settings.voiceTagline,
     logoUrl: settings.logoUrl,
     products: products.map(toProduct),
+    contextVariantId: products[0]?.variants[0]?.id ?? null,
   };
 }
 
-/** Renders the published designer page for this context, or null when the shop
- *  has no publication (caller falls through to the runtime renderer). */
-export async function serveDesignerPageIfPublished(
+/** Loader payload + headers for the published designer page, or null when the
+ *  shop has no publication (caller falls through to the runtime renderer). */
+export async function resolveDesignerPublicPage(
   shopId: string,
   context: DesignerPublicContext,
-): Promise<Response | null> {
-  const publication = await loadPublication(shopId, context.kind).catch((err) => {
+): Promise<{ page: DesignerPublicPage; headers: Headers } | null> {
+  const publication = await loadPublication(shopId, ROUTE_FOR_KIND[context.kind]).catch((err) => {
     // A read hiccup must never take the storefront down — fall through.
     console.error("[designer/serve] publication lookup failed", err);
     return null;
@@ -105,26 +98,33 @@ export async function serveDesignerPageIfPublished(
   const data = await storeDataFor(shopId, context);
   if (!data) return null;
 
-  let html = renderDesignerDocument({
+  const rendered = renderDesignerBody({
     html: publication.html,
     css: `${publication.baseCss}\n${publication.css}`,
     data,
   });
-  // Attach the context product's variant to add-to-cart buttons, then inject
-  // the runtime cart script. Both are server-owned post-processing steps.
-  const variantId = (data.products[0] as { variantId?: string | null } | undefined)?.variantId;
-  if (variantId) {
-    html = html.replace(/class="designer-add-to-cart"/g, `class="designer-add-to-cart" data-variant-id="${variantId}"`);
+  // Attach the context product's variant to add-to-cart buttons so the cart
+  // script has something real to add. Server-owned post-processing.
+  let bodyHtml = rendered.bodyHtml;
+  if (data.contextVariantId) {
+    bodyHtml = bodyHtml.replace(
+      /class="designer-add-to-cart"/g,
+      `class="designer-add-to-cart" data-variant-id="${data.contextVariantId}"`,
+    );
   }
   const nonce = randomBytes(18).toString("base64url");
-  html = html.replace("</body>", `<script nonce="${nonce}">${CART_SCRIPT}</script></body>`);
-
-  return new Response(html, {
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": "no-store",
-      "content-security-policy": liveCsp(nonce),
-      "x-content-type-options": "nosniff",
+  const headers = storefrontCacheHeaders({ routeId: ROUTE_FOR_KIND[context.kind], personalized: false, shopId });
+  headers.set("cache-control", "no-store");
+  markStorefrontBundleRendered(headers, nonce);
+  return {
+    page: {
+      designer: true,
+      bodyHtml,
+      css: rendered.css,
+      nonce,
+      cartScript: CART_SCRIPT,
+      seoMeta: [{ title: data.storeName }],
     },
-  });
+    headers,
+  };
 }
