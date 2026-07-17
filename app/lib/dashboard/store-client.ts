@@ -1,6 +1,7 @@
 // Client fetchers for the Store studio surface. Kept in its own module (not
 // client.ts) so parallel surface work never collides on one file.
 import { apiGet, apiSend, apiSendForm, DashboardApiError, saveProduct, uploadProductImage } from "./client";
+import { throwIfVersionSkew } from "./version-skew";
 import {
   parseBuildEvent,
   type BuildStage,
@@ -80,6 +81,7 @@ export async function editStudioStorefrontStream(
     if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
     throw new StudioStreamError(error instanceof Error ? error.message : "edit stream request failed");
   }
+  throwIfVersionSkew(response);
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
     throw new DashboardApiError(response.status, body.error ?? "storefront_edit_failed", body.message ?? "Storefront edit failed.");
@@ -325,6 +327,7 @@ export async function buildStudioStoreStream(
     if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
     throw new StudioStreamError(err instanceof Error ? err.message : "stream request failed");
   }
+  throwIfVersionSkew(res);
   if (!res.ok) {
     let code = "storefront_build_failed";
     let message = "Storefront build failed.";

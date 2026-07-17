@@ -13,6 +13,7 @@ import { sendVerificationEmail } from "~/lib/auth/verify.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { AuthShell, AuthError, AuthNotice, AuthForm, useAuthFormPending } from "~/components/auth/AuthCard";
 import { clearShopHintCookieHeader } from "~/lib/dashboard/cookies.server";
+import { throwIfVersionSkew } from "~/lib/dashboard/version-skew";
 
 export const meta: MetaFunction = () => [{ title: "Verify your email — Calderyn" }];
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboard }];
@@ -160,6 +161,7 @@ export default function VerifyNeeded() {
           credentials: "same-origin",
           signal: ctrl.signal,
         });
+        throwIfVersionSkew(res);
         if (!stopped && res.ok) {
           const data = (await res.json()) as { verified?: boolean };
           if (!stopped && data.verified) {

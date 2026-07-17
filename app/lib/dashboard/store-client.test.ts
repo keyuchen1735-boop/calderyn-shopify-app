@@ -18,11 +18,12 @@ import { DashboardApiError } from "./client";
 
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // client mock still applies even though it is written below them.
-const { saveProduct, uploadProductImage, apiSend, apiSendForm } = vi.hoisted(() => ({
+const { saveProduct, uploadProductImage, apiSend, apiSendForm, throwIfVersionSkew } = vi.hoisted(() => ({
   saveProduct: vi.fn(),
   uploadProductImage: vi.fn(),
   apiSend: vi.fn(),
   apiSendForm: vi.fn(),
+  throwIfVersionSkew: vi.fn(),
 }));
 
 vi.mock("./client", () => ({
@@ -35,6 +36,7 @@ vi.mock("./client", () => ({
     constructor(public status: number, public code: string, message: string) { super(message); }
   },
 }));
+vi.mock("./version-skew", () => ({ throwIfVersionSkew }));
 
 beforeEach(() => {
   vi.clearAllMocks();

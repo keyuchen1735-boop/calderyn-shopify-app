@@ -62,23 +62,12 @@ import type {
   ConversationSummary as AssistantConversation,
 } from "~/lib/assistant/types";
 import type { ActionReceipt } from "~/lib/assistant/actions/registry-types";
+import { DashboardApiError } from "./api-error";
+import { throwIfVersionSkew } from "./version-skew";
 
 // --- error type ------------------------------------------------------------
 
-export class DashboardApiError extends Error {
-  readonly status: number;
-  readonly code: string;
-  /** For 502 action_failed responses, the audit row id of the failed attempt. */
-  readonly auditId?: string;
-
-  constructor(status: number, code: string, message: string, auditId?: string) {
-    super(message);
-    this.name = "DashboardApiError";
-    this.status = status;
-    this.code = code;
-    this.auditId = auditId;
-  }
-}
+export { DashboardApiError };
 
 // --- low-level fetchers ----------------------------------------------------
 
@@ -120,15 +109,20 @@ function redirectToLogin(): void {
   location.assign("/login?error=session_expired");
 }
 
+async function readApiResponse<T>(res: Response): Promise<T> {
+  if (res.status === 401) redirectToLogin();
+  throwIfVersionSkew(res);
+  if (!res.ok) throw await toApiError(res);
+  return (await res.json()) as T;
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(path, {
     method: "GET",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
   });
-  if (res.status === 401) redirectToLogin();
-  if (!res.ok) throw await toApiError(res);
-  return (await res.json()) as T;
+  return readApiResponse<T>(res);
 }
 
 export async function apiSend<T>(
@@ -147,9 +141,7 @@ export async function apiSend<T>(
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (res.status === 401) redirectToLogin();
-  if (!res.ok) throw await toApiError(res);
-  return (await res.json()) as T;
+  return readApiResponse<T>(res);
 }
 
 /** POST multipart FormData with the same-origin + CSRF conventions apiSend uses,
@@ -164,9 +156,7 @@ export async function apiSendForm<T>(path: string, form: FormData, signal?: Abor
     body: form,
     signal,
   });
-  if (res.status === 401) redirectToLogin();
-  if (!res.ok) throw await toApiError(res);
-  return (await res.json()) as T;
+  return readApiResponse<T>(res);
 }
 
 // --- adapters --------------------------------------------------------------
@@ -1192,6 +1182,7 @@ export async function sendAssistantMessage(
       conversation_id: conversationId ?? undefined,
     }),
   });
+  throwIfVersionSkew(res);
   const body = (await res.json().catch(() => ({}))) as {
     conversation_id?: string;
     message?: AssistantMessage | string;
@@ -1776,6 +1767,7 @@ export async function uploadProductImage(
     headers: { Origin: location.origin },
     body: fd,
   });
+  throwIfVersionSkew(res);
   if (res.status === 401) redirectToLogin();
   if (!res.ok) throw await toApiError(res);
   return (await res.json()) as { id: string; url: string };
@@ -1793,6 +1785,7 @@ export async function uploadCampaignCreativeImage(
     headers: { Origin: location.origin },
     body: form,
   });
+  throwIfVersionSkew(response);
   if (response.status === 401) redirectToLogin();
   if (!response.ok) throw await toApiError(response);
   const data = (await response.json()) as { id: string; url: string };

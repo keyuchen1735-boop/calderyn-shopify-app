@@ -6,6 +6,7 @@ import { CDIcon } from "./icons";
 import { Btn } from "./ui";
 import { reduced } from "./hero/hero-motion";
 import { MAX_MESSAGE_CHARS } from "~/lib/contact/validate";
+import { throwIfVersionSkew } from "~/lib/dashboard/version-skew";
 import type { DashboardCtx } from "./context";
 
 export default function ContactButton({ app }: { app: DashboardCtx }) {
@@ -96,6 +97,7 @@ export default function ContactButton({ app }: { app: DashboardCtx }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, email, screen: app.nav.screen }),
       });
+      throwIfVersionSkew(res);
       if (!res.ok) {
         // Only surface server messages written for humans; machine codes
         // (bad_origin, unauthorized, ...) fall through to the generic line.
