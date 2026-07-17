@@ -3,7 +3,7 @@
 // happens on send/attach. Each "ai-working" message carries its own phase
 // snapshot (see chat-types.ts), so an older, already-finished card in history
 // can never be flipped back to "running" by a later, unrelated build.
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import { CDIcon } from "../icons";
 import { buildSteps, canSendComposer } from "../screens/store-logic";
 import BuildStepsCard from "./BuildStepsCard";
@@ -97,6 +97,7 @@ export default function ChatRail({
   onRemoveAttachment,
   model,
   onModelChange,
+  composerExtra,
 }: {
   messages: ChatMsg[];
   prompt: string;
@@ -113,6 +114,8 @@ export default function ChatRail({
   onRemoveAttachment: (id: string) => void;
   model: StudioDesignModel;
   onModelChange: (m: StudioDesignModel) => void;
+  /** Optional row rendered above the composer (e.g. first-build mode choice). */
+  composerExtra?: ReactNode;
 }) {
   const threadRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -186,6 +189,7 @@ export default function ChatRail({
         ))}
       </div>
       <div className="cd-rail-foot">
+        {composerExtra}
         <div className="cd-composer">
           {attachments.length > 0 && (
             <div className="cd-composer-chips">

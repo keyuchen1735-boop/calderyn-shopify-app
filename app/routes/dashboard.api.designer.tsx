@@ -1,18 +1,24 @@
 // app/routes/dashboard.api.designer.tsx
 // Chat endpoint for the from-scratch designer engine (hidden Labs). One POST
-// per merchant message; the server decides whether it's the first build
-// (attach to a template) or a direct edit turn on the existing documents.
+// per merchant message. Edit turns answer as plain JSON; the FIRST build
+// (no documents yet) streams NDJSON so every finished page reaches the
+// merchant the moment it is saved instead of after one long wait.
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { quotaTrusted } from "~/lib/ai-quota.server";
 import { assertCanGenerate } from "~/lib/storegen/guard.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
-import { designerTurn } from "~/lib/designer/engine.server";
+import {
+  designerFirstBuild,
+  designerHasDocuments,
+  designerTurn,
+  type DesignerBuildMode,
+} from "~/lib/designer/engine.server";
 import type { DesignerRoute } from "~/lib/designer/types";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 
-export const config = { maxDuration: 300 };
+export const config = { maxDuration: 800 };
 
 const MESSAGE_MAX = 4_000;
 const ROUTES = new Set(["home", "collection", "product", "search", "cart"]);
@@ -39,6 +45,9 @@ export async function action({ request }: ActionFunctionArgs) {
   if (body.page !== undefined && (typeof body.page !== "string" || !ROUTES.has(body.page))) {
     return jsonError(422, "invalid_page");
   }
+  if (body.mode !== undefined && body.mode !== "template" && body.mode !== "scratch") {
+    return jsonError(422, "invalid_mode", "Mode must be template or scratch.");
+  }
 
   const settings = await getStoreSettings(session.shopId);
   if (!settings.composerEnabled) {
@@ -47,14 +56,76 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!(await rateLimit(`designer-chat:${session.shopId}`, 20, 60_000))) {
     return jsonError(429, "rate_limited", "Too many designer messages. Please wait a moment.");
   }
-  return dashboardJson(async () => {
-    await assertCanGenerate(session.shopId, message, { trusted: quotaTrusted(session) });
-    return designerTurn({
-      shopId: session.shopId,
-      message,
-      route: body.page as DesignerRoute | undefined,
-      model: body.model as StudioDesignModel | undefined,
-      signal: request.signal,
+
+  const hasDocuments = await designerHasDocuments(session.shopId);
+  if (hasDocuments) {
+    return dashboardJson(async () => {
+      await assertCanGenerate(session.shopId, message, { trusted: quotaTrusted(session) });
+      return designerTurn({
+        shopId: session.shopId,
+        message,
+        route: body.page as DesignerRoute | undefined,
+        model: body.model as StudioDesignModel | undefined,
+        signal: request.signal,
+      });
     });
+  }
+
+  // First build: stream page events. The quota guard still runs first — its
+  // refusal must arrive as a plain JSON error, not a broken stream.
+  try {
+    await assertCanGenerate(session.shopId, message, { trusted: quotaTrusted(session) });
+  } catch (err) {
+    const status = (err as { status?: number }).status;
+    if (typeof status === "number" && status < 500) {
+      return jsonError(status, (err as { code?: string }).code ?? "generation_blocked", (err as Error).message);
+    }
+    throw err;
+  }
+
+  const encoder = new TextEncoder();
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let cancelled = false;
+  const buildController = new AbortController();
+  const abortFromRequest = () => buildController.abort(new DOMException("Client left", "AbortError"));
+  request.signal.addEventListener("abort", abortFromRequest);
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const write = (event: Record<string, unknown>) => {
+        if (cancelled) return;
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+      // Keep intermediaries and client watchdogs fed between model calls.
+      heartbeat = setInterval(() => {
+        try { write({ kind: "heartbeat" }); } catch { clearInterval(heartbeat); }
+      }, 15_000);
+      try {
+        const done = await designerFirstBuild({
+          shopId: session.shopId,
+          message,
+          mode: body.mode as DesignerBuildMode | undefined,
+          model: body.model as StudioDesignModel | undefined,
+          signal: buildController.signal,
+          onEvent: (event) => write({ ...event }),
+        });
+        write({ kind: "done", ...done });
+      } catch (err) {
+        console.error("[dashboard.api.designer] first build failed", err);
+        write({ kind: "error", message: "The build hit a problem partway. Finished pages are saved; send another message to continue." });
+      } finally {
+        clearInterval(heartbeat);
+        request.signal.removeEventListener("abort", abortFromRequest);
+        if (!cancelled) controller.close();
+      }
+    },
+    cancel() {
+      cancelled = true;
+      clearInterval(heartbeat);
+      buildController.abort(new DOMException("Designer build stopped", "AbortError"));
+    },
+  });
+  return new Response(stream, {
+    headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store" },
   });
 }

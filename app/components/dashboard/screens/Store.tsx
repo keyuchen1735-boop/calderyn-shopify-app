@@ -157,6 +157,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
   // Design-model picker. Ref-paired like chatBusy: builds fire from chat-action
   // closures created long before the click, so they must read the current pick.
   const [designModel, setDesignModel] = useState<StudioDesignModel>("sonnet");
+  // Designer first-build starting point. Template attaches a curated design
+  // and personalizes it; scratch has the model author every page itself.
+  const [designerMode, setDesignerMode] = useState<"template" | "scratch">("template");
   const designModelRef = useRef<StudioDesignModel>("sonnet");
   const setDesignModelBoth = (m: StudioDesignModel) => {
     designModelRef.current = m;
@@ -645,10 +648,27 @@ export default function Store({ app }: { app: DashboardCtx }) {
     const thinkId = newId();
     pushMsg({ id: thinkId, kind: "ai-thinking" });
     try {
-      const turn = await sendDesignerMessage({ message: text, page, model: designModel });
+      const turn = await sendDesignerMessage({
+        message: text,
+        page,
+        model: designModel,
+        ...(data?.designerReady ? {} : { mode: designerMode }),
+        // First build: each finished page lands in the chat and the preview
+        // immediately, so the wait reads as pages arriving, not a spinner.
+        onPage: (event) => {
+          if (!aliveRef.current) return;
+          pushMsg({
+            id: newId(),
+            kind: "ai-text",
+            text: `${event.reply} (${event.index}/${event.total} pages ready — it's in the preview.)`,
+          });
+          reloadPreview();
+        },
+      });
       if (!aliveRef.current) return;
       if (turn.changed) reloadPreview();
       setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: turn.reply } : x)));
+      if (!data?.designerReady) void refresh();
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that change. Try again.";
@@ -1166,6 +1186,25 @@ export default function Store({ app }: { app: DashboardCtx }) {
           onRemoveAttachment={onRemoveAttachment}
           model={designModel}
           onModelChange={setDesignModelBoth}
+          composerExtra={
+            designerOn && !data.designerReady ? (
+              <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "0 2px 8px" }}>
+                <span className="cd-caption" style={{ marginRight: 2 }}>Start from</span>
+                {(["template", "scratch"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className="cd-chip"
+                    aria-pressed={designerMode === mode}
+                    style={designerMode === mode ? { borderColor: "var(--cd-accent, #6366f1)", fontWeight: 600 } : undefined}
+                    onClick={() => setDesignerMode(mode)}
+                  >
+                    {mode === "template" ? "A template" : "Scratch"}
+                  </button>
+                ))}
+              </div>
+            ) : undefined
+          }
         />
 
         <div className="cd-stage">

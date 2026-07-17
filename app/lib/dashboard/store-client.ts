@@ -235,14 +235,95 @@ export async function generateStudioStoreWithImages(
   return apiSendForm<StudioGenerateReceipt>("/dashboard/api/store", form, signal);
 }
 
-/** One conversational turn against the hidden designer engine (Labs). The
- *  server decides whether it's the first build or a direct code edit. */
+export interface DesignerPageEvent {
+  page: string;
+  index: number;
+  total: number;
+  reply: string;
+}
+
+export interface DesignerTurnResult {
+  reply: string;
+  changed: boolean;
+  rejectedEdits: number;
+}
+
+/** One conversational turn against the hidden designer engine (Labs). Edit
+ *  turns answer as JSON; the first build streams NDJSON page events — each
+ *  finished page fires onPage so the merchant sees progress, and the final
+ *  done event resolves the promise. */
 export async function sendDesignerMessage(input: {
   message: string;
   page?: string;
   model?: StudioDesignModel;
-}): Promise<{ reply: string; changed: boolean; rejectedEdits: number }> {
-  return apiSend("POST", "/dashboard/api/designer", input);
+  mode?: "template" | "scratch";
+  onPage?: (event: DesignerPageEvent) => void;
+  signal?: AbortSignal;
+}): Promise<DesignerTurnResult> {
+  const { onPage, signal, ...body } = input;
+  const res = await fetch("/dashboard/api/designer", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "content-type": "application/json",
+      ...(typeof location !== "undefined" ? { Origin: location.origin } : {}),
+    },
+    body: JSON.stringify(body),
+    signal,
+  });
+  throwIfVersionSkew(res);
+  const contentType = res.headers.get("content-type") ?? "";
+
+  if (!contentType.includes("ndjson")) {
+    const data = (await res.json().catch(() => null)) as
+      | (DesignerTurnResult & { error?: string; message?: string })
+      | null;
+    if (!res.ok || !data || typeof data.reply !== "string") {
+      throw new DashboardApiError(res.status, data?.error ?? "designer_failed", data?.message ?? "The designer couldn't process that.");
+    }
+    return { reply: data.reply, changed: data.changed === true, rejectedEdits: data.rejectedEdits ?? 0 };
+  }
+
+  if (!res.body) throw new DashboardApiError(502, "designer_stream_failed", "The build stream had no body.");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let done: DesignerTurnResult | null = null;
+  const handleLine = (line: string) => {
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      return;
+    }
+    if (event.kind === "page" && typeof event.reply === "string") {
+      onPage?.({
+        page: String(event.page ?? ""),
+        index: Number(event.index ?? 0),
+        total: Number(event.total ?? 0),
+        reply: event.reply,
+      });
+    } else if (event.kind === "done" && typeof event.reply === "string") {
+      done = { reply: event.reply, changed: event.changed === true, rejectedEdits: Number(event.rejectedEdits ?? 0) };
+    } else if (event.kind === "error") {
+      throw new DashboardApiError(502, "designer_build_failed", typeof event.message === "string" ? event.message : "The build failed partway.");
+    }
+  };
+  for (;;) {
+    const { done: finished, value } = await reader.read();
+    if (finished) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline: number;
+    while ((newline = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line) handleLine(line);
+    }
+  }
+  const rest = buffer.trim();
+  if (rest) handleLine(rest);
+  if (!done) throw new DashboardApiError(502, "designer_stream_failed", "The build stream ended early. Finished pages are saved.");
+  return done;
 }
 
 /** Publish every drafted storefront page after the tenant domain is ready. The

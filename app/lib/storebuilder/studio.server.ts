@@ -384,9 +384,25 @@ async function shopOrgSlug(shopId: string): Promise<string | null> {
   return typeof data?.org_slug === "string" && data.org_slug ? data.org_slug : null;
 }
 
+/** Whether the designer engine (Labs) has built this shop's document set.
+ *  Fail-soft: a missing flag only re-shows the first-build mode choice. */
+async function designerDocumentsReady(shopId: string): Promise<boolean> {
+  if (!UUID_RE.test(shopId)) return false;
+  const { data, error } = await getSupabase()
+    .from("designer_documents")
+    .select("route")
+    .eq("shop_id", shopId)
+    .limit(1);
+  if (error) {
+    console.error("[studio] designer documents lookup failed", { shopId, error: error.message });
+    return false;
+  }
+  return (data ?? []).length > 0;
+}
+
 export async function loadStudioState(shopId: string): Promise<StudioState> {
   const catalog = getCatalog();
-  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug, experiment, release, policies] =
+  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug, experiment, release, policies, designerReady] =
     await Promise.all([
       getStoreSettings(shopId),
       loadDraftDoc(shopId, "home"),
@@ -406,6 +422,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
             publishedRuntimeVersion: null,
           }),
       UUID_RE.test(shopId) ? loadStorefrontPolicies(shopId) : Promise.resolve([]),
+      designerDocumentsReady(shopId),
     ]);
 
   const doc = draft ?? published;
@@ -442,6 +459,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     },
     generation,
     orgSlug,
+    designerReady,
     sections: doc ? sectionsFromDoc(doc) : [],
     policies,
     // The public storefront resolves tenants by Host, so on the dashboard

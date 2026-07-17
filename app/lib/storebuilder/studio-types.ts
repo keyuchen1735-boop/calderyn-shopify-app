@@ -168,6 +168,9 @@ export interface StudioState {
   sections: StudioSection[];
   /** Persisted merchant policies. Sparse by design: no fabricated legal copy. */
   policies: StudioPolicy[];
+  /** True once the designer engine (Labs) has built this shop's documents —
+   *  the Store chat shows first-build mode choices until then. */
+  designerReady?: boolean;
 }
 
 /** Merchant-facing design-model choice for a generation run. The client only
