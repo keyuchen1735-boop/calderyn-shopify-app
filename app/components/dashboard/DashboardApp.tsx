@@ -1557,7 +1557,18 @@ export default function DashboardApp({
           >
             <span style={{ position: "relative", display: "inline-flex" }}>
               <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-              {item.id === "storefront" && designerBusy && <span className="cd-nav-busy" aria-label="Store build running" />}
+              {item.id === "storefront" && designerBusy && (
+                <svg className="cd-nav-busy" viewBox="0 0 32 32" fill="none" role="img" aria-label="Store build running">
+                  <path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z" fill="var(--accent)" />
+                  <path
+                    d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
+                    stroke="var(--on-accent)"
+                    strokeWidth="3.6"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
             </span>
             <span className="cd-sidebar-copy">{item.label}</span>
             <CDIcon name="chevronDown" size={15} strokeWidth={2} className="cd-nav-caret" />
@@ -1593,7 +1604,18 @@ export default function DashboardApp({
       >
         <span style={{ position: "relative", display: "inline-flex" }}>
               <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-              {item.id === "storefront" && designerBusy && <span className="cd-nav-busy" aria-label="Store build running" />}
+              {item.id === "storefront" && designerBusy && (
+                <svg className="cd-nav-busy" viewBox="0 0 32 32" fill="none" role="img" aria-label="Store build running">
+                  <path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z" fill="var(--accent)" />
+                  <path
+                    d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
+                    stroke="var(--on-accent)"
+                    strokeWidth="3.6"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
             </span>
         <span className="cd-sidebar-copy">{item.label}</span>
         {item.id === "alerts" && openCount > 0 && (
@@ -1822,7 +1844,18 @@ export default function DashboardApp({
                     >
                       <span style={{ position: "relative", display: "inline-flex" }}>
               <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
-              {item.id === "storefront" && designerBusy && <span className="cd-nav-busy" aria-label="Store build running" />}
+              {item.id === "storefront" && designerBusy && (
+                <svg className="cd-nav-busy" viewBox="0 0 32 32" fill="none" role="img" aria-label="Store build running">
+                  <path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z" fill="var(--accent)" />
+                  <path
+                    d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
+                    stroke="var(--on-accent)"
+                    strokeWidth="3.6"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
             </span>
                       <span>{item.label}</span>
                     </button>
