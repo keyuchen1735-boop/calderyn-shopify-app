@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CDIcon } from "./icons";
 import { Btn } from "./ui";
+import { throwIfVersionSkew } from "~/lib/dashboard/version-skew";
 import type { DashboardCtx } from "./context";
 
 const MAX_FILES = 3;
@@ -91,6 +92,7 @@ export default function BugReportButton({
         credentials: "same-origin",
         body: fd,
       });
+      throwIfVersionSkew(res);
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
         throw new Error(body.message ?? body.error ?? "Could not send the report.");
