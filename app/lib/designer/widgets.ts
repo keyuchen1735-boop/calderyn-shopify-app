@@ -96,3 +96,61 @@ export function expandCouponWidget(html: string, opts: { preview: boolean }): { 
 export function hasCouponWidget(html: string): boolean {
   return MARKER_RE.test(html);
 }
+
+// ── Cart drawer (live pages only) ────────────────────────────────────────────
+// Runtime chrome, not model-authored design: every published designer page
+// gets a slide-in cart with line items, subtotal, an optional free-shipping
+// progress meter, and a checkout button. The model can power the meter by
+// declaring data-designer-free-shipping="120" (whole dollars) on its
+// announcement bar; without it the meter simply doesn't render.
+
+export const CART_DRAWER_CSS = `
+.cd-drawer-backdrop{position:fixed;inset:0;background:rgba(15,15,15,.45);display:none;z-index:9998}
+.cd-drawer-backdrop[data-open="1"]{display:block}
+.cd-drawer{position:fixed;top:0;right:0;bottom:0;width:min(400px,92vw);background:var(--paper,#fff);color:var(--forest,#1a1a1a);z-index:9999;transform:translateX(105%);transition:transform .28s ease;display:flex;flex-direction:column;box-shadow:-18px 0 48px rgba(0,0,0,.22);font-family:var(--font-body,inherit)}
+.cd-drawer[data-open="1"]{transform:none}
+.cd-drawer-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--line,#e2e2e2)}
+.cd-drawer-head b{font-family:var(--font-display,inherit);font-size:1.05rem}
+.cd-drawer-close{background:none;border:none;font-size:22px;cursor:pointer;color:inherit;opacity:.6}
+.cd-drawer-meter{padding:12px 20px;border-bottom:1px solid var(--line,#e2e2e2);font-size:.85rem}
+.cd-drawer-meter-track{height:5px;background:var(--line,#e6e6e6);border-radius:3px;margin-top:8px;overflow:hidden}
+.cd-drawer-meter-track i{display:block;height:100%;width:0;background:var(--signal,var(--acid,#c2551f));transition:width .3s ease}
+.cd-drawer-lines{flex:1;overflow:auto;padding:8px 20px}
+.cd-drawer-line{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line,#eee);font-size:.92rem}
+.cd-drawer-line span:last-child{font-weight:600;white-space:nowrap}
+.cd-drawer-empty{padding:28px 0;text-align:center;opacity:.65;font-size:.92rem}
+.cd-drawer-foot{padding:16px 20px;border-top:1px solid var(--line,#e2e2e2)}
+.cd-drawer-sub{display:flex;justify-content:space-between;font-weight:600;margin-bottom:12px}
+.cd-drawer-checkout{display:block;width:100%;text-align:center;padding:14px;border:none;border-radius:8px;background:var(--signal,var(--acid,#1a1a1a));color:#fff;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
+.cd-drawer-view{display:block;text-align:center;margin-top:10px;font-size:.85rem;color:inherit;opacity:.75}
+`;
+
+export const CART_DRAWER_MARKUP = `<div class="cd-drawer-backdrop" data-cd-drawer-backdrop></div>
+<aside class="cd-drawer" data-cd-drawer aria-label="Cart">
+  <div class="cd-drawer-head"><b>Your cart</b><button class="cd-drawer-close" type="button" data-cd-drawer-close aria-label="Close">&times;</button></div>
+  <div class="cd-drawer-meter" data-cd-drawer-meter hidden><span data-cd-meter-text></span><span class="cd-drawer-meter-track"><i data-cd-meter-bar></i></span></div>
+  <div class="cd-drawer-lines" data-cd-drawer-lines><div class="cd-drawer-empty">Your cart is empty.</div></div>
+  <div class="cd-drawer-foot">
+    <div class="cd-drawer-sub"><span>Subtotal</span><span data-cd-drawer-subtotal>$0.00</span></div>
+    <a class="cd-drawer-checkout" href="/storefront/checkout">Checkout</a>
+    <a class="cd-drawer-view" href="/storefront/cart">View full cart</a>
+  </div>
+</aside>`;
+
+/** Live behavior: add-to-cart opens the drawer instead of navigating; the
+ *  drawer reads /storefront/api/cart and renders lines + subtotal + meter. */
+export const CART_DRAWER_SCRIPT = `(function(){var drawer=document.querySelector("[data-cd-drawer]");var backdrop=document.querySelector("[data-cd-drawer-backdrop]");if(!drawer||!backdrop)return;
+var thresholdEl=document.querySelector("[data-designer-free-shipping]");var threshold=thresholdEl?parseFloat(thresholdEl.getAttribute("data-designer-free-shipping"))*100:0;
+function money(c){return "$"+(c/100).toFixed(2)}
+function render(cart){var lines=drawer.querySelector("[data-cd-drawer-lines]");var sub=drawer.querySelector("[data-cd-drawer-subtotal]");var meter=drawer.querySelector("[data-cd-drawer-meter]");
+if(!cart||!cart.lines||cart.lines.length===0){lines.innerHTML='<div class="cd-drawer-empty">Your cart is empty.</div>';sub.textContent="$0.00";if(meter)meter.hidden=true;return}
+lines.innerHTML=cart.lines.map(function(l){return '<div class="cd-drawer-line"><span>'+String(l.titleSnapshot||"Item").replace(/[<>&]/g,"")+" × "+l.quantity+'</span><span>'+money(l.unitPriceCents*l.quantity)+"</span></div>"}).join("");
+sub.textContent=money(cart.subtotalCents||0);
+if(meter&&threshold>0){meter.hidden=false;var left=Math.max(0,threshold-(cart.subtotalCents||0));var text=meter.querySelector("[data-cd-meter-text]");var bar=meter.querySelector("[data-cd-meter-bar]");if(text)text.textContent=left>0?("You're "+money(left)+" away from free shipping"):"You've unlocked free shipping";if(bar)bar.style.width=Math.min(100,Math.round(((cart.subtotalCents||0)/threshold)*100))+"%"}}
+function refresh(){return fetch("/storefront/api/cart",{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null}).then(function(d){render(d&&d.cart)}).catch(function(){})}
+function open(){drawer.setAttribute("data-open","1");backdrop.setAttribute("data-open","1");refresh()}
+function close(){drawer.removeAttribute("data-open");backdrop.removeAttribute("data-open")}
+backdrop.addEventListener("click",close);var x=drawer.querySelector("[data-cd-drawer-close]");if(x)x.addEventListener("click",close);
+document.addEventListener("click",function(e){var b=e.target&&e.target.closest?e.target.closest(".designer-add-to-cart"):null;if(!b)return;e.preventDefault();var v=b.getAttribute("data-variant-id");if(!v){open();return}
+b.disabled=true;fetch("/storefront/api/cart/add",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify({variantId:v,quantity:1})}).then(function(r){if(r.ok)open();else location.href="/storefront/cart"}).finally(function(){b.disabled=false})});
+})();`;

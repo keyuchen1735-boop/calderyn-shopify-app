@@ -14,6 +14,7 @@ import type { StudioDesignModel } from "../storebuilder/studio-types";
 import { convertTemplateToDocuments, DESIGNER_ROUTES } from "./convert.server";
 import { artDirectionFor, scratchSeedFiles, type ArtDirection } from "./direction.server";
 import { generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
+import { applyAssetOverrides, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
 import { applyDesignerEdits, parseDesignerReply, type DesignerEdit } from "./edits";
 import { scrubDesignerCss, scrubDesignerHtml } from "./render.server";
 import type { DesignerReply, DesignerRoute, DesignerStoreData } from "./types";
@@ -38,7 +39,7 @@ Rules:
 - Files you may edit: base.css (fonts, colors, shared layout) and, for the page being discussed, <route>.html and <route>.css.
 - Placeholders like {{store.name}}, {{product.title}}, {{product.price}}, {{product.image}}, {{product.url}} and the {{#products}}...{{/products}} loop bind live store data; {{asset.hero}} binds this store's generated hero photograph when one exists. Keep them working; never invent new placeholder names.
 - Never add scripts, iframes, forms, event handlers, or references to external URLs. Fonts come only from the @font-face files already in base.css. Images: template art under /storefront-recipes/ and the product placeholders.
-- Conversion widgets are declared, not scripted. To add an email/coupon capture popup, place exactly one marker on the home page (the runtime turns it into a real, dismissible popup and wires the behavior): <div data-designer-widget="coupon" data-code="WELCOME10" data-headline="10 percent off your first order" data-sub="Join the list for early access and member pricing."></div>. Style it by editing base.css variables it inherits; never write its script. An announcement bar is ordinary styled markup you author at the very top of the shell (a thin full-width bar with a shipping-threshold or promo line) — it needs no script.
+- Conversion widgets are declared, not scripted. To add an email/coupon capture popup, place exactly one marker on the home page (the runtime turns it into a real, dismissible popup and wires the behavior): <div data-designer-widget="coupon" data-code="WELCOME10" data-headline="10 percent off your first order" data-sub="Join the list for early access and member pricing."></div>. Style it by editing base.css variables it inherits; never write its script. An announcement bar is ordinary styled markup you author at the very top of the shell (a thin full-width bar with a shipping-threshold or promo line) — it needs no script; when it advertises a free-shipping threshold, also put data-designer-free-shipping="120" (the whole-dollar threshold) on that bar element so the store's cart drawer can show a progress meter toward it.
 - Design taste: one accent color per store, saturation under 80 percent, never pure black or pure white, no AI-purple gradients, no neon glows. Text must stay readable against its background (4.5:1). Headlines short and confident. No dash characters in copy, no exclamation marks, no filler verbs (elevate, unleash, seamless).
 - Conversion, at premium DTC quality (think trenchies.co, gymshark.com):
   - Hero: full-bleed media edge to edge (no boxed image with side margins), roughly 82 to 92vh, ONE committed branded headline that states the promise (never just the store name, never a 5-slide carousel), one subhead clause, ONE high-contrast branded CTA (specific copy like "Shop the drop" or "Get yours", never bare "Shop now"), and a trust triad row of three short signals (quality, origin, speed) near the top.
@@ -47,7 +48,7 @@ Rules:
   - PDP buy area readable without scrolling and visually the heaviest block: title, rating line, price, variant choices as visual swatches and size pills (never a bare dropdown), a full-width add-to-cart, and a reassurance micro-row under it (free shipping, returns, ships fast). Below: a benefits strip, then a trust/proof or reviews block.
   - Home carries a trust/proof row and exactly one coupon-capture popup (the widget marker above).
 - Premium polish, not wireframe: neutral-dominant palette (near-black not pure black, off-white paper, a couple of greys) with the single accent reserved for CTAs and sale prices; generous consistent section padding (about 96 to 128px desktop) on an 8px rhythm; a real type scale with clear jumps between display, heading, and body and negative tracking on big headlines; hairline borders and soft low-opacity shadows tinted to the background; hover and focus states on every interactive element. Avoid the AI tells: no three identical equal feature cards, no centered-everything, no rainbow accent use, no filler stock geometry where a product or lifestyle image belongs.
-- Make the change the merchant asked for, decisively. If they ask for something vague ("make it better"), improve the weakest part and say what you changed.`;
+- The merchant owns this store. When they give a SPECIFIC instruction (exact copy, "change X to Y", a named color or layout), execute it exactly as stated — you may add ONE short sentence noting a concern, but never refuse, water down, or substitute your own wording for theirs. Your creative discretion applies only to vague requests ("make it better"), where you improve the weakest part and say what you changed.`;
 
 const REVIEW_PROMPT = `You audit one storefront page's HTML/CSS for launch readiness. Look ONLY for concrete defects: interactive elements left with default browser styling (bare buttons, blue underlined links), raw unstyled lists or tables, leftover template copy that contradicts this store, stray empty-state or filter text rendering where it shouldn't, unreadable text against its background, a primary call to action with no hover or focus treatment, broken or empty href/src, and product listings rendered as one-per-row full-width bands instead of a scannable multi-column grid (the {{#products}} loop repeats per product — its item must be a grid cell, not a page section). If the page is clean reply with exactly OK and nothing else. Otherwise reply ONLY with edit blocks in this format (SEARCH copied character-for-character; * replaces a whole file):
 
@@ -116,11 +117,14 @@ async function appendHistory(shopId: string, role: "user" | "assistant", body: s
 }
 
 export async function loadDesignerStoreData(shopId: string): Promise<DesignerStoreData> {
-  const [settings, products, assets] = await Promise.all([
+  const [settings, rawProducts, assets] = await Promise.all([
     getStoreSettings(shopId),
     getCatalog().listProducts(shopId, { limit: 12 }),
     loadDesignerAssets(shopId),
   ]);
+  // Generated product photography (store_asset rows) fills gaps where the
+  // merchant hasn't uploaded imagery — same overrides the runtime applies.
+  const products = await applyAssetOverrides(shopId, rawProducts).catch(() => rawProducts);
   return {
     storeName: settings.storeName,
     tagline: settings.voiceTagline,
@@ -349,8 +353,18 @@ export async function designerFirstBuild(input: {
   onEvent?: (event: DesignerBuildEvent) => void;
 }): Promise<DesignerReply> {
   const mode: DesignerBuildMode = input.mode === "scratch" ? "scratch" : "template";
-  const data = await loadDesignerStoreData(input.shopId);
   const direction = artDirectionFor(input.shopId);
+
+  // Product photography first: fill catalog gaps (products with no image)
+  // through the same generated-asset pipeline, capped per build. Fail-soft —
+  // then load store data so the pages are designed against the real visuals.
+  try {
+    const catalogProducts = await getCatalog().listProducts(input.shopId, { limit: 12 });
+    await generateMissingListingImages(input.shopId, catalogProducts, undefined, input.signal, 6);
+  } catch (err) {
+    console.error("[designer] product image generation skipped", err);
+  }
+  const data = await loadDesignerStoreData(input.shopId);
 
   let templateId: string;
   let files: Record<string, string>;
@@ -433,12 +447,30 @@ export async function designerTurn(input: {
   }
 
   const history = await loadHistory(input.shopId);
+
+  // Chat-requested imagery: "generate a banner image for the sale" produces a
+  // real photograph first, then the edit turn places it via its placeholder.
+  let userMessage = input.message;
+  if (/\b(generate|create|make|add)\b[^.!?]{0,80}\b(photo|photograph|image|picture|banner|visual|imagery)\b/i.test(input.message)) {
+    const key = `img-${Date.now().toString(36)}`;
+    const url = await generateDesignerAsset({
+      shopId: input.shopId,
+      key,
+      prompt: `Photorealistic commercial photograph for an online store. Request: ${input.message.slice(0, 400)}. Store: ${data.storeName}. Editorial lighting, no text, no logos, no watermarks.`,
+      signal: input.signal,
+    });
+    if (url) {
+      data.assets = { ...(data.assets ?? {}), [key]: url };
+      userMessage = `${input.message}\n\n(A new photograph was just generated for this request. Place it with the placeholder {{asset.${key}}} as an image src where it belongs.)`;
+    }
+  }
+
   const turn = await runEditTurn({
     shopId: input.shopId,
     files: documents.files,
     templateId: documents.templateId,
     route,
-    userMessage: input.message,
+    userMessage,
     history,
     data,
     model: input.model,
