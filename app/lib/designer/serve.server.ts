@@ -110,9 +110,11 @@ export async function resolveDesignerPublicPage(
   // script has something real to add. Server-owned post-processing.
   let bodyHtml = rendered.bodyHtml;
   if (data.contextVariantId) {
+    // Match the class TOKEN, not the exact attribute — the model often adds
+    // its own classes alongside (class="designer-add-to-cart pdp-add").
     bodyHtml = bodyHtml.replace(
-      /class="designer-add-to-cart"/g,
-      `class="designer-add-to-cart" data-variant-id="${data.contextVariantId}"`,
+      /class="([^"]*\bdesigner-add-to-cart\b[^"]*)"/g,
+      `class="$1" data-variant-id="${data.contextVariantId}"`,
     );
   }
   // The cart drawer is always live chrome; the coupon widget's behavior only
