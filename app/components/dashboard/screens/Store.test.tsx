@@ -108,6 +108,27 @@ afterEach(() => {
 });
 
 describe("Store command orchestration", () => {
+  it("keeps desktop preview at a desktop layout width inside a narrow stage", async () => {
+    vi.stubGlobal("ResizeObserver", class {
+      private readonly callback: ResizeObserverCallback;
+      constructor(callback: ResizeObserverCallback) { this.callback = callback; }
+      observe(target: Element) {
+        Object.defineProperty(target, "clientWidth", { configurable: true, value: 680 });
+        this.callback([{ target } as ResizeObserverEntry], this as unknown as ResizeObserver);
+      }
+      disconnect() {}
+    });
+
+    const { host, root } = await renderStore();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    const preview = host.querySelector<HTMLIFrameElement>('iframe[title="Store preview"]')!;
+
+    expect(preview.style.width).toBe("150.58823529411765%");
+    expect(preview.style.transform).toBe("scale(0.6640625)");
+    await act(async () => root.unmount());
+    vi.unstubAllGlobals();
+  });
+
   it("maps page selections to runtime preview routes", async () => {
     const { host, root } = await renderStore();
     const previewParams = () => new URL(host.querySelector<HTMLIFrameElement>('iframe[title="Store preview"]')!.src)

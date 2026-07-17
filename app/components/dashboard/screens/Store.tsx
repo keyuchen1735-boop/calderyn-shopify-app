@@ -42,6 +42,7 @@ import type { ChatMsg } from "../store/chat-types";
 import type { PageKey } from "~/lib/storebuilder/types";
 
 const PREVIEW_PATH = "/dashboard/store/preview";
+const DESKTOP_PREVIEW_WIDTH = 1_024;
 const MERCHANT_STAGES = new Set<MerchantStage>(["understanding", "preparing_products", "checking_preview"]);
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -137,7 +138,21 @@ function ClassicStore({ app }: { app: DashboardCtx }) {
   useEffect(() => () => commandControllerRef.current?.abort(), []);
 
   const [previewVersion, setPreviewVersion] = useState(0);
+  const [desktopPreviewScale, setDesktopPreviewScale] = useState(1);
+  const previewWrapRef = useRef<HTMLDivElement>(null);
   const reloadPreview = useCallback(() => setPreviewVersion((version) => version + 1), []);
+
+  useEffect(() => {
+    const wrap = previewWrapRef.current;
+    if (!wrap || typeof ResizeObserver === "undefined") return;
+    const resize = () => {
+      if (wrap.clientWidth > 0) setDesktopPreviewScale(Math.min(1, wrap.clientWidth / DESKTOP_PREVIEW_WIDTH));
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(wrap);
+    resize();
+    return () => observer.disconnect();
+  }, [data]);
   const [page, setPage] = useState<PageKey>("home");
   const [device, setDevice] = useState<Device>("desktop");
   const badgeRef = useRef<HTMLSpanElement>(null);
@@ -492,13 +507,20 @@ function ClassicStore({ app }: { app: DashboardCtx }) {
                 canPublish={data.release.draftVersionId != null}
               />
               <div className="cd-stage-page">
-                <div className="cd-canvas-frame-wrap" data-device={device}>
+                <div ref={previewWrapRef} className="cd-canvas-frame-wrap" data-device={device}>
                   <iframe
                     key="store-preview"
                     className="cd-canvas-frame"
                     title="Store preview"
                     src={previewSrc}
                     sandbox="allow-same-origin allow-scripts allow-popups"
+                    style={device === "desktop" && desktopPreviewScale < 1 ? {
+                      width: `${100 / desktopPreviewScale}%`,
+                      height: `${100 / desktopPreviewScale}%`,
+                      flex: "none",
+                      transform: `scale(${desktopPreviewScale})`,
+                      transformOrigin: "top left",
+                    } : undefined}
                   />
                   <div className="cd-canvas-veil" data-on={building ? "1" : "0"} aria-hidden="true">
                     <div className="cd-canvas-skel" style={{ ["--cd-skel" as string]: data.settings.accent }}>

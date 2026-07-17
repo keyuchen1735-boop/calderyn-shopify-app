@@ -253,4 +253,23 @@ describe("storefront bundle release repository", () => {
       p_validation_json: expect.objectContaining({ valid: true }),
     }));
   });
+
+  it("accepts a timed-out edit when the requested draft version committed", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "upstream request timeout" } });
+    versionResult.current = { data: { draft_version_id: VERSION }, error: null };
+
+    await expect(editStorefrontDraft({
+      shopId: SHOP,
+      resultVersionId: VERSION,
+      baseVersionId: BASE,
+      expectedDraftVersionId: BASE,
+      baseArtifactHash: "sha256:base",
+      resultArtifactHash: "sha256:result",
+      prompt: "Switch design",
+      scope: { operation: "select_design" },
+      patch: { operation: "select_design" },
+      provider: { kind: "bounded_classification" },
+      validation: { valid: true },
+    })).resolves.toBe(VERSION);
+  });
 });

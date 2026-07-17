@@ -201,14 +201,27 @@ export async function editStorefrontDraft(input: EditStorefrontDraftInput): Prom
   requireUuid(input.baseVersionId, "baseVersionId");
   requireUuid(input.resultVersionId, "resultVersionId");
   throwIfReleaseAborted(input.signal);
-  return writeRpc<string>("edit_storefront_draft", {
-    p_shop_id: input.shopId,
-    p_base_version_id: input.baseVersionId,
-    p_result_version_id: input.resultVersionId,
-    p_expected_draft_version_id: input.expectedDraftVersionId,
-    p_actor_id: input.actorId ?? null,
-    ...editAuditRpcParams(input),
-  }, "storefront_edit_failed");
+  try {
+    return await writeRpc<string>("edit_storefront_draft", {
+      p_shop_id: input.shopId,
+      p_base_version_id: input.baseVersionId,
+      p_result_version_id: input.resultVersionId,
+      p_expected_draft_version_id: input.expectedDraftVersionId,
+      p_actor_id: input.actorId ?? null,
+      ...editAuditRpcParams(input),
+    }, "storefront_edit_failed");
+  } catch (error) {
+    if (!(error instanceof StorefrontReleaseError)
+      || error.code !== "storefront_edit_failed"
+      || error.message !== "upstream request timeout") throw error;
+    const release = await getSupabase()
+      .from("storefront_release")
+      .select("draft_version_id")
+      .eq("shop_id", input.shopId)
+      .maybeSingle();
+    if (!release.error && release.data?.draft_version_id === input.resultVersionId) return input.resultVersionId;
+    throw error;
+  }
 }
 
 export interface PublishStorefrontReleaseInput {
