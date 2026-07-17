@@ -81,6 +81,9 @@ export async function editStudioStorefrontStream(
     if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
     throw new StudioStreamError(error instanceof Error ? error.message : "edit stream request failed");
   }
+  // A 401 means the session lapsed; recover the same way every other dashboard
+  // call does instead of surfacing a dead-end error in the chat.
+  if (response.status === 401) redirectToLogin();
   throwIfVersionSkew(response);
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
@@ -429,6 +432,9 @@ export async function buildStudioStoreStream(
     if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
     throw new StudioStreamError(err instanceof Error ? err.message : "stream request failed");
   }
+  // A 401 means the session lapsed; recover the same way every other dashboard
+  // call does instead of surfacing a dead-end error in the chat.
+  if (res.status === 401) redirectToLogin();
   throwIfVersionSkew(res);
   if (!res.ok) {
     let code = "storefront_build_failed";
