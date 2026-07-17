@@ -2232,11 +2232,11 @@
 .cd-ap-stream-static .cd-apq-grp + .cd-ap-stream-static-row { border-top: 0; }
 @media (prefers-reduced-motion: no-preference) {
   @keyframes cd-ap-stream-enter {
-    0% { opacity: 0; transform: translate3d(240px, -96px, 0) rotate(6deg) scale(0.72); }
-    58% { opacity: 1; transform: translate3d(-10px, 5px, 0) rotate(-1deg) scale(1.035); }
+    0% { opacity: 0; transform: translate3d(112px, -48px, 0) rotate(2deg) scale(0.96); }
+    72% { opacity: 1; transform: translate3d(4px, -2px, 0) rotate(0.15deg) scale(0.995); }
     100% { opacity: 1; transform: none; }
   }
-  .cd-ap-stream-row[data-entering="1"] { animation: cd-ap-stream-enter 0.78s cubic-bezier(0.16, 1.22, 0.32, 1) both; transform-origin: 100% 0; }
+  .cd-ap-stream-row[data-entering="1"] { animation: cd-ap-stream-enter 0.52s cubic-bezier(0.22, 1, 0.36, 1) both; transform-origin: 100% 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .cd-ap-stream-row { animation: none; transition: none; }
