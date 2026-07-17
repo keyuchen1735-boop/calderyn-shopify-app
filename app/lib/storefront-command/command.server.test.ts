@@ -9,6 +9,8 @@ import { StorefrontReleaseError } from "../storefront-bundle/release.server";
 import { storefrontProofContext } from "../storefront-validation/fixtures";
 import { proveStorefrontBundle } from "../storefront-validation/browser.server";
 import { launchChromium } from "../browser/chromium.server";
+import { assembleStorefrontContextWithReferences, type StorefrontContextSource } from "../storefront-ai/context.server";
+import { classifyStoreIntent, type StoreIntentProvider } from "./intent.server";
 import type { StoreCommand, StoreCommandEvent, StoreCommandReceipt, StoreIntent } from "./types";
 import {
   runStoreCommand,
@@ -42,10 +44,10 @@ const promptCommand = (
 const resolution = {
   kind: "recipe" as const,
   templateId: "custom-bench" as const,
-  templateVersion: 1,
+  templateVersion: 2,
   selectionKind: "niche_match" as const,
   routingVersion: 1,
-  registryVersion: 1,
+  registryVersion: 2,
   catalogFingerprint: "sha256:catalog",
   score: 12,
   runnerUpScore: 0,
@@ -233,24 +235,71 @@ describe("runStoreCommand", () => {
     expect(deps.install).not.toHaveBeenCalled();
   });
 
-  it("passes a bounded fresh-store shader attachment to classification without writing", async () => {
+  it("applies a bounded fresh-store shader after selecting an approved design", async () => {
     const source = "void main(){gl_FragColor=vec4(1.);}";
     const deps = dependencies({
       classify: vi.fn().mockResolvedValue({
-        kind: "update_visual_layer",
-        visualLayer: { kind: "fragment_shader", source, colors: ["#000000", "#ffffff", "#888888"] },
+        kind: "select_design",
+        prompt: "Use this shader",
+        excludedTemplateIds: [],
       }),
+      applyIntent: applyStoreIntent,
     });
     const command = {
       ...promptCommand(null, "Use this shader"),
       attachments: [{ kind: "fragment_shader" as const, source }],
     };
 
-    await expect(runStoreCommand({ shopId: SHOP, command }, deps)).resolves.toMatchObject({ status: "unchanged" });
+    await expect(runStoreCommand({ shopId: SHOP, command }, deps)).resolves.toMatchObject({ status: "installed" });
     expect(deps.classify).toHaveBeenCalledWith(expect.objectContaining({ attachments: command.attachments }));
-    expect(deps.prove).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.prove).mock.calls[0]![0].bundle.visualLayer).toEqual({
+      kind: "fragment_shader",
+      source,
+      colors: ["#000000", "#ffffff", "#888888"],
+    });
+    expect(deps.install).toHaveBeenCalledOnce();
+  });
+
+  it("does not partially apply a compound edit classified as unsupported", async () => {
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      classify: vi.fn().mockResolvedValue({
+        kind: "unsupported",
+        message: "Please make one storefront change at a time.",
+      }),
+    });
+
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: promptCommand(CURRENT, "Change the title and feature the jacket"),
+    }, deps)).resolves.toMatchObject({ status: "unchanged" });
+    expect(deps.applyIntent).not.toHaveBeenCalled();
     expect(deps.createVersion).not.toHaveBeenCalled();
-    expect(deps.install).not.toHaveBeenCalled();
+    expect(deps.edit).not.toHaveBeenCalled();
+  });
+
+  it("keeps a compound edit non-writing through the real classifier boundary", async () => {
+    const provider = vi.fn(async (request: Parameters<StoreIntentProvider>[0]) => {
+      expect(request.system).toContain("requestedOperations");
+      return JSON.stringify({
+        requestedOperations: ["update_text", "update_merchandising"],
+        intent: { kind: "update_text", slot: "heroTitle", value: "Only the first edit" },
+      });
+    });
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      classify: (classificationInput, options) =>
+        classifyStoreIntent(classificationInput, { provider }, options),
+    });
+
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: promptCommand(CURRENT, "Change the title and feature the jacket"),
+    }, deps)).resolves.toMatchObject({ status: "unchanged" });
+    expect(provider).toHaveBeenCalledOnce();
+    expect(deps.applyIntent).not.toHaveBeenCalled();
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.edit).not.toHaveBeenCalled();
   });
 
   it("omits the unreachable product route from fresh zero-product proof", async () => {
@@ -331,6 +380,26 @@ describe("runStoreCommand", () => {
       excludedTemplateIds: ["soft-chemistry", "custom-bench"],
     }));
     expect(Object.keys(deps)).not.toContain("compileStructuralPatch");
+  });
+
+  it("carries explicit exclusions through a non-exact start-over request", async () => {
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      classify: vi.fn().mockResolvedValue({
+        kind: "start_over",
+        prompt: "Start over, but not Soft Chemistry",
+      }),
+    });
+
+    await runStoreCommand({
+      shopId: SHOP,
+      command: promptCommand(CURRENT, "Start over, but not Soft Chemistry"),
+    }, deps);
+
+    expect(deps.resolveDesign).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: "Start over, but not Soft Chemistry",
+      excludedTemplateIds: ["soft-chemistry", "custom-bench"],
+    }), expect.anything());
   });
 
   it.each([
@@ -477,6 +546,51 @@ describe("runStoreCommand", () => {
     });
     expect(vi.mocked(deps.createVersion).mock.calls[0]![0].artifact).toMatchObject({
       bundle: { featuredProductIds: [SECOND_PRODUCT, PRODUCT] },
+    });
+  });
+
+  it("selects the 61st owned product through real context assembly and classification", async () => {
+    const sourceProducts = storefrontProofContext().products.map((product, index) => ({
+      ...product,
+      id: `owned-product-${String(index + 1).padStart(3, "0")}`,
+      title: `Catalog Product ${index + 1}`,
+      collectionIds: [],
+    }));
+    const target = sourceProducts[60]!;
+    const source: StorefrontContextSource = {
+      getStore: async () => ({ name: "Store", logoAssetKey: null, publicBrandAssetKeys: [] }),
+      listCollections: async () => [],
+      listProducts: async (_shopId, limit) => sourceProducts.slice(0, limit),
+      listReusableAssets: async () => [],
+    };
+    let providerInput = "";
+    const provider = vi.fn(async (request: { prompt: string }) => {
+      providerInput = request.prompt;
+      return JSON.stringify({
+        requestedOperations: ["update_merchandising"],
+        intent: { kind: "update_merchandising", productIds: ["product-061"] },
+      });
+    });
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      loadContext: (input) => assembleStorefrontContextWithReferences(input, source),
+      classify: (input, options) => classifyStoreIntent(input, { provider }, options),
+      applyIntent: applyStoreIntent,
+    });
+
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: promptCommand(CURRENT, "Feature Catalog Product 61"),
+    }, deps)).resolves.toMatchObject({ status: "installed" });
+
+    const candidates = (JSON.parse(providerInput) as {
+      productCandidates: Array<{ id: string; title: string }>;
+    }).productCandidates;
+    expect(candidates).toHaveLength(61);
+    expect(candidates[60]).toEqual({ id: "product-061", title: target.title });
+    expect(providerInput).not.toContain("owned-product-");
+    expect(vi.mocked(deps.createVersion).mock.calls[0]![0].artifact).toMatchObject({
+      bundle: { featuredProductIds: [target.id] },
     });
   });
 
@@ -975,7 +1089,7 @@ describe("runStoreCommand", () => {
     }],
     ["template version", (bundle: typeof CUSTOM_BENCH_BUNDLE) => {
       if (bundle.source.kind !== "recipe") throw new Error("recipe fixture required");
-      bundle.source.templateVersion = 2;
+      bundle.source.templateVersion = 3;
     }],
     ["source kind", (bundle: typeof CUSTOM_BENCH_BUNDLE) => {
       bundle.source = { kind: "custom", generationId: "mismatch", promptHash: "sha256:mismatch" };

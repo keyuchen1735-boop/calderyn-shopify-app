@@ -97,7 +97,15 @@ export function shouldWriteStorefrontPreview(
   viewport: StorefrontProofViewportName,
   artifacts?: StorefrontProofArtifacts,
 ): boolean {
-  return routeId === "home" && viewport === "desktop" && Boolean(artifacts?.previewFile && artifacts.updateBaselines);
+  return shouldVerifyStorefrontPreview(routeId, viewport, artifacts) && Boolean(artifacts?.updateBaselines);
+}
+
+export function shouldVerifyStorefrontPreview(
+  routeId: StorefrontRouteId,
+  viewport: StorefrontProofViewportName,
+  artifacts?: StorefrontProofArtifacts,
+): boolean {
+  return routeId === "home" && viewport === "desktop" && Boolean(artifacts?.previewFile);
 }
 
 export interface ProveStorefrontBundleResult extends StorefrontBrowserProofReport {
@@ -999,8 +1007,8 @@ async function auditPage(
   };
 }
 
-async function pixelDiffRatio(page: Page, current: Buffer, baseline: Buffer): Promise<number> {
-  return page.evaluate(async ({ currentUrl, baselineUrl }) => {
+async function pixelDiffRatio(page: Page, current: Buffer, baseline: Buffer, channelTolerance = 8): Promise<number> {
+  return page.evaluate(async ({ currentUrl, baselineUrl, tolerance }) => {
     const pixels = async (url: string) => {
       const image = new Image();
       image.src = url;
@@ -1016,15 +1024,16 @@ async function pixelDiffRatio(page: Page, current: Buffer, baseline: Buffer): Pr
     if (left.width !== right.width || left.height !== right.height) return 1;
     let changed = 0;
     for (let index = 0; index < left.data.length; index += 4) {
-      if (Math.abs(left.data[index] - right.data[index]) > 8 ||
-          Math.abs(left.data[index + 1] - right.data[index + 1]) > 8 ||
-          Math.abs(left.data[index + 2] - right.data[index + 2]) > 8 ||
-          Math.abs(left.data[index + 3] - right.data[index + 3]) > 8) changed += 1;
+      if (Math.abs(left.data[index] - right.data[index]) > tolerance ||
+          Math.abs(left.data[index + 1] - right.data[index + 1]) > tolerance ||
+          Math.abs(left.data[index + 2] - right.data[index + 2]) > tolerance ||
+          Math.abs(left.data[index + 3] - right.data[index + 3]) > tolerance) changed += 1;
     }
     return changed / (left.width * left.height);
   }, {
     currentUrl: `data:image/webp;base64,${current.toString("base64")}`,
     baselineUrl: `data:image/webp;base64,${baseline.toString("base64")}`,
+    tolerance: channelTolerance,
   });
 }
 
@@ -1155,6 +1164,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
   try {
     for (const [caseIndex, proofCase] of proofCases.entries()) {
       assertActive();
+      const caseDiagnosticStart = diagnostics.length;
       const { routeId, viewport, catalogOffset } = proofCase;
       currentUnexpected = [];
       currentConsole = [];
@@ -1226,6 +1236,39 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
         proofData: data,
       });
       assertActive();
+      let previewImage: Buffer | undefined;
+      if (shouldVerifyStorefrontPreview(routeId, viewport.name, input.artifacts)) {
+        await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 1 });
+        await page.evaluate(() => new Promise((resolveFrame) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+        previewImage = Buffer.from(await page.screenshot({ type: "webp", quality: 90, fullPage: false }));
+        if (!shouldWriteStorefrontPreview(routeId, viewport.name, input.artifacts)) {
+          try {
+            const diff = await pixelDiffRatio(page, previewImage, await readFile(input.artifacts!.previewFile!), 0);
+            if (diff > 0) addDiagnostic(
+              diagnostics,
+              routeId,
+              viewport.name,
+              "visual.preview-regression",
+              `Template preview differs across ${(diff * 100).toFixed(3)}% of pixels`,
+              { preview: input.artifacts!.previewFile!, ratio: diff },
+            );
+          } catch (error) {
+            addDiagnostic(
+              diagnostics,
+              routeId,
+              viewport.name,
+              "visual.preview-missing",
+              error instanceof Error ? error.message : String(error),
+              { preview: input.artifacts!.previewFile! },
+            );
+          }
+        }
+        await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
+        await page.evaluate(() => new Promise((resolveFrame) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+      }
+      const image = Buffer.from(await page.screenshot({ type: "webp", quality: 90, fullPage: false }));
       const commerceExerciseFailures = await page.evaluate(async (activeRoute) => {
         const failures: string[] = [];
         if (activeRoute === "checkout") {
@@ -1369,12 +1412,6 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       requestFailures.push(...currentFailures);
       consoleErrors.push(...currentConsole);
 
-      // Keep the visual artifact sequence stable; the deterministic keyboard
-      // entry assertion runs after screenshots so proof focus does not become
-      // a visual regression.
-      await page.keyboard.press("Tab");
-      await page.evaluate(() => scrollTo(0, 0));
-      const image = Buffer.from(await page.screenshot({ type: "webp", quality: 90, fullPage: false }));
       assertActive();
       const sha256 = createHash("sha256").update(image).digest("hex");
       const screenshotRef = `sha256:${sha256}`;
@@ -1395,7 +1432,16 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
         );
         manifestEntry.baseline = baseline;
         await mkdir(input.artifacts.baselineDirectory, { recursive: true });
-        if (input.artifacts.updateBaselines) await writeFile(baseline, image);
+        if (input.artifacts.updateBaselines) {
+          if (diagnostics.length > caseDiagnosticStart) {
+            throw new Error(`Refusing to capture a failing storefront case: ${routeId}@${viewport.name}`);
+          }
+          await writeFile(baseline, image, { flag: "wx" });
+          if (previewImage && input.artifacts.previewFile) {
+            await mkdir(resolve(input.artifacts.previewFile, ".."), { recursive: true });
+            await writeFile(input.artifacts.previewFile, previewImage);
+          }
+        }
         else {
           try {
             const diff = await pixelDiffRatio(page, image, await readFile(baseline));
@@ -1407,13 +1453,6 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
         }
       }
       screenshotManifest.push(manifestEntry);
-
-      if (shouldWriteStorefrontPreview(routeId, viewport.name, input.artifacts)) {
-        await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 1 });
-        await mkdir(resolve(input.artifacts!.previewFile!, ".."), { recursive: true });
-        await writeFile(input.artifacts!.previewFile!, Buffer.from(await page.screenshot({ type: "webp", quality: 90, fullPage: false })));
-        await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
-      }
 
       // Commerce exercise intentionally clicks every trusted control. Reset
       // that synthetic pointer focus before proving keyboard entry; otherwise

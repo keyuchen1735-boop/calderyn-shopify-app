@@ -33,7 +33,7 @@ import {
   type PublishStorefrontReleaseInput,
 } from "~/lib/storefront-bundle/release.server";
 import { buildCatalogRoutingEvidence } from "~/lib/storefront-bundle/routing-evidence.server";
-import { resolveStoreDesign } from "~/lib/storefront-bundle/routing";
+import { explicitStoreTemplateExclusions, resolveStoreDesign } from "~/lib/storefront-bundle/routing";
 import type {
   CatalogRoutingEvidence,
   StoreDesignRequest,
@@ -354,6 +354,13 @@ function designReferenceRefs(attachments?: readonly StoreAttachment[]): string[]
     .map(({ assetRef }) => assetRef);
 }
 
+const ATTACHED_SHADER_COLORS: [string, string, string] = ["#000000", "#ffffff", "#888888"];
+
+function attachedShader(attachments?: readonly StoreAttachment[]): Extract<StoreAttachment, { kind: "fragment_shader" }> | null {
+  return attachments?.find((attachment): attachment is Extract<StoreAttachment, { kind: "fragment_shader" }> =>
+    attachment.kind === "fragment_shader") ?? null;
+}
+
 function unchanged(message: string): StoreCommandReceipt {
   return { status: "unchanged", message };
 }
@@ -610,7 +617,11 @@ export async function runStoreCommand(
       if (intent.kind === "select_design" || intent.kind === "start_over") {
         const selectedExclusions = intent.kind === "select_design"
           ? intent.excludedTemplateIds
-          : uniqueTemplateIds([...priorExclusions, ...(currentTemplateId ? [currentTemplateId] : [])]);
+          : uniqueTemplateIds([
+            ...priorExclusions,
+            ...(currentTemplateId ? [currentTemplateId] : []),
+            ...explicitStoreTemplateExclusions(input.command.prompt, STORE_TEMPLATE_REGISTRY),
+          ]);
         const evidence = await dependencies.buildEvidence(input.shopId);
         designResolution = dependencies.resolveDesign({
           prompt: intent.prompt,
@@ -649,6 +660,18 @@ export async function runStoreCommand(
           return ready(input, unchanged("That request did not change the storefront."));
         }
       }
+    }
+
+    const shader = attachedShader(input.command.attachments);
+    if (shader && designResolution?.kind === "recipe") {
+      nextBundle = dependencies.applyIntent(
+        nextBundle,
+        getStoreTemplate(designResolution.templateId),
+        {
+          kind: "update_visual_layer",
+          visualLayer: { kind: "fragment_shader", source: shader.source, colors: ATTACHED_SHADER_COLORS },
+        },
+      ).bundle;
     }
 
     await emit(input, { stage: "preparing_products" });

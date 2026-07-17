@@ -37,7 +37,7 @@ describe("Atelier Grid recipe contract", () => {
 
   it("compiles the approved asymmetric editorial identity through validation profile v1", () => {
     expect(ATELIER_GRID_RECIPE.report).toMatchObject({ ok: true, profileVersion: 1 });
-    expect(ATELIER_GRID_BUNDLE.source).toEqual({ kind: "recipe", templateId: "atelier-nine", templateVersion: 2 });
+    expect(ATELIER_GRID_BUNDLE.source).toEqual({ kind: "recipe", templateId: "atelier-nine", templateVersion: 3 });
     expect(ATELIER_GRID_BUNDLE.validationProfileVersion).toBe(1);
     expect(ATELIER_GRID_BUNDLE.designSystem).toMatchObject({
       displayFontId: "archivo-narrow",

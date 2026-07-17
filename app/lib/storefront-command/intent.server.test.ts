@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { serializeCompiledTree } from "../storefront-compiler/html";
 import type { CompiledElementNode, CompiledNode, StorefrontBundleV1 } from "../storefront-bundle/types";
+import { STOREFRONT_RECIPES } from "../storefront-recipes";
 import { CUSTOM_BENCH_BUNDLE } from "../storefront-recipes/custom-bench/bundle";
 import {
   classifyStoreIntent,
@@ -89,6 +90,14 @@ function deferredProvider(): {
   };
 }
 
+function classified(intentJson: string, requestedOperations?: string[]): string {
+  const intent = JSON.parse(intentJson) as { kind: string };
+  return JSON.stringify({
+    requestedOperations: requestedOperations ?? (intent.kind === "unsupported" ? [] : [intent.kind]),
+    intent,
+  });
+}
+
 beforeEach(() => {
   createMessage.mockReset();
 });
@@ -100,8 +109,8 @@ describe("classifyStoreIntent", () => {
       requests.push(request);
       const providerInput = JSON.parse(request.prompt) as { storeState?: string };
       return providerInput.storeState === "fresh"
-        ? '{"kind":"select_design","prompt":"Build my store","excludedTemplateIds":[]}'
-        : '{"kind":"update_text","slot":"heroTitle","value":"Existing store title"}';
+        ? classified('{"kind":"select_design","prompt":"Build my store","excludedTemplateIds":[]}')
+        : classified('{"kind":"update_text","slot":"heroTitle","value":"Existing store title"}');
     };
 
     await expect(classifyStoreIntent({
@@ -111,9 +120,86 @@ describe("classifyStoreIntent", () => {
     await expect(classifyStoreIntent(input, { provider })).resolves.toMatchObject({ kind: "update_text" });
 
     expect(requests.map(({ prompt }) => JSON.parse(prompt).storeState)).toEqual(["fresh", "existing"]);
-    expect(requests[0]?.system).toContain("Fresh store: always return select_design");
+    expect(requests[0]?.system).toContain("Fresh store: for one design request return select_design");
     expect(requests[0]?.system).toContain("Existing store: return select_design");
     expect(requests[0]?.system).toContain("use update_text");
+    expect(requests[0]?.system).toContain("requestedOperations");
+  });
+
+  it.each([
+    ["different kinds", ["update_text", "update_merchandising"]],
+    ["the same kind twice", ["update_text", "update_text"]],
+  ])("forces a request with %s to unsupported even when the provider proposes one edit", async (_label, requestedOperations) => {
+    const provider = vi.fn(async () => classified(
+      '{"kind":"update_text","slot":"heroTitle","value":"Only the first edit"}',
+      requestedOperations,
+    ));
+
+    await expect(classifyStoreIntent({
+      ...input,
+      prompt: "Change the title and the CTA",
+    }, { provider })).resolves.toEqual({
+      kind: "unsupported",
+      message: "Please make one storefront change at a time.",
+    });
+  });
+
+  it("accepts coordinated wording with a conjunction when it is one declared operation", async () => {
+    const provider = vi.fn(async () => classified(
+      '{"kind":"update_text","slot":"heroTitle","value":"Black and white"}',
+    ));
+
+    await expect(classifyStoreIntent({
+      ...input,
+      prompt: "Make the headline black and white",
+    }, { provider })).resolves.toEqual({
+      kind: "update_text",
+      slot: "heroTitle",
+      value: "Black and white",
+    });
+  });
+
+  it("returns unsupported for a compound fresh-store request before enforcing design-only output", async () => {
+    const provider = vi.fn(async () => classified(
+      '{"kind":"select_design","prompt":"Build my store","excludedTemplateIds":[]}',
+      ["select_design", "update_text"],
+    ));
+
+    await expect(classifyStoreIntent({
+      prompt: "Build my store and set the headline to Summer",
+      productCandidates: [],
+    }, { provider })).resolves.toEqual({
+      kind: "unsupported",
+      message: "Please make one storefront change at a time.",
+    });
+  });
+
+  it("sends each design's applicable text slots to the classifier", async () => {
+    const expected = {
+      "custom-bench": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+      "commons-index": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+      "soft-chemistry": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+      "companion-field-guide": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading"],
+      "daily-protocol": ["heroEyebrow", "heroTitle"],
+      "room-modes": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+      "rep-rest": ["heroTitle", "ctaLabel"],
+      "diagnostic-deck": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+      "ritual-almanac": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
+      "broadcast-patch-bay": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
+      "atelier-nine": ["announcement", "heroTitle", "heroBody", "ctaLabel"],
+    } as const;
+
+    for (const recipe of STOREFRONT_RECIPES) {
+      const provider: StoreIntentProvider = async (request) => {
+        expect(JSON.parse(request.prompt).allowedTextSlots).toEqual(expected[recipe.config.templateId]);
+        return classified('{"kind":"unsupported","message":"No text change requested."}');
+      };
+      await classifyStoreIntent({
+        prompt: "Keep the copy",
+        currentTemplateId: recipe.config.templateId,
+        bundle: recipe.bundle,
+      }, { provider });
+    }
   });
 
   it("sends verified reference URLs as image blocks before the bounded JSON request", async () => {
@@ -125,7 +211,7 @@ describe("classifyStoreIntent", () => {
       model: "test-model",
       content: [{
         type: "text",
-        text: '{"kind":"select_design","prompt":"soft editorial skincare","excludedTemplateIds":[]}',
+        text: classified('{"kind":"select_design","prompt":"soft editorial skincare","excludedTemplateIds":[]}'),
       }],
       stop_reason: "end_turn",
       stop_sequence: null,
@@ -143,7 +229,7 @@ describe("classifyStoreIntent", () => {
 
     await expect(classifyStoreIntent(referencedInput, {}, { signal: controller.signal })).resolves.toEqual({
       kind: "select_design",
-      prompt: "soft editorial skincare",
+      prompt: "Use this reference\nVisual reference cues: soft editorial skincare",
       excludedTemplateIds: [],
     });
 
@@ -170,13 +256,31 @@ describe("classifyStoreIntent", () => {
     const controller = new AbortController();
     const provider = vi.fn(async (request: Parameters<StoreIntentProvider>[0]) => {
       expect(request.signal).toBe(controller.signal);
-      return '{"kind":"select_design","prompt":"Build my store","excludedTemplateIds":[]}';
+      return classified('{"kind":"select_design","prompt":"Build my store","excludedTemplateIds":[]}');
     });
 
     await expect(classifyStoreIntent({
       prompt: "Build my store",
       productCandidates: input.productCandidates,
     }, { provider }, { signal: controller.signal })).resolves.toMatchObject({ kind: "select_design" });
+    expect(provider).toHaveBeenCalledOnce();
+  });
+
+  it("accepts the assembled product-title boundary and rejects titles beyond it", async () => {
+    const provider = vi.fn(async () => classified(
+      '{"kind":"update_merchandising","productIds":["product-long"]}'));
+
+    await expect(classifyStoreIntent({
+      ...input,
+      productCandidates: [{ id: "product-long", title: "T".repeat(240) }],
+    }, { provider })).resolves.toEqual({
+      kind: "update_merchandising",
+      productIds: ["product-long"],
+    });
+    await expect(classifyStoreIntent({
+      ...input,
+      productCandidates: [{ id: "product-long", title: "T".repeat(241) }],
+    }, { provider })).rejects.toMatchObject({ code: "invalid_store_intent" });
     expect(provider).toHaveBeenCalledOnce();
   });
 
@@ -194,9 +298,8 @@ describe("classifyStoreIntent", () => {
     '{"kind":"update_merchandising","productIds":["product-a"]}',
     '{"kind":"update_visual_layer","visualLayer":{"kind":"none"}}',
     '{"kind":"start_over","prompt":"Start over"}',
-    '{"kind":"unsupported","message":"Not sure"}',
   ])("rejects non-design provider output for a fresh store: %s", async (output) => {
-    const provider = vi.fn(async () => output);
+    const provider = vi.fn(async () => classified(output));
 
     await expect(classifyStoreIntent({
       prompt: "Build my store",
@@ -204,9 +307,18 @@ describe("classifyStoreIntent", () => {
     }, { provider })).rejects.toMatchObject({ code: "invalid_store_intent" });
   });
 
+  it("leaves a fresh store unchanged when no supported operation is requested", async () => {
+    const provider = vi.fn(async () => classified('{"kind":"unsupported","message":"Not sure"}'));
+
+    await expect(classifyStoreIntent({
+      prompt: "Do something impossible",
+      productCandidates: input.productCandidates,
+    }, { provider })).resolves.toEqual({ kind: "unsupported", message: "Not sure" });
+  });
+
   it("rejects markup returned as slot copy", async () => {
-    const provider = vi.fn(async () =>
-      '{"kind":"update_text","slot":"heroTitle","value":"<style>bad</style>"}');
+    const provider = vi.fn(async () => classified(
+      '{"kind":"update_text","slot":"heroTitle","value":"<style>bad</style>"}'));
 
     await expect(classifyStoreIntent(input, { provider })).rejects.toMatchObject({
       code: "invalid_store_intent",
@@ -215,9 +327,9 @@ describe("classifyStoreIntent", () => {
 
   it("accepts only exact closed intent JSON and declared text slots", async () => {
     const provider = vi.fn()
-      .mockResolvedValueOnce('{"kind":"update_text","slot":"heroTitle","value":"Summer starts here"}')
-      .mockResolvedValueOnce('{"kind":"update_text","slot":"heroTitle","value":"Summer","html":"<main>"}')
-      .mockResolvedValueOnce('{"kind":"update_text","slot":"notDeclared","value":"Summer"}');
+      .mockResolvedValueOnce(classified('{"kind":"update_text","slot":"heroTitle","value":"Summer starts here"}'))
+      .mockResolvedValueOnce(classified('{"kind":"update_text","slot":"heroTitle","value":"Summer","html":"<main>"}'))
+      .mockResolvedValueOnce(classified('{"kind":"update_text","slot":"notDeclared","value":"Summer"}'));
 
     await expect(classifyStoreIntent(input, { provider })).resolves.toEqual({
       kind: "update_text",
@@ -230,8 +342,8 @@ describe("classifyStoreIntent", () => {
 
   it("rejects text slots absent from the current bundle and non-home route contexts", async () => {
     const provider = vi.fn()
-      .mockResolvedValueOnce('{"kind":"update_text","slot":"announcement","value":"Free shipping"}')
-      .mockResolvedValueOnce('{"kind":"update_text","slot":"heroTitle","value":"Wrong route"}');
+      .mockResolvedValueOnce(classified('{"kind":"update_text","slot":"announcement","value":"Free shipping"}'))
+      .mockResolvedValueOnce(classified('{"kind":"update_text","slot":"heroTitle","value":"Wrong route"}'));
 
     await expect(classifyStoreIntent(input, { provider })).rejects.toMatchObject({ code: "invalid_store_intent" });
     await expect(classifyStoreIntent({
@@ -241,8 +353,8 @@ describe("classifyStoreIntent", () => {
   });
 
   it("rejects ambiguous concrete text targets with or without home context", async () => {
-    const provider = vi.fn(async () =>
-      '{"kind":"update_text","slot":"heroTitle","value":"One target only"}');
+    const provider = vi.fn(async () => classified(
+      '{"kind":"update_text","slot":"heroTitle","value":"One target only"}'));
     const ambiguousInput = { ...input, bundle: ambiguousHeroBundle() };
 
     await expect(classifyStoreIntent(ambiguousInput, { provider }))
@@ -259,18 +371,45 @@ describe("classifyStoreIntent", () => {
   });
 
   it("keeps design exclusions deterministic", async () => {
-    const provider = vi.fn(async () =>
-      '{"kind":"select_design","prompt":"More editorial","excludedTemplateIds":["atelier-nine"]}');
+    const provider = vi.fn(async () => classified(
+      '{"kind":"select_design","prompt":"More editorial","excludedTemplateIds":["atelier-nine"]}'));
 
     await expect(classifyStoreIntent({ ...input, prompt: "Make it more editorial" }, { provider })).resolves.toEqual({
       kind: "select_design",
-      prompt: "More editorial",
+      prompt: "Make it more editorial",
       excludedTemplateIds: ["soft-chemistry", "custom-bench"],
     });
   });
 
+  it("routes the original design prompt and its explicit exclusions, not a model rewrite", async () => {
+    const provider = vi.fn(async () => classified(
+      '{"kind":"select_design","prompt":"clean skincare","excludedTemplateIds":[]}'));
+
+    await expect(classifyStoreIntent({
+      prompt: "Anything except Soft Chemistry",
+      productCandidates: [],
+    }, { provider })).resolves.toEqual({
+      kind: "select_design",
+      prompt: "Anything except Soft Chemistry",
+      excludedTemplateIds: ["soft-chemistry"],
+    });
+  });
+
+  it("routes a non-exact restart with the original prompt and exclusions, not a model rewrite", async () => {
+    const provider = vi.fn(async () => classified(
+      '{"kind":"start_over","prompt":"Start over"}'));
+
+    await expect(classifyStoreIntent({
+      ...input,
+      prompt: "Start over, but not Soft Chemistry",
+    }, { provider })).resolves.toEqual({
+      kind: "start_over",
+      prompt: "Start over, but not Soft Chemistry",
+    });
+  });
+
   it("intercepts exact commands without provider routing", async () => {
-    const provider = vi.fn(async () => '{"kind":"unsupported","message":"model"}');
+    const provider = vi.fn(async () => classified('{"kind":"unsupported","message":"model"}'));
 
     await expect(classifyStoreIntent({ ...input, prompt: "Undo" }, { provider })).resolves.toEqual({
       kind: "unsupported",
@@ -293,7 +432,7 @@ describe("classifyStoreIntent", () => {
   });
 
   it("sends every near-match command to the provider", async () => {
-    const provider = vi.fn(async () => '{"kind":"unsupported","message":"Handled by the model."}');
+    const provider = vi.fn(async () => classified('{"kind":"unsupported","message":"Handled by the model."}'));
 
     for (const prompt of ["undo", " Undo", "Publish ", "START   OVER", "try another"]) {
       await expect(classifyStoreIntent({ ...input, prompt }, { provider })).resolves.toEqual({
@@ -315,7 +454,7 @@ describe("classifyStoreIntent", () => {
   });
 
   it("sends the full parser-valid Unicode prompt boundary to the provider", async () => {
-    const provider = vi.fn(async () => '{"kind":"unsupported","message":"Prompt accepted."}');
+    const provider = vi.fn(async () => classified('{"kind":"unsupported","message":"Prompt accepted."}'));
 
     await expect(classifyStoreIntent({ ...input, prompt: "🧶".repeat(4_000) }, { provider })).resolves.toEqual({
       kind: "unsupported",
@@ -326,24 +465,24 @@ describe("classifyStoreIntent", () => {
     expect(provider).toHaveBeenCalledTimes(1);
   });
 
-  it("accepts parser-valid Unicode at the provider output boundary", async () => {
+  it("validates parser-valid Unicode at the provider output boundary without routing a rewrite", async () => {
     const prompt = "🧶".repeat(4_000);
-    const provider = vi.fn(async () => JSON.stringify({ kind: "start_over", prompt }));
+    const provider = vi.fn(async () => classified(JSON.stringify({ kind: "start_over", prompt })));
 
     await expect(classifyStoreIntent(input, { provider })).resolves.toEqual({
       kind: "start_over",
-      prompt,
+      prompt: input.prompt,
     });
   });
 
   it("validates bounded merchandising and visual-layer results", async () => {
     const provider = vi.fn()
-      .mockResolvedValueOnce('{"kind":"update_merchandising","productIds":["product-a","product-b"]}')
-      .mockResolvedValueOnce('{"kind":"update_visual_layer","visualLayer":{"kind":"fragment_shader","source":"void main(){}","colors":["#000000","#111111","#222222"]}}')
-      .mockResolvedValueOnce(`{"kind":"update_visual_layer","visualLayer":{"kind":"fragment_shader","source":"${"x".repeat(4_001)}","colors":["#000000","#111111","#222222"]}}`)
-      .mockResolvedValueOnce('{"kind":"update_merchandising","productIds":["product-a"," product-a"]}')
-      .mockResolvedValueOnce('{"kind":"update_merchandising","productIds":["invented-product"]}')
-      .mockResolvedValueOnce('{"kind":"update_visual_layer","visualLayer":{"kind":"fragment_shader","source":"void main(){}","colors":[" #000000","#111111","#222222"]}}');
+      .mockResolvedValueOnce(classified('{"kind":"update_merchandising","productIds":["product-a","product-b"]}'))
+      .mockResolvedValueOnce(classified('{"kind":"update_visual_layer","visualLayer":{"kind":"fragment_shader","source":"void main(){}","colors":["#000000","#111111","#222222"]}}'))
+      .mockResolvedValueOnce(classified(`{"kind":"update_visual_layer","visualLayer":{"kind":"fragment_shader","source":"${"x".repeat(4_001)}","colors":["#000000","#111111","#222222"]}}`))
+      .mockResolvedValueOnce(classified('{"kind":"update_merchandising","productIds":["product-a"," product-a"]}'))
+      .mockResolvedValueOnce(classified('{"kind":"update_merchandising","productIds":["invented-product"]}'))
+      .mockResolvedValueOnce(classified('{"kind":"update_visual_layer","visualLayer":{"kind":"fragment_shader","source":"void main(){}","colors":[" #000000","#111111","#222222"]}}'));
 
     await expect(classifyStoreIntent(input, { provider })).resolves.toEqual({
       kind: "update_merchandising",
@@ -363,7 +502,7 @@ describe("classifyStoreIntent", () => {
     const providerPrompts: string[] = [];
     const provider = vi.fn(async (request: { prompt: string }) => {
       providerPrompts.push(request.prompt);
-      return '{"kind":"update_visual_layer","visualLayer":{"kind":"fragment_shader","source":"model rewrite","colors":["#000000","#111111","#222222"]}}';
+      return classified('{"kind":"update_visual_layer","visualLayer":{"kind":"fragment_shader","source":"model rewrite","colors":["#000000","#111111","#222222"]}}');
     });
     const source = "void main(){ gl_FragColor = vec4(1.0); }";
 
@@ -385,7 +524,7 @@ describe("classifyStoreIntent", () => {
 
     mutable.context.slot = "heroBody";
     mutable.bundle!.routes.home.tree = [];
-    deferred.resolve('{"kind":"update_text","slot":"heroTitle","value":"Snapshot copy"}');
+    deferred.resolve(classified('{"kind":"update_text","slot":"heroTitle","value":"Snapshot copy"}'));
 
     await expect(pending).resolves.toEqual({
       kind: "update_text",
@@ -399,7 +538,7 @@ describe("classifyStoreIntent", () => {
     const merchandisingInput = mutableInput();
     const merchandisingPending = classifyStoreIntent(merchandisingInput, { provider: merchandising.provider });
     merchandisingInput.productCandidates![0]!.id = "mutated-product";
-    merchandising.resolve('{"kind":"update_merchandising","productIds":["product-a"]}');
+    merchandising.resolve(classified('{"kind":"update_merchandising","productIds":["product-a"]}'));
     await expect(merchandisingPending).resolves.toEqual({
       kind: "update_merchandising",
       productIds: ["product-a"],
@@ -409,10 +548,10 @@ describe("classifyStoreIntent", () => {
     const designInput = mutableInput();
     const designPending = classifyStoreIntent(designInput, { provider: design.provider });
     designInput.excludedTemplateIds![0] = "atelier-nine";
-    design.resolve('{"kind":"select_design","prompt":"More editorial","excludedTemplateIds":[]}');
+    design.resolve(classified('{"kind":"select_design","prompt":"More editorial","excludedTemplateIds":[]}'));
     await expect(designPending).resolves.toEqual({
       kind: "select_design",
-      prompt: "More editorial",
+      prompt: "Change the headline",
       excludedTemplateIds: ["soft-chemistry", "custom-bench"],
     });
   });
@@ -426,7 +565,7 @@ describe("classifyStoreIntent", () => {
     const attachment = mutable.attachments[0];
     if (attachment?.kind !== "fragment_shader") throw new Error("Missing shader attachment");
     attachment.source = "mutated source";
-    deferred.resolve('{"kind":"update_visual_layer","visualLayer":{"kind":"fragment_shader","source":"model rewrite","colors":["#000000","#111111","#222222"]}}');
+    deferred.resolve(classified('{"kind":"update_visual_layer","visualLayer":{"kind":"fragment_shader","source":"model rewrite","colors":["#000000","#111111","#222222"]}}'));
 
     await expect(pending).resolves.toEqual({
       kind: "update_visual_layer",

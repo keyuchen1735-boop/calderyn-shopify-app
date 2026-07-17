@@ -1,5 +1,6 @@
 import type { DataRequirement, StorefrontBundleV1, StorefrontRouteId } from "~/lib/storefront-bundle/types";
 import { resolveVerifiedStorefrontAssetUrls } from "~/lib/storefront-bundle/assets.server";
+import { getStoreTemplate } from "~/lib/storefront-bundle/registry";
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
 import { getStorefrontRecipe, STOREFRONT_RECIPE_BY_ID } from "~/lib/storefront-recipes";
@@ -56,11 +57,14 @@ function recipeDerivedStaticAssets(bundle: StorefrontBundleV1): {
     return { urls: {}, ownedManifest: bundle.assets };
   }
   const templateId = bundle.source.derivedFromTemplateId;
+  const templateVersion = bundle.source.derivedFromTemplateVersion;
   if (!Object.hasOwn(STOREFRONT_RECIPE_BY_ID, templateId)) {
     return { urls: {}, ownedManifest: bundle.assets };
   }
   const recipe = getStorefrontRecipe(templateId);
-  if (recipe.config.templateVersion !== bundle.source.derivedFromTemplateVersion) {
+  if (!getStoreTemplate(templateId).versions.some(
+    (version) => version.templateVersion === templateVersion,
+  )) {
     return { urls: {}, ownedManifest: bundle.assets };
   }
   const registered = new Map(recipe.bundle.assets.entries.map((entry) => [entry.key, entry]));

@@ -1,5 +1,5 @@
 // app/routes/storefront.products.$handle.tsx
-import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs, MetaDescriptor, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { resolveHandleRedirect } from "~/lib/storefront/handle-redirect.server";
@@ -15,6 +15,13 @@ import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-
 import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
 import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
+import { getCatalog } from "~/lib/storefront/catalog.server";
+import { getStoreSettings } from "~/lib/storefront/settings.server";
+import { buildProductDraft } from "~/lib/seo/writer.server";
+import { safeMetaFromDraft } from "~/lib/seo/render.server";
+import { storefrontOrigin } from "~/lib/seo/origin.server";
+import { getSeoOverride } from "~/lib/seo/seo-store.server";
+import { applyOverride } from "~/lib/seo/override";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Product" }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
@@ -38,7 +45,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
   const shopId = await resolveStorefrontShop(request);
   const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "product", handle } });
-  if (!runtime1) throw new Response("No runtime-1 storefront release is available.", { status: 503 });
+  if (!runtime1) throw new Response("Storefront is temporarily unavailable.", { status: 503 });
   if (runtime1.data.notFound) {
     await redirectRenamedProductHandle(request, shopId, handle);
     throw new Response(null, { status: 404 });
@@ -50,7 +57,23 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   appendStorefrontTrackingCookies(headers, await trackStorefrontEvent(request, shopId, "page_view", {
     productId: runtime1.data.product?.id ?? null,
   }));
-  return json({ ...runtime1, nonce, seoMeta: [{ title }] }, { headers });
+  let seoMeta: MetaDescriptor[];
+  try {
+    const [product, settings] = await Promise.all([
+      getCatalog().getProduct(shopId, handle),
+      getStoreSettings(shopId),
+    ]);
+    if (!product) throw new Error("Product is missing from the public catalog.");
+    const override = await getSeoOverride(shopId, "product", product.id);
+    seoMeta = safeMetaFromDraft(applyOverride(
+      buildProductDraft(product, settings, storefrontOrigin(request)),
+      override,
+    ));
+  } catch (err) {
+    console.error(`[storefront] seo meta build failed for shop ${shopId}:`, err);
+    seoMeta = [{ title }];
+  }
+  return json({ ...runtime1, nonce, seoMeta }, { headers });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -112,6 +135,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function StorefrontProduct() {
   const loaded = useLoaderData<typeof loader>();
-  if (!isRuntime1RenderData(loaded)) throw new Error("Runtime-1 product data is required.");
+  if (!isRuntime1RenderData(loaded)) throw new Error("Product data is unavailable.");
   return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "product", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="product" data={loaded.data} mode="public" /></>;
 }

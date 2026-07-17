@@ -2,13 +2,14 @@ import { createHash } from "node:crypto";
 import { getSupabase } from "~/lib/supabase.server";
 import { STOREFRONT_RECIPES } from "../storefront-recipes";
 import type { StoreTemplateId } from "../storefront-bundle/types";
+import { STOREFRONT_PRODUCT_TITLE_CAP } from "./contracts";
 import type { ContextAssemblyInput, MerchantStorefrontContext, NoveltySignature } from "./contracts";
 import { structuralSignatureFromBundle } from "./structure";
 
 const DEFAULT_LIMITS: ContextLimits = {
   maxPromptChars: 4_000,
   maxCollections: 40,
-  maxProducts: 48,
+  maxProducts: 100,
   maxTagsPerProduct: 12,
   maxOptionsPerProduct: 8,
   maxImagesPerProduct: 6,
@@ -289,7 +290,7 @@ export async function assembleStorefrontContextWithReferences(
     return {
       id: productRef,
       handle: cleanText(item.handle, 160),
-      title: cleanText(item.title, 240),
+      title: cleanText(item.title, STOREFRONT_PRODUCT_TITLE_CAP),
       productType: item.productType == null ? null : cleanText(item.productType, 120),
       tags: stableUnique(item.tags, limits.maxTagsPerProduct),
       optionNames: stableUnique(item.optionNames, limits.maxOptionsPerProduct),

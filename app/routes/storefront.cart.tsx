@@ -58,7 +58,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     },
   });
-  if (!runtime1) throw new Response("No runtime-1 storefront release is available.", { status: 503 });
+  if (!runtime1) throw new Response("Storefront is temporarily unavailable.", { status: 503 });
   const nonce = randomBytes(18).toString("base64url");
   const headers = storefrontCacheHeaders({ routeId: "cart", personalized: true });
   markStorefrontBundleRendered(headers, nonce);
@@ -101,6 +101,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function StorefrontCart() {
   const loaded = useLoaderData<typeof loader>();
-  if (!isRuntime1RenderData(loaded)) throw new Error("Runtime-1 cart data is required.");
+  if (!isRuntime1RenderData(loaded)) throw new Error("Cart data is unavailable.");
   return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "cart", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="cart" data={loaded.data} mode="public" /></>;
 }

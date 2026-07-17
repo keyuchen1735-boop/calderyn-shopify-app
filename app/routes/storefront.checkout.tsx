@@ -147,7 +147,7 @@ export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "checkout" } });
-  if (!runtime1) throw new Response("No runtime-1 storefront release is available.", { status: 503 });
+  if (!runtime1) throw new Response("Storefront is temporarily unavailable.", { status: 503 });
   // Demo shell is browse-only — no cart can exist for it (see storefront.cart.tsx).
   if (shopId === DEMO_SHOP_ID) return redirect("/storefront/cart");
   const cartId = await readCartId(request);
@@ -591,7 +591,7 @@ interface CheckoutPlatformData {
 
 export default function StorefrontCheckout() {
   const loaded = useLoaderData<typeof loader>();
-  if (!isRuntime1RenderData(loaded)) throw new Error("Runtime-1 checkout data is required.");
+  if (!isRuntime1RenderData(loaded)) throw new Error("Checkout data is unavailable.");
   const surface = renderStorefrontSurface({
     bundle: loaded.bundle,
     routeId: "checkout",
@@ -604,7 +604,7 @@ export default function StorefrontCheckout() {
   return <>{surface}<StorefrontHydrator bundle={loaded.bundle} routeId="checkout" data={loaded.data} mode="public" /></>;
 }
 
-function CheckoutPlatform({ loaded }: { loaded: CheckoutPlatformData }) {
+export function CheckoutPlatform({ loaded }: { loaded: CheckoutPlatformData }) {
   const { publishableKey, paymentsReady, origin, summary, prefill } = loaded;
   const fetcher = useFetcher<typeof action>();
   const [stripePromise] = useState(() => (publishableKey ? loadStripe(publishableKey) : null));

@@ -22,6 +22,7 @@ const globalCss = `
 .atelier-serif { color:#34322f; font-family:var(--font-body); line-height:1.45 }
 .atelier-price { font-family:var(--font-display); font-size:.85rem; letter-spacing:.04em }
 .atelier-card-description { display:block; grid-column:1 / -1; min-width:0; margin:0; color:#706c65; font-family:var(--font-body); font-size:.76rem; line-height:1.35; overflow-wrap:anywhere; text-transform:none }
+.atelier-empty { margin:0; padding:2rem; border-bottom:1px solid #aaa49b; color:#706c65; font-family:var(--font-body) }
 .atelier-media { display:block; width:100%; object-fit:cover }
 .atelier-rule { border-bottom:1px solid #2a2927 }
 .atelier-action { display:inline-flex; align-items:center; gap:.8rem; color:#d63821; font-family:var(--font-display); font-weight:700; letter-spacing:.08em; text-decoration:none; text-transform:uppercase }
@@ -65,6 +66,7 @@ const homeHtml = `
           </a>
         </article>
       </div>
+      <p class="atelier-empty" data-cd-empty-state>No pieces are available in this edition yet.</p>
     </div>
   </section>
   <section>
@@ -161,6 +163,7 @@ const collectionHtml = `
       </a>
     </article>
   </section>
+  <p class="atelier-empty" data-cd-empty-state>No pieces match this collection. Clear a filter to continue.</p>
   <section>
     <div data-cd-repeat="collection.products"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div></div>
   </section>
@@ -258,6 +261,7 @@ const searchHtml = `
       </a>
     </article>
   </section>
+  <p class="atelier-empty" data-cd-empty-state>No archive results match this query. Try a broader search.</p>
   <section>
     <div data-cd-repeat="search.results"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink paper accent"></div></div>
   </section>
@@ -298,6 +302,7 @@ const cartHtml = `
       <div data-cd-slot="cartLineControls" data-cd-host-size="block" data-cd-theme-tokens="ink paper accent"></div>
     </article>
   </section>
+  <p class="atelier-empty" data-cd-empty-state>Your order folio is empty. Choose a piece to continue.</p>
   <section class="atelier-cart-totals">
     <p>Subtotal <strong data-cd-money="cart.subtotal"></strong></p>
     <p>Discounts <strong data-cd-money="cart.discounts"></strong></p>
@@ -352,7 +357,7 @@ const checkoutCss = `
 
 const config = {
   templateId: "atelier-nine",
-  templateVersion: 2,
+  templateVersion: 3,
   concept: {
     name: "Atelier Grid",
     rationale: "A complete commerce journal that treats products as an edited fashion issue without obscuring purchase paths.",

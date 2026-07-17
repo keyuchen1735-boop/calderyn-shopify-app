@@ -7,6 +7,7 @@ import type { RouteArtifact, StorefrontBundleV1 } from "~/lib/storefront-bundle/
 import { CURATED_FONT_IDS } from "~/lib/storefront-bundle/types";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
+import { SOFT_CHEMISTRY_BUNDLE } from "~/lib/storefront-recipes/soft-chemistry/bundle";
 import { resolveStorefrontVisualPlacement } from "./visual-layer.server";
 import {
   renderStorefrontSurface,
@@ -648,6 +649,55 @@ describe("compiled-node server renderer", () => {
     expect(html).toContain('src="data:image/svg+xml,');
     expect(html).toContain('aria-hidden="true"');
     expect(html).not.toContain('alt="Product one"');
+  });
+
+  it("uses the selected design's owned product placeholder before generated media is ready", () => {
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle: SOFT_CHEMISTRY_BUNDLE,
+      routeId: "collection",
+      data: {
+        ...data,
+        collection: {
+          id: "collection-1",
+          handle: "formulas",
+          title: "Formulas",
+          description: "Live formulas",
+          image: { url: "https://cdn.example.test/collection.webp", alt: "Formula shelf" },
+          productCount: 1,
+          products: [publicProduct],
+          nextCursor: null,
+        },
+      },
+      nonce: "recipe-media-fallback",
+      mode: "public",
+    }));
+
+    expect(html).toContain('data-cd-media-fallback="true"');
+    expect(html).toContain('src="/storefront-recipes/soft-chemistry/hero.webp"');
+    expect(html).not.toContain('src="data:image/svg+xml,');
+  });
+
+  it("shows design empty copy only when the route repeat is actually empty", () => {
+    const collection = {
+      id: "collection-1",
+      handle: "formulas",
+      title: "Formulas",
+      description: "Live formulas",
+      image: null,
+      productCount: 1,
+      products: [publicProduct],
+      nextCursor: null,
+    };
+    const render = (products: typeof collection.products) => renderToStaticMarkup(renderStorefrontSurface({
+      bundle: SOFT_CHEMISTRY_BUNDLE,
+      routeId: "collection",
+      data: { ...data, collection: { ...collection, productCount: products.length, products } },
+      nonce: "empty-state",
+      mode: "public",
+    }));
+
+    expect(render([publicProduct])).not.toContain("No formulas match this concern");
+    expect(render([])).toContain("No formulas match this concern");
   });
 
   it("returns a platform-owned 404 instead of rendering a generated missing-record route", () => {

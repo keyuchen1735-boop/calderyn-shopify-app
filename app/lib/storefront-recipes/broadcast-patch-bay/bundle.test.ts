@@ -10,7 +10,7 @@ describe("broadcast-patch-bay storefront recipe", () => {
   it("compiles a modular signal patch bay and complete creator-commerce route matrix", () => {
     const { bundle, config, report } = BROADCAST_PATCH_BAY_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 1 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 2 });
     expect(config.archetype).toEqual({ composition: "signal-patch-bay", hero: "rig-signal-chain", scroll: "modular-patching", cards: "signal-modules", iconography: ["signal path glyphs", "compatibility port marks"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "space-grotesk", bodyFontId: "ibm-plex-mono", iconStyle: "signal-path glyphs and compatibility-port marks", motionStyle: "modular patch transitions with reduced-motion static routing" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

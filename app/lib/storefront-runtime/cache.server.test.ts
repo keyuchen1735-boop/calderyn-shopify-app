@@ -20,12 +20,12 @@ describe("storefront runtime cache policy", () => {
     expect(buildStorefrontCacheKey({ ...base, catalogRevision: "catalog-8" })).not.toBe(key);
   });
 
-  it("allows neutral public browse caching and forces personalized surfaces private no-store", () => {
+  it("keeps cookie-setting browse responses private while allowing neutral policies to cache", () => {
     expect(storefrontCacheHeaders({ routeId: "home", personalized: false }).get("Cache-Control"))
-      .toBe("public, max-age=0, s-maxage=300, stale-while-revalidate=60");
+      .toBe("private, no-store");
     expect(storefrontCacheHeaders({ routeId: "policy", personalized: false }).get("Cache-Control"))
       .toBe("public, max-age=0, s-maxage=300, stale-while-revalidate=60");
-    for (const routeId of ["cart", "checkout", "account", "preview", "signedMedia"] as const) {
+    for (const routeId of ["collection", "product", "cart", "checkout", "account", "preview", "signedMedia"] as const) {
       const headers = storefrontCacheHeaders({ routeId, personalized: false });
       expect(headers.get("Cache-Control")).toBe("private, no-store");
       expect(headers.get("Vary")).toContain("Cookie");
@@ -34,17 +34,17 @@ describe("storefront runtime cache policy", () => {
       .toBe("private, no-store");
   });
 
-  it("tags public tenant HTML for hard invalidation after policy writes", () => {
+  it("tags only cacheable public policy HTML for hard invalidation", () => {
     const shopId = "11111111-1111-4111-8111-111111111111";
     expect(storefrontTenantCacheTag(shopId)).toBe(`storefront-shop-${shopId}`);
-    expect(storefrontCacheHeaders({ routeId: "home", personalized: false, shopId }).get("Vercel-Cache-Tag"))
+    expect(storefrontCacheHeaders({ routeId: "policy", personalized: false, shopId }).get("Vercel-Cache-Tag"))
       .toBe(`storefront-shop-${shopId}`);
     expect(() => storefrontTenantCacheTag("not-a-shop")).toThrow("UUID shop id");
   });
 
-  it("keeps the demo shell cacheable without assigning it a tenant purge tag", () => {
+  it("keeps the tracked demo shell private without assigning it a tenant purge tag", () => {
     const headers = storefrontCacheHeaders({ routeId: "home", personalized: false, shopId: "demo-shop" });
-    expect(headers.get("Cache-Control")).toBe("public, max-age=0, s-maxage=300, stale-while-revalidate=60");
+    expect(headers.get("Cache-Control")).toBe("private, no-store");
     expect(headers.has("Vercel-Cache-Tag")).toBe(false);
   });
 });

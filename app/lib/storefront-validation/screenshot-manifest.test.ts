@@ -41,9 +41,9 @@ describe("committed storefront screenshot manifest", () => {
       ...RECIPE_IDS.map((id) => `long-copy-${id}`),
       ...RECIPE_IDS.map((id) => `invalid-shader-${id}`),
       ...RECIPE_IDS.map((id) => `empty-${id}`),
+      "full-story-missing-images",
       "full-story",
       "full-story-invalid-shader",
-      "full-story-missing-images",
     ]);
     expect(manifest.recipes.every((entry) => entry.sourceKind === "recipe")).toBe(true);
     for (const entry of manifest.recipes) {

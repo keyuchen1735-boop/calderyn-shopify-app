@@ -43,6 +43,13 @@ const EDIT_ASSET_PROVENANCE_PATH = path.resolve(
 const EDIT_ASSET_PROVENANCE = existsSync(EDIT_ASSET_PROVENANCE_PATH)
   ? readFileSync(EDIT_ASSET_PROVENANCE_PATH, "utf8").toLowerCase()
   : "";
+const RECIPE_ASSET_VERSIONS_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../supabase/migrations/20260717120000_storefront_recipe_asset_versions.sql",
+);
+const RECIPE_ASSET_VERSIONS = existsSync(RECIPE_ASSET_VERSIONS_PATH)
+  ? readFileSync(RECIPE_ASSET_VERSIONS_PATH, "utf8").toLowerCase()
+  : "";
 const SQL = `${RELEASES}\n${ASSETS}\n${FUNCTIONS}`;
 
 describe("storefront bundle persistence migrations", () => {
@@ -225,24 +232,42 @@ describe("storefront bundle persistence migrations", () => {
     expect(RUNTIME1_PUBLISH).toMatch(/revoke all on function public\.storefront_runtime1_release_pointer_guard\(\)[^;]+from public, anon, authenticated/);
   });
 
-  it("moves every previously published page-document shop onto a validated runtime-1 release", () => {
+  it("moves every legacy public storefront and unsupported release pointer onto runtime 1", () => {
     expect(RUNTIME1_CUTOVER).toContain("from public.page_document");
     expect(RUNTIME1_CUTOVER).toMatch(/published_json is not null/);
+    expect(RUNTIME1_CUTOVER).toContain("from public.designer_publications");
+    expect(RUNTIME1_CUTOVER).toMatch(/draft_version_id[\s\S]+runtime_version <> 1/);
+    expect(RUNTIME1_CUTOVER).toMatch(/published_version_id[\s\S]+runtime_version <> 1/);
     expect(RUNTIME1_CUTOVER).toMatch(/runtime_version\s*=\s*1/);
     expect(RUNTIME1_CUTOVER).toMatch(/status\s*=\s*'validated'/);
-    expect(RUNTIME1_CUTOVER).toContain("'initial_design'");
+    expect(RUNTIME1_CUTOVER).toContain("'runtime1_cutover_backfill'");
     expect(RUNTIME1_CUTOVER).toContain("insert into public.storefront_bundle_version");
     expect(RUNTIME1_CUTOVER).toContain("insert into public.storefront_release_history");
     expect(RUNTIME1_CUTOVER).toContain("runtime1_cutover_backfill_incomplete");
   });
 
+  it("publishes only an existing published pointer, publish history, or the canonical seed", () => {
+    expect(RUNTIME1_CUTOVER).toMatch(/operation\s+in\s*\('publish',\s*'rollback'\)/);
+    expect(RUNTIME1_CUTOVER).not.toMatch(
+      /\(version\.id is not distinct from target\.previous_draft_version_id\) desc/,
+    );
+  });
+
   it("allows only the canonical checked-in recipe artifact to seed cross-shop cutover backfills", () => {
-    expect(RUNTIME1_CUTOVER).toMatch(/version\.template_id\s*=\s*'custom-bench'/);
-    expect(RUNTIME1_CUTOVER).toMatch(/version\.template_version\s*=\s*1/);
+    expect(RUNTIME1_CUTOVER).toContain("storefront_runtime1_cutover_seed_payload");
+    expect(RUNTIME1_CUTOVER).toMatch(/'custom-bench'::text\s+as template_id/);
+    expect(RUNTIME1_CUTOVER).toMatch(/2::integer\s+as template_version/);
     expect(RUNTIME1_CUTOVER).toContain(
-      "sha256:6422971974cb227fa2b55c4741361310fa5e67de740a94338ad89fd8539b401b",
+      "sha256:df3d9aa6a162ab14ed05879a5f79d1563598a936ea3d240a21a6a70acb9d7217",
     );
     expect(RUNTIME1_CUTOVER).toContain("public.storefront_artifact_hash(");
+  });
+
+  it("locks affected shops before snapshotting release pointers", () => {
+    const lock = RUNTIME1_CUTOVER.indexOf("select public.lock_storefront_design_shop(shop_id)");
+    const snapshot = RUNTIME1_CUTOVER.indexOf("create temporary table storefront_runtime1_cutover_targets");
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(snapshot);
   });
 
   it("stops obsolete running design experiments before enforcing the command-only cutover", () => {
@@ -275,6 +300,18 @@ describe("storefront bundle persistence migrations", () => {
     expect(EDIT_ASSET_PROVENANCE).toMatch(/registry\.content_hash = entry ->> 'contenthash'/);
     expect(EDIT_ASSET_PROVENANCE).toMatch(/asset\.asset_key = source_ref\.asset_key/);
     expect(EDIT_ASSET_PROVENANCE).toMatch(/target_ref\.logical_key = entry ->> 'key'/);
+  });
+
+  it("registers the unchanged hero provenance for every new immutable recipe version", () => {
+    for (const templateId of [
+      "custom-bench", "commons-index", "soft-chemistry", "companion-field-guide", "daily-protocol",
+      "room-modes", "rep-rest", "diagnostic-deck", "ritual-almanac", "broadcast-patch-bay",
+    ]) {
+      expect(RECIPE_ASSET_VERSIONS).toContain(`('${templateId}', 2, 'hero'`);
+    }
+    expect(RECIPE_ASSET_VERSIONS).toContain("('atelier-nine', 2, 'hero'");
+    expect(RECIPE_ASSET_VERSIONS).toContain("('atelier-nine', 3, 'hero'");
+    expect(RECIPE_ASSET_VERSIONS).toMatch(/on conflict \(template_id, template_version, logical_key\) do nothing/);
   });
 
   it("requires every custom manifest entry to have exactly one verified owned or recipe-static provenance row", () => {

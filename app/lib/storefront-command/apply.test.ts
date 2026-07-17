@@ -75,50 +75,23 @@ describe("applyStoreIntent", () => {
     expect(result.bundle.routes.home.html.match(/<span/g)?.length).toBe(originalSpanCount);
   });
 
-  it("applies concrete slots and fails closed for absent optional slots across every design", () => {
-    const unresolvedSlots = new Set([
-      ...STOREFRONT_RECIPES
-        .filter((recipe) => recipe.config.templateId !== "atelier-nine")
-        .map((recipe) => `${recipe.config.templateId}:announcement`),
-      "custom-bench:sectionHeading",
-      "commons-index:sectionHeading",
-      "soft-chemistry:sectionHeading",
-      "companion-field-guide:ctaLabel",
-      "daily-protocol:heroBody",
-      "daily-protocol:sectionHeading",
-      "daily-protocol:ctaLabel",
-      "room-modes:sectionHeading",
-      "rep-rest:heroEyebrow",
-      "rep-rest:heroBody",
-      "rep-rest:sectionHeading",
-      "diagnostic-deck:sectionHeading",
-      "atelier-nine:heroEyebrow",
-      "atelier-nine:sectionHeading",
-    ]);
-
+  it("applies every text slot advertised by every design", () => {
     for (const recipe of STOREFRONT_RECIPES) {
       const activeTemplate = getStoreTemplate(recipe.config.templateId);
       for (const slot of activeTemplate.overrideSurface.textSlots) {
-        const operation = () => applyStoreIntent(recipe.bundle, activeTemplate, {
+        const result = applyStoreIntent(recipe.bundle, activeTemplate, {
           kind: "update_text",
           slot,
           value: "Replacement copy",
         });
         const key = `${recipe.config.templateId}:${slot}`;
-        if (unresolvedSlots.has(key)) {
-          expect(operation, key).toThrowError(expect.objectContaining({
-            code: "storefront_template_integrity_failed",
-          }));
-        } else {
-          const result = operation();
-          const renderedText = `${result.bundle.shell.html} ${result.bundle.routes.home.html}`
-            .replace(/<[^>]+>/g, " ")
-            .replace(/\s+/g, " ");
-          expect(renderedText, key).toContain("Replacement copy");
-          expect(result.bundle.assets, key).toEqual(recipe.bundle.assets);
-          expect(result.bundle.routes.home.css, key).toBe(recipe.bundle.routes.home.css);
-          expect(result.bundle.routes.home.interactions, key).toEqual(recipe.bundle.routes.home.interactions);
-        }
+        const renderedText = `${result.bundle.shell.html} ${result.bundle.routes.home.html}`
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ");
+        expect(renderedText, key).toContain("Replacement copy");
+        expect(result.bundle.assets, key).toEqual(recipe.bundle.assets);
+        expect(result.bundle.routes.home.css, key).toBe(recipe.bundle.routes.home.css);
+        expect(result.bundle.routes.home.interactions, key).toEqual(recipe.bundle.routes.home.interactions);
       }
     }
   });

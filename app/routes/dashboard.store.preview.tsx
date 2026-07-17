@@ -1,5 +1,5 @@
 // app/routes/dashboard.store.preview.tsx
-// Session-gated, same-origin frameable preview for immutable runtime-1 drafts.
+// Session-gated, same-origin frameable preview for immutable storefront drafts.
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
@@ -125,7 +125,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       }
     }
   }
-  throw new Response("No runtime-1 storefront draft is available.", { status: 404 });
+  throw new Response("No storefront draft is available.", { status: 404 });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -184,6 +184,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function StoreDraftPreview() {
   const loaded = useLoaderData<typeof loader>();
-  if (!isRuntime1RenderData(loaded)) throw new Error("Runtime-1 preview data is required.");
+  if (!isRuntime1RenderData(loaded)) throw new Error("Storefront preview data is unavailable.");
   return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: loaded.routeId, data: loaded.data, nonce: loaded.nonce, mode: "preview", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId={loaded.routeId} data={loaded.data} mode="preview" /></>;
 }

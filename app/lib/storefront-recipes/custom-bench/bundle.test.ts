@@ -18,7 +18,7 @@ describe("Custom Bench storefront recipe", () => {
     const { bundle, config, report } = CUSTOM_BENCH_RECIPE;
 
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "custom-bench", templateVersion: 1 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "custom-bench", templateVersion: 2 });
     expect(config.archetype).toMatchObject({
       composition: "workshop-configurator",
       hero: "configurator-workbench",

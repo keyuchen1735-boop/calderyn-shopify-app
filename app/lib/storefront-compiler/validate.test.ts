@@ -52,6 +52,20 @@ describe("validation profile v1", () => {
     );
   });
 
+  it("rejects a forged nonempty empty-state marker", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><p data-cd-empty-state>No products yet.</p></main>`;
+    const bundle = compileBundle(source).bundle;
+    const emptyState = flattenElements(bundle.routes.home.tree).find((node) =>
+      node.attributes["data-cd-empty-state"] !== undefined);
+    if (!emptyState) throw new Error("empty-state fixture is missing");
+    emptyState.attributes["data-cd-empty-state"] = "true";
+
+    expect(validateCompiledBundle(bundle).diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "tree.empty_state" }),
+    ]));
+  });
+
   it("rejects persisted cart-line controls whose exact repeat scope was removed", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.routes.cart.html = `<main data-cd-repeat="cart.lines"><div data-cd-key="cartLine.id" data-cd-slot="cartLineControls"></div></main>`;

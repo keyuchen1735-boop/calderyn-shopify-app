@@ -52,6 +52,7 @@ const home = {
       <section class="featured"><h2>Objects on the bench</h2><div class="specimen-grid" data-cd-repeat="featured.products">
         <article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy"><h3 data-cd-text="product.title"></h3><p class="recipe-copy" data-cd-text="product.description"></p><p data-cd-money="product.price"></p><a data-cd-route="product" data-cd-param-handle="product.handle">Configure</a></article>
       </div></section>
+      <p class="empty-state" data-cd-empty-state>No objects are on the bench yet. Open the catalog to begin.</p>
       <section data-cd-repeat="featured.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink cobalt paper"></aside></section>
       <button data-cd-on="click" data-cd-action="scroll.to" data-cd-target="configurator">Return to configuration</button>
     </main>
@@ -93,7 +94,7 @@ const collection = {
       <section class="catalog-grid" data-cd-repeat="collection.products">
         <article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy"><h2 data-cd-text="product.title"></h2><p class="recipe-copy" data-cd-text="product.description"></p><p data-cd-money="product.price"></p><small data-cd-text="product.availability"></small><a data-cd-route="product" data-cd-param-handle="product.handle">Open work order</a><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline" data-cd-theme-tokens="ink cobalt paper"></div></article>
       </section>
-      <p class="empty-state">No objects match these workshop filters. Clear a material filter to reopen the bench.</p>
+      <p class="empty-state" data-cd-empty-state>No objects match these workshop filters. Clear a material filter to reopen the bench.</p>
     </main>
   `,
   css: `
@@ -143,7 +144,7 @@ const search = {
       <header><small>Search the workshop</small><h1>Find an object to mark.</h1><p data-cd-text="search.query"></p></header>
       <div class="query-controls" role="search"><span>Workshop query</span><input aria-label="Workshop query" type="search" name="q" value="" placeholder="Object, material, or occasion" data-cd-on="input" data-cd-action="search.update"><button value="submit" data-cd-on="click" data-cd-action="search.submit">Search</button><button value="clear" data-cd-on="click" data-cd-action="search.clear">Clear</button></div>
       <section class="ranked-results" data-cd-repeat="search.results"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p class="recipe-copy" data-cd-text="product.description"></p><p data-cd-money="product.price"></p><a data-cd-route="product" data-cd-param-handle="product.handle">Open result</a></article></section>
-      <p class="empty-state">No workshop results yet. Try an object, material, or occasion.</p>
+      <p class="empty-state" data-cd-empty-state>No workshop results yet. Try an object, material, or occasion.</p>
     </main>
   `,
   css: `
@@ -164,7 +165,7 @@ const cart = {
   html: `
     <main class="commission-cart"><header><small>Workshop queue</small><h1>Your commission</h1><p><span data-cd-text="cart.count"></span> objects awaiting approval</p></header>
       <section class="cart-ledger" data-cd-repeat="cart.lines"><article data-cd-key="cartLine.id"><h2 data-cd-text="cartLine.title"></h2><p data-cd-text="cartLine.quantity"></p><p data-cd-money="cartLine.unitPrice"></p><p data-cd-money="cartLine.total"></p><div data-cd-slot="cartLineControls" data-cd-host-size="inline" data-cd-theme-tokens="ink cobalt paper"></div></article></section>
-      <p class="empty-state">Your commission is empty. Choose an object to begin a proof.</p>
+      <p class="empty-state" data-cd-empty-state>Your commission is empty. Choose an object to begin a proof.</p>
       <aside data-cd-slot="cartSummary" data-cd-host-size="page" data-cd-theme-tokens="ink signal paper"></aside>
     </main>
   `,
@@ -192,7 +193,7 @@ const checkout = {
 
 export const CUSTOM_BENCH_RECIPE = defineRecipe({
   templateId: "custom-bench",
-  templateVersion: 1,
+  templateVersion: 2,
   concept: {
     name: "Custom Bench",
     rationale: "A workshop interface turns personalization into a legible proofing sequence.",

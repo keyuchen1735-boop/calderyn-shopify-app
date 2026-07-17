@@ -42,7 +42,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     request,
     route: { kind: "search", query: searchInput.query, searchInput },
   });
-  if (!runtime1) throw new Response("No runtime-1 storefront release is available.", { status: 503 });
+  if (!runtime1) throw new Response("Storefront is temporarily unavailable.", { status: 503 });
   const nonce = randomBytes(18).toString("base64url");
   const headers = storefrontCacheHeaders({ routeId: "search", personalized: true });
   markStorefrontBundleRendered(headers, nonce);

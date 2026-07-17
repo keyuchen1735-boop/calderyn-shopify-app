@@ -49,8 +49,7 @@ export function storefrontCacheHeaders(input: {
   shopId?: string;
 }): Headers {
   const headers = new Headers();
-  const publicBrowse = !input.personalized &&
-    (input.routeId === "home" || input.routeId === "collection" || input.routeId === "product" || input.routeId === "policy");
+  const publicBrowse = !input.personalized && input.routeId === "policy";
   if (publicBrowse) {
     headers.set("Cache-Control", "public, max-age=0, s-maxage=300, stale-while-revalidate=60");
     headers.set("Vary", "Host, Accept-Encoding");

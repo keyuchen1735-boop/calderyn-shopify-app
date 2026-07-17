@@ -5,6 +5,7 @@ import type { StudioDesignModel } from "../storebuilder/studio-types";
 export const STOREFRONT_AI_CONTRACT_VERSION = 1 as const;
 export const CONCEPT_STRATEGIES = ["asymmetric-commerce", "narrative-utility", "spatial-catalog"] as const;
 export const STOREFRONT_REFERENCE_MEDIA_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+export const STOREFRONT_PRODUCT_TITLE_CAP = 240;
 export type ConceptStrategy = (typeof CONCEPT_STRATEGIES)[number];
 export type StorefrontReferenceMediaType = (typeof STOREFRONT_REFERENCE_MEDIA_TYPES)[number];
 

@@ -2,7 +2,10 @@
 
 import { createServer } from "vite";
 
-const updateBaselines = process.argv.includes("--update-baselines");
+if (process.argv.includes("--update-baselines")) {
+  throw new Error("Existing storefront baselines are immutable; use --capture-new-baselines for a new recipe version.");
+}
+const updateBaselines = process.argv.includes("--capture-new-baselines");
 const filter = process.argv.find((argument) => argument.startsWith("--filter="))?.slice("--filter=".length);
 const vite = await createServer({
   appType: "custom",

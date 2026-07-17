@@ -7,6 +7,7 @@ import Store from "./Store";
 import { clearScreenCache } from "~/lib/dashboard/screen-cache";
 import { CUSTOM_BENCH_BUNDLE } from "~/lib/storefront-recipes/custom-bench/bundle";
 import { action, loader } from "~/routes/dashboard.api.store";
+import { action as uploadAction } from "~/routes/dashboard.api.assets.upload";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -23,6 +24,7 @@ const fakes = vi.hoisted(() => ({
   installDraft: vi.fn(),
   loadRecipe: vi.fn(),
   loadStudioState: vi.fn(),
+  persistUploadedImage: vi.fn(),
   publishRelease: vi.fn(),
   rateLimit: vi.fn(),
   requirePublishable: vi.fn(),
@@ -46,6 +48,10 @@ vi.mock("~/lib/dashboard/http.server", async (original) => {
 });
 vi.mock("~/lib/dashboard/session.server", () => ({
   requireDashboardSession: fakes.session,
+}));
+vi.mock("~/lib/assets/upload.server", () => ({
+  MAX_UPLOAD_BYTES: 10 * 1024 * 1024,
+  persistUploadedImage: fakes.persistUploadedImage,
 }));
 vi.mock("~/lib/storebuilder/studio.server", () => ({
   loadStudioState: fakes.loadStudioState,
@@ -110,12 +116,15 @@ const RESTORED = "55555555-5555-5555-5555-555555555555";
 const HASH = `sha256:${"a".repeat(64)}`;
 const RESULT_HASH = `sha256:${"b".repeat(64)}`;
 const PROMPT = "Make the headline say Summer starts here";
+const REFERENCE_ASSET_REF = `${SHOP}/upload/reference.webp`;
+const REFERENCE_PUBLIC_URL = "https://assets.example/reference.webp";
 
 let currentVersion: string | null = CURRENT;
 let publishedVersion: string | null = null;
 let currentBundle = structuredClone(CUSTOM_BENCH_BUNDLE);
 let pendingBundle = structuredClone(CUSTOM_BENCH_BUNDLE);
 let storefrontUrl = "/storefront";
+let assetQueries: Array<[string, unknown]> = [];
 
 function snapshot() {
   return {
@@ -151,7 +160,10 @@ function snapshot() {
 function supabaseQuery(table: string) {
   const query = {
     select: () => query,
-    eq: () => query,
+    eq: (column: string, value: unknown) => {
+      if (table === "asset_dim") assetQueries.push([column, value]);
+      return query;
+    },
     maybeSingle: async () => ({
       data:
         table === "storefront_release"
@@ -159,7 +171,14 @@ function supabaseQuery(table: string) {
               draft_version_id: currentVersion,
               published_version_id: publishedVersion,
             }
-          : {
+          : table === "asset_dim"
+            ? {
+                shop_id: SHOP,
+                storage_key: REFERENCE_ASSET_REF,
+                public_url: REFERENCE_PUBLIC_URL,
+                mime: "image/webp",
+              }
+            : {
               id: currentVersion,
               artifact_hash: HASH,
               bundle_json: currentBundle,
@@ -244,10 +263,17 @@ beforeEach(() => {
   currentBundle = structuredClone(CUSTOM_BENCH_BUNDLE);
   pendingBundle = structuredClone(CUSTOM_BENCH_BUNDLE);
   storefrontUrl = "/storefront";
+  assetQueries = [];
 
   fakes.session.mockResolvedValue({ shopId: SHOP, userId: USER });
   fakes.requireSameOrigin.mockReturnValue(location.origin);
   fakes.rateLimit.mockResolvedValue(true);
+  fakes.persistUploadedImage.mockResolvedValue({
+    assetId: "66666666-6666-4666-8666-666666666666",
+    publicUrl: REFERENCE_PUBLIC_URL,
+    storageKey: REFERENCE_ASSET_REF,
+    mime: "image/webp",
+  });
   fakes.loadStudioState.mockImplementation(async () => snapshot());
   fakes.getSupabase.mockReturnValue({
     from: (table: string) => supabaseQuery(table),
@@ -339,6 +365,17 @@ beforeEach(() => {
           headers: { "content-type": "application/json" },
         });
       }
+      if (url.pathname === "/dashboard/api/assets/upload") {
+        const request = input instanceof Request
+          ? input
+          : new Request(url, { method: init?.method, headers: init?.headers });
+        if (!(input instanceof Request)) {
+          Object.defineProperty(request, "formData", {
+            value: async () => init?.body as FormData,
+          });
+        }
+        return uploadAction({ request, params: {}, context: {} });
+      }
       if (url.pathname !== "/dashboard/api/store")
         throw new Error(`Unexpected request: ${url.pathname}`);
       const request = input instanceof Request ? input : new Request(url, init);
@@ -355,6 +392,61 @@ afterEach(() => {
 });
 
 describe("Store vertical command path", () => {
+  it("uploads a rendered design reference and classifies with its verified owned URL and MIME", async () => {
+    const { host, root } = await renderStore();
+    const fileInput = host.querySelector<HTMLInputElement>(
+      'input[type="file"][aria-label="Attach a design reference or shader"]',
+    )!;
+    const file = new File(["reference"], "reference.webp", { type: "image/webp" });
+    Object.defineProperty(file, "arrayBuffer", {
+      value: async () => new TextEncoder().encode("reference").buffer,
+    });
+    Object.defineProperty(fileInput, "files", {
+      configurable: true,
+      value: [file],
+    });
+
+    act(() => fileInput.dispatchEvent(new Event("change", { bubbles: true })));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+      "/dashboard/api/assets/upload",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    await waitFor(() => expect(fakes.persistUploadedImage).toHaveBeenCalled());
+    await waitFor(() => expect(host.textContent).toContain("reference.webp"));
+    sendPrompt(host);
+
+    await waitFor(() => expect(fakes.classify).toHaveBeenCalled());
+    expect(fetch).toHaveBeenCalledWith(
+      "/dashboard/api/store",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          kind: "prompt",
+          prompt: PROMPT,
+          expectedDraftVersionId: CURRENT,
+          attachments: [{ kind: "design_reference", assetRef: REFERENCE_ASSET_REF }],
+        }),
+      }),
+    );
+    expect(fakes.persistUploadedImage).toHaveBeenCalledWith(
+      SHOP,
+      expect.objectContaining({ declaredType: "image/webp" }),
+    );
+    expect(assetQueries).toEqual([
+      ["shop_id", SHOP],
+      ["storage_key", REFERENCE_ASSET_REF],
+    ]);
+    expect(fakes.classify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attachments: [{ kind: "design_reference", assetRef: REFERENCE_ASSET_REF }],
+        referenceImages: [{ url: REFERENCE_PUBLIC_URL, mediaType: "image/webp" }],
+      }),
+      {},
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    act(() => root.unmount());
+  });
+
   it("builds the first draft from the rendered welcome action", async () => {
     currentVersion = null;
     const { host, root } = await renderStore();

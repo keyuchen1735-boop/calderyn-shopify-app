@@ -13,6 +13,7 @@ import type {
   TrustedSlotManifest,
 } from "~/lib/storefront-bundle/types";
 import { isAllowedCompiledTag } from "~/lib/storefront-compiler/html";
+import { getStoreTemplate } from "~/lib/storefront-bundle/registry";
 import { CheckoutIslands } from "./checkout-islands";
 import { storefrontDesignSystemCss } from "./curated-fonts";
 import type {
@@ -45,6 +46,7 @@ interface RenderContext {
   mode: "public" | "preview";
   previewTemplateId?: StoreTemplateId;
   assetUrls: ReadonlyMap<string, string>;
+  productPlaceholderUrl?: string;
   visualLayer?: StorefrontVisualPlacement;
 }
 
@@ -206,6 +208,13 @@ function repeatValues(node: CompiledElementNode, data: PublicPresentationData): 
   }
 }
 
+function routeRepeatIsEmpty(data: PublicPresentationData): boolean {
+  if (data.collection) return data.collection.products.length === 0;
+  if (data.search) return data.search.results.length === 0;
+  if (data.cart) return data.cart.lines.length === 0;
+  return data.featuredProducts.length === 0;
+}
+
 function itemKey(value: ScopeValue, index: number): string {
   if ("id" in value && typeof value.id === "string") return value.id;
   if ("url" in value && typeof value.url === "string") return value.url;
@@ -287,6 +296,7 @@ function targetHref(target: RouteTarget, context: RenderContext): string {
 function renderOne(node: CompiledNode, context: RenderContext, key: string): ReactNode {
   if (node.kind === "text") return node.value;
   if (!isAllowedCompiledTag(node.tag)) throw new Error(`Unsupported compiled tag ${node.tag}`);
+  if (node.attributes["data-cd-empty-state"] !== undefined && !routeRepeatIsEmpty(context.data)) return null;
 
   if (node.trustedSlotId) {
     const slot = context.slots.get(node.trustedSlotId);
@@ -329,6 +339,7 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
 
   const nodeBindings = context.bindings.get(node.id) ?? [];
   let missingBoundImage = false;
+  let missingBoundProductImage = false;
   let children: ReactNode[];
   if (node.attributes["data-cd-platform-content"] === "policyLinks") {
     const policyIds = new Set(["privacy", "terms", "refund", "shipping"]);
@@ -345,11 +356,16 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
     const formatted = formatBinding(binding, resolveRef(binding.ref, context));
     if (binding.kind === "text" || binding.kind === "money") children = formatted === null ? [] : [formatted];
     else if (binding.kind === "src" && formatted !== null) props.src = formatted;
-    else if (binding.kind === "src" && node.tag === "img") missingBoundImage = true;
+    else if (binding.kind === "src" && node.tag === "img") {
+      missingBoundImage = true;
+      missingBoundProductImage = binding.ref.kind === "data" && binding.ref.path === "product.primaryImage";
+    }
     else if (binding.kind === "alt") props.alt = formatted ?? "";
   }
   if (node.tag === "img" && missingBoundImage && props.src === undefined) {
-    props.src = EMPTY_MEDIA_DATA_URL;
+    props.src = missingBoundProductImage
+      ? context.productPlaceholderUrl ?? EMPTY_MEDIA_DATA_URL
+      : EMPTY_MEDIA_DATA_URL;
     props.alt = "";
     props["aria-hidden"] = true;
     props["data-cd-media-fallback"] = "true";
@@ -382,6 +398,7 @@ function contextFor(
   assetUrls: ReadonlyMap<string, string> = new Map(),
   previewTemplateId?: StoreTemplateId,
   visualLayer?: StorefrontVisualPlacement,
+  productPlaceholderUrl?: string,
 ): RenderContext {
   const bindings = new Map<string, CompiledBinding[]>();
   for (const binding of treeBindings) {
@@ -399,6 +416,7 @@ function contextFor(
     mode,
     previewTemplateId,
     assetUrls,
+    productPlaceholderUrl,
     visualLayer,
   };
 }
@@ -412,8 +430,9 @@ function renderTree(
   assetUrls: ReadonlyMap<string, string> = new Map(),
   previewTemplateId?: StoreTemplateId,
   visualLayer?: StorefrontVisualPlacement,
+  productPlaceholderUrl?: string,
 ): ReactNode[] {
-  const context = contextFor(bindings, trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer);
+  const context = contextFor(bindings, trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer, productPlaceholderUrl);
   return tree.map((node, index) => renderNode(node, context, `node-${index}`));
 }
 
@@ -511,6 +530,12 @@ export function isRuntime1RenderData(value: unknown): value is {
 /** Render the immutable shell and selected route from the same resolved bundle object. */
 export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, checkoutContent, customAssetUrls, visualLayerPlacement }: RenderStorefrontSurfaceInput): ReactElement {
   const assetUrls = assetUrlsForBundle(bundle, customAssetUrls ?? data.storefrontAssetUrls);
+  const recipeSource = bundle.source.kind === "recipe" ? bundle.source : null;
+  const productPlaceholderUrl = recipeSource
+    ? assetUrls.get(getStoreTemplate(recipeSource.templateId).versions
+      .find(({ templateVersion }) => templateVersion === recipeSource.templateVersion)
+      ?.productPlaceholderAssetKey ?? "")
+    : undefined;
   const previewTemplateId = mode === "preview" && bundle.source.kind === "recipe" ? bundle.source.templateId : undefined;
   const shellTree = splitShellTree(bundle.shell.tree);
   const visualLayer = visualLayerPlacement ?? null;
@@ -532,7 +557,7 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
     routeResult = (
       <div data-cd-bundle={routeId} data-cd-bundle-route={routeId}>
         {route.css ? <StorefrontStyle nonce={nonce} css={route.css} kind={routeId} /> : null}
-        {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined)}
+        {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined, productPlaceholderUrl)}
       </div>
     );
   }
@@ -542,9 +567,9 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
       {bundle.designSystem.globalCss ? <StorefrontStyle nonce={nonce} css={bundle.designSystem.globalCss} kind="global" /> : null}
       <div data-cd-bundle="shell" data-cd-bundle-shell={routeId}>
         {bundle.shell.css ? <StorefrontStyle nonce={nonce} css={bundle.shell.css} kind="shell" /> : null}
-        {renderTree(shellTree.beforeRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined)}
+        {renderTree(shellTree.beforeRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined, productPlaceholderUrl)}
         {routeResult}
-        {renderTree(shellTree.afterRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined)}
+        {renderTree(shellTree.afterRoute, bundle.shell.bindings, bundle.shell.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined, productPlaceholderUrl)}
       </div>
     </div>
   );

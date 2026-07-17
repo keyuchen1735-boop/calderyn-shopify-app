@@ -5,6 +5,21 @@ import {
   getStoreTemplate,
 } from "./registry";
 import { CUSTOM_BENCH_ASSETS } from "../storefront-recipes/custom-bench/assets";
+import provenance from "../storefront-validation/design-provenance.json";
+
+const EXPECTED_TEXT_SLOTS = {
+  "custom-bench": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+  "commons-index": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+  "soft-chemistry": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+  "companion-field-guide": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading"],
+  "daily-protocol": ["heroEyebrow", "heroTitle"],
+  "room-modes": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+  "rep-rest": ["heroTitle", "ctaLabel"],
+  "diagnostic-deck": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+  "ritual-almanac": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
+  "broadcast-patch-bay": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
+  "atelier-nine": ["announcement", "heroTitle", "heroBody", "ctaLabel"],
+} as const;
 
 describe("versioned storefront recipe registry", () => {
   it("registers all eleven stable recipe IDs with complete route and override metadata", () => {
@@ -21,10 +36,10 @@ describe("versioned storefront recipe registry", () => {
       "broadcast-patch-bay",
       "atelier-nine",
     ]);
-    expect(STORE_TEMPLATE_REGISTRY.registryVersion).toBe(1);
+    expect(STORE_TEMPLATE_REGISTRY.registryVersion).toBe(2);
     expect(STORE_TEMPLATE_REGISTRY.routingVersion).toBe(1);
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
-      expect(recipe.activeVersion).toBe(recipe.id === "atelier-nine" ? 2 : 1);
+      expect(recipe.activeVersion).toBe(recipe.id === "atelier-nine" ? 3 : 2);
       expect(recipe.routeCapabilities).toEqual(["home", "collection", "product", "search", "cart", "checkout"]);
       expect(recipe.overrideSurface.designTokens.length).toBeGreaterThan(0);
       expect(recipe.overrideSurface.textSlots.length).toBeGreaterThan(0);
@@ -33,6 +48,9 @@ describe("versioned storefront recipe registry", () => {
       expect(recipe.promptTerms.length).toBeGreaterThan(1);
       expect(recipe.catalogTerms.length).toBeGreaterThan(1);
       expect(recipe.versions.length).toBeGreaterThan(0);
+      for (const version of recipe.versions) {
+        expect(provenance.artifacts).toHaveProperty(version.baselineArtifact);
+      }
       const activeVersion = recipe.versions.find((version) => version.templateVersion === recipe.activeVersion);
       expect(activeVersion).toBeDefined();
       expect(activeVersion?.baselineArtifact).toMatch(/^(app|docs|public)\//);
@@ -101,6 +119,13 @@ describe("versioned storefront recipe registry", () => {
         expect.objectContaining({ slot: "productDescription" }),
       );
     }
+  });
+
+  it("advertises only the text slots present in each active bundle", () => {
+    expect(Object.fromEntries(STORE_TEMPLATE_REGISTRY.templates.map((template) => [
+      template.id,
+      template.overrideSurface.textSlots,
+    ]))).toEqual(EXPECTED_TEXT_SLOTS);
   });
 
   it("rejects duplicate or unresolved visual and product assets", () => {

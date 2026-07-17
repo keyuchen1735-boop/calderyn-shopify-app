@@ -68,6 +68,7 @@ const COMPILED_ATTRIBUTES = new Set([
   "type", "name", "placeholder", "value",
   "data-cd-repeat-id", "data-cd-bind-text", "data-cd-bind-money", "data-cd-bind-src", "data-cd-bind-alt",
   "data-cd-route-target", "data-cd-trusted-slot-id", "data-cd-platform-content", "data-cd-asset-key",
+  "data-cd-empty-state",
 ]);
 
 function record(value: unknown): UnknownRecord | null {
@@ -337,6 +338,7 @@ function parseTree(
     if (element.repeat && element.attributes["data-cd-repeat-id"] !== element.repeat.scopeId) add("tree.repeat_marker", `${path}.${element.id}`, "Repeat marker does not match repeat scope");
     if (element.trustedSlotId && element.attributes["data-cd-trusted-slot-id"] !== element.trustedSlotId) add("slot.host", `${path}.${element.id}`, "Trusted slot marker does not match host identity");
     if (element.attributes["data-cd-platform-content"] && element.attributes["data-cd-platform-content"] !== "policyLinks") add("tree.platform_content", `${path}.${element.id}`, "Platform content marker is unsupported");
+    if (element.attributes["data-cd-empty-state"] !== undefined && element.attributes["data-cd-empty-state"] !== "") add("tree.empty_state", `${path}.${element.id}`, "Empty-state marker is malformed");
     if (element.attributes["data-cd-asset-key"] && !isIdentifier(element.attributes["data-cd-asset-key"])) add("asset.key", `${path}.${element.id}`, "Compiled asset key is malformed");
   }
   return context;

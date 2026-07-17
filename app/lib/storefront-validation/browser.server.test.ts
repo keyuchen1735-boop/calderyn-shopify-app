@@ -16,6 +16,7 @@ import {
   detectHorizontalLayoutFailures,
   measureStorefrontBundle,
   proveStorefrontBundle,
+  shouldVerifyStorefrontPreview,
   shouldWriteStorefrontPreview,
   validateStorefrontBundleBudgets,
 } from "./browser.server";
@@ -374,6 +375,14 @@ describe("storefront browser proof matrix", () => {
   });
 
   it("writes generated preview assets only during an intentional baseline refresh", () => {
+    expect(shouldVerifyStorefrontPreview("home", "desktop", {
+      previewFile: "preview.webp",
+      updateBaselines: false,
+    })).toBe(true);
+    expect(shouldVerifyStorefrontPreview("collection", "desktop", {
+      previewFile: "preview.webp",
+      updateBaselines: false,
+    })).toBe(false);
     expect(shouldWriteStorefrontPreview("home", "desktop", {
       previewFile: "preview.webp",
       updateBaselines: false,

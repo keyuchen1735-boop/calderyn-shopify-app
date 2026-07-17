@@ -220,7 +220,7 @@ describe("deterministic store design resolver", () => {
       kind: "recipe",
       templateId: "companion-field-guide",
       routingVersion: 1,
-      registryVersion: 1,
+      registryVersion: 2,
       catalogFingerprint: "sha256:fixture",
     });
     if (first.kind === "recipe") {

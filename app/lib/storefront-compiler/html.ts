@@ -37,6 +37,7 @@ export function isAllowedCompiledTag(value: unknown): value is string {
 const VOID_TAGS = new Set(["br", "hr", "img", "source", "input"]);
 const STATIC_ATTRIBUTES = new Set([
   "class", "title", "role", "tabindex", "alt", "width", "height", "loading", "decoding", "open", "href", "for",
+  "data-cd-empty-state",
 ]);
 const IDREF_ATTRIBUTES = new Set(["aria-controls", "aria-labelledby", "aria-describedby", "aria-owns", "aria-activedescendant", "for"]);
 const BINDING_ATTRIBUTES = new Map([
@@ -155,6 +156,9 @@ function assertAllowedAttribute(name: string, value: string, tagName: string): v
   if (name === "value") {
     if ((tagName === "input" || tagName === "button") && value.length <= 120 && !hasControlCharacter(value)) return;
     throw new CompilerError("html.control_attribute", `Invalid ${tagName} value`);
+  }
+  if (name === "data-cd-empty-state" && value !== "") {
+    throw new CompilerError("html.empty_state", "Empty-state marker must not have a value");
   }
   if (name === "href" && value.startsWith("#") && isSafeIdentifier(value.slice(1))) return;
   if (name === "href" || name === "src" || name === "srcset" || name === "action" || name === "formaction") {

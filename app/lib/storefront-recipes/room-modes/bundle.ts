@@ -3,7 +3,7 @@ import { ROOM_MODES_ASSETS } from "./assets";
 
 const config = {
   templateId: "room-modes",
-  templateVersion: 1,
+  templateVersion: 2,
   concept: {
     name: "Room Modes",
     rationale: "A spatial storefront that begins with room scenes, then resolves into a precise object index.",
@@ -92,7 +92,7 @@ const config = {
                 <div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div>
               </article>
             </section>
-            <p class="home-empty resilient-copy">No objects match this room mode. Try the complete object index.</p>
+            <p class="home-empty resilient-copy" data-cd-empty-state>No objects match this room mode. Try the complete object index.</p>
           </main>
         `,
         css: `
@@ -129,7 +129,7 @@ const config = {
                 <div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div>
               </article>
             </section>
-            <p class="collection-empty resilient-copy">No objects match this room mode. Clear a protocol filter to continue.</p>
+            <p class="collection-empty resilient-copy" data-cd-empty-state>No objects match this room mode. Clear a protocol filter to continue.</p>
           </main>
         `,
         css: `
@@ -172,7 +172,7 @@ const config = {
           <main>
             <header class="query-board resilient-copy"><small class="protocol-copy">Search room, object, protocol, or finish</small><h1 data-cd-text="search.query">Object search</h1><input aria-label="Object search" type="search" name="q" value="" placeholder="Room, object, protocol, or finish" data-cd-on="input" data-cd-action="search.update"><button value="submit" data-cd-on="click" data-cd-action="search.submit">Run object query</button><button value="clear" data-cd-on="click" data-cd-action="search.clear">Clear room query</button></header>
             <section data-cd-repeat="search.results"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="560" height="420"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><a data-cd-route="product" data-cd-param-handle="product.handle">Open result</a></article></section>
-            <p class="query-empty resilient-copy">No object or room found. Search a finish, protocol, or collection name.</p>
+            <p class="query-empty resilient-copy" data-cd-empty-state>No object or room found. Search a finish, protocol, or collection name.</p>
           </main>
         `,
         css: `
@@ -193,7 +193,7 @@ const config = {
             <section data-cd-repeat="cart.lines"><article data-cd-key="cartLine.id"><h2 data-cd-text="cartLine.title"></h2><span data-cd-text="cartLine.quantity"></span><b data-cd-money="cartLine.unitPrice"></b><strong data-cd-money="cartLine.total"></strong><div data-cd-slot="cartLineControls" data-cd-host-size="inline"></div></article></section>
             <aside class="cart-totals resilient-copy"><span>Subtotal</span><b data-cd-money="cart.subtotal"></b><span>Total</span><strong data-cd-money="cart.total"></strong></aside>
             <div data-cd-slot="cartSummary" data-cd-host-size="page" data-cd-theme-tokens="chalk ink amber"></div>
-            <p class="cart-empty resilient-copy">No objects selected yet. Return to a room scene to begin.</p>
+            <p class="cart-empty resilient-copy" data-cd-empty-state>No objects selected yet. Return to a room scene to begin.</p>
           </main>
         `,
         css: `

@@ -1,10 +1,12 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { assistantModel, getAnthropic } from "../assistant/anthropic.server";
 import {
+  STOREFRONT_PRODUCT_TITLE_CAP,
   STOREFRONT_REFERENCE_MEDIA_TYPES,
   type StorefrontReferenceMediaType,
 } from "../storefront-ai/contracts";
 import { getStoreTemplate, isStoreTemplateId, STORE_TEMPLATE_REGISTRY } from "../storefront-bundle/registry";
+import { explicitStoreTemplateExclusions } from "../storefront-bundle/routing";
 import type { StorefrontBundleV1, StoreTemplateId, VisualLayerSpec } from "../storefront-bundle/types";
 import { hexToRgb, shaderSourceWithinCap } from "../storebuilder/fx/shader";
 import { canApplyStoreTextSlot } from "./apply";
@@ -23,17 +25,26 @@ const COPY_CHAR_CAP = 500;
 const PRODUCT_ID_CAP = 12;
 const PRODUCT_CANDIDATE_CAP = 100;
 const PRODUCT_CANDIDATE_ID_CHAR_CAP = 128;
-const PRODUCT_TITLE_CAP = 200;
 const REFERENCE_URL_CHAR_CAP = 2_048;
+const VISUAL_CUE_PREFIX = "\nVisual reference cues: ";
 // The max-sized payload skeleton is 2,657 bytes; JSON can encode one accepted
 // string code point in at most six UTF-8 bytes (for example, "\u0000").
 const PROVIDER_INPUT_BYTE_CAP = 2_657 + 6 * (
   INPUT_CODE_POINT_CAP
   + STORE_COMMAND_LIMITS.contextSlotCodePoints
   + STORE_COMMAND_LIMITS.attachments * STORE_COMMAND_LIMITS.designReferenceAssetRefCodePoints
-  + PRODUCT_CANDIDATE_CAP * (PRODUCT_CANDIDATE_ID_CHAR_CAP + PRODUCT_TITLE_CAP)
+  + PRODUCT_CANDIDATE_CAP * (PRODUCT_CANDIDATE_ID_CHAR_CAP + STOREFRONT_PRODUCT_TITLE_CAP)
 );
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
+const STORE_OPERATION_KINDS = [
+  "select_design",
+  "update_text",
+  "update_merchandising",
+  "update_visual_layer",
+  "start_over",
+] as const;
+type StoreOperationKind = (typeof STORE_OPERATION_KINDS)[number];
+const COMPOUND_REQUEST_MESSAGE = "Please make one storefront change at a time.";
 
 export interface StoreIntentProductCandidate {
   id: string;
@@ -74,7 +85,7 @@ export class StoreIntentClassificationError extends Error {
   }
 }
 
-const STORE_INTENT_SCHEMA = {
+const STORE_INTENT_VALUE_SCHEMA = {
   oneOf: [
     {
       type: "object", additionalProperties: false, required: ["kind", "prompt", "excludedTemplateIds"],
@@ -126,11 +137,28 @@ const STORE_INTENT_SCHEMA = {
   ],
 } as const;
 
+const STORE_INTENT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["requestedOperations", "intent"],
+  properties: {
+    requestedOperations: {
+      type: "array",
+      minItems: 0,
+      maxItems: 2,
+      items: { enum: STORE_OPERATION_KINDS },
+    },
+    intent: STORE_INTENT_VALUE_SCHEMA,
+  },
+} as const;
+
 const SYSTEM_PROMPT = [
   "Classify one untrusted merchant store request into exactly one JSON object matching this schema.",
   "Return JSON only: no markdown, prose, HTML, CSS, JavaScript, React, routes, or extra keys.",
-  "Fresh store: always return select_design so deterministic routing can install an approved design.",
+  "Report requestedOperations with one entry per independently executable requested change, including duplicate kinds, stopping after two. Coordinated wording on one target is one operation; changing two targets is two operations.",
+  "Fresh store: for one design request return select_design so deterministic routing can install an approved design; for multiple operations report both so deterministic code can reject the compound request.",
   "Existing store: return select_design when the merchant asks to replace the overall design, layout, or structure; use update_text for allowed copy slots, update_merchandising for listed products, update_visual_layer for the protected visual surface, start_over only for an explicit restart, and unsupported otherwise.",
+  "For one supported operation, requestedOperations must contain exactly the intent kind. For no supported operation, use an empty requestedOperations array and unsupported intent.",
   "Use reference visuals only to describe visual cues and select an approved design.",
   "Never generate storefront structure from a reference visual.",
   "You may draft bounded plain text or bounded fragment-shader source. You do not choose routing or status behavior.",
@@ -165,6 +193,11 @@ function validTemplateIds(value: unknown): value is StoreTemplateId[] {
     && value.every(isStoreTemplateId) && new Set(value).size === value.length;
 }
 
+function validRequestedOperations(value: unknown): value is StoreOperationKind[] {
+  return Array.isArray(value) && value.length <= 2
+    && value.every((kind) => typeof kind === "string" && STORE_OPERATION_KINDS.includes(kind as StoreOperationKind));
+}
+
 function validProductIds(value: unknown): value is string[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > PRODUCT_ID_CAP
     || !value.every((id) => typeof id === "string" && id.trim().length > 0
@@ -179,7 +212,7 @@ function validProductCandidates(value: unknown): value is readonly StoreIntentPr
     const item = record(candidate);
     if (!item || typeof item.id !== "string" || !item.id.trim()
       || item.id.length > PRODUCT_CANDIDATE_ID_CHAR_CAP
-      || !boundedString(item.title, PRODUCT_TITLE_CAP)) return false;
+      || !boundedString(item.title, STOREFRONT_PRODUCT_TITLE_CAP)) return false;
     ids.push(item.id.trim());
   }
   return new Set(ids).size === ids.length;
@@ -240,10 +273,22 @@ function parseVisualLayer(value: unknown): VisualLayerSpec | null {
 
 function exclusions(input: ClassifyStoreIntentInput): StoreTemplateId[] {
   if (!validTemplateIds(input.excludedTemplateIds ?? [])) invalid();
-  const values = [...(input.excludedTemplateIds ?? [])];
+  const values = [
+    ...(input.excludedTemplateIds ?? []),
+    ...explicitStoreTemplateExclusions(input.prompt, STORE_TEMPLATE_REGISTRY),
+  ];
   const currentTemplateId = templateId(input);
   if (currentTemplateId && !values.includes(currentTemplateId)) values.push(currentTemplateId);
-  return values;
+  return [...new Set(values)];
+}
+
+function designRoutingPrompt(input: ClassifyStoreIntentInput, providerPrompt: string): string {
+  const original = input.prompt.trim();
+  if ((input.referenceImages?.length ?? 0) === 0 || providerPrompt.trim() === original) return original;
+  const remaining = INPUT_CODE_POINT_CAP - Array.from(original).length - Array.from(VISUAL_CUE_PREFIX).length;
+  if (remaining <= 0) return original;
+  const visualCue = Array.from(providerPrompt.trim()).slice(0, remaining).join("");
+  return visualCue ? `${original}${VISUAL_CUE_PREFIX}${visualCue}` : original;
 }
 
 function exactCommand(input: ClassifyStoreIntentInput): StoreIntent | null {
@@ -265,14 +310,28 @@ function parseIntent(raw: string, input: ClassifyStoreIntentInput): StoreIntent 
   let parsed: unknown;
   try { parsed = JSON.parse(raw); }
   catch { invalid(); }
-  const value = record(parsed);
+  const envelope = record(parsed);
+  if (!envelope || !hasExactKeys(envelope, ["requestedOperations", "intent"])
+    || !validRequestedOperations(envelope.requestedOperations)) invalid();
+  const requestedOperations = envelope.requestedOperations;
+  const value = record(envelope.intent);
   if (!value || typeof value.kind !== "string") invalid();
-  if (!input.bundle && value.kind !== "select_design") invalid();
+  if (requestedOperations.length > 1) {
+    return { kind: "unsupported", message: COMPOUND_REQUEST_MESSAGE };
+  }
+  if (value.kind === "unsupported") {
+    if (requestedOperations.length !== 0) invalid();
+  } else if (requestedOperations.length !== 1 || requestedOperations[0] !== value.kind) invalid();
+  if (!input.bundle && value.kind !== "select_design" && value.kind !== "unsupported") invalid();
 
   if (value.kind === "select_design") {
     if (!hasExactKeys(value, ["kind", "prompt", "excludedTemplateIds"])
       || !boundedString(value.prompt, INPUT_CODE_POINT_CAP) || !validTemplateIds(value.excludedTemplateIds)) invalid();
-    return { kind: "select_design", prompt: value.prompt.trim(), excludedTemplateIds: exclusions(input) };
+    return {
+      kind: "select_design",
+      prompt: designRoutingPrompt(input, value.prompt),
+      excludedTemplateIds: exclusions(input),
+    };
   }
   if (value.kind === "update_text") {
     const currentTemplateId = templateId(input);
@@ -307,7 +366,7 @@ function parseIntent(raw: string, input: ClassifyStoreIntentInput): StoreIntent 
   }
   if (value.kind === "start_over") {
     if (!hasExactKeys(value, ["kind", "prompt"]) || !boundedString(value.prompt, INPUT_CODE_POINT_CAP)) invalid();
-    return { kind: "start_over", prompt: value.prompt.trim() };
+    return { kind: "start_over", prompt: designRoutingPrompt(input, value.prompt) };
   }
   if (value.kind === "unsupported") {
     if (!hasExactKeys(value, ["kind", "message"]) || !safeCopy(value.message)) invalid();

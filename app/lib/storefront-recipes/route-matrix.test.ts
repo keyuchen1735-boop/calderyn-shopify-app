@@ -23,6 +23,12 @@ function visibleText(nodes: RouteArtifact["tree"]): string {
   return nodes.map((node) => node.kind === "text" ? node.value : visibleText(node.children)).join(" ");
 }
 
+function emptyStateCount(nodes: RouteArtifact["tree"]): number {
+  return nodes.reduce((count, node) => node.kind === "text"
+    ? count
+    : count + Number(node.attributes["data-cd-empty-state"] !== undefined) + emptyStateCount(node.children), 0);
+}
+
 describe("storefront recipe route matrix", () => {
   it("implements exactly one validated active recipe for every registered template", () => {
     const registeredIds = STORE_TEMPLATE_REGISTRY.templates.map((template) => template.id);
@@ -135,6 +141,14 @@ describe("storefront recipe route matrix", () => {
   it("does not render unconditional sold-out notices below collection grids", () => {
     for (const { bundle, config } of STOREFRONT_RECIPES) {
       expect(visibleText(bundle.routes.collection.tree), config.templateId).not.toMatch(/\bsold(?:\s|\p{Pd})+out\b/iu);
+    }
+  });
+
+  it("declares one conditional empty state on every catalog and cart surface", () => {
+    for (const { bundle, config } of STOREFRONT_RECIPES) {
+      for (const routeId of ["home", "collection", "search", "cart"] as const) {
+        expect(emptyStateCount(bundle.routes[routeId].tree), `${config.templateId}/${routeId}`).toBe(1);
+      }
     }
   });
 

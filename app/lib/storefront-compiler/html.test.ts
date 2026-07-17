@@ -24,6 +24,13 @@ describe("compileHtml", () => {
     ]);
   });
 
+  it("preserves only a valueless empty-state marker", () => {
+    expect(compileHtml(`<p data-cd-empty-state>No products yet.</p>`, { namespace: "home" }).html)
+      .toContain("data-cd-empty-state");
+    expect(() => compileHtml(`<p data-cd-empty-state="true">No products yet.</p>`, { namespace: "home" }))
+      .toThrow(CompilerError);
+  });
+
   it("removes route and action source attributes from deterministic HTML", () => {
     const result = compileHtml(
       `<a id="home" data-cd-route="home">Home</a><button data-cd-on="click" data-cd-action="scroll.to" data-cd-target="home">Top</button>`,

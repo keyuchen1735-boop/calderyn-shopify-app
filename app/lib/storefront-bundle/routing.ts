@@ -15,6 +15,7 @@ const MIN_MARGIN = 2;
 const NEGATION_FOCUS_WORDS = new Set(["only", "just", "merely", "exclusively", "simply"]);
 const NEGATION_NAME_DETERMINERS = new Set(["a", "an", "the", "either", "neither"]);
 const NEGATION_COORDINATORS = new Set(["and", "or", "nor"]);
+const EXCLUSION_QUANTIFIERS = new Set(["any", "anything", "everything"]);
 
 export function normalizeRoutingText(value: string): string {
   return value
@@ -73,8 +74,15 @@ function nonOverlappingPhraseSpans(haystack: string[], phrases: readonly string[
 function isNegativeNameSpan(promptTokens: string[], span: Span): boolean {
   const preceding = promptTokens.slice(Math.max(0, span.start - 4), span.start);
   const last = preceding[preceding.length - 1];
-  if (last === "not" || last === "avoid" || last === "without" || last === "neither") return true;
   const governor = preceding[preceding.length - 2];
+  if (last === "except" || (last === "for" && governor === "except")) {
+    const prefix = preceding.slice(0, last === "except" ? -1 : -2);
+    return !prefix.includes("nothing") && !prefix.includes("no");
+  }
+  if (last === "exclude") return governor !== "not" && governor !== "never";
+  if (last === "no") return true;
+  if (last === "but" && preceding.some((token) => EXCLUSION_QUANTIFIERS.has(token))) return true;
+  if (last === "not" || last === "avoid" || last === "without" || last === "neither") return true;
   if (governor === "not" && last && NEGATION_FOCUS_WORDS.has(last)) return false;
   if (last && (governor === "not" || governor === "avoid" || governor === "without")) {
     return true;
@@ -144,6 +152,13 @@ function recipeNameHits(prompt: string, registry: VersionedStoreTemplateRegistry
     positive: positive.filter((hit, index) => positive.findIndex((candidate) => candidate.templateId === hit.templateId) === index),
     negative: negative.filter((templateId, index) => negative.indexOf(templateId) === index),
   };
+}
+
+export function explicitStoreTemplateExclusions(
+  prompt: string,
+  registry: VersionedStoreTemplateRegistry,
+): StoreTemplateId[] {
+  return recipeNameHits(prompt, registry).negative;
 }
 
 function catalogMatches(
