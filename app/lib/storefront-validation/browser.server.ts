@@ -38,6 +38,7 @@ const PROOF_NONCE = "storefront-proof-nonce";
 const ROUTE_BYTES_LIMIT = 250 * 1024;
 const INTERACTION_BYTES_LIMIT = 40 * 1024;
 const FULL_BUNDLE_BYTES_LIMIT = 1.5 * 1024 * 1024;
+const CATALOG_PAGE_SIZE = 24;
 const STOREFRONT_PROOF_ROUTE_RE = /^\/storefront(?:\/(?:collections|products|search|cart|checkout|account)(?:[/?#].*)?|\/policies\/(?:privacy|terms|refund|shipping)\/?(?:[?#].*)?)?$/;
 let proofRuntimeSource: Promise<string> | undefined;
 
@@ -48,6 +49,7 @@ export function isSupportedStorefrontProofLink(href: string): boolean {
 export interface StorefrontProofCase {
   routeId: StorefrontRouteId;
   viewport: (typeof STOREFRONT_PROOF_VIEWPORTS)[number];
+  catalogOffset: number;
 }
 
 export interface StorefrontProofArtifacts {
@@ -65,6 +67,8 @@ export interface ProveStorefrontBundleInput {
   browser?: Browser;
   artifacts?: StorefrontProofArtifacts;
   routes?: readonly StorefrontRouteId[];
+  catalogPagination?: boolean;
+  viewports?: readonly StorefrontProofViewportName[];
   onProgress?: (event: { routeId: StorefrontRouteId; viewport: StorefrontProofViewportName; completed: number; total: number }) => void;
 }
 
@@ -81,6 +85,7 @@ export interface ProveStorefrontBundleResult extends StorefrontBrowserProofRepor
     routeId: StorefrontRouteId;
     viewport: StorefrontProofViewportName;
     sha256: string;
+    catalogOffset?: number;
     baseline?: string;
     pixelDiffRatio?: number;
   }>;
@@ -89,10 +94,22 @@ export interface ProveStorefrontBundleResult extends StorefrontBrowserProofRepor
 export function buildStorefrontProofCases(
   _bundle: StorefrontBundleV1,
   routes: readonly StorefrontRouteId[] = STOREFRONT_PROOF_ROUTES,
+  options?: {
+    catalogProductCount?: number;
+    viewports?: readonly StorefrontProofViewportName[];
+  },
 ): StorefrontProofCase[] {
-  return routes.flatMap((routeId) =>
-    STOREFRONT_PROOF_VIEWPORTS.map((viewport) => ({ routeId, viewport })),
-  );
+  const selectedViewports = options?.viewports
+    ? STOREFRONT_PROOF_VIEWPORTS.filter(({ name }) => options.viewports?.includes(name))
+    : STOREFRONT_PROOF_VIEWPORTS;
+  return routes.flatMap((routeId) => {
+    const pageCount = (routeId === "collection" || routeId === "search")
+      && options?.catalogProductCount !== undefined
+      ? Math.max(1, Math.ceil(options.catalogProductCount / CATALOG_PAGE_SIZE))
+      : 1;
+    return Array.from({ length: pageCount }, (_, index) => index * CATALOG_PAGE_SIZE)
+      .flatMap((catalogOffset) => selectedViewports.map((viewport) => ({ routeId, viewport, catalogOffset })));
+  });
 }
 
 export function detectFullStoryFailures(input: {
@@ -101,6 +118,7 @@ export function detectFullStoryFailures(input: {
   renderedText: string;
   hasVisualCanvas: boolean;
   hasProtectedFallback: boolean;
+  visualExpectation: "canvas" | "fallback" | null;
 }): string[] {
   const failures: string[] = [];
   const normalize = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -108,10 +126,41 @@ export function detectFullStoryFailures(input: {
     && !normalize(input.renderedText).includes(normalize(input.expectedProductDescription))) {
     failures.push("product-description-incomplete");
   }
-  if (input.routeId === "home" && !input.hasVisualCanvas && !input.hasProtectedFallback) {
-    failures.push("visual-layer-or-fallback-missing");
+  if (input.routeId === "home" && input.visualExpectation === "canvas") {
+    if (!input.hasVisualCanvas) failures.push("visual-canvas-missing");
+    if (input.hasProtectedFallback) failures.push("protected-fallback-visible");
+  }
+  if (input.routeId === "home" && input.visualExpectation === "fallback") {
+    if (input.hasVisualCanvas) failures.push("visual-canvas-unexpected");
+    if (!input.hasProtectedFallback) failures.push("protected-fallback-missing");
   }
   return failures;
+}
+
+export function detectCatalogPaginationFailure(
+  expectedIds: readonly string[],
+  observedPages: readonly (readonly string[])[],
+): { code: "catalog.pagination"; detail: { pageSizes: number[]; total: number; unique: number; expected: number } } | null {
+  const pageSizes = observedPages.map((page) => page.length);
+  const observedIds = observedPages.flatMap((page) => [...page]);
+  const expectedPageSizes = Array.from(
+    { length: Math.max(1, Math.ceil(expectedIds.length / CATALOG_PAGE_SIZE)) },
+    (_, index) => Math.min(CATALOG_PAGE_SIZE, Math.max(0, expectedIds.length - index * CATALOG_PAGE_SIZE)),
+  );
+  const exact = pageSizes.length === expectedPageSizes.length
+    && pageSizes.every((size, index) => size === expectedPageSizes[index])
+    && observedIds.length === expectedIds.length
+    && new Set(observedIds).size === expectedIds.length
+    && observedIds.every((id, index) => id === expectedIds[index]);
+  return exact ? null : {
+    code: "catalog.pagination",
+    detail: {
+      pageSizes,
+      total: observedIds.length,
+      unique: new Set(observedIds).size,
+      expected: expectedIds.length,
+    },
+  };
 }
 
 function routeBytes(bundle: StorefrontBundleV1, routeId: StorefrontRouteId): number {
@@ -212,10 +261,15 @@ export function createStorefrontProofDataForContext(
   context?: MerchantStorefrontContext,
   featuredProductIds?: readonly string[],
   featuredProductLimit = 12,
+  catalogOffset = 0,
 ): PublicPresentationData {
   const fixture = createStorefrontProofData(routeId);
   if (!context) return fixture;
   const products = context.products.map(presentContextProduct);
+  const catalogPage = products.slice(catalogOffset, catalogOffset + CATALOG_PAGE_SIZE);
+  const nextCursor = catalogOffset + CATALOG_PAGE_SIZE < products.length
+    ? String(catalogOffset + CATALOG_PAGE_SIZE)
+    : null;
   const proofFeaturedProducts = routeId === "home" && featuredProductIds?.length
     ? featuredProductIds.slice(0, featuredProductLimit).flatMap((id) => {
         const product = products.find((entry) => entry.id === id);
@@ -244,7 +298,15 @@ export function createStorefrontProofDataForContext(
       handle: context.collections[0]?.handle ?? "proof-collection",
       title: context.collections[0]?.title ?? "Catalog",
       productCount: context.collections[0]?.productCount ?? products.length,
-      products,
+      products: catalogPage,
+      nextCursor,
+    } : null,
+    search: routeId === "search" ? {
+      ...(fixture.search!),
+      query: "studio",
+      results: catalogPage,
+      total: products.length,
+      nextCursor,
     } : null,
   };
 }
@@ -253,6 +315,7 @@ export function createStorefrontProofDataForBundle(
   routeId: StorefrontRouteId,
   bundle: StorefrontBundleV1,
   context?: MerchantStorefrontContext,
+  catalogOffset = 0,
 ): PublicPresentationData {
   const featuredProductLimit = [...bundle.shell.requiredData, ...bundle.routes.home.requiredData]
     .find((requirement) => requirement.kind === "featuredProducts")?.limit ?? 12;
@@ -261,6 +324,7 @@ export function createStorefrontProofDataForBundle(
     context,
     bundle.featuredProductIds,
     featuredProductLimit,
+    catalogOffset,
   );
 }
 
@@ -423,6 +487,7 @@ interface PageAuditResult {
   shellStyleFailures: string[];
   layoutFailures: string[];
   fullStoryFailures: string[];
+  catalogProductHandles: string[];
   focusableCount: number;
   reducedMotion: boolean;
   cls: number;
@@ -465,6 +530,9 @@ async function auditPage(
       ({ templateVersion }) => templateVersion === recipeSource.templateVersion,
     )?.visualLayer.fallbackAssetKey ?? null
     : null;
+  const visualExpectation: "canvas" | "fallback" | null = routeId !== "home" || !fallbackAssetKey
+    ? null
+    : resolveStorefrontVisualPlacement(bundle, routeId) ? "canvas" : "fallback";
   await page.evaluate(axe);
   const result = await page.evaluate(async ({ transitions, route, supportedRoutePattern, protectedFallbackKey }) => {
     const visible = (element: HTMLElement) => {
@@ -585,6 +653,16 @@ async function auditPage(
         .find((element) => element.getAttribute("data-cd-asset-key") === protectedFallbackKey)
       : null;
     const visualCanvas = document.querySelector<HTMLElement>("[data-cd-visual-host] canvas");
+    const routeRoot = document.querySelector<HTMLElement>(`[data-cd-bundle-route='${route}']`);
+    const catalogProductHandles = [...(routeRoot?.querySelectorAll<HTMLElement>("[data-cd-repeat-owner='true']") ?? [])]
+      .flatMap((owner) => {
+        const links = owner.matches("a[href]")
+          ? [owner as HTMLAnchorElement]
+          : [...owner.querySelectorAll<HTMLAnchorElement>("a[href]")];
+        const match = links.map((link) => new URL(link.href).pathname.match(/^\/storefront\/products\/([^/]+)$/))
+          .find((candidate) => candidate);
+        return match?.[1] ? [decodeURIComponent(match[1])] : [];
+      });
     const shifts = performance.getEntriesByType("layout-shift") as Array<PerformanceEntry & { value?: number; hadRecentInput?: boolean }>;
     const paints = performance.getEntriesByType("largest-contentful-paint") as Array<PerformanceEntry & { startTime: number }>;
     const tasks = performance.getEntriesByType("longtask") as Array<PerformanceEntry & { duration: number }>;
@@ -614,6 +692,7 @@ async function auditPage(
         hasVisualCanvas: Boolean(visualCanvas && visible(visualCanvas)),
         hasProtectedFallback: Boolean(protectedFallback && visible(protectedFallback)),
       },
+      catalogProductHandles,
     };
   }, {
     transitions: route?.interactions.transitions ?? [],
@@ -625,7 +704,12 @@ async function auditPage(
   return {
     ...audit,
     layoutFailures: detectHorizontalLayoutFailures(layout),
-    fullStoryFailures: detectFullStoryFailures({ routeId, expectedProductDescription, ...fullStory }),
+    fullStoryFailures: detectFullStoryFailures({
+      routeId,
+      expectedProductDescription,
+      visualExpectation,
+      ...fullStory,
+    }),
   };
 }
 
@@ -715,6 +799,20 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
   const screenshots: string[] = [];
   const screenshotManifest: ProveStorefrontBundleResult["screenshotManifest"] = [];
   const metrics = measureStorefrontBundle(input.bundle);
+  const proofCases = buildStorefrontProofCases(input.bundle, input.routes, {
+    catalogProductCount: input.catalogPagination ? input.context?.products.length : undefined,
+    viewports: input.viewports,
+  });
+  type CatalogPageEvidence = {
+    catalogOffset: number;
+    viewport: StorefrontProofViewportName;
+    productIds: string[];
+  };
+  const provedCatalogPages: Record<"collection" | "search", CatalogPageEvidence[]> = {
+    collection: [],
+    search: [],
+  };
+  const productIdsByHandle = new Map(input.context?.products.map(({ id, handle }) => [handle, id]) ?? []);
   const ownBrowser = !input.browser;
   const browser = input.browser ?? await launchChromium();
   const page = await browser.newPage();
@@ -746,14 +844,13 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
   page.on("requestfailed", (request) => currentFailures.push(`${request.url()}: ${request.failure()?.errorText ?? "failed"}`));
   await page.setRequestInterception(true);
   try {
-    const proofCases = buildStorefrontProofCases(input.bundle, input.routes);
     for (const [caseIndex, proofCase] of proofCases.entries()) {
       assertActive();
-      const { routeId, viewport } = proofCase;
+      const { routeId, viewport, catalogOffset } = proofCase;
       currentUnexpected = [];
       currentConsole = [];
       currentFailures = [];
-      const data = createStorefrontProofDataForBundle(routeId, input.bundle, input.context);
+      const data = createStorefrontProofDataForBundle(routeId, input.bundle, input.context, catalogOffset);
       let publicMarkup: string;
       let previewMarkup: string;
       try {
@@ -769,7 +866,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
       await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
       currentDocument = documentHtml(publicMarkup, `${input.bundle.concept.name} — ${routeId}`);
-      await page.goto(`${PROOF_ORIGIN}/__proof__/document?route=${routeId}&viewport=${viewport.name}`, {
+      await page.goto(`${PROOF_ORIGIN}/__proof__/document?route=${routeId}&viewport=${viewport.name}&cursor=${catalogOffset}`, {
         waitUntil: "networkidle0",
         timeout: Math.max(1, Math.min(30_000, deadlineAt - Date.now())),
       });
@@ -895,7 +992,12 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       const sha256 = createHash("sha256").update(image).digest("hex");
       const screenshotRef = `sha256:${sha256}`;
       screenshots.push(screenshotRef);
-      const manifestEntry: ProveStorefrontBundleResult["screenshotManifest"][number] = { routeId, viewport: viewport.name, sha256 };
+      const manifestEntry: ProveStorefrontBundleResult["screenshotManifest"][number] = {
+        routeId,
+        viewport: viewport.name,
+        sha256,
+        ...((routeId === "collection" || routeId === "search") ? { catalogOffset } : {}),
+      };
       if (routeId === "home" && input.artifacts?.baselineDirectory) {
         const baselineVersion = input.bundle.source.kind === "recipe" ? input.bundle.source.templateVersion : 1;
         const baseline = resolve(input.artifacts.baselineDirectory, `v${baselineVersion}-${viewport.name}.webp`);
@@ -947,7 +1049,36 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       if (!focus.viewportMatches) addDiagnostic(diagnostics, routeId, viewport.name, "proof.viewport", "Keyboard proof ran at the wrong viewport");
       if (!focus.ok) addDiagnostic(diagnostics, routeId, viewport.name, "keyboard.focus", "Tab did not move focus to an interactive control");
       else if (!focus.outline) addDiagnostic(diagnostics, routeId, viewport.name, "focus.visible", "Keyboard focus has no visible outline");
+      if (input.catalogPagination && (routeId === "collection" || routeId === "search")) {
+        provedCatalogPages[routeId].push({
+          catalogOffset,
+          viewport: viewport.name,
+          productIds: audit.catalogProductHandles.map((handle) => productIdsByHandle.get(handle) ?? `unknown:${handle}`),
+        });
+      }
       input.onProgress?.({ routeId, viewport: viewport.name, completed: caseIndex + 1, total: proofCases.length });
+    }
+    if (input.catalogPagination && input.context) {
+      const expectedIds = input.context.products.map(({ id }) => id);
+      for (const routeId of ["collection", "search"] as const) {
+        for (const viewport of [...new Set(provedCatalogPages[routeId].map((page) => page.viewport))]) {
+          const observedPages = provedCatalogPages[routeId]
+            .filter((page) => page.viewport === viewport)
+            .sort((left, right) => left.catalogOffset - right.catalogOffset)
+            .map((page) => page.productIds);
+          const failure = detectCatalogPaginationFailure(expectedIds, observedPages);
+          if (failure) {
+            addDiagnostic(
+              diagnostics,
+              routeId,
+              viewport,
+              failure.code,
+              "Cursor pages did not render every merchant product exactly once",
+              failure.detail,
+            );
+          }
+        }
+      }
     }
   } finally {
     await page.close();
@@ -958,7 +1089,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
     screenshots,
     browserMs: Date.now() - startedAt,
     metrics,
-    cases: buildStorefrontProofCases(input.bundle, input.routes).length,
+    cases: proofCases.length,
   });
   return { ...report, screenshotManifest };
 }

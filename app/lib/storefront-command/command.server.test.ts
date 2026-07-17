@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { applyStoreIntent } from "./apply";
 import { CUSTOM_BENCH_BUNDLE } from "../storefront-recipes/custom-bench/bundle";
 import { STOREFRONT_RECIPES } from "../storefront-recipes";
 import { StorefrontReleaseError } from "../storefront-bundle/release.server";
 import { storefrontProofContext } from "../storefront-validation/fixtures";
+import { proveStorefrontBundle } from "../storefront-validation/browser.server";
+import { launchChromium } from "../browser/chromium.server";
 import type { StoreCommand, StoreCommandEvent, StoreCommandReceipt } from "./types";
 import {
   runStoreCommand,
@@ -745,6 +747,17 @@ describe("runStoreCommand", () => {
 
   it("runs the 61-product merchant story through command CAS, edits, Undo, and Publish", async () => {
     const merchant = storefrontProofContext();
+    const browser = await launchChromium();
+    onTestFinished(() => browser.close(), 30_000);
+    const browserProofPrompts = new Set([
+      "Generate an effect",
+      "Use the merchant shader",
+      "Switch design",
+      "Try another",
+      "Start over",
+    ]);
+    const provedPrompts: string[] = [];
+    let promptInFlight: string | null = null;
     const merchantAssembly = {
       context: merchant,
       references: {
@@ -804,6 +817,20 @@ describe("runStoreCommand", () => {
         return structuredClone(selected);
       }),
       applyIntent: applyStoreIntent,
+      prove: vi.fn(async (input) => {
+        if (!promptInFlight || !browserProofPrompts.has(promptInFlight)) {
+          return { ok: true, diagnostics: [], screenshots: ["proof"], browserMs: 1 };
+        }
+        const result = await proveStorefrontBundle({
+          ...input,
+          browser,
+          routes: ["home"],
+          viewports: ["mobile", "desktop"],
+        });
+        expect(result.diagnostics).toEqual([]);
+        provedPrompts.push(promptInFlight);
+        return result;
+      }),
       hashArtifact: vi.fn(async ({ artifact }) => `sha256:${createHash("sha256").update(JSON.stringify(artifact)).digest("hex")}`),
       createVersion: vi.fn(async (input) => {
         const versionId = nextVersionId();
@@ -843,10 +870,15 @@ describe("runStoreCommand", () => {
       value: string,
       command: Extract<StoreCommand, { kind: "prompt" }> = promptCommand(current.draft?.versionId ?? null, value),
     ): Promise<Extract<StoreCommandReceipt, { status: "installed" }>> => {
-      const receipt = await runStoreCommand({ shopId: SHOP, command }, deps);
-      expect(receipt.status).toBe("installed");
-      if (receipt.status !== "installed") throw new Error("expected installed receipt");
-      return receipt;
+      promptInFlight = value;
+      try {
+        const receipt = await runStoreCommand({ shopId: SHOP, command }, deps);
+        expect(receipt.status).toBe("installed");
+        if (receipt.status !== "installed") throw new Error("expected installed receipt");
+        return receipt;
+      } finally {
+        promptInFlight = null;
+      }
     };
 
     const initial = await prompt("Build the store", promptCommand(null, "Build the store"));
@@ -908,5 +940,6 @@ describe("runStoreCommand", () => {
     expect(merchant.products.filter(({ images }) => images.length === 0)).toHaveLength(10);
     expect(deps.prove).toHaveBeenCalled();
     expect(vi.mocked(deps.prove).mock.calls.every(([input]) => input.context.products.length === 61)).toBe(true);
-  });
+    expect(provedPrompts).toEqual([...browserProofPrompts]);
+  }, 120_000);
 });

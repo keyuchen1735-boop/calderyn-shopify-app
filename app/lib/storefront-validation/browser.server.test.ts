@@ -8,6 +8,7 @@ import {
   buildStorefrontProofCases,
   createStorefrontProofDataForBundle,
   createStorefrontProofDataForContext,
+  detectCatalogPaginationFailure,
   detectFullStoryFailures,
   detectHorizontalLayoutFailures,
   measureStorefrontBundle,
@@ -29,6 +30,23 @@ describe("storefront browser proof matrix", () => {
     expect(STOREFRONT_PROOF_ROUTES).toEqual(["home", "collection", "product", "search", "cart", "checkout"]);
     expect(cases).toHaveLength(18);
     expect(new Set(cases.map((entry) => entry.routeId))).toEqual(new Set(STOREFRONT_PROOF_ROUTES));
+  });
+
+  it("expands collection and search into bounded 61-product cursor pages", () => {
+    const cases = buildStorefrontProofCases(
+      compileBundle(VALID_BUNDLE_SOURCE).bundle,
+      ["collection", "search"],
+      { catalogProductCount: 61, viewports: ["mobile", "desktop"] },
+    );
+
+    expect(cases).toHaveLength(12);
+    for (const routeId of ["collection", "search"] as const) {
+      const routeCases = cases.filter((entry) => entry.routeId === routeId);
+      expect(routeCases.map(({ catalogOffset }) => catalogOffset)).toEqual([0, 0, 24, 24, 48, 48]);
+      expect(routeCases.map(({ viewport }) => viewport.name)).toEqual([
+        "mobile", "desktop", "mobile", "desktop", "mobile", "desktop",
+      ]);
+    }
   });
 
   it("builds realistic sale, sold-out, long-copy, missing-image, empty, and checkout fixtures", () => {
@@ -59,28 +77,74 @@ describe("storefront browser proof matrix", () => {
     expect(storefrontProofContext(27).products).toHaveLength(27);
   });
 
-  it("requires the complete PDP description and either the visual canvas or protected fallback", () => {
+  it("requires the complete PDP description and the expected visual-layer outcome", () => {
     expect(detectFullStoryFailures({
       routeId: "product",
       expectedProductDescription: "Complete merchant description",
       renderedText: "Complete merchant",
       hasVisualCanvas: true,
       hasProtectedFallback: false,
+      visualExpectation: null,
     })).toEqual(["product-description-incomplete"]);
     expect(detectFullStoryFailures({
       routeId: "home",
       expectedProductDescription: null,
       renderedText: "",
       hasVisualCanvas: false,
-      hasProtectedFallback: false,
-    })).toEqual(["visual-layer-or-fallback-missing"]);
+      hasProtectedFallback: true,
+      visualExpectation: "canvas",
+    })).toEqual(["visual-canvas-missing", "protected-fallback-visible"]);
     expect(detectFullStoryFailures({
-      routeId: "product",
-      expectedProductDescription: "Complete merchant description",
-      renderedText: "Complete merchant description",
+      routeId: "home",
+      expectedProductDescription: null,
+      renderedText: "",
+      hasVisualCanvas: true,
+      hasProtectedFallback: false,
+      visualExpectation: "fallback",
+    })).toEqual(["visual-canvas-unexpected", "protected-fallback-missing"]);
+    expect(detectFullStoryFailures({
+      routeId: "home",
+      expectedProductDescription: null,
+      renderedText: "",
       hasVisualCanvas: false,
       hasProtectedFallback: true,
+      visualExpectation: "fallback",
     })).toEqual([]);
+  });
+
+  it("builds and aggregates the 61-product collection and search cursor pages", () => {
+    const context = storefrontProofContext();
+    const pageOffsets = [0, 24, 48];
+
+    for (const routeId of ["collection", "search"] as const) {
+      const pages = pageOffsets.map((offset) => createStorefrontProofDataForContext(
+        routeId,
+        context,
+        undefined,
+        12,
+        offset,
+      ));
+      const ids = pages.flatMap((page) => routeId === "collection"
+        ? page.collection?.products.map(({ id }) => id) ?? []
+        : page.search?.results.map(({ id }) => id) ?? []);
+
+      expect(pages.map((page) => routeId === "collection"
+        ? page.collection?.products.length
+        : page.search?.results.length)).toEqual([24, 24, 13]);
+      expect(ids).toHaveLength(61);
+      expect(new Set(ids).size).toBe(61);
+    }
+  });
+
+  it("fails catalog pagination when browser-observed identities are missing or duplicated", () => {
+    const ids = storefrontProofContext().products.map(({ id }) => id);
+    const pages = [ids.slice(0, 24), ids.slice(24, 48), ids.slice(48)];
+
+    expect(detectCatalogPaginationFailure(ids, pages)).toBeNull();
+    expect(detectCatalogPaginationFailure(ids, [pages[0]!.slice(1), pages[1]!, pages[2]!]))
+      .toMatchObject({ code: "catalog.pagination", detail: { total: 60, unique: 60 } });
+    expect(detectCatalogPaginationFailure(ids, [[...pages[0]!, ids[0]!], pages[1]!, pages[2]!]))
+      .toMatchObject({ code: "catalog.pagination", detail: { total: 62, unique: 61 } });
   });
 
   it("preserves a genuinely empty catalog instead of silently substituting demo products", () => {

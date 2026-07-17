@@ -16,8 +16,18 @@ describe("committed storefront screenshot manifest", () => {
     expect(manifest.recipes.map((entry) => entry.id)).toEqual([...RECIPE_IDS, "full-story", "full-story-invalid-shader", "representative-empty"]);
     expect(manifest.recipes.filter((entry) => entry.id.startsWith("full-story")).every((entry) => entry.sourceKind === "recipe")).toBe(true);
     for (const entry of manifest.recipes) {
-      expect(entry.screenshots).toHaveLength(entry.id === "representative-empty" ? 15 : 18);
+      const expectedCount = entry.id === "full-story" ? 30
+        : entry.id === "full-story-invalid-shader" ? 3
+          : entry.id === "representative-empty" ? 15 : 18;
+      expect(entry.screenshots).toHaveLength(expectedCount);
       expect(new Set(entry.screenshots.map((shot) => shot.viewport))).toEqual(new Set(["mobile", "tablet", "desktop"]));
+    }
+    const fullStory = manifest.recipes.find((entry) => entry.id === "full-story")!;
+    for (const routeId of ["collection", "search"] as const) {
+      expect(fullStory.screenshots
+        .filter((shot) => shot.routeId === routeId)
+        .map((shot) => "catalogOffset" in shot ? shot.catalogOffset : null))
+        .toEqual([0, 0, 0, 24, 24, 24, 48, 48, 48]);
     }
   });
 

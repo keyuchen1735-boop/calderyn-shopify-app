@@ -44,14 +44,15 @@ window.__CD_HYDRATE_STOREFRONT_PROOF__ = ({ bundle, routeId, data }) => {
   };
   const shell = root.querySelector<HTMLElement>("[data-cd-bundle-shell]");
   if (!shell) throw new Error("Storefront proof shell is missing");
-  const shellHandle = hydrateStorefront({ root: shell, artifact: bundle.shell, adapters });
+  const visualLayer = bundle.visualLayer?.kind === "fragment_shader" ? bundle.visualLayer : undefined;
+  const shellHandle = hydrateStorefront({ root: shell, artifact: bundle.shell, adapters, visualLayer });
   const routeRoot = routeId === "checkout"
     ? null
     : root.querySelector<HTMLElement>(`[data-cd-bundle-route='${routeId}']`);
   const routeHandle = routeId === "checkout"
     ? null
     : routeRoot
-      ? hydrateStorefront({ root: routeRoot, artifact: bundle.routes[routeId], adapters })
+      ? hydrateStorefront({ root: routeRoot, artifact: bundle.routes[routeId], adapters, visualLayer })
       : null;
   if (!shellHandle.hydrated) throw shellHandle.error ?? new Error("Storefront shell hydration failed");
   if (routeId !== "checkout" && !routeHandle?.hydrated) {
