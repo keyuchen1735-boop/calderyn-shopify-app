@@ -61,7 +61,7 @@ function productValue(product: DesignerStoreData["products"][number], path: stri
     case "product.price": return money(product.priceCents);
     case "product.compareAtPrice": return money(product.compareAtPriceCents);
     case "product.availability": return product.available ? "In stock" : "Sold out";
-    case "product.image": return product.imageUrl ?? NEUTRAL_IMAGE;
+    case "product.image": return escapeHtml(product.imageUrl ?? NEUTRAL_IMAGE);
     case "product.url": return `/storefront/products/${encodeURIComponent(product.handle)}`;
     default: return "";
   }
@@ -71,7 +71,7 @@ function rootValue(data: DesignerStoreData, path: string): string {
   switch (path) {
     case "store.name": return escapeHtml(data.storeName);
     case "store.tagline": return escapeHtml(data.tagline ?? "");
-    case "store.logo": return data.logoUrl ?? NEUTRAL_IMAGE;
+    case "store.logo": return escapeHtml(data.logoUrl ?? NEUTRAL_IMAGE);
     case "cart.count": return "0";
     case "collection.title": return "Everything";
     case "collection.description": return escapeHtml(data.tagline ?? "");
