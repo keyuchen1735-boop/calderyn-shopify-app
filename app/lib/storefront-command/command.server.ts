@@ -785,6 +785,13 @@ export async function runStoreCommand(
     });
   } catch (error) {
     const failure = normalizedError(error, input.signal);
+    if (failure.code === "storefront_command_failed") {
+      console.error("[storefront-command] unexpected failure", {
+        shopId: input.shopId,
+        commandKind: input.command.kind,
+        error,
+      });
+    }
     await emit(input, {
       stage: "error",
       code: failure.code,
