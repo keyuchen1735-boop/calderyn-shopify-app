@@ -1,7 +1,7 @@
 // app/lib/experiments/store-experiment.server.ts
 // One-at-a-time A/B experiments for the owned storefront (spec
 // 2026-07-05-store-studio-v2-design.md D4; extended 2026-07-09 to product-page
-// tests + an AI-generated challenger). The champion stays in
+// tests). The champion stays in
 // page_document.published_json; the challenger doc and optional settings
 // overrides live on the store_experiment row. Server-only: service-role
 // client, shop_id threaded on every query. Non-uuid (demo) shops: reads
@@ -16,7 +16,6 @@ import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { loadPublishedDoc } from "~/lib/storebuilder/page-document.server";
 import { sanitizeDocHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { validateDocument, type ValidIds } from "~/lib/storebuilder/validate";
-import { generateChallengerHome } from "~/lib/storegen/generate.server";
 import type { Block, BlockDocument } from "~/lib/storebuilder/types";
 import type {
   StudioExperiment,
@@ -26,15 +25,11 @@ import type {
   StudioVibe,
 } from "~/lib/storebuilder/studio-types";
 
-export type StoreExperimentKind = "headline" | "vibe" | "pdp_copy" | "ai_page";
+export type StoreExperimentKind = "headline" | "vibe" | "pdp_copy";
 export type StoreExperimentDecision = "ship" | "keep" | "stop";
 export interface StoreExperimentSpec {
   kind: StoreExperimentKind;
   name?: string;
-  /** Runs after the cheap refusals (running test, nothing published) but BEFORE any paid model
-   *  call — the route wires the designer cooldown here so a refused start never delays a
-   *  corrected retry. Only invoked for AI-backed kinds. */
-  onBeforeAiCall?: () => Promise<void>;
 }
 
 /** The page a challenger tests against. pdp_copy runs on the PDP template;
@@ -61,8 +56,7 @@ const VIBES: StudioVibe[] = ["minimal", "bold", "warm"];
 // shipped copy before building a new challenger, so repeat tests never stack duplicates.
 const REASSURANCE_BLOCK_ID = "pdp-experiment-reassurance";
 
-// Copy bounds mirror the generator's COPY_BOUNDS (storegen/sanitize.ts) so a
-// templated challenger can never exceed what a generated doc may hold.
+// Keep templated challenger copy within the page-document bounds.
 const HEADLINE_MAX = 120;
 const SUBHEAD_MAX = 200;
 
@@ -367,10 +361,6 @@ export async function startExperiment(
     });
   }
 
-  // Quota-last: the cheap refusals above ran; consume the designer allowance only when the
-  // paid challenger generation is actually about to happen.
-  if (spec.kind === "ai_page" && spec.onBeforeAiCall) await spec.onBeforeAiCall();
-
   const challenger = await buildChallenger(shopId, spec.kind, published);
   const name = spec.name?.trim() || challenger.name;
 
@@ -435,26 +425,6 @@ async function buildChallenger(
       why: `Tests the ${next} design vibe against your current ${current} look on the home page.`,
       doc: published,
       settings: { vibe: next },
-    };
-  }
-
-  if (kind === "ai_page") {
-    // A full alternative home designed by the same engine that built the champion — a genuinely
-    // different composition/copy angle, never a fake or templated "AI" variant. Unreachable or
-    // unusable model output refuses the start honestly (503) instead of starting a sham test.
-    const doc = await generateChallengerHome(shopId);
-    if (!doc) {
-      throw new CalderynError({
-        code: "ai_unavailable",
-        status: 503,
-        message: "The design engine couldn't produce a challenger page right now. Try again later.",
-      });
-    }
-    return {
-      name: "AI redesign",
-      why: "Tests a fresh AI-designed home page — new composition and copy angle, same brand — against your current one.",
-      doc,
-      settings: null,
     };
   }
 
