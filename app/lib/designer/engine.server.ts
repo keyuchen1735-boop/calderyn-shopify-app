@@ -352,6 +352,15 @@ async function runEditTurn(input: {
     reply = parsed.prose || "Tell me what you'd like to change and I'll make it happen.";
   }
 
+  // Absolute output guard: whatever new formatting a model invents, edit-block
+  // markers must never render in a merchant's chat bubble. If any slipped
+  // through parsing into the prose, swap in an honest generic reply instead.
+  if (/(?:^|\n)[ \t]*(?:<{4,}|>{4,}|={4,}|FILE:[ \t]*[\w.-]+[ \t]*$)/m.test(reply)) {
+    reply = changed
+      ? "Done, it's in the preview."
+      : "I couldn't apply that change cleanly this time. Try asking for it in smaller steps, or point me at the exact text to change.";
+  }
+
   return { reply, changed, rejectedEdits: result.rejected.length, files: result.files };
 }
 

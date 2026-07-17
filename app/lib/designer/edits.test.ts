@@ -197,3 +197,36 @@ describe("hardening: deletions, truncation, ambiguity, allowlist", () => {
     expect(parsed.truncated).toBe(false);
   });
 });
+
+describe("hardening: reply-leak variants seen live", () => {
+  it("parses CRLF-formatted blocks (no marker soup in prose)", () => {
+    const raw = "Making the cards feel nicer.\r\n=======\r\nFILE: home.css\r\n<<<<<<< SEARCH\r\n.product { min-width:0 }\r\n=======\r\n.product { min-width:0; box-shadow:0 14px 28px rgba(0,0,0,.35) }\r\n>>>>>>> REPLACE\r\n";
+    const parsed = parseDesignerReply(raw);
+    expect(parsed.edits).toHaveLength(1);
+    expect(parsed.prose).toBe("Making the cards feel nicer.");
+    expect(parsed.prose).not.toContain("SEARCH");
+    expect(parsed.prose).not.toContain("box-shadow");
+  });
+
+  it("parses blocks whose markers carry indentation or a blank line after FILE", () => {
+    const raw = ["Done below.", "FILE: home.css", "", "  <<<<<<< SEARCH", "a{color:red}", "  =======", "a{color:blue}", "  >>>>>>> REPLACE"].join("\n");
+    const parsed = parseDesignerReply(raw);
+    expect(parsed.edits).toHaveLength(1);
+    expect(parsed.edits[0].search).toBe("a{color:red}");
+    expect(parsed.prose).toBe("Done below.");
+  });
+
+  it("flags truncation when a CRLF block never closes, keeping css out of prose", () => {
+    const raw = "=======\r\nFILE: home.css\r\n<<<<<<< SEARCH\r\n.product { border:1px }\r\n=======\r\n.product { border:1px; transition:transform .3s }\r\n";
+    const parsed = parseDesignerReply(raw);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.prose).not.toContain("transition");
+    expect(parsed.prose).not.toContain("SEARCH");
+  });
+
+  it("parses long divider runs (ten equals) and long angle runs", () => {
+    const raw = "FILE: home.css\n<<<<<<<<<< SEARCH\nx\n==========\ny\n>>>>>>>>>> REPLACE";
+    const parsed = parseDesignerReply(raw);
+    expect(parsed.edits).toHaveLength(1);
+  });
+});

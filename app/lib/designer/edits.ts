@@ -25,26 +25,38 @@ export interface ParsedDesignerReply {
   truncated: boolean;
 }
 
-const FILE_LINE = /^FILE:[ \t]*([\w.-]+)[ \t]*$/;
-const SEARCH_LINE = /^<{5,9} ?SEARCH[ \t]*$/;
-const DIVIDER_LINE = /^={5,9}[ \t]*$/;
-const REPLACE_LINE = /^>{5,9} ?REPLACE[ \t]*$/;
+// Marker matching is deliberately loose (leading indent, any run length of
+// marker characters, trailing spaces): a marker line the parser fails to
+// recognize doesn't just break that edit — its whole block leaks into the
+// merchant's chat as raw diff text (observed live with CRLF-formatted
+// replies, whose trailing \r defeated exact end-of-line anchors).
+const FILE_LINE = /^[ \t]*FILE:[ \t]*([\w.-]+)[ \t]*$/;
+const SEARCH_LINE = /^[ \t]*<{4,} ?SEARCH[ \t]*$/;
+const DIVIDER_LINE = /^[ \t]*={4,}[ \t]*$/;
+const REPLACE_LINE = /^[ \t]*>{4,} ?REPLACE[ \t]*$/;
 
 /** Line-based block parser. A single regex cannot express empty SEARCH or
  *  empty REPLACE sections (deletions), and silently drops blocks cut off by
  *  a max_tokens truncation — both real merchant scenarios. */
 export function parseDesignerReply(raw: string): ParsedDesignerReply {
-  const lines = raw.split("\n");
+  const lines = raw.replace(/\r\n?/g, "\n").split("\n");
   const edits: DesignerEdit[] = [];
   const proseLines: string[] = [];
   let truncated = false;
 
   let i = 0;
   while (i < lines.length) {
-    // A block starts at "FILE: name" with "<<<<<<< SEARCH" on the next line.
-    if (FILE_LINE.test(lines[i]) && i + 1 < lines.length && SEARCH_LINE.test(lines[i + 1])) {
+    // A block starts at "FILE: name" with "<<<<<<< SEARCH" on the next
+    // non-blank line (models sometimes pad a blank line between them).
+    let searchAt = -1;
+    if (FILE_LINE.test(lines[i])) {
+      let probe = i + 1;
+      while (probe < lines.length && lines[probe].trim() === "") probe += 1;
+      if (probe < lines.length && SEARCH_LINE.test(lines[probe])) searchAt = probe;
+    }
+    if (searchAt !== -1) {
       const file = lines[i].match(FILE_LINE)![1];
-      let j = i + 2;
+      let j = searchAt + 1;
       const search: string[] = [];
       while (j < lines.length && !DIVIDER_LINE.test(lines[j])) search.push(lines[j++]);
       if (j >= lines.length) {
