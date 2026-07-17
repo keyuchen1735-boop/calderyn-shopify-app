@@ -1008,6 +1008,7 @@ describe("runStoreCommand", () => {
 
   it("maps unknown upstream failures to one fixed merchant-safe stream error", async () => {
     const events: StoreCommandEvent[] = [];
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const deps = dependencies({
       loadState: vi.fn().mockRejectedValue(Object.assign(
         new Error("bundle_json leaked custom-bench service_role"),
@@ -1031,6 +1032,11 @@ describe("runStoreCommand", () => {
       message: "The storefront change could not be completed. Your current draft was not changed.",
     }]);
     expect(JSON.stringify(events)).not.toMatch(/bundle_json|custom-bench|service_role|postgres_private_recipe_failure/);
+    expect(logged).toHaveBeenCalledWith(
+      "[storefront-command] unexpected failure",
+      expect.objectContaining({ shopId: SHOP, commandKind: "prompt", error: expect.any(Error) }),
+    );
+    logged.mockRestore();
   });
 
   it("maps release CAS failures to the fixed public conflict error", async () => {

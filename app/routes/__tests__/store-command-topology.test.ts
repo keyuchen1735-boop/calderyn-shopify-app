@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { UNSAFE_flatRoutes } from "@remix-run/dev";
 import { describe, expect, it } from "vitest";
