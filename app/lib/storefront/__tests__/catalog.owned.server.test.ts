@@ -442,6 +442,26 @@ describe("ownedCatalog.getProduct", () => {
   });
 });
 
+describe("listOwnedPreviewProducts", () => {
+  it("keeps draft products visible only for the authenticated Store Builder preview", async () => {
+    tableRows = {
+      product_dim: [{ id: "draft-1", handle: "draft", title: "Draft product", description: "" }],
+      variant_dim: [{ id: "variant-1", product_id: "draft-1", title: "Default", retail_price_cents: 1200, currency: "USD", inventory_tracked: false, position: 0 }],
+      inventory_balance: [],
+      product_media: [],
+      product_collection: [],
+      product_option: [],
+      product_option_value: [],
+    };
+    const { listOwnedPreviewProducts } = await import("../catalog.owned.server");
+    const products = await listOwnedPreviewProducts("shop-1");
+    expect(products.map((product) => product.id)).toEqual(["draft-1"]);
+    expect(eqCalls.product_dim).toContainEqual(["shop_id", "shop-1"]);
+    expect(eqCalls.product_dim).not.toContainEqual(["status", "active"]);
+    expect(inCalls.product_dim).toContainEqual(["status", ["active", "draft"]]);
+  });
+});
+
 describe("ownedCatalog.getVariantById", () => {
   it("looks up the variant and active owning product directly within the resolved shop", async () => {
     tableSingle = {

@@ -110,6 +110,7 @@ afterEach(() => {
 describe("Store command orchestration", () => {
   it("maps page selections to runtime preview routes", async () => {
     const { host, root } = await renderStore();
+    const initialFrame = host.querySelector<HTMLIFrameElement>('iframe[title="Store preview"]');
     const previewParams = () => new URL(host.querySelector<HTMLIFrameElement>('iframe[title="Store preview"]')!.src)
       .searchParams;
 
@@ -123,6 +124,7 @@ describe("Store command orchestration", () => {
         .find((button) => button.textContent?.includes("Product page"))!.click();
     });
     expect(Object.fromEntries(previewParams())).toMatchObject({ route: "product", page: "pdp" });
+    expect(host.querySelector<HTMLIFrameElement>('iframe[title="Store preview"]')).not.toBe(initialFrame);
 
     await act(async () => {
       [...host.querySelectorAll<HTMLButtonElement>("button")]

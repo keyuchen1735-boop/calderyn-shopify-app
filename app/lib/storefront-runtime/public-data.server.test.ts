@@ -147,6 +147,17 @@ describe("runtime-1 public data plans", () => {
     expect(data.featuredProducts[0]?.description).toBe(described.description);
   });
 
+  it("supplies storefront copy when a merchant product description is blank", async () => {
+    const blank = { ...product("one"), title: "Enriched Uranium", description: "", category: "Materials" };
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "featuredProducts", limit: 1 }],
+      route: { kind: "home" },
+    }, { catalog: catalog([blank]), settingsLoader });
+
+    expect(data.featuredProducts[0]?.description).toBe("Enriched Uranium is selected for this store in Materials.");
+  });
+
   it("uses the immutable bundle's featured product order on home only", async () => {
     const first = product("one");
     const second = product("two");

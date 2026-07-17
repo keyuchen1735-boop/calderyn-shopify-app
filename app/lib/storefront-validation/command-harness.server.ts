@@ -144,6 +144,7 @@ export function createStoreCommandHarness(options: StoreCommandHarnessOptions) {
       context: { ...structuredClone(context), prompt },
       references: structuredClone(references),
     }),
+    prepareProductMedia: async () => 0,
     classify: options.classify,
     resolveDesign: options.resolveDesign
       ?? ((request, evidence) => resolveStoreDesign(request, evidence, STORE_TEMPLATE_REGISTRY)),
