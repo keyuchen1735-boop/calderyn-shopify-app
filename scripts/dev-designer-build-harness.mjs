@@ -32,6 +32,11 @@ try {
 
   const { data: backupDocs } = await sb.from("designer_documents").select("*").eq("shop_id", SHOP_ID);
   const { data: backupChat } = await sb.from("designer_chat").select("*").eq("shop_id", SHOP_ID);
+  // On-disk backup first: an in-memory-only backup is lost if the process is
+  // killed between the delete and the finally restore, orphaning the demo shop.
+  const backupPath = `./.harness-backup-${SHOP_ID}.json`;
+  writeFileSync(backupPath, JSON.stringify({ docs: backupDocs ?? [], chat: backupChat ?? [] }));
+  console.log(`[backup] wrote ${backupPath} (docs=${backupDocs?.length ?? 0} chat=${backupChat?.length ?? 0}); restore manually if this run is killed`);
   await sb.from("designer_documents").delete().eq("shop_id", SHOP_ID);
   await sb.from("designer_chat").delete().eq("shop_id", SHOP_ID);
 

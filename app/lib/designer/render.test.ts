@@ -34,6 +34,18 @@ describe("scrubDesignerHtml", () => {
     expect(scrubDesignerHtml('<img src="data:image/svg+xml,ok">')).toContain("data:image/svg+xml,ok");
   });
 
+  it("strips external sources in single-quoted and unquoted forms (img-src https is open)", () => {
+    expect(scrubDesignerHtml("<img src='https://evil.example/p.gif'>")).toBe("<img>");
+    expect(scrubDesignerHtml("<img src=https://evil.example/p.gif>")).toBe("<img>");
+    expect(scrubDesignerHtml('<img srcset="https://evil.example/p.gif 2x">')).toBe("<img>");
+    expect(scrubDesignerHtml('<video poster="https://evil.example/p.jpg"></video>')).toBe("<video></video>");
+    expect(scrubDesignerHtml('<image xlink:href="https://evil.example/p.svg"/>')).toBe("<image/>");
+  });
+
+  it("strips unquoted event handlers", () => {
+    expect(scrubDesignerHtml("<a onclick=steal() href=\"/ok\">a</a>")).toBe('<a href="/ok">a</a>');
+  });
+
   it("removes link/meta/base tags entirely", () => {
     expect(scrubDesignerHtml('<link rel="stylesheet" href="https://cdn.example/a.css"><meta http-equiv="refresh" content="0"><base href="https://evil.example/">')).toBe("");
   });

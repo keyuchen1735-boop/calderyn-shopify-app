@@ -1,6 +1,6 @@
 // Client fetchers for the Store studio surface. Kept in its own module (not
 // client.ts) so parallel surface work never collides on one file.
-import { apiGet, apiSend, apiSendForm, DashboardApiError, saveProduct, uploadProductImage } from "./client";
+import { apiGet, apiSend, apiSendForm, DashboardApiError, redirectToLogin, saveProduct, uploadProductImage } from "./client";
 import { throwIfVersionSkew } from "./version-skew";
 import {
   parseBuildEvent,
@@ -271,6 +271,9 @@ export async function sendDesignerMessage(input: {
     body: JSON.stringify(body),
     signal,
   });
+  // A 401 means the session lapsed; recover the same way every other dashboard
+  // call does instead of surfacing a dead-end error in the chat.
+  if (res.status === 401) redirectToLogin();
   throwIfVersionSkew(res);
   const contentType = res.headers.get("content-type") ?? "";
 
@@ -309,19 +312,29 @@ export async function sendDesignerMessage(input: {
       throw new DashboardApiError(502, "designer_build_failed", typeof event.message === "string" ? event.message : "The build failed partway.");
     }
   };
-  for (;;) {
-    const { done: finished, value } = await reader.read();
-    if (finished) break;
-    buffer += decoder.decode(value, { stream: true });
-    let newline: number;
-    while ((newline = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, newline).trim();
-      buffer = buffer.slice(newline + 1);
-      if (line) handleLine(line);
+  try {
+    for (;;) {
+      const { done: finished, value } = await reader.read();
+      if (finished) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (line) handleLine(line);
+      }
     }
+    const rest = buffer.trim();
+    if (rest) handleLine(rest);
+  } catch (err) {
+    // A DashboardApiError (an {kind:"error"} event) carries real intent; a raw
+    // read failure (network drop) becomes the "pages are saved" message.
+    if (err instanceof DashboardApiError) throw err;
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
+    throw new DashboardApiError(502, "designer_stream_failed", "The build lost its connection. Finished pages are saved; send another message to continue.");
+  } finally {
+    reader.cancel().catch(() => {});
   }
-  const rest = buffer.trim();
-  if (rest) handleLine(rest);
   if (!done) throw new DashboardApiError(502, "designer_stream_failed", "The build stream ended early. Finished pages are saved.");
   return done;
 }

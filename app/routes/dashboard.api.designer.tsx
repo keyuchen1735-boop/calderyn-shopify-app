@@ -57,7 +57,13 @@ export async function action({ request }: ActionFunctionArgs) {
     return jsonError(429, "rate_limited", "Too many designer messages. Please wait a moment.");
   }
 
-  const hasDocuments = await designerHasDocuments(session.shopId);
+  let hasDocuments: boolean;
+  try {
+    hasDocuments = await designerHasDocuments(session.shopId);
+  } catch (err) {
+    console.error("[dashboard.api.designer] documents lookup failed", err);
+    return jsonError(503, "designer_unavailable", "The designer is briefly unavailable. Try again in a moment.");
+  }
   if (hasDocuments) {
     return dashboardJson(async () => {
       await assertCanGenerate(session.shopId, message, { trusted: quotaTrusted(session) });
@@ -69,6 +75,13 @@ export async function action({ request }: ActionFunctionArgs) {
         signal: request.signal,
       });
     });
+  }
+
+  // One first build at a time per shop: two racing builds would double the
+  // model spend and interleave their page saves. The window only needs to
+  // outlast a click race; a failed build can retry two minutes later.
+  if (!(await rateLimit(`designer-build:${session.shopId}`, 1, 120_000))) {
+    return jsonError(409, "build_running", "A store build is already running. Give it a couple of minutes.");
   }
 
   // First build: stream page events. The quota guard still runs first — its

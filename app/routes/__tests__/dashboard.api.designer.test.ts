@@ -122,6 +122,15 @@ describe("dashboard.api.designer action", () => {
     expect(firstBuildMock).not.toHaveBeenCalled();
   });
 
+  it("409s when a first build is already running for the shop", async () => {
+    hasDocsMock.mockResolvedValue(false);
+    rateLimitMock.mockImplementation(async (key: string) => !key.startsWith("designer-build:"));
+    const res = await post({ message: "Build my store" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("build_running");
+    expect(firstBuildMock).not.toHaveBeenCalled();
+  });
+
   it("streams the first build as NDJSON page events ending in done", async () => {
     hasDocsMock.mockResolvedValue(false);
     firstBuildMock.mockImplementation(async ({ onEvent }) => {

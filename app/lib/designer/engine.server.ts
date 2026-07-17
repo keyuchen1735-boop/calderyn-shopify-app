@@ -240,6 +240,9 @@ async function runEditTurn(input: {
         { role: "user" as const, content: `These blocks did not apply because their SEARCH text is not present character-for-character in the current files. Re-send ONLY these edits with SEARCH text copied exactly from the files above (or use * to replace a whole file):\n\n${failed}` },
       ],
       signal: input.signal,
+      // First-build retries re-send whole-file rewrites; the higher cap must
+      // carry over or the regenerated page truncates and drops its edit.
+      maxTokens: input.maxTokens,
     });
     const retryParsed = parseDesignerReply(retryRaw);
     const retryResult = applyDesignerEdits(result.files, retryParsed.edits);
@@ -350,6 +353,10 @@ export async function designerFirstBuild(input: {
     }
   }
 
+  // Record the brief up front so an interrupted build still leaves the
+  // merchant's intent in history rather than an empty conversation.
+  await appendHistory(input.shopId, "user", input.message);
+
   const donePages: DesignerRoute[] = [];
   let rejected = 0;
   for (const route of DESIGNER_ROUTES) {
@@ -378,7 +385,6 @@ export async function designerFirstBuild(input: {
   const summary = mode === "scratch"
     ? "Your store is built from scratch across every page. Look around the pages and tell me what to push further."
     : "Every page is designed and ready. Look around and tell me what to change.";
-  await appendHistory(input.shopId, "user", input.message);
   await appendHistory(input.shopId, "assistant", summary);
   return { reply: summary, changed: true, rejectedEdits: rejected };
 }
@@ -395,7 +401,12 @@ export async function designerTurn(input: {
   const route: DesignerRoute = input.route && (DESIGNER_ROUTES as readonly string[]).includes(input.route) ? input.route : "home";
   const data = await loadDesignerStoreData(input.shopId);
   const documents = await loadDocuments(input.shopId);
-  if (!documents) return designerFirstBuild(input);
+  // The route only calls this once designerHasDocuments is true. If the set
+  // vanished in the gap (a reset/harness race), do NOT silently launch a full
+  // multi-call build inside this plain-JSON path — report a retryable state.
+  if (!documents) {
+    return { reply: "This store's design was just reset. Send your message again to start a fresh build.", changed: false, rejectedEdits: 0 };
+  }
 
   const history = await loadHistory(input.shopId);
   const turn = await runEditTurn({

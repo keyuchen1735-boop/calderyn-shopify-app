@@ -645,6 +645,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const runDesignerChat = async (text: string) => {
     if (chatBusyRef.current) return;
     setChatBusyBoth(true);
+    const firstBuild = !data?.designerReady;
     const thinkId = newId();
     pushMsg({ id: thinkId, kind: "ai-thinking" });
     try {
@@ -652,27 +653,35 @@ export default function Store({ app }: { app: DashboardCtx }) {
         message: text,
         page,
         model: designModel,
-        ...(data?.designerReady ? {} : { mode: designerMode }),
+        ...(firstBuild ? { mode: designerMode } : {}),
         // First build: each finished page lands in the chat and the preview
         // immediately, so the wait reads as pages arriving, not a spinner.
+        // The thinking bubble stays pinned at the bottom by moving it below
+        // each new page message as it arrives.
         onPage: (event) => {
           if (!aliveRef.current) return;
-          pushMsg({
-            id: newId(),
-            kind: "ai-text",
-            text: `${event.reply} (${event.index}/${event.total} pages ready — it's in the preview.)`,
+          setMessages((m) => {
+            const without = m.filter((x) => x.id !== thinkId);
+            return [
+              ...without,
+              { id: newId(), kind: "ai-text", text: `${event.reply} (${event.index}/${event.total} pages ready — it's in the preview.)` },
+              { id: thinkId, kind: "ai-thinking" },
+            ];
           });
           reloadPreview();
         },
       });
       if (!aliveRef.current) return;
       if (turn.changed) reloadPreview();
-      setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: turn.reply } : x)));
-      if (!data?.designerReady) void refresh();
+      setMessages((m) => m.filter((x) => x.id !== thinkId).concat({ id: newId(), kind: "ai-text", text: turn.reply }));
+      if (firstBuild) void refresh();
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that change. Try again.";
-      setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : x)));
+      setMessages((m) => m.filter((x) => x.id !== thinkId).concat({ id: newId(), kind: "ai-text", text: msg }));
+      // Documents may exist server-side even on a partial build; resync so the
+      // mode chips and first-build routing reflect reality.
+      if (firstBuild) void refresh();
     } finally {
       if (aliveRef.current) setChatBusyBoth(false);
     }
