@@ -236,7 +236,17 @@ describe("classifyStoreIntent", () => {
     const request = createMessage.mock.calls[0]?.[0] as {
       system: string;
       messages: Array<{ content: unknown }>;
+      output_config?: unknown;
     };
+    expect(request.output_config).toMatchObject({
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          required: ["requestedOperations", "intent"],
+        },
+      },
+    });
     const content = request.messages[0]?.content as Array<{
       type: string;
       source?: { type: string; url: string };

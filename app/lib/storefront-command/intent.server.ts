@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
 import { assistantModel, getAnthropic } from "../assistant/anthropic.server";
 import {
   STOREFRONT_PRODUCT_TITLE_CAP,
@@ -90,35 +91,35 @@ const STORE_INTENT_VALUE_SCHEMA = {
     {
       type: "object", additionalProperties: false, required: ["kind", "prompt", "excludedTemplateIds"],
       properties: {
-        kind: { const: "select_design" }, prompt: { type: "string", minLength: 1, maxLength: INPUT_CODE_POINT_CAP },
-        excludedTemplateIds: { type: "array", uniqueItems: true, items: { enum: STORE_TEMPLATE_REGISTRY.templates.map(({ id }) => id) } },
+        kind: { type: "string", const: "select_design" }, prompt: { type: "string", minLength: 1, maxLength: INPUT_CODE_POINT_CAP },
+        excludedTemplateIds: { type: "array", uniqueItems: true, items: { type: "string", enum: STORE_TEMPLATE_REGISTRY.templates.map(({ id }) => id) } },
       },
     },
     {
       type: "object", additionalProperties: false, required: ["kind", "slot", "value"],
       properties: {
-        kind: { const: "update_text" }, slot: { type: "string", minLength: 1, maxLength: STORE_COMMAND_LIMITS.contextSlotCodePoints },
+        kind: { type: "string", const: "update_text" }, slot: { type: "string", minLength: 1, maxLength: STORE_COMMAND_LIMITS.contextSlotCodePoints },
         value: { type: "string", minLength: 1, maxLength: COPY_CHAR_CAP },
       },
     },
     {
       type: "object", additionalProperties: false, required: ["kind", "productIds"],
       properties: {
-        kind: { const: "update_merchandising" },
+        kind: { type: "string", const: "update_merchandising" },
         productIds: { type: "array", minItems: 1, maxItems: PRODUCT_ID_CAP, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: PRODUCT_CANDIDATE_ID_CHAR_CAP } },
       },
     },
     {
       type: "object", additionalProperties: false, required: ["kind", "visualLayer"],
       properties: {
-        kind: { const: "update_visual_layer" },
+        kind: { type: "string", const: "update_visual_layer" },
         visualLayer: {
           oneOf: [
-            { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { const: "none" } } },
+            { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { type: "string", const: "none" } } },
             {
               type: "object", additionalProperties: false, required: ["kind", "source", "colors"],
               properties: {
-                kind: { const: "fragment_shader" }, source: { type: "string", minLength: 1, maxLength: 4_000 },
+                kind: { type: "string", const: "fragment_shader" }, source: { type: "string", minLength: 1, maxLength: 4_000 },
                 colors: { type: "array", minItems: 3, maxItems: 3, items: { type: "string", pattern: "^#[0-9A-Fa-f]{6}$" } },
               },
             },
@@ -128,11 +129,11 @@ const STORE_INTENT_VALUE_SCHEMA = {
     },
     {
       type: "object", additionalProperties: false, required: ["kind", "prompt"],
-      properties: { kind: { const: "start_over" }, prompt: { type: "string", minLength: 1, maxLength: INPUT_CODE_POINT_CAP } },
+      properties: { kind: { type: "string", const: "start_over" }, prompt: { type: "string", minLength: 1, maxLength: INPUT_CODE_POINT_CAP } },
     },
     {
       type: "object", additionalProperties: false, required: ["kind", "message"],
-      properties: { kind: { const: "unsupported" }, message: { type: "string", minLength: 1, maxLength: COPY_CHAR_CAP } },
+      properties: { kind: { type: "string", const: "unsupported" }, message: { type: "string", minLength: 1, maxLength: COPY_CHAR_CAP } },
     },
   ],
 } as const;
@@ -146,7 +147,7 @@ const STORE_INTENT_SCHEMA = {
       type: "array",
       minItems: 0,
       maxItems: 2,
-      items: { enum: STORE_OPERATION_KINDS },
+      items: { type: "string", enum: STORE_OPERATION_KINDS },
     },
     intent: STORE_INTENT_VALUE_SCHEMA,
   },
@@ -389,6 +390,7 @@ async function anthropicProvider(request: StoreIntentProviderRequest): Promise<s
     model: assistantModel(),
     max_tokens: 2_048,
     system: request.system,
+    output_config: { format: jsonSchemaOutputFormat(STORE_INTENT_SCHEMA) },
     messages: [{ role: "user", content }],
   }, { signal: request.signal });
   if (response.content.length !== 1 || response.content[0]?.type !== "text") invalid();
