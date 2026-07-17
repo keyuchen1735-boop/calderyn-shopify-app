@@ -54,7 +54,11 @@ export function applyDesignerEdits(files: Record<string, string>, edits: Designe
       rejected.push(edit);
       continue;
     }
-    if (edit.search.trim() === "*") {
+    // A whole-file rewrite is the sentinel `*` or an empty SEARCH. Fold the
+    // empty case in here: `current.replace("", fn)` inserts at offset 0, which
+    // would silently prepend the replacement to a non-empty file instead of
+    // replacing it.
+    if (edit.search.trim() === "*" || edit.search.trim() === "") {
       next[edit.file] = edit.replace;
       applied += 1;
       continue;

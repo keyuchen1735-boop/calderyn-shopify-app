@@ -68,6 +68,15 @@ describe("applyDesignerEdits", () => {
     expect(result.applied).toBe(1);
   });
 
+  it("treats an empty SEARCH as a whole-file replace, not a prepend", () => {
+    const result = applyDesignerEdits(
+      { "home.html": "<p>old</p>" },
+      [{ file: "home.html", search: "", replace: "<p>new</p>" }],
+    );
+    expect(result.files["home.html"]).toBe("<p>new</p>");
+    expect(result.applied).toBe(1);
+  });
+
   it("falls back to whitespace-relaxed matching when indentation drifts", () => {
     const file = "<div>\n    <h1>Hello</h1>\n    <p>World</p>\n</div>";
     const result = applyDesignerEdits(
