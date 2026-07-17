@@ -47,13 +47,14 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!(await rateLimit(`designer-chat:${session.shopId}`, 20, 60_000))) {
     return jsonError(429, "rate_limited", "Too many designer messages. Please wait a moment.");
   }
-  await assertCanGenerate(session.shopId, message, { trusted: quotaTrusted(session) });
-
-  return dashboardJson(() => designerTurn({
-    shopId: session.shopId,
-    message,
-    route: body.page as DesignerRoute | undefined,
-    model: body.model as StudioDesignModel | undefined,
-    signal: request.signal,
-  }));
+  return dashboardJson(async () => {
+    await assertCanGenerate(session.shopId, message, { trusted: quotaTrusted(session) });
+    return designerTurn({
+      shopId: session.shopId,
+      message,
+      route: body.page as DesignerRoute | undefined,
+      model: body.model as StudioDesignModel | undefined,
+      signal: request.signal,
+    });
+  });
 }

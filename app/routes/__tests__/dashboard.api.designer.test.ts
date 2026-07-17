@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ActionFunctionArgs } from "@remix-run/node";
 import type * as HttpServer from "~/lib/dashboard/http.server";
+import { CalderynError } from "~/lib/calderyn.server";
 import { action, config } from "../dashboard.api.designer";
 
 const { sessionMock, settingsMock, turnMock, rateLimitMock, guardMock } = vi.hoisted(() => ({
@@ -91,9 +92,20 @@ describe("dashboard.api.designer action", () => {
     expect(turnMock).not.toHaveBeenCalled();
   });
 
-  it("enforces the AI generation guard before the turn", async () => {
-    guardMock.mockRejectedValue(new Error("quota"));
-    await expect(post({ message: "hi" })).rejects.toThrow("quota");
+  it("returns the AI generation guard error as JSON before the turn", async () => {
+    guardMock.mockRejectedValue(new CalderynError({
+      code: "ai_cooldown",
+      status: 429,
+      message: "Going a little fast — try again in 20 seconds.",
+    }));
+
+    const res = await post({ message: "hi" });
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({
+      error: "ai_cooldown",
+      message: "Going a little fast — try again in 20 seconds.",
+    });
     expect(turnMock).not.toHaveBeenCalled();
   });
 });
