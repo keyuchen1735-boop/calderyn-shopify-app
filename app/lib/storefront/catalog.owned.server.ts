@@ -614,3 +614,49 @@ export const ownedCatalog: StorefrontCatalog = {
     }));
   },
 };
+
+/** Authenticated Store Builder previews include draft products so merchants can
+ * design and verify a store before making the catalog public. Public storefront
+ * reads continue to use `ownedCatalog`, which remains active-only. */
+export async function listOwnedPreviewProducts(
+  shopId: string,
+  opts?: { collection?: string; ids?: string[]; limit?: number; query?: string },
+): Promise<StoreProduct[]> {
+  const sb = getSupabase();
+  let restrictToIds: string[] | null = null;
+  if (opts?.collection) {
+    const { data: collection, error: collectionError } = await sb
+      .from("collection_dim")
+      .select("id")
+      .eq("shop_id", shopId)
+      .eq("handle", opts.collection)
+      .maybeSingle();
+    if (collectionError) throw collectionError;
+    if (!collection) return [];
+    const { data: links, error: linksError } = await sb
+      .from("product_collection")
+      .select("product_id")
+      .eq("collection_id", collection.id);
+    if (linksError) throw linksError;
+    restrictToIds = (links ?? []).map((row: Row) => String(row.product_id)).slice(0, MAX_STOREFRONT_PRODUCTS);
+    if (!restrictToIds.length) return [];
+  } else if (opts?.ids) {
+    restrictToIds = opts.ids.slice(0, MAX_STOREFRONT_PRODUCTS);
+    if (!restrictToIds.length) return [];
+  }
+
+  let query = sb
+    .from("product_dim")
+    .select("id, handle, title, description, category, tags")
+    .eq("shop_id", shopId)
+    .in("status", ["active", "draft"]);
+  if (restrictToIds) query = query.in("id", restrictToIds);
+  if (opts?.query) {
+    const literal = opts.query.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
+    query = query.ilike("title", `%${literal}%`);
+  }
+  const limit = Math.min(Math.max(opts?.limit ?? MAX_STOREFRONT_PRODUCTS, 0), MAX_STOREFRONT_PRODUCTS);
+  const { data, error } = await query.order("title").limit(limit);
+  if (error) throw error;
+  return assemble(sb, shopId, (data ?? []) as Row[]);
+}

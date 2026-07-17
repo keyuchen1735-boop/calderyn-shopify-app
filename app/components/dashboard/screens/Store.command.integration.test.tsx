@@ -23,6 +23,7 @@ const fakes = vi.hoisted(() => ({
   hashArtifact: vi.fn(),
   installDraft: vi.fn(),
   loadRecipe: vi.fn(),
+  listPreviewProducts: vi.fn(),
   loadStudioState: vi.fn(),
   persistUploadedImage: vi.fn(),
   publishRelease: vi.fn(),
@@ -60,6 +61,9 @@ vi.mock("~/lib/storebuilder/studio.server", () => ({
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: fakes.getSupabase }));
 vi.mock("~/lib/storefront-ai/context.server", () => ({
   assembleStorefrontContextWithReferences: fakes.assembleContext,
+}));
+vi.mock("~/lib/storefront/catalog.server", () => ({
+  getPreviewCatalog: () => ({ listProducts: fakes.listPreviewProducts }),
 }));
 vi.mock("~/lib/storefront-bundle/build.server", () => ({
   isStorefrontBundlePublishEnabled: () => true,
@@ -288,6 +292,7 @@ beforeEach(() => {
     collectionTitles: [],
     fingerprint: "sha256:catalog",
   });
+  fakes.listPreviewProducts.mockResolvedValue([]);
   fakes.assembleContext.mockResolvedValue({
     context: {
       version: 1,

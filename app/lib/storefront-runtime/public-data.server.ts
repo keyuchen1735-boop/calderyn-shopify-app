@@ -168,7 +168,7 @@ function presentProduct(product: StoreProduct): PublicProduct {
     id: product.id,
     handle: product.handle,
     title: product.title,
-    description: product.description,
+    description: product.description.trim() || `${product.title} is selected for this store${product.category ? ` in ${product.category}` : ""}.`,
     primaryImage: product.images[0] ?? null,
     images: product.images.map((image) => ({ url: image.url, alt: image.alt })),
     options: (product.options ?? []).map((option) => ({ name: option.name, values: [...option.values] })),

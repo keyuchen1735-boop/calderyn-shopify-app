@@ -47,6 +47,8 @@ import { validateCompiledBundle, type BundleValidationReport } from "~/lib/store
 import { StorefrontUndoError, undoStorefrontEdit } from "~/lib/storefront-edit/undo.server";
 import { isStorefrontBundleReadEnabled } from "~/lib/storefront-runtime/csp.server";
 import { requirePublishableTenantDomain } from "~/lib/storebuilder/studio.server";
+import { getPreviewCatalog } from "~/lib/storefront/catalog.server";
+import { generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
 import { storefrontAiBrowserProof } from "~/lib/storefront-validation/browser.server";
 import { applyStoreIntent, canApplyStoreTextSlot, readStoreTextSlot } from "./apply";
 import { classifyStoreIntent, type StoreIntentClassificationOptions } from "./intent.server";
@@ -89,6 +91,7 @@ export interface StoreCommandDependencies {
   buildEvidence(shopId: string): Promise<CatalogRoutingEvidence>;
   loadReferenceImages(shopId: string, assetRefs: readonly string[]): Promise<VerifiedDesignReferenceImage[]>;
   loadContext(input: ContextAssemblyInput): Promise<StorefrontContextAssembly>;
+  prepareProductMedia(shopId: string, signal?: AbortSignal): Promise<number>;
   classify(
     input: Parameters<typeof classifyStoreIntent>[0],
     options?: StoreIntentClassificationOptions,
@@ -245,6 +248,10 @@ const defaultDependencies: StoreCommandDependencies = {
   buildEvidence: buildCatalogRoutingEvidence,
   loadReferenceImages: loadVerifiedDesignReferenceImages,
   loadContext: assembleStorefrontContextWithReferences,
+  prepareProductMedia: async (shopId, signal) => {
+    const products = await getPreviewCatalog().listProducts(shopId);
+    return generateMissingListingImages(shopId, products, undefined, signal);
+  },
   classify: (input, options) => classifyStoreIntent(input, {}, options),
   resolveDesign: (request, evidence) => resolveStoreDesign(request, evidence, STORE_TEMPLATE_REGISTRY),
   loadRecipe: loadStorefrontRecipe,
@@ -552,6 +559,10 @@ export async function runStoreCommand(
       );
     }
 
+    await emit(input, { stage: "preparing_products" });
+    await dependencies.prepareProductMedia(input.shopId, input.signal);
+    throwIfAborted(input.signal);
+
     const priorExclusions = state.draft ? exclusions(state.draft.resolution) : [];
     const currentTemplateId = state.draft?.bundle.source.kind === "recipe"
       ? state.draft.bundle.source.templateId
@@ -674,7 +685,6 @@ export async function runStoreCommand(
       ).bundle;
     }
 
-    await emit(input, { stage: "preparing_products" });
     const validation = dependencies.validate(nextBundle);
     if (!validation.ok) {
       throw new StoreCommandError(

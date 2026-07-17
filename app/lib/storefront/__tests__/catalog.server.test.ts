@@ -1,7 +1,7 @@
 // app/lib/storefront/__tests__/catalog.server.test.ts
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import type { StorefrontCatalog } from "../catalog";
-import { getCatalog } from "../catalog.server";
+import { getCatalog, getPreviewCatalog } from "../catalog.server";
 import { fixtureCatalog } from "../catalog.stub.server";
 
 const { assetRows, fromMock, eqMock, inMock, orderMock, rangeMock } = vi.hoisted(() => {
@@ -27,6 +27,9 @@ const { assetRows, fromMock, eqMock, inMock, orderMock, rangeMock } = vi.hoisted
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
 
 vi.mock("../catalog.owned.server", () => ({
+  listOwnedPreviewProducts: vi.fn(async (shopId: string) => [{
+    id: "draft", handle: `draft-for-${shopId}`, title: "Draft", description: "", images: [], variants: [], collections: [],
+  }]),
   ownedCatalog: {
     searchProductPage: vi.fn(async (shopId: string) => ({
       items: [{ id: "owned", handle: `owned-for-${shopId}`, title: "Owned", images: [] }],
@@ -68,6 +71,14 @@ async function loadHome(cat: StorefrontCatalog, shopId: string) {
 }
 
 describe("getCatalog", () => {
+  it("uses the private preview catalog for real tenants without changing the public seam", async () => {
+    const products = await getPreviewCatalog().listProducts(UUID_SHOP);
+    const { listOwnedPreviewProducts, ownedCatalog } = await import("../catalog.owned.server");
+    expect(products[0].handle).toBe(`draft-for-${UUID_SHOP}`);
+    expect(listOwnedPreviewProducts).toHaveBeenCalledWith(UUID_SHOP, undefined);
+    expect(ownedCatalog.listProducts).not.toHaveBeenCalledWith(UUID_SHOP, undefined);
+  });
+
   it("routes public product pages through the tenant seam", async () => {
     await getCatalog().listProductPage(UUID_SHOP, { limit: 24 });
     const { ownedCatalog } = await import("../catalog.owned.server");

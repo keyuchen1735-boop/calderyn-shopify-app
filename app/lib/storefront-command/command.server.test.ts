@@ -138,6 +138,7 @@ function dependencies(overrides: Partial<StoreCommandDependencies> = {}): StoreC
     }),
     loadReferenceImages: vi.fn().mockResolvedValue([]),
     loadContext: vi.fn().mockResolvedValue(contextAssembly),
+    prepareProductMedia: vi.fn().mockResolvedValue(0),
     classify: vi.fn().mockResolvedValue({ kind: "select_design", prompt: "Make it calm", excludedTemplateIds: [] }),
     resolveDesign: vi.fn().mockReturnValue(resolution),
     loadRecipe: vi.fn().mockResolvedValue({
@@ -169,6 +170,10 @@ describe("runStoreCommand", () => {
       onEvent: (event) => { events.push(event); },
     }, deps);
 
+    expect(deps.prepareProductMedia).toHaveBeenCalledWith(SHOP, undefined);
+    expect(vi.mocked(deps.prepareProductMedia).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.loadContext).mock.invocationCallOrder[0]!,
+    );
     expect(deps.resolveDesign).toHaveBeenCalledWith(expect.objectContaining({ excludedTemplateIds: [] }), expect.anything());
     expect(deps.classify).toHaveBeenCalledWith(expect.objectContaining({
       prompt: "Make it calm",

@@ -509,7 +509,7 @@ function ClassicStore({ app }: { app: DashboardCtx }) {
               <div className="cd-stage-page">
                 <div ref={previewWrapRef} className="cd-canvas-frame-wrap" data-device={device}>
                   <iframe
-                    key="store-preview"
+                    key={previewSrc}
                     className="cd-canvas-frame"
                     title="Store preview"
                     src={previewSrc}

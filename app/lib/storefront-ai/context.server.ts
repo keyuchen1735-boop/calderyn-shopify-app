@@ -191,7 +191,7 @@ const databaseContextSource: StorefrontContextSource = {
     const bounded = await sb.from("product_dim")
       .select("id, handle, title, category, tags")
       .eq("shop_id", shopId)
-      .eq("status", "active")
+      .in("status", ["active", "draft"])
       .order("id")
       .limit(limit);
     if (bounded.error) throw bounded.error;
@@ -200,7 +200,7 @@ const databaseContextSource: StorefrontContextSource = {
       ? await sb.from("product_dim")
           .select("id, handle, title, category, tags")
           .eq("shop_id", shopId)
-          .eq("status", "active")
+          .in("status", ["active", "draft"])
           .in("id", requiredIds)
       : { data: [], error: null };
     if (required.error) throw required.error;
