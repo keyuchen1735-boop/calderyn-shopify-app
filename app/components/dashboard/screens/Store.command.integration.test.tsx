@@ -372,10 +372,14 @@ describe("Store vertical command path", () => {
       }),
     );
     expect(fakes.editDraft).not.toHaveBeenCalled();
-    expect(fakes.classify).toHaveBeenCalledWith(expect.objectContaining({
-      prompt: "Build my store",
-      excludedTemplateIds: [],
-    }));
+    expect(fakes.classify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "Build my store",
+        excludedTemplateIds: [],
+      }),
+      {},
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(currentVersion).toBe(RESULT);
     expect(host.querySelector('iframe[title="Store preview"]')).not.toBeNull();
     act(() => root.unmount());
@@ -410,6 +414,8 @@ describe("Store vertical command path", () => {
         prompt: PROMPT,
         currentTemplateId: "custom-bench",
       }),
+      {},
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
 
     await act(async () => {
