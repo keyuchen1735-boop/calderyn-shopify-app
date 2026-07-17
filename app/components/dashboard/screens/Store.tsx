@@ -75,6 +75,17 @@ function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+// After a dropped stream, how long to keep checking whether the server-side
+// build actually finished (it usually did — long generations outlive flaky
+// connections). Exported for tests.
+export const RECOVERY_POLL_MS = 5_000;
+export const RECOVERY_POLL_LIMIT = 60;
+const RECOVERY_IDLE_TICKS = 3;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export default function Store({ app }: { app: DashboardCtx }) {
   // Hidden designer engine (sparkle in Settings): when it's on, the Store tab
   // IS the designer studio; the classic builder below stays untouched.
@@ -303,11 +314,55 @@ function ClassicStore({ app }: { app: DashboardCtx }) {
         replaceMessage(workingId, { id: workingId, kind: "ai-text", text: message });
         setWelcomeTerminalMessage(message);
       } else {
-        const message = error instanceof DashboardApiError ? error.message : "The storefront change could not be completed.";
-        replaceMessage(workingId, { id: workingId, kind: "ai-text", text: message });
-        setWelcomeTerminalMessage(message);
-        if (error instanceof DashboardApiError && error.code === "storefront_command_conflict") {
-          try { await refresh(); reloadPreview(); } catch { /* The original conflict remains the useful error. */ }
+        // A dropped connection surfaces here as a failure even though the
+        // server-side build usually keeps going and lands the draft. Before
+        // declaring failure on a prompt, watch the store for a while: a new
+        // draft version (or the in-flight generation flag) means the work is
+        // real, and the merchant should see success, not a scary error.
+        let recovered = false;
+        // Only when the transport failed (no structured server reply): a
+        // DashboardApiError is the server's definitive verdict and polling
+        // would just delay showing it.
+        if (command.kind === "prompt" && !(error instanceof DashboardApiError)) {
+          setStoppable(false);
+          const waitingText = "The connection hiccuped while I was working. Checking whether your change finished…";
+          replaceMessage(workingId, { id: workingId, kind: "ai-text", text: waitingText });
+          setWelcomeTerminalMessage(waitingText);
+          const before = command.expectedDraftVersionId ?? null;
+          let idleTicks = 0;
+          for (let i = 0; i < RECOVERY_POLL_LIMIT && aliveRef.current; i += 1) {
+            await sleep(RECOVERY_POLL_MS);
+            if (!aliveRef.current) break;
+            try {
+              const snapshot = await fetchStore();
+              setSnapshot(snapshot);
+              if (snapshot.release.draftVersionId != null && snapshot.release.draftVersionId !== before) {
+                recovered = true;
+                break;
+              }
+              if (snapshot.generation) {
+                idleTicks = 0;
+              } else {
+                idleTicks += 1;
+                if (idleTicks >= RECOVERY_IDLE_TICKS) break;
+              }
+            } catch {
+              // Offline; keep waiting — the next poll may reach the server.
+            }
+          }
+        }
+        if (recovered) {
+          setWelcomeVisible(false);
+          reloadPreview();
+          replaceMessage(workingId, { id: workingId, kind: "ai-text", text: "Done. The change is in your preview." });
+          setWelcomeTerminalMessage(null);
+        } else {
+          const message = error instanceof DashboardApiError ? error.message : "The storefront change could not be completed.";
+          replaceMessage(workingId, { id: workingId, kind: "ai-text", text: message });
+          setWelcomeTerminalMessage(message);
+          if (error instanceof DashboardApiError && error.code === "storefront_command_conflict") {
+            try { await refresh(); reloadPreview(); } catch { /* The original conflict remains the useful error. */ }
+          }
         }
       }
       setBuildPhase(null);

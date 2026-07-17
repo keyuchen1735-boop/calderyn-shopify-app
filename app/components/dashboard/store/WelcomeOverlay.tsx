@@ -39,6 +39,11 @@ export default function WelcomeOverlay({
 
   return (
     <div className="cd-welcome" data-stage={stage}>
+      {step ? (
+        <div className="cd-welcome-loom" aria-hidden="true">
+          <span /><span /><span /><span />
+        </div>
+      ) : null}
       <div className="cd-welcome-inner">
         <svg className="cd-welcome-script" viewBox="0 0 560 170" aria-label="Welcome">
           <text x="50%" y="120" textAnchor="middle" className="cd-welcome-text">Welcome</text>
@@ -53,7 +58,14 @@ export default function WelcomeOverlay({
             rows={importStepRows(importRun).map((row) => ({ dot: row.state, title: row.title, sub: row.sub }))}
           />
         ) : null}
-        {step ? <BuildStepsCard className="cd-welcome-build" dimPending rows={[step]} /> : null}
+        {step ? (
+          <>
+            <BuildStepsCard className="cd-welcome-build" dimPending rows={[step]} />
+            <p className="cd-welcome-eta">
+              A first build usually takes 2 to 4 minutes. Stay here; the preview appears on its own the moment it&rsquo;s ready.
+            </p>
+          </>
+        ) : null}
 
         {!step && branch.kind !== "importing" ? (
           <div>
