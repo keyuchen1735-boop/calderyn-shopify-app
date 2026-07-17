@@ -122,10 +122,14 @@ export function renderDesignerBody(input: {
         product,
       ),
     ).join("\n"));
-  const filled = withLoops.replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (match, path: string) =>
-    path.startsWith("product.")
-      ? (contextProduct ? productValue(contextProduct, path) : "")
-      : rootValue(input.data, path));
+  const filled = withLoops
+    .replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (match, path: string) =>
+      path.startsWith("product.")
+        ? (contextProduct ? productValue(contextProduct, path) : "")
+        : rootValue(input.data, path))
+    // The model occasionally invents loop names ({{#related.products}}) despite
+    // the prompt; unknown sentinels must vanish, never render as literal text.
+    .replace(/\{\{[#/][^}]*\}\}/g, "");
   // Expand any declared conversion widget (coupon popup). In the body path
   // this is the live-storefront render, so behavior is wired by the caller
   // via the returned script; preview uses renderDesignerDocument below.
