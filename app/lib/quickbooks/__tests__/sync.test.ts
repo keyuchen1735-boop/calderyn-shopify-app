@@ -52,7 +52,11 @@ function makeSb(opts: {
 function conn(items: unknown, homeCurrency: string | null = null): QboConnection {
   return {
     realmId: "r",
-    client: { queryItems: vi.fn(async () => items), queryHomeCurrency: vi.fn(async () => homeCurrency) },
+    client: {
+      queryItems: vi.fn(async () => items),
+      queryHomeCurrency: vi.fn(async () => homeCurrency),
+      queryReport: vi.fn(async () => ({})),
+    },
   };
 }
 

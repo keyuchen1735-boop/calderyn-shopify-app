@@ -46,7 +46,7 @@ export function actionStreamWindow<T>(items: readonly T[], start: number, size: 
 
 const STREAM_SIZE = 4;
 const STREAM_INTERVAL_MS = 3200;
-const STREAM_EXIT_MS = 360;
+const STREAM_MOVE_MS = 520;
 
 /** Calibration split panel: the real score and dollars at risk on the left,
  *  with a rotating action window and full static review list on the right. */
@@ -67,7 +67,7 @@ export function CalibrationTrainer({
   // Group-level approve-all in flight: items remaining, null when idle.
   const [batchLeft, setBatchLeft] = useState<number | null>(null);
   const [streamStart, setStreamStart] = useState(0);
-  const [streamExiting, setStreamExiting] = useState(false);
+  const [streamMoving, setStreamMoving] = useState(false);
   const [showAll, setShowAll] = useState(false);
 
   const queue = app.actionQueue;
@@ -76,7 +76,11 @@ export function CalibrationTrainer({
   // locks reject (and vice versa) so a single decision can never send the
   // calibration engine contradictory feedback.
   const teachingBusy = approving !== null || rejectBusy || batchLeft !== null;
-  const visibleQueue = actionStreamWindow(queue, streamStart, STREAM_SIZE);
+  const visibleQueue = actionStreamWindow(
+    queue,
+    streamStart,
+    STREAM_SIZE + (streamMoving ? 1 : 0),
+  );
 
   useEffect(() => {
     setStreamStart((current) => (queue.length === 0 ? 0 : current % queue.length));
@@ -93,21 +97,19 @@ export function CalibrationTrainer({
       return;
     }
 
-    let exitTimer: ReturnType<typeof setTimeout> | undefined;
+    let moveTimer: ReturnType<typeof setTimeout> | undefined;
     const interval = setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      setStreamExiting(true);
-      exitTimer = setTimeout(() => {
-        setStreamStart((current) => (current - 1 + queue.length) % queue.length);
-        setStreamExiting(false);
-      }, STREAM_EXIT_MS);
+      setStreamStart((current) => (current - 1 + queue.length) % queue.length);
+      setStreamMoving(true);
+      moveTimer = setTimeout(() => setStreamMoving(false), STREAM_MOVE_MS);
     }, STREAM_INTERVAL_MS);
 
     return () => {
       clearInterval(interval);
-      if (exitTimer) {
-        clearTimeout(exitTimer);
-        setStreamExiting(false);
+      if (moveTimer) {
+        clearTimeout(moveTimer);
+        setStreamMoving(false);
       }
     };
   }, [openRow, queue.length, showAll, teachingBusy]);
@@ -228,14 +230,17 @@ export function CalibrationTrainer({
     const r = reasonLines(p.reasoning, p.detector_id);
     const whyId = `cd-apq-why-${mode}-${p.alertId}`;
     const stream = mode === "stream";
+    const exiting = stream && streamMoving && index === visibleQueue.length - 1;
 
     return (
       <div
         key={p.alertId}
         className={stream ? "cd-ap-stream-row" : "cd-ap-stream-static-row"}
         data-alert-id={p.alertId}
-        data-entering={stream && index === 0 && !streamExiting ? "1" : "0"}
-        data-exiting={stream && streamExiting && index === visibleQueue.length - 1 ? "1" : "0"}
+        data-entering={stream && streamMoving && index === 0 ? "1" : "0"}
+        data-exiting={exiting ? "1" : "0"}
+        aria-hidden={exiting || undefined}
+        {...(exiting ? { inert: "" } : {})}
       >
         <div className="cd-apq-row" data-open={open ? "1" : "0"}>
           <button
@@ -364,7 +369,7 @@ export function CalibrationTrainer({
               </button>
             </div>
 
-            <div className="cd-ap-stream" data-exiting={streamExiting ? "1" : "0"}>
+            <div className="cd-ap-stream" data-moving={streamMoving ? "1" : "0"}>
               {visibleQueue.map((proposal, index) =>
                 renderActionRow(proposal, "stream", index),
               )}

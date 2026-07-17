@@ -70,10 +70,16 @@ describe("CalibrationTrainer action stream", () => {
     expect(host.textContent).toContain("46%");
     expect(host.textContent).toContain("$4.8k");
 
-    act(() => vi.advanceTimersByTime(3_600));
+    act(() => vi.advanceTimersByTime(3_200));
+    expect(host.querySelectorAll(".cd-ap-stream-row")).toHaveLength(5);
     expect(host.querySelector(".cd-ap-stream-row")?.getAttribute("data-alert-id")).toBe(
       "alert-5",
     );
+    const exitingRow = host.querySelector(".cd-ap-stream-row[data-exiting='1']");
+    expect(exitingRow?.hasAttribute("inert")).toBe(true);
+    expect(exitingRow?.getAttribute("aria-hidden")).toBe("true");
+    act(() => vi.advanceTimersByTime(520));
+    expect(host.querySelectorAll(".cd-ap-stream-row")).toHaveLength(4);
 
     act(() =>
       host.querySelector<HTMLButtonElement>("[aria-label='Expand all actions']")?.click(),

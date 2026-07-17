@@ -9,7 +9,7 @@ import type { NavState } from "./context";
 export const DASHBOARD_BASE = "/dashboard";
 
 export const ORDERS_SUBTABS = ["orders", "labels", "drafts", "abandoned"] as const;
-export const ANALYTICS_SUBTABS = ["perf", "live"] as const;
+export const ANALYTICS_SUBTABS = ["perf", "live", "pnl"] as const;
 
 function seg(nav: NavState): string {
   const { screen, param, sub } = nav;
@@ -21,7 +21,7 @@ function seg(nav: NavState): string {
     case "campaigns":
       return param ? `campaigns/${encodeURIComponent(param)}` : "campaigns";
     case "analytics":
-      return sub === "live" ? "analytics/live" : "analytics";
+      return sub && sub !== "perf" ? `analytics/${sub}` : "analytics";
     case "search":
       // Merchant SEO/AIO surface, nested under Store as "Preferences".
       return "store/preferences";

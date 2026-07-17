@@ -27,11 +27,13 @@ import { fetchSearchOverview } from "./search-client";
 import { fetchAllPendingTransfers } from "./transfers-client";
 import { cachedDraftAuditIds, fetchPoScreen } from "./po-client";
 import { fetchCommerceAnalytics } from "./commerce-analytics-client";
+import { fetchOperatingPnl } from "./operating-pnl-client";
 import {
   analyticsCacheKey,
   catalogCacheKey,
   prefetchScreenData,
   SCREEN_CACHE_KEYS,
+  operatingPnlCacheKey,
 } from "./screen-cache";
 
 // Ordered by how likely the merchant is to open the tab next. Mission
@@ -46,6 +48,7 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   // this exact key/params, so the seed always matches what it would have fetched itself.
   [SCREEN_CACHE_KEYS.ordersList, () => fetchOrdersList({})],
   [analyticsCacheKey(30), () => fetchCommerceAnalytics(30)],
+  [operatingPnlCacheKey(30), () => fetchOperatingPnl(30)],
   [SCREEN_CACHE_KEYS.customers, fetchCustomersPage],
   [SCREEN_CACHE_KEYS.shipping, fetchShippingSummary],
   [SCREEN_CACHE_KEYS.payments, fetchPaymentsPage],

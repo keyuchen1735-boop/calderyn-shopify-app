@@ -78,6 +78,7 @@ import ScreenDiscover from "./screens/Discover";
 import ScreenSearch from "./screens/Search";
 import ScreenPurchaseOrders from "./screens/PurchaseOrders";
 import ScreenTransfers from "./screens/Transfers";
+import { canViewOperatingPnl } from "~/lib/dashboard/analytics-access";
 
 interface NavChild {
   /** Stable key for React + active-child matching. */
@@ -117,6 +118,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
         children: [
           { key: "perf", label: "Performance", screen: "analytics", sub: "perf" },
           { key: "live", label: "Live", screen: "analytics", sub: "live" },
+          { key: "pnl", label: "Profit & loss", screen: "analytics", sub: "pnl" },
         ],
       },
     ],
@@ -1531,7 +1533,7 @@ export default function DashboardApp({
       );
     }
 
-    const kids = item.children;
+    const kids = item.children?.filter((child) => child.key !== "pnl" || canViewOperatingPnl(integrations));
     if (kids && kids.length > 0) {
       const expanded = activeNav === item.id;
       const target = parentTarget(item);
@@ -1812,7 +1814,7 @@ export default function DashboardApp({
                     </button>
                     {item.children && (
                       <div className="cd-more-subnav">
-                        {item.children.map((c) => (
+                        {item.children.filter((child) => child.key !== "pnl" || canViewOperatingPnl(integrations)).map((c) => (
                           <button
                             key={c.key}
                             type="button"
