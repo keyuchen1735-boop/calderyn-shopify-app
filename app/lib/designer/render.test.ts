@@ -116,6 +116,13 @@ describe("renderDesignerDocument", () => {
     expect(out).not.toContain("alt='Kids' Pack'");
   });
 
+  it("resolves {{asset.*}} from the assets map with a neutral fallback", () => {
+    const withAsset = { ...data, assets: { hero: "https://x.supabase.co/storage/designer/hero.jpg" } };
+    const out = renderDesignerBody({ html: '<img src="{{asset.hero}}"><img src="{{asset.missing}}">', css: "", data: withAsset });
+    expect(out.bodyHtml).toContain('src="https://x.supabase.co/storage/designer/hero.jpg"');
+    expect(out.bodyHtml).toContain('src="data:image/svg+xml'); // missing key → neutral image
+  });
+
   it("respects maxProducts", () => {
     const out = renderDesignerDocument({ html: "{{#products}}<li>{{product.title}}</li>{{/products}}", css: "", data, maxProducts: 1 });
     expect((out.match(/<li>/g) ?? []).length).toBe(1);

@@ -12,6 +12,7 @@ import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
 import { renderDesignerBody } from "./render.server";
+import { loadDesignerAssets } from "./imagery.server";
 import type { DesignerPublicPage, DesignerStoreData } from "./types";
 
 export type DesignerPublicContext =
@@ -44,7 +45,7 @@ async function storeDataFor(
   context: DesignerPublicContext,
 ): Promise<(DesignerStoreData & { contextVariantId: string | null }) | null> {
   const catalog = getCatalog();
-  const settings = await getStoreSettings(shopId);
+  const [settings, assets] = await Promise.all([getStoreSettings(shopId), loadDesignerAssets(shopId)]);
   const toProduct = (p: Awaited<ReturnType<typeof catalog.listProducts>>[number]) => ({
     id: p.id,
     handle: p.handle,
@@ -62,6 +63,7 @@ async function storeDataFor(
     const rest = (await catalog.listProducts(shopId, { limit: PRODUCT_LIMIT })).filter((p) => p.id !== product.id);
     return {
       storeName: settings.storeName,
+      assets,
       tagline: settings.voiceTagline,
       logoUrl: settings.logoUrl,
       products: [product, ...rest].map(toProduct),
@@ -75,6 +77,7 @@ async function storeDataFor(
   const products = await catalog.listProducts(shopId, options);
   return {
     storeName: settings.storeName,
+    assets,
     tagline: settings.voiceTagline,
     logoUrl: settings.logoUrl,
     products: products.map(toProduct),
