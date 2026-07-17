@@ -7,7 +7,7 @@ import type { DesignerPublicPage } from "~/lib/designer/types";
 export default function DesignerPublicView({ page }: { page: DesignerPublicPage }) {
   return (
     <>
-      <style dangerouslySetInnerHTML={{ __html: page.css }} />
+      <style nonce={page.nonce} dangerouslySetInnerHTML={{ __html: page.css }} />
       <div dangerouslySetInnerHTML={{ __html: page.bodyHtml }} />
       <script nonce={page.nonce} dangerouslySetInnerHTML={{ __html: page.cartScript }} />
     </>
