@@ -81,6 +81,11 @@ export function buildStorefrontCsp(input: {
     directive("default-src", ["'none'"]),
     directive("script-src", ["'self'", nonce, ...stripeScript]),
     directive("style-src", ["'self'", nonce, SHOPIFY_CDN_ORIGIN]),
+    // Inline style ATTRIBUTES (not blocks) — designer documents lean on them
+    // and the preview allows them, so the published page must match what the
+    // merchant approved. The designer scrub strips external url() references,
+    // so an attribute can't beacon; nonces don't apply to attributes.
+    directive("style-src-attr", ["'unsafe-inline'"]),
     directive("connect-src", ["'self'", ...stripeConnect]),
     directive("font-src", ["'self'", SHOPIFY_CDN_ORIGIN]),
     directive("img-src", ["'self'", "data:", "blob:", ...mediaOrigins, ...stripeImages]),

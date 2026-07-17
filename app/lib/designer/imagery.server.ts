@@ -5,7 +5,7 @@
 // FAIL-SOFT: no image only means the design keeps template art or neutral
 // placeholders — a build must never die on an image.
 import { getSupabase } from "~/lib/supabase.server";
-import { generateGeminiImages, geminiImageGenerationEnabled } from "~/lib/storegen/imagery/gemini.server";
+import { generateGeminiImages, geminiImageGenerationEnabled, ImageGenerationQuotaError } from "~/lib/storegen/imagery/gemini.server";
 import { persistExternalImage } from "~/lib/assets/persist.server";
 
 /** Fetch every generated asset for a shop as a {key: url} map. */
@@ -24,14 +24,16 @@ export async function loadDesignerAssets(shopId: string): Promise<Record<string,
 }
 
 /** Generate one named asset (e.g. "hero") and persist it. Returns the owned
- *  https URL, or null when generation is disabled, over quota, or failed. */
+ *  https URL, or null when generation is disabled, over quota, or failed —
+ *  with quotaBlocked flagged so callers can tell the merchant honestly why
+ *  their imagery is placeholders instead of failing silently. */
 export async function generateDesignerAsset(input: {
   shopId: string;
   key: string;
   prompt: string;
   signal?: AbortSignal;
-}): Promise<string | null> {
-  if (!geminiImageGenerationEnabled()) return null;
+}): Promise<{ url: string | null; quotaBlocked: boolean }> {
+  if (!geminiImageGenerationEnabled()) return { url: null, quotaBlocked: false };
   try {
     const [dataUrl] = await generateGeminiImages({
       shopId: input.shopId,
@@ -40,9 +42,9 @@ export async function generateDesignerAsset(input: {
       count: 1,
       signal: input.signal,
     });
-    if (!dataUrl) return null;
+    if (!dataUrl) return { url: null, quotaBlocked: false };
     const persisted = await persistExternalImage(input.shopId, dataUrl, "designer", "generated", { signal: input.signal });
-    if (!persisted.url || persisted.url.startsWith("data:")) return null;
+    if (!persisted.url || persisted.url.startsWith("data:")) return { url: null, quotaBlocked: false };
     const { error } = await getSupabase()
       .from("designer_assets")
       .upsert(
@@ -50,9 +52,9 @@ export async function generateDesignerAsset(input: {
         { onConflict: "shop_id,key" },
       );
     if (error) throw error;
-    return persisted.url;
+    return { url: persisted.url, quotaBlocked: false };
   } catch (err) {
     console.error("[designer/imagery] asset generation failed (continuing without)", err);
-    return null;
+    return { url: null, quotaBlocked: err instanceof ImageGenerationQuotaError };
   }
 }

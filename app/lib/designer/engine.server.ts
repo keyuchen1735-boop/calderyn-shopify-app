@@ -22,6 +22,10 @@ import type { DesignerReply, DesignerRoute, DesignerStoreData } from "./types";
 const HISTORY_LIMIT = 14;
 const MAX_TOKENS = 8_000;
 const FIRST_BUILD_MAX_TOKENS = 12_000;
+// The serverless route is hard-killed at maxDuration (800s) with no error
+// path — stop starting new pages well before that so the build always ends
+// with a saved state and an honest reply instead of a vanished stream.
+const FIRST_BUILD_DEADLINE_MS = 680_000;
 
 const SYSTEM_PROMPT = `You are Calderyn's storefront designer. You edit a real store's HTML and CSS documents directly, in conversation with the merchant, like a senior design engineer pairing on their storefront.
 
@@ -40,6 +44,7 @@ Rules:
 - Placeholders like {{store.name}}, {{product.title}}, {{product.price}}, {{product.image}}, {{product.url}} and the {{#products}}...{{/products}} loop bind live store data; {{asset.hero}} binds this store's generated hero photograph when one exists. Keep them working; never invent new placeholder names.
 - Never add scripts, iframes, forms, event handlers, or references to external URLs. Fonts come only from the @font-face files already in base.css. Images: template art under /storefront-recipes/ and the product placeholders.
 - Conversion widgets are declared, not scripted. To add an email/coupon capture popup, place exactly one marker on the home page (the runtime turns it into a real, dismissible popup and wires the behavior): <div data-designer-widget="coupon" data-code="WELCOME10" data-headline="10 percent off your first order" data-sub="Join the list for early access and member pricing."></div>. Style it by editing base.css variables it inherits; never write its script. An announcement bar is ordinary styled markup you author at the very top of the shell (a thin full-width bar with a shipping-threshold or promo line) — it needs no script; when it advertises a free-shipping threshold, also put data-designer-free-shipping="120" (the whole-dollar threshold) on that bar element so the store's cart drawer can show a progress meter toward it.
+- Live behavior comes from data attributes the runtime wires (never write scripts): a header search field is an <input type="search" data-designer-search placeholder="Search"> (the runtime submits it to the search page on Enter); a header cart count is <span data-designer-cart-count>{{cart.count}}</span> (the runtime keeps it current). Add-to-cart buttons always carry the class designer-add-to-cart.
 - Design taste: one accent color per store, saturation under 80 percent, never pure black or pure white, no AI-purple gradients, no neon glows. Text must stay readable against its background (4.5:1). Headlines short and confident. No dash characters in copy, no exclamation marks, no filler verbs (elevate, unleash, seamless).
 - Never fabricate facts: no invented review counts or star ratings, no made-up customer quotes, press mentions, sales numbers, or certifications. Trust elements state real policies (shipping, returns) or stay generic ("Loved by our customers") until the merchant supplies real numbers.
 - Conversion, at premium DTC quality (think trenchies.co, gymshark.com):
@@ -65,14 +70,15 @@ interface DocumentSet {
   files: Record<string, string>;
 }
 
-async function loadDocuments(shopId: string): Promise<DocumentSet | null> {
+async function loadDocuments(shopId: string): Promise<(DocumentSet & { unbuilt: DesignerRoute[] }) | null> {
   const { data, error } = await getSupabase()
     .from("designer_documents")
-    .select("route, html, css, template_id")
+    .select("route, html, css, template_id, built")
     .eq("shop_id", shopId);
   if (error) throw error;
   if (!data || data.length === 0) return null;
   const files: Record<string, string> = {};
+  const unbuilt: DesignerRoute[] = [];
   let templateId = "";
   for (const row of data) {
     templateId = String(row.template_id);
@@ -80,23 +86,61 @@ async function loadDocuments(shopId: string): Promise<DocumentSet | null> {
     else {
       files[`${row.route}.html`] = String(row.html ?? "");
       files[`${row.route}.css`] = String(row.css ?? "");
+      if (row.built === false) unbuilt.push(row.route as DesignerRoute);
     }
   }
-  return { files, templateId };
+  return { files, templateId, unbuilt };
 }
 
-async function saveDocuments(shopId: string, templateId: string, files: Record<string, string>): Promise<void> {
+/** How the route decides between a first build, a resume of an interrupted
+ *  build, and a plain edit turn — one query. */
+export async function designerBuildState(shopId: string): Promise<{ hasDocuments: boolean; unbuiltRoutes: DesignerRoute[] }> {
+  const { data, error } = await getSupabase()
+    .from("designer_documents")
+    .select("route, built")
+    .eq("shop_id", shopId);
+  if (error) throw error;
+  const rows = data ?? [];
+  return {
+    hasDocuments: rows.length > 0,
+    unbuiltRoutes: rows
+      .filter((row) => row.route !== "base" && row.built === false)
+      .map((row) => row.route as DesignerRoute),
+  };
+}
+
+async function saveDocuments(
+  shopId: string,
+  templateId: string,
+  files: Record<string, string>,
+  opts?: {
+    /** Routes designed so far this build; the rest save with built=false so an
+     *  interrupted build is detectable and resumable. Omit = all built. */
+    builtRoutes?: ReadonlySet<string>;
+    /** Save only these files (edit turns) — a concurrent turn on another page
+     *  must not be clobbered by this turn's stale snapshot of it. */
+    onlyFiles?: ReadonlySet<string>;
+  },
+): Promise<void> {
+  const stamp = new Date().toISOString();
   const rows = [
-    { shop_id: shopId, route: "base", html: "", css: scrubDesignerCss(files["base.css"] ?? ""), template_id: templateId, updated_at: new Date().toISOString() },
+    { shop_id: shopId, route: "base", html: "", css: scrubDesignerCss(files["base.css"] ?? ""), template_id: templateId, built: true, updated_at: stamp },
     ...DESIGNER_ROUTES.map((route) => ({
       shop_id: shopId,
       route,
       html: scrubDesignerHtml(files[`${route}.html`] ?? ""),
       css: scrubDesignerCss(files[`${route}.css`] ?? ""),
       template_id: templateId,
-      updated_at: new Date().toISOString(),
+      built: opts?.builtRoutes ? opts.builtRoutes.has(route) : true,
+      updated_at: stamp,
     })),
-  ];
+  ].filter((row) =>
+    !opts?.onlyFiles ||
+    (row.route === "base"
+      ? opts.onlyFiles.has("base.css")
+      : opts.onlyFiles.has(`${row.route}.html`) || opts.onlyFiles.has(`${row.route}.css`)),
+  );
+  if (rows.length === 0) return;
   const { error } = await getSupabase().from("designer_documents").upsert(rows, { onConflict: "shop_id,route" });
   if (error) throw error;
 }
@@ -131,16 +175,20 @@ export async function loadDesignerStoreData(shopId: string): Promise<DesignerSto
     tagline: settings.voiceTagline,
     logoUrl: settings.logoUrl,
     assets,
-    products: products.map((product) => ({
-      id: product.id,
-      handle: product.handle,
-      title: product.title,
-      description: null,
-      priceCents: product.variants[0]?.priceCents ?? null,
-      compareAtPriceCents: null,
-      available: true,
-      imageUrl: product.images[0]?.url ?? null,
-    })),
+    products: products.map((product) => {
+      const buyable = product.variants.find((variant) => variant.available) ?? null;
+      return {
+        id: product.id,
+        handle: product.handle,
+        title: product.title,
+        description: null,
+        priceCents: product.variants[0]?.priceCents ?? null,
+        compareAtPriceCents: null,
+        available: buyable != null,
+        imageUrl: product.images[0]?.url ?? null,
+        variantId: buyable?.id ?? null,
+      };
+    }),
   };
 }
 
@@ -172,6 +220,11 @@ async function completeText(input: {
   const request = () => client.messages.create({
     model: input.model ? STOREFRONT_DESIGN_MODEL_IDS[input.model] : STOREFRONT_DESIGN_MODEL_IDS.sonnet,
     max_tokens: input.maxTokens ?? MAX_TOKENS,
+    // Thinking must stay off: Sonnet 5 runs adaptive thinking by default when
+    // the field is omitted, and its reasoning bills against max_tokens — a
+    // heavy page turn can burn the whole budget before one edit block is
+    // emitted (observed live: 11,999 thinking tokens, zero text).
+    thinking: { type: "disabled" },
     system: input.system,
     messages: input.messages,
   }, { signal: input.signal });
@@ -186,6 +239,11 @@ async function completeText(input: {
     await new Promise((resolve) => setTimeout(resolve, 5_000));
     if (input.signal?.aborted) throw error;
     response = await request();
+  }
+  if (response.stop_reason === "max_tokens") {
+    // Surfaced for observability; the parser detects the cut block and the
+    // retry loop re-requests the lost edits, so the turn still lands.
+    console.warn("[designer] completion truncated at max_tokens", { maxTokens: input.maxTokens ?? MAX_TOKENS });
   }
   return response.content
     .map((block: { type: string; text?: string }) => (block.type === "text" ? block.text ?? "" : ""))
@@ -236,23 +294,36 @@ async function runEditTurn(input: {
     { role: "user" as const, content: `${context}\n\nMERCHANT: ${input.userMessage}` },
   ];
 
+  // The model only sees base.css plus the page under discussion; edits to any
+  // other file would rewrite pages it never read, so they are rejected.
+  const allowedFiles = new Set(["base.css", `${input.route}.html`, `${input.route}.css`]);
+
   let raw = await completeText({ model: input.model, system: SYSTEM_PROMPT, messages, signal: input.signal, maxTokens: input.maxTokens });
   let parsed = parseDesignerReply(raw);
-  let result = applyDesignerEdits(input.files, parsed.edits);
+  let result = applyDesignerEdits(input.files, parsed.edits, allowedFiles);
+  let attempted = parsed.edits.length + (parsed.truncated ? 1 : 0);
 
-  // One retry for edits whose SEARCH text missed: show the model exactly which
-  // blocks failed so it can re-quote from the real file.
-  if (result.rejected.length > 0) {
+  // One retry covering both failure shapes: SEARCH text that missed, and a
+  // reply cut off mid-block by the output-token cap.
+  if (result.rejected.length > 0 || parsed.truncated) {
     const failed = result.rejected
       .map((edit: DesignerEdit) => `FILE: ${edit.file}\n<<<<<<< SEARCH\n${edit.search}\n=======\n${edit.replace}\n>>>>>>> REPLACE`)
       .join("\n\n");
+    const instruction = [
+      parsed.truncated
+        ? "Your previous reply was cut off before its final edit block completed. Re-send the edits that were lost, keeping each block small."
+        : "",
+      result.rejected.length > 0
+        ? `These blocks did not apply because their SEARCH text is not present character-for-character in the current files (or they touch a file outside base.css and the page being discussed). Re-send ONLY these edits with SEARCH text copied exactly from the files above (or use * to replace a whole file):\n\n${failed}`
+        : "",
+    ].filter(Boolean).join("\n\n");
     const retryRaw = await completeText({
       model: input.model,
       system: SYSTEM_PROMPT,
       messages: [
         ...messages,
         { role: "assistant" as const, content: raw.slice(0, 6_000) },
-        { role: "user" as const, content: `These blocks did not apply because their SEARCH text is not present character-for-character in the current files. Re-send ONLY these edits with SEARCH text copied exactly from the files above (or use * to replace a whole file):\n\n${failed}` },
+        { role: "user" as const, content: instruction },
       ],
       signal: input.signal,
       // First-build retries re-send whole-file rewrites; the higher cap must
@@ -260,17 +331,28 @@ async function runEditTurn(input: {
       maxTokens: input.maxTokens,
     });
     const retryParsed = parseDesignerReply(retryRaw);
-    const retryResult = applyDesignerEdits(result.files, retryParsed.edits);
+    const retryResult = applyDesignerEdits(result.files, retryParsed.edits, allowedFiles);
+    attempted += retryParsed.edits.length + (retryParsed.truncated ? 1 : 0);
     result = { files: retryResult.files, applied: result.applied + retryResult.applied, rejected: retryResult.rejected };
     if (!parsed.prose && retryParsed.prose) parsed = { ...parsed, prose: retryParsed.prose };
   }
 
-  return {
-    reply: parsed.prose || (result.applied > 0 ? "Done, it's in the preview." : "I didn't find a safe way to make that change. Try describing it differently."),
-    changed: result.applied > 0,
-    rejectedEdits: result.rejected.length,
-    files: result.files,
-  };
+  // Honest reporting (rule 12): never let success prose stand when nothing
+  // (or only part) of what the model attempted actually landed.
+  const changed = result.applied > 0;
+  let reply: string;
+  if (changed && result.rejected.length === 0) {
+    reply = parsed.prose || "Done, it's in the preview.";
+  } else if (changed) {
+    const base = parsed.prose || "Done, it's in the preview.";
+    reply = `${base} (Note: ${result.rejected.length} of the changes didn't apply cleanly — ask again for those and I'll take another pass.)`;
+  } else if (attempted > 0) {
+    reply = "I couldn't apply that change cleanly this time. Try asking for it in smaller steps, or point me at the exact text to change.";
+  } else {
+    reply = parsed.prose || "Tell me what you'd like to change and I'll make it happen.";
+  }
+
+  return { reply, changed, rejectedEdits: result.rejected.length, files: result.files };
 }
 
 /** True once the shop has designer documents — the route uses this to choose
@@ -304,7 +386,7 @@ async function reviewPage(input: {
     });
     if (raw.trim().toUpperCase() === "OK") return { files: input.files, fixed: 0 };
     const parsed = parseDesignerReply(raw);
-    const result = applyDesignerEdits(input.files, parsed.edits);
+    const result = applyDesignerEdits(input.files, parsed.edits, new Set(["base.css", `${input.route}.html`, `${input.route}.css`]));
     return { files: result.files, fixed: result.applied };
   } catch {
     return { files: input.files, fixed: 0 };
@@ -353,25 +435,41 @@ export async function designerFirstBuild(input: {
   signal?: AbortSignal;
   onEvent?: (event: DesignerBuildEvent) => void;
 }): Promise<DesignerReply> {
+  const startedAt = Date.now();
   const mode: DesignerBuildMode = input.mode === "scratch" ? "scratch" : "template";
   const direction = artDirectionFor(input.shopId);
 
-  // Product photography first: fill catalog gaps (products with no image)
-  // through the same generated-asset pipeline, capped per build. Fail-soft —
-  // then load store data so the pages are designed against the real visuals.
+  // Product photography first: fill catalog gaps through the same
+  // generated-asset pipeline, capped per build. Overrides are applied BEFORE
+  // computing what's missing so products that already have a generated photo
+  // aren't paid for again. Fail-soft — then load store data so the pages are
+  // designed against the real visuals.
+  let photosQuotaBlocked = false;
   try {
     const catalogProducts = await getCatalog().listProducts(input.shopId, { limit: 12 });
-    await generateMissingListingImages(input.shopId, catalogProducts, undefined, input.signal, 6);
+    const withExisting = await applyAssetOverrides(input.shopId, catalogProducts).catch(() => catalogProducts);
+    await generateMissingListingImages(input.shopId, withExisting, undefined, input.signal, 6);
   } catch (err) {
     console.error("[designer] product image generation skipped", err);
   }
   const data = await loadDesignerStoreData(input.shopId);
 
+  // Resume: an interrupted build left documents with built=false routes.
+  // Reuse the saved files and design only the remaining pages.
+  const existing = await loadDocuments(input.shopId);
+  const resuming = existing !== null && existing.unbuilt.length > 0;
+
   let templateId: string;
   let files: Record<string, string>;
-  if (mode === "scratch") {
+  let routesToBuild: readonly DesignerRoute[];
+  if (resuming) {
+    templateId = existing.templateId;
+    files = existing.files;
+    routesToBuild = existing.unbuilt;
+  } else if (mode === "scratch") {
     templateId = "scratch";
     files = scratchSeedFiles(direction, data);
+    routesToBuild = DESIGNER_ROUTES;
   } else {
     templateId = await pickTemplate(input.message, input.model, input.signal);
     const converted = await convertTemplateToDocuments(templateId as StoreTemplateId);
@@ -380,6 +478,7 @@ export async function designerFirstBuild(input: {
       files[`${document.route}.html`] = document.html;
       files[`${document.route}.css`] = document.css;
     }
+    routesToBuild = DESIGNER_ROUTES;
   }
 
   // Record the brief up front so an interrupted build still leaves the
@@ -387,18 +486,34 @@ export async function designerFirstBuild(input: {
   await appendHistory(input.shopId, "user", input.message);
 
   // One generated hero photograph per build (cheap image tier, quota-metered,
-  // fail-soft). Generated before the pages so every page can reference it.
-  const heroAssetUrl = await generateDesignerAsset({
-    shopId: input.shopId,
-    key: "hero",
-    prompt: `Photorealistic lifestyle/product photograph for an online store. Brief: ${input.message.slice(0, 500)}. Mood: ${direction.mood}. Palette leaning: ${direction.palette}. Editorial commercial photography, natural light, no text, no logos, no watermarks, no people's identifiable faces.`,
-    signal: input.signal,
-  });
+  // fail-soft). Generated before the pages so every page can reference it;
+  // a resume reuses the hero the interrupted build already paid for.
+  let heroAssetUrl = data.assets?.hero ?? null;
+  if (!heroAssetUrl) {
+    const hero = await generateDesignerAsset({
+      shopId: input.shopId,
+      key: "hero",
+      prompt: `Photorealistic lifestyle/product photograph for an online store. Brief: ${input.message.slice(0, 500)}. Mood: ${direction.mood}. Palette leaning: ${direction.palette}. Editorial commercial photography, natural light, no text, no logos, no watermarks, no people's identifiable faces.`,
+      signal: input.signal,
+    });
+    heroAssetUrl = hero.url;
+    photosQuotaBlocked = photosQuotaBlocked || hero.quotaBlocked;
+  }
   if (heroAssetUrl) data.assets = { ...(data.assets ?? {}), hero: heroAssetUrl };
 
-  const donePages: DesignerRoute[] = [];
+  const donePages: DesignerRoute[] = resuming
+    ? DESIGNER_ROUTES.filter((route) => !existing.unbuilt.includes(route))
+    : [];
+  const builtRoutes = new Set<string>(donePages);
+  const remaining: DesignerRoute[] = [...routesToBuild];
   let rejected = 0;
-  for (const route of DESIGNER_ROUTES) {
+  const total = donePages.length + remaining.length;
+  while (remaining.length > 0) {
+    // The platform hard-kills this function at maxDuration with no error
+    // path. Stop starting pages near the deadline so the build always ends
+    // with saved work and an honest reply; the next message resumes it.
+    if (donePages.length > 0 && Date.now() - startedAt > FIRST_BUILD_DEADLINE_MS) break;
+    const route = remaining.shift() as DesignerRoute;
     const turn = await runEditTurn({
       shopId: input.shopId,
       files,
@@ -415,15 +530,36 @@ export async function designerFirstBuild(input: {
     rejected += turn.rejectedEdits;
     const review = await reviewPage({ files, route, model: input.model, signal: input.signal });
     files = review.files;
-    // Persist after every page so the preview shows finished pages immediately.
-    await saveDocuments(input.shopId, templateId, files);
     donePages.push(route);
-    input.onEvent?.({ kind: "page", page: route, index: donePages.length, total: DESIGNER_ROUTES.length, reply: turn.reply });
+    builtRoutes.add(route);
+    // Persist after every page so the preview shows finished pages
+    // immediately, and so an interruption never loses completed work.
+    await saveDocuments(input.shopId, templateId, files, { builtRoutes });
+    input.onEvent?.({
+      kind: "page",
+      page: route,
+      index: donePages.length,
+      total,
+      // A page that ended up unchanged must not stream a confusing edit-turn
+      // failure line — say what actually happened.
+      reply: turn.changed
+        ? turn.reply
+        : `The ${route} page kept its starting layout for now — tell me what you'd like different there and I'll shape it.`,
+    });
   }
 
-  const summary = mode === "scratch"
+  const quotaNote = photosQuotaBlocked
+    ? " Today's photo-generation limit was reached, so some imagery uses placeholders — build again tomorrow to fill them in."
+    : "";
+  if (remaining.length > 0) {
+    const summary = `I've designed ${donePages.length} of ${total} pages so far — the ${remaining.join(", ")} page${remaining.length > 1 ? "s are" : " is"} still on the way. Send any message and I'll finish the rest.${quotaNote}`;
+    await appendHistory(input.shopId, "assistant", summary);
+    return { reply: summary, changed: donePages.length > 0, rejectedEdits: rejected };
+  }
+
+  const summary = (mode === "scratch"
     ? "Your store is built from scratch across every page. Look around the pages and tell me what to push further."
-    : "Every page is designed and ready. Look around and tell me what to change.";
+    : "Every page is designed and ready. Look around and tell me what to change.") + quotaNote;
   await appendHistory(input.shopId, "assistant", summary);
   return { reply: summary, changed: true, rejectedEdits: rejected };
 }
@@ -451,18 +587,23 @@ export async function designerTurn(input: {
 
   // Chat-requested imagery: "generate a banner image for the sale" produces a
   // real photograph first, then the edit turn places it via its placeholder.
+  // Generation verbs only, and the request must introduce a NEW image ("a",
+  // "an", "new") — "make the hero image bigger" is an edit, not a paid
+  // generation.
   let userMessage = input.message;
-  if (/\b(generate|create|make|add)\b[^.!?]{0,80}\b(photo|photograph|image|picture|banner|visual|imagery)\b/i.test(input.message)) {
+  if (/\b(?:generate|create)\b[^.!?]{0,60}\b(?:a|an|new|another|fresh)\b[^.!?]{0,40}\b(?:photo|photograph|image|picture|banner|visual)\b/i.test(input.message)) {
     const key = `img-${Date.now().toString(36)}`;
-    const url = await generateDesignerAsset({
+    const generated = await generateDesignerAsset({
       shopId: input.shopId,
       key,
       prompt: `Photorealistic commercial photograph for an online store. Request: ${input.message.slice(0, 400)}. Store: ${data.storeName}. Editorial lighting, no text, no logos, no watermarks.`,
       signal: input.signal,
     });
-    if (url) {
-      data.assets = { ...(data.assets ?? {}), [key]: url };
+    if (generated.url) {
+      data.assets = { ...(data.assets ?? {}), [key]: generated.url };
       userMessage = `${input.message}\n\n(A new photograph was just generated for this request. Place it with the placeholder {{asset.${key}}} as an image src where it belongs.)`;
+    } else if (generated.quotaBlocked) {
+      userMessage = `${input.message}\n\n(Today's photo-generation limit is reached, so no new photograph could be created — tell the merchant that in one honest clause and make the rest of the change without new imagery.)`;
     }
   }
 
@@ -479,7 +620,12 @@ export async function designerTurn(input: {
   });
 
   if (turn.changed) {
-    await saveDocuments(input.shopId, documents.templateId, turn.files);
+    // Save only what this turn touched: a concurrent turn on another page
+    // must not be clobbered by this turn's stale snapshot of it.
+    const changedFiles = new Set(
+      Object.keys(turn.files).filter((name) => turn.files[name] !== documents.files[name]),
+    );
+    await saveDocuments(input.shopId, documents.templateId, turn.files, { onlyFiles: changedFiles });
   }
   await appendHistory(input.shopId, "user", input.message);
   await appendHistory(input.shopId, "assistant", turn.reply);

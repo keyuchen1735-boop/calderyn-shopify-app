@@ -128,3 +128,72 @@ describe("relaxedFind", () => {
     expect(relaxedFind("a\nb\nc", "a\nc")).toBeNull();
   });
 });
+
+describe("hardening: deletions, truncation, ambiguity, allowlist", () => {
+  const block = (file: string, search: string, replace: string) =>
+    `FILE: ${file}\n<<<<<<< SEARCH\n${search}\n=======\n${replace}\n>>>>>>> REPLACE`;
+
+  it("parses a deletion block (empty REPLACE)", () => {
+    const raw = `Removed the bar.\nFILE: home.html\n<<<<<<< SEARCH\n<div class="bar">Free shipping</div>\n=======\n>>>>>>> REPLACE`;
+    const parsed = parseDesignerReply(raw);
+    expect(parsed.edits).toHaveLength(1);
+    expect(parsed.edits[0].replace).toBe("");
+    expect(parsed.prose).toBe("Removed the bar.");
+    const result = applyDesignerEdits({ "home.html": `<p>a</p><div class="bar">Free shipping</div><p>b</p>` }, parsed.edits);
+    expect(result.applied).toBe(1);
+    expect(result.files["home.html"]).toBe("<p>a</p><p>b</p>");
+  });
+
+  it("parses an empty-SEARCH block and applies it only to an empty file", () => {
+    const raw = `FILE: home.css\n<<<<<<< SEARCH\n=======\nbody{color:red}\n>>>>>>> REPLACE`;
+    const parsed = parseDesignerReply(raw);
+    expect(parsed.edits).toHaveLength(1);
+    const onEmpty = applyDesignerEdits({ "home.css": "" }, parsed.edits);
+    expect(onEmpty.applied).toBe(1);
+    expect(onEmpty.files["home.css"]).toBe("body{color:red}");
+    const onFull = applyDesignerEdits({ "home.css": "body{color:blue}" }, parsed.edits);
+    expect(onFull.applied).toBe(0);
+    expect(onFull.rejected).toHaveLength(1);
+  });
+
+  it("flags a reply cut off mid-block and keeps the partial markup out of prose", () => {
+    const raw = `Here we go.\n${block("home.html", "*", "<section>done</section>")}\nFILE: home.css\n<<<<<<< SEARCH\n*\n=======\n.hero{padding`;
+    const parsed = parseDesignerReply(raw);
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.edits).toHaveLength(1);
+    expect(parsed.prose).toBe("Here we go.");
+    expect(parsed.prose).not.toContain(".hero{padding");
+  });
+
+  it("rejects a whitespace-relaxed match that is ambiguous", () => {
+    const hay = `<section id="a">\n  <div>x</div>\n</section>\n<section id="b">\n  <div>x</div>\n</section>`;
+    const result = applyDesignerEdits({ "home.html": hay }, [
+      { file: "home.html", search: "<div>x</div>\n  </section>", replace: "gone" },
+    ]);
+    expect(result.applied).toBe(0);
+    expect(result.rejected).toHaveLength(1);
+  });
+
+  it("rejects edits to files outside the allowlist", () => {
+    const files = { "home.html": "a", "cart.html": "b", "base.css": "c" };
+    const result = applyDesignerEdits(
+      files,
+      [
+        { file: "cart.html", search: "*", replace: "rewritten" },
+        { file: "home.html", search: "a", replace: "A" },
+      ],
+      new Set(["base.css", "home.html", "home.css"]),
+    );
+    expect(result.applied).toBe(1);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.files["cart.html"]).toBe("b");
+    expect(result.files["home.html"]).toBe("A");
+  });
+
+  it("keeps stray block markers out of prose", () => {
+    const parsed = parseDesignerReply("Done.\n>>>>>>> REPLACE\n=======");
+    expect(parsed.prose).toBe("Done.");
+    expect(parsed.edits).toHaveLength(0);
+    expect(parsed.truncated).toBe(false);
+  });
+});

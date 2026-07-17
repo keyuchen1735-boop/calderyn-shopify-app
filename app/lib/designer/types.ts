@@ -11,9 +11,15 @@ export interface DesignerStoreData {
     compareAtPriceCents: number | null;
     available: boolean;
     imageUrl: string | null;
+    /** Default variant to add to cart from listing cards; null = not buyable. */
+    variantId?: string | null;
   }>;
   /** Generated imagery by key, resolved via the {{asset.<key>}} placeholder. */
   assets?: Record<string, string>;
+  /** Live-serve context: the real collection title for {{collection.title}}. */
+  collectionTitle?: string;
+  /** Live-serve context: the query echoed by {{search.query}}. */
+  searchQuery?: string;
 }
 
 export type DesignerRoute = "home" | "collection" | "product" | "search" | "cart" | "checkout";

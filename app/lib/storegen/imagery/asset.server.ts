@@ -60,7 +60,9 @@ export async function generateMissingListingImages(
   if (products.length === 0 || limit <= 0) return 0;
   const missing = products
     .filter((product) => product.images.length === 0)
-    .slice(0, Math.min(MAX_STOREFRONT_IMAGES_PER_BUILD, limit));
+    // An explicit limit is the caller's budget decision; the constant is only
+    // the default for callers that don't pass one.
+    .slice(0, Math.max(0, limit));
   const results = await Promise.all(missing.map((product) => enhance(shopId, product, { signal })));
   return results.filter((result) => result.status === "ready").length;
 }

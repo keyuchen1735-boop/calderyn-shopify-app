@@ -1238,6 +1238,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
           onRemoveAttachment={onRemoveAttachment}
           model={designModel}
           onModelChange={setDesignModelBoth}
+          placeholder={designerOn && !data.designerReady ? "Describe your store and Calderyn builds every page…" : undefined}
           composerExtra={
             designerOn && !data.designerReady ? (
               <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "0 2px 8px" }}>

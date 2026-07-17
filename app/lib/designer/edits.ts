@@ -19,20 +19,62 @@ export interface DesignerEdit {
 export interface ParsedDesignerReply {
   prose: string;
   edits: DesignerEdit[];
+  /** True when the reply ends inside an unterminated edit block — the model
+   *  ran out of output tokens mid-edit. The partial block is excluded from
+   *  both edits and prose so raw markup never reaches the merchant. */
+  truncated: boolean;
 }
 
-const BLOCK_RE = /FILE:[ \t]*([\w.-]+)\s*\n<{5,9} ?SEARCH\s*\n([\s\S]*?)\n={5,9}\s*\n([\s\S]*?)\n>{5,9} ?REPLACE/g;
+const FILE_LINE = /^FILE:[ \t]*([\w.-]+)[ \t]*$/;
+const SEARCH_LINE = /^<{5,9} ?SEARCH[ \t]*$/;
+const DIVIDER_LINE = /^={5,9}[ \t]*$/;
+const REPLACE_LINE = /^>{5,9} ?REPLACE[ \t]*$/;
 
+/** Line-based block parser. A single regex cannot express empty SEARCH or
+ *  empty REPLACE sections (deletions), and silently drops blocks cut off by
+ *  a max_tokens truncation — both real merchant scenarios. */
 export function parseDesignerReply(raw: string): ParsedDesignerReply {
+  const lines = raw.split("\n");
   const edits: DesignerEdit[] = [];
-  let prose = raw;
-  for (const match of raw.matchAll(BLOCK_RE)) {
-    edits.push({ file: match[1], search: match[2], replace: match[3] });
-    prose = prose.replace(match[0], "");
+  const proseLines: string[] = [];
+  let truncated = false;
+
+  let i = 0;
+  while (i < lines.length) {
+    // A block starts at "FILE: name" with "<<<<<<< SEARCH" on the next line.
+    if (FILE_LINE.test(lines[i]) && i + 1 < lines.length && SEARCH_LINE.test(lines[i + 1])) {
+      const file = lines[i].match(FILE_LINE)![1];
+      let j = i + 2;
+      const search: string[] = [];
+      while (j < lines.length && !DIVIDER_LINE.test(lines[j])) search.push(lines[j++]);
+      if (j >= lines.length) {
+        // Cut off before the divider — drop the partial block from prose.
+        truncated = true;
+        break;
+      }
+      j += 1; // past the divider
+      const replace: string[] = [];
+      while (j < lines.length && !REPLACE_LINE.test(lines[j])) replace.push(lines[j++]);
+      if (j >= lines.length) {
+        truncated = true;
+        break;
+      }
+      edits.push({ file, search: search.join("\n"), replace: replace.join("\n") });
+      i = j + 1;
+      continue;
+    }
+    // A stray block marker outside a well-formed block is model formatting
+    // debris — keep it out of the merchant-facing prose.
+    if (SEARCH_LINE.test(lines[i]) || DIVIDER_LINE.test(lines[i]) || REPLACE_LINE.test(lines[i]) || FILE_LINE.test(lines[i])) {
+      i += 1;
+      continue;
+    }
+    proseLines.push(lines[i]);
+    i += 1;
   }
-  // A whole-file rewrite ships as a block with an empty SEARCH on an empty
-  // file, or the sentinel `*` meaning "replace the entire file".
-  return { prose: prose.replace(/```(?:\w+)?/g, "").trim(), edits };
+
+  const prose = proseLines.join("\n").replace(/```(?:\w+)?/g, "").trim();
+  return { prose, edits, truncated };
 }
 
 export interface ApplyResult {
@@ -43,18 +85,31 @@ export interface ApplyResult {
 
 /** Applies edits with exact matching (first occurrence). Whitespace-tolerant
  *  fallback: when the exact search misses, retry with every line trimmed —
- *  models frequently drop or add indentation when quoting. */
-export function applyDesignerEdits(files: Record<string, string>, edits: DesignerEdit[]): ApplyResult {
+ *  models frequently drop or add indentation when quoting. `allowedFiles`
+ *  (when given) scopes edits to the files the model was shown; edits to any
+ *  other file are rejected rather than silently rewriting unseen pages. */
+export function applyDesignerEdits(
+  files: Record<string, string>,
+  edits: DesignerEdit[],
+  allowedFiles?: ReadonlySet<string>,
+): ApplyResult {
   const next = { ...files };
   const rejected: DesignerEdit[] = [];
   let applied = 0;
   for (const edit of edits) {
     const current = next[edit.file];
-    if (current === undefined) {
+    if (current === undefined || (allowedFiles && !allowedFiles.has(edit.file))) {
       rejected.push(edit);
       continue;
     }
-    if (edit.search.trim() === "*") {
+    if (edit.search.trim() === "*" || edit.search.trim() === "") {
+      // Whole-file rewrite (`*`), or an empty SEARCH which only makes sense
+      // as "write this file" on an empty file — on non-empty files an empty
+      // SEARCH is ambiguous, so reject it for the retry to re-quote.
+      if (edit.search.trim() === "" && current.trim() !== "") {
+        rejected.push(edit);
+        continue;
+      }
       next[edit.file] = edit.replace;
       applied += 1;
       continue;
@@ -77,7 +132,11 @@ export function applyDesignerEdits(files: Record<string, string>, edits: Designe
   return { files: next, applied, rejected };
 }
 
-/** Finds the search text ignoring per-line leading/trailing whitespace. */
+/** Finds the search text ignoring per-line leading/trailing whitespace.
+ *  Returns null when the loose match is ambiguous (more than one occurrence):
+ *  generic closers like `</div>\n</section>` appear in every section, and
+ *  splicing the first occurrence would edit the wrong part of the page — a
+ *  rejection feeds the retry, which asks for a longer unambiguous quote. */
 export function relaxedFind(haystack: string, needle: string): { start: number; end: number } | null {
   const needleLines = needle.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
   if (needleLines.length === 0) return null;
@@ -88,6 +147,7 @@ export function relaxedFind(haystack: string, needle: string): { start: number; 
     offsets.push(cursor);
     cursor += line.length + 1;
   }
+  let found: { start: number; end: number } | null = null;
   for (let i = 0; i < hayLines.length; i += 1) {
     let matched = 0;
     let j = i;
@@ -102,11 +162,11 @@ export function relaxedFind(haystack: string, needle: string): { start: number; 
       j += 1;
     }
     if (matched === needleLines.length) {
-      const start = offsets[i];
+      if (found) return null; // ambiguous — two loose matches, wrong-splice risk
       const lastLine = j - 1;
-      const end = offsets[lastLine] + hayLines[lastLine].length;
-      return { start, end };
+      found = { start: offsets[i], end: offsets[lastLine] + hayLines[lastLine].length };
+      i = lastLine;
     }
   }
-  return null;
+  return found;
 }

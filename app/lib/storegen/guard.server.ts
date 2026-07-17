@@ -25,6 +25,7 @@ const BRIEF_MAX = 4000;
 export async function assertGeneratePrechecks(
   shopId: string,
   brief: string | undefined,
+  opts?: { skipExperimentCheck?: boolean },
 ): Promise<void> {
   if (typeof brief === "string" && brief.length > BRIEF_MAX) {
     throw new CalderynError({
@@ -42,6 +43,10 @@ export async function assertGeneratePrechecks(
   }
   // A test past its max duration decides itself here, so an abandoned
   // experiment can never block regeneration forever (failure-isolated inside).
+  // Draft-only surfaces (the designer's chat edits) skip the experiment gate:
+  // they never touch what shoppers see until an explicit publish, and the
+  // designer publish path carries its own experiment check.
+  if (opts?.skipExperimentCheck) return;
   await expireOverdueExperiment(shopId);
   if (await hasRunningExperiment(shopId)) {
     throw new CalderynError({
@@ -74,9 +79,9 @@ export async function assertDesignerQuota(
 export async function assertCanGenerate(
   shopId: string,
   brief: string | undefined,
-  opts: { trusted: boolean },
+  opts: { trusted: boolean; skipExperimentCheck?: boolean },
 ): Promise<void> {
-  await assertGeneratePrechecks(shopId, brief);
+  await assertGeneratePrechecks(shopId, brief, { skipExperimentCheck: opts.skipExperimentCheck });
   await assertDesignerQuota(shopId, opts);
 }
 
