@@ -80,7 +80,10 @@ export default function StorefrontLayout() {
   const matches = useMatches();
   if (matches.some((match) => {
     const data = match.data;
-    return Boolean(data && typeof data === "object" && "runtime" in data && data.runtime === 1);
+    if (!data || typeof data !== "object") return false;
+    // Runtime-1 bundles and published designer pages both carry their own
+    // full page chrome — the layout must not wrap them in a second header.
+    return ("runtime" in data && data.runtime === 1) || ("designer" in data && data.designer === true);
   })) return <Outlet />;
   const navCollections = collections ?? [];
   return (

@@ -31,7 +31,9 @@ import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-
 import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
 import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
-import { serveDesignerPageIfPublished } from "~/lib/designer/serve.server";
+import { resolveDesignerPublicPage } from "~/lib/designer/serve.server";
+import DesignerPublicView from "~/components/storefront/DesignerPublicView";
+import { isDesignerPublicPage } from "~/lib/designer/types";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Product" }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
@@ -56,8 +58,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   // Designer-published shops (hidden Labs): serve the snapshot; an unknown
   // handle returns null so the runtime's 404/redirect handling still runs.
-  const designer = await serveDesignerPageIfPublished(shopId, { kind: "product", handle });
-  if (designer) throw designer;
+  const designer = await resolveDesignerPublicPage(shopId, { kind: "product", handle });
+  if (designer) return json(designer.page, { headers: designer.headers });
   const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "product", handle } });
   if (runtime1) {
     if (runtime1.data.notFound) {
@@ -188,10 +190,15 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function StorefrontProduct() {
   const loaded = useLoaderData<typeof loader>();
-  const runtime1 = isRuntime1RenderData(loaded);
-  const initialVariantId = runtime1 ? "" : loaded.product.variants[0]?.id ?? "";
+  // Hooks must run unconditionally, so the designer/runtime discrimination
+  // happens before the early returns but after useState.
+  const legacy = !isDesignerPublicPage(loaded) && !isRuntime1RenderData(loaded) ? loaded : null;
+  const initialVariantId = legacy ? legacy.product.variants[0]?.id ?? "" : "";
   const [selectedVariantId, setSelectedVariantId] = useState(initialVariantId);
-  if (runtime1) {
+  if (isDesignerPublicPage(loaded)) {
+    return <DesignerPublicView page={loaded} />;
+  }
+  if (isRuntime1RenderData(loaded)) {
     return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "product", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="product" data={loaded.data} mode="public" /></>;
   }
   const { product, doc, data, record, demo, unavailable } = loaded;
