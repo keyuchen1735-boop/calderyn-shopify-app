@@ -109,15 +109,26 @@ export async function listProducts(
         externalUrl: m.external_url ? String(m.external_url) : null,
       });
     }
-    const { data: variants, error: vcErr } = await sb
-      .from("variant_dim")
-      .select("id, product_id, retail_price_cents")
-      .in("product_id", ids);
-    if (vcErr) throw vcErr;
+    // Page past PostgREST's 1,000-row cap: a catalog page can carry up to 100
+    // products, and a single un-ranged .in() would silently drop variant rows
+    // beyond the clamp — corrupting variantCount, min price, and the ship check
+    // for products whose variants fall past row 1,000.
+    const variants: Array<Record<string, unknown>> = [];
+    const VARIANT_PAGE = 1000;
+    for (let from = 0; ; from += VARIANT_PAGE) {
+      const { data: page, error: vcErr } = await sb
+        .from("variant_dim")
+        .select("id, product_id, retail_price_cents")
+        .in("product_id", ids)
+        .order("id")
+        .range(from, from + VARIANT_PAGE - 1);
+      if (vcErr) throw vcErr;
+      if (!page || page.length === 0) break;
+      variants.push(...(page as Array<Record<string, unknown>>));
+      if (page.length < VARIANT_PAGE) break;
+    }
 
-    const variantIds = (variants ?? []).map((v: { id: string }) =>
-      String(v.id),
-    );
+    const variantIds = variants.map((v) => String(v.id));
     const shippingByVariant = new Map<string, Record<string, unknown>>();
     // Chunk the id list: a page of products can carry hundreds of variants and
     // an unbounded .in() blows past PostgREST's URL length limit.
@@ -136,7 +147,7 @@ export async function listProducts(
       }
     }
 
-    for (const v of (variants ?? []) as Array<Record<string, unknown>>) {
+    for (const v of variants) {
       const pid = String(v.product_id);
       variantCount.set(pid, (variantCount.get(pid) ?? 0) + 1);
 

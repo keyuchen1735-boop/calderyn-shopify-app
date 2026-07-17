@@ -52,12 +52,17 @@ vi.mock("~/lib/supabase.server", () => ({
           }),
         };
       }
-      // variant_dim
-      return {
-        select: () => ({
-          in: () => Promise.resolve({ data: variantRows, error: null }),
-        }),
+      // variant_dim: listProducts chains .in("product_id", ids).order("id").range(...)
+      const variantResult = () =>
+        Promise.resolve({ data: variantRows, error: null });
+      const ordered: {
+        order: () => typeof ordered;
+        range: () => Promise<unknown>;
+      } = {
+        order: () => ordered,
+        range: () => variantResult(),
       };
+      return { select: () => ({ in: () => ordered }) };
     },
   }),
 }));
