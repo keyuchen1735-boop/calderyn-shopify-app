@@ -96,10 +96,19 @@ export function runDesignerTurn(input: {
           });
         },
       });
+      const landed: ChatMsg[] = [{ id: designerNewId(), kind: "ai-text", text: turn.reply }];
+      // The edit-result card: what this turn changed, with a jump back to the
+      // preview. First builds narrate page by page instead and send no summary.
+      if (turn.changes.length > 0) {
+        landed.push({
+          id: designerNewId(),
+          kind: "ai-result",
+          changes: turn.changes,
+          onView: () => patch({ previewVersion: state.previewVersion + 1 }),
+        });
+      }
       patch({
-        messages: state.messages
-          .filter((m) => m.id !== thinkId)
-          .concat({ id: designerNewId(), kind: "ai-text", text: turn.reply }),
+        messages: state.messages.filter((m) => m.id !== thinkId).concat(landed),
         previewVersion: turn.changed ? state.previewVersion + 1 : state.previewVersion,
       });
     } catch (err) {
