@@ -147,7 +147,7 @@ if(!cart||!cart.lines||cart.lines.length===0){lines.innerHTML='<div class="cd-dr
 lines.innerHTML=cart.lines.map(function(l){return '<div class="cd-drawer-line"><span>'+String(l.titleSnapshot||"Item").replace(/[<>&]/g,"")+" × "+l.quantity+'</span><span>'+money(l.unitPriceCents*l.quantity)+"</span></div>"}).join("");
 sub.textContent=money(cart.subtotalCents||0);
 if(meter&&threshold>0){meter.hidden=false;var left=Math.max(0,threshold-(cart.subtotalCents||0));var text=meter.querySelector("[data-cd-meter-text]");var bar=meter.querySelector("[data-cd-meter-bar]");if(text)text.textContent=left>0?("You're "+money(left)+" away from free shipping"):"You've unlocked free shipping";if(bar)bar.style.width=Math.min(100,Math.round(((cart.subtotalCents||0)/threshold)*100))+"%"}}
-function refresh(){return fetch("/storefront/api/cart",{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null}).then(function(d){render(d&&d.cart)}).catch(function(){})}
+function refresh(){return fetch("/storefront/api/cart",{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null}).then(function(d){render(d&&d.data?d.data.cart:(d&&d.cart))}).catch(function(){})}
 function open(){drawer.setAttribute("data-open","1");backdrop.setAttribute("data-open","1");refresh()}
 function close(){drawer.removeAttribute("data-open");backdrop.removeAttribute("data-open")}
 backdrop.addEventListener("click",close);var x=drawer.querySelector("[data-cd-drawer-close]");if(x)x.addEventListener("click",close);
