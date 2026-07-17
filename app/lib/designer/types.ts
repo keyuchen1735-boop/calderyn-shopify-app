@@ -44,6 +44,14 @@ export function isDesignerPublicPage(value: unknown): value is DesignerPublicPag
   return Boolean(value && typeof value === "object" && (value as { designer?: unknown }).designer === true);
 }
 
+/** One line of the edit-result card: a merchant-facing surface label (e.g.
+ *  "Home page", "Site styles") with the real lines added/removed this turn. */
+export interface DesignerChange {
+  label: string;
+  added: number;
+  removed: number;
+}
+
 export interface DesignerReply {
   /** The assistant's one-or-two sentence chat reply. */
   reply: string;
@@ -51,4 +59,6 @@ export interface DesignerReply {
   changed: boolean;
   /** Edits that failed to apply after the retry, for observability. */
   rejectedEdits: number;
+  /** Per-surface summary of what this turn changed, for the result card. */
+  changes?: DesignerChange[];
 }

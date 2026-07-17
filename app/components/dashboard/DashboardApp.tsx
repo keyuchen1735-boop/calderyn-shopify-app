@@ -1690,6 +1690,19 @@ export default function DashboardApp({
               <span className="flex-1">Night mode</span>
               <Toggle value={dark} onChange={setNightMode} ariaLabel="Night mode" />
             </div>
+            {/* Compact-rail fallback: the full row above collapses to zero height
+                when the sidebar compacts (e.g. the store designer), so surface an
+                icon-only toggle so night mode stays reachable there. */}
+            <button
+              type="button"
+              className="cd-foot-night"
+              aria-label="Night mode"
+              aria-pressed={dark}
+              title={dark ? "Switch to light mode" : "Switch to night mode"}
+              onClick={() => setNightMode(!dark)}
+            >
+              <CDIcon name={dark ? "sun" : "moon"} size={16} strokeWidth={1.9} />
+            </button>
           </div>
           <div className="cd-acct-wrap">
             <div className="cd-acct-menu" data-open={acctOpen ? "1" : "0"}>

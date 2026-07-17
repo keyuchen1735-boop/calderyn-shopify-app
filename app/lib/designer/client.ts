@@ -4,6 +4,7 @@
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { throwIfVersionSkew } from "~/lib/dashboard/version-skew";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
+import type { DesignerChange } from "~/lib/designer/types";
 
 /** Session lapsed: recover the way every dashboard call does. */
 function redirectToLogin(): void {
@@ -61,6 +62,8 @@ export interface DesignerTurnResult {
   reply: string;
   changed: boolean;
   rejectedEdits: number;
+  /** Per-surface summary of what changed this turn (edit turns only). */
+  changes: DesignerChange[];
 }
 
 /** One conversational turn against the designer engine. Edit turns answer as
@@ -93,7 +96,12 @@ export async function sendDesignerMessage(input: {
     if (!res.ok || !data || typeof data.reply !== "string") {
       throw new DashboardApiError(res.status, data?.error ?? "designer_failed", data?.message ?? "The designer couldn't process that.");
     }
-    return { reply: data.reply, changed: data.changed === true, rejectedEdits: data.rejectedEdits ?? 0 };
+    return {
+      reply: data.reply,
+      changed: data.changed === true,
+      rejectedEdits: data.rejectedEdits ?? 0,
+      changes: Array.isArray(data.changes) ? data.changes : [],
+    };
   }
 
   if (!res.body) throw new DashboardApiError(502, "designer_stream_failed", "The build stream had no body.");
@@ -116,7 +124,14 @@ export async function sendDesignerMessage(input: {
         reply: event.reply,
       });
     } else if (event.kind === "done" && typeof event.reply === "string") {
-      done = { reply: event.reply, changed: event.changed === true, rejectedEdits: Number(event.rejectedEdits ?? 0) };
+      done = {
+        reply: event.reply,
+        changed: event.changed === true,
+        rejectedEdits: Number(event.rejectedEdits ?? 0),
+        // First builds narrate page by page and send no summary today, but a
+        // resumed build's done event may carry one — don't discard it.
+        changes: Array.isArray(event.changes) ? (event.changes as DesignerChange[]) : [],
+      };
     } else if (event.kind === "error") {
       throw new DashboardApiError(502, "designer_build_failed", typeof event.message === "string" ? event.message : "The build failed partway.");
     }

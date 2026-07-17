@@ -14,9 +14,10 @@ import { convertTemplateToDocuments, DESIGNER_ROUTES } from "./convert.server";
 import { artDirectionFor, scratchSeedFiles, type ArtDirection } from "./direction.server";
 import { generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
 import { applyAssetOverrides, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
+import { editContext, fileContext, summarizeChanges } from "./context";
 import { applyDesignerEdits, parseDesignerReply, type DesignerEdit } from "./edits";
 import { scrubDesignerCss, scrubDesignerHtml } from "./render.server";
-import type { DesignerReply, DesignerRoute, DesignerStoreData } from "./types";
+import type { DesignerChange, DesignerReply, DesignerRoute, DesignerStoreData } from "./types";
 
 /** Concrete model ids behind the merchant's design-model picker; requests
  *  only ever select a key, never a free-form model id. */
@@ -53,6 +54,7 @@ Rules:
 - Live behavior comes from data attributes the runtime wires (never write scripts): a header search field is an <input type="search" data-designer-search placeholder="Search"> (the runtime submits it to the search page on Enter); a header cart count is <span data-designer-cart-count>{{cart.count}}</span> (the runtime keeps it current). Add-to-cart buttons always carry the class designer-add-to-cart.
 - Design taste: one accent color per store, saturation under 80 percent, never pure black or pure white, no AI-purple gradients, no neon glows. Text must stay readable against its background (4.5:1). Headlines short and confident. No dash characters in copy, no exclamation marks, no filler verbs (elevate, unleash, seamless).
 - Never fabricate facts: no invented review counts or star ratings, no made-up customer quotes, press mentions, sales numbers, or certifications. Trust elements state real policies (shipping, returns) or stay generic ("Loved by our customers") until the merchant supplies real numbers.
+- The store's name is exactly what the STORE line gives. Bind it with {{store.name}} wherever the live name renders, and never invent, guess, or hard-code a different brand or store name anywhere: copy, headings, alt text, meta, or link text. If an earlier draft left a stray brand name in the files, correct it to the real store name — it is never the store's identity, and its presence is never a reason to treat the files as another store's or to ask the merchant to paste or rebuild anything.
 - Conversion, at premium DTC quality (think trenchies.co, gymshark.com):
   - Hero: full-bleed media edge to edge (no boxed image with side margins), roughly 82 to 92vh, ONE committed branded headline that states the promise (never just the store name, never a 5-slide carousel), one subhead clause, ONE high-contrast branded CTA (specific copy like "Shop the drop" or "Get yours", never bare "Shop now"), and a trust triad row of three short signals (quality, origin, speed) near the top.
   - Announcement bar pinned at the very top of the shell: a thin full-width bar with a free-shipping threshold or promo line.
@@ -211,17 +213,6 @@ export async function loadDesignerStoreData(shopId: string): Promise<DesignerSto
   };
 }
 
-function fileContext(files: Record<string, string>, route: DesignerRoute): string {
-  const sections = [
-    ["base.css", files["base.css"] ?? ""],
-    [`${route}.html`, files[`${route}.html`] ?? ""],
-    [`${route}.css`, files[`${route}.css`] ?? ""],
-  ] as const;
-  return sections
-    .map(([name, body]) => `===== ${name} =====\n${body}`)
-    .join("\n\n");
-}
-
 function templateMenu(): string {
   return STORE_TEMPLATE_REGISTRY.templates
     .map((template) => `- ${template.id}: ${template.niche}. ${template.descriptor}`)
@@ -300,13 +291,7 @@ async function runEditTurn(input: {
   signal?: AbortSignal;
   maxTokens?: number;
 }): Promise<DesignerReply & { files: Record<string, string> }> {
-  const context = [
-    `STORE: ${input.data.storeName}${input.data.tagline ? ` — ${input.data.tagline}` : ""}`,
-    `PRODUCTS: ${input.data.products.map((product) => product.title).join("; ").slice(0, 800)}`,
-    `PAGE BEING EDITED: ${input.route}`,
-    "",
-    fileContext(input.files, input.route),
-  ].join("\n");
+  const context = editContext(input.data, input.route, input.files);
 
   const messages = [
     ...input.history,
@@ -647,6 +632,7 @@ export async function designerTurn(input: {
     signal: input.signal,
   });
 
+  let changes: DesignerChange[] = [];
   if (turn.changed) {
     // Save only what this turn touched: a concurrent turn on another page
     // must not be clobbered by this turn's stale snapshot of it.
@@ -654,9 +640,10 @@ export async function designerTurn(input: {
       Object.keys(turn.files).filter((name) => turn.files[name] !== documents.files[name]),
     );
     await saveDocuments(input.shopId, documents.templateId, turn.files, { onlyFiles: changedFiles });
+    changes = summarizeChanges(documents.files, turn.files);
   }
   await appendHistory(input.shopId, "user", input.message);
   await appendHistory(input.shopId, "assistant", turn.reply);
 
-  return { reply: turn.reply, changed: turn.changed, rejectedEdits: turn.rejectedEdits };
+  return { reply: turn.reply, changed: turn.changed, rejectedEdits: turn.rejectedEdits, changes };
 }

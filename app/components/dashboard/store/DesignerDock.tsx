@@ -9,6 +9,39 @@ import { CDIcon } from "../icons";
 import { canSendComposer } from "../screens/store-logic";
 import type { ChatMsg } from "./chat-types";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
+import type { DesignerChange } from "~/lib/designer/types";
+
+/** The edit-result card: what a turn changed, phrased for the merchant (the
+ *  surfaces they see, not filenames) with real line deltas and a jump back to
+ *  the preview. The agent-chat "Edited N files" block, adapted to a store. */
+function ResultCard({ changes, onView }: { changes: DesignerChange[]; onView?: () => void }) {
+  const added = changes.reduce((sum, c) => sum + c.added, 0);
+  const removed = changes.reduce((sum, c) => sum + c.removed, 0);
+  const surfaces = changes.map((c) => c.label).join(" and ");
+  return (
+    <div className="cd-dock-card">
+      <span className="cd-dock-card-tile" aria-hidden="true">
+        <CDIcon name="pencil" size={17} strokeWidth={1.8} />
+      </span>
+      <div className="cd-dock-card-meta">
+        <div className="cd-dock-card-title">Updated your store</div>
+        {surfaces && <div className="cd-dock-card-sub">{surfaces}</div>}
+        {(added > 0 || removed > 0) && (
+          <div className="cd-dock-card-chgs">
+            {added > 0 && <span className="cd-dock-card-add">{`+${added} lines`}</span>}
+            {removed > 0 && <span className="cd-dock-card-del">{`-${removed} lines`}</span>}
+          </div>
+        )}
+      </div>
+      {onView && (
+        <button type="button" className="cd-dock-card-btn" onClick={onView}>
+          <CDIcon name="eye" size={13} strokeWidth={1.9} />
+          View
+        </button>
+      )}
+    </div>
+  );
+}
 
 function formatDuration(ms: number): string {
   const total = Math.max(1, Math.round(ms / 1000));
@@ -55,6 +88,9 @@ function Bubble({ msg }: { msg: ChatMsg }) {
       </div>
     );
   }
+  if (msg.kind === "ai-result") {
+    return <ResultCard changes={msg.changes} onView={msg.onView} />;
+  }
   if (msg.kind === "ai-working") {
     // The designer streams its own page events as plain replies; the classic
     // build-steps card never appears on this surface, but render its text
@@ -92,6 +128,7 @@ export default function DesignerDock({
   stoppable,
   attaching,
   onAttachFiles,
+  onAttachClick,
   model,
   onModelChange,
   placeholder,
@@ -107,6 +144,10 @@ export default function DesignerDock({
   stoppable: boolean;
   attaching: boolean;
   onAttachFiles: (files: File[]) => void;
+  /** Overrides the + button's default open-file-picker click. Surfaces that
+   *  can't accept attachments yet answer here instead of letting the merchant
+   *  pick a file that goes nowhere. */
+  onAttachClick?: () => void;
   model: StudioDesignModel;
   onModelChange: (m: StudioDesignModel) => void;
   placeholder?: string;
@@ -283,13 +324,13 @@ export default function DesignerDock({
         <div className="cd-dock-input-row">
           <button
             type="button"
-            className="cd-composer-tool"
-            title="Add a product from a photo"
-            aria-label="Add a product from a photo"
+            className="cd-composer-tool cd-dock-plus"
+            title="Attach an image"
+            aria-label="Attach an image"
             disabled={attaching}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => (onAttachClick ? onAttachClick() : fileInputRef.current?.click())}
           >
-            <CDIcon name="paperclip" size={15} strokeWidth={1.9} />
+            <CDIcon name="plus" size={17} strokeWidth={2} />
           </button>
           <input
             ref={fileInputRef}

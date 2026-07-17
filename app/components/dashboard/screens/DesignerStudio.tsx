@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cachedScreenData, cacheScreenData } from "~/lib/dashboard/screen-cache";
 import { fetchDesignerState, publishDesignerSite, type DesignerStateVM } from "~/lib/designer/client";
+import { DESIGNER_PAGE_LABELS } from "~/lib/designer/context";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import {
   designerNewId,
@@ -23,14 +24,11 @@ import { Btn } from "../ui";
 export const DESIGNER_STATE_CACHE_KEY = "designer-studio";
 
 type DesignerPageKey = "home" | "collection" | "product" | "search" | "cart" | "checkout";
-const PAGES: { key: DesignerPageKey; label: string }[] = [
-  { key: "home", label: "Home page" },
-  { key: "collection", label: "Collection" },
-  { key: "product", label: "Product page" },
-  { key: "search", label: "Search" },
-  { key: "cart", label: "Cart" },
-  { key: "checkout", label: "Checkout" },
-];
+// Shared with the edit-result card so the picker and the card name pages
+// identically.
+const PAGES: { key: DesignerPageKey; label: string }[] = (
+  ["home", "collection", "product", "search", "cart", "checkout"] as const
+).map((key) => ({ key, label: DESIGNER_PAGE_LABELS[key] }));
 
 export default function DesignerStudio({ app }: { app: DashboardCtx }) {
   const toast = app.toast;
@@ -184,6 +182,8 @@ export default function DesignerStudio({ app }: { app: DashboardCtx }) {
             stoppable={false}
             attaching={false}
             onAttachFiles={() => toast("Image attachments aren't supported in the designer beta yet.", "warn")}
+            // Answer on click, before a file picker that could go nowhere.
+            onAttachClick={() => toast("Image attachments aren't supported in the designer beta yet.", "warn")}
             model={model}
             onModelChange={setModel}
             placeholder={!ready ? "Describe your store and Calderyn builds every page…" : undefined}

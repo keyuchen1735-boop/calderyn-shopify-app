@@ -1,4 +1,5 @@
 import type { BuildPhase } from "../screens/store-logic";
+import type { DesignerChange } from "~/lib/designer/types";
 
 export interface ChatAction {
   label: string;
@@ -13,4 +14,6 @@ export type ChatMsg =
   // Designer-engine kinds: the sparkle studio's thread renders these; the
   // classic builder never produces them.
   | { id: number; kind: "ai-thinking" }
+  // The edit-result card: what a turn changed, with a jump-to-preview action.
+  | { id: number; kind: "ai-result"; changes: DesignerChange[]; onView?: () => void }
   | { id: number; kind: "user-image"; imageUrl: string; caption: string };
