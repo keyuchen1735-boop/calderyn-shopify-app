@@ -1099,8 +1099,14 @@ export default function Store({ app }: { app: DashboardCtx }) {
       const designerActive = data.settings.composerEnabled === true;
       const { storefrontUrl } = designerActive ? await publishDesignerSite() : await publishStudioStore();
       if (!aliveRef.current) return;
-      // Publishing stays in the studio: confirm here, link out on demand —
-      // never yank the merchant away from where they were working.
+      if (!designerActive) {
+        // Classic builder keeps its long-standing behavior untouched while the
+        // designer is in its hidden test phase.
+        window.location.assign(storefrontUrl);
+        return;
+      }
+      // Designer publish stays in the studio: confirm here, link out on
+      // demand — never yank the merchant away from where they were working.
       toast("Your site is live", "check");
       pushMsg({
         id: newId(),
