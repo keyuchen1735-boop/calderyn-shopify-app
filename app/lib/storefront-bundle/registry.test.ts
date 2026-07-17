@@ -39,7 +39,9 @@ describe("versioned storefront recipe registry", () => {
     expect(STORE_TEMPLATE_REGISTRY.registryVersion).toBe(2);
     expect(STORE_TEMPLATE_REGISTRY.routingVersion).toBe(1);
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
-      expect(recipe.activeVersion).toBe(recipe.id === "atelier-nine" ? 3 : 2);
+      expect(recipe.activeVersion).toBe(
+        recipe.id === "atelier-nine" || recipe.id === "soft-chemistry" ? 3 : 2,
+      );
       expect(recipe.routeCapabilities).toEqual(["home", "collection", "product", "search", "cart", "checkout"]);
       expect(recipe.overrideSurface.designTokens.length).toBeGreaterThan(0);
       expect(recipe.overrideSurface.textSlots.length).toBeGreaterThan(0);
