@@ -119,7 +119,7 @@ export default function StorefrontCollection() {
           // are all unpriced shows no price rather than a misleading "$0.00".
           const priced = p.variants.find((v) => v.available);
           return (
-            <a key={p.id} className="cd-product-card" href={`/storefront/products/${p.handle}`}>
+            <a key={p.id} className="cd-product-card" href={`/storefront/products/${encodeURIComponent(p.handle)}`}>
               {p.images[0] ? (
                 <img className="cd-product-card__img" src={p.images[0].url} alt={p.images[0].alt ?? p.title} />
               ) : null}
