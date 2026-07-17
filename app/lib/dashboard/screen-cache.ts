@@ -106,3 +106,7 @@ export function catalogCacheKey(search: string, status: string | undefined): str
 export function analyticsCacheKey(days: number): string {
   return `analytics:${days}`;
 }
+
+export function operatingPnlCacheKey(days: number): string {
+  return `operating-pnl:${days}`;
+}

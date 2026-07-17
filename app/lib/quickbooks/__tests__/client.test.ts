@@ -112,6 +112,22 @@ describe("quickbooksClientForShop", () => {
     expect(await conn!.client.queryHomeCurrency()).toBeNull();
   });
 
+  it("requests an accrual P&L summarized by day", async () => {
+    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9341452" });
+    const fetcher = vi.fn().mockResolvedValue({
+      access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
+    });
+    const httpFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ Rows: { Row: [] } }) });
+    const conn = await quickbooksClientForShop("s1", { sb, fetcher, httpFetch: httpFetch as unknown as typeof fetch });
+    await conn!.client.queryReport("ProfitAndLoss", {
+      startDate: "2026-07-01", endDate: "2026-07-15", accountingMethod: "Accrual", summarizeBy: "Days",
+    });
+    const url = new URL(httpFetch.mock.calls[0][0] as string);
+    expect(url.pathname).toBe("/v3/company/9341452/reports/ProfitAndLoss");
+    expect(url.searchParams.get("accounting_method")).toBe("Accrual");
+    expect(url.searchParams.get("summarize_column_by")).toBe("Days");
+  });
+
   it("throws when the QBO query returns a non-ok status", async () => {
     const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9341452" });
     const fetcher = vi.fn().mockResolvedValue({
