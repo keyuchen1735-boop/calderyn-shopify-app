@@ -47,6 +47,26 @@ beforeEach(() => {
 });
 
 describe("database storefront context source", () => {
+  it("counts collection memberships beyond the PostgREST page boundary", async () => {
+    const collectionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    tableRows.collection_dim = [{ id: collectionId, handle: "complete", title: "Complete" }];
+    tableRows.product_collection = Array.from({ length: 1_001 }, (_, index) => ({
+      collection_id: collectionId,
+      product_id: `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+    }));
+
+    const { assembleStorefrontContext } = await import("./context.server");
+    const context = await assembleStorefrontContext({
+      shopId: "11111111-1111-4111-8111-111111111111",
+      prompt: "Build a store",
+    });
+
+    expect(context.collections).toEqual([
+      expect.objectContaining({ id: "collection-001", handle: "complete", productCount: 1_001 }),
+    ]);
+    expect(ranges.product_collection).toEqual([[0, 999], [1_000, 1_999]]);
+  });
+
   it("pages every child row needed by the bounded product sample", async () => {
     const productId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     tableRows.product_dim = [{ id: productId, handle: "product", title: "Product", category: null, tags: [] }];

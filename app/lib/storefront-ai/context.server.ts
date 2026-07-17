@@ -165,10 +165,14 @@ const databaseContextSource: StorefrontContextSource = {
     const ids = (data ?? []).map((row) => String(row.id));
     let counts = new Map<string, number>();
     if (ids.length) {
-      const links = await sb.from("product_collection").select("collection_id").in("collection_id", ids);
-      if (links.error) throw links.error;
+      const links = await readAllPages((from, to) => sb.from("product_collection")
+        .select("collection_id, product_id")
+        .in("collection_id", ids)
+        .order("collection_id")
+        .order("product_id")
+        .range(from, to));
       counts = new Map();
-      for (const row of links.data ?? []) {
+      for (const row of links) {
         const id = String(row.collection_id);
         counts.set(id, (counts.get(id) ?? 0) + 1);
       }
