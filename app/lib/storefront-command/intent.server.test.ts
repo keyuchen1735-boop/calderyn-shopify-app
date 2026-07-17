@@ -441,6 +441,17 @@ describe("classifyStoreIntent", () => {
     expect(provider).not.toHaveBeenCalled();
   });
 
+  it("routes make store through the approved design library even when a draft exists", async () => {
+    const provider = vi.fn(async () => classified('{"kind":"unsupported","message":"model"}'));
+
+    await expect(classifyStoreIntent({ ...input, prompt: "make store" }, { provider })).resolves.toEqual({
+      kind: "select_design",
+      prompt: "make store",
+      excludedTemplateIds: ["soft-chemistry", "custom-bench"],
+    });
+    expect(provider).not.toHaveBeenCalled();
+  });
+
   it("sends every near-match command to the provider", async () => {
     const provider = vi.fn(async () => classified('{"kind":"unsupported","message":"Handled by the model."}'));
 
