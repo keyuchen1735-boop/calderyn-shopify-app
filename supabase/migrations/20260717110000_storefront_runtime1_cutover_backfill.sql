@@ -39,7 +39,7 @@ with legacy_public as (
   select publication.shop_id
   from public.designer_publications publication
 ), legacy_draft as (
-  select page.shop_id
+  select distinct page.shop_id
   from public.page_document page
   where page.draft_json is not null
 )

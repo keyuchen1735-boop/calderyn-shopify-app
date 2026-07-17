@@ -248,6 +248,7 @@ describe("storefront bundle persistence migrations", () => {
 
   it("preserves unpublished legacy drafts without publishing them", () => {
     expect(RUNTIME1_CUTOVER).toMatch(/draft_json is not null/);
+    expect(RUNTIME1_CUTOVER).toMatch(/legacy_draft as \(\s*select distinct page\.shop_id/);
     expect(RUNTIME1_CUTOVER).toMatch(/legacy_draft\.shop_id is not null/);
     expect(RUNTIME1_CUTOVER).toMatch(
       /legacy_public\.shop_id is not null\s+or release\.published_version_id is not null as requires_published_version/,
