@@ -21,7 +21,11 @@ const HEX_RE = /#([0-9a-f]{6})\b/i;
 
 function normalizedFont(prompt: string): CuratedFontId | null {
   const lower = prompt.toLowerCase();
-  for (const [alias, id] of Object.entries(FONT_ALIASES)) if (lower.includes(alias)) return id;
+  // Match on whole words: a bare substring test lets "inter" fire on winter,
+  // center, interior, printer… and hijack an unrelated edit into a setFont.
+  for (const [alias, id] of Object.entries(FONT_ALIASES)) {
+    if (new RegExp(`\\b${alias}\\b`).test(lower)) return id;
+  }
   const dashed = lower.match(/\b(?:font|typeface)\s+([a-z0-9-]+)\b/)?.[1];
   return dashed && isCuratedFontId(dashed) ? dashed : null;
 }

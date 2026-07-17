@@ -15,6 +15,14 @@ describe("parseEditIntent", () => {
       kind: "deterministic",
       operations: [{ kind: "setFont", target: "display", fontId: "fraunces" }],
     });
+    // "inter" must match as a whole word only — not as a substring of winter,
+    // center, interior… which would hijack an unrelated edit into a setFont.
+    expect(parseEditIntent("Make the winter sale hero bigger").kind).not.toBe("deterministic");
+    expect(parseEditIntent("Center the interior banner").kind).not.toBe("deterministic");
+    expect(parseEditIntent("Switch the body font to Inter")).toEqual({
+      kind: "deterministic",
+      operations: [{ kind: "setFont", target: "body", fontId: "inter" }],
+    });
     expect(parseEditIntent("Move this section up", { routeId: "home", regionId: "home-story" })).toEqual({
       kind: "deterministic",
       operations: [{ kind: "moveRegion", routeId: "home", targetId: "home-story", direction: "up" }],
