@@ -1,5 +1,5 @@
 import { getSupabase } from "~/lib/supabase.server";
-import type { BrowserProofReport, MerchantStorefrontContext } from "~/lib/storefront-ai/contracts";
+import type { BrowserProofReport, ContextAssemblyInput, MerchantStorefrontContext } from "~/lib/storefront-ai/contracts";
 import {
   createStorefrontBundleVersion,
   editStorefrontDraft,
@@ -37,7 +37,7 @@ export interface StorefrontUndoDependencies {
   loadVersion(shopId: string, versionId: string): Promise<LoadedStorefrontVersion | null>;
   loadEditAudit(input: { shopId: string; resultVersionId: string }): Promise<{ baseVersionId: string; resultVersionId: string } | null>;
   validate(bundle: StorefrontBundleV1): BundleValidationReport;
-  loadProofContext(input: { shopId: string; prompt: string }): Promise<StorefrontContextAssembly>;
+  loadProofContext(input: ContextAssemblyInput): Promise<StorefrontContextAssembly>;
   prove(input: { bundle: StorefrontBundleV1; context: MerchantStorefrontContext; persistedAssets: []; signal?: AbortSignal }): Promise<BrowserProofReport>;
   hashArtifact(input: HashStorefrontArtifactInput): Promise<string>;
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
@@ -168,11 +168,16 @@ export async function undoStorefrontEdit(
     if (!validation.ok) {
       throw new StorefrontUndoError("storefront_undo_target_invalid", "The undo version no longer passes storefront validation.", 409, validation.diagnostics);
     }
-    const contextAssembly = await dependencies.loadProofContext({ shopId: input.shopId, prompt: "Undo storefront edit" });
+    const featuredProductIds = target.bundle.featuredProductIds ?? [];
+    const contextAssembly = await dependencies.loadProofContext({
+      shopId: input.shopId,
+      prompt: "Undo storefront edit",
+      requiredProductIds: featuredProductIds,
+    });
     throwIfAborted(input.signal);
     const browserProof = await dependencies.prove({
       bundle: target.bundle,
-      context: ownedProofContext(contextAssembly, target.bundle.featuredProductIds ?? []),
+      context: ownedProofContext(contextAssembly, featuredProductIds),
       persistedAssets: [],
       ...(input.signal ? { signal: input.signal } : {}),
     });

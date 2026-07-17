@@ -321,6 +321,57 @@ describe("runStoreCommand", () => {
     });
   });
 
+  it("loads and proves existing featured products outside the ordinary sample for a text edit", async () => {
+    const current = state();
+    current.draft!.bundle.featuredProductIds = [SECOND_PRODUCT, PRODUCT];
+    const requiredAssembly = referencedContextAssembly();
+    const loadContext = vi.fn(async (input: { requiredProductIds?: string[] }) =>
+      input.requiredProductIds?.length ? requiredAssembly : contextAssembly);
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(current),
+      loadContext,
+      classify: vi.fn().mockResolvedValue({ kind: "update_text", slot: "heroTitle", value: "New title" }),
+      applyIntent: vi.fn((bundle) => ({
+        bundle: {
+          ...structuredClone(bundle),
+          visualLayer: { kind: "fragment_shader", source: "void main(){gl_FragColor=vec4(1.);}", colors: ["#000000", "#ffffff", "#888888"] },
+        },
+      })),
+    });
+
+    await runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT, "Update the headline") }, deps);
+
+    expect(loadContext).toHaveBeenCalledWith(expect.objectContaining({
+      requiredProductIds: [SECOND_PRODUCT, PRODUCT],
+    }));
+    expect(vi.mocked(deps.prove).mock.calls[0]![0]).toMatchObject({
+      bundle: { featuredProductIds: [SECOND_PRODUCT, PRODUCT] },
+      context: { products: [{ id: PRODUCT }, { id: SECOND_PRODUCT }] },
+    });
+  });
+
+  it("fails closed when an existing featured product is unavailable", async () => {
+    const current = state();
+    current.draft!.bundle.featuredProductIds = [SECOND_PRODUCT];
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(current),
+      loadContext: vi.fn().mockResolvedValue(contextAssembly),
+      classify: vi.fn().mockResolvedValue({ kind: "update_text", slot: "heroTitle", value: "New title" }),
+      applyIntent: vi.fn((bundle) => ({
+        bundle: {
+          ...structuredClone(bundle),
+          visualLayer: { kind: "fragment_shader", source: "void main(){gl_FragColor=vec4(1.);}", colors: ["#000000", "#ffffff", "#888888"] },
+        },
+      })),
+    });
+
+    await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT, "Update the headline") }, deps))
+      .rejects.toMatchObject({ code: "storefront_command_rejected", status: 422 });
+    expect(deps.prove).not.toHaveBeenCalled();
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.edit).not.toHaveBeenCalled();
+  });
+
   it("rejects an unmapped product reference before proof or persistence", async () => {
     const deps = dependencies({
       loadState: vi.fn().mockResolvedValue(state()),

@@ -1,5 +1,5 @@
 import { getSupabase } from "~/lib/supabase.server";
-import type { BrowserProofReport, MerchantStorefrontContext } from "~/lib/storefront-ai/contracts";
+import type { BrowserProofReport, ContextAssemblyInput, MerchantStorefrontContext } from "~/lib/storefront-ai/contracts";
 import {
   assembleStorefrontContextWithReferences,
   type StorefrontContextAssembly,
@@ -64,7 +64,7 @@ export interface StoreCommandDependencies {
   recipeBuildEnabled(): boolean;
   publishEnabled(): boolean;
   buildEvidence(shopId: string): Promise<CatalogRoutingEvidence>;
-  loadContext(input: { shopId: string; prompt: string }): Promise<StorefrontContextAssembly>;
+  loadContext(input: ContextAssemblyInput): Promise<StorefrontContextAssembly>;
   classify(input: Parameters<typeof classifyStoreIntent>[0]): Promise<StoreIntent>;
   resolveDesign(request: StoreDesignRequest, evidence: CatalogRoutingEvidence): StoreDesignResolution;
   loadRecipe(templateId: StoreTemplateId, templateVersion: number): Promise<StorefrontRecipeArtifact>;
@@ -314,14 +314,31 @@ function ownedProductId(reference: string, assembly: StorefrontContextAssembly):
   return product.id;
 }
 
-function proofContext(assembly: StorefrontContextAssembly): MerchantStorefrontContext {
-  return {
+function proofContext(
+  assembly: StorefrontContextAssembly,
+  requiredProductIds: readonly string[],
+): MerchantStorefrontContext {
+  const context = {
     ...assembly.context,
     products: assembly.context.products.map((product) => ({
       ...product,
       id: ownedProductId(product.id, assembly),
     })),
   };
+  const availableIds = new Set(context.products.map(({ id }) => id));
+  if (requiredProductIds.some((id) => !availableIds.has(id))) {
+    throw new StoreCommandError(
+      "storefront_command_invalid",
+      "That product selection could not be resolved safely.",
+      422,
+    );
+  }
+  return context;
+}
+
+function hasOwnedProducts(assembly: StorefrontContextAssembly, productIds: readonly string[]): boolean {
+  const availableIds = new Set(Object.values(assembly.references.products).map(({ id }) => id));
+  return productIds.every((id) => availableIds.has(id));
 }
 
 function operationAudit(intent: StoreIntent | null, resolution: StoreDesignResolution | null): Record<string, unknown> {
@@ -438,7 +455,11 @@ export async function runStoreCommand(
       const recipe = await loadSelectedRecipe(designResolution, dependencies);
       nextBundle = recipe.bundle;
     } else {
-      const classificationAssembly = await dependencies.loadContext({ shopId: input.shopId, prompt: input.command.prompt });
+      const classificationAssembly = await dependencies.loadContext({
+        shopId: input.shopId,
+        prompt: input.command.prompt,
+        requiredProductIds: state.draft.bundle.featuredProductIds ?? [],
+      });
       contextAssembly = classificationAssembly;
       throwIfAborted(input.signal);
       intent = await dependencies.classify({
@@ -504,12 +525,19 @@ export async function runStoreCommand(
         validation.diagnostics,
       );
     }
-    contextAssembly ??= await dependencies.loadContext({ shopId: input.shopId, prompt: input.command.prompt });
+    const requiredProductIds = nextBundle.featuredProductIds ?? [];
+    if (!contextAssembly || !hasOwnedProducts(contextAssembly, requiredProductIds)) {
+      contextAssembly = await dependencies.loadContext({
+        shopId: input.shopId,
+        prompt: input.command.prompt,
+        requiredProductIds,
+      });
+    }
     throwIfAborted(input.signal);
     await emit(input, { stage: "checking_preview" });
     const browserProof = await dependencies.prove({
       bundle: nextBundle,
-      context: proofContext(contextAssembly),
+      context: proofContext(contextAssembly, requiredProductIds),
       persistedAssets: [],
       ...(input.signal ? { signal: input.signal } : {}),
     });

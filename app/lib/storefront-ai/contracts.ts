@@ -51,6 +51,7 @@ export interface ContextAssemblyInput {
   shopId: string;
   prompt: string;
   referenceImages?: MerchantReferenceImage[];
+  requiredProductIds?: string[];
 }
 
 export interface AssetRequest {

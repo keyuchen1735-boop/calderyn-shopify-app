@@ -89,6 +89,27 @@ describe("undoStorefrontEdit", () => {
     }));
   });
 
+  it("requests an undo target's featured products outside the ordinary proof sample", async () => {
+    const deps = dependencies();
+    const target = await deps.loadVersion(SHOP, BASE);
+    target!.bundle.featuredProductIds = [PRODUCT];
+    vi.mocked(deps.loadVersion).mockResolvedValue(target);
+    vi.mocked(deps.loadProofContext).mockImplementation(async (input: { requiredProductIds?: string[] }) =>
+      input.requiredProductIds?.includes(PRODUCT)
+        ? referencedProofContext()
+        : { context: { fingerprint: "proof", products: [] } as never, references: { products: {}, collections: {}, assets: {} } });
+
+    await expect(undoStorefrontEdit({
+      shopId: SHOP,
+      expectedDraftVersionId: RESULT,
+      targetVersionId: BASE,
+    }, deps)).resolves.toMatchObject({ status: "installed" });
+    expect(deps.loadProofContext).toHaveBeenCalledWith(expect.objectContaining({ requiredProductIds: [PRODUCT] }));
+    expect(deps.prove).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.objectContaining({ products: [{ id: PRODUCT }] }),
+    }));
+  });
+
   it("rejects an unmapped proof product before proof or persistence", async () => {
     const deps = dependencies();
     vi.mocked(deps.loadProofContext).mockResolvedValue(referencedProofContext(false));
