@@ -95,7 +95,7 @@
       transparent 46%
     );
     padding: 14px 12px 12px;
-    gap: 12px;
+    gap: 10px;
     overflow-x: hidden;
   }
   .cd-side-brand { display: flex; align-items: center; gap: 9px; padding: 1px 8px; cursor: pointer; }
@@ -105,7 +105,7 @@
   .cd-side-nav { display: flex; flex-direction: column; gap: 1px; flex: 1; }
   .cd-nav-item {
     display: flex; align-items: center; gap: 10px;
-    padding: calc(6px * var(--density)) 10px; border: none; background: none;
+    padding: calc(4.5px * var(--density)) 10px; border: none; background: none;
     border-radius: 8px; cursor: pointer;
     font-size: calc(13.5px * var(--type-scale)); font-weight: 480; color: var(--text-1);
     letter-spacing: -0.008em;
@@ -1943,11 +1943,13 @@
 }
 
 /* ---- sidebar groups ---- */
-.cd-nav-group { font-size: 10.5px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); padding: 8px 10px 3px; }
+/* Label-free nav groups: a thin gap separates the GROW/RUN/BUILD clusters. */
+.cd-nav-section { display: flex; flex-direction: column; gap: 1px; }
+.cd-nav-section + .cd-nav-section { margin-top: 7px; }
 .cd-nav-later { margin-left: auto; font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); background: var(--gray-bg); padding: 1.5px 6px; border-radius: 999px; }
 .cd-act-dot { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 var(--live); animation: cd-act 1.8s ease infinite; flex-shrink: 0; }
 @keyframes cd-act { 0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--live) 60%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
-.cd-ask-btn { display: flex; align-items: center; gap: 9px; margin: 0 0 2px; padding: 8px 10px; border: none; cursor: pointer; font-family: inherit; text-align: left; width: 100%; border-radius: 10px; background: var(--gray-bg); box-shadow: inset 0 0 0 0.5px var(--hairline-strong); color: var(--text-1); font-size: calc(13.5px * var(--type-scale)); font-weight: 600; letter-spacing: -0.008em; transition: transform 0.13s ease, opacity 0.15s ease; }
+.cd-ask-btn { display: flex; align-items: center; gap: 9px; margin: 0 0 2px; padding: 7px 10px; border: none; cursor: pointer; font-family: inherit; text-align: left; width: 100%; border-radius: 10px; background: var(--gray-bg); box-shadow: inset 0 0 0 0.5px var(--hairline-strong); color: var(--text-1); font-size: calc(13.5px * var(--type-scale)); font-weight: 600; letter-spacing: -0.008em; transition: transform 0.13s ease, opacity 0.15s ease; }
 .cd-ask-btn:hover { transform: translateY(-1px); opacity: 0.94; }
 .cd-nav-scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; margin: 0 -4px; padding: 0 4px; }
 .cd-nav-scroll::-webkit-scrollbar { width: 0; }
@@ -2062,7 +2064,6 @@
   flex: 0 0 30px;
 }
 .cd-sidebar[data-compact="1"] .cd-nav-sec { width: 36px; }
-.cd-sidebar[data-compact="1"] .cd-nav-group,
 .cd-sidebar[data-compact="1"] .cd-subnav,
 .cd-sidebar[data-compact="1"] .cd-live-row {
   height: 0;
@@ -7056,4 +7057,81 @@
     transform: perspective(430px) rotateX(13deg) rotateY(-17deg) rotateZ(-2deg);
   }
   .cd-payout-skeleton { animation: none; }
+}
+
+/* ---- designer dock (bottom command surface; sparkle engine only) ----
+   A floating composer over the preview with a status row that expands upward
+   into the conversation. GSAP drives open/close and message entrances
+   (DesignerDock.tsx); everything here is resting style + cheap CSS motion. */
+.cd-studio[data-dock="1"] .cd-stage { position: relative; }
+.cd-dock {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 16px;
+  width: min(660px, calc(100% - 40px));
+  display: flex; flex-direction: column;
+  background: var(--card);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  backdrop-filter: blur(18px) saturate(1.4);
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: 16px;
+  box-shadow: 0 18px 44px -18px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.12);
+  z-index: 6; overflow: hidden;
+}
+.cd-dock-panel { height: 0; opacity: 0; overflow: hidden; }
+.cd-dock-thread {
+  max-height: 52vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px 16px 12px;
+}
+.cd-dock-msg { display: flex; min-width: 0; }
+.cd-dock-msg[data-side="user"] { justify-content: flex-end; }
+.cd-dock-msg[data-side="ai"] { justify-content: flex-start; }
+.cd-dock-msg .cd-bub { max-width: 86%; }
+.cd-dock-status {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; padding: 10px 14px 10px 16px;
+  background: none; border: 0; border-bottom: 0.5px solid var(--hairline);
+  cursor: pointer; text-align: left;
+  font-size: calc(12.5px * var(--type-scale)); font-weight: 500; color: var(--text-2);
+  transition: background 0.18s ease;
+}
+.cd-dock-status[aria-expanded="true"] { border-top: 0.5px solid var(--hairline); }
+.cd-dock-status:hover { background: var(--hairline); }
+.cd-dock-status[data-flash="1"] { animation: cdDockFlash 1.4s ease; }
+@keyframes cdDockFlash {
+  0% { background: color-mix(in srgb, var(--green) 18%, transparent); }
+  100% { background: transparent; }
+}
+.cd-dock-status-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.cd-dock-status-label { color: var(--text-1); font-weight: 600; white-space: nowrap; flex: 0 0 auto; }
+.cd-dock-elapsed { color: var(--text-2); font-weight: 500; font-variant-numeric: tabular-nums; }
+.cd-dock-activity { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cd-dock-pulse {
+  width: 7px; height: 7px; border-radius: 999px; background: var(--green);
+  flex: 0 0 auto; animation: cdDockPulse 1.5s ease-in-out infinite;
+}
+@keyframes cdDockPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+/* Chevron points up while collapsed (the panel opens upward), down while open. */
+.cd-dock-chevron { display: inline-flex; color: var(--text-2); flex: 0 0 auto; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+.cd-dock-chevron[data-open="0"] { transform: rotate(180deg); }
+.cd-dock-composer { padding: 10px 12px 12px; }
+.cd-dock-input-row { display: flex; align-items: flex-end; gap: 8px; }
+.cd-dock-in {
+  flex: 1; min-width: 0; resize: none; border: 0; outline: 0; background: transparent;
+  color: var(--text-1); font: inherit;
+  font-size: calc(13.5px * var(--type-scale)); line-height: 1.45;
+  padding: 7px 4px; min-height: 34px; max-height: 120px;
+}
+.cd-dock-in::placeholder { color: var(--text-2); }
+@media (max-width: 720px) {
+  .cd-dock { width: calc(100% - 20px); bottom: 10px; }
+  .cd-dock-thread { max-height: 44vh; }
+  .cd-dock-activity { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cd-dock-pulse { animation: none; opacity: 0.8; }
+  .cd-dock-chevron { transition: none; }
+  .cd-dock-status[data-flash="1"] { animation: none; }
 }

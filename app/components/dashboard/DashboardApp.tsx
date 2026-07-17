@@ -1429,7 +1429,7 @@ export default function DashboardApp({
       const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       const duration = reducedMotion ? 0 : 0.36;
       const copy = sidebar.querySelectorAll<HTMLElement>(
-        ".cd-sidebar-copy, .cd-nav-group, .cd-subnav, .cd-apswitch, .cd-live-row, .cd-acct-body, .cd-acct-chev, .cd-nav-caret",
+        ".cd-sidebar-copy, .cd-subnav, .cd-apswitch, .cd-live-row, .cd-acct-body, .cd-acct-chev, .cd-nav-caret",
       );
 
       gsap.to(sidebar, {
@@ -1643,8 +1643,7 @@ export default function DashboardApp({
             <span className="cd-sidebar-copy">Ask Calderyn</span>
           </button>
           {NAV_GROUPS.map((group) => (
-            <div key={group.label} style={{ display: "contents" }}>
-              <div className="cd-nav-group">{group.label}</div>
+            <div key={group.label} className="cd-nav-section" role="group" aria-label={group.label}>
               {group.items.map((item) => renderNavItem(item))}
             </div>
           ))}
