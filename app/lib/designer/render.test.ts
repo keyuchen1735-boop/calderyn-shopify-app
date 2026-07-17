@@ -170,3 +170,19 @@ describe("hardening: live-serve bindings", () => {
     expect(bodyHtml).not.toContain("<img onerror");
   });
 });
+
+describe("hardening: unknown placeholder sentinels", () => {
+  it("strips invented loop sentinels instead of rendering them as text", () => {
+    const html = `<h2>You may also like</h2>{{#related.products}}<div>{{product.title}}</div>{{/related.products}}`;
+    const { bodyHtml } = renderDesignerBody({
+      html,
+      css: "",
+      data: { storeName: "Peak", tagline: null, logoUrl: null, products: [
+        { id: "1", handle: "shell", title: "Shell", description: null, priceCents: 1000, compareAtPriceCents: null, available: true, imageUrl: null },
+      ] },
+    });
+    expect(bodyHtml).not.toContain("{{#related.products}}");
+    expect(bodyHtml).not.toContain("{{/related.products}}");
+    expect(bodyHtml).toContain("<div>Shell</div>");
+  });
+});
