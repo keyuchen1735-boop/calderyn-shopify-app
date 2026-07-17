@@ -8,7 +8,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import { loadDesignerStoreData } from "~/lib/designer/engine.server";
 import { DESIGNER_PREVIEW_CSP, renderDesignerDocument } from "~/lib/designer/render.server";
 
-const ROUTES = new Set(["home", "collection", "product", "search", "cart"]);
+const ROUTES = new Set(["home", "collection", "product", "search", "cart", "checkout"]);
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);

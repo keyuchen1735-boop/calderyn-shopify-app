@@ -7,11 +7,16 @@ import { CDIcon } from "../icons";
 import { Btn } from "../ui";
 import { reduced } from "../hero/hero-motion";
 import type { StudioExperiment } from "~/lib/dashboard/store-client";
-import type { PageKey } from "~/lib/storebuilder/types";
 
 export type Device = "desktop" | "mobile";
 
-const PAGE_OPTIONS: { key: PageKey; label: string; icon: string }[] = [
+export interface PageOption {
+  key: string;
+  label: string;
+  icon: string;
+}
+
+const PAGE_OPTIONS: PageOption[] = [
   { key: "home", label: "Home page", icon: "home" },
   { key: "pdp", label: "Product page", icon: "tag" },
   { key: "collection", label: "Collection", icon: "grid" },
@@ -127,8 +132,11 @@ const TopBar = forwardRef<
     experiment: StudioExperiment | null;
     onDecideExperiment: (decision: "ship" | "keep" | "stop") => void;
     decidingExperiment: boolean;
-    page: PageKey;
-    onPageChange: (page: PageKey) => void;
+    page: string;
+    onPageChange: (page: string) => void;
+    /** Overrides the default home/pdp/collection set — the designer supplies
+     *  its own page list (home, collection, product, search, cart, checkout). */
+    pageOptions?: PageOption[];
     device: Device;
     onDeviceChange: (device: Device) => void;
     markupOn: boolean;
@@ -147,6 +155,7 @@ const TopBar = forwardRef<
     decidingExperiment,
     page,
     onPageChange,
+    pageOptions,
     device,
     onDeviceChange,
     markupOn,
@@ -156,6 +165,7 @@ const TopBar = forwardRef<
   },
   badgeRef,
 ) {
+  const options = pageOptions ?? PAGE_OPTIONS;
   const [pageMenuOpen, setPageMenuOpen] = useState(false);
   const [expPopOpen, setExpPopOpen] = useState(false);
   const pageWrapRef = useRef<HTMLDivElement>(null);
@@ -191,7 +201,7 @@ const TopBar = forwardRef<
     { dependencies: [pageMenuOpen], scope: pageWrapRef },
   );
 
-  const activePage = PAGE_OPTIONS.find((p) => p.key === page) ?? PAGE_OPTIONS[0];
+  const activePage = options.find((p) => p.key === page) ?? options[0];
   const running = experiment && experiment.state === "running" ? experiment : null;
 
   return (
@@ -237,7 +247,7 @@ const TopBar = forwardRef<
         </button>
         {pageMenuOpen && (
           <div className="cd-page-menu" ref={pageMenuRef} role="listbox" aria-label="Store page to preview">
-            {PAGE_OPTIONS.map((p) => {
+            {options.map((p) => {
               const active = p.key === page;
               return (
                 <button

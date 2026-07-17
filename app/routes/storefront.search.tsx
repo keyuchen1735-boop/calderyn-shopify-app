@@ -10,6 +10,7 @@ import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 import { InvalidSearchRequestError, parseStorefrontSearchParams } from "~/lib/storefront/search.server";
 import { storefrontError } from "~/lib/storefront/cart-api.server";
+import { serveDesignerPageIfPublished } from "~/lib/designer/serve.server";
 
 export const meta: MetaFunction = () => [
   { title: "Search" },
@@ -19,6 +20,12 @@ export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
+  // Designer-published shops (hidden Labs) serve their snapshot instead.
+  const designer = await serveDesignerPageIfPublished(shopId, {
+    kind: "search",
+    query: new URL(request.url).searchParams.get("q") ?? "",
+  });
+  if (designer) throw designer;
   let searchInput;
   try {
     searchInput = parseStorefrontSearchParams(new URL(request.url).searchParams);

@@ -9,12 +9,12 @@ import type { StoreTemplateId } from "../storefront-bundle/types";
 import type { DefinedRecipe } from "../storefront-recipes/factory";
 
 export interface DesignerDocument {
-  route: "home" | "collection" | "product" | "search" | "cart";
+  route: "home" | "collection" | "product" | "search" | "cart" | "checkout";
   html: string;
   css: string;
 }
 
-export const DESIGNER_ROUTES = ["home", "collection", "product", "search", "cart"] as const;
+export const DESIGNER_ROUTES = ["home", "collection", "product", "search", "cart", "checkout"] as const;
 
 /** data-cd paths → designer placeholders. Money paths render pre-formatted. */
 const TEXT_PATHS: Record<string, string> = {

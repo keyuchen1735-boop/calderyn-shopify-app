@@ -18,6 +18,7 @@ import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dash
 import {
   addProductFromImage,
   buildStudioStoreStream,
+  publishDesignerSite,
   sendDesignerMessage,
   decideStoreExperiment,
   editStudioStorefrontStream,
@@ -77,6 +78,19 @@ const DEFAULT_HERO: StudioHero = { headline: "Welcome", subhead: "Shop our lates
 const PREVIEW_PATH = "/dashboard/store/preview";
 
 const PAGE_LABEL: Record<string, string> = { home: "home", pdp: "product", collection: "collection" };
+
+// Every surface the designer engine owns; the switcher shows all of them when
+// the designer is on. Checkout is design-only — the live checkout stays on the
+// transactional runtime route regardless of what gets published.
+type DesignerPageKey = "home" | "collection" | "product" | "search" | "cart" | "checkout";
+const DESIGNER_PAGE_OPTIONS: { key: DesignerPageKey; label: string; icon: string }[] = [
+  { key: "home", label: "Home page", icon: "home" },
+  { key: "collection", label: "Collection", icon: "grid" },
+  { key: "product", label: "Product page", icon: "tag" },
+  { key: "search", label: "Search", icon: "search" },
+  { key: "cart", label: "Cart", icon: "bag" },
+  { key: "checkout", label: "Checkout", icon: "card" },
+];
 const VIBE_LABEL: Record<StudioVibe, string> = { minimal: "clean, minimal", bold: "bold, dramatic", warm: "warm, earthy" };
 
 const clampPct = (v: number): number => Math.min(100, Math.max(0, v));
@@ -157,6 +171,12 @@ export default function Store({ app }: { app: DashboardCtx }) {
   // Design-model picker. Ref-paired like chatBusy: builds fire from chat-action
   // closures created long before the click, so they must read the current pick.
   const [designModel, setDesignModel] = useState<StudioDesignModel>("sonnet");
+  // Designer first-build starting point. Template attaches a curated design
+  // and personalizes it; scratch has the model author every page itself.
+  const [designerMode, setDesignerMode] = useState<"template" | "scratch">("template");
+  // The designer designs more surfaces than the runtime preview exposes; its
+  // page switcher runs on its own state so the runtime's PageKey stays intact.
+  const [designerPage, setDesignerPage] = useState<DesignerPageKey>("home");
   const designModelRef = useRef<StudioDesignModel>("sonnet");
   const setDesignModelBoth = (m: StudioDesignModel) => {
     designModelRef.current = m;
@@ -642,17 +662,43 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const runDesignerChat = async (text: string) => {
     if (chatBusyRef.current) return;
     setChatBusyBoth(true);
+    const firstBuild = !data?.designerReady;
     const thinkId = newId();
     pushMsg({ id: thinkId, kind: "ai-thinking" });
     try {
-      const turn = await sendDesignerMessage({ message: text, page, model: designModel });
+      const turn = await sendDesignerMessage({
+        message: text,
+        page: designerPage,
+        model: designModel,
+        ...(firstBuild ? { mode: designerMode } : {}),
+        // First build: each finished page lands in the chat and the preview
+        // immediately, so the wait reads as pages arriving, not a spinner.
+        // The thinking bubble stays pinned at the bottom by moving it below
+        // each new page message as it arrives.
+        onPage: (event) => {
+          if (!aliveRef.current) return;
+          setMessages((m) => {
+            const without = m.filter((x) => x.id !== thinkId);
+            return [
+              ...without,
+              { id: newId(), kind: "ai-text", text: `${event.reply} (${event.index}/${event.total} pages ready — it's in the preview.)` },
+              { id: thinkId, kind: "ai-thinking" },
+            ];
+          });
+          reloadPreview();
+        },
+      });
       if (!aliveRef.current) return;
       if (turn.changed) reloadPreview();
-      setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: turn.reply } : x)));
+      setMessages((m) => m.filter((x) => x.id !== thinkId).concat({ id: newId(), kind: "ai-text", text: turn.reply }));
+      if (firstBuild) void refresh();
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that change. Try again.";
-      setMessages((m) => m.map((x) => (x.id === thinkId ? { id: thinkId, kind: "ai-text", text: msg } : x)));
+      setMessages((m) => m.filter((x) => x.id !== thinkId).concat({ id: newId(), kind: "ai-text", text: msg }));
+      // Documents may exist server-side even on a partial build; resync so the
+      // mode chips and first-build routing reflect reality.
+      if (firstBuild) void refresh();
     } finally {
       if (aliveRef.current) setChatBusyBoth(false);
     }
@@ -725,6 +771,11 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setPage(p);
     setPreviewEditContext(undefined);
   };
+  const onDesignerPageChange = (p: string) => {
+    if (markupOn) exitMarkup();
+    setDesignerPage(p as DesignerPageKey);
+    setPreviewEditContext(undefined);
+  };
   const onDeviceChange = (d: Device) => {
     if (markupOn) exitMarkup();
     setDevice(d);
@@ -752,10 +803,16 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const submitMarkupNote = () => {
     const note = noteText.trim();
     if (!note) return;
-    const pageLabel = PAGE_LABEL[page] ?? "store";
+    const designerActive = data?.settings.composerEnabled === true;
+    const pageLabel = designerActive ? designerPage : (PAGE_LABEL[page] ?? "store");
     const intent = parseChatIntent(note, "note");
     pushMsg({ id: newId(), kind: "user-text", text: `[Marked up the ${pageLabel} page] ${note}` });
     exitMarkup();
+    // Designer mode: a markup note is just a conversational turn on the page.
+    if (designerActive) {
+      void runDesignerChat(note);
+      return;
+    }
     if (data?.release.draftRuntime === 1 && data.release.draftVersionId) {
       void runRuntime1Edit(note, previewEditContext);
       return;
@@ -1039,9 +1096,18 @@ export default function Store({ app }: { app: DashboardCtx }) {
       // Flush any in-flight deterministic edit first, so the published
       // snapshot matches the last requested vibe/accent/hero change.
       await mutationChain.current;
-      const { storefrontUrl } = await publishStudioStore();
+      const designerActive = data.settings.composerEnabled === true;
+      const { storefrontUrl } = designerActive ? await publishDesignerSite() : await publishStudioStore();
       if (!aliveRef.current) return;
-      window.location.assign(storefrontUrl);
+      // Publishing stays in the studio: confirm here, link out on demand —
+      // never yank the merchant away from where they were working.
+      toast("Your site is live", "check");
+      pushMsg({
+        id: newId(),
+        kind: "ai-text",
+        text: "Published. Your latest design is live on your site.",
+        actions: [{ label: "Visit your site", kind: "primary", onClick: () => window.open(storefrontUrl, "_blank", "noopener") }],
+      });
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Could not publish.";
@@ -1143,7 +1209,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
   });
   const designerOn = data.settings.composerEnabled === true;
   const previewSrc = designerOn
-    ? `/dashboard/designer/preview?page=${page}&v=${previewVersion}`
+    ? `/dashboard/designer/preview?page=${designerPage}&v=${previewVersion}`
     : `${PREVIEW_PATH}?page=${page}&v=${previewVersion}`;
   // Before the first build → invite a prompt; after one build the full studio takes over.
   // The designer engine renders its own invite inside the preview instead.
@@ -1166,6 +1232,25 @@ export default function Store({ app }: { app: DashboardCtx }) {
           onRemoveAttachment={onRemoveAttachment}
           model={designModel}
           onModelChange={setDesignModelBoth}
+          composerExtra={
+            designerOn && !data.designerReady ? (
+              <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "0 2px 8px" }}>
+                <span className="cd-caption" style={{ marginRight: 2 }}>Start from</span>
+                {(["template", "scratch"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className="cd-chip"
+                    aria-pressed={designerMode === mode}
+                    style={designerMode === mode ? { borderColor: "var(--cd-accent, #6366f1)", fontWeight: 600 } : undefined}
+                    onClick={() => setDesignerMode(mode)}
+                  >
+                    {mode === "template" ? "A template" : "Scratch"}
+                  </button>
+                ))}
+              </div>
+            ) : undefined
+          }
         />
 
         <div className="cd-stage">
@@ -1188,8 +1273,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
             experiment={data.experiment}
             onDecideExperiment={(d) => void onDecideExperiment(d)}
             decidingExperiment={decidingExperiment}
-            page={page}
-            onPageChange={onPageChange}
+            page={designerOn ? designerPage : page}
+            onPageChange={designerOn ? onDesignerPageChange : ((p: string) => onPageChange(p as PageKey))}
+            pageOptions={designerOn ? DESIGNER_PAGE_OPTIONS : undefined}
             device={device}
             onDeviceChange={onDeviceChange}
             markupOn={markupOn}

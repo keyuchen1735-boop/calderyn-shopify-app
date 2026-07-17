@@ -14,7 +14,7 @@ export interface DesignerStoreData {
   }>;
 }
 
-export type DesignerRoute = "home" | "collection" | "product" | "search" | "cart";
+export type DesignerRoute = "home" | "collection" | "product" | "search" | "cart" | "checkout";
 
 export interface DesignerReply {
   /** The assistant's one-or-two sentence chat reply. */

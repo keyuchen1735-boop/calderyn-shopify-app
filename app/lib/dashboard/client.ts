@@ -99,7 +99,7 @@ async function toApiError(res: Response): Promise<DashboardApiError> {
 // so the live poller's parallel fan-out triggers a single navigation, not one
 // per in-flight request.
 let redirectingToLogin = false;
-function redirectToLogin(): void {
+export function redirectToLogin(): void {
   // Latch only when we actually navigate, so a no-op environment (SSR, tests)
   // can't trip the guard and suppress a real later redirect.
   if (redirectingToLogin || typeof location === "undefined") return;

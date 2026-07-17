@@ -5,12 +5,14 @@ import type * as HttpServer from "~/lib/dashboard/http.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { action, config } from "../dashboard.api.designer";
 
-const { sessionMock, settingsMock, turnMock, rateLimitMock, guardMock } = vi.hoisted(() => ({
+const { sessionMock, settingsMock, turnMock, rateLimitMock, guardMock, hasDocsMock, firstBuildMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   settingsMock: vi.fn(),
   turnMock: vi.fn(),
   rateLimitMock: vi.fn(),
   guardMock: vi.fn(),
+  hasDocsMock: vi.fn(),
+  firstBuildMock: vi.fn(),
 }));
 
 vi.mock("~/lib/dashboard/http.server", async (orig) => {
@@ -19,7 +21,11 @@ vi.mock("~/lib/dashboard/http.server", async (orig) => {
 });
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sessionMock }));
 vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: settingsMock }));
-vi.mock("~/lib/designer/engine.server", () => ({ designerTurn: turnMock }));
+vi.mock("~/lib/designer/engine.server", () => ({
+  designerTurn: turnMock,
+  designerFirstBuild: firstBuildMock,
+  designerHasDocuments: hasDocsMock,
+}));
 vi.mock("~/lib/ai-quota.server", () => ({ quotaTrusted: () => true }));
 vi.mock("~/lib/storegen/guard.server", () => ({ assertCanGenerate: guardMock }));
 
@@ -40,11 +46,13 @@ beforeEach(() => {
   turnMock.mockReset().mockResolvedValue({ reply: "Done.", changed: true, rejectedEdits: 0 });
   rateLimitMock.mockReset().mockResolvedValue(true);
   guardMock.mockReset().mockResolvedValue(undefined);
+  hasDocsMock.mockReset().mockResolvedValue(true);
+  firstBuildMock.mockReset().mockResolvedValue({ reply: "Built.", changed: true, rejectedEdits: 0 });
 });
 
 describe("dashboard.api.designer action", () => {
-  it("keeps the platform deadline generous for multi-call turns", () => {
-    expect(config.maxDuration).toBe(300);
+  it("keeps the platform deadline generous for the multi-page first build", () => {
+    expect(config.maxDuration).toBe(800);
   });
 
   it("runs a designer turn and returns its result", async () => {
@@ -107,5 +115,63 @@ describe("dashboard.api.designer action", () => {
       message: "Going a little fast — try again in 20 seconds.",
     });
     expect(turnMock).not.toHaveBeenCalled();
+  });
+
+  it("422s on an unknown mode", async () => {
+    expect((await post({ message: "hi", mode: "remix" })).status).toBe(422);
+    expect(firstBuildMock).not.toHaveBeenCalled();
+  });
+
+  it("409s when a first build is already running for the shop", async () => {
+    hasDocsMock.mockResolvedValue(false);
+    rateLimitMock.mockImplementation(async (key: string) => !key.startsWith("designer-build:"));
+    const res = await post({ message: "Build my store" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("build_running");
+    expect(firstBuildMock).not.toHaveBeenCalled();
+  });
+
+  it("streams the first build as NDJSON page events ending in done", async () => {
+    hasDocsMock.mockResolvedValue(false);
+    firstBuildMock.mockImplementation(async ({ onEvent }) => {
+      onEvent?.({ kind: "page", page: "home", index: 1, total: 5, reply: "Home ready." });
+      onEvent?.({ kind: "page", page: "collection", index: 2, total: 5, reply: "Collection ready." });
+      return { reply: "All pages ready.", changed: true, rejectedEdits: 0 };
+    });
+
+    const res = await post({ message: "Build my store", mode: "scratch", model: "opus" });
+
+    expect(res.headers.get("content-type")).toContain("ndjson");
+    const lines = (await res.text()).trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines[0]).toMatchObject({ kind: "page", page: "home", index: 1 });
+    expect(lines[1]).toMatchObject({ kind: "page", page: "collection", index: 2 });
+    expect(lines[lines.length - 1]).toMatchObject({ kind: "done", reply: "All pages ready.", changed: true });
+    expect(firstBuildMock).toHaveBeenCalledWith(expect.objectContaining({ shopId: "s1", mode: "scratch", model: "opus" }));
+    expect(turnMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the quota guard refusal as plain JSON on a first build, never a stream", async () => {
+    hasDocsMock.mockResolvedValue(false);
+    guardMock.mockRejectedValue(new CalderynError({ code: "ai_quota", status: 402, message: "Out of credits." }));
+
+    const res = await post({ message: "Build my store" });
+
+    expect(res.status).toBe(402);
+    expect(res.headers.get("content-type") ?? "").not.toContain("ndjson");
+    expect(await res.json()).toEqual({ error: "ai_quota", message: "Out of credits." });
+    expect(firstBuildMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a mid-build failure as an error event on the stream", async () => {
+    hasDocsMock.mockResolvedValue(false);
+    firstBuildMock.mockImplementation(async ({ onEvent }) => {
+      onEvent?.({ kind: "page", page: "home", index: 1, total: 5, reply: "Home ready." });
+      throw new Error("model fell over");
+    });
+
+    const res = await post({ message: "Build my store" });
+    const lines = (await res.text()).trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines[0]).toMatchObject({ kind: "page", page: "home" });
+    expect(lines[lines.length - 1].kind).toBe("error");
   });
 });

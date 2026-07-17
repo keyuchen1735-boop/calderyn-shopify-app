@@ -6,21 +6,31 @@
 import type { DesignerStoreData } from "./types";
 
 const BLOCKED_TAGS = /<\/?(?:script|iframe|object|embed|base|form|link|meta)\b[^>]*>/gi;
-const EVENT_ATTRS = /\son\w+="[^"]*"/gi;
-const EVENT_ATTRS_SQ = /\son\w+='[^']*'/gi;
-const JS_URLS = /\s(href|src|srcset|action|formaction)\s*=\s*"(?:\s*javascript:|\s*data:text)[^"]*"/gi;
+// Event handlers in every quote style, including unquoted (onclick=steal()).
+const EVENT_ATTRS = /\son\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+// javascript:/data:text in navigable/loading attrs, every quote style.
+const JS_URLS = /\s(?:href|src|srcset|action|formaction)\s*=\s*(?:"(?:\s*(?:javascript|data:text))[^"]*"|'(?:\s*(?:javascript|data:text))[^']*'|(?:javascript|data:text)[^\s>]*)/gi;
 
-/** Only same-origin and data-image URLs survive; the CSP enforces the same. */
+/** Only same-origin and data-image URLs survive; the CSP enforces the same.
+ *  The preview CSP allows img-src https: (catalog imagery is injected after
+ *  the scrub), so a resource-loading attribute the model authored with an
+ *  external URL would auto-beacon the viewer — strip those in every quote
+ *  style, not just double-quoted. */
 function scrubExternalUrls(value: string): string {
   return value
-    .replace(/\s(src|srcset)\s*=\s*"(?:https?:)?\/\/[^"]*"/gi, "")
+    // src / srcset / poster pointing off-origin: double, single, or unquoted.
+    .replace(/\s(?:src|srcset|poster)\s*=\s*"(?:https?:)?\/\/[^"]*"/gi, "")
+    .replace(/\s(?:src|srcset|poster)\s*=\s*'(?:https?:)?\/\/[^']*'/gi, "")
+    .replace(/\s(?:src|srcset|poster)\s*=\s*(?:https?:)?\/\/[^\s>]*/gi, "")
+    // SVG <image>/<use> load through xlink:href, which never appears on anchors.
+    .replace(/\sxlink:href\s*=\s*(?:"(?:https?:)?\/\/[^"]*"|'(?:https?:)?\/\/[^']*'|(?:https?:)?\/\/[^\s>]*)/gi, "")
     .replace(/url\(\s*(['"]?)(?:https?:)?\/\/[^)]*\)/gi, "none")
     .replace(/@import[^;]+;/gi, "");
 }
 
 export function scrubDesignerHtml(html: string): string {
   return scrubExternalUrls(
-    html.replace(BLOCKED_TAGS, "").replace(EVENT_ATTRS, "").replace(EVENT_ATTRS_SQ, "").replace(JS_URLS, ""),
+    html.replace(BLOCKED_TAGS, "").replace(EVENT_ATTRS, "").replace(JS_URLS, ""),
   );
 }
 
