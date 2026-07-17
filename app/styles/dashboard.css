@@ -3422,17 +3422,6 @@
     0 24px 70px -28px rgba(0, 0, 0, 0.48),
     0 1px 0 color-mix(in oklch, white 38%, transparent) inset;
 }
-.cd-cw-generation-consent::after {
-  position: absolute;
-  top: -42px;
-  right: 13%;
-  width: 126px;
-  height: 74px;
-  border: 1px solid color-mix(in oklch, var(--accent) 12%, transparent);
-  border-radius: 50%;
-  content: "";
-  pointer-events: none;
-}
 .cd-cw-generation-consent-mark {
   position: relative;
   z-index: 1;
