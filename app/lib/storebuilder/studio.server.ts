@@ -384,6 +384,22 @@ async function shopOrgSlug(shopId: string): Promise<string | null> {
   return typeof data?.org_slug === "string" && data.org_slug ? data.org_slug : null;
 }
 
+/** Whether the designer has published a live snapshot — the TopBar badge and
+ *  publish affordances treat it like any other published storefront. */
+async function designerPublicationLive(shopId: string): Promise<boolean> {
+  if (!UUID_RE.test(shopId)) return false;
+  const { data, error } = await getSupabase()
+    .from("designer_publications")
+    .select("route")
+    .eq("shop_id", shopId)
+    .limit(1);
+  if (error) {
+    console.error("[studio] designer publications lookup failed", { shopId, error: error.message });
+    return false;
+  }
+  return (data ?? []).length > 0;
+}
+
 /** Whether the designer engine (Labs) has built this shop's document set.
  *  Fail-soft: a missing flag only re-shows the first-build mode choice. */
 async function designerDocumentsReady(shopId: string): Promise<boolean> {
@@ -402,7 +418,7 @@ async function designerDocumentsReady(shopId: string): Promise<boolean> {
 
 export async function loadStudioState(shopId: string): Promise<StudioState> {
   const catalog = getCatalog();
-  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug, experiment, release, policies, designerReady] =
+  const [settings, draft, published, products, generation, canCharge, draftCount, orgSlug, experiment, release, policies, designerReady, designerLive] =
     await Promise.all([
       getStoreSettings(shopId),
       loadDraftDoc(shopId, "home"),
@@ -423,6 +439,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
           }),
       UUID_RE.test(shopId) ? loadStorefrontPolicies(shopId) : Promise.resolve([]),
       designerDocumentsReady(shopId),
+      designerPublicationLive(shopId),
     ]);
 
   const doc = draft ?? published;
@@ -450,7 +467,7 @@ export async function loadStudioState(shopId: string): Promise<StudioState> {
     draftProductCount: draftCount,
     checkoutReady: canCharge,
     hasDraft: draft != null || release.draftVersionId != null,
-    hasPublished: published != null || release.publishedVersionId != null,
+    hasPublished: published != null || release.publishedVersionId != null || designerLive,
     release: {
       draftVersionId: release.draftVersionId,
       publishedVersionId: release.publishedVersionId,

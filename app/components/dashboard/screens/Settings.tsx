@@ -344,6 +344,16 @@ function DesignerSwitch() {
     setEnabled(next);
     try {
       await apiSend("POST", "/dashboard/api/store", { action: "composer-enabled", enabled: next });
+      // Write through the Store screen's cache so its very next message routes
+      // to the right engine — a stale composerEnabled would spend the message
+      // on the wrong pipeline.
+      const cachedStudio = cachedScreenData<{ settings?: Record<string, unknown> }>(SCREEN_CACHE_KEYS.storeStudio);
+      if (cachedStudio?.settings) {
+        cacheScreenData(SCREEN_CACHE_KEYS.storeStudio, {
+          ...cachedStudio,
+          settings: { ...cachedStudio.settings, composerEnabled: next },
+        });
+      }
     } catch {
       setEnabled(previous);
     } finally {

@@ -5,12 +5,23 @@
 import { getSupabase } from "~/lib/supabase.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { requirePublishableTenantDomain } from "~/lib/storebuilder/studio.server";
+import { expireOverdueExperiment, hasRunningExperiment } from "~/lib/experiments/store-experiment.server";
 
 const PUBLISHED_ROUTES = ["base", "home", "collection", "product", "search"] as const;
 
 /** Copies the current designer documents to the served snapshot and makes
  *  sure the tenant domain exists. Returns the public storefront URL. */
 export async function publishDesignerSite(shopId: string): Promise<string> {
+  // Draft edits are always safe mid-experiment, but PUBLISHING would shadow
+  // both experiment arms with the designer snapshot and invalidate the test.
+  await expireOverdueExperiment(shopId);
+  if (await hasRunningExperiment(shopId)) {
+    throw new CalderynError({
+      code: "experiment_running",
+      status: 409,
+      message: "An experiment is running on your store. Decide it before publishing a new design.",
+    });
+  }
   const sb = getSupabase();
   const { data, error } = await sb
     .from("designer_documents")

@@ -312,9 +312,24 @@ export async function sendDesignerMessage(input: {
       throw new DashboardApiError(502, "designer_build_failed", typeof event.message === "string" ? event.message : "The build failed partway.");
     }
   };
+  // The server heartbeats every 15s between model calls. If the function is
+  // killed with the connection left open (platform hard-stop), reader.read()
+  // would otherwise pend forever and lock the composer for good — a silent
+  // stretch three heartbeats long means the build is gone.
+  const STALL_MS = 50_000;
   try {
     for (;;) {
-      const { done: finished, value } = await reader.read();
+      let stallTimer: ReturnType<typeof setTimeout> | undefined;
+      const stalled = new Promise<never>((_, reject) => {
+        stallTimer = setTimeout(() => reject(new DOMException("Stream stalled", "TimeoutError")), STALL_MS);
+      });
+      let step: ReadableStreamReadResult<Uint8Array>;
+      try {
+        step = await Promise.race([reader.read(), stalled]);
+      } finally {
+        clearTimeout(stallTimer);
+      }
+      const { done: finished, value } = step;
       if (finished) break;
       buffer += decoder.decode(value, { stream: true });
       let newline: number;
@@ -331,11 +346,11 @@ export async function sendDesignerMessage(input: {
     // read failure (network drop) becomes the "pages are saved" message.
     if (err instanceof DashboardApiError) throw err;
     if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Stopped", "AbortError");
-    throw new DashboardApiError(502, "designer_stream_failed", "The build lost its connection. Finished pages are saved; send another message to continue.");
+    throw new DashboardApiError(502, "designer_stream_failed", "The build lost its connection. Finished pages are saved; send another message and I'll pick up where it left off.");
   } finally {
     reader.cancel().catch(() => {});
   }
-  if (!done) throw new DashboardApiError(502, "designer_stream_failed", "The build stream ended early. Finished pages are saved.");
+  if (!done) throw new DashboardApiError(502, "designer_stream_failed", "The build stream ended early. Finished pages are saved; send another message and I'll pick up where it left off.");
   return done;
 }
 

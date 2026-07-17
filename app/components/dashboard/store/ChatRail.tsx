@@ -98,6 +98,7 @@ export default function ChatRail({
   model,
   onModelChange,
   composerExtra,
+  placeholder,
 }: {
   messages: ChatMsg[];
   prompt: string;
@@ -116,6 +117,8 @@ export default function ChatRail({
   onModelChange: (m: StudioDesignModel) => void;
   /** Optional row rendered above the composer (e.g. first-build mode choice). */
   composerExtra?: ReactNode;
+  /** Composer hint; the fresh-build state reads "build", edits read "change". */
+  placeholder?: string;
 }) {
   const threadRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -212,8 +215,8 @@ export default function ChatRail({
           <textarea
             className="cd-composer-in"
             rows={2}
-            placeholder="Tell Calderyn what to change…"
-            aria-label="Tell Calderyn what to change"
+            placeholder={placeholder ?? "Tell Calderyn what to change…"}
+            aria-label={placeholder ?? "Tell Calderyn what to change"}
             value={prompt}
             onChange={(e) => onPromptChange(e.target.value)}
             onKeyDown={onKeyDown}

@@ -5,26 +5,27 @@ import type * as HttpServer from "~/lib/dashboard/http.server";
 import { CalderynError } from "~/lib/calderyn.server";
 import { action, config } from "../dashboard.api.designer";
 
-const { sessionMock, settingsMock, turnMock, rateLimitMock, guardMock, hasDocsMock, firstBuildMock } = vi.hoisted(() => ({
+const { sessionMock, settingsMock, turnMock, rateLimitMock, releaseRateLimitMock, guardMock, buildStateMock, firstBuildMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   settingsMock: vi.fn(),
   turnMock: vi.fn(),
   rateLimitMock: vi.fn(),
+  releaseRateLimitMock: vi.fn(),
   guardMock: vi.fn(),
-  hasDocsMock: vi.fn(),
+  buildStateMock: vi.fn(),
   firstBuildMock: vi.fn(),
 }));
 
 vi.mock("~/lib/dashboard/http.server", async (orig) => {
   const actual = await orig<typeof HttpServer>();
-  return { ...actual, requireSameOrigin: vi.fn(), rateLimit: rateLimitMock };
+  return { ...actual, requireSameOrigin: vi.fn(), rateLimit: rateLimitMock, releaseRateLimit: releaseRateLimitMock };
 });
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sessionMock }));
 vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: settingsMock }));
 vi.mock("~/lib/designer/engine.server", () => ({
   designerTurn: turnMock,
   designerFirstBuild: firstBuildMock,
-  designerHasDocuments: hasDocsMock,
+  designerBuildState: buildStateMock,
 }));
 vi.mock("~/lib/ai-quota.server", () => ({ quotaTrusted: () => true }));
 vi.mock("~/lib/storegen/guard.server", () => ({ assertCanGenerate: guardMock }));
@@ -46,7 +47,8 @@ beforeEach(() => {
   turnMock.mockReset().mockResolvedValue({ reply: "Done.", changed: true, rejectedEdits: 0 });
   rateLimitMock.mockReset().mockResolvedValue(true);
   guardMock.mockReset().mockResolvedValue(undefined);
-  hasDocsMock.mockReset().mockResolvedValue(true);
+  buildStateMock.mockReset().mockResolvedValue({ hasDocuments: true, unbuiltRoutes: [] });
+  releaseRateLimitMock.mockReset().mockResolvedValue(undefined);
   firstBuildMock.mockReset().mockResolvedValue({ reply: "Built.", changed: true, rejectedEdits: 0 });
 });
 
@@ -123,7 +125,7 @@ describe("dashboard.api.designer action", () => {
   });
 
   it("409s when a first build is already running for the shop", async () => {
-    hasDocsMock.mockResolvedValue(false);
+    buildStateMock.mockResolvedValue({ hasDocuments: false, unbuiltRoutes: [] });
     rateLimitMock.mockImplementation(async (key: string) => !key.startsWith("designer-build:"));
     const res = await post({ message: "Build my store" });
     expect(res.status).toBe(409);
@@ -132,7 +134,7 @@ describe("dashboard.api.designer action", () => {
   });
 
   it("streams the first build as NDJSON page events ending in done", async () => {
-    hasDocsMock.mockResolvedValue(false);
+    buildStateMock.mockResolvedValue({ hasDocuments: false, unbuiltRoutes: [] });
     firstBuildMock.mockImplementation(async ({ onEvent }) => {
       onEvent?.({ kind: "page", page: "home", index: 1, total: 5, reply: "Home ready." });
       onEvent?.({ kind: "page", page: "collection", index: 2, total: 5, reply: "Collection ready." });
@@ -150,8 +152,23 @@ describe("dashboard.api.designer action", () => {
     expect(turnMock).not.toHaveBeenCalled();
   });
 
+  it("resumes an interrupted build as a stream instead of a single-page edit turn", async () => {
+    buildStateMock.mockResolvedValue({ hasDocuments: true, unbuiltRoutes: ["cart", "checkout"] });
+    firstBuildMock.mockImplementation(async ({ onEvent }) => {
+      onEvent?.({ kind: "page", page: "cart", index: 5, total: 6, reply: "Cart ready." });
+      return { reply: "Every page is designed.", changed: true, rejectedEdits: 0 };
+    });
+
+    const res = await post({ message: "keep going" });
+
+    expect(res.headers.get("content-type")).toContain("ndjson");
+    expect(firstBuildMock).toHaveBeenCalled();
+    expect(turnMock).not.toHaveBeenCalled();
+    expect(releaseRateLimitMock).toHaveBeenCalledWith("designer-build:s1");
+  });
+
   it("returns the quota guard refusal as plain JSON on a first build, never a stream", async () => {
-    hasDocsMock.mockResolvedValue(false);
+    buildStateMock.mockResolvedValue({ hasDocuments: false, unbuiltRoutes: [] });
     guardMock.mockRejectedValue(new CalderynError({ code: "ai_quota", status: 402, message: "Out of credits." }));
 
     const res = await post({ message: "Build my store" });
@@ -163,7 +180,7 @@ describe("dashboard.api.designer action", () => {
   });
 
   it("reports a mid-build failure as an error event on the stream", async () => {
-    hasDocsMock.mockResolvedValue(false);
+    buildStateMock.mockResolvedValue({ hasDocuments: false, unbuiltRoutes: [] });
     firstBuildMock.mockImplementation(async ({ onEvent }) => {
       onEvent?.({ kind: "page", page: "home", index: 1, total: 5, reply: "Home ready." });
       throw new Error("model fell over");

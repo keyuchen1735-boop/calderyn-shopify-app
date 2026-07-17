@@ -79,12 +79,23 @@ function rootValue(data: DesignerStoreData, path: string): string {
     case "store.tagline": return escapeHtml(data.tagline ?? "");
     case "store.logo": return data.logoUrl ?? NEUTRAL_IMAGE;
     case "cart.count": return "0";
-    case "collection.title": return "Everything";
+    case "collection.title": return escapeHtml(data.collectionTitle ?? "Everything");
     case "collection.description": return escapeHtml(data.tagline ?? "");
     case "collection.count": return String(data.products.length);
-    case "search.query": return "";
+    case "search.query": return escapeHtml(data.searchQuery ?? "");
     default: return "";
   }
+}
+
+/** Per-product cart binding, stamped where the loop knows which product each
+ *  card belongs to. Sold-out products are marked instead so the runtime cart
+ *  script refuses the click — an "In stock"-labeled dead button was worse. */
+function stampCartBinding(cardHtml: string, product: DesignerStoreData["products"][number]): string {
+  return cardHtml.replace(/class="([^"]*\bdesigner-add-to-cart\b[^"]*)"/g, (match, classes: string) =>
+    product.available && product.variantId
+      ? `class="${classes}" data-variant-id="${escapeHtml(product.variantId)}"`
+      : `class="${classes}" data-designer-sold-out=""`,
+  );
 }
 
 /** Interprets the document's placeholder vocabulary: {{path}} substitutions
@@ -106,7 +117,10 @@ export function renderDesignerBody(input: {
   const contextProduct = products[0];
   const withLoops = scrubbedHtml.replace(/\{\{#products\}\}([\s\S]*?)\{\{\/products\}\}/g, (match, body: string) =>
     products.map((product) =>
-      body.replace(/\{\{(product\.[a-zA-Z]+)\}\}/g, (m, path: string) => productValue(product, path)),
+      stampCartBinding(
+        body.replace(/\{\{(product\.[a-zA-Z]+)\}\}/g, (m, path: string) => productValue(product, path)),
+        product,
+      ),
     ).join("\n"));
   const filled = withLoops.replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (match, path: string) =>
     path.startsWith("product.")
@@ -116,7 +130,12 @@ export function renderDesignerBody(input: {
   // this is the live-storefront render, so behavior is wired by the caller
   // via the returned script; preview uses renderDesignerDocument below.
   const widget = expandCouponWidget(filled, { preview: input.preview === true });
-  const css = `${scrubDesignerCss(input.css)}\n${widget.css}`.replace(/<\/style/gi, "");
+  // Generated imagery may also be referenced from CSS (hero as a section
+  // background). Substitute AFTER the scrub, like the HTML imagery injection,
+  // so owned https URLs survive the external-url strip.
+  const filledCss = scrubDesignerCss(input.css).replace(/\{\{asset\.([a-z0-9_-]+)\}\}/g, (m, key: string) =>
+    input.data.assets?.[key] ?? NEUTRAL_IMAGE);
+  const css = `${filledCss}\n${widget.css}`.replace(/<\/style/gi, "");
   return { bodyHtml: widget.html, css, widgetScript: widget.script };
 }
 

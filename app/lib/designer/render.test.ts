@@ -134,3 +134,39 @@ describe("renderDesignerDocument", () => {
     expect(out).toContain("<p>ok</p>");
   });
 });
+
+describe("hardening: live-serve bindings", () => {
+  const products = [
+    { id: "1", handle: "shell", title: "Shell", description: null, priceCents: 1000, compareAtPriceCents: null, available: true, imageUrl: null, variantId: "v-shell" },
+    { id: "2", handle: "fleece", title: "Fleece", description: null, priceCents: 2000, compareAtPriceCents: null, available: false, imageUrl: null, variantId: null },
+  ];
+  const data = { storeName: "Peak", tagline: null, logoUrl: null, products };
+
+  it("stamps each loop card's add-to-cart with that product's variant; sold-out cards get marked instead", () => {
+    const html = `{{#products}}<div><h3>{{product.title}}</h3><button class="designer-add-to-cart buy" type="button">Add</button></div>{{/products}}`;
+    const { bodyHtml } = renderDesignerBody({ html, css: "", data });
+    expect(bodyHtml).toContain(`class="designer-add-to-cart buy" data-variant-id="v-shell"`);
+    expect(bodyHtml).toContain(`class="designer-add-to-cart buy" data-designer-sold-out=""`);
+  });
+
+  it("substitutes {{asset.*}} in CSS after the scrub", () => {
+    const { css } = renderDesignerBody({
+      html: "<div>x</div>",
+      css: ".hero{background-image:url({{asset.hero}})}",
+      data: { ...data, assets: { hero: "https://owned.example/hero.jpg" } },
+    });
+    expect(css).toContain("url(https://owned.example/hero.jpg)");
+  });
+
+  it("renders live collection titles and echoes the search query escaped", () => {
+    const html = `<h1>{{collection.title}}</h1><p>{{search.query}}</p>`;
+    const { bodyHtml } = renderDesignerBody({
+      html,
+      css: "",
+      data: { ...data, collectionTitle: "Camp Kitchen", searchQuery: `<img onerror=x>` },
+    });
+    expect(bodyHtml).toContain("<h1>Camp Kitchen</h1>");
+    expect(bodyHtml).toContain("&lt;img onerror=x&gt;");
+    expect(bodyHtml).not.toContain("<img onerror");
+  });
+});

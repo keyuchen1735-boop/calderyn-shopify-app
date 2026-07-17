@@ -72,8 +72,10 @@ function escapeHtml(v: string): string {
 
 /** Nonce'd behavior for the live storefront: open once per session after a
  *  short delay, close, and reveal the code on submit (no data leaves the page —
- *  the email is a soft capture that just unlocks the code). */
-export const COUPON_WIDGET_SCRIPT = `(function(){var b=document.querySelector("[data-cd-coupon]");if(!b)return;var KEY="cd_coupon_seen";function open(){b.setAttribute("data-open","1")}function close(){b.removeAttribute("data-open");try{sessionStorage.setItem(KEY,"1")}catch(e){}}if(!(function(){try{return sessionStorage.getItem(KEY)}catch(e){return null}})()){setTimeout(open,6000)}b.addEventListener("click",function(e){if(e.target===b||e.target.closest("[data-cd-coupon-close]"))close()});var f=b.querySelector("[data-cd-coupon-form]");if(f){f.addEventListener("submit",function(e){e.preventDefault();var c=b.querySelector(".cd-coupon");if(c)c.setAttribute("data-revealed","1")})}})();`;
+ *  the email is a soft capture that just unlocks the code). Showing the popup
+ *  marks it seen immediately — once per session means once, not once per page
+ *  until the shopper finds the close button. */
+export const COUPON_WIDGET_SCRIPT = `(function(){var b=document.querySelector("[data-cd-coupon]");if(!b)return;var KEY="cd_coupon_seen";function seen(){try{sessionStorage.setItem(KEY,"1")}catch(e){}}function open(){b.setAttribute("data-open","1");seen()}function close(){b.removeAttribute("data-open");seen()}if(!(function(){try{return sessionStorage.getItem(KEY)}catch(e){return null}})()){setTimeout(open,6000)}b.addEventListener("click",function(e){if(e.target===b||e.target.closest("[data-cd-coupon-close]"))close()});var f=b.querySelector("[data-cd-coupon-form]");if(f){f.addEventListener("submit",function(e){e.preventDefault();var c=b.querySelector(".cd-coupon");if(c)c.setAttribute("data-revealed","1")})}})();`;
 
 /** Replaces a coupon-widget marker with real markup. Returns the expanded html,
  *  the baseline css to append, and (when not preview) the behavior script.
@@ -142,15 +144,21 @@ export const CART_DRAWER_MARKUP = `<div class="cd-drawer-backdrop" data-cd-drawe
 export const CART_DRAWER_SCRIPT = `(function(){var drawer=document.querySelector("[data-cd-drawer]");var backdrop=document.querySelector("[data-cd-drawer-backdrop]");if(!drawer||!backdrop)return;
 var thresholdEl=document.querySelector("[data-designer-free-shipping]");var threshold=thresholdEl?parseFloat(thresholdEl.getAttribute("data-designer-free-shipping"))*100:0;
 function money(c){return "$"+(c/100).toFixed(2)}
-function render(cart){var lines=drawer.querySelector("[data-cd-drawer-lines]");var sub=drawer.querySelector("[data-cd-drawer-subtotal]");var meter=drawer.querySelector("[data-cd-drawer-meter]");
+function count(cart){var n=0;if(cart&&cart.lines)for(var i=0;i<cart.lines.length;i++)n+=cart.lines[i].quantity||0;return n}
+function badges(cart){var els=document.querySelectorAll("[data-designer-cart-count]");for(var i=0;i<els.length;i++)els[i].textContent=String(count(cart))}
+function render(cart){var lines=drawer.querySelector("[data-cd-drawer-lines]");var sub=drawer.querySelector("[data-cd-drawer-subtotal]");var meter=drawer.querySelector("[data-cd-drawer-meter]");badges(cart);
 if(!cart||!cart.lines||cart.lines.length===0){lines.innerHTML='<div class="cd-drawer-empty">Your cart is empty.</div>';sub.textContent="$0.00";if(meter)meter.hidden=true;return}
 lines.innerHTML=cart.lines.map(function(l){return '<div class="cd-drawer-line"><span>'+String(l.titleSnapshot||"Item").replace(/[<>&]/g,"")+" × "+l.quantity+'</span><span>'+money(l.unitPriceCents*l.quantity)+"</span></div>"}).join("");
 sub.textContent=money(cart.subtotalCents||0);
 if(meter&&threshold>0){meter.hidden=false;var left=Math.max(0,threshold-(cart.subtotalCents||0));var text=meter.querySelector("[data-cd-meter-text]");var bar=meter.querySelector("[data-cd-meter-bar]");if(text)text.textContent=left>0?("You're "+money(left)+" away from free shipping"):"You've unlocked free shipping";if(bar)bar.style.width=Math.min(100,Math.round(((cart.subtotalCents||0)/threshold)*100))+"%"}}
-function refresh(){return fetch("/storefront/api/cart",{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null}).then(function(d){render(d&&d.data?d.data.cart:(d&&d.cart))}).catch(function(){})}
+function refresh(){return fetch("/storefront/api/cart",{credentials:"same-origin"}).then(function(r){return r.ok?r.json():null}).then(function(d){if(d)render(d.data?d.data.cart:d.cart)}).catch(function(){})}
 function open(){drawer.setAttribute("data-open","1");backdrop.setAttribute("data-open","1");refresh()}
 function close(){drawer.removeAttribute("data-open");backdrop.removeAttribute("data-open")}
 backdrop.addEventListener("click",close);var x=drawer.querySelector("[data-cd-drawer-close]");if(x)x.addEventListener("click",close);
-document.addEventListener("click",function(e){var b=e.target&&e.target.closest?e.target.closest(".designer-add-to-cart"):null;if(!b)return;e.preventDefault();var v=b.getAttribute("data-variant-id");if(!v){open();return}
+var solds=document.querySelectorAll(".designer-add-to-cart[data-designer-sold-out]");for(var s=0;s<solds.length;s++){solds[s].setAttribute("aria-disabled","true");solds[s].setAttribute("title","Sold out");solds[s].style.opacity="0.55";solds[s].style.cursor="not-allowed"}
+document.addEventListener("click",function(e){var b=e.target&&e.target.closest?e.target.closest(".designer-add-to-cart"):null;if(!b)return;e.preventDefault();if(b.hasAttribute("data-designer-sold-out"))return;var v=b.getAttribute("data-variant-id");if(!v){open();return}
 b.disabled=true;fetch("/storefront/api/cart/add",{method:"POST",credentials:"same-origin",headers:{"content-type":"application/json"},body:JSON.stringify({variantId:v,quantity:1})}).then(function(r){if(r.ok)open();else location.href="/storefront/cart"}).finally(function(){b.disabled=false})});
+var search=document.querySelectorAll("[data-designer-search],input[type=search]");function go(el){var q=(el.value||"").trim();location.href="/storefront/search"+(q?"?q="+encodeURIComponent(q):"")}
+for(var i=0;i<search.length;i++){(function(el){el.addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();go(el)}})})(search[i])}
+if(document.querySelector("[data-designer-cart-count]"))refresh();
 })();`;

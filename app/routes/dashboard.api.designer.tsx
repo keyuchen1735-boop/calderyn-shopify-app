@@ -5,13 +5,13 @@
 // merchant the moment it is saved instead of after one long wait.
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson, jsonError, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
+import { dashboardJson, jsonError, rateLimit, releaseRateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { quotaTrusted } from "~/lib/ai-quota.server";
 import { assertCanGenerate } from "~/lib/storegen/guard.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
 import {
+  designerBuildState,
   designerFirstBuild,
-  designerHasDocuments,
   designerTurn,
   type DesignerBuildMode,
 } from "~/lib/designer/engine.server";
@@ -57,16 +57,19 @@ export async function action({ request }: ActionFunctionArgs) {
     return jsonError(429, "rate_limited", "Too many designer messages. Please wait a moment.");
   }
 
-  let hasDocuments: boolean;
+  let buildState: Awaited<ReturnType<typeof designerBuildState>>;
   try {
-    hasDocuments = await designerHasDocuments(session.shopId);
+    buildState = await designerBuildState(session.shopId);
   } catch (err) {
     console.error("[dashboard.api.designer] documents lookup failed", err);
     return jsonError(503, "designer_unavailable", "The designer is briefly unavailable. Try again in a moment.");
   }
-  if (hasDocuments) {
+  // A complete document set means a plain edit turn. Draft edits never touch
+  // the live site, so a running experiment doesn't block them — the designer
+  // publish path has its own experiment gate.
+  if (buildState.hasDocuments && buildState.unbuiltRoutes.length === 0) {
     return dashboardJson(async () => {
-      await assertCanGenerate(session.shopId, message, { trusted: quotaTrusted(session) });
+      await assertCanGenerate(session.shopId, message, { trusted: quotaTrusted(session), skipExperimentCheck: true });
       return designerTurn({
         shopId: session.shopId,
         message,
@@ -77,23 +80,27 @@ export async function action({ request }: ActionFunctionArgs) {
     });
   }
 
-  // One first build at a time per shop: two racing builds would double the
-  // model spend and interleave their page saves. The window only needs to
-  // outlast a click race; a failed build can retry two minutes later.
-  if (!(await rateLimit(`designer-build:${session.shopId}`, 1, 120_000))) {
-    return jsonError(409, "build_running", "A store build is already running. Give it a couple of minutes.");
-  }
-
-  // First build: stream page events. The quota guard still runs first — its
-  // refusal must arrive as a plain JSON error, not a broken stream.
+  // First build (or a resume of an interrupted one): stream page events.
+  // The quota guard runs BEFORE the build lock — a quota refusal must arrive
+  // as a plain JSON error without consuming the lock and blocking the retry.
   try {
-    await assertCanGenerate(session.shopId, message, { trusted: quotaTrusted(session) });
+    await assertCanGenerate(session.shopId, message, { trusted: quotaTrusted(session), skipExperimentCheck: true });
   } catch (err) {
     const status = (err as { status?: number }).status;
     if (typeof status === "number" && status < 500) {
       return jsonError(status, (err as { code?: string }).code ?? "generation_blocked", (err as Error).message);
     }
     throw err;
+  }
+
+  // One build at a time per shop: two racing builds would double the model
+  // spend and interleave their page saves. The window covers the gap until the
+  // first page save flips routing to edit turns; the lock is released the
+  // moment the stream ends (success or failure), so a failed build can retry
+  // immediately instead of waiting the window out.
+  const buildLockKey = `designer-build:${session.shopId}`;
+  if (!(await rateLimit(buildLockKey, 1, 300_000))) {
+    return jsonError(409, "build_running", "A store build is already running. Give it a couple of minutes.");
   }
 
   const encoder = new TextEncoder();
@@ -125,10 +132,11 @@ export async function action({ request }: ActionFunctionArgs) {
         write({ kind: "done", ...done });
       } catch (err) {
         console.error("[dashboard.api.designer] first build failed", err);
-        write({ kind: "error", message: "The build hit a problem partway. Finished pages are saved; send another message to continue." });
+        write({ kind: "error", message: "The build hit a problem partway. Finished pages are saved; send another message and I'll pick up where it left off." });
       } finally {
         clearInterval(heartbeat);
         request.signal.removeEventListener("abort", abortFromRequest);
+        await releaseRateLimit(buildLockKey);
         if (!cancelled) controller.close();
       }
     },
