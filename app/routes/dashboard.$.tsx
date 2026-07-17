@@ -1,8 +1,8 @@
 // The merchant dashboard SPA, served for /dashboard and every dedicated
 // sub-URL (/dashboard/campaigns, /dashboard/orders/labels, …) by one splat
 // route. One route id on purpose: back/forward between any two dashboard URLs
-// stays inside this route, so React Router revalidates the loader instead of
-// remounting the shell (which would drop all fetched state). The SPA reads the
+// stays inside this route without remounting the shell (which would drop all
+// fetched state). The SPA reads the
 // path to pick the screen (app/components/dashboard/routes.ts) and drives
 // history itself. Specific dashboard.* routes (api.*, login, signin,
 // builder.*, payouts.*, connect, auth.*) rank higher and are unaffected.
@@ -10,7 +10,11 @@
 // unauthenticated); the client fetches all data on mount so no server-only
 // module leaks into the browser bundle.
 import type { LoaderFunctionArgs, LinksFunction } from "@remix-run/node";
-import { useLoaderData, useRouteError } from "@remix-run/react";
+import {
+  useLoaderData,
+  useRouteError,
+  type ShouldRevalidateFunction,
+} from "@remix-run/react";
 
 import { requireVerifiedSession } from "~/lib/dashboard/session.server";
 import { publicBaseUrl } from "~/lib/dashboard/http.server";
@@ -53,6 +57,12 @@ export const links: LinksFunction = () => [
   { rel: "stylesheet", href: dashboard },
   { rel: "stylesheet", href: shipping },
 ];
+
+export const shouldRevalidate: ShouldRevalidateFunction = ({
+  currentUrl,
+  nextUrl,
+  defaultShouldRevalidate,
+}) => currentUrl.pathname === nextUrl.pathname && defaultShouldRevalidate;
 
 export async function loader({ request }: LoaderFunctionArgs) {
   // An unmatched /dashboard/api/* path is a wrong or removed endpoint — fail
