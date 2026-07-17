@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { getDesignerSession, subscribeDesignerSession } from "~/lib/designer/session";
 import { useLocation, useNavigate, useNavigationType } from "@remix-run/react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -1492,6 +1493,11 @@ export default function DashboardApp({
   // children become expandable (parent opens the default view + discloses the
   // children indented beneath, accordion by active section); everything else is
   // a single link, unchanged.
+  // Designer background work: a build keeps running while the merchant is on
+  // another screen; the Store item pulses so they can see it without sitting
+  // on the builder.
+  const designerBusy = useSyncExternalStore(subscribeDesignerSession, () => getDesignerSession().busy, () => false);
+
   const renderNavItem = (item: NavItem) => {
     if (item.id === "autopilot" && guardrails) {
       return (
@@ -1549,7 +1555,10 @@ export default function DashboardApp({
             title={sidebarCompact ? item.label : undefined}
             onClick={() => navigate(target.screen, null, target.sub)}
           >
-            <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+            <span style={{ position: "relative", display: "inline-flex" }}>
+              <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+              {item.id === "storefront" && designerBusy && <span className="cd-nav-busy" aria-label="Store build running" />}
+            </span>
             <span className="cd-sidebar-copy">{item.label}</span>
             <CDIcon name="chevronDown" size={15} strokeWidth={2} className="cd-nav-caret" />
           </button>
@@ -1582,7 +1591,10 @@ export default function DashboardApp({
         data-tour-anchor={item.id}
         onClick={() => navigate(item.id)}
       >
-        <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+        <span style={{ position: "relative", display: "inline-flex" }}>
+              <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+              {item.id === "storefront" && designerBusy && <span className="cd-nav-busy" aria-label="Store build running" />}
+            </span>
         <span className="cd-sidebar-copy">{item.label}</span>
         {item.id === "alerts" && openCount > 0 && (
           <span className="cd-nav-count">{openCount}</span>
@@ -1808,7 +1820,10 @@ export default function DashboardApp({
                       data-active={activeNav === item.id ? "1" : "0"}
                       onClick={() => navigate(target.screen, null, target.sub)}
                     >
-                      <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+                      <span style={{ position: "relative", display: "inline-flex" }}>
+              <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
+              {item.id === "storefront" && designerBusy && <span className="cd-nav-busy" aria-label="Store build running" />}
+            </span>
                       <span>{item.label}</span>
                     </button>
                     {item.children && (
