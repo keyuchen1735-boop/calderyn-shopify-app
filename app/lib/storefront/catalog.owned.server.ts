@@ -26,6 +26,7 @@ const DEFAULT_CURRENCY = "USD";
 // Hard cap for bounded/curated reads. Public catalog traversal uses listProductPage.
 const MAX_STOREFRONT_PRODUCTS = 250;
 const POSTGREST_PAGE_SIZE = 1000;
+const POSTGREST_IN_CHUNK_SIZE = 200;
 
 function postgrestLiteral(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
@@ -152,14 +153,18 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   const collectionIds = [...new Set(pc.map((r) => String(r.collection_id)))];
   const handleByCollectionId = new Map<string, string>();
   if (collectionIds.length) {
-    const colls = await pagedRows((from, to) => sb
-      .from("collection_dim")
-      .select("id, handle")
-      .eq("shop_id", shopId)
-      .in("id", collectionIds)
-      .order("id")
-      .range(from, to));
-    for (const c of colls) handleByCollectionId.set(String(c.id), String(c.handle));
+    const chunks: string[][] = [];
+    for (let i = 0; i < collectionIds.length; i += POSTGREST_IN_CHUNK_SIZE)
+      chunks.push(collectionIds.slice(i, i + POSTGREST_IN_CHUNK_SIZE));
+    const pages = await Promise.all(chunks.map((chunk) => pagedRows((from, to) => sb
+        .from("collection_dim")
+        .select("id, handle")
+        .eq("shop_id", shopId)
+        .in("id", chunk)
+        .order("id")
+        .range(from, to))));
+    for (const page of pages)
+      for (const c of page) handleByCollectionId.set(String(c.id), String(c.handle));
   }
 
   // Ledger stock needs the variant ids, so it starts right after the variant fetch

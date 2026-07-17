@@ -11,6 +11,7 @@ const eqCalls: Record<string, Array<[string, unknown]>> = {};
 const ilikeCalls: Record<string, Array<[string, string]>> = {};
 const orCalls: Record<string, string[]> = {};
 const rangeCalls: Record<string, Array<[number, number]>> = {};
+const inCalls: Record<string, Array<[string, unknown[]]>> = {};
 // Canned rows per table for a query that resolves to a list.
 let tableRows: Record<string, unknown[]> = {};
 // Canned single-row result per table (for maybeSingle()).
@@ -20,6 +21,7 @@ let tableCount: Record<string, number> = {};
 function builder(table: string) {
   const b: Record<string, unknown> = {};
   let requestedRange: [number, number] | null = null;
+  let requestedIn: [string, unknown[]] | null = null;
   const chain = () => b;
   Object.assign(b, {
     select: chain,
@@ -35,7 +37,11 @@ function builder(table: string) {
       (orCalls[table] ??= []).push(value);
       return b;
     },
-    in: chain,
+    in: (col: string, values: unknown[]) => {
+      requestedIn = [col, values];
+      (inCalls[table] ??= []).push([col, values]);
+      return b;
+    },
     order: chain,
     limit: chain,
     range: (from: number, to: number) => {
@@ -45,7 +51,9 @@ function builder(table: string) {
     },
     maybeSingle: () => Promise.resolve({ data: tableSingle[table] ?? null, error: null }),
     then: (resolve: (v: unknown) => unknown) => {
-      const rows = tableRows[table] ?? [];
+      const rows = requestedIn && table === "collection_dim"
+        ? (tableRows[table] ?? []).filter((row) => requestedIn![1].includes((row as Record<string, unknown>)[requestedIn![0]]))
+        : tableRows[table] ?? [];
       const [from, to] = requestedRange ?? [0, 999];
       return Promise.resolve({
         data: rows.slice(from, to + 1), error: null, count: tableCount[table] ?? null,
@@ -65,6 +73,7 @@ beforeEach(() => {
   for (const k of Object.keys(ilikeCalls)) delete ilikeCalls[k];
   for (const k of Object.keys(orCalls)) delete orCalls[k];
   for (const k of Object.keys(rangeCalls)) delete rangeCalls[k];
+  for (const k of Object.keys(inCalls)) delete inCalls[k];
   tableRows = {};
   tableSingle = {};
   tableCount = {};
@@ -93,6 +102,7 @@ describe("ownedCatalog.listProductPage", () => {
   });
 
   it("assembles child rows beyond the PostgREST page boundary", async () => {
+    const collectionId = (index: number) => `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
     tableRows = {
       product_dim: [{ id: "p1", handle: "complete", title: "Complete", description: "All child rows" }],
       variant_dim: Array.from({ length: 1001 }, (_, index) => ({
@@ -102,11 +112,11 @@ describe("ownedCatalog.listProductPage", () => {
       product_media: Array.from({ length: 1001 }, (_, index) => ({
         product_id: "p1", storage_path: `shop-1/p1/${index}.png`, alt: `Image ${index}`, position: index, is_primary: index === 0,
       })),
-      product_collection: Array.from({ length: 1001 }, (_, index) => ({ product_id: "p1", collection_id: `c${index}` })),
+      product_collection: Array.from({ length: 1001 }, (_, index) => ({ product_id: "p1", collection_id: collectionId(index) })),
       product_option: Array.from({ length: 1001 }, (_, index) => ({
         product_id: "p1", name: `Option ${index}`, position: index, product_option_value: [],
       })),
-      collection_dim: Array.from({ length: 1001 }, (_, index) => ({ id: `c${index}`, handle: `collection-${index}` })),
+      collection_dim: Array.from({ length: 1001 }, (_, index) => ({ id: collectionId(index), handle: `collection-${index}` })),
       inventory_balance: [],
     };
     const { ownedCatalog } = await import("../catalog.owned.server");
@@ -122,9 +132,15 @@ describe("ownedCatalog.listProductPage", () => {
     expect(product.collections.at(-1)).toBe("collection-1000");
     expect(product.options).toHaveLength(1001);
     expect(product.options?.at(-1)?.name).toBe("Option 1000");
-    for (const table of ["variant_dim", "product_media", "product_collection", "product_option", "collection_dim"]) {
+    for (const table of ["variant_dim", "product_media", "product_collection", "product_option"]) {
       expect(rangeCalls[table]).toEqual([[0, 999], [1000, 1999]]);
     }
+    const collectionIdFilters = inCalls.collection_dim.map(([, values]) => values);
+    expect(collectionIdFilters).toHaveLength(6);
+    expect(collectionIdFilters.every((values) => values.length <= 200)).toBe(true);
+    expect(collectionIdFilters.flat()).toHaveLength(1001);
+    expect(rangeCalls.collection_dim).toEqual(collectionIdFilters.map(() => [0, 999]));
+    expect(eqCalls.collection_dim.filter(([column, value]) => column === "shop_id" && value === "shop-1")).toHaveLength(6);
   });
 });
 
