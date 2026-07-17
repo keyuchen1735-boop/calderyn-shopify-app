@@ -1,4 +1,7 @@
 import type { HeadersFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
+import { resolveDesignerPublicPage } from "~/lib/designer/serve.server";
+import DesignerPublicView from "~/components/storefront/DesignerPublicView";
+import { isDesignerPublicPage } from "~/lib/designer/types";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { randomBytes } from "node:crypto";
@@ -37,6 +40,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
     throw error;
   }
+  // Designer-published shops (hidden Labs) serve their snapshot instead of
+  // the runtime renderer; shops without a publication are untouched.
+  const designer = await resolveDesignerPublicPage(shopId, { kind: "search", query: new URL(request.url).searchParams.get("q") ?? "" });
+  if (designer) return json(designer.page, { headers: designer.headers });
   const runtime1 = await resolveRuntime1Route({
     shopId,
     request,
@@ -56,5 +63,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export default function StorefrontSearch() {
   const loaded = useLoaderData<typeof loader>();
+  if (isDesignerPublicPage(loaded)) {
+    return <DesignerPublicView page={loaded} />;
+  }
   return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "search", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="search" data={loaded.data} mode="public" />{loaded.nextPageHref ? <a className="cd-store__pagination" rel="next" href={loaded.nextPageHref}>Next products</a> : null}</>;
 }

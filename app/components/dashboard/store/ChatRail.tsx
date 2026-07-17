@@ -29,6 +29,8 @@ function Bubble({ message }: { message: ChatMsg }) {
       </div>
     );
   }
+  // Designer-engine kinds render in the sparkle studio's dock, never here.
+  if (message.kind !== "ai-text") return null;
   return (
     <div className="cd-bub cd-bub-ai">
       {message.text}

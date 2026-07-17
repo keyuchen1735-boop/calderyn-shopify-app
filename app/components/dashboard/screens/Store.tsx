@@ -1,3 +1,5 @@
+import DesignerStudio, { DESIGNER_STATE_CACHE_KEY } from "./DesignerStudio";
+import { fetchDesignerState } from "~/lib/designer/client";
 import {
   useCallback,
   useEffect,
@@ -73,6 +75,29 @@ function isAbort(error: unknown): boolean {
 }
 
 export default function Store({ app }: { app: DashboardCtx }) {
+  // Hidden designer engine (sparkle in Settings): when it's on, the Store tab
+  // IS the designer studio; the classic builder below stays untouched.
+  const [designerEnabled, setDesignerEnabled] = useState<boolean>(
+    () => cachedScreenData<{ enabled?: boolean }>(DESIGNER_STATE_CACHE_KEY)?.enabled === true,
+  );
+  useEffect(() => {
+    let alive = true;
+    fetchDesignerState()
+      .then((state) => {
+        if (!alive) return;
+        cacheScreenData(DESIGNER_STATE_CACHE_KEY, state);
+        setDesignerEnabled(state.enabled);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (designerEnabled) return <DesignerStudio app={app} />;
+  return <ClassicStore app={app} />;
+}
+
+function ClassicStore({ app }: { app: DashboardCtx }) {
   const toast = app.toast;
   const [data, setData] = useState<StudioState | null>(() => cachedScreenData<StudioState>(SCREEN_CACHE_KEYS.storeStudio));
   const dataRef = useRef(data);

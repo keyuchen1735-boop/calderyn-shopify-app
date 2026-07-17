@@ -78,6 +78,25 @@ export async function enhanceListing(shopId: string, product: StoreProduct, opts
   return { productId: product.id, status, url };
 }
 
+/** Generate photos for catalog products that have none, capped per build.
+ *  Restored for the designer engine's first builds (fail-soft at call sites). */
+export async function generateMissingListingImages(
+  shopId: string,
+  products: StoreProduct[],
+  enhance: typeof enhanceListing = enhanceListing,
+  signal?: AbortSignal,
+  limit = 3,
+): Promise<number> {
+  if (products.length === 0 || limit <= 0) return 0;
+  const missing = products
+    .filter((product) => product.images.length === 0)
+    // An explicit limit is the caller's budget decision; the constant is only
+    // the default for callers that don't pass one.
+    .slice(0, Math.max(0, limit));
+  const results = await Promise.all(missing.map((product) => enhance(shopId, product, { signal })));
+  return results.filter((result) => result.status === "ready").length;
+}
+
 export async function applyAssetOverrides(
   shopId: string,
   products: StoreProduct[],
