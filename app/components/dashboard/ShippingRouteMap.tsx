@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type RefObject,
 } from "react";
 import type { GeoJSONSource, MapLayerMouseEvent } from "maplibre-gl";
@@ -444,7 +445,10 @@ function UnmappedOrders({ count }: { count: number }) {
 function ResolvedShippingRouteMap({
   routes,
   dark,
-}: Pick<ShippingRouteMapProps, "routes" | "dark">) {
+  overlay,
+}: Pick<ShippingRouteMapProps, "routes" | "dark"> & {
+  overlay?: ReactNode;
+}) {
   const [highlightedRouteId, setHighlightedRouteId] = useState<string | null>(
     null,
   );
@@ -579,14 +583,16 @@ function ResolvedShippingRouteMap({
         </Map>
       </div>
 
-      <button
-        className="cd-shipping-route-reset"
-        type="button"
-        aria-label="Fit map to all shipping routes"
-        onClick={fitAllRoutes}
-      >
-        Fit all routes
-      </button>
+      {routeArcs.length > 0 ? (
+        <button
+          className="cd-shipping-route-reset"
+          type="button"
+          aria-label="Fit map to all shipping routes"
+          onClick={fitAllRoutes}
+        >
+          Fit all routes
+        </button>
+      ) : null}
 
       <ul
         className="cd-shipping-route-destinations"
@@ -616,6 +622,7 @@ function ResolvedShippingRouteMap({
         ))}
       </ul>
       <UnmappedOrders count={routes.unmappedOrderCount} />
+      {overlay}
     </div>
   );
 }
@@ -627,40 +634,52 @@ export function ShippingRouteMapFrame({
 }: ShippingRouteMapProps) {
   const orderCount = routes.mappedOrderCount + routes.unmappedOrderCount;
 
-  if (orderCount === 0) {
-    return (
-      <p className="cd-emptyhint">Routes appear after your first orders</p>
-    );
-  }
-
+  // The basemap always renders — a store with no orders still gets its map,
+  // with a status card floated over it instead of replacing it.
   if (!routes.origin) {
     return (
-      <div>
-        <p className="cd-emptyhint">Set a ship-from origin to draw routes</p>
-        <button
-          type="button"
-          className="cd-btn cd-btn-primary cd-btn-sm"
-          onClick={onOpenSetup}
+      <div
+        className="cd-shipping-route-frame"
+        data-theme={dark ? "dark" : "light"}
+      >
+        <div
+          className="cd-shipping-route-map"
+          role="region"
+          aria-label="Customer shipping routes"
         >
-          Setup
-        </button>
-        <UnmappedOrders count={routes.unmappedOrderCount} />
+          <Map renderWorldCopies={false} attributionControl={{ compact: true }}>
+            <MapControls position="bottom-right" showZoom />
+          </Map>
+        </div>
+        <div>
+          <p className="cd-emptyhint">Set a ship-from origin to draw routes</p>
+          <button
+            type="button"
+            className="cd-btn cd-btn-primary cd-btn-sm"
+            onClick={onOpenSetup}
+          >
+            Setup
+          </button>
+          <UnmappedOrders count={routes.unmappedOrderCount} />
+        </div>
       </div>
     );
   }
 
-  if (routes.destinations.length === 0) {
-    return (
+  const overlay =
+    orderCount === 0 ? (
+      <div>
+        <p className="cd-emptyhint">Routes appear after your first orders</p>
+      </div>
+    ) : routes.destinations.length === 0 ? (
       <div>
         <p className="cd-emptyhint">
           No customer destinations could be placed on the map
         </p>
-        <UnmappedOrders count={routes.unmappedOrderCount} />
       </div>
-    );
-  }
+    ) : null;
 
-  return <ResolvedShippingRouteMap routes={routes} dark={dark} />;
+  return <ResolvedShippingRouteMap routes={routes} dark={dark} overlay={overlay} />;
 }
 
 export default function ShippingRouteMap(props: ShippingRouteMapProps) {

@@ -11,7 +11,8 @@ import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dash
 // outbound labels. URL-only page (/dashboard/products/locations): no Products
 // subtab entry, so no subtab bar renders here.
 
-const GRID = "2fr 1fr 1fr 1fr auto";
+const GRID_FULL = "2fr 1fr 1fr 1fr auto";
+const GRID_SIMPLE = "2fr 1fr auto";
 
 export default function Locations({ app }: { app: DashboardCtx }) {
   // Seeded from the session cache so a return visit paints instantly; the
@@ -22,6 +23,9 @@ export default function Locations({ app }: { app: DashboardCtx }) {
   const [rows, setRows] = useState<client.LocationVM[] | null>(() => seeded);
   const [loading, setLoading] = useState(() => !seeded);
   const [error, setError] = useState<string | null>(null);
+  // Coordinates are a power-user detail; most merchants never need them, so
+  // the columns stay collapsed until asked for.
+  const [showCoords, setShowCoords] = useState(false);
   // Deactivated locations are fetch-only (never cached): only the active list
   // lives under SCREEN_CACHE_KEYS.locations, as other screens consume it.
   const [inactive, setInactive] = useState<client.LocationVM[]>([]);
@@ -174,10 +178,15 @@ export default function Locations({ app }: { app: DashboardCtx }) {
         </div>
       </header>
       <Card pad={false}>
-        <p className="cd-caption" style={{ padding: "14px 20px 2px" }}>
-          Rank locations (lower priority fills first) and set coordinates so orders can ship from the
-          nearest location to the buyer. Without coordinates, a location falls back to priority order.
-        </p>
+        <div className="flex items-center justify-between gap-3" style={{ padding: "14px 20px 2px" }}>
+          <p className="cd-caption" style={{ margin: 0 }}>
+            Where your stock lives. Orders ship from here; if you have several, the lowest priority
+            number ships first.
+          </p>
+          <Btn small onClick={() => setShowCoords((v) => !v)}>
+            {showCoords ? "Hide coordinates" : "Coordinates"}
+          </Btn>
+        </div>
         {loading && !rows ? (
           <TableSkeleton rows={3} />
         ) : error ? (
@@ -192,16 +201,20 @@ export default function Locations({ app }: { app: DashboardCtx }) {
           // Five columns of inputs can't compress into a phone width — the
           // table pans sideways inside the card instead of crushing the fields.
           <div style={{ overflowX: "auto" }}>
-            <div style={{ minWidth: 620 }}>
-            <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
+            <div style={{ minWidth: showCoords ? 620 : 420 }}>
+            <div className="cd-tablehd" style={{ gridTemplateColumns: showCoords ? GRID_FULL : GRID_SIMPLE }}>
               <span>Location</span>
               <span>Priority</span>
-              <span>Latitude</span>
-              <span>Longitude</span>
+              {showCoords ? (
+                <>
+                  <span>Latitude</span>
+                  <span>Longitude</span>
+                </>
+              ) : null}
               <span aria-hidden="true" />
             </div>
             {rows.map((l) => (
-              <div className="cd-trow" key={l.id} style={{ gridTemplateColumns: GRID }}>
+              <div className="cd-trow" key={l.id} style={{ gridTemplateColumns: showCoords ? GRID_FULL : GRID_SIMPLE }}>
                 <div className="cd-row-title truncate">{l.name}</div>
                 <div>
                   <input
@@ -217,6 +230,8 @@ export default function Locations({ app }: { app: DashboardCtx }) {
                     }}
                   />
                 </div>
+                {showCoords ? (
+                <>
                 <div>
                   <input
                     key={`lat:${l.id}:${l.lat ?? ""}`}
@@ -243,6 +258,8 @@ export default function Locations({ app }: { app: DashboardCtx }) {
                     }}
                   />
                 </div>
+                </>
+                ) : null}
                 <div>
                   <Btn small icon="x" onClick={() => deactivate(l)}>
                     Deactivate
@@ -259,7 +276,7 @@ export default function Locations({ app }: { app: DashboardCtx }) {
         <Card>
           <SectionTitle>Ship-from addresses</SectionTitle>
           <p className="cd-caption" style={{ marginBottom: 12 }}>
-            Used on outbound shipping labels for each location. Leave blank to omit from labels.
+            Printed on your shipping labels.
           </p>
           <div className="flex flex-col gap-6">
             {rows.map((l) => (
@@ -349,8 +366,7 @@ export default function Locations({ app }: { app: DashboardCtx }) {
         <Card>
           <SectionTitle>Deactivated</SectionTitle>
           <p className="cd-caption" style={{ marginBottom: 12 }}>
-            These locations no longer fill orders or hold stock. Reactivate one to put it back in
-            every picker.
+            Not filling orders or holding stock.
           </p>
           <div className="flex flex-col gap-3">
             {inactive.map((l) => (
