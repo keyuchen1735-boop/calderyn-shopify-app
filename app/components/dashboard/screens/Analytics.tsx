@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Card, Btn, CountMoney, Segmented, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { money } from "../format";
-import { DashboardApiError } from "~/lib/dashboard/client";
+import { DashboardApiError, startIntegrationConnect } from "~/lib/dashboard/client";
 import { fetchCommerceAnalytics } from "~/lib/dashboard/commerce-analytics-client";
 import { analyticsCacheKey, cacheScreenData, cachedScreenData } from "~/lib/dashboard/screen-cache";
 import type {
@@ -323,9 +323,11 @@ function AgenticStat({
 
 export default function Analytics({ app }: { app: DashboardCtx }) {
   const [range, setRange] = useState<Range>("30d");
+  const [connectingQuickBooks, setConnectingQuickBooks] = useState(false);
   // Performance ↔ Live rides the URL (/dashboard/analytics vs /analytics/live)
   // so both subtabs are deep-linkable and back-button friendly.
   const pnlEnabled = canViewOperatingPnl(app.integrations);
+  const quickBooks = app.integrations.find((integration) => integration.key === "quickbooks");
   const view: "performance" | "live" | "pnl" = app.nav.sub === "live"
     ? "live"
     : app.nav.sub === "pnl" && pnlEnabled
@@ -370,13 +372,41 @@ export default function Analytics({ app }: { app: DashboardCtx }) {
     };
   }, [range]);
 
-  // The Performance / Live switch now lives in the sidebar rail (Analytics
-  // children), so the header only carries the Agentic channel button — its
-  // entry point, present in every header state (loading / error / loaded).
+  // The Performance / Live switch lives in the sidebar rail. Header actions
+  // stay present in every state (loading / error / loaded).
   const viewSwitch = (
-    <Btn small icon="bot" onClick={() => app.navigate("agentic")}>
-      Agentic channel
-    </Btn>
+    <>
+      {quickBooks && !pnlEnabled && (
+        <Btn
+          small
+          kind="primary"
+          disabled={connectingQuickBooks}
+          onClick={async () => {
+            setConnectingQuickBooks(true);
+            try {
+              const { url } = await startIntegrationConnect("quickbooks", window.location.pathname);
+              window.location.assign(url);
+            } catch (err) {
+              app.toast(
+                err instanceof DashboardApiError ? err.message : "Couldn't start the QuickBooks connection.",
+                "x",
+                "critical",
+              );
+              setConnectingQuickBooks(false);
+            }
+          }}
+        >
+          {connectingQuickBooks
+            ? "Connecting…"
+            : quickBooks.status === "reauth"
+              ? "Reconnect QuickBooks"
+              : "Connect QuickBooks"}
+        </Btn>
+      )}
+      <Btn small icon="bot" onClick={() => app.navigate("agentic")}>
+        Agentic channel
+      </Btn>
+    </>
   );
 
   // The Live subtab is fully independent of the performance fetch — bail out
