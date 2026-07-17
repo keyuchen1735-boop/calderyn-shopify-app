@@ -27,11 +27,12 @@ export interface ContextLimits {
 
 type PublicProduct = MerchantStorefrontContext["products"][number];
 type PublicCollection = MerchantStorefrontContext["collections"][number];
+type Row = Record<string, unknown>;
 
 export interface StorefrontContextSource {
   getStore(shopId: string): Promise<MerchantStorefrontContext["store"]>;
   listCollections(shopId: string, limit: number): Promise<PublicCollection[]>;
-  listProducts(shopId: string, limit: number): Promise<PublicProduct[]>;
+  listProducts(shopId: string, limit: number, requiredProductIds?: readonly string[]): Promise<PublicProduct[]>;
   listReusableAssets(shopId: string, limit: number): Promise<MerchantStorefrontContext["reusableAssets"]>;
 }
 
@@ -76,6 +77,21 @@ function finiteNonNegative(value: unknown): number {
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
 }
 
+const POSTGREST_PAGE_SIZE = 1_000;
+
+async function readAllPages(
+  loadPage: (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>,
+): Promise<Row[]> {
+  const rows: Row[] = [];
+  for (let from = 0; ; from += POSTGREST_PAGE_SIZE) {
+    const result = await loadPage(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    const page = Array.isArray(result.data) ? result.data as Row[] : [];
+    rows.push(...page);
+    if (page.length < POSTGREST_PAGE_SIZE) return rows;
+  }
+}
+
 function recipeSignatures(): Array<{ templateId: StoreTemplateId; signature: NoveltySignature }> {
   return STOREFRONT_RECIPES.map((recipe) => ({
     templateId: recipe.config.templateId,
@@ -87,9 +103,16 @@ function selectProductsWithCollectionCoverage(
   products: PublicProduct[],
   collections: PublicCollection[],
   limit: number,
+  requiredProductIds: readonly string[] = [],
 ): PublicProduct[] {
   const sorted = products.slice().sort((a, b) => a.id.localeCompare(b.id));
   const chosen = new Map<string, PublicProduct>();
+  const byId = new Map(sorted.map((product) => [product.id, product]));
+  for (const id of requiredProductIds) {
+    const required = byId.get(id);
+    if (required) chosen.set(id, required);
+    if (chosen.size === limit) return [...chosen.values()];
+  }
   for (const collection of collections) {
     const representative = sorted.find((product) => product.collectionIds?.includes(collection.id));
     if (representative) chosen.set(representative.id, representative);
@@ -99,7 +122,9 @@ function selectProductsWithCollectionCoverage(
     chosen.set(product.id, product);
     if (chosen.size === limit) break;
   }
-  return [...chosen.values()].sort((a, b) => a.id.localeCompare(b.id));
+  return requiredProductIds.length
+    ? [...chosen.values()]
+    : [...chosen.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function stableValue(value: unknown): unknown {
@@ -140,10 +165,14 @@ const databaseContextSource: StorefrontContextSource = {
     const ids = (data ?? []).map((row) => String(row.id));
     let counts = new Map<string, number>();
     if (ids.length) {
-      const links = await sb.from("product_collection").select("collection_id").in("collection_id", ids);
-      if (links.error) throw links.error;
+      const links = await readAllPages((from, to) => sb.from("product_collection")
+        .select("collection_id, product_id")
+        .in("collection_id", ids)
+        .order("collection_id")
+        .order("product_id")
+        .range(from, to));
       counts = new Map();
-      for (const row of links.data ?? []) {
+      for (const row of links) {
         const id = String(row.collection_id);
         counts.set(id, (counts.get(id) ?? 0) + 1);
       }
@@ -156,27 +185,48 @@ const databaseContextSource: StorefrontContextSource = {
     }));
   },
 
-  async listProducts(shopId, limit) {
+  async listProducts(shopId, limit, requiredProductIds = []) {
     const sb = getSupabase();
-    const { data, error } = await sb.from("product_dim")
+    const bounded = await sb.from("product_dim")
       .select("id, handle, title, category, tags")
       .eq("shop_id", shopId)
       .eq("status", "active")
       .order("id")
       .limit(limit);
-    if (error) throw error;
+    if (bounded.error) throw bounded.error;
+    const requiredIds = [...new Set(requiredProductIds)];
+    const required = requiredIds.length
+      ? await sb.from("product_dim")
+          .select("id, handle, title, category, tags")
+          .eq("shop_id", shopId)
+          .eq("status", "active")
+          .in("id", requiredIds)
+      : { data: [], error: null };
+    if (required.error) throw required.error;
+    const data = [...new Map([
+      ...(required.data ?? []),
+      ...(bounded.data ?? []),
+    ].map((row) => [String(row.id), row])).values()];
     const ids = (data ?? []).map((row) => String(row.id));
     if (!ids.length) return [];
     const [variants, options, media, links] = await Promise.all([
-      sb.from("variant_dim").select("product_id, retail_price_cents, currency, inventory_tracked, inventory_on_hand").eq("shop_id", shopId).in("product_id", ids),
-      sb.from("product_option").select("product_id, name").in("product_id", ids),
-      sb.from("product_media").select("product_id, storage_path").in("product_id", ids).not("storage_path", "is", null),
-      sb.from("product_collection").select("product_id, collection_id").in("product_id", ids),
+      readAllPages((from, to) => sb.from("variant_dim")
+        .select("id, product_id, retail_price_cents, currency, inventory_tracked, inventory_on_hand, position")
+        .eq("shop_id", shopId).in("product_id", ids)
+        .order("product_id").order("position").order("id").range(from, to)),
+      readAllPages((from, to) => sb.from("product_option")
+        .select("id, product_id, name, position").in("product_id", ids)
+        .order("product_id").order("position").order("id").range(from, to)),
+      readAllPages((from, to) => sb.from("product_media")
+        .select("id, product_id, storage_path, position").in("product_id", ids).not("storage_path", "is", null)
+        .order("product_id").order("position").order("id").range(from, to)),
+      readAllPages((from, to) => sb.from("product_collection")
+        .select("product_id, collection_id").in("product_id", ids)
+        .order("product_id").order("collection_id").range(from, to)),
     ]);
-    for (const result of [variants, options, media, links]) if (result.error) throw result.error;
     return (data ?? []).map((row) => {
       const id = String(row.id);
-      const productVariants = (variants.data ?? []).filter((variant) => String(variant.product_id) === id);
+      const productVariants = variants.filter((variant) => String(variant.product_id) === id);
       const prices = productVariants.map((variant) => finiteNonNegative(variant.retail_price_cents)).filter((price) => price > 0);
       const availability = productVariants.map((variant) => !variant.inventory_tracked || finiteNonNegative(variant.inventory_on_hand) > 0);
       const availableCount = availability.filter(Boolean).length;
@@ -186,13 +236,13 @@ const databaseContextSource: StorefrontContextSource = {
         title: cleanText(row.title, 240),
         productType: row.category == null ? null : cleanText(row.category, 120),
         tags: Array.isArray(row.tags) ? row.tags.map((tag) => cleanText(tag, 120)).filter(Boolean) : [],
-        optionNames: (options.data ?? []).filter((option) => String(option.product_id) === id).map((option) => cleanText(option.name, 120)),
+        optionNames: options.filter((option) => String(option.product_id) === id).map((option) => cleanText(option.name, 120)),
         priceMin: prices.length ? Math.min(...prices) : 0,
         priceMax: prices.length ? Math.max(...prices) : 0,
         currency: cleanText(productVariants.find((variant) => variant.currency)?.currency ?? "USD", 8).toUpperCase(),
         availability: availableCount === 0 ? "sold_out" as const : availableCount === availability.length ? "available" as const : "mixed" as const,
-        collectionIds: (links.data ?? []).filter((link) => String(link.product_id) === id).map((link) => String(link.collection_id)),
-        images: (media.data ?? []).filter((item) => String(item.product_id) === id)
+        collectionIds: links.filter((link) => String(link.product_id) === id).map((link) => String(link.collection_id)),
+        images: media.filter((item) => String(item.product_id) === id)
           .flatMap((item) => safeOwnedKey(item.storage_path) ? [{ assetKey: String(item.storage_path), aspectRatio: null }] : []),
       };
     });
@@ -211,10 +261,11 @@ export async function assembleStorefrontContextWithReferences(
   const limits = { ...DEFAULT_LIMITS, ...overrides };
   const prompt = cleanText(input.prompt, limits.maxPromptChars);
   if (!prompt) throw new Error("A custom storefront prompt is required");
+  const requiredProductIds = [...new Set(input.requiredProductIds ?? [])].slice(0, limits.maxProducts);
   const [rawStore, rawCollections, rawProducts, rawAssets] = await Promise.all([
     source.getStore(input.shopId),
     source.listCollections(input.shopId, limits.maxCollections),
-    source.listProducts(input.shopId, Math.max(limits.maxProducts * 4, limits.maxProducts)),
+    source.listProducts(input.shopId, Math.max(limits.maxProducts * 4, limits.maxProducts), requiredProductIds),
     source.listReusableAssets(input.shopId, limits.maxReusableAssets),
   ]);
   const references: StorefrontContextReferences = { products: {}, collections: {}, assets: {} };
@@ -232,7 +283,7 @@ export async function assembleStorefrontContextWithReferences(
     references.collections[opaqueRef("collection", index)] = { id: item.id, handle: item.handle };
   }
   let imageIndex = 0;
-  const products = selectProductsWithCollectionCoverage(rawProducts, selectedCollections, limits.maxProducts).map((item, index) => {
+  const products = selectProductsWithCollectionCoverage(rawProducts, selectedCollections, limits.maxProducts, requiredProductIds).map((item, index) => {
     const productRef = opaqueRef("product", index);
     references.products[productRef] = { id: item.id, handle: item.handle };
     return {

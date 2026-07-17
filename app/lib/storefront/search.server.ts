@@ -1,13 +1,20 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { getCatalog } from "~/lib/storefront/catalog.server";
-import type { StorefrontCatalog, StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
+import type {
+  StorefrontCatalog,
+  StorefrontCatalogSearchSort,
+  StoreProduct,
+  StoreVariant,
+} from "~/lib/storefront/catalog";
+import {
+  capStorefrontCardDescription,
+  selectStorefrontPriceVariant,
+} from "~/lib/storefront/catalog";
 
-const MAX_SCAN = 250;
 const MAX_RESULTS = 24;
-const MAX_FACETS = 20;
 const SORTS = ["relevance", "title_asc", "title_desc", "price_asc", "price_desc"] as const;
 
-export type StorefrontSearchSort = typeof SORTS[number];
+export type StorefrontSearchSort = StorefrontCatalogSearchSort;
 
 export interface StorefrontSearchInput {
   query: string;
@@ -20,7 +27,7 @@ export interface StorefrontSearchInput {
   cursor: string | null;
 }
 
-interface CursorPayload { v: 1; offset: number; fingerprint: string }
+interface CursorPayload { v: 2; sortValue: string | number; productId: string; fingerprint: string }
 
 export class InvalidSearchRequestError extends Error {
   constructor() {
@@ -54,9 +61,11 @@ function decodeCursor(token: string): CursorPayload {
     const value: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
     const row = value as Record<string, unknown>;
-    if (row.v !== 1 || !Number.isInteger(row.offset) || Number(row.offset) < 0
+    if (row.v !== 2 || (typeof row.sortValue !== "string" && typeof row.sortValue !== "number")
+      || (typeof row.sortValue === "number" && !Number.isFinite(row.sortValue))
+      || typeof row.productId !== "string" || row.productId.length === 0
       || typeof row.fingerprint !== "string" || row.fingerprint.length !== 64) throw new Error();
-    return { v: 1, offset: Number(row.offset), fingerprint: row.fingerprint };
+    return { v: 2, sortValue: row.sortValue, productId: row.productId, fingerprint: row.fingerprint };
   } catch {
     throw new InvalidSearchRequestError();
   }
@@ -128,12 +137,10 @@ export function parseStorefrontCollectionParams(
   return parseStorefrontSearchParams(translated);
 }
 
-function lower(value: string): string { return value.toLocaleLowerCase("en-US"); }
 function variantFor(product: StoreProduct): StoreVariant | null {
-  return product.variants.slice().sort((a, b) => a.priceCents - b.priceCents || a.id.localeCompare(b.id))[0] ?? null;
+  return selectStorefrontPriceVariant(product);
 }
 function available(product: StoreProduct): boolean { return product.variants.some((variant) => variant.available); }
-function price(product: StoreProduct): number { return variantFor(product)?.priceCents ?? Number.MAX_SAFE_INTEGER; }
 
 function fingerprint(shopId: string, input: StorefrontSearchInput): string {
   return createHash("sha256").update(JSON.stringify({
@@ -148,50 +155,51 @@ function fingerprint(shopId: string, input: StorefrontSearchInput): string {
   })).digest("hex");
 }
 
-function facet(values: string[]): Array<{ value: string; count: number }> {
-  const counts = new Map<string, number>();
-  for (const value of values) if (value) counts.set(value, (counts.get(value) ?? 0) + 1);
-  return [...counts].map(([value, count]) => ({ value, count }))
-    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
-    .slice(0, MAX_FACETS);
-}
-
 export async function searchStorefront(
   shopId: string,
   input: StorefrontSearchInput,
   catalog: StorefrontCatalog = getCatalog(),
 ) {
-  const products = await catalog.listProducts(shopId, { limit: MAX_SCAN });
-  const query = lower(input.query);
-  let filtered = products.filter((product) => {
-    if (query && !lower(`${product.title} ${product.description} ${product.category ?? ""} ${(product.tags ?? []).join(" ")}`).includes(query)) return false;
-    if (input.collection && !product.collections.some((value) => lower(value) === lower(input.collection!))) return false;
-    if (input.category && lower(product.category ?? "") !== lower(input.category)) return false;
-    if (input.tag && !(product.tags ?? []).some((value) => lower(value) === lower(input.tag!))) return false;
-    if (input.available !== null && available(product) !== input.available) return false;
-    return true;
-  });
-  const facets = {
-    categories: facet(filtered.map((product) => product.category ?? "")),
-    tags: facet(filtered.flatMap((product) => product.tags ?? [])),
-    collections: facet(filtered.flatMap((product) => product.collections)),
-  };
-  filtered = filtered.slice().sort((a, b) => {
-    if (input.sort === "title_asc") return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
-    if (input.sort === "title_desc") return b.title.localeCompare(a.title) || a.id.localeCompare(b.id);
-    if (input.sort === "price_asc") return price(a) - price(b) || a.id.localeCompare(b.id);
-    if (input.sort === "price_desc") return price(b) - price(a) || a.id.localeCompare(b.id);
-    return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
-  });
   const expectedFingerprint = fingerprint(shopId, input);
   const cursor = input.cursor ? decodeCursor(input.cursor) : null;
   if (cursor && cursor.fingerprint !== expectedFingerprint) throw new InvalidSearchRequestError();
-  const offset = cursor?.offset ?? 0;
-  if (offset > filtered.length) throw new InvalidSearchRequestError();
-  const page = filtered.slice(offset, offset + input.limit);
-  const nextOffset = offset + page.length;
+  const result = await catalog.searchProductPage(shopId, {
+    query: input.query,
+    collection: input.collection,
+    category: input.category,
+    tag: input.tag,
+    available: input.available,
+    sort: input.sort,
+    limit: input.limit,
+    after: cursor ? { sortValue: cursor.sortValue, productId: cursor.productId } : null,
+  });
+  const last = result.items.at(-1);
+  const boundary = result.boundary ?? null;
+  const priceSort = input.sort === "price_asc" || input.sort === "price_desc";
+  if (result.hasNextPage
+    ? !last || !boundary || boundary.productId !== last.id
+      || (priceSort ? !Number.isSafeInteger(boundary.sortValue) : typeof boundary.sortValue !== "string")
+    : boundary !== null) {
+    throw new Error("invalid storefront catalog search page");
+  }
+  const presentationProducts = result.items.map((product): StoreProduct => {
+    const variant = variantFor(product);
+    return {
+      id: product.id,
+      handle: product.handle,
+      title: product.title,
+      description: capStorefrontCardDescription(product.description),
+      images: product.images.slice(0, 1),
+      variants: variant ? [variant] : [],
+      options: [],
+      collections: [],
+      category: null,
+      tags: [],
+    };
+  });
   return {
-    items: page.map((product) => {
+    presentationProducts,
+    items: presentationProducts.map((product) => {
       const variant = variantFor(product);
       return {
         id: product.id,
@@ -199,16 +207,21 @@ export async function searchStorefront(
         title: product.title,
         image: product.images[0] ?? null,
         variantId: variant?.id ?? null,
-        priceCents: variant?.priceCents ?? null,
+        priceCents: variant?.hasPrice === false ? null : variant?.priceCents ?? null,
         compareAtPriceCents: variant?.compareAtPriceCents ?? null,
         currency: variant?.currency.toLowerCase() ?? "usd",
         available: available(product),
       };
     }),
-    facets,
-    total: filtered.length,
-    nextCursor: nextOffset < filtered.length
-      ? encodeCursor({ v: 1, offset: nextOffset, fingerprint: expectedFingerprint })
+    facets: result.facets,
+    total: result.total,
+    nextCursor: boundary && result.hasNextPage
+      ? encodeCursor({
+          v: 2,
+          sortValue: boundary.sortValue,
+          productId: boundary.productId,
+          fingerprint: expectedFingerprint,
+        })
       : null,
   };
 }

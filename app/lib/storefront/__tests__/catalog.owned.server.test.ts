@@ -9,14 +9,22 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Records the .eq() filters applied to each table so we can assert scoping.
 const eqCalls: Record<string, Array<[string, unknown]>> = {};
 const ilikeCalls: Record<string, Array<[string, string]>> = {};
+const orCalls: Record<string, string[]> = {};
+const rangeCalls: Record<string, Array<[number, number]>> = {};
+const inCalls: Record<string, Array<[string, unknown[]]>> = {};
+const fromCalls: string[] = [];
 // Canned rows per table for a query that resolves to a list.
 let tableRows: Record<string, unknown[]> = {};
 // Canned single-row result per table (for maybeSingle()).
 let tableSingle: Record<string, unknown> = {};
 let tableCount: Record<string, number> = {};
+let rpcData: unknown = null;
+const rpcMock = vi.fn(async () => ({ data: rpcData, error: null }));
 
 function builder(table: string) {
   const b: Record<string, unknown> = {};
+  let requestedRange: [number, number] | null = null;
+  let requestedIn: [string, unknown[]] | null = null;
   const chain = () => b;
   Object.assign(b, {
     select: chain,
@@ -28,29 +36,263 @@ function builder(table: string) {
       (ilikeCalls[table] ??= []).push([col, val]);
       return b;
     },
-    in: chain,
+    or: (value: string) => {
+      (orCalls[table] ??= []).push(value);
+      return b;
+    },
+    in: (col: string, values: unknown[]) => {
+      requestedIn = [col, values];
+      (inCalls[table] ??= []).push([col, values]);
+      return b;
+    },
     order: chain,
     limit: chain,
-    range: chain,
+    range: (from: number, to: number) => {
+      requestedRange = [from, to];
+      (rangeCalls[table] ??= []).push([from, to]);
+      return b;
+    },
     maybeSingle: () => Promise.resolve({ data: tableSingle[table] ?? null, error: null }),
-    then: (resolve: (v: unknown) => unknown) => Promise.resolve({
-      data: tableRows[table] ?? [], error: null, count: tableCount[table] ?? null,
-    }).then(resolve),
+    then: (resolve: (v: unknown) => unknown) => {
+      const rows = requestedIn && table === "collection_dim"
+        ? (tableRows[table] ?? []).filter((row) => requestedIn![1].includes((row as Record<string, unknown>)[requestedIn![0]]))
+        : tableRows[table] ?? [];
+      const [from, to] = requestedRange ?? [0, 999];
+      return Promise.resolve({
+        data: rows.slice(from, to + 1), error: null, count: tableCount[table] ?? null,
+      }).then(resolve);
+    },
   });
   return b;
 }
 
-vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: (t: string) => builder(t) }) }));
+vi.mock("~/lib/supabase.server", () => ({
+  getSupabase: () => ({
+    from: (t: string) => {
+      fromCalls.push(t);
+      return builder(t);
+    },
+    rpc: rpcMock,
+  }),
+}));
 vi.mock("~/lib/catalog/sign-media.server", () => ({
   signMediaPaths: vi.fn(async (paths: string[]) => new Map(paths.map((p) => [p, `signed:${p}`]))),
 }));
 
 beforeEach(() => {
+  vi.clearAllMocks();
   for (const k of Object.keys(eqCalls)) delete eqCalls[k];
   for (const k of Object.keys(ilikeCalls)) delete ilikeCalls[k];
+  for (const k of Object.keys(orCalls)) delete orCalls[k];
+  for (const k of Object.keys(rangeCalls)) delete rangeCalls[k];
+  for (const k of Object.keys(inCalls)) delete inCalls[k];
+  fromCalls.length = 0;
   tableRows = {};
   tableSingle = {};
   tableCount = {};
+  rpcData = null;
+});
+
+describe("ownedCatalog.searchProductPage", () => {
+  it("uses only the RPC search-card projection and signs at most one path per returned product", async () => {
+    const cards = Array.from({ length: 24 }, (_, index) => ({
+      id: `p${index}`,
+      handle: `product-${index}`,
+      title: `Product ${index}`,
+      description: `Description ${index}`,
+      image: {
+        storage_path: `shop-1/p${index}/primary.webp`,
+        external_url: null,
+        alt: `Product ${index}`,
+      },
+      variant: {
+        id: `v${index}`,
+        sku: null,
+        title: "Default",
+        price_cents: 1000 + index,
+        compare_at_price_cents: null,
+        currency: "USD",
+        available: true,
+      },
+    }));
+    rpcData = {
+      cards,
+      boundary: { sort_value: 1023, product_id: "p23" },
+      total: 50,
+      has_next_page: true,
+      facets: {
+        categories: [{ value: "Beauty", count: 50 }],
+        tags: [{ value: "clean", count: 40 }],
+        collections: [{ value: "skin", count: 50 }],
+      },
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const { signMediaPaths } = await import("~/lib/catalog/sign-media.server");
+    const searchProductPage = Reflect.get(ownedCatalog, "searchProductPage");
+    expect(searchProductPage).toEqual(expect.any(Function));
+    if (typeof searchProductPage !== "function") return;
+
+    const page = await searchProductPage("shop-1", {
+      query: "clean", collection: "skin", category: "Beauty", tag: "vegan",
+      available: true, sort: "price_desc", limit: 24,
+      after: { sortValue: 2400, productId: "p0" },
+    });
+
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(rpcMock).toHaveBeenCalledWith("storefront_catalog_search_page", {
+      p_shop_id: "shop-1",
+      p_query: "clean",
+      p_collection: "skin",
+      p_category: "Beauty",
+      p_tag: "vegan",
+      p_available: true,
+      p_sort: "price_desc",
+      p_after_value: "2400",
+      p_after_product_id: "p0",
+      p_limit: 24,
+    });
+    expect(fromCalls).toEqual([]);
+    expect(signMediaPaths).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(signMediaPaths).mock.calls[0]?.[0]).toHaveLength(24);
+    expect(page.items).toHaveLength(24);
+    expect(page.items[0]).toMatchObject({
+      id: "p0",
+      images: [{ url: "signed:shop-1/p0/primary.webp", alt: "Product 0" }],
+      variants: [{ id: "v0", priceCents: 1000, available: true }],
+    });
+    expect(page.boundary).toEqual({ sortValue: 1023, productId: "p23" });
+    expect(page.total).toBe(50);
+    expect(page.hasNextPage).toBe(true);
+    expect(page.facets.tags).toEqual([{ value: "clean", count: 40 }]);
+  });
+
+  it.each([
+    ["boundary", { sort_value: [], product_id: "p1" }, [{
+      id: "p1", handle: "one", title: "One", description: "First", image: null,
+      variant: { id: "v1", sku: null, title: "Default", price_cents: 1000, compare_at_price_cents: null, currency: "USD", available: true },
+    }]],
+    ["card", { sort_value: 1000, product_id: "p1" }, [{
+      id: "p1", handle: "one", title: "One", description: "First", image: null,
+      variant: { id: "v1", sku: null, title: "Default", price_cents: "1000", compare_at_price_cents: null, currency: "USD", available: true },
+    }]],
+    ["boundary value", { sort_value: 999, product_id: "p1" }, [{
+      id: "p1", handle: "one", title: "One", description: "First", image: null,
+      variant: { id: "v1", sku: null, title: "Default", price_cents: 1000, compare_at_price_cents: null, currency: "USD", available: true },
+    }]],
+    ["description", { sort_value: 1000, product_id: "p1" }, [{
+      id: "p1", handle: "one", title: "One", description: "x".repeat(501), image: null,
+      variant: { id: "v1", sku: null, title: "Default", price_cents: 1000, compare_at_price_cents: null, currency: "USD", available: true },
+    }]],
+  ])("fails closed for a malformed RPC %s", async (_kind, boundary, cards) => {
+    rpcData = {
+      product_ids: ["p1"],
+      cards,
+      boundary,
+      total: 2,
+      has_next_page: true,
+      facets: { categories: [], tags: [], collections: [] },
+    };
+    tableRows = {
+      product_dim: [{ id: "p1", handle: "one", title: "One", description: "First" }],
+      variant_dim: [], product_media: [], product_collection: [], product_option: [],
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+
+    await expect(ownedCatalog.searchProductPage("shop-1", {
+      query: "", collection: null, category: null, tag: null,
+      available: null, sort: "price_asc", limit: 1, after: null,
+    })).rejects.toThrow("invalid storefront catalog search response");
+  });
+
+  it("accepts the descending missing-price sentinel as the card boundary", async () => {
+    rpcData = {
+      cards: [{
+        id: "p1", handle: "missing", title: "Missing", description: "No price", image: null,
+        variant: {
+          id: "v1", sku: null, title: "Default", price_cents: null,
+          compare_at_price_cents: null, currency: "USD", available: false,
+        },
+      }],
+      boundary: { sort_value: -2147483649, product_id: "p1" },
+      total: 2,
+      has_next_page: true,
+      facets: { categories: [], tags: [], collections: [] },
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+
+    const page = await ownedCatalog.searchProductPage("shop-1", {
+      query: "", collection: null, category: null, tag: null,
+      available: null, sort: "price_desc", limit: 1, after: null,
+    });
+
+    expect(page.boundary).toEqual({ sortValue: -2147483649, productId: "p1" });
+    expect(page.items[0]?.variants[0]).toMatchObject({ hasPrice: false, available: false });
+  });
+});
+
+describe("ownedCatalog.listProductPage", () => {
+  it("caps public pages and continues from the stable title-plus-id cursor", async () => {
+    tableRows = {
+      product_dim: Array.from({ length: 25 }, (_, index) => ({
+        id: `product-${index.toString().padStart(2, "0")}`,
+        handle: `product-${index}`,
+        title: `Product ${index.toString().padStart(2, "0")}`,
+        description: `Description ${index}`,
+      })),
+      variant_dim: [], product_media: [], product_collection: [], product_option: [],
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const first = await ownedCatalog.listProductPage("shop-1", { limit: 99 });
+    expect(first.items).toHaveLength(24);
+    expect(first.nextCursor).toEqual(expect.any(String));
+    expect(eqCalls.product_dim).toEqual(expect.arrayContaining([["shop_id", "shop-1"], ["status", "active"]]));
+
+    await ownedCatalog.listProductPage("shop-1", { cursor: first.nextCursor, limit: 24 });
+    expect(orCalls.product_dim.at(-1)).toContain("title.gt.");
+    expect(orCalls.product_dim.at(-1)).toContain("id.gt.");
+  });
+
+  it("assembles child rows beyond the PostgREST page boundary", async () => {
+    const collectionId = (index: number) => `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`;
+    tableRows = {
+      product_dim: [{ id: "p1", handle: "complete", title: "Complete", description: "All child rows" }],
+      variant_dim: Array.from({ length: 1001 }, (_, index) => ({
+        id: `v${index}`, product_id: "p1", sku: `SKU-${index}`, title: `Variant ${index}`,
+        retail_price_cents: 1000 + index, currency: "USD", inventory_tracked: false, inventory_on_hand: 0, position: index,
+      })),
+      product_media: Array.from({ length: 1001 }, (_, index) => ({
+        product_id: "p1", storage_path: `shop-1/p1/${index}.png`, alt: `Image ${index}`, position: index, is_primary: index === 0,
+      })),
+      product_collection: Array.from({ length: 1001 }, (_, index) => ({ product_id: "p1", collection_id: collectionId(index) })),
+      product_option: Array.from({ length: 1001 }, (_, index) => ({
+        product_id: "p1", name: `Option ${index}`, position: index, product_option_value: [],
+      })),
+      collection_dim: Array.from({ length: 1001 }, (_, index) => ({ id: collectionId(index), handle: `collection-${index}` })),
+      inventory_balance: [],
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+
+    const page = await ownedCatalog.listProductPage("shop-1", { limit: 24 });
+    const product = page.items[0]!;
+
+    expect(product.variants).toHaveLength(1001);
+    expect(product.variants.at(-1)).toMatchObject({ title: "Variant 1000", priceCents: 2000, available: true });
+    expect(product.images).toHaveLength(1001);
+    expect(product.images.at(-1)?.url).toBe("signed:shop-1/p1/1000.png");
+    expect(product.collections).toHaveLength(1001);
+    expect(product.collections.at(-1)).toBe("collection-1000");
+    expect(product.options).toHaveLength(1001);
+    expect(product.options?.at(-1)?.name).toBe("Option 1000");
+    for (const table of ["variant_dim", "product_media", "product_collection", "product_option"]) {
+      expect(rangeCalls[table]).toEqual([[0, 999], [1000, 1999]]);
+    }
+    const collectionIdFilters = inCalls.collection_dim.map(([, values]) => values);
+    expect(collectionIdFilters).toHaveLength(6);
+    expect(collectionIdFilters.every((values) => values.length <= 200)).toBe(true);
+    expect(collectionIdFilters.flat()).toHaveLength(1001);
+    expect(rangeCalls.collection_dim).toEqual(collectionIdFilters.map(() => [0, 999]));
+    expect(eqCalls.collection_dim.filter(([column, value]) => column === "shop_id" && value === "shop-1")).toHaveLength(6);
+  });
 });
 
 describe("ownedCatalog.listProducts", () => {

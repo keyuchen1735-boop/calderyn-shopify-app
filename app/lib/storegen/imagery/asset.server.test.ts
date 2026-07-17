@@ -1,7 +1,7 @@
 // app/lib/storegen/imagery/asset.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StoreProduct } from "~/lib/storefront/catalog";
-import { enhanceListing, applyAssetOverrides, generateMissingListingImages } from "./asset.server";
+import { enhanceListing, applyAssetOverrides } from "./asset.server";
 
 const { fromMock, providerMock, persistMock } = vi.hoisted(() => ({ fromMock: vi.fn(), providerMock: vi.fn(), persistMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
@@ -14,6 +14,34 @@ const product = (id: string, url: string | null): StoreProduct => ({
   images: url ? [{ url, alt: null }] : [], variants: [],
 });
 beforeEach(() => { fromMock.mockReset(); providerMock.mockReset(); persistMock.mockReset(); });
+
+type AssetRow = Record<string, unknown>;
+type AssetQuery = {
+  eq: ReturnType<typeof vi.fn>;
+  in: ReturnType<typeof vi.fn>;
+  order: ReturnType<typeof vi.fn>;
+  range: ReturnType<typeof vi.fn>;
+};
+
+function mockAssetQueries(pagesByQuery: AssetRow[][][]): AssetQuery[] {
+  const queries: AssetQuery[] = [];
+  fromMock.mockImplementation(() => {
+    const pages = pagesByQuery[queries.length] ?? [[]];
+    const query: AssetQuery = {
+      eq: vi.fn(),
+      in: vi.fn(),
+      order: vi.fn(),
+      range: vi.fn(),
+    };
+    query.eq.mockReturnValue(query);
+    query.in.mockReturnValue(query);
+    query.order.mockReturnValue(query);
+    query.range.mockImplementation(async () => ({ data: pages[0] ?? [], error: null }));
+    queries.push(query);
+    return { select: () => query };
+  });
+  return queries;
+}
 
 describe("enhanceListing", () => {
   it("persists the ephemeral generated image and upserts the OWNED url (rule 12: durable)", async () => {
@@ -63,11 +91,10 @@ describe("enhanceListing", () => {
 });
 
 describe("applyAssetOverrides", () => {
-  it("replaces a product's first image with the ready generated asset", async () => {
-    const eq = vi.fn().mockResolvedValue({ data: [{ product_id: "1", url: "https://img/new.png", status: "ready" }], error: null });
-    fromMock.mockReturnValue({ select: () => ({ eq }) });
+  it("keeps real product_media ahead of ready generated imagery", async () => {
+    mockAssetQueries([[[{ product_id: "1", url: "https://img/new.png", status: "ready" }]]]);
     const out = await applyAssetOverrides(realShop, [product("1", "/old.jpg"), product("2", "/keep.jpg")]);
-    expect(out[0].images[0].url).toBe("https://img/new.png");
+    expect(out[0].images[0].url).toBe("/old.jpg");
     expect(out[1].images[0].url).toBe("/keep.jpg");
   });
   it("returns products unchanged for a non-uuid (demo) shop without hitting the DB", async () => {
@@ -76,40 +103,60 @@ describe("applyAssetOverrides", () => {
     expect(fromMock).not.toHaveBeenCalled();
   });
   it("adds the override image to a product that had no image (alt falls back to title)", async () => {
-    const eq = vi.fn().mockResolvedValue({ data: [{ product_id: "1", url: "https://img/new.png", status: "ready" }], error: null });
-    fromMock.mockReturnValue({ select: () => ({ eq }) });
+    mockAssetQueries([[[{ product_id: "1", url: "https://img/new.png", status: "ready" }]]]);
     const out = await applyAssetOverrides(realShop, [product("1", null)]);
     expect(out[0].images).toEqual([{ url: "https://img/new.png", alt: "P1" }]);
   });
+  it("never renders pending or failed generated imagery", async () => {
+    mockAssetQueries([[[
+      { product_id: "1", url: "https://img/pending.png", status: "pending" },
+      { product_id: "2", url: "https://img/failed.png", status: "failed" },
+    ]]]);
+    const out = await applyAssetOverrides(realShop, [product("1", null), product("2", null)]);
+    expect(out.map((entry) => entry.images)).toEqual([[], []]);
+  });
   it("prefers the newest ready generated asset when legacy rows remain", async () => {
-    const eq = vi.fn().mockResolvedValue({ data: [
+    mockAssetQueries([[[
       { product_id: "1", url: "https://img/old.png", status: "ready", created_at: "2026-01-01" },
       { product_id: "1", url: "https://img/new.png", status: "ready", created_at: "2026-07-14" },
-    ], error: null });
-    fromMock.mockReturnValue({ select: () => ({ eq }) });
+    ]]]);
     const out = await applyAssetOverrides(realShop, [product("1", null)]);
     expect(out[0].images[0].url).toBe("https://img/new.png");
   });
-});
+  it("queries only ready assets for current image-less product IDs in bounded chunks", async () => {
+    const queries = mockAssetQueries([[[]], [[]]]);
+    const missing = Array.from({ length: 101 }, (_, index) => product(String(index), null));
+    await applyAssetOverrides(realShop, [...missing, product("has-media", "/real.jpg")]);
 
-describe("generateMissingListingImages", () => {
-  it("generates the first recipe's product imagery only when the catalog has none", async () => {
-    const enhance = vi.fn(async (_shopId: string, item: StoreProduct) => ({ productId: item.id, status: "ready" as const, url: `/generated/${item.id}.webp` }));
-    const result = await generateMissingListingImages(realShop, [product("1", null), product("2", null)], enhance);
-    expect(result).toBe(2);
-    expect(enhance).toHaveBeenCalledTimes(2);
+    expect(queries).toHaveLength(2);
+    expect(queries[0].eq.mock.calls).toEqual([
+      ["shop_id", realShop],
+      ["status", "ready"],
+    ]);
+    expect(queries[0].in).toHaveBeenCalledWith("product_id", missing.slice(0, 100).map((entry) => entry.id));
+    expect(queries[1].in).toHaveBeenCalledWith("product_id", ["100"]);
+    expect(queries.flatMap((query) => query.in.mock.calls[0][1] as string[])).not.toContain("has-media");
   });
-  it("reuses existing images and caps a build to three paid generations", async () => {
-    const enhance = vi.fn(async (_shopId: string, item: StoreProduct) => ({ productId: item.id, status: "ready" as const, url: `/generated/${item.id}.webp` }));
-    const products = [
-      product("native", "/native.webp"),
-      product("1", null),
-      product("2", null),
-      product("3", null),
-      product("4", null),
-    ];
-    const result = await generateMissingListingImages(realShop, products, enhance);
-    expect(result).toBe(3);
-    expect(enhance.mock.calls.map(([, item]) => item.id)).toEqual(["1", "2", "3"]);
+  it("pages through a full PostgREST response before choosing the newest ready asset", async () => {
+    const firstPage = Array.from({ length: 1000 }, (_, index) => ({
+      product_id: "1",
+      source: `legacy-${index}`,
+      url: `https://img/old-${index}.png`,
+      status: "ready",
+      created_at: "2026-01-01",
+    }));
+    const secondPage = [{
+      product_id: "1",
+      source: "gemini",
+      url: "https://img/new.png",
+      status: "ready",
+      created_at: "2026-07-16",
+    }];
+    const queries = mockAssetQueries([[firstPage], [secondPage]]);
+
+    const out = await applyAssetOverrides(realShop, [product("1", null)]);
+
+    expect(queries.flatMap((query) => query.range.mock.calls)).toEqual([[0, 999], [1000, 1999]]);
+    expect(out[0].images[0].url).toBe("https://img/new.png");
   });
 });

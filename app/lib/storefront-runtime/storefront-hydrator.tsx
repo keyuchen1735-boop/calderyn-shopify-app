@@ -292,11 +292,17 @@ export function StorefrontHydrator(props: {
       previewTemplateId: props.mode === "preview" && props.bundle.source.kind === "recipe" ? props.bundle.source.templateId : undefined,
     });
     const handles: StorefrontRuntimeHandle[] = [];
+    const visualLayer = props.bundle.visualLayer?.kind === "fragment_shader" ? props.bundle.visualLayer : undefined;
     const shell = root.querySelector<HTMLElement>("[data-cd-bundle-shell]");
-    if (shell) handles.push(hydrateStorefront({ root: shell, artifact: props.bundle.shell, adapters }));
+    if (shell) handles.push(hydrateStorefront({ root: shell, artifact: props.bundle.shell, adapters, visualLayer }));
     if (props.routeId !== "checkout") {
       const route = root.querySelector<HTMLElement>(`[data-cd-bundle-route='${props.routeId}']`);
-      if (route) handles.push(hydrateStorefront({ root: route, artifact: props.bundle.routes[props.routeId], adapters }));
+      if (route) handles.push(hydrateStorefront({
+        root: route,
+        artifact: props.bundle.routes[props.routeId],
+        adapters,
+        visualLayer,
+      }));
     }
     return () => handles.forEach((handle) => handle.teardown());
   }, [props.bundle, props.data, props.mode, props.routeId]);

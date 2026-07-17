@@ -9,6 +9,7 @@ const getCartOrigin = vi.fn();
 const createCheckout = vi.fn();
 const paymentsReadiness = vi.fn();
 const quoteCartOptions = vi.fn();
+const resolveRuntime1Route = vi.fn();
 
 // Real class so the route's `err instanceof OutOfStockError` branch (-> 409) is exercised. Defined
 // via vi.hoisted so it exists when the (hoisted) vi.mock factory below references it. The payments
@@ -42,6 +43,10 @@ vi.mock("~/lib/payments/connect.server", () => ({
 }));
 vi.mock("~/lib/commerce/quote.server", () => ({
   quoteCartOptions: (...a: unknown[]) => quoteCartOptions(...a),
+}));
+vi.mock("~/lib/storefront-runtime/release-resolution.server", () => ({
+  resolveRuntime1Route: (...a: unknown[]) => resolveRuntime1Route(...a),
+  hasRuntime1Storefront: vi.fn(async () => true),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
@@ -98,6 +103,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.SHOPIFY_API_SECRET = SECRET;
   process.env.STRIPE_PUBLISHABLE_KEY = "pk_test_x";
+  resolveRuntime1Route.mockResolvedValue({
+    runtime: 1, bundleId: "bundle-checkout", artifactHash: "sha256:checkout",
+    bundle: {}, data: {}, routeId: "checkout", visualLayerPlacement: null,
+  });
   resolveStorefrontShop.mockResolvedValue("shop-1");
   getCartOrigin.mockResolvedValue(null);
   paymentsReadiness.mockResolvedValue({ ready: true, route: "destination" });
@@ -134,6 +143,13 @@ beforeEach(() => {
 });
 
 describe("checkout loader", () => {
+  it("fails explicitly before platform checkout reads when runtime-1 is absent", async () => {
+    resolveRuntime1Route.mockResolvedValue(null);
+    await expect(loader(loaderArgs(new Request("https://shop.example/storefront/checkout"))))
+      .rejects.toMatchObject({ status: 503 });
+    expect(priceCart).not.toHaveBeenCalled();
+  });
+
   it("redirects to the cart when there is no cart cookie", async () => {
     const res = await loader(loaderArgs(new Request("https://shop.example/storefront/checkout")));
     expect((res as Response).status).toBe(302);

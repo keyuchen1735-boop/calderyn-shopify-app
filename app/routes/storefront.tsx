@@ -6,11 +6,7 @@ import { useLoaderData, Outlet, useMatches } from "@remix-run/react";
 import storefrontCss from "~/styles/storefront.css?url";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
-import { getCatalog } from "~/lib/storefront/catalog.server";
-import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import { detectAiBot, logAiCrawl } from "~/lib/seo/crawlers.server";
-import type { StudioVibe } from "~/lib/storebuilder/studio-types";
-import { hasRuntime1Storefront } from "~/lib/storefront-runtime/release-resolution.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
 
@@ -23,32 +19,6 @@ export const meta: MetaFunction<typeof loader> = ({ data }) => {
     { property: "og:title", content: title },
   ];
 };
-
-/**
- * A running vibe experiment restyles the WHOLE page, not just the home doc's
- * blocks: the vibe token packs redeclare on this .cd-store root, so the swap
- * has to happen here regardless of which child route is being served. The
- * shared resolver keeps this bucketing identical to every other surface's
- * (and is failure-isolated internally — a hiccup never breaks the shell).
- */
-async function resolveLayoutExperimentVibe(shopId: string, request: Request): Promise<StudioVibe | null> {
-  const served = await resolveServedExperiment(shopId, request, "layout");
-  if (served.variantKey !== "b") return null;
-  return served.experiment?.variantSettings?.vibe ?? null;
-}
-
-/** Collections for the header category nav — the store chrome that makes a page read as a real
- *  storefront (For Him / For Her …) rather than a bare hero. Failure-isolated (a catalog hiccup
- *  must never break the shell) and capped so a large catalog can't overflow the bar. */
-async function loadNavCollections(shopId: string): Promise<{ handle: string; title: string }[]> {
-  try {
-    const cols = await getCatalog().listCollections(shopId);
-    return cols.slice(0, 6).map((c) => ({ handle: c.handle, title: c.title }));
-  } catch (err) {
-    console.error(`[storefront] nav collections lookup failed for shop ${shopId}:`, err);
-    return [];
-  }
-}
 
 export async function loader({ request }: LoaderFunctionArgs) {
   // Public, multi-tenant entry: resolve the tenant from the request, then scope
@@ -69,20 +39,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
   }
   const settings = await getStoreSettings(shopId);
-  const runtime1 = await hasRuntime1Storefront({ shopId, request });
-  const experimentVibe = runtime1 ? null : await resolveLayoutExperimentVibe(shopId, request);
-  const collections = runtime1 ? [] : await loadNavCollections(shopId);
-  return json({ settings, experimentVibe: experimentVibe ?? null, collections });
+  return json({ settings, experimentVibe: null, collections: [] });
 }
 
 export default function StorefrontLayout() {
-  const { settings, experimentVibe, collections } = useLoaderData<typeof loader>();
+  const { settings, experimentVibe } = useLoaderData<typeof loader>();
   const matches = useMatches();
   if (matches.some((match) => {
     const data = match.data;
     return Boolean(data && typeof data === "object" && "runtime" in data && data.runtime === 1);
   })) return <Outlet />;
-  const navCollections = collections ?? [];
   return (
     <div
       className="cd-store"
@@ -105,15 +71,6 @@ export default function StorefrontLayout() {
           </a>
         </nav>
       </header>
-      {navCollections.length > 0 ? (
-        <nav className="cd-store__nav">
-          {navCollections.map((c) => (
-            <a key={c.handle} href={`/storefront/collections/${c.handle}`}>
-              {c.title}
-            </a>
-          ))}
-        </nav>
-      ) : null}
       <main>
         <Outlet />
       </main>

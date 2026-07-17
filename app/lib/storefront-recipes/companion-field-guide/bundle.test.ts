@@ -4,6 +4,13 @@ import { describe, expect, it } from "vitest";
 import { COMPANION_FIELD_GUIDE_RECIPE } from "./bundle";
 
 describe("Companion Field Guide storefront recipe", () => {
+  it("keeps the mobile profile heading on its own row above bounded controls", () => {
+    const css = COMPANION_FIELD_GUIDE_RECIPE.config.surfaces.home.source.css;
+    expect(css).toContain(".profile-rail { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.5rem; position:static }");
+    expect(css).toContain(".profile-rail h2 { grid-column:1 / -1; margin:0 0 .5rem }");
+    expect(css).toContain(".profile-rail button { min-width:0 }");
+  });
+
   it("compiles a chaptered pet care guide across the complete commerce contract", () => {
     const { bundle, config, report } = COMPANION_FIELD_GUIDE_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });

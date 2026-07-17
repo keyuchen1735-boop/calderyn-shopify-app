@@ -13,7 +13,6 @@ import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.serve
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
 import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { ensureVisitorSession } from "~/lib/storefront/visitor-cookie.server";
-import { resolveServedExperiment } from "~/lib/experiments/store-experiment.server";
 import { priceCart, getCartOrigin } from "~/lib/order/cart.server";
 import { createCheckout, OutOfStockError } from "~/lib/order/checkout.server";
 import { paymentsReadiness } from "~/lib/payments/connect.server";
@@ -33,7 +32,7 @@ import { defaultShippingAddress, getBuyerEmail } from "~/lib/buyer/account.serve
 import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
 import { randomBytes } from "node:crypto";
-import { hasRuntime1Storefront, resolveRuntime1Route } from "~/lib/storefront-runtime/release-resolution.server";
+import { resolveRuntime1Route } from "~/lib/storefront-runtime/release-resolution.server";
 import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-runtime/render";
 import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
 import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
@@ -79,25 +78,6 @@ async function buyerCheckoutPrefill(request: Request, shopId: string): Promise<C
     console.error(`[checkout] buyer prefill failed for shop ${shopId} (continuing as guest):`, err);
     return null;
   }
-}
-
-/**
- * Stamp {experiment_id, variant_key} onto the order's attribution when an A/B test is
- * running (D4) — snake_case to match the keys experimentReport reads back off
- * orders.attribution. The shared resolver buckets off the COOKIE visitor id, the same id
- * every storefront surface bucketed with — a buyer whose cookie vanished between browse
- * and checkout gets NO stamp rather than a freshly-minted id's 50/50 coin flip crediting
- * the wrong arm. Failure-isolated inside the resolver: the order still records
- * live_session_id when the lookup hiccups.
- */
-async function checkoutExperimentAttribution(
-  shopId: string,
-  request: Request,
-): Promise<Record<string, string>> {
-  if (await hasRuntime1Storefront({ shopId, request })) return {};
-  const served = await resolveServedExperiment(shopId, request, "checkout");
-  if (!served.experimentId || !served.variantKey) return {};
-  return { experiment_id: served.experimentId, variant_key: served.variantKey };
 }
 
 const RECOVERY_ORIGIN_RE = /^recovery:(.+)$/;
@@ -167,21 +147,14 @@ export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
   const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "checkout" } });
+  if (!runtime1) throw new Response("No runtime-1 storefront release is available.", { status: 503 });
   // Demo shell is browse-only — no cart can exist for it (see storefront.cart.tsx).
   if (shopId === DEMO_SHOP_ID) return redirect("/storefront/cart");
   const cartId = await readCartId(request);
   // No cart -> nothing to check out; send the buyer back to the cart view.
   if (!cartId) return redirect("/storefront/cart");
 
-  // Independent reads: the experiment lookup (checkout always participates, so
-  // the funnel's checkout_start rows carry the arm stamp) rides alongside the
-  // cart pricing instead of adding latency in front of it.
-  const [priced, served] = await Promise.all([
-    priceCart(shopId, cartId),
-    runtime1
-      ? Promise.resolve({ experimentId: null, variantKey: null })
-      : resolveServedExperiment(shopId, request, "checkout"),
-  ]);
+  const priced = await priceCart(shopId, cartId);
   if (priced.lines.length === 0) return redirect("/storefront/cart");
 
   // A store without payment keys renders an honest "payments not set up" notice
@@ -200,8 +173,6 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // page — logged with its OWN cause so an operator isn't sent chasing onboarding
   // when the refusal was a DB blip. Independent of the tracking/prefill reads, so
   // all three run concurrently (this is the conversion-critical first paint).
-  // checkout_start carries the experiment arm stamp (checkout always participates,
-  // so the funnel's per-arm counts include this step).
   const [paymentsReady, track, prefill] = await Promise.all([
     paymentsReadiness(shopId).then(
       (r) => {
@@ -216,8 +187,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     ),
     trackStorefrontEvent(request, shopId, "checkout_start", {
-      experimentId: served.experimentId,
-      variantKey: served.variantKey,
+      experimentId: null,
+      variantKey: null,
     }),
     // Prefill from the buyer's saved profile when signed in (#1b); guest checkout is unchanged.
     buyerCheckoutPrefill(request, shopId),
@@ -241,14 +212,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
         currency: priced.currency,
       },
     };
-  if (runtime1) {
-    const nonce = randomBytes(18).toString("base64url");
-    const cacheHeaders = storefrontCacheHeaders({ routeId: "checkout", personalized: true });
-    cacheHeaders.forEach((value, key) => track.set(key, value));
-    markStorefrontBundleRendered(track, nonce);
-    return json({ ...payload, ...runtime1, nonce }, { headers: track });
-  }
-  return json(payload, { headers: track });
+  const nonce = randomBytes(18).toString("base64url");
+  const cacheHeaders = storefrontCacheHeaders({ routeId: "checkout", personalized: true });
+  cacheHeaders.forEach((value, key) => track.set(key, value));
+  markStorefrontBundleRendered(track, nonce);
+  return json({ ...payload, ...runtime1, nonce }, { headers: track });
 }
 
 function str(form: FormData, key: string): string {
@@ -457,11 +425,8 @@ export async function action({ request }: ActionFunctionArgs) {
   // this is the only moment the session id and the order meet — it anchors the
   // Live View funnel's "purchased" count on paid orders instead of on the
   // buyer happening to revisit the confirmation page.
-  // Independent reads — resolved concurrently so the experiment lookup never adds latency
-  // in front of createCheckout, the most conversion-sensitive call in the app.
-  const [visitor, experimentAttribution, recovery] = await Promise.all([
+  const [visitor, recovery] = await Promise.all([
     ensureVisitorSession(request),
-    checkoutExperimentAttribution(shopId, request),
     recoveryAttribution(shopId, cartId),
   ]);
 
@@ -485,7 +450,7 @@ export async function action({ request }: ActionFunctionArgs) {
         },
         consent: { version: CHECKOUT_POLICY_VERSION, marketingOptIn, sourceIp, ua },
       },
-      { live_session_id: visitor.sessionId, ...experimentAttribution, ...recovery },
+      { live_session_id: visitor.sessionId, ...recovery },
       { shippingService },
     );
 
@@ -626,18 +591,17 @@ interface CheckoutPlatformData {
 
 export default function StorefrontCheckout() {
   const loaded = useLoaderData<typeof loader>();
-  if (isRuntime1RenderData(loaded)) {
-    const surface = renderStorefrontSurface({
-      bundle: loaded.bundle,
-      routeId: "checkout",
-      data: loaded.data,
-      nonce: loaded.nonce,
-      mode: "public",
-      checkoutContent: <CheckoutPlatform loaded={loaded} />,
-    });
-    return <>{surface}<StorefrontHydrator bundle={loaded.bundle} routeId="checkout" data={loaded.data} mode="public" /></>;
-  }
-  return <CheckoutPlatform loaded={loaded} />;
+  if (!isRuntime1RenderData(loaded)) throw new Error("Runtime-1 checkout data is required.");
+  const surface = renderStorefrontSurface({
+    bundle: loaded.bundle,
+    routeId: "checkout",
+    data: loaded.data,
+    nonce: loaded.nonce,
+    mode: "public",
+    visualLayerPlacement: loaded.visualLayerPlacement,
+    checkoutContent: <CheckoutPlatform loaded={loaded} />,
+  });
+  return <>{surface}<StorefrontHydrator bundle={loaded.bundle} routeId="checkout" data={loaded.data} mode="public" /></>;
 }
 
 function CheckoutPlatform({ loaded }: { loaded: CheckoutPlatformData }) {

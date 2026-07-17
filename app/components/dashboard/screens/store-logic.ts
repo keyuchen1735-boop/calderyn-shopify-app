@@ -1,41 +1,21 @@
-// Pure logic for the Store studio screen (kept out of Store.tsx so it is
-// testable without rendering — same pattern as dashboard-layout.ts).
 import type { Screen } from "../context";
-import { STUDIO_IMAGE_MEDIA_TYPES, type BuildStage, type StudioVibe, type StudioExperimentKind } from "~/lib/storebuilder/studio-types";
-export { parseBuildEvent, type BuildEvent, type BuildStage } from "~/lib/storebuilder/studio-types";
 
 export interface StoreReadiness {
-  /** Live (active) products the storefront actually renders. */
   productCount: number;
-  /** Products stuck in draft status (created but not finished). */
   draftProductCount: number;
   checkoutReady: boolean;
 }
 
 export interface MissingPiece {
   key: "products" | "checkout";
-  /** What's missing, shown in the pre-publish warning. */
   label: string;
-  /** Call-to-action copy for fixing it inline. */
   action: string;
-  /** Dashboard screen that fixes it. */
   screen: Screen;
 }
 
-/** Legacy section controls mutate runtime-0 page documents and must never be
- * shown beside an immutable runtime-1 bundle preview. */
-export function showLegacySectionsPanel(input: {
-  page: string;
-  building: boolean;
-  draftRuntime: 0 | 1;
-}): boolean {
-  return input.page === "home" && !input.building && input.draftRuntime === 0;
-}
-
+export type MerchantStage = "understanding" | "preparing_products" | "checking_preview";
 export type BuildPhase =
-  | { kind: "running"; stage?: BuildStage }
-  | { kind: "editing"; stage: "compiling" | "validating" | "proofing" | "installing" }
-  | { kind: "done"; status: "draft" | "no_products" | "failed" }
+  | { kind: "running"; stage?: MerchantStage }
   | { kind: "failed"; message: string };
 
 export interface BuildStepView {
@@ -45,121 +25,49 @@ export interface BuildStepView {
   sub: string;
 }
 
-const LEGACY_STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
-  { stage: "brand", title: "Reading your catalog", sub: "Naming the brand and picking its palette." },
-  { stage: "designing", title: "Designing your pages", sub: "Home, collection and product pages." },
-  { stage: "checking", title: "Verifying links & layout", sub: "Every link checked against your catalog." },
+const COMMAND_STAGE_ROWS: ReadonlyArray<{ stage: MerchantStage; title: string; sub: string }> = [
+  { stage: "understanding", title: "Understanding your request", sub: "Reading your store and the direction you described." },
+  { stage: "preparing_products", title: "Preparing your catalog", sub: "Connecting the full product collection to the new direction." },
+  { stage: "checking_preview", title: "Checking your preview", sub: "Opening every storefront page before saving the change." },
 ];
 
-const RUNTIME1_STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
-  { stage: "routing", title: "Matching your store", sub: "Using your prompt and current catalog to choose the right design path." },
-  { stage: "applying_recipe", title: "Applying the complete recipe", sub: "Preparing home, collection, product, search, cart and checkout." },
-  { stage: "compiling", title: "Compiling safe interactions", sub: "Binding the design to your live products and trusted commerce controls." },
-  { stage: "validating", title: "Validating every route", sub: "Checking the bundle against the storefront runtime contract." },
-  { stage: "proofing", title: "Proofing the storefront", sub: "Confirming the approved recipe and ecommerce surfaces before install." },
-];
-
-const CUSTOM_STAGE_ROWS: { stage: BuildStage; title: string; sub: string }[] = [
-  { stage: "routing", title: "Matching your store", sub: "Confirming that your brief calls for an original design path." },
-  { stage: "generating_original", title: "Creating an original direction", sub: "Exploring concepts, imagery and complete commerce routes from your brief." },
-];
-
-const EDIT_STAGE_ROWS = [
-  { stage: "compiling", title: "Preparing your change", sub: "Applying your request to the selected storefront region." },
-  { stage: "validating", title: "Validating the storefront", sub: "Checking the changed bundle against the runtime contract." },
-  { stage: "proofing", title: "Proofing the preview", sub: "Opening the changed storefront in a browser before install." },
-  { stage: "installing", title: "Installing the preview", sub: "Saving the verified version as your current draft." },
-] as const;
-
-/** Multi-row live progress for the streaming build: each row is a REAL stage the
- *  server reported. Without a stage (the non-streaming fallback) and for terminal
- *  phases, this collapses to the single legacy row. */
 export function buildSteps(phase: BuildPhase): BuildStepView[] {
-  if (phase.kind === "editing") {
-    const at = EDIT_STAGE_ROWS.findIndex((row) => row.stage === phase.stage);
-    return EDIT_STAGE_ROWS.map((row, index) => ({
-      dot: index < at ? "done" : index === at ? "run" : "wait",
-      title: row.title,
-      sub: row.sub,
-    }));
-  }
-  if (phase.kind !== "running" || !phase.stage) return [buildStep(phase)];
-  const rows = phase.stage === "generating_original"
-    ? CUSTOM_STAGE_ROWS
-    : RUNTIME1_STAGE_ROWS.some((row) => row.stage === phase.stage)
-      ? RUNTIME1_STAGE_ROWS
-    : LEGACY_STAGE_ROWS;
-  const at = rows.findIndex((row) => row.stage === phase.stage);
-  return rows.map((r, i) => ({
-    dot: i < at ? "done" : i === at ? "run" : "wait",
-    title: r.title,
-    sub: r.sub,
+  if (phase.kind === "failed") return [buildStep(phase)];
+  if (!phase.stage) return [buildStep(phase)];
+  const current = COMMAND_STAGE_ROWS.findIndex(({ stage }) => stage === phase.stage);
+  return COMMAND_STAGE_ROWS.map((row, index) => ({
+    dot: index < current ? "done" : index === current ? "run" : "wait",
+    title: row.title,
+    sub: row.sub,
   }));
 }
 
-/** Progress copy for the floating build step. A no-products run still drafted
- *  every page, so it reads as done — adding products is a suggestion, not a
- *  prerequisite. */
 export function buildStep(phase: BuildPhase): BuildStepView {
-  if (phase.kind === "editing") {
-    const row = EDIT_STAGE_ROWS.find((candidate) => candidate.stage === phase.stage)!;
-    return { dot: "run", title: row.title, sub: row.sub };
-  }
-  if (phase.kind === "running") {
-    return {
-      dot: "run",
-      title: "Generating with your brand kit",
-      sub: "This can take a few seconds.",
-    };
-  }
   if (phase.kind === "failed") {
-    return { dot: "wait", dotColor: "var(--red)", title: "Generation failed", sub: phase.message };
+    return { dot: "wait", dotColor: "var(--red)", title: "Change failed", sub: phase.message };
   }
-  // Soft-degraded: a draft exists, but the AI designer was unreachable so every
-  // page is a deterministic starter layout that ignored the prompt. Say so
-  // plainly instead of claiming the design is ready (rule 12).
-  if (phase.status === "failed") {
-    return {
-      dot: "wait",
-      dotColor: "var(--orange)",
-      title: "Showing a starter layout",
-      sub: "The AI designer was unavailable, so your prompt wasn't applied. Try Build again in a moment.",
-    };
-  }
-  return {
-    dot: "done",
-    title: "Draft ready: review and publish",
-    sub:
-      phase.status === "no_products"
-        ? "No products yet. Attach images below to add some, or publish as is."
-        : "Home, collection and product pages were drafted.",
-  };
+  const row = phase.stage && COMMAND_STAGE_ROWS.find(({ stage }) => stage === phase.stage);
+  return row
+    ? { dot: "run", title: row.title, sub: row.sub }
+    : { dot: "run", title: "Preparing your store", sub: "This can take a moment." };
 }
 
-/** What an about-to-publish store still lacks. Warn-only — publishing proceeds
- *  regardless when the merchant declines to fix these. (The hard go-live gates
- *  for cutover live in app/lib/cutover/go-live.server.ts; this panel is a
- *  softer, pre-publish nudge and deliberately does not block.) */
 export function missingPieces(state: StoreReadiness): MissingPiece[] {
   const pieces: MissingPiece[] = [];
   if (state.productCount === 0) {
-    pieces.push(
-      state.draftProductCount > 0
-        ? {
-            key: "products",
-            label: `${state.draftProductCount} draft product${
-              state.draftProductCount === 1 ? " is" : "s are"
-            } unfinished; the storefront will publish without them.`,
-            action: "Finish products",
-            screen: "catalog",
-          }
-        : {
-            key: "products",
-            label: "No products yet. The storefront will publish without a catalog.",
-            action: "Add products",
-            screen: "catalog",
-          },
-    );
+    pieces.push(state.draftProductCount > 0
+      ? {
+          key: "products",
+          label: `${state.draftProductCount} draft product${state.draftProductCount === 1 ? " is" : "s are"} unfinished; the storefront will publish without them.`,
+          action: "Finish products",
+          screen: "catalog",
+        }
+      : {
+          key: "products",
+          label: "No products yet. The storefront will publish without a catalog.",
+          action: "Add products",
+          screen: "catalog",
+        });
   }
   if (!state.checkoutReady) {
     pieces.push({
@@ -172,185 +80,19 @@ export function missingPieces(state: StoreReadiness): MissingPiece[] {
   return pieces;
 }
 
-// ---- chat intent parsing (the "Build with Calderyn" rail) ------------------
-//
-// The chat is client-orchestrated, not an LLM turn: a message maps to exactly
-// ONE of a small set of real API calls, and the reply is generated from that
-// real call's result. Deterministic edits (vibe word, accent color, an
-// explicit headline rewrite) win first because they're unambiguous and cheap;
-// "test/optimize" starts a real experiment; everything else becomes a real
-// generateStudioStore() brief — the chat never fakes a change it didn't make.
-
-export type ChatIntent =
-  | { kind: "vibe"; vibe: StudioVibe }
-  | { kind: "accent"; color: string }
-  | { kind: "hero"; headline: string }
-  | { kind: "experiment"; expKind: StudioExperimentKind }
-  | { kind: "generate"; brief: string };
-
-const VIBE_WORDS: Record<StudioVibe, RegExp> = {
-  bold: /\b(bold|dark|dramatic|loud)\b/i,
-  warm: /\b(warm|earthy|cozy|craft|rustic)\b/i,
-  minimal: /\b(minimal|clean|simple|quiet)\b/i,
-};
-const VIBE_PRIORITY: StudioVibe[] = ["bold", "warm", "minimal"];
-
-// Curated color words -> hex, matching the storefront accent palette. A raw
-// #rrggbb typed by the merchant wins over a word match.
-const ACCENT_WORDS: Record<string, string> = {
-  blue: "#2D7FF9",
-  green: "#1F8A5B",
-  orange: "#C2410C",
-  purple: "#7C5CFC",
-  teal: "#0F766E",
-  red: "#DB4B41",
-};
-
-// Requires an explicit rewrite instruction ("headline to ..."); bare
-// criticism ("the headline is boring") falls through to the other checks
-// instead of silently becoming the new headline.
-const HERO_QUOTE_RE = /headline (?:to say|to|says?|reading) ["']?([^"']{4,60})["']?$/i;
-const HEX_RE = /#[0-9a-f]{6}\b/i;
-const EXPERIMENT_RE = /\b(test|optimi[sz]e|experiment|a\/b)\b/i;
-const EXPERIMENT_VIBE_HINT_RE = /\b(vibe|look|style|design)\b/i;
-// "test my product page" / "optimize the buy box" -> the PDP-template test.
-const EXPERIMENT_PDP_HINT_RE = /\b(product page|pdp|buy box|add to cart)\b/i;
-// "test a redesign" / "try a new page" -> the AI-designed challenger. Deliberately narrow:
-// generic adjectives ("fresh look") must fall through to the free deterministic vibe test,
-// not burn a designer-quota slot on a full generation.
-const EXPERIMENT_AI_HINT_RE = /\b(redesign|rework|new (?:page|design|version)|different (?:page|design))\b/i;
-// An explicit build verb is a rebuild ask no matter what adjectives ride along.
-const BUILD_VERB_RE = /\b(rebuild|redesign|regenerate|redo|build|generate|create)\b/i;
-// Vibe/accent word-matches only apply to short imperative tweaks ("make it
-// bolder", "use blue"). Sentence-length briefs routinely contain the same
-// adjectives ("a bold alpine brand — dark, dramatic") and must reach the real
-// generator instead of silently flipping a setting.
-const MAX_TOGGLE_WORDS = 6;
-
-/**
- * Parse a chat (or markup-note) message into the one real action it maps to.
- * The build-verb and word-count gates exist to stop sentence-length briefs in
- * the composer from being hijacked into cheap toggles; the markup channel
- * never generates (its unmatched fallback is "noted"), so it keeps the
- * permissive matching — gating it would only turn working edits into no-ops.
- */
-export function parseChatIntent(text: string, channel: "composer" | "note" = "composer"): ChatIntent {
-  const t = text.trim();
-  const permissive = channel === "note";
-
-  const heroMatch = t.match(HERO_QUOTE_RE);
-  if (heroMatch) return { kind: "hero", headline: heroMatch[1].trim() };
-
-  // "test a redesign" is an experiment ask, not a rebuild — the experiment word wins
-  // when both appear, so the build verb only hijacks messages with no test intent.
-  if (!permissive && BUILD_VERB_RE.test(t) && !EXPERIMENT_RE.test(t)) return { kind: "generate", brief: t };
-
-  // A raw #rrggbb is machine-readable and unambiguous at any message length.
-  const hex = t.match(HEX_RE);
-  if (hex) return { kind: "accent", color: hex[0].toLowerCase() };
-
-  // Count word-bearing tokens only, so spaced punctuation ("dark — moodier")
-  // does not eat into the toggle budget.
-  const words = t.split(/\s+/).filter((w) => /\w/.test(w)).length;
-  if (permissive || words <= MAX_TOGGLE_WORDS) {
-    for (const vibe of VIBE_PRIORITY) {
-      if (VIBE_WORDS[vibe].test(t)) return { kind: "vibe", vibe };
-    }
-    for (const word of Object.keys(ACCENT_WORDS)) {
-      if (new RegExp(`\\b${word}\\b`, "i").test(t)) return { kind: "accent", color: ACCENT_WORDS[word] };
-    }
-  }
-
-  if (EXPERIMENT_RE.test(t)) {
-    const expKind = EXPERIMENT_PDP_HINT_RE.test(t)
-      ? "pdp_copy"
-      : EXPERIMENT_AI_HINT_RE.test(t)
-        ? "ai_page"
-        : EXPERIMENT_VIBE_HINT_RE.test(t)
-          ? "vibe"
-          : "headline";
-    return { kind: "experiment", expKind };
-  }
-
-  return { kind: "generate", brief: t };
+export function canSendComposer(input: { prompt: string; busy: boolean }): boolean {
+  return !input.busy && input.prompt.trim().length > 0;
 }
-
-/** The subset of intents that are cheap, deterministic edits with a real
- *  setter — used to gate the markup-note flow, where an unmatched scribble
- *  should read as "noted" rather than kick off a full rebuild or a test. */
-export function isDeterministicChatIntent(
-  intent: ChatIntent,
-): intent is Extract<ChatIntent, { kind: "vibe" | "accent" | "hero" }> {
-  return intent.kind === "vibe" || intent.kind === "accent" || intent.kind === "hero";
-}
-
-// ---- composer attachments (staging) -----------------------------------------
-//
-// Images picked/dropped in the chat composer are STAGED as chips, not converted
-// on the spot — they travel with the next message. The rules below mirror the
-// server's multipart caps (app/routes/dashboard.api.store.tsx) so an over-limit
-// pick is rejected in chat before it can fail at the API boundary.
-
-export const MAX_STAGED_ATTACHMENTS = 4;
-// Mirrors the route's MAX_IMAGE_BYTES: 3,932,160 raw bytes (~3.75 MiB) stays
-// under Anthropic's per-image ceiling once base64-inflated.
-export const MAX_ATTACHMENT_BYTES = 3_932_160;
-
-export interface StagePlan {
-  /** Files accepted for staging, in order (image, within size, within the cap). */
-  accepted: File[];
-  /** Non-image files, rejected with the "images only" message. */
-  skipped: File[];
-  /** Images over the byte cap, rejected by name. */
-  oversize: File[];
-  /** How many within-size images were dropped because the 4-image cap was hit. */
-  overflow: number;
-}
-
-/** Decide which picked/dropped files can be staged, given how many are already
- *  staged. Pure so the non-image / oversize / over-cap rules stay unit-testable
- *  apart from the object-URL + React state work the screen layers on top. */
-export function planStagedAttachments(files: File[], alreadyStaged: number): StagePlan {
-  // Exact server allowlist (studio-types.ts), not image/* — a drag-dropped HEIC or
-  // SVG would otherwise chip up here and dead-end in a 422 at send.
-  const allowed: ReadonlySet<string> = new Set<string>(STUDIO_IMAGE_MEDIA_TYPES);
-  const skipped = files.filter((f) => !allowed.has(f.type));
-  const images = files.filter((f) => allowed.has(f.type));
-  const oversize = images.filter((f) => f.size > MAX_ATTACHMENT_BYTES);
-  const withinSize = images.filter((f) => f.size <= MAX_ATTACHMENT_BYTES);
-  const slots = Math.max(0, MAX_STAGED_ATTACHMENTS - alreadyStaged);
-  const accepted = withinSize.slice(0, slots);
-  return { accepted, skipped, oversize, overflow: withinSize.length - accepted.length };
-}
-
-/** Whether the composer's send button (and Enter) fires: some text OR at least
- *  one staged attachment, and not mid-build (busy) or mid-add (attaching). */
-export function canSendComposer(input: {
-  prompt: string;
-  attachmentCount: number;
-  busy: boolean;
-  attaching: boolean;
-}): boolean {
-  if (input.busy || input.attaching) return false;
-  return input.prompt.trim().length > 0 || input.attachmentCount > 0;
-}
-
-// ---- welcome overlay (first run) --------------------------------------------
 
 export type WelcomeBranch = { kind: "importing" } | { kind: "empty" } | { kind: "ready" };
 
 export interface WelcomeSignals {
-  /** DashboardCtx.shopDomain — null for owned (non-Shopify) stores. */
   shopDomain: string | null;
   productCount: number;
   draftProductCount: number;
   importInProgress: boolean;
 }
 
-/** Which first-run branch the welcome overlay shows. An in-progress Shopify
- *  import always wins (the merchant is mid-connect, nothing to build yet);
- *  a Shopify-less shop with no catalog at all needs a product before a build
- *  is worth doing; everyone else can jump straight to building. */
 export function decideWelcomeBranch(signals: WelcomeSignals): WelcomeBranch {
   if (signals.importInProgress) return { kind: "importing" };
   if (signals.shopDomain === null && signals.productCount === 0 && signals.draftProductCount === 0) {
@@ -359,10 +101,6 @@ export function decideWelcomeBranch(signals: WelcomeSignals): WelcomeBranch {
   return { kind: "ready" };
 }
 
-/** The welcome overlay's subline copy: importing wins over everything (nothing
- *  to build yet); a live build phase reports its own progress; otherwise the
- *  branch decides between the empty-catalog prompt and the ready state, which
- *  itself names the product count when there is one. */
 export function welcomeSubline(params: {
   branch: WelcomeBranch;
   buildPhase: BuildPhase | null;
@@ -372,22 +110,16 @@ export function welcomeSubline(params: {
   if (branch.kind === "importing") {
     return "Bringing your Shopify store over. I'll start building the moment it lands.";
   }
-  if (buildPhase) {
-    return buildPhase.kind === "running" ? "Building your store. This usually takes about a minute." : buildStep(buildPhase).sub;
-  }
+  if (buildPhase) return buildStep(buildPhase).sub;
   if (branch.kind === "empty") {
     return "I'm Calderyn. Your store is empty so far. Let's get you something to sell, then I'll build everything around it.";
   }
   if (productCount > 0) {
-    return `I've read the ${productCount} product${productCount === 1 ? "" : "s"} you have so far. Give me a minute and I'll build your store around ${productCount === 1 ? "it" : "them"}.`;
+    return `I've read the ${productCount} product${productCount === 1 ? "" : "s"} you have so far. Tell me how the store should feel and I'll build around ${productCount === 1 ? "it" : "them"}.`;
   }
   return "Let's build your store. You can add products anytime; I'll design around whatever you have.";
 }
 
-/** Whether the first-run welcome overlay should show at all. Only meaningful
- *  after a FRESH fetch — the session-cache seed used for the instant first
- *  paint may be stale (or belong to a different, already-built session), so
- *  callers must not evaluate this against the cache seed. */
 export function shouldShowWelcome(state: {
   hasDraft: boolean;
   hasPublished: boolean;
@@ -396,41 +128,29 @@ export function shouldShowWelcome(state: {
   return !state.hasDraft && !state.hasPublished && !state.generation;
 }
 
-/** The studio shows the empty "prompt anything" canvas only until the merchant's
- *  first build — no draft, no published store, no generation on record. After one
- *  prompt the studio hands off to the full store interface and all tools, even
- *  before there are products: a hollow store still previews (and does so
- *  stunningly, via the fallback composition). */
 export function showPromptCanvas(state: { hasDraft: boolean; hasPublished: boolean; generation: unknown }): boolean {
   return !state.hasDraft && !state.hasPublished && !state.generation;
 }
 
 export interface ParsedProductLine {
   title: string;
-  /** Null when no price was typed — never fabricate a number the merchant
-   *  didn't give. */
   priceCents: number | null;
 }
 
-/** "Hand-poured cedar candle, $18" -> { title: "Hand-poured Cedar Candle",
- *  priceCents: 1800 }. A trailing dollar amount becomes the price; whatever's
- *  left becomes a short title-cased name (first 6 words). */
 export function parseProductLine(text: string): ParsedProductLine {
   const trimmed = text.trim();
   const priceMatch = trimmed.match(/\$?\s?(\d{1,4}(?:\.\d{1,2})?)\s*$/);
   const priceCents = priceMatch ? Math.round(parseFloat(priceMatch[1]) * 100) : null;
-  const withoutPrice = priceMatch
-    ? trimmed.slice(0, priceMatch.index).replace(/[,$\s]+$/, "")
-    : trimmed;
-  const words = withoutPrice.split(/\s+/).filter(Boolean).slice(0, 6);
-  const title = words
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+  const withoutPrice = priceMatch ? trimmed.slice(0, priceMatch.index).replace(/[,$\s]+$/, "") : trimmed;
+  const title = withoutPrice
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 6)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ")
     .replace(/[.,!?]+$/, "");
   return { title: title || "First product", priceCents };
 }
-
-// ---- Shopify import progress (folded into the welcome overlay) -------------
 
 export interface ImportStepRow {
   title: string;
@@ -443,18 +163,12 @@ interface ImportRunLike {
   counts: { products: number; variants: number; collections: number; balances: number } | null;
 }
 
-/** Live import-progress rows for the welcome overlay — grounded in the real
- *  run state and counts, never a synthetic timer standing in for real numbers. */
 export function importStepRows(run: ImportRunLike | null): ImportStepRow[] {
   const pulling = run?.state === "pulling";
   const promoting = run?.state === "promoting";
   const counts = run?.counts ?? null;
   return [
-    {
-      title: "Connecting to your Shopify store",
-      sub: "secure sign-in",
-      state: run ? "done" : "run",
-    },
+    { title: "Connecting to your Shopify store", sub: "secure sign-in", state: run ? "done" : "run" },
     {
       title: "Importing products, collections and stock",
       sub: counts ? `${counts.products} products so far` : "reading your catalog",

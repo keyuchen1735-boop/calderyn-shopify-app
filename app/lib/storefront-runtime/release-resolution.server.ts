@@ -5,6 +5,7 @@ import { isUuid } from "~/lib/ids";
 import { getStorefrontRecipe, STOREFRONT_RECIPE_BY_ID } from "~/lib/storefront-recipes";
 import { isolateCompiledShellCss } from "~/lib/storefront-compiler/css";
 import { isStorefrontBundleReadEnabled } from "./csp.server";
+import { resolveStorefrontVisualPlacement, type StorefrontVisualPlacement } from "./visual-layer.server";
 import {
   resolvePublicData,
   routeIdForPublicContext,
@@ -204,12 +205,8 @@ export const storefrontReleaseReader: StorefrontReleaseReader = {
 };
 
 function supported(version: StorefrontVersionRecord): boolean {
-  if (version.status !== "validated" || version.schemaVersion !== 1) return false;
-  if (version.runtimeVersion === 0) {
-    return version.sourceKind === "legacy" && version.validationProfileVersion === 0 &&
-      version.artifact.sourceKind === "legacy";
-  }
-  return version.runtimeVersion === 1 && version.validationProfileVersion === 1 &&
+  return version.status === "validated" && version.schemaVersion === 1 &&
+    version.runtimeVersion === 1 && version.validationProfileVersion === 1 &&
     (version.sourceKind === "recipe" || version.sourceKind === "custom") &&
     version.artifact.sourceKind === version.sourceKind;
 }
@@ -234,7 +231,7 @@ function firstCompatible(
   bundleReadEnabled: boolean,
 ): StorefrontVersionRecord | null {
   return retainedPublishedVersions(history).find((version) =>
-    supported(version) && (bundleReadEnabled || version.runtimeVersion === 0)) ?? null;
+    bundleReadEnabled && supported(version)) ?? null;
 }
 
 export class StorefrontReleaseResolutionError extends Error {
@@ -248,17 +245,11 @@ export class StorefrontReleaseResolutionError extends Error {
   }
 }
 
-export type ResolvedStorefrontRelease =
-  | { kind: "runtime0-live" }
-  | { kind: "runtime0-snapshot"; version: StorefrontVersionRecord; fallbackFromVersionId?: string }
-  | { kind: "runtime1"; version: StorefrontVersionRecord; fallbackFromVersionId?: string };
-
-function resolvedVersion(version: StorefrontVersionRecord, fallbackFromVersionId?: string): ResolvedStorefrontRelease {
-  const fallback = fallbackFromVersionId ? { fallbackFromVersionId } : {};
-  return version.runtimeVersion === 0
-    ? { kind: "runtime0-snapshot", version, ...fallback }
-    : { kind: "runtime1", version, ...fallback };
-}
+export type ResolvedStorefrontRelease = {
+  kind: "runtime1";
+  version: StorefrontVersionRecord;
+  fallbackFromVersionId?: string;
+};
 
 export async function resolveStorefrontRelease(input: {
   shopId: string;
@@ -288,9 +279,8 @@ export async function resolveStorefrontRelease(input: {
     return pending;
   }
   const published = await reader.readPublished(input.shopId);
-  if (!published) return { kind: "runtime0-live" };
-  if (supported(published) && (bundleReadEnabled || published.runtimeVersion === 0)) {
-    return resolvedVersion(published);
+  if (published && bundleReadEnabled && supported(published)) {
+    return { kind: "runtime1", version: published };
   }
   const fallback = firstCompatible(await reader.readReleaseHistory(input.shopId), bundleReadEnabled);
   if (!fallback) {
@@ -300,7 +290,11 @@ export async function resolveStorefrontRelease(input: {
       503,
     );
   }
-  return resolvedVersion(fallback, published.id);
+  return {
+    kind: "runtime1",
+    version: fallback,
+    ...(published ? { fallbackFromVersionId: published.id } : {}),
+  };
 }
 
 const requestReleaseMemo = new WeakMap<
@@ -315,6 +309,7 @@ export interface Runtime1RouteData {
   routeId: StorefrontRouteId;
   bundle: StorefrontBundleV1;
   data: PublicPresentationData;
+  visualLayerPlacement: StorefrontVisualPlacement | null;
 }
 
 export type StorefrontAssetUrlLoader = (input: {
@@ -372,6 +367,9 @@ export async function resolveRuntime1VersionRoute(input: {
       shopId: input.shopId,
       route: input.route,
       requiredData: routeRequirements(bundle, input.route),
+      ...(input.route.kind === "home" && bundle.featuredProductIds
+        ? { featuredProductIds: bundle.featuredProductIds }
+        : {}),
     }, input.dataDependencies),
     bundle.source.kind === "custom" && derivedStaticAssets.ownedManifest.entries.length > 0
       ? (input.assetUrlLoader ?? resolveVerifiedStorefrontAssetUrls)({
@@ -393,6 +391,7 @@ export async function resolveRuntime1VersionRoute(input: {
     routeId,
     bundle: resolvedBundle,
     data: Object.keys(resolvedAssetUrls).length > 0 ? { ...data, storefrontAssetUrls: resolvedAssetUrls } : data,
+    visualLayerPlacement: resolveStorefrontVisualPlacement(resolvedBundle, routeId),
   };
 }
 

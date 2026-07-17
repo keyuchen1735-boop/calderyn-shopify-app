@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assembleStorefrontContext } from "./context.server";
+import { assembleStorefrontContext, assembleStorefrontContextWithReferences } from "./context.server";
 
 describe("assembleStorefrontContext", () => {
   it("builds a deterministic bounded public snapshot while preserving collection coverage", async () => {
@@ -129,5 +129,41 @@ describe("assembleStorefrontContext", () => {
     expect(assembly.context.products[0].id).toBe("product-001");
     expect(assembly.references.products["product-001"]).toEqual({ id: rawId, handle: "arc-lamp" });
     expect(JSON.stringify(assembly.context)).not.toContain(rawId);
+  });
+
+  it("prioritizes required owned products outside the ordinary sample", async () => {
+    const requiredId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const ordinary = Array.from({ length: 8 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      handle: `ordinary-${index}`,
+      title: `Ordinary ${index}`,
+      productType: null,
+      tags: [],
+      optionNames: [],
+      priceMin: 100,
+      priceMax: 100,
+      currency: "USD",
+      availability: "available" as const,
+      collectionIds: [],
+      images: [],
+    }));
+    const required = { ...ordinary[0]!, id: requiredId, handle: "required", title: "Required" };
+    const assembly = await assembleStorefrontContextWithReferences({
+      shopId: "11111111-1111-4111-8111-111111111111",
+      prompt: "Update the headline",
+      requiredProductIds: [requiredId],
+    }, {
+      getStore: async () => ({ name: "Store", logoAssetKey: null, publicBrandAssetKeys: [] }),
+      listCollections: async () => [],
+      listProducts: async (_shopId, limit, requiredIds = []) => [
+        ...ordinary.slice(0, limit),
+        ...(requiredIds.includes(requiredId) ? [required] : []),
+      ],
+      listReusableAssets: async () => [],
+    }, { maxProducts: 3 });
+
+    expect(assembly.context.products).toHaveLength(3);
+    expect(assembly.references.products["product-001"]).toEqual({ id: requiredId, handle: "required" });
+    expect(assembly.context.products.map(({ title }) => title)).toEqual(["Required", "Ordinary 0", "Ordinary 1"]);
   });
 });

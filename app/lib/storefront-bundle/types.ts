@@ -15,12 +15,13 @@ export type StoreTemplateId =
   | "broadcast-patch-bay"
   | "atelier-nine";
 
-export type StoreDesignMode = "auto" | "recipe" | "custom";
+export type VisualLayerSpec =
+  | { kind: "none" }
+  | { kind: "fragment_shader"; source: string; colors: [string, string, string] };
 
 export interface StoreDesignRequest {
   prompt: string;
-  mode: StoreDesignMode;
-  templateId?: StoreTemplateId;
+  excludedTemplateIds?: StoreTemplateId[];
 }
 
 export interface CatalogRoutingEvidence {
@@ -56,15 +57,15 @@ export type StoreDesignResolution =
       kind: "recipe";
       templateId: StoreTemplateId;
       templateVersion: number;
-      selectionKind: "manual_override" | "explicit_name" | "niche_match";
+      selectionKind: "explicit_name" | "niche_match";
       score: number | null;
       runnerUpScore: number | null;
       margin: number | null;
       confidenceBand: "high" | "medium" | null;
     })
   | (ResolutionMetadata & {
-      kind: "custom";
-      reason: "explicit_custom" | "low_confidence" | "ambiguous_recipe_names" | "manual_override";
+      kind: "no_match";
+      reason: "all_designs_excluded";
     });
 
 export type StorefrontRouteId = "home" | "collection" | "product" | "search" | "cart" | "checkout";
@@ -177,6 +178,7 @@ export type RecipeCardTopology = `${RecipeCardIdentity}.${RouteCardPattern}.${St
 export type ProtectedStorefrontSlot =
   | "variantPicker"
   | "addToCart"
+  | "productDescription"
   | "cartLineControls"
   | "cartSummary"
   | "cartDrawer"
@@ -202,6 +204,13 @@ export interface StoreTemplateRouteBlueprint {
   forbiddenGenericStructures: readonly string[];
 }
 
+export interface TemplateVisualLayer {
+  slotId: `visual:${string}`;
+  fallbackAssetKey: string;
+  placement: "hero-background" | "section-background";
+  pointerEvents: "none";
+}
+
 export interface StoreTemplateVersionRecord {
   templateVersion: number;
   baselineArtifact: string;
@@ -209,6 +218,8 @@ export interface StoreTemplateVersionRecord {
     desktop: string;
     mobile: string;
   }>;
+  visualLayer: TemplateVisualLayer;
+  productPlaceholderAssetKey: string;
   routeBlueprints: Readonly<Record<StorefrontRecipeBlueprintId, StoreTemplateRouteBlueprint>>;
 }
 
@@ -273,6 +284,7 @@ export const PUBLIC_BINDING_PATHS = [
   "collection.description",
   "collection.image",
   "collection.productCount",
+  "collection.nextCursor",
   "product.id",
   "product.handle",
   "product.title",
@@ -484,6 +496,10 @@ export interface StorefrontBundleV1 {
     motionStyle: string;
     globalCss: string;
   };
+  /** Optional home curation; absent keeps the catalog's default featured order. */
+  featuredProductIds?: string[];
+  /** Optional content for the registry-owned visual host; absent renders its fallback. */
+  visualLayer?: VisualLayerSpec;
   shell: RouteArtifact;
   routes: {
     home: RouteArtifact;

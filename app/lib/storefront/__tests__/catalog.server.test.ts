@@ -1,19 +1,41 @@
 // app/lib/storefront/__tests__/catalog.server.test.ts
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import type { StorefrontCatalog } from "../catalog";
 import { getCatalog } from "../catalog.server";
 import { fixtureCatalog } from "../catalog.stub.server";
 
-const { applyAssetOverrides } = vi.hoisted(() => ({
-  applyAssetOverrides: vi.fn(async (_shopId: string, products: Array<Record<string, unknown>>) =>
-    products.map((product) => ({ ...product, images: [{ url: "/generated.webp", alt: "Generated" }] }))),
-}));
+const { assetRows, fromMock, eqMock, inMock, orderMock, rangeMock } = vi.hoisted(() => {
+  const assetRows = { current: [] as Array<Record<string, unknown>> };
+  const eqMock = vi.fn();
+  const inMock = vi.fn();
+  const orderMock = vi.fn();
+  const rangeMock = vi.fn(async () => ({ data: assetRows.current, error: null }));
+  const query = { eq: eqMock, in: inMock, order: orderMock, range: rangeMock };
+  eqMock.mockReturnValue(query);
+  inMock.mockReturnValue(query);
+  orderMock.mockReturnValue(query);
+  return {
+    assetRows,
+    eqMock,
+    inMock,
+    orderMock,
+    rangeMock,
+    fromMock: vi.fn(() => ({ select: () => query })),
+  };
+});
 
-vi.mock("~/lib/storegen/imagery/asset.server", () => ({ applyAssetOverrides }));
+vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
 
 vi.mock("../catalog.owned.server", () => ({
   ownedCatalog: {
-    listProducts: vi.fn(async (shopId: string) => [{ handle: `owned-for-${shopId}` }]),
+    searchProductPage: vi.fn(async (shopId: string) => ({
+      items: [{ id: "owned", handle: `owned-for-${shopId}`, title: "Owned", images: [] }],
+      facets: { categories: [], tags: [], collections: [] },
+      total: 1,
+      hasNextPage: false,
+    })),
+    listProductPage: vi.fn(async (shopId: string) => ({ items: [{ id: "owned", handle: `owned-for-${shopId}`, title: "Owned", images: [] }], nextCursor: null })),
+    listProducts: vi.fn(async (shopId: string) => [{ id: "owned", handle: `owned-for-${shopId}`, title: "Owned", images: [] }]),
     getProduct: vi.fn(async () => null),
     listCollections: vi.fn(async () => [{ handle: "owned", title: "Owned" }]),
     getCollection: vi.fn(async (_shopId: string, handle: string) => ({
@@ -27,6 +49,15 @@ vi.mock("../catalog.owned.server", () => ({
 const SHOP = "demo-shop";
 const UUID_SHOP = "11111111-1111-1111-1111-111111111111";
 
+beforeEach(() => {
+  assetRows.current = [];
+  fromMock.mockClear();
+  eqMock.mockClear();
+  inMock.mockClear();
+  orderMock.mockClear();
+  rangeMock.mockClear();
+});
+
 // A consumer shaped exactly like the home loader: it only ever talks to the
 // StorefrontCatalog contract, so any conforming impl must drive it identically.
 async function loadHome(cat: StorefrontCatalog, shopId: string) {
@@ -37,15 +68,36 @@ async function loadHome(cat: StorefrontCatalog, shopId: string) {
 }
 
 describe("getCatalog", () => {
+  it("routes public product pages through the tenant seam", async () => {
+    await getCatalog().listProductPage(UUID_SHOP, { limit: 24 });
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    expect(ownedCatalog.listProductPage).toHaveBeenCalledWith(UUID_SHOP, { limit: 24 });
+  });
+
   it("routes a real (uuid) tenant to the owned catalog", async () => {
     const products = await getCatalog().listProducts(UUID_SHOP);
     expect(products[0].handle).toBe(`owned-for-${UUID_SHOP}`);
   });
 
-  it("does not expose generated draft imagery through the public catalog before publish", async () => {
-    applyAssetOverrides.mockClear();
-    await getCatalog().listProducts(UUID_SHOP);
-    expect(applyAssetOverrides).not.toHaveBeenCalled();
+  it("serves ready owned imagery through the normal public catalog", async () => {
+    assetRows.current = [{
+      product_id: "owned",
+      url: "https://owned.example/generated.webp",
+      status: "ready",
+      created_at: "2026-07-16T12:00:00.000Z",
+    }];
+    const products = await getCatalog().listProducts(UUID_SHOP);
+
+    expect(fromMock).toHaveBeenCalledWith("store_asset");
+    expect(eqMock.mock.calls).toEqual([
+      ["shop_id", UUID_SHOP],
+      ["status", "ready"],
+    ]);
+    expect(inMock).toHaveBeenCalledWith("product_id", ["owned"]);
+    expect(products[0].images).toEqual([{
+      url: "https://owned.example/generated.webp",
+      alt: "Owned",
+    }]);
   });
 
   it("routes bounded collection lookups through the same tenant seam", async () => {
@@ -75,6 +127,14 @@ describe("getCatalog", () => {
       collections: ["books"],
     };
     const secondFake: StorefrontCatalog = {
+      async searchProductPage() {
+        return {
+          items: [novel], facets: { categories: [], tags: [], collections: [] }, total: 1, hasNextPage: false,
+        };
+      },
+      async listProductPage() {
+        return { items: [novel], nextCursor: null };
+      },
       async listCollections() {
         return [{ handle: "books", title: "Books" }];
       },

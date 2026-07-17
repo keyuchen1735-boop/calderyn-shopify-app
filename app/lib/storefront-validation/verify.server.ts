@@ -1,10 +1,16 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve, relative } from "node:path";
 import { STOREFRONT_RECIPES } from "../storefront-recipes";
-import { compileBundle, type StorefrontBundleSourceV1 } from "../storefront-compiler/compile";
+import type { StoreIntent } from "../storefront-command/types";
 import { createBrowserProofReport, mergeBrowserProofReports } from "./report";
-import { proveStorefrontBundle } from "./browser.server";
+import {
+  createStorefrontProofCatalog,
+  proveStorefrontBundle,
+  type ProveStorefrontBundleInput,
+} from "./browser.server";
+import { createStoreCommandHarness } from "./command-harness.server";
 import { storefrontProofContext } from "./fixtures";
+import { createStorefrontFullStory } from "./full-story.server";
 
 export interface VerifyStorefrontBundlesOptions {
   updateBaselines: boolean;
@@ -12,78 +18,79 @@ export interface VerifyStorefrontBundlesOptions {
   onProgress?: (message: string) => void;
 }
 
-function editedFixtureSource(): StorefrontBundleSourceV1 {
-  const recipe = STOREFRONT_RECIPES[0];
-  const source: StorefrontBundleSourceV1 = {
-    source: {
-      kind: "custom",
-      generationId: "proof-edit-fixture",
-      promptHash: "sha256:proof-edit-fixture",
-      derivedFromVersionId: "proof-base-version",
-      derivedFromTemplateId: recipe.config.templateId,
-      derivedFromTemplateVersion: recipe.config.templateVersion,
-    },
-    concept: {
-      ...recipe.config.concept,
-      name: `${recipe.config.concept.name} — Merchant Edit`,
-      rationale: "A representative prompt edit changes a safe visual token while preserving the complete route and commerce contract.",
-    },
-    designSystem: {
-      ...recipe.config.designSystem,
-      tokens: { ...recipe.config.designSystem.tokens, signal: "#6f1bc4" },
-    },
-    shell: recipe.config.surfaces.shell.source,
-    routes: {
-      home: recipe.config.surfaces.home.source,
-      collection: recipe.config.surfaces.collection.source,
-      product: recipe.config.surfaces.product.source,
-      search: recipe.config.surfaces.search.source,
-      cart: recipe.config.surfaces.cart.source,
-      checkout: recipe.config.surfaces.checkout.source,
-    },
-    assets: recipe.config.assets,
-  };
-  return source;
+type VerificationEntry = Pick<
+  ProveStorefrontBundleInput,
+  "bundle" | "catalog" | "context" | "routes" | "catalogPagination" | "viewports" | "expectations"
+> & {
+  id: string;
+  baseline: boolean;
+  assetTemplateId: string | undefined;
+};
+
+type VerificationCandidate = Omit<VerificationEntry, "bundle"> & {
+  bundle: VerificationEntry["bundle"] | (() => Promise<VerificationEntry["bundle"]>);
+};
+
+const LONG_COPY_HERO_TEXT = "W".repeat(500);
+export const INVALID_SHADER_PROOF_SOURCE = "void main() {";
+
+function followUpHeroText(recipe: (typeof STOREFRONT_RECIPES)[number]): string {
+  return `Fidelity proof ${recipe.config.templateId}`;
 }
 
-function customFixtureSource(): StorefrontBundleSourceV1 {
-  const recipe = (templateId: string) => STOREFRONT_RECIPES.find((entry) => entry.config.templateId === templateId)!;
-  const home = recipe("diagnostic-deck");
-  const search = recipe("daily-protocol").config.surfaces.search.source;
-  return {
-    source: { kind: "custom", generationId: "proof-custom-fixture", promptHash: "sha256:proof-custom-fixture" },
-    concept: {
-      name: "Original Orbit Store",
-      rationale: "A cross-template AI remix used to prove that independently authored surfaces remain coherent and contained when combined.",
-      noveltySignature: ["mixed surface grammar", "edge index", "direct manipulation"],
-    },
-    designSystem: {
-      ...home.config.designSystem,
-      tokens: {
-        ...recipe("custom-bench").config.designSystem.tokens,
-        ...recipe("commons-index").config.designSystem.tokens,
-        ...recipe("soft-chemistry").config.designSystem.tokens,
-        ...recipe("daily-protocol").config.designSystem.tokens,
-        ...recipe("room-modes").config.designSystem.tokens,
-        ...recipe("rep-rest").config.designSystem.tokens,
-        ...home.config.designSystem.tokens,
-        signal: recipe("custom-bench").config.designSystem.tokens.signal,
+function reorderedFeaturedProductIds(): string[] {
+  return storefrontProofContext().products.slice(0, 12).map(({ id }) => id).reverse();
+}
+
+function homeExpectations(
+  heroText: string,
+  visualLayer: "canvas" | "fallback",
+): NonNullable<ProveStorefrontBundleInput["expectations"]> {
+  return { home: { heroText, featuredProductIds: reorderedFeaturedProductIds(), visualLayer } };
+}
+
+async function followUpBundle(
+  recipe: (typeof STOREFRONT_RECIPES)[number],
+  heroText: string,
+  shaderSource: string,
+) {
+  const intents = new Map<string, StoreIntent>([
+    ["Update the title", { kind: "update_text", slot: "heroTitle", value: heroText }],
+    ["Feature the catalog", { kind: "update_merchandising", productIds: reorderedFeaturedProductIds() }],
+    ["Add the visual effect", {
+      kind: "update_visual_layer",
+      visualLayer: {
+        kind: "fragment_shader",
+        source: shaderSource,
+        colors: ["#102030", "#496070", "#d8c6a0"],
       },
-    },
-    shell: recipe("custom-bench").config.surfaces.shell.source,
-    routes: {
-      home: home.config.surfaces.home.source,
-      collection: recipe("commons-index").config.surfaces.collection.source,
-      product: recipe("soft-chemistry").config.surfaces.product.source,
-      search: {
-        ...search,
-        css: `${search.css} .protocol-query input, .protocol-query button { background:#173f8f; border-color:#101820; color:#fff }`,
-      },
-      cart: recipe("room-modes").config.surfaces.cart.source,
-      checkout: recipe("rep-rest").config.surfaces.checkout.source,
-    },
-    assets: home.config.assets,
-  };
+    }],
+  ]);
+  const harness = createStoreCommandHarness({
+    shopId: "11111111-1111-4111-8111-111111111111",
+    context: storefrontProofContext(),
+    initialBundle: recipe.bundle,
+    classify: async ({ prompt }) => intents.get(prompt)
+      ?? { kind: "unsupported", message: "Unsupported proof command." },
+  });
+  await harness.prompt("Update the title");
+  await harness.prompt("Feature the catalog");
+  await harness.prompt("Add the visual effect");
+  const draft = harness.state().draft;
+  if (!draft) throw new Error("follow-up proof did not produce a draft");
+  return draft.bundle;
+}
+
+export function mergeRefreshedManifestEntries<T extends { id: string }>(
+  committed: readonly T[],
+  refreshed: readonly T[],
+): T[] {
+  const refreshedById = new Map(refreshed.map((entry) => [entry.id, entry]));
+  const committedIds = new Set(committed.map((entry) => entry.id));
+  return [
+    ...committed.map((entry) => refreshedById.get(entry.id) ?? entry),
+    ...refreshed.filter((entry) => !committedIds.has(entry.id)),
+  ];
 }
 
 export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOptions) {
@@ -94,19 +101,98 @@ export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOp
     sourceKind: "recipe" | "custom";
     screenshots: Awaited<ReturnType<typeof proveStorefrontBundle>>["screenshotManifest"];
   }> = [];
-  const bundles = [
-    ...STOREFRONT_RECIPES.map((recipe) => ({ id: recipe.config.templateId, bundle: recipe.bundle, baseline: true, assetTemplateId: undefined, context: storefrontProofContext(27) })),
-    { id: "representative-custom", bundle: compileBundle(customFixtureSource()).bundle, baseline: false, assetTemplateId: "diagnostic-deck", context: storefrontProofContext() },
-    { id: "representative-edit", bundle: compileBundle(editedFixtureSource()).bundle, baseline: false, assetTemplateId: STOREFRONT_RECIPES[0].config.templateId, context: storefrontProofContext(27) },
-    {
-      id: "representative-empty",
-      bundle: STOREFRONT_RECIPES[0].bundle,
+  const fullStory = !options.filter || options.filter === "full-story"
+    ? await createStorefrontFullStory()
+    : null;
+  const shaderSource = "void main(){gl_FragColor=vec4(mix(u_color1,u_color2,0.5),1.0);}";
+  const candidates: VerificationCandidate[] = [
+    ...STOREFRONT_RECIPES.map((recipe) => ({
+      id: recipe.config.templateId,
+      bundle: recipe.bundle,
+      baseline: true,
+      assetTemplateId: undefined,
+      context: storefrontProofContext(27),
+      catalogPagination: true,
+    })),
+    ...STOREFRONT_RECIPES.map((recipe) => ({
+      id: `follow-up-${recipe.config.templateId}`,
+      bundle: () => followUpBundle(recipe, followUpHeroText(recipe), shaderSource),
+      baseline: false,
+      assetTemplateId: undefined,
+      context: storefrontProofContext(),
+      routes: ["home"] as const,
+      expectations: homeExpectations(followUpHeroText(recipe), "canvas"),
+    })),
+    ...STOREFRONT_RECIPES.map((recipe) => ({
+      id: `long-copy-${recipe.config.templateId}`,
+      bundle: () => followUpBundle(recipe, LONG_COPY_HERO_TEXT, shaderSource),
+      baseline: false,
+      assetTemplateId: undefined,
+      context: storefrontProofContext(),
+      routes: ["home"] as const,
+      expectations: homeExpectations(LONG_COPY_HERO_TEXT, "canvas"),
+    })),
+    ...STOREFRONT_RECIPES.map((recipe) => ({
+      id: `invalid-shader-${recipe.config.templateId}`,
+      bundle: () => followUpBundle(recipe, followUpHeroText(recipe), INVALID_SHADER_PROOF_SOURCE),
+      baseline: false,
+      assetTemplateId: undefined,
+      context: storefrontProofContext(),
+      routes: ["home"] as const,
+      expectations: homeExpectations(followUpHeroText(recipe), "fallback"),
+    })),
+    ...STOREFRONT_RECIPES.map((recipe) => ({
+      id: `empty-${recipe.config.templateId}`,
+      bundle: recipe.bundle,
       baseline: false,
       assetTemplateId: undefined,
       context: storefrontProofContext(0),
       routes: ["home", "collection", "search", "cart", "checkout"] as const,
+    })),
+    ...(fullStory ? [
+      {
+        id: "full-story-missing-images",
+        bundle: fullStory.initial.bundle,
+        baseline: false,
+        assetTemplateId: undefined,
+        context: fullStory.context,
+        catalog: createStorefrontProofCatalog(fullStory.context),
+        catalogPagination: true,
+        routes: ["collection", "search"] as const,
+        viewports: ["mobile", "desktop"] as const,
+      },
+      {
+        id: "full-story",
+        bundle: fullStory.published.bundle,
+        baseline: false,
+        assetTemplateId: undefined,
+        context: fullStory.context,
+        catalog: fullStory.catalog,
+        catalogPagination: true,
+        expectations: fullStory.expectations,
+      },
+    ] : []),
+    {
+      id: "full-story-invalid-shader",
+      bundle: () => followUpBundle(
+        STOREFRONT_RECIPES[0],
+        followUpHeroText(STOREFRONT_RECIPES[0]),
+        INVALID_SHADER_PROOF_SOURCE,
+      ),
+      baseline: false,
+      assetTemplateId: undefined,
+      context: storefrontProofContext(),
+      routes: ["home"] as const,
+      expectations: homeExpectations(followUpHeroText(STOREFRONT_RECIPES[0]), "fallback"),
     },
-  ].filter((entry) => !options.filter || entry.id === options.filter);
+  ];
+  const bundles: VerificationEntry[] = await Promise.all(candidates
+    .filter((entry) => !options.filter || entry.id === options.filter
+      || (options.filter === "full-story" && entry.id === "full-story-missing-images"))
+    .map(async (entry) => ({
+      ...entry,
+      bundle: typeof entry.bundle === "function" ? await entry.bundle() : entry.bundle,
+    })));
   for (const [bundleIndex, entry] of bundles.entries()) {
       options.onProgress?.(`[${bundleIndex + 1}/${bundles.length}] proving ${entry.id}`);
       const persistedAssets = entry.assetTemplateId
@@ -118,9 +204,13 @@ export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOp
         : undefined;
       const result = await proveStorefrontBundle({
         bundle: entry.bundle,
+        ...(entry.catalog ? { catalog: entry.catalog } : {}),
         context: entry.context,
         persistedAssets,
-        ...("routes" in entry ? { routes: entry.routes } : {}),
+        ...(entry.routes ? { routes: entry.routes } : {}),
+        ...(entry.viewports ? { viewports: entry.viewports } : {}),
+        ...(entry.catalogPagination ? { catalogPagination: true } : {}),
+        ...(entry.expectations ? { expectations: entry.expectations } : {}),
         ...(entry.baseline ? {
           artifacts: {
             baselineDirectory: resolve(root, `public/storefront-recipes/${entry.id}/baselines`),
@@ -147,15 +237,22 @@ export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOp
       options.onProgress?.(`  ${entry.id}: ${result.ok ? "PASS" : `FAIL (${result.diagnostics.length} diagnostics)`}`);
   }
   const report = mergeBrowserProofReports(reports);
-  const manifest = {
+  let manifest = {
     schemaVersion: 1,
     validationProfileVersion: 1,
     viewports: ["390x844", "768x1024", "1440x1000"],
     recipes: manifestRecipes,
   };
-  if (options.updateBaselines && !options.filter) {
+  if (options.updateBaselines) {
     const manifestPath = resolve(root, "app/lib/storefront-validation/screenshot-manifest.json");
     await mkdir(resolve(manifestPath, ".."), { recursive: true });
+    if (options.filter) {
+      const committed = JSON.parse(await readFile(manifestPath, "utf8")) as typeof manifest;
+      manifest = {
+        ...committed,
+        recipes: mergeRefreshedManifestEntries(committed.recipes, manifest.recipes),
+      };
+    }
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   }
   return { report: createBrowserProofReport(report), manifest };

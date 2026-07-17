@@ -1,6 +1,7 @@
 // Deterministic assignment, one-at-a-time start guards, distinct-session
 // report math, and guarded decide transitions for store A/B experiments.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { STUDIO_EXPERIMENT_KINDS } from "~/lib/storebuilder/studio-types";
 import {
   assignArm,
   clearStoreExperimentCache,
@@ -15,8 +16,7 @@ import {
 
 // vi.mock is hoisted above the imports by vitest at transform time, so the
 // mocks still apply even though they are written below them.
-const { fromMock, rpcMock, pageDoc, catalogMock, settingsMock, storegenMock, visitorMock } = vi.hoisted(() => ({
-  storegenMock: { generateChallengerHome: vi.fn() },
+const { fromMock, rpcMock, pageDoc, catalogMock, settingsMock, visitorMock } = vi.hoisted(() => ({
   visitorMock: { peekVisitorId: vi.fn(), ensureVisitorSession: vi.fn() },
   fromMock: vi.fn(),
   rpcMock: vi.fn(),
@@ -36,11 +36,14 @@ vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock, 
 vi.mock("~/lib/storebuilder/page-document.server", () => pageDoc);
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: () => catalogMock }));
 vi.mock("~/lib/storefront/settings.server", () => settingsMock);
-vi.mock("~/lib/storegen/generate.server", () => storegenMock);
 vi.mock("~/lib/storefront/visitor-cookie.server", () => visitorMock);
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const EXP_ID = "22222222-2222-2222-2222-222222222222";
+
+it("offers only deterministic challenger kinds", () => {
+  expect(STUDIO_EXPERIMENT_KINDS).toEqual(["headline", "vibe", "pdp_copy"]);
+});
 
 const EMPTY_REPORT = {
   aSessions: 0,
@@ -594,7 +597,7 @@ describe("report cache", () => {
   });
 });
 
-describe("new challenger kinds (pdp_copy / ai_page)", () => {
+describe("pdp_copy challenger", () => {
   const PDP_DOC = {
     kind: "template",
     pageKey: "pdp",
@@ -666,30 +669,6 @@ describe("new challenger kinds (pdp_copy / ai_page)", () => {
     });
   });
 
-  it("ai_page stores the generated challenger home under page_key home", async () => {
-    pageDoc.loadPublishedDoc.mockResolvedValue(HOME_DOC);
-    storegenMock.generateChallengerHome.mockResolvedValue({
-      kind: "singleton",
-      pageKey: "home",
-      blocks: [{ id: "x", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html: "<div>alt</div>" } }],
-    });
-    queue("store_experiment:insert.single", { data: { ...insertedRow, page_key: "home", name: "AI redesign" } });
-    const exp = await startExperiment(SHOP, { kind: "ai_page" });
-    expect(exp.pageKey).toBe("home");
-    expect(storegenMock.generateChallengerHome).toHaveBeenCalledWith(SHOP);
-    const start = rpcMock.mock.calls.find((c) => c[0] === "start_store_experiment")?.[1] as { p_page_key: string };
-    expect(start.p_page_key).toBe("home");
-  });
-
-  it("ai_page refuses with 503 when the design engine produced nothing — never a fake variant", async () => {
-    pageDoc.loadPublishedDoc.mockResolvedValue(HOME_DOC);
-    storegenMock.generateChallengerHome.mockResolvedValue(null);
-    await expect(startExperiment(SHOP, { kind: "ai_page" })).rejects.toMatchObject({
-      status: 503,
-      code: "ai_unavailable",
-    });
-    expect(calls.find((c) => c.table === "store_experiment" && c.verb === "insert")).toBeUndefined();
-  });
 });
 
 describe("ship-on-loss guard", () => {

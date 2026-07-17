@@ -3,26 +3,26 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WelcomeOverlay from "../WelcomeOverlay";
-import { STORE_TEMPLATE_REGISTRY } from "~/lib/storefront-bundle/registry";
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 vi.mock("@gsap/react", () => ({ useGSAP: () => undefined }));
-vi.mock("gsap", () => ({ default: { registerPlugin: vi.fn(), from: vi.fn(), set: vi.fn(), timeline: vi.fn() } }));
+vi.mock("gsap", () => ({ default: { registerPlugin: vi.fn(), from: vi.fn() } }));
 vi.mock("../../hero/hero-motion", () => ({ reduced: () => true }));
-vi.mock("~/lib/dashboard/store-client", () => ({ resolveStudioDesign: vi.fn() }));
 
 afterEach(() => {
   document.body.innerHTML = "";
 });
 
-function clickButton(root: HTMLElement, label: RegExp) {
-  const button = [...root.querySelectorAll("button")].find((candidate) =>
-    label.test(candidate.textContent || candidate.getAttribute("aria-label") || ""));
+function click(root: HTMLElement, label: RegExp) {
+  const button = [...root.querySelectorAll("button")].find((candidate) => label.test(candidate.textContent ?? ""));
   expect(button).toBeTruthy();
   act(() => button!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
 }
 
-describe("welcome template selection", () => {
-  it("renders every registered recipe card from its real HTML preview route", () => {
+describe("welcome visual direction", () => {
+  it("sends the default non-empty prompt through the same command callback", () => {
+    const onBuildPrompt = vi.fn();
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -32,26 +32,20 @@ describe("welcome template selection", () => {
         importRun={null}
         buildPhase={null}
         productCount={3}
-        onBuildPlain={() => undefined}
-        onBuildDesign={() => undefined}
+        onBuildPrompt={onBuildPrompt}
         onAddProduct={() => undefined}
       />,
     ));
 
-    clickButton(host, /How should it look/i);
-    const frames = [...host.querySelectorAll<HTMLIFrameElement>(".cd-welcome-card iframe")];
-    expect(frames).toHaveLength(11);
-    expect(frames.map((frame) => frame.getAttribute("src")).sort()).toEqual(
-      STORE_TEMPLATE_REGISTRY.templates
-        .map((template) => `/dashboard/store/preview?template=${template.id}&route=home`)
-        .sort(),
-    );
-    expect(frames.every((frame) => frame.getAttribute("loading") === "lazy")).toBe(true);
-    expect(host.querySelector(".cd-welcome-card img")).toBeNull();
+    click(host, /Let's build my store/i);
+    expect(onBuildPrompt).toHaveBeenCalledWith("Build my store");
+    expect(host.textContent).not.toMatch(/recipe|template|compiler|runtime|custom-derived/i);
+    expect(host.querySelector('iframe[src*="template="]')).toBeNull();
     act(() => root.unmount());
   });
 
-  it("shows a merchant-bound first recipe and reserves full redesign for a follow-up prompt", () => {
+  it("sends the merchant's visual-direction prompt without exposing registry choices", () => {
+    const onBuildPrompt = vi.fn();
     const host = document.createElement("div");
     document.body.append(host);
     const root = createRoot(host);
@@ -61,22 +55,20 @@ describe("welcome template selection", () => {
         importRun={null}
         buildPhase={null}
         productCount={3}
-        onBuildPlain={() => undefined}
-        onBuildDesign={() => undefined}
+        onBuildPrompt={onBuildPrompt}
         onAddProduct={() => undefined}
       />,
     ));
-
-    clickButton(host, /How should it look/i);
-    clickButton(host, /Commons Index/i);
-    const frame = host.querySelector<HTMLIFrameElement>('iframe[title="Commons Index with your catalog"]');
-    expect(frame?.getAttribute("src")).toBe("/dashboard/store/preview?template=commons-index&route=home");
-    expect(frame?.getAttribute("sandbox")).toContain("allow-scripts");
-    expect(host.textContent).toMatch(/with your store data/i);
-    expect(host.textContent).toMatch(/no AI design credit/i);
-
-    expect([...host.querySelectorAll("button")].some((button) => /Create something original/i.test(button.textContent ?? ""))).toBe(false);
-    expect(host.textContent).toMatch(/full redesign.*after.*first draft/i);
+    click(host, /How should it look/i);
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Describe your store\'s visual direction"]')!;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "Quiet editorial skincare");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    click(host, /Build my store/i);
+    expect(onBuildPrompt).toHaveBeenCalledWith("Quiet editorial skincare");
+    expect(host.querySelectorAll("iframe")).toHaveLength(0);
     act(() => root.unmount());
   });
 });

@@ -59,7 +59,7 @@ const home = {
   css: `
     .bench-hero { display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr); min-height: 42rem; border-bottom: 1px solid var(--rule) }
     .bench-copy { align-content: center; display: grid; padding: clamp(2rem, 6vw, 6rem) }
-    .bench-copy h1 { font-family: var(--font-display); font-size: clamp(4rem, 9vw, 8.5rem); line-height: .78; margin: .5rem 0; text-transform: uppercase }
+    .bench-copy h1 { font-family: var(--font-display); font-size: clamp(4rem, 9vw, 8.5rem); line-height: .78; margin: .5rem 0; overflow-wrap: anywhere; text-transform: uppercase }
     .bench-copy p { max-width: 34rem }
     .proof-stage img { aspect-ratio: 2 / 1; height: 100%; object-fit: cover }
     .proof-stage figcaption { background: var(--cobalt); color: var(--paper); font-family: var(--font-body); padding: .7rem }

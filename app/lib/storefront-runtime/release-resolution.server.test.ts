@@ -12,6 +12,9 @@ import { ATELIER_GRID_BUNDLE } from "~/lib/storefront-recipes/atelier-nine/bundl
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const originalBundleRead = process.env.STOREFRONT_BUNDLE_READ;
+const emptySearchPage = async () => ({
+  items: [], facets: { categories: [], tags: [], collections: [] }, total: 0, hasNextPage: false,
+});
 
 function version(id: string, runtimeVersion: number, createdAt: string): StorefrontVersionRecord {
   return {
@@ -64,6 +67,8 @@ describe("storefront release resolution", () => {
     };
     const source = reader(live, []);
     const catalog = {
+      searchProductPage: vi.fn(emptySearchPage),
+      listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })),
       listProducts: vi.fn(async () => []),
       listCollections: vi.fn(async () => []),
       getProduct: vi.fn(async () => null),
@@ -92,6 +97,40 @@ describe("storefront release resolution", () => {
     expect(catalog.getProduct).toHaveBeenCalledWith(SHOP, "missing");
   });
 
+  it("passes immutable featured product ids into home public-data resolution", async () => {
+    const bundle = structuredClone(ATELIER_GRID_BUNDLE);
+    bundle.featuredProductIds = ["product-b", "product-a"];
+    const live = {
+      ...version("featured", 1, "2026-07-02T00:00:00Z"),
+      sourceKind: "recipe" as const,
+      artifact: { sourceKind: "recipe" as const, bundle },
+    };
+    const listProducts = vi.fn(async () => []);
+
+    await resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "home" },
+      reader: reader(live, []),
+      bundleReadEnabled: true,
+      dataDependencies: {
+        catalog: {
+          searchProductPage: vi.fn(emptySearchPage),
+          listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })),
+          listProducts,
+          listCollections: vi.fn(async () => []),
+          getProduct: vi.fn(async () => null),
+        },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
+      },
+    });
+
+    expect(listProducts).toHaveBeenCalledWith(SHOP, {
+      ids: ["product-b", "product-a"],
+      limit: 2,
+    });
+  });
+
   it("isolates persisted pre-boundary shell CSS without mutating the stored bundle", async () => {
     const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
     bundle.shell.css = `[data-cd-bundle=shell] a{color:red}`;
@@ -106,6 +145,8 @@ describe("storefront release resolution", () => {
       bundleReadEnabled: true,
       dataDependencies: {
         catalog: {
+          searchProductPage: vi.fn(emptySearchPage),
+          listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })),
           listProducts: vi.fn(async () => []),
           listCollections: vi.fn(async () => []),
           getProduct: vi.fn(async () => null),
@@ -136,7 +177,7 @@ describe("storefront release resolution", () => {
       bundleReadEnabled: true,
       assetUrlLoader,
       dataDependencies: {
-        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
         policyLoader: async () => [],
       },
@@ -168,7 +209,7 @@ describe("storefront release resolution", () => {
       bundleReadEnabled: true,
       assetUrlLoader,
       dataDependencies: {
-        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
         policyLoader: async () => [],
       },
@@ -202,7 +243,7 @@ describe("storefront release resolution", () => {
       bundleReadEnabled: true,
       assetUrlLoader,
       dataDependencies: {
-        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
         policyLoader: async () => [],
       },
@@ -233,7 +274,7 @@ describe("storefront release resolution", () => {
       bundleReadEnabled: true,
       assetUrlLoader,
       dataDependencies: {
-        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
         policyLoader: async () => [],
       },
@@ -264,7 +305,7 @@ describe("storefront release resolution", () => {
       ...shared,
       route: { kind: "home" },
       dataDependencies: {
-        catalog: { listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
         settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
         policyLoader: async () => [],
       },
@@ -272,14 +313,14 @@ describe("storefront release resolution", () => {
     expect(source.readPublished).toHaveBeenCalledTimes(1);
   });
 
-  it("uses only STOREFRONT_BUNDLE_READ to select the immutable bundle", async () => {
+  it("never selects a retained runtime-0 snapshot when bundle reads are disabled", async () => {
     const legacy = version("legacy", 0, "2026-07-01T00:00:00Z");
     const live = version("live", 1, "2026-07-02T00:00:00Z");
     const source = reader(live, [event("publish", live, legacy)]);
     process.env.STOREFRONT_RUNTIME_1_READ = "1";
     process.env.STOREFRONT_BUNDLE_READ = "0";
     await expect(resolveStorefrontRelease({ shopId: SHOP, reader: source }))
-      .resolves.toMatchObject({ kind: "runtime0-snapshot", version: legacy });
+      .rejects.toMatchObject({ code: "no_compatible_storefront_release", status: 503 });
     process.env.STOREFRONT_BUNDLE_READ = "1";
     await expect(resolveStorefrontRelease({ shopId: SHOP, reader: source }))
       .resolves.toMatchObject({ kind: "runtime1", version: live });
@@ -307,19 +348,18 @@ describe("storefront release resolution", () => {
     });
   });
 
-  it("accepts legacy capture only when it is the explicit predecessor of a publish", async () => {
+  it("skips a published runtime-0 release and resolves the newest compatible runtime-1 history entry", async () => {
+    const publishedLegacy = version("legacy-published", 0, "2026-07-03T00:00:00Z");
     const live = version("live", 1, "2026-07-02T00:00:00Z");
-    const publishedLegacy = version("legacy-published", 0, "2026-07-01T00:00:00Z");
-    const neverPublishedCapture = version("legacy-unpublished", 0, "2026-07-03T00:00:00Z");
     const history = [
-      event("capture_legacy", neverPublishedCapture, null, "2026-07-03T00:00:00Z"),
-      event("publish", live, publishedLegacy, "2026-07-02T00:00:00Z"),
+      event("rollback", publishedLegacy, live, "2026-07-03T00:00:00Z"),
+      event("publish", live, null, "2026-07-02T00:00:00Z"),
     ];
     await expect(resolveStorefrontRelease({
       shopId: SHOP,
-      bundleReadEnabled: false,
-      reader: reader(live, history),
-    })).resolves.toMatchObject({ kind: "runtime0-snapshot", version: publishedLegacy });
+      bundleReadEnabled: true,
+      reader: reader(publishedLegacy, history),
+    })).resolves.toMatchObject({ kind: "runtime1", version: live, fallbackFromVersionId: "legacy-published" });
   });
 
   it("fails safely when a published pointer has no compatible immutable predecessor", async () => {
@@ -335,11 +375,11 @@ describe("storefront release resolution", () => {
     }));
   });
 
-  it("uses mutable runtime-0 only before any immutable published release exists", async () => {
+  it("fails closed before any immutable runtime-1 release exists", async () => {
     await expect(resolveStorefrontRelease({
       shopId: SHOP,
       bundleReadEnabled: true,
       reader: reader(null, []),
-    })).resolves.toEqual({ kind: "runtime0-live" });
+    })).rejects.toMatchObject({ code: "no_compatible_storefront_release", status: 503 });
   });
 });

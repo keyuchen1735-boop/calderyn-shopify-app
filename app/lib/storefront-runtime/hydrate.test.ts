@@ -39,13 +39,116 @@ function rootMarkup() {
   return document.getElementById("root") as HTMLElement;
 }
 
+function installWebGl(): void {
+  const gl = {
+    VERTEX_SHADER: 1,
+    FRAGMENT_SHADER: 2,
+    COMPILE_STATUS: 3,
+    LINK_STATUS: 4,
+    ARRAY_BUFFER: 5,
+    STATIC_DRAW: 6,
+    FLOAT: 7,
+    TRIANGLES: 8,
+    NO_ERROR: 0,
+    createShader: vi.fn(() => ({})),
+    shaderSource: vi.fn(),
+    compileShader: vi.fn(),
+    getShaderParameter: vi.fn(() => true),
+    deleteShader: vi.fn(),
+    createProgram: vi.fn(() => ({})),
+    attachShader: vi.fn(),
+    linkProgram: vi.fn(),
+    getProgramParameter: vi.fn(() => true),
+    deleteProgram: vi.fn(),
+    createBuffer: vi.fn(() => ({})),
+    deleteBuffer: vi.fn(),
+    bindBuffer: vi.fn(),
+    bufferData: vi.fn(),
+    getError: vi.fn(() => 0),
+    getAttribLocation: vi.fn(() => 0),
+    enableVertexAttribArray: vi.fn(),
+    vertexAttribPointer: vi.fn(),
+    useProgram: vi.fn(),
+    getUniformLocation: vi.fn((_program, name: string) => ({ name })),
+    uniform3fv: vi.fn(),
+    uniform2f: vi.fn(),
+    uniform1f: vi.fn(),
+    viewport: vi.fn(),
+    drawArrays: vi.fn(),
+    getExtension: vi.fn(() => ({ loseContext: vi.fn() })),
+  } as unknown as WebGLRenderingContext;
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(gl as never);
+  vi.stubGlobal("matchMedia", vi.fn(() => ({
+    matches: true,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })));
+}
+
 afterEach(() => {
   teardownStorefront();
   document.body.innerHTML = "";
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("declarative storefront hydration", () => {
+  it("mounts a typed visual only at the server-issued host and restores the fallback", () => {
+    installWebGl();
+    document.body.innerHTML = `<main id="root">
+      <figure data-cd-visual-host><img data-cd-asset-key="hero" data-cd-visual-fallback></figure>
+      <figure data-cd-visual-slot="visual:unregistered" data-fx-shader="void main(){}"></figure>
+    </main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const fallback = root.querySelector<HTMLElement>("[data-cd-asset-key='hero']")!;
+    const runtime = hydrateStorefront({
+      root,
+      artifact: artifact({
+        requiredCapabilities: [],
+        interactions: { version: 1, state: [], bindings: [], transitions: [] },
+      }),
+      visualLayer: {
+        kind: "fragment_shader",
+        source: "void main(){gl_FragColor=vec4(1.0);}",
+        colors: ["#000000", "#111111", "#222222"],
+      },
+    });
+
+    expect(runtime.hydrated).toBe(true);
+    expect(root.querySelector("[data-cd-visual-host] canvas")).not.toBeNull();
+    expect(root.querySelector("[data-cd-visual-slot='visual:unregistered'] canvas")).toBeNull();
+    expect(fallback.style.visibility).toBe("hidden");
+
+    runtime.teardown();
+    expect(root.querySelector("canvas")).toBeNull();
+    expect(fallback.style.visibility).toBe("");
+  });
+
+  it("does not let shell hydration mount a visual owned by the nested route", () => {
+    installWebGl();
+    document.body.innerHTML = `<main data-cd-bundle-shell="home">
+      <section data-cd-bundle-route="home">
+        <figure data-cd-visual-host><img data-cd-asset-key="hero" data-cd-visual-fallback></figure>
+      </section>
+    </main>`;
+    const shell = document.querySelector<HTMLElement>("[data-cd-bundle-shell]")!;
+    const route = document.querySelector<HTMLElement>("[data-cd-bundle-route]")!;
+    const visualLayer = {
+      kind: "fragment_shader" as const,
+      source: "void main(){gl_FragColor=vec4(1.0);}",
+      colors: ["#000000", "#111111", "#222222"] as [string, string, string],
+    };
+    const emptyArtifact = artifact({
+      requiredCapabilities: [],
+      interactions: { version: 1, state: [], bindings: [], transitions: [] },
+    });
+
+    hydrateStorefront({ root: shell, artifact: emptyArtifact, visualLayer });
+    expect(shell.querySelector("canvas")).toBeNull();
+    hydrateStorefront({ root: route, artifact: emptyArtifact, visualLayer });
+    expect(route.querySelectorAll("canvas")).toHaveLength(1);
+  });
+
   it("hydrates compiler-issued transitions and applies bounded scroll progress", () => {
     const root = rootMarkup();
     const source = document.getElementById("cd-home-progress-source") as HTMLElement;

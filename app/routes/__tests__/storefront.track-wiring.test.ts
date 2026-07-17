@@ -2,6 +2,10 @@
 // Live-analytics wiring: storefront loaders/actions emit exactly one event and
 // forward the visitor/session Set-Cookie headers on their responses.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { loader as homeLoader } from "../storefront._index";
+import { loader as collectionLoader } from "../storefront.collections.$handle";
+import { action as pdpAction, loader as productLoader } from "../storefront.products.$handle";
+import { loader as searchLoader } from "../storefront.search";
 
 const track = vi.fn(async (..._a: unknown[]) => {
   const h = new Headers();
@@ -9,6 +13,7 @@ const track = vi.fn(async (..._a: unknown[]) => {
   return h;
 });
 const resolveStorefrontShop = vi.fn(async (..._a: unknown[]) => "11111111-2222-3333-4444-555555555555");
+const resolveRuntime1Route = vi.fn();
 interface ServedFake {
   experiment: { id: string; pageKey: string } | null;
   experimentId: string | null;
@@ -28,6 +33,9 @@ vi.mock("~/lib/storefront/events.server", () => ({
 vi.mock("~/lib/storefront/shop.server", () => ({
   resolveStorefrontShop: (...a: unknown[]) => resolveStorefrontShop(...a),
   DEMO_SHOP_ID: "demo-shop",
+}));
+vi.mock("~/lib/storefront-runtime/release-resolution.server", () => ({
+  resolveRuntime1Route: (...a: unknown[]) => resolveRuntime1Route(...a),
 }));
 vi.mock("~/lib/storefront/catalog.server", () => ({
   getCatalog: () => ({
@@ -55,21 +63,49 @@ vi.mock("~/lib/experiments/store-experiment.server", () => ({
   resolveServedExperiment: (...a: unknown[]) => resolveServedExperiment(...a),
 }));
 
-// eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
-import { loader as pdpLoader, action as pdpAction } from "../storefront.products.$handle";
-
-beforeEach(() => track.mockClear());
+beforeEach(() => {
+  vi.clearAllMocks();
+  resolveRuntime1Route.mockImplementation(async ({ route }: { route: { kind: string } }) => ({
+    runtime: 1,
+    bundleId: "bundle-1",
+    artifactHash: "sha256:bundle-1",
+    routeId: route.kind,
+    bundle: {},
+    visualLayerPlacement: null,
+    data: {
+      store: { name: "Store", logo: null },
+      notFound: null,
+      product: { id: "p1", title: "Mug" },
+      collection: { title: "Featured", nextCursor: null },
+      search: { nextCursor: null },
+    },
+  }));
+});
 
 describe("storefront live-analytics wiring", () => {
-  it("PDP loader emits page_view with the variant id and forwards Set-Cookie", async () => {
-    const res = (await pdpLoader({
-      request: new Request("https://x.example/storefront/products/mug"),
-      params: { handle: "mug" },
-      context: {},
-    })) as Response;
+  it.each([
+    ["home", homeLoader, "https://x.example/storefront", {}, true, null],
+    ["product", productLoader, "https://x.example/storefront/products/mug", { handle: "mug" }, true, "p1"],
+    ["collection", collectionLoader, "https://x.example/storefront/collections/featured", { handle: "featured" }, true, null],
+    ["search", searchLoader, "https://x.example/storefront/search?q=mug", {}, false, null],
+  ] as const)("%s loader emits page_view while preserving tracking and cache headers", async (
+    _route,
+    loader,
+    url,
+    params,
+    publiclyCached,
+    productId,
+  ) => {
+    const res = await loader({ request: new Request(url), params, context: {} } as never);
+
     expect(track).toHaveBeenCalledTimes(1);
     expect(track.mock.calls[0][2]).toBe("page_view");
-    expect(res.headers.getSetCookie().some((c) => c.startsWith("cd_sid="))).toBe(true);
+    if (productId) expect(track.mock.calls[0][3]).toMatchObject({ productId });
+    expect(res.headers.getSetCookie().some((cookie) => cookie.startsWith("cd_sid="))).toBe(true);
+    expect(res.headers.get("X-Calderyn-Storefront-Renderer")).toBe("bundle-v1");
+    expect(res.headers.get("Cache-Control")).toBe(publiclyCached
+      ? "public, max-age=0, s-maxage=300, stale-while-revalidate=60"
+      : "private, no-store");
   });
 
   it("PDP action emits cart_add and still redirects to the cart", async () => {
@@ -91,12 +127,7 @@ describe("storefront live-analytics wiring", () => {
     expect(res.headers.getSetCookie().some((c) => c.startsWith("cd_sid="))).toBe(true);
   });
 
-  it("PDP action stamps cart_add with the served experiment (checkout surface)", async () => {
-    resolveServedExperiment.mockResolvedValueOnce({
-      experiment: { id: "exp-9", pageKey: "home" },
-      experimentId: "exp-9",
-      variantKey: "b",
-    });
+  it("PDP action does not consult the removed legacy experiment path", async () => {
     await pdpAction({
       request: new Request("https://x.example/storefront/products/mug", {
         method: "POST",
@@ -106,15 +137,7 @@ describe("storefront live-analytics wiring", () => {
       params: { handle: "mug" },
       context: {},
     });
-    expect(resolveServedExperiment).toHaveBeenCalledWith(
-      "11111111-2222-3333-4444-555555555555",
-      expect.any(Request),
-      "checkout",
-    );
-    expect(track.mock.calls[0][3]).toMatchObject({
-      productId: "p1",
-      experimentId: "exp-9",
-      variantKey: "b",
-    });
+    expect(resolveServedExperiment).not.toHaveBeenCalled();
+    expect(track.mock.calls[0][3]).toMatchObject({ productId: "p1" });
   });
 });

@@ -21,7 +21,7 @@ import { fetchOrdersList, fetchOrdersPage } from "./orders-client";
 import { fetchCustomersPage } from "./customers-client";
 import { fetchShippingSummary } from "./shipping-client";
 import { fetchPaymentsPage } from "./payments-client";
-import { fetchStudio } from "./store-client";
+import { fetchStore } from "./store-client";
 import { fetchDiscover } from "./discover-client";
 import { fetchSearchOverview } from "./search-client";
 import { fetchAllPendingTransfers } from "./transfers-client";
@@ -50,7 +50,7 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.shipping, fetchShippingSummary],
   [SCREEN_CACHE_KEYS.payments, fetchPaymentsPage],
   [SCREEN_CACHE_KEYS.billing, fetchBilling],
-  [SCREEN_CACHE_KEYS.storeStudio, fetchStudio],
+  [SCREEN_CACHE_KEYS.storeStudio, fetchStore],
   [SCREEN_CACHE_KEYS.discover, fetchDiscover],
   [SCREEN_CACHE_KEYS.search, fetchSearchOverview],
   [SCREEN_CACHE_KEYS.agentic, () => apiGet("/dashboard/api/agentic")],

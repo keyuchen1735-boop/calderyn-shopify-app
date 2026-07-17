@@ -5132,10 +5132,6 @@
 }
 @keyframes cd-skel-sweep { to { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) { .cd-canvas-skel::after { animation: none; opacity: 0; } }
-.cd-mark-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 6; }
-.cd-mark-capture { position: absolute; inset: 0; z-index: 7; background: transparent; border: 0; padding: 0; cursor: crosshair; touch-action: none; }
-.cd-mark-note { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 8; display: flex; gap: 8px; align-items: center; background: var(--card-solid); border-radius: 12px; box-shadow: var(--shadow-pop); padding: 8px; width: min(360px, 88%); }
-.cd-mark-note input { flex: 1; min-width: 0; border: 0; background: var(--gray-bg); border-radius: 8px; padding: 8px 11px; font-size: calc(12.5px * var(--type-scale)); color: var(--text-1); outline: none; }
 .cd-build-float { position: absolute; top: 14px; right: 14px; z-index: 10; width: 250px; background: var(--card-solid); border-radius: 12px; box-shadow: var(--shadow-pop); padding: 6px 0; }
 
 /* ---- first-run welcome overlay ---- */

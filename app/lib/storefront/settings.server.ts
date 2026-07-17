@@ -16,9 +16,6 @@ export interface StoreSettings {
   vibe: StudioVibe;
   typeStyle: StudioTypeStyle;
   density: StudioDensity;
-  /** Hidden Labs switch: chat builds route through the from-scratch designer.
-   *  Optional with absence meaning off, so settings fixtures stay untouched. */
-  composerEnabled?: boolean;
 }
 export interface StoreSettingsInput {
   storeName: string;
@@ -48,7 +45,7 @@ function defaults(shopId: string): StoreSettings {
 export async function getStoreSettings(shopId: string): Promise<StoreSettings> {
   if (!UUID_RE.test(shopId)) return defaults(shopId);
   const { data, error } = await getSupabase()
-    .from("store_settings").select("store_name, palette, logo_url, voice_tagline, vibe, type_style, density, composer_enabled").eq("shop_id", shopId).maybeSingle();
+    .from("store_settings").select("store_name, palette, logo_url, voice_tagline, vibe, type_style, density").eq("shop_id", shopId).maybeSingle();
   if (error) throw error;
   if (!data) {
     // A real shop that hasn't run the store generator yet still has a brand:
@@ -69,24 +66,7 @@ export async function getStoreSettings(shopId: string): Promise<StoreSettings> {
     vibe: VIBES.includes(data.vibe as StudioVibe) ? (data.vibe as StudioVibe) : "minimal",
     typeStyle: TYPE_STYLES.includes(data.type_style as StudioTypeStyle) ? (data.type_style as StudioTypeStyle) : "classic",
     density: DENSITIES.includes(data.density as StudioDensity) ? (data.density as StudioDensity) : "standard",
-    composerEnabled: data.composer_enabled === true,
   };
-}
-
-/** Flip the hidden designer-engine switch. Upserts so shops that never ran the
- *  generator (no store_settings row yet) can still opt in from Labs. */
-export async function setComposerEnabled(shopId: string, enabled: boolean): Promise<void> {
-  if (!UUID_RE.test(shopId)) throw new Error(`setComposerEnabled requires a real (uuid) shop_id, got ${shopId}`);
-  const current = await getStoreSettings(shopId);
-  const { error } = await getSupabase().from("store_settings").upsert({
-    shop_id: shopId,
-    store_name: current.storeName,
-    palette: current.palette,
-    voice_tagline: current.voiceTagline,
-    composer_enabled: enabled,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "shop_id" });
-  if (error) throw error;
 }
 
 /** Whether a shop has ever written a store_settings row — lets callers avoid

@@ -66,6 +66,20 @@ describe("template + functional blocks", () => {
     expect(html("collectionGrid", ctxFor(undefined, "summer"))).toContain("P1");
   });
 
+  it("collectionGrid renders escaped description excerpts", () => {
+    const ctx = ctxFor(undefined, "summer");
+    ctx.data.productsByCollection.summer = [{
+      ...product("1"),
+      description: `<script>alert("merchant")</script> ${"detail ".repeat(30)}complete ending`,
+    }];
+
+    const out = html("collectionGrid", ctx);
+    expect(out).toContain('&lt;script&gt;alert(&quot;merchant&quot;)&lt;/script&gt;');
+    expect(out).toContain("…");
+    expect(out).not.toContain('<script>alert("merchant")</script>');
+    expect(out).not.toContain("complete ending");
+  });
+
   it("template blocks degrade to empty (never throw) with no record", () => {
     expect(() => html("productGallery", { data: ctxFor().data })).not.toThrow();
     expect(() => html("addToCart", { data: ctxFor().data })).not.toThrow();

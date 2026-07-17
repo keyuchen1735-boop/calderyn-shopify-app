@@ -1,5 +1,6 @@
 import type { DataRequirement, StorefrontRouteId } from "~/lib/storefront-bundle/types";
 import type { StorefrontCatalog, StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
+import { selectStorefrontPriceVariant } from "~/lib/storefront/catalog";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings, type StoreSettings } from "~/lib/storefront/settings.server";
 import { loadStorefrontPolicyLinks } from "~/lib/storefront/policies.server";
@@ -22,7 +23,7 @@ export interface PublicMedia {
 export interface PublicVariant {
   id: string;
   title: string;
-  price: PublicMoney;
+  price: PublicMoney | null;
   compareAtPrice: PublicMoney | null;
   availability: "In stock" | "Sold out";
   available: boolean;
@@ -50,6 +51,7 @@ export interface PublicCollection {
   image: PublicMedia | null;
   productCount: number;
   products: PublicProduct[];
+  nextCursor: string | null;
 }
 
 export interface PublicCart {
@@ -100,6 +102,7 @@ export interface ResolvePublicDataInput {
   shopId: string;
   requiredData: readonly DataRequirement[];
   route: PublicRouteContext;
+  featuredProductIds?: readonly string[];
 }
 
 export interface PublicDataDependencies {
@@ -145,6 +148,7 @@ function validatePlan(requiredData: readonly DataRequirement[]): void {
 }
 
 function money(variant: StoreVariant, field: "priceCents" | "compareAtPriceCents"): PublicMoney | null {
+  if (variant.hasPrice === false) return null;
   const cents = variant[field];
   return typeof cents === "number" ? { cents, currency: variant.currency } : null;
 }
@@ -153,12 +157,13 @@ function presentProduct(product: StoreProduct): PublicProduct {
   const variants = product.variants.map((variant): PublicVariant => ({
     id: variant.id,
     title: variant.title,
-    price: { cents: variant.priceCents, currency: variant.currency },
+    price: money(variant, "priceCents"),
     compareAtPrice: money(variant, "compareAtPriceCents"),
     availability: variant.available ? "In stock" : "Sold out",
     available: variant.available,
   }));
-  const first = variants[0] ?? null;
+  const selectedId = selectStorefrontPriceVariant(product)?.id;
+  const selected = variants.find((variant) => variant.id === selectedId) ?? null;
   return {
     id: product.id,
     handle: product.handle,
@@ -168,8 +173,8 @@ function presentProduct(product: StoreProduct): PublicProduct {
     images: product.images.map((image) => ({ url: image.url, alt: image.alt })),
     options: (product.options ?? []).map((option) => ({ name: option.name, values: [...option.values] })),
     variants,
-    price: first?.price ?? null,
-    compareAtPrice: first?.compareAtPrice ?? null,
+    price: selected?.price ?? null,
+    compareAtPrice: selected?.compareAtPrice ?? null,
     availability: variants.some((variant) => variant.available) ? "In stock" : "Sold out",
   };
 }
@@ -200,17 +205,9 @@ async function fullSearchProducts(
   searchLoader: typeof searchStorefront,
 ) {
   const result = await searchLoader(shopId, searchInput, catalog);
-  const items = result.items.slice(0, limit);
-  const products = items.length === 0
-    ? []
-    : await catalog.listProducts(shopId, { ids: items.map((item) => item.id), limit: items.length });
-  const byId = new Map(products.map((product) => [product.id, product]));
   return {
     result,
-    products: items.flatMap((item) => {
-      const product = byId.get(item.id);
-      return product ? [presentProduct(product)] : [];
-    }),
+    products: result.presentationProducts.slice(0, limit).map(presentProduct),
   };
 }
 
@@ -260,16 +257,31 @@ export async function resolvePublicData(
         image: searched.products[0]?.primaryImage ?? null,
         productCount: searched.result.total,
         products: searched.products,
+        nextCursor: searched.result.nextCursor,
       };
     }
   }
 
   for (const requirement of input.requiredData) {
     if (requirement.kind === "featuredProducts") {
-      data.featuredProducts = (await catalog.listProducts(input.shopId, {
-        ...(requirement.collectionHandle ? { collection: requirement.collectionHandle } : {}),
-        limit: requirement.limit,
-      })).slice(0, requirement.limit).map(presentProduct);
+      const featuredIds = input.route.kind === "home"
+        ? input.featuredProductIds?.slice(0, requirement.limit)
+        : undefined;
+      const products = await catalog.listProducts(input.shopId, {
+        ...(featuredIds?.length
+          ? { ids: [...featuredIds] }
+          : requirement.collectionHandle ? { collection: requirement.collectionHandle } : {}),
+        limit: featuredIds?.length ?? requirement.limit,
+      });
+      if (featuredIds?.length) {
+        const byId = new Map(products.map((product) => [product.id, product]));
+        data.featuredProducts = featuredIds.flatMap((id) => {
+          const product = byId.get(id);
+          return product ? [presentProduct(product)] : [];
+        });
+      } else {
+        data.featuredProducts = products.slice(0, requirement.limit).map(presentProduct);
+      }
     } else if (requirement.kind === "relatedProducts") {
       if (!rawCurrentProduct) data.relatedProducts = [];
       else {

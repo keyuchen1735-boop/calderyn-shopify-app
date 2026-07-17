@@ -2,8 +2,6 @@
 // Plain DTOs for the Store studio surface, shared by the /dashboard/api/store
 // route (server) and the dashboard SPA client. No server imports — this module
 // must stay safe to pull into the browser bundle.
-import type { StoreDesignResolution } from "~/lib/storefront-bundle/types";
-
 /** Mirrors the store_settings.vibe check constraint — the design pack the
  *  storefront CSS keys off ([data-vibe]). */
 export type StudioVibe = "minimal" | "bold" | "warm";
@@ -26,8 +24,6 @@ export interface StudioSettings {
   density?: StudioDensity;
   logoUrl: string | null;
   tagline: string | null;
-  /** Hidden Labs switch: chat builds route through the from-scratch designer. */
-  composerEnabled?: boolean;
 }
 
 /**
@@ -64,12 +60,12 @@ export type StudioExperimentState = "running" | "decided_ship" | "decided_keep" 
 /** Mirrors the store_experiment.page_key check constraint — the storefront page under test. */
 export type StudioExperimentPage = "home" | "pdp";
 
-/** Challenger recipes the studio can start. headline/vibe/ai_page test the home page;
+/** Challenger recipes the studio can start. headline/vibe test the home page;
  *  pdp_copy tests the product-page template. */
-export type StudioExperimentKind = "headline" | "vibe" | "pdp_copy" | "ai_page";
+export type StudioExperimentKind = "headline" | "vibe" | "pdp_copy";
 /** The single runtime list behind StudioExperimentKind — the API route validates against it
  *  and the client narrows from it, so adding a kind is a one-line change here. */
-export const STUDIO_EXPERIMENT_KINDS: readonly StudioExperimentKind[] = ["headline", "vibe", "pdp_copy", "ai_page"];
+export const STUDIO_EXPERIMENT_KINDS: readonly StudioExperimentKind[] = ["headline", "vibe", "pdp_copy"];
 
 export interface StudioExperimentReport {
   /** Distinct sessions that saw each arm (page_view exposure rows). */
@@ -239,94 +235,4 @@ export interface StudioGenerateReceipt {
     strippedMotion: number;
     warnings: string[];
   };
-}
-
-// ---- streaming build events (chat progress) ---------------------------------------------------
-
-/** Real generation stages, streamed by the server as they happen (mirrors
- *  generate.server.ts BuildStage — a server-only module clients can't import). */
-export type LegacyBuildStage = "brand" | "designing" | "checking";
-export type Runtime1BuildStage = "routing" | "applying_recipe" | "generating_original" | "compiling" | "validating" | "proofing";
-export type BuildStage = LegacyBuildStage | Runtime1BuildStage;
-export const BUILD_STAGES: readonly BuildStage[] = [
-  "brand",
-  "designing",
-  "checking",
-  "routing",
-  "applying_recipe",
-  "compiling",
-  "validating",
-  "proofing",
-];
-
-export interface StudioBundleBuildReceipt {
-  runtime: 1;
-  versionId: string;
-  status: "draft";
-  resolution: StoreDesignResolution;
-}
-
-/** One NDJSON line from the streaming generate endpoint. */
-export type BuildEvent =
-  | { stage: LegacyBuildStage }
-  | {
-      stage: "routing";
-      resolution: StoreDesignResolution;
-      recommendationChanged: boolean;
-      recommendationChangeReason?: string;
-    }
-  | { stage: "applying_recipe"; templateId: string; templateVersion: number }
-  | { stage: "generating_original" }
-  | { stage: "compiling" | "validating" | "proofing" }
-  | { stage: "installed"; receipt: StudioBundleBuildReceipt }
-  | { stage: "done"; receipt: StudioGenerateReceipt }
-  | { stage: "error"; message: string; code?: string; status?: number };
-
-/** Strict parse of one stream line — junk, unknown stages and malformed terminal
- *  lines are null (callers treat an unparseable stream as a failed stream). */
-export function parseBuildEvent(line: string): BuildEvent | null {
-  let v: unknown;
-  try {
-    v = JSON.parse(line);
-  } catch {
-    return null;
-  }
-  if (typeof v !== "object" || v === null) return null;
-  const o = v as Record<string, unknown>;
-  if (["brand", "designing", "checking", "compiling", "validating", "proofing"].includes(String(o.stage))) {
-    return { stage: o.stage as LegacyBuildStage | "compiling" | "validating" | "proofing" };
-  }
-  if (
-    o.stage === "routing" &&
-    typeof o.resolution === "object" && o.resolution !== null &&
-    typeof o.recommendationChanged === "boolean"
-  ) {
-    return {
-      stage: "routing",
-      resolution: o.resolution as StoreDesignResolution,
-      recommendationChanged: o.recommendationChanged,
-      ...(typeof o.recommendationChangeReason === "string"
-        ? { recommendationChangeReason: o.recommendationChangeReason }
-        : {}),
-    };
-  }
-  if (o.stage === "applying_recipe" && typeof o.templateId === "string" && typeof o.templateVersion === "number") {
-    return { stage: "applying_recipe", templateId: o.templateId, templateVersion: o.templateVersion };
-  }
-  if (o.stage === "generating_original") return { stage: "generating_original" };
-  if (o.stage === "installed" && typeof o.receipt === "object" && o.receipt !== null) {
-    return { stage: "installed", receipt: o.receipt as StudioBundleBuildReceipt };
-  }
-  if (o.stage === "done" && typeof o.receipt === "object" && o.receipt !== null) {
-    return { stage: "done", receipt: o.receipt as StudioGenerateReceipt };
-  }
-  if (o.stage === "error" && typeof o.message === "string") {
-    return {
-      stage: "error",
-      message: o.message,
-      ...(typeof o.code === "string" ? { code: o.code } : {}),
-      ...(typeof o.status === "number" && Number.isInteger(o.status) ? { status: o.status } : {}),
-    };
-  }
-  return null;
 }

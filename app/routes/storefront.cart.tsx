@@ -5,14 +5,11 @@
 // future route, which 404s until that module lands.
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs, MetaFunction } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, useLoaderData } from "@remix-run/react";
+import { useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop, DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import { readCartId } from "~/lib/storefront/cart-cookie.server";
-import { trackStorefrontEvent } from "~/lib/storefront/events.server";
 import { priceCart, removeCartLine, clearCart } from "~/lib/order/cart.server";
-import { loadShipRules } from "~/lib/shipping/rules.server";
 import { rateLimit, clientIpKey } from "~/lib/rate-limit.server";
-import { formatMoney as money } from "~/lib/storefront/money";
 import { storeNameFromMatches } from "~/lib/storefront/meta";
 import { randomBytes } from "node:crypto";
 import { resolveRuntime1Route } from "~/lib/storefront-runtime/release-resolution.server";
@@ -61,47 +58,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
       },
     },
   });
-  if (runtime1) {
-    const nonce = randomBytes(18).toString("base64url");
-    const headers = storefrontCacheHeaders({ routeId: "cart", personalized: true });
-    markStorefrontBundleRendered(headers, nonce);
-    return json({ ...runtime1, nonce }, { headers });
-  }
-  // The demo shell is browse-only (no shop row, uuid-keyed cart tables can't
-  // hold its sentinel id) — always an empty cart, never a DB read.
-  if (shopId === DEMO_SHOP_ID) return json({ cart: null, freeShipThresholdCents: null, error: null });
-  const track = await trackStorefrontEvent(request, shopId, "page_view");
-  const cartId = await readCartId(request);
-  // No cookie yet -> empty cart, no DB read.
-  if (!cartId) return json({ cart: null, freeShipThresholdCents: null, error: null }, { headers: track });
-  // priceCart scopes by (shopId, cartId); a stale/foreign id simply yields 0 lines. A cart whose
-  // lines somehow mix currencies would otherwise throw here and make the page un-viewable (the only
-  // route from which a buyer could remove the offending line), so degrade to a null cart + notice
-  // instead of a 500 — the empty-cart control below is still reachable to recover.
-  // Free-shipping nudge: when the merchant set a threshold (ship_rules), tell the
-  // buyer how close they are — the single strongest basket-size lever. Best-effort
-  // and started BEFORE pricing so the independent reads overlap: a rules read hiccup
-  // renders the cart without the banner, never a 500.
-  const freeShipP = loadShipRules(shopId).then(
-    (rules) => rules.freeShipThresholdCents,
-    (err) => {
-      console.error(`[cart] ship_rules read failed for shop ${shopId} (no free-ship banner):`, err);
-      return null;
-    },
-  );
-  try {
-    const cart = await priceCart(shopId, cartId);
-    return json(
-      { cart, cartId, freeShipThresholdCents: await freeShipP, error: null },
-      { headers: track },
-    );
-  } catch (err) {
-    console.error(`[cart] could not price cart ${cartId} for shop ${shopId}:`, err);
-    return json(
-      { cart: null, cartId, freeShipThresholdCents: null, error: "unpriceable" as const },
-      { headers: track },
-    );
-  }
+  if (!runtime1) throw new Response("No runtime-1 storefront release is available.", { status: 503 });
+  const nonce = randomBytes(18).toString("base64url");
+  const headers = storefrontCacheHeaders({ routeId: "cart", personalized: true });
+  markStorefrontBundleRendered(headers, nonce);
+  return json({ ...runtime1, nonce }, { headers });
 }
 
 /**
@@ -140,86 +101,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function StorefrontCart() {
   const loaded = useLoaderData<typeof loader>();
-  if (isRuntime1RenderData(loaded)) {
-    return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "cart", data: loaded.data, nonce: loaded.nonce, mode: "public" })}<StorefrontHydrator bundle={loaded.bundle} routeId="cart" data={loaded.data} mode="public" /></>;
-  }
-  const { cart, freeShipThresholdCents, error } = loaded;
-
-  if (!cart || cart.lines.length === 0) {
-    return (
-      <section className="cd-cart cd-cart--empty">
-        <h1>Your cart</h1>
-        {error === "unpriceable" ? (
-          <>
-            <p className="cd-cart__empty">
-              We couldn&apos;t load your cart. You can empty it and start again.
-            </p>
-            <Form method="post">
-              <input type="hidden" name="intent" value="clear" />
-              <button type="submit" className="cd-cart__empty-btn">
-                Empty cart
-              </button>
-            </Form>
-          </>
-        ) : (
-          <p className="cd-cart__empty">Your cart is empty.</p>
-        )}
-        <a className="cd-cart__continue" href="/storefront">
-          Continue shopping
-        </a>
-      </section>
-    );
-  }
-
-  return (
-    <section className="cd-cart">
-      <h1>Your cart</h1>
-      <ul className="cd-cart__lines">
-        {cart.lines.map((line) => (
-          <li key={line.id} className="cd-cart__line">
-            <span className="cd-cart__line-title">{line.titleSnapshot}</span>
-            <span className="cd-cart__line-qty">Qty {line.quantity}</span>
-            <span className="cd-cart__line-unit">{money(line.unitPriceCents, line.currency)}</span>
-            <span className="cd-cart__line-total">
-              {money(line.unitPriceCents * line.quantity, line.currency)}
-            </span>
-            <Form method="post" className="cd-cart__line-remove">
-              <input type="hidden" name="intent" value="remove" />
-              <input type="hidden" name="lineId" value={line.id} />
-              <button type="submit" className="cd-cart__remove-btn" aria-label={`Remove ${line.titleSnapshot}`}>
-                Remove
-              </button>
-            </Form>
-          </li>
-        ))}
-      </ul>
-      {freeShipThresholdCents != null ? (
-        cart.subtotalCents >= freeShipThresholdCents ? (
-          <p className="cd-cart__freeship cd-cart__freeship--unlocked">
-            You&apos;ve unlocked free shipping.
-          </p>
-        ) : (
-          <p className="cd-cart__freeship">
-            Add {money(freeShipThresholdCents - cart.subtotalCents, cart.currency)} more for free
-            shipping.
-          </p>
-        )
-      ) : null}
-      <div className="cd-cart__summary">
-        <span className="cd-cart__subtotal-label">Subtotal</span>
-        <span className="cd-cart__subtotal-value">{money(cart.subtotalCents, cart.currency)}</span>
-      </div>
-      <div className="cd-cart__actions">
-        <Form method="post">
-          <input type="hidden" name="intent" value="clear" />
-          <button type="submit" className="cd-cart__empty-btn">
-            Empty cart
-          </button>
-        </Form>
-        <a className="cd-cart__checkout" href="/storefront/checkout">
-          Checkout
-        </a>
-      </div>
-    </section>
-  );
+  if (!isRuntime1RenderData(loaded)) throw new Error("Runtime-1 cart data is required.");
+  return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "cart", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="cart" data={loaded.data} mode="public" /></>;
 }

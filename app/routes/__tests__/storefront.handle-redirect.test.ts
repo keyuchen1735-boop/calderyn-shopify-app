@@ -1,16 +1,11 @@
-// PDP miss path: a handle with a redirect row 301s to the product's current
-// URL; a handle with no row stays a 404. The lookup runs ONLY when getProduct
-// misses — a live PDP never pays for it.
+// A runtime-1 PDP miss may resolve through the handle redirect table.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { loader } from "../storefront.products.$handle";
 
-const { getCatalogMock, getProductMock, resolveRedirectMock, resolveRuntime1RouteMock } = vi.hoisted(() => ({
-  getCatalogMock: vi.fn(),
-  getProductMock: vi.fn(),
+const { resolveRedirectMock, resolveRuntime1RouteMock } = vi.hoisted(() => ({
   resolveRedirectMock: vi.fn(),
   resolveRuntime1RouteMock: vi.fn(),
 }));
-vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock }));
 vi.mock("~/lib/storefront/handle-redirect.server", () => ({
   resolveHandleRedirect: (...a: unknown[]) => resolveRedirectMock(...a),
 }));
@@ -21,10 +16,11 @@ vi.mock("~/lib/storefront-runtime/release-resolution.server", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  getProductMock.mockResolvedValue(null);
-  getCatalogMock.mockReturnValue({ getProduct: getProductMock });
   resolveRedirectMock.mockResolvedValue(null);
-  resolveRuntime1RouteMock.mockResolvedValue(null);
+  resolveRuntime1RouteMock.mockResolvedValue({
+    runtime: 1,
+    data: { notFound: { kind: "product", handle: "missing" } },
+  });
 });
 
 const args = (handle: string) =>
@@ -45,6 +41,13 @@ async function thrownResponse(handle: string): Promise<Response> {
 }
 
 describe("PDP handle redirect", () => {
+  it("fails explicitly before consulting legacy product data when no runtime-1 surface resolves", async () => {
+    resolveRuntime1RouteMock.mockResolvedValue(null);
+    const res = await thrownResponse("missing-runtime");
+    expect(res.status).toBe(503);
+    expect(resolveRedirectMock).not.toHaveBeenCalled();
+  });
+
   it("301s a renamed handle to the product's current URL", async () => {
     resolveRedirectMock.mockResolvedValue("new-handle");
     const res = await thrownResponse("old-handle");
@@ -94,6 +97,17 @@ describe("PDP handle redirect", () => {
     expect(caught?.headers.get("Cache-Control")).toBe("public, max-age=300");
   });
 
+  it("404s a runtime-1 product miss instead of rendering a recipe PDP", async () => {
+    resolveRuntime1RouteMock.mockResolvedValue({
+      runtime: 1,
+      data: { notFound: { kind: "product", handle: "missing" } },
+    });
+
+    const res = await thrownResponse("missing");
+
+    expect(res.status).toBe(404);
+  });
+
   it("404s when no redirect row exists", async () => {
     const res = await thrownResponse("never-existed");
     expect(res.status).toBe(404);
@@ -109,13 +123,8 @@ describe("PDP handle redirect", () => {
     errSpy.mockRestore();
   });
 
-  it("does not consult the redirect table when the product resolves", async () => {
-    // Minimal product; the loader's downstream reads all run against the demo
-    // shop (non-uuid), which every helper no-ops for.
-    getProductMock.mockResolvedValue({
-      id: "p1", handle: "live-handle", title: "Live", description: "d",
-      images: [], variants: [], collections: [],
-    });
+  it("does not consult the redirect table when the runtime-1 product resolves", async () => {
+    resolveRuntime1RouteMock.mockResolvedValue({ runtime: 1, data: {} });
     const res = (await loader(args("live-handle"))) as Response;
     expect(res.status).toBe(200);
     expect(resolveRedirectMock).not.toHaveBeenCalled();

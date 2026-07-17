@@ -1,14 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { renderBlocks } from "~/lib/storebuilder/render";
 import { PdpBlockColumns } from "~/lib/storebuilder/pdp-layout";
 import type { Block, BlockDocument, RenderData } from "~/lib/storebuilder/types";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 // vi.mock calls are hoisted above every import, so the mocks below still apply
 // before the route module is evaluated.
-import { action, loader, previewCompilerId, rewriteStorefrontHrefs, rewriteDocStorefrontHrefs } from "../dashboard.store.preview";
+import { action, loader } from "../dashboard.store.preview";
 
 // The route imports the storefront stylesheet as a URL and several server-only
 // data sources. Stub the URL import and the DB/session reads so the loader's
@@ -39,13 +38,6 @@ vi.mock("~/lib/storefront-runtime/preview-commerce.server", () => ({
 }));
 vi.mock("~/lib/storefront-recipes", () => ({ getStorefrontRecipe: getRecipeMock }));
 
-/** Chainable shops.org_slug read: getSupabase().from().select().eq().maybeSingle(). */
-function stubOrgSlug(orgSlug: string | null) {
-  getSupabaseMock.mockReturnValue({
-    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { org_slug: orgSlug }, error: null }) }) }) }),
-  });
-}
-
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const settings = {
   storeName: "Acme",
@@ -57,6 +49,13 @@ const settings = {
   density: "roomy",
 };
 const catalog = {
+  searchProductPage: async () => ({
+    items: [],
+    facets: { categories: [], tags: [], collections: [] },
+    total: 0,
+    hasNextPage: false,
+  }),
+  listProductPage: async () => ({ items: [], nextCursor: null }),
   listProducts: async () => [],
   listCollections: async () => [],
   getProduct: async () => null,
@@ -86,17 +85,6 @@ async function loaderData(url: string) {
 }
 
 describe("dashboard.store.preview loader", () => {
-  it("selects repeated preview DOM by canonical compiler metadata, never by parsing its suffixed DOM id", () => {
-    const repeatOwner = { dataset: { cdCompilerId: "cd-home-grid" } };
-    const selected = {
-      dataset: { cdCompilerId: "cd-home-title" },
-      closest: (selector: string) => selector === "[data-cd-repeat-owner][data-cd-compiler-id]" ? repeatOwner : null,
-    };
-    const target = { closest: () => selected } as unknown as Element;
-
-    expect(previewCompilerId(target)).toBe("cd-home-grid");
-  });
-
   it("renders a selected recipe against the authenticated merchant catalog without installing it", async () => {
     const previous = process.env.STOREFRONT_BUNDLE_READ;
     const previousAppUrl = process.env.SHOPIFY_APP_URL;
@@ -165,105 +153,32 @@ describe("dashboard.store.preview loader", () => {
     }
   });
 
-  it("renders the merchant's generated draft home doc as real storefront HTML", async () => {
-    const draft: BlockDocument = {
+  it("fails closed when no runtime-1 draft exists instead of loading a legacy page document", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    loadDraftMock.mockResolvedValue({
       kind: "singleton",
       pageKey: "home",
-      blocks: [
-        {
-          id: "h",
-          type: "hero",
-          layout: { x: 0, y: 0, w: 12, h: 2 },
-          props: { headline: "Handmade soy candles", subhead: "Small batch" },
-        },
-      ],
-    };
-    loadDraftMock.mockResolvedValue(draft);
-    const { doc, data } = await loaderData("https://app.example.com/dashboard/store/preview?page=home");
-    // The draft (what the prompt produced) is what the studio shows — not a mock.
-    expect(doc.blocks[0].props.headline).toBe("Handmade soy candles");
-    const html = renderToStaticMarkup(<>{renderBlocks(doc, { data })}</>);
-    expect(html).toContain("Handmade soy candles");
-    expect(html).toContain("Small batch");
-  });
-
-  it("carries typeStyle/density in the preview settings DTO so the canvas matches the published store", async () => {
-    loadDraftMock.mockResolvedValue(null);
-    const { settings: dto } = await loaderData("https://app.example.com/dashboard/store/preview");
-    expect(dto.typeStyle).toBe("editorial");
-    expect(dto.density).toBe("roomy");
-  });
-
-  it("falls back to the never-blank default home doc when there is no draft", async () => {
-    loadDraftMock.mockResolvedValue(null);
-    const { doc } = await loaderData("https://app.example.com/dashboard/store/preview");
-    expect(doc.blocks.some((b: { type: string }) => b.type === "hero")).toBe(true);
-    expect(doc.blocks.some((b: { type: string }) => b.type === "productGrid")).toBe(true);
-  });
-
-  it("uses the deterministic starter for a template page with no draft (never blank)", async () => {
-    loadDraftMock.mockResolvedValue(null);
-    const { doc } = await loaderData("https://app.example.com/dashboard/store/preview?page=collection");
-    expect(doc.blocks.some((b: { type: string }) => b.type === "collectionGrid")).toBe(true);
-  });
-
-  it("ignores an unknown page param and previews home", async () => {
-    loadDraftMock.mockResolvedValue(null);
-    await loaderData("https://app.example.com/dashboard/store/preview?page=bogus");
-    // loadDraftDoc is called with the resolved page — must be "home", not "bogus".
-    expect(loadDraftMock).toHaveBeenCalledWith(SHOP, "home");
-  });
-
-  it("binds the pdp preview to the clicked product via ?handle (not just the first product)", async () => {
-    const special = { id: "p9", handle: "special-tee", title: "Special Tee", description: "", images: [], variants: [], collections: [] };
-    getCatalogMock.mockReturnValue({
-      listProducts: async () => [{ ...special, id: "p1", handle: "first-product" }],
-      listCollections: async () => [],
-      getProduct: async (_s: string, h: string) => (h === "special-tee" ? special : null),
+      blocks: [{
+        id: "legacy-html",
+        type: "rawHtml",
+        layout: { x: 0, y: 0, w: 12, h: 12 },
+        props: { html: "<main>legacy generated html</main>" },
+      }],
     });
-    loadDraftMock.mockResolvedValue(null);
-    const { record } = await loaderData("https://app.example.com/dashboard/store/preview?page=pdp&handle=special-tee");
-    expect(record.product.handle).toBe("special-tee"); // the clicked product, not products[0]
+    try {
+      await expect(loader({
+        request: new Request("https://app.example.com/dashboard/store/preview"),
+      } as LoaderFunctionArgs)).rejects.toMatchObject({ status: 404 });
+      expect(loadDraftMock).not.toHaveBeenCalled();
+      expect(getSettingsMock).not.toHaveBeenCalled();
+      expect(getCatalogMock).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
   });
 
-  it("binds the collection preview to the clicked collection via ?handle", async () => {
-    getCatalogMock.mockReturnValue({
-      listProducts: async () => [],
-      listCollections: async () => [{ handle: "winter", title: "Winter" }, { handle: "summer", title: "Summer" }],
-      getProduct: async () => null,
-    });
-    loadDraftMock.mockResolvedValue(null);
-    const { record } = await loaderData("https://app.example.com/dashboard/store/preview?page=collection&handle=summer");
-    expect(record.collection.handle).toBe("summer"); // the clicked collection, not collections[0]
-  });
-
-  it("rewrites rawHtml /storefront hrefs to the tenant origin (display-only, stored draft untouched)", async () => {
-    const html = '<a href="/storefront/products/tee">Shop</a><a href="/about">About</a>';
-    const draft: BlockDocument = {
-      kind: "singleton",
-      pageKey: "home",
-      blocks: [{ id: "r", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html } }],
-    };
-    loadDraftMock.mockResolvedValue(draft);
-    stubOrgSlug("acme");
-    const { doc } = await loaderData("https://app.example.com/dashboard/store/preview?page=home");
-    expect(doc.blocks[0].props.html).toContain('href="https://acme.calderyncompany.com/storefront/products/tee" target="_blank" rel="noopener"');
-    expect(doc.blocks[0].props.html).toContain('href="/about"'); // non-storefront hrefs untouched
-    expect(draft.blocks[0].props.html).toBe(html); // the loaded draft object is never mutated
-  });
-
-  it("makes rawHtml /storefront hrefs inert when the shop has no org_slug", async () => {
-    const draft: BlockDocument = {
-      kind: "singleton",
-      pageKey: "home",
-      blocks: [{ id: "r", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html: '<a href="/storefront">Shop</a>' } }],
-    };
-    loadDraftMock.mockResolvedValue(draft);
-    stubOrgSlug(null);
-    const { doc } = await loaderData("https://app.example.com/dashboard/store/preview?page=home");
-    expect(doc.blocks[0].props.html).toContain('href="#"');
-    expect(doc.blocks[0].props.html).not.toContain("target=");
-  });
 });
 
 describe("PdpBlockColumns (shared preview/storefront PDP layout)", () => {
@@ -302,49 +217,5 @@ describe("PdpBlockColumns (shared preview/storefront PDP layout)", () => {
       </PdpBlockColumns>,
     );
     expect(html.indexOf("PROMISE")).toBeGreaterThan(html.indexOf("RIGHT"));
-  });
-});
-
-describe("rewriteStorefrontHrefs", () => {
-  const origin = "https://acme.calderyncompany.com";
-  it("rewrites /storefront hrefs to the absolute tenant origin with target/rel", () => {
-    expect(rewriteStorefrontHrefs('<a href="/storefront/collections/all">All</a>', origin)).toBe(
-      `<a href="${origin}/storefront/collections/all" target="_blank" rel="noopener">All</a>`,
-    );
-    // Bare /storefront and single-quoted attributes rewrite too.
-    expect(rewriteStorefrontHrefs("<a href='/storefront'>Home</a>", origin)).toBe(
-      `<a href='${origin}/storefront' target='_blank' rel='noopener'>Home</a>`,
-    );
-  });
-  it("falls back to inert links (href=\"#\", no target) without a tenant origin", () => {
-    expect(rewriteStorefrontHrefs('<a href="/storefront/products/tee">Shop</a>', null)).toBe('<a href="#">Shop</a>');
-  });
-  it("leaves non-storefront hrefs untouched", () => {
-    for (const html of ['<a href="/about">About</a>', '<a href="https://example.com/storefront">Ext</a>', '<a href="/storefronts">Near miss</a>']) {
-      expect(rewriteStorefrontHrefs(html, origin)).toBe(html);
-    }
-  });
-  it("leaves anchors without an href untouched", () => {
-    const html = '<a data-section="hero">No link</a>';
-    expect(rewriteStorefrontHrefs(html, origin)).toBe(html);
-  });
-});
-
-describe("rewriteDocStorefrontHrefs", () => {
-  it("touches only rawHtml blocks and returns the doc unchanged (same reference) when there are none", () => {
-    const doc: BlockDocument = {
-      kind: "singleton",
-      pageKey: "home",
-      blocks: [
-        { id: "r", type: "rawHtml", layout: { x: 0, y: 0, w: 12, h: 12 }, props: { html: '<a href="/storefront">Shop</a>' } },
-        { id: "t", type: "richText", layout: { x: 0, y: 12, w: 12, h: 2 }, props: { html: '<a href="/storefront">Story</a>' } },
-      ],
-    };
-    const out = rewriteDocStorefrontHrefs(doc, "https://acme.calderyncompany.com");
-    expect(out.blocks[0].props.html).toContain("https://acme.calderyncompany.com/storefront");
-    expect(out.blocks[1].props.html).toBe('<a href="/storefront">Story</a>'); // non-rawHtml untouched
-
-    const noRaw: BlockDocument = { kind: "singleton", pageKey: "home", blocks: [doc.blocks[1]] };
-    expect(rewriteDocStorefrontHrefs(noRaw, "https://acme.calderyncompany.com")).toBe(noRaw);
   });
 });

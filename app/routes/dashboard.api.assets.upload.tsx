@@ -53,6 +53,7 @@ export async function action({ request }: ActionFunctionArgs) {
       ok: true,
       id: stored.assetId,
       url: stored.publicUrl,
+      assetRef: stored.storageKey,
       mime: stored.mime,
       ...(purpose === "logo" ? { applied: "logo" } : {}),
     };

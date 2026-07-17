@@ -1,4 +1,5 @@
 import type {
+  AssetManifest,
   CuratedFontId,
   RecipeCardIdentity,
   RecipeCompositionIdentity,
@@ -17,6 +18,17 @@ import type {
   VersionedStoreTemplate,
   VersionedStoreTemplateRegistry,
 } from "./types";
+import { ATELIER_GRID_ASSETS } from "../storefront-recipes/atelier-nine/assets";
+import { BROADCAST_PATCH_BAY_ASSETS } from "../storefront-recipes/broadcast-patch-bay/assets";
+import { COMMONS_INDEX_ASSETS } from "../storefront-recipes/commons-index/assets";
+import { COMPANION_FIELD_GUIDE_ASSETS } from "../storefront-recipes/companion-field-guide/assets";
+import { CUSTOM_BENCH_ASSETS } from "../storefront-recipes/custom-bench/assets";
+import { DAILY_PROTOCOL_ASSETS } from "../storefront-recipes/daily-protocol/assets";
+import { DIAGNOSTIC_DECK_ASSETS } from "../storefront-recipes/diagnostic-deck/assets";
+import { REP_REST_ASSETS } from "../storefront-recipes/rep-rest/assets";
+import { RITUAL_ALMANAC_ASSETS } from "../storefront-recipes/ritual-almanac/assets";
+import { ROOM_MODES_ASSETS } from "../storefront-recipes/room-modes/assets";
+import { SOFT_CHEMISTRY_ASSETS } from "../storefront-recipes/soft-chemistry/assets";
 import {
   RECIPE_CARD_TOPOLOGIES,
   RECIPE_COMPOSITION_FAMILIES,
@@ -37,8 +49,22 @@ const HERO_TREATMENTS: ReadonlySet<string> = new Set(RECIPE_HERO_TREATMENTS);
 const SCROLL_MODELS: ReadonlySet<string> = new Set(RECIPE_SCROLL_MODELS);
 const CARD_TOPOLOGIES: ReadonlySet<string> = new Set(RECIPE_CARD_TOPOLOGIES);
 const PROTECTED_SLOTS = new Set([
-  "variantPicker", "addToCart", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce", "checkoutRoot",
+  "variantPicker", "addToCart", "productDescription", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce", "checkoutRoot",
 ]);
+const PROTECTED_HERO_ASSET_KEY = "hero";
+const ASSET_MANIFEST_BY_TEMPLATE_ID = {
+  "custom-bench": CUSTOM_BENCH_ASSETS,
+  "commons-index": COMMONS_INDEX_ASSETS,
+  "soft-chemistry": SOFT_CHEMISTRY_ASSETS,
+  "companion-field-guide": COMPANION_FIELD_GUIDE_ASSETS,
+  "daily-protocol": DAILY_PROTOCOL_ASSETS,
+  "room-modes": ROOM_MODES_ASSETS,
+  "rep-rest": REP_REST_ASSETS,
+  "diagnostic-deck": DIAGNOSTIC_DECK_ASSETS,
+  "ritual-almanac": RITUAL_ALMANAC_ASSETS,
+  "broadcast-patch-bay": BROADCAST_PATCH_BAY_ASSETS,
+  "atelier-nine": ATELIER_GRID_ASSETS,
+} satisfies Readonly<Record<StoreTemplateId, AssetManifest>>;
 
 const DEFAULT_OVERRIDE_SURFACE = {
   designTokens: ["color", "typography", "spacing", "radius", "motion"],
@@ -263,10 +289,14 @@ function protectedSlotsFor(blueprint: StorefrontRecipeBlueprintId): RecipeProtec
   switch (blueprint) {
     case "shell": return [{ slot: "cartDrawer", region: "shell.utility" }];
     case "home": return [{ slot: "quickViewCommerce", region: "home.featured" }];
-    case "collection": return [{ slot: "quickViewCommerce", region: "collection.results" }];
+    case "collection": return [
+      { slot: "quickViewCommerce", region: "collection.results" },
+      { slot: "productDescription", region: "collection.results" },
+    ];
     case "product": return [
       { slot: "variantPicker", region: "product.purchase" },
       { slot: "addToCart", region: "product.purchase" },
+      { slot: "productDescription", region: "product.purchase" },
     ];
     case "search": return [{ slot: "quickViewCommerce", region: "search.results" }];
     case "cart": return [
@@ -331,6 +361,13 @@ function recipe(
       desktop: `public/storefront-recipes/${value.id}/baselines/v${templateVersion}-desktop.webp`,
       mobile: `public/storefront-recipes/${value.id}/baselines/v${templateVersion}-mobile.webp`,
     },
+    visualLayer: {
+      slotId: `visual:${value.id}:v${templateVersion}`,
+      fallbackAssetKey: PROTECTED_HERO_ASSET_KEY,
+      placement: "hero-background",
+      pointerEvents: "none",
+    },
+    productPlaceholderAssetKey: PROTECTED_HERO_ASSET_KEY,
     routeBlueprints,
   });
   return {
@@ -575,6 +612,7 @@ function freezeTemplate(template: VersionedStoreTemplate): VersionedStoreTemplat
     return Object.freeze({
       ...version,
       screenshots: Object.freeze({ ...version.screenshots }),
+      visualLayer: Object.freeze({ ...version.visualLayer }),
       routeBlueprints: Object.freeze(routeBlueprints),
     });
   });
@@ -602,10 +640,12 @@ export function createStoreTemplateRegistry(
   const ids = new Set<StoreTemplateId>();
   const namesAndAliases = new Set<string>();
   const semanticSignatures = new Set<string>();
+  const visualSlots = new Set<string>();
   const validatedTemplates: VersionedStoreTemplate[] = [];
   for (const template of templates) {
     if (ids.has(template.id)) throw new Error(`Duplicate template ID: ${template.id}`);
     ids.add(template.id);
+    const ownedAssetKeys = new Set(ASSET_MANIFEST_BY_TEMPLATE_ID[template.id].entries.map(({ key }) => key));
     if (template.activeVersion < 1 || !Number.isInteger(template.activeVersion)) throw new Error(`Invalid active version: ${template.id}`);
     const versionNumbers = new Set<number>();
     for (const version of template.versions) {
@@ -616,6 +656,26 @@ export function createStoreTemplateRegistry(
       const artifactReferences = [version.baselineArtifact, version.screenshots.desktop, version.screenshots.mobile];
       if (artifactReferences.some((reference) => !isSafeArtifactReference(reference))) {
         throw new Error(`Invalid artifact reference: ${template.id}`);
+      }
+      if (
+        !version.visualLayer?.slotId.startsWith("visual:") ||
+        version.visualLayer.slotId.length === "visual:".length ||
+        (version.visualLayer.placement !== "hero-background" && version.visualLayer.placement !== "section-background") ||
+        version.visualLayer.pointerEvents !== "none"
+      ) {
+        throw new Error(`Invalid visual layer: ${template.id}@${version.templateVersion}`);
+      }
+      if (
+        version.visualLayer.placement === "hero-background" &&
+        version.visualLayer.fallbackAssetKey !== PROTECTED_HERO_ASSET_KEY
+      ) {
+        throw new Error(`Hero visual fallback must use the protected owned visual fallback asset: ${template.id}`);
+      }
+      if (!ownedAssetKeys.has(version.visualLayer.fallbackAssetKey)) {
+        throw new Error(`Unresolved owned visual fallback: ${template.id}`);
+      }
+      if (!ownedAssetKeys.has(version.productPlaceholderAssetKey)) {
+        throw new Error(`Unresolved owned product placeholder: ${template.id}`);
       }
       const blueprintKeys = Object.keys(version.routeBlueprints);
       if (
@@ -632,6 +692,11 @@ export function createStoreTemplateRegistry(
         if (routeSemanticSignatures.has(signature)) throw new Error(`Duplicate route semantic signature: ${template.id}`);
         routeSemanticSignatures.add(signature);
       }
+      for (const routeId of ["collection", "product"] as const) {
+        if (!version.routeBlueprints[routeId].protectedSlotPlacement.some(({ slot }) => slot === "productDescription")) {
+          throw new Error(`Missing product description placement: ${template.id}/${routeId}`);
+        }
+      }
     }
     if (!versionNumbers.has(template.activeVersion)) throw new Error(`Active version is not registered: ${template.id}`);
     const activeBlueprint = template.versions.find((version) => version.templateVersion === template.activeVersion)!.routeBlueprints.shell;
@@ -647,6 +712,12 @@ export function createStoreTemplateRegistry(
     ]);
     if (semanticSignatures.has(semanticSignature)) throw new Error(`Duplicate semantic signature: ${template.id}`);
     semanticSignatures.add(semanticSignature);
+    for (const version of template.versions) {
+      if (visualSlots.has(version.visualLayer.slotId)) {
+        throw new Error(`Duplicate visual slot: ${version.visualLayer.slotId}`);
+      }
+      visualSlots.add(version.visualLayer.slotId);
+    }
     if (ALL_ROUTES.some((route) => !template.routeCapabilities.includes(route)) || template.routeCapabilities.length !== ALL_ROUTES.length) {
       throw new Error(`Incomplete route capabilities: ${template.id}`);
     }

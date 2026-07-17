@@ -33,6 +33,14 @@ async function thrownResponse(run: () => Promise<unknown>): Promise<Response> {
 }
 
 describe("runtime-1 search route grammar", () => {
+  it("fails explicitly when no runtime-1 search surface resolves", async () => {
+    resolveRuntime1RouteMock.mockResolvedValue(null);
+    const response = await thrownResponse(() => searchLoader({
+      request: new Request("https://demo.calderyncompany.com/storefront/search?q=tea"), params: {}, context: {},
+    } as never));
+    expect(response.status).toBe(503);
+  });
+
   it("passes the validated Task 6 query, facets, sort, and cursor to release data resolution", async () => {
     const request = new Request("https://demo.calderyncompany.com/storefront/search?q=vegan&category=Beauty&sort=price_desc&limit=1");
     await searchLoader({ request, params: {}, context: {} } as never);
@@ -56,6 +64,15 @@ describe("runtime-1 search route grammar", () => {
 });
 
 describe("runtime-1 collection route grammar", () => {
+  it("fails explicitly when no runtime-1 collection surface resolves", async () => {
+    resolveRuntime1RouteMock.mockResolvedValue(null);
+    const response = await thrownResponse(() => collectionLoader({
+      request: new Request("https://demo.calderyncompany.com/storefront/collections/featured"),
+      params: { handle: "featured" }, context: {},
+    } as never));
+    expect(response.status).toBe(503);
+  });
+
   it("translates only allowlisted collection facets plus sort/cursor", async () => {
     const request = new Request("https://demo.calderyncompany.com/storefront/collections/featured?filter.tag=vegan&filter.available=true&sort=price_asc");
     await collectionLoader({ request, params: { handle: "featured" }, context: {} } as never);
@@ -77,5 +94,20 @@ describe("runtime-1 collection route grammar", () => {
     expect(response.status).toBe(422);
     await expect(response.json()).resolves.toMatchObject({ ok: false, error: { code: "invalid_search_request" } });
     expect(resolveRuntime1RouteMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a safe next-page href that preserves the validated collection controls", async () => {
+    resolveRuntime1RouteMock.mockResolvedValue({
+      ...runtimeData,
+      data: { ...runtimeData.data, collection: { title: "Featured", nextCursor: "signed.cursor" } },
+    });
+    const response = await collectionLoader({
+      request: new Request("https://demo.calderyncompany.com/storefront/collections/featured?filter.tag=vegan&sort=price_asc"),
+      params: { handle: "featured" }, context: {},
+    } as never);
+
+    await expect(response.json()).resolves.toMatchObject({
+      nextPageHref: "/storefront/collections/featured?filter.tag=vegan&sort=price_asc&cursor=signed.cursor",
+    });
   });
 });

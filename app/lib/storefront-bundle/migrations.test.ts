@@ -17,6 +17,20 @@ const ASSETS = migration("20260713141000_storefront_bundle_assets.sql");
 const FUNCTIONS = migration("20260713142000_storefront_bundle_functions.sql");
 const CUSTOM_ASSET_KEYS = migration("20260713210000_storefront_custom_asset_logical_keys.sql");
 const GENERATION_RUNS = migration("20260713230000_storefront_generation_runs_and_atomic_install.sql");
+const RUNTIME1_PUBLISH_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../supabase/migrations/20260717100000_storefront_runtime1_publish.sql",
+);
+const RUNTIME1_PUBLISH = existsSync(RUNTIME1_PUBLISH_PATH)
+  ? readFileSync(RUNTIME1_PUBLISH_PATH, "utf8").toLowerCase()
+  : "";
+const RUNTIME1_CUTOVER_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../supabase/migrations/20260717110000_storefront_runtime1_cutover_backfill.sql",
+);
+const RUNTIME1_CUTOVER = existsSync(RUNTIME1_CUTOVER_PATH)
+  ? readFileSync(RUNTIME1_CUTOVER_PATH, "utf8").toLowerCase()
+  : "";
 const ACTOR_FOREIGN_KEYS_NAME = readdirSync(path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../../supabase/migrations",
@@ -32,6 +46,24 @@ const EDIT_ASSET_PROVENANCE = existsSync(EDIT_ASSET_PROVENANCE_PATH)
 const SQL = `${RELEASES}\n${ASSETS}\n${FUNCTIONS}`;
 
 describe("storefront bundle persistence migrations", () => {
+  it("appends hidden-design migrations after the recorded designer migration history", () => {
+    const directory = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../supabase/migrations",
+    );
+    const names = [
+      "_store_asset_generation_claims.sql",
+      "_storefront_catalog_search_page.sql",
+      "_storefront_runtime1_publish.sql",
+      "_storefront_runtime1_cutover_backfill.sql",
+    ].map((suffix) => readdirSync(directory).find((name) => name.endsWith(suffix)));
+
+    expect(names.every(Boolean)).toBe(true);
+    const versions = names.map((name) => Number(name!.split("_", 1)[0]));
+    expect(versions).toEqual([...versions].sort((left, right) => left - right));
+    expect(versions[0]).toBeGreaterThan(20260717070000);
+  });
+
   it("links storefront audit actors to first-party users", () => {
     for (const table of ["storefront_release_history", "storefront_bundle_edit"]) {
       expect(ACTOR_FOREIGN_KEYS).toMatch(new RegExp(
@@ -165,6 +197,58 @@ describe("storefront bundle persistence migrations", () => {
     expect(publish).toContain("p_legacy_snapshot");
     expect(publish).toContain("capture_storefront_legacy_release");
     expect(publish).not.toContain("legacy_capture_required");
+  });
+
+  it("adds a service-role-only runtime-1 publish transaction with pointer CAS and no legacy capture", () => {
+    const publish = RUNTIME1_PUBLISH.match(/function public\.publish_storefront_runtime1_release[\s\S]+?\$\$;/)?.[0] ?? "";
+    expect(publish).toMatch(/p_expected_published_version_id uuid/);
+    expect(publish).toContain("lock_storefront_design_shop");
+    expect(publish).toContain("storefront_assert_no_running_experiment");
+    expect(publish).toContain("storefront_assert_installable");
+    expect(publish).toMatch(/runtime_version\s*=\s*1/);
+    expect(publish).toMatch(/published_version_id is not distinct from p_expected_published_version_id/);
+    expect(publish).toContain("storefront_publish_conflict");
+    expect(publish).toContain("get diagnostics");
+    expect(publish).not.toContain("legacy");
+    expect(RUNTIME1_PUBLISH).toMatch(/revoke all on function public\.publish_storefront_runtime1_release[^;]+from public, anon, authenticated/);
+    expect(RUNTIME1_PUBLISH).toMatch(/grant execute on function public\.publish_storefront_runtime1_release[^;]+to service_role/);
+    for (const signature of [
+      "prepare_storefront_legacy_capture\\(uuid\\)",
+      "capture_storefront_legacy_release\\(uuid, uuid, jsonb, jsonb, text, jsonb, text\\)",
+      "publish_storefront_release\\(uuid, uuid, uuid, uuid, jsonb, jsonb, text, jsonb, text\\)",
+    ]) {
+      expect(RUNTIME1_PUBLISH).toMatch(new RegExp(`revoke execute on function public\\.${signature} from service_role`));
+    }
+    expect(RUNTIME1_PUBLISH).toMatch(/create function public\.storefront_runtime1_release_pointer_guard/);
+    expect(RUNTIME1_PUBLISH).toMatch(/new\.(draft|published)_version_id[^;]+runtime_version = 1/);
+    expect(RUNTIME1_PUBLISH).toMatch(/create trigger storefront_runtime1_release_pointer_guard/);
+    expect(RUNTIME1_PUBLISH).toMatch(/revoke all on function public\.storefront_runtime1_release_pointer_guard\(\)[^;]+from public, anon, authenticated/);
+  });
+
+  it("moves every previously published page-document shop onto a validated runtime-1 release", () => {
+    expect(RUNTIME1_CUTOVER).toContain("from public.page_document");
+    expect(RUNTIME1_CUTOVER).toMatch(/published_json is not null/);
+    expect(RUNTIME1_CUTOVER).toMatch(/runtime_version\s*=\s*1/);
+    expect(RUNTIME1_CUTOVER).toMatch(/status\s*=\s*'validated'/);
+    expect(RUNTIME1_CUTOVER).toContain("'initial_design'");
+    expect(RUNTIME1_CUTOVER).toContain("insert into public.storefront_bundle_version");
+    expect(RUNTIME1_CUTOVER).toContain("insert into public.storefront_release_history");
+    expect(RUNTIME1_CUTOVER).toContain("runtime1_cutover_backfill_incomplete");
+  });
+
+  it("allows only the canonical checked-in recipe artifact to seed cross-shop cutover backfills", () => {
+    expect(RUNTIME1_CUTOVER).toMatch(/version\.template_id\s*=\s*'custom-bench'/);
+    expect(RUNTIME1_CUTOVER).toMatch(/version\.template_version\s*=\s*1/);
+    expect(RUNTIME1_CUTOVER).toContain(
+      "sha256:6422971974cb227fa2b55c4741361310fa5e67de740a94338ad89fd8539b401b",
+    );
+    expect(RUNTIME1_CUTOVER).toContain("public.storefront_artifact_hash(");
+  });
+
+  it("stops obsolete running design experiments before enforcing the command-only cutover", () => {
+    expect(RUNTIME1_CUTOVER).toMatch(
+      /update public\.store_experiment[\s\S]+set state = 'stopped'[\s\S]+where state = 'running'/,
+    );
   });
 
   it("derives immutable asset keys and verifies deletion generation immediately before removal", () => {

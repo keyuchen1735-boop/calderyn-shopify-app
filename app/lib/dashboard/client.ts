@@ -1776,7 +1776,7 @@ export async function uploadProductImage(
 /** Upload a replacement image used only by the campaign creative editor. */
 export async function uploadCampaignCreativeImage(
   file: File,
-): Promise<{ id: string; url: string }> {
+): Promise<{ id: string; url: string; assetRef: string }> {
   const form = new FormData();
   form.set("file", file);
   const response = await fetch("/dashboard/api/assets/upload", {
@@ -1788,8 +1788,8 @@ export async function uploadCampaignCreativeImage(
   throwIfVersionSkew(response);
   if (response.status === 401) redirectToLogin();
   if (!response.ok) throw await toApiError(response);
-  const data = (await response.json()) as { id: string; url: string };
-  return { id: data.id, url: data.url };
+  const data = (await response.json()) as { id: string; url: string; assetRef: string };
+  return { id: data.id, url: data.url, assetRef: data.assetRef };
 }
 
 export async function deleteProductImage(mediaId: string): Promise<void> {

@@ -149,8 +149,8 @@ export function resolveMediaMarkers(html: string, productsById: Record<string, S
   });
 }
 
-// Mounts the sanitized markup, then hydrates its data-fx-shader / data-fx-motion
-// effect channels client-side (the effect is a no-op on the server and skips when
+// Mounts the sanitized markup, then hydrates its motion channel client-side
+// (the effect is a no-op on the server and skips when
 // html is empty). Re-keyed on props.html so a regenerated home tears down the old
 // effects before hydrating the new markup.
 function RawHtmlBlock({ props, ctx }: { props: RawHtmlProps; ctx: RenderContext }) {

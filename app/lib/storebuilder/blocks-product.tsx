@@ -112,11 +112,15 @@ const collectionGrid: BlockMeta = {
     const products = handle ? (ctx.data.productsByCollection[handle] ?? []) : [];
     const links = ctx.links ?? STOREFRONT_LINKS;
     return createElement("div", { className: "cd-block cd-store__grid" },
-      products.map((p) =>
-        createElement("a", { key: p.id, className: "cd-product-card", href: links.product(p.handle) },
+      products.map((p) => {
+        const description = p.description.trim();
+        const excerpt = description.length > 160 ? `${description.slice(0, 159).trimEnd()}…` : description;
+        return createElement("a", { key: p.id, className: "cd-product-card", href: links.product(p.handle) },
           p.images[0] ? createElement("img", { className: "cd-product-card__img", src: p.images[0].url, alt: p.images[0].alt ?? p.title }) : null,
           createElement("span", { className: "cd-product-card__title" }, p.title),
-          createElement("span", { className: "cd-product-card__price" }, p.variants[0] ? money(p.variants[0].priceCents, p.variants[0].currency) : ""))));
+          excerpt ? createElement("span", { className: "cd-product-card__description" }, excerpt) : null,
+          createElement("span", { className: "cd-product-card__price" }, p.variants[0] ? money(p.variants[0].priceCents, p.variants[0].currency) : ""));
+      }));
   },
 };
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
+import { searchProductPageInMemory } from "~/lib/storefront/catalog.stub.server";
 import { parseStorefrontSearchParams } from "~/lib/storefront/search.server";
 import { PublicDataPlanError, resolvePublicData } from "./public-data.server";
 
@@ -32,6 +33,16 @@ function product(handle: string, imageUrl = "https://media.example/one.jpg"): St
 
 function catalog(products = [product("one"), product("two")]): StorefrontCatalog {
   return {
+    searchProductPage: vi.fn(async (_shopId, opts) => searchProductPageInMemory(products, opts)),
+    listProductPage: vi.fn(async (_shopId, opts) => {
+      const selected = opts.collection
+        ? products.filter((entry) => entry.collections.includes(opts.collection!))
+        : products;
+      const offset = opts.cursor ? Number(opts.cursor) : 0;
+      const items = selected.slice(offset, offset + opts.limit);
+      const next = offset + items.length;
+      return { items, nextCursor: next < selected.length ? String(next) : null };
+    }),
     listProducts: vi.fn(async (_shopId, opts) => {
       const selected = opts?.ids
         ? products.filter((entry) => opts.ids!.includes(entry.id))
@@ -106,12 +117,8 @@ describe("runtime-1 public data plans", () => {
       route: { kind: "search", query: "title" },
     }, { catalog: fake, settingsLoader });
     expect(fake.listProducts).toHaveBeenNthCalledWith(1, SHOP, { collection: "featured", limit: 12 });
-    expect(fake.listProducts).toHaveBeenNthCalledWith(2, SHOP, { limit: 250 });
-    expect(fake.listProducts).toHaveBeenNthCalledWith(3, SHOP, {
-      ids: expect.any(Array),
-      limit: 24,
-    });
-    expect(vi.mocked(fake.listProducts).mock.calls[2]?.[1]?.ids).toHaveLength(24);
+    expect(fake.searchProductPage).toHaveBeenCalledTimes(1);
+    expect(fake.listProducts).toHaveBeenCalledTimes(1);
     expect(data.featuredProducts).toHaveLength(12);
     expect(data.search?.results).toHaveLength(24);
   });
@@ -128,6 +135,36 @@ describe("runtime-1 public data plans", () => {
     expect(data.relatedProducts).toEqual([]);
   });
 
+  it("keeps the complete merchant description on runtime product and card data", async () => {
+    const described = { ...product("one"), description: "First <detail> through the complete ending." };
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "currentProduct" }, { kind: "featuredProducts", limit: 1 }],
+      route: { kind: "product", handle: "one" },
+    }, { catalog: catalog([described]), settingsLoader });
+
+    expect(data.product?.description).toBe(described.description);
+    expect(data.featuredProducts[0]?.description).toBe(described.description);
+  });
+
+  it("uses the immutable bundle's featured product order on home only", async () => {
+    const first = product("one");
+    const second = product("two");
+    const fake = catalog([first, second]);
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "featuredProducts", limit: 2 }],
+      route: { kind: "home" },
+      featuredProductIds: [second.id, first.id],
+    }, { catalog: fake, settingsLoader });
+
+    expect(fake.listProducts).toHaveBeenCalledWith(SHOP, {
+      ids: [second.id, first.id],
+      limit: 2,
+    });
+    expect(data.featuredProducts.map(({ id }) => id)).toEqual([second.id, first.id]);
+  });
+
   it("uses a direct collection lookup and keeps the total separate from the 24-product slice", async () => {
     const fake = catalog(Array.from({ length: 40 }, (_, index) => product(String(index))));
     const data = await resolvePublicData({
@@ -139,6 +176,28 @@ describe("runtime-1 public data plans", () => {
     expect(fake.listCollections).not.toHaveBeenCalled();
     expect(data.collection?.products).toHaveLength(24);
     expect(data.collection?.productCount).toBe(40);
+  });
+
+  it("carries the cursor through runtime collection data until all 61 products are reached once", async () => {
+    const products = Array.from({ length: 61 }, (_, index) => product(index.toString().padStart(2, "0")));
+    const fake = catalog(products);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+
+    do {
+      const params = new URLSearchParams({ collection: "featured", limit: "24" });
+      if (cursor) params.set("cursor", cursor);
+      const data = await resolvePublicData({
+        shopId: SHOP,
+        requiredData: [{ kind: "currentCollection" }],
+        route: { kind: "collection", handle: "featured", searchInput: parseStorefrontSearchParams(params) },
+      }, { catalog: fake, settingsLoader });
+      seen.push(...(data.collection?.products.map((entry) => entry.id) ?? []));
+      cursor = data.collection?.nextCursor ?? null;
+    } while (cursor);
+
+    expect(seen).toEqual(products.map((entry) => entry.id));
+    expect(new Set(seen).size).toBe(61);
   });
 
   it.each([
@@ -183,6 +242,66 @@ describe("runtime-1 public data plans", () => {
     expect(second.search?.results.map((entry) => entry.handle)).toEqual(["cheap"]);
   });
 
+  it("uses the bounded search card without rehydrating all product children", async () => {
+    const mixed = {
+      ...product("mixed"),
+      images: [
+        { url: "https://media.example/primary.jpg", alt: "Primary" },
+        { url: "https://media.example/secondary.jpg", alt: "Secondary" },
+      ],
+      variants: [
+        {
+          ...product("mixed").variants[0], id: "variant-draft", title: "Draft",
+          priceCents: 0, available: false, hasPrice: false,
+        },
+        {
+          ...product("mixed").variants[0], id: "variant-live", title: "Live",
+          priceCents: 2500, available: true, hasPrice: true,
+        },
+      ],
+    };
+    const fake = catalog([mixed]);
+    const searchInput = parseStorefrontSearchParams(
+      new URL("https://shop.example/?available=true&sort=price_asc").searchParams,
+    );
+
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "searchResults", limit: 24 }],
+      route: { kind: "search", query: "", searchInput },
+    }, { catalog: fake, settingsLoader });
+
+    expect(fake.listProducts).not.toHaveBeenCalled();
+    expect(data.search?.results[0]).toMatchObject({
+      images: [{ url: "https://media.example/primary.jpg", alt: "Primary" }],
+      variants: [{ id: "variant-live", price: { cents: 2500, currency: "USD" } }],
+      price: { cents: 2500, currency: "USD" },
+      availability: "In stock",
+    });
+    expect(data.search?.results[0]?.images).toHaveLength(1);
+    expect(data.search?.results[0]?.variants).toHaveLength(1);
+  });
+
+  it("keeps missing PublicProduct and PublicVariant prices null", async () => {
+    const missing = {
+      ...product("missing"),
+      variants: [{
+        ...product("missing").variants[0], priceCents: 0,
+        available: false, hasPrice: false,
+      }],
+    };
+    const fake = catalog([missing]);
+
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "searchResults", limit: 24 }],
+      route: { kind: "search", query: "" },
+    }, { catalog: fake, settingsLoader });
+
+    expect(data.search?.results[0]?.price).toBeNull();
+    expect(data.search?.results[0]?.variants[0]?.price).toBeNull();
+  });
+
   it("changes collection products when an allowlisted Task 6 facet changes", async () => {
     const vegan = { ...product("vegan"), tags: ["vegan"] };
     const wool = { ...product("wool"), tags: ["wool"] };
@@ -202,6 +321,10 @@ describe("runtime-1 public data plans", () => {
       .mockResolvedValueOnce([product("one", "https://signed.example/first")])
       .mockResolvedValueOnce([product("one", "https://signed.example/second")]);
     const fake: StorefrontCatalog = {
+      searchProductPage: vi.fn(async () => ({
+        items: [], facets: { categories: [], tags: [], collections: [] }, total: 0, hasNextPage: false,
+      })),
+      listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })),
       listProducts,
       getProduct: vi.fn(async () => null),
       getCollection: vi.fn(async () => null),

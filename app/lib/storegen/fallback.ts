@@ -19,9 +19,7 @@ export interface FallbackContext {
   vibe?: StudioVibe;
 }
 
-// Fallback docs are saved straight to page_document without passing through assembleDocument
-// (see generate.server.ts), so they must self-enforce the same length limits that pass would
-// have applied. Mirrors the generator's COPY_BOUNDS (storegen/sanitize.ts).
+// Fallback docs are saved straight to page_document, so they enforce their own copy limits.
 const HEADLINE_MAX = 120;
 const SUBHEAD_MAX = 200;
 const HEADING_MAX = 80;

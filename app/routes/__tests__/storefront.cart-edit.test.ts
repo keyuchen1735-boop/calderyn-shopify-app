@@ -7,6 +7,7 @@ const resolveStorefrontShop = vi.fn();
 const priceCart = vi.fn();
 const removeCartLine = vi.fn();
 const clearCart = vi.fn();
+const resolveRuntime1Route = vi.fn();
 
 vi.mock("~/lib/order/cart.server", () => ({
   priceCart: (...a: unknown[]) => priceCart(...a),
@@ -20,6 +21,9 @@ vi.mock("~/lib/storefront/shop.server", () => ({
 // events.server touches storefront_event; stub it so the loader's page_view tracking is a no-op.
 vi.mock("~/lib/storefront/events.server", () => ({
   trackStorefrontEvent: vi.fn(async () => new Headers()),
+}));
+vi.mock("~/lib/storefront-runtime/release-resolution.server", () => ({
+  resolveRuntime1Route: (...a: unknown[]) => resolveRuntime1Route(...a),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock so the fakes register first
@@ -58,6 +62,7 @@ beforeEach(() => {
   });
   removeCartLine.mockResolvedValue(undefined);
   clearCart.mockResolvedValue(undefined);
+  resolveRuntime1Route.mockResolvedValue(null);
 });
 
 describe("cart edit action", () => {
@@ -100,12 +105,10 @@ describe("cart edit action", () => {
   });
 });
 
-describe("cart loader degrades a mixed-currency/unpriceable cart", () => {
-  it("returns error='unpriceable' (not a 500) so the empty-cart control stays reachable", async () => {
-    priceCart.mockRejectedValueOnce(new Error("cart cart-1 mixes currencies: eur, usd"));
-    const res = await loader(loaderArgs(new Request("https://shop.example/storefront/cart", { headers: { Cookie: await cartCookie() } })));
-    const body = await (res as Response).json();
-    expect(body.cart).toBeNull();
-    expect(body.error).toBe("unpriceable");
+describe("cart runtime cutover", () => {
+  it("fails explicitly before loading the platform fallback when runtime-1 is absent", async () => {
+    const run = loader(loaderArgs(new Request("https://shop.example/storefront/cart")));
+    await expect(run).rejects.toMatchObject({ status: 503 });
+    expect(priceCart).not.toHaveBeenCalled();
   });
 });

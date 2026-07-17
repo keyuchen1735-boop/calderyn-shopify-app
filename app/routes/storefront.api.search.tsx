@@ -9,7 +9,8 @@ export async function loader({ request }: LoaderFunctionArgs): Promise<Response>
   if (!(await allowStorefrontRequest(request, shopId, "search", 60))) return storefrontError(429, "rate_limited");
   try {
     const input = parseStorefrontSearchParams(new URL(request.url).searchParams);
-    return storefrontOk(await searchStorefront(shopId, input));
+    const { presentationProducts: _presentationProducts, ...result } = await searchStorefront(shopId, input);
+    return storefrontOk(result);
   } catch (error) {
     if (error instanceof InvalidSearchRequestError) return storefrontError(422, "invalid_search_request");
     throw error;

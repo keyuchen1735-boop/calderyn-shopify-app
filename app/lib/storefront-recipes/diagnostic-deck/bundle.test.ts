@@ -1,12 +1,33 @@
 import { describe, expect, it } from "vitest";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
+import { proveStorefrontBundle } from "~/lib/storefront-validation/browser.server";
+import { storefrontProofContext } from "~/lib/storefront-validation/fixtures";
 import { DIAGNOSTIC_DECK_ASSETS } from "./assets";
-import { DIAGNOSTIC_DECK_RECIPE } from "./bundle";
+import { DIAGNOSTIC_DECK_BUNDLE, DIAGNOSTIC_DECK_RECIPE } from "./bundle";
 
 const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((node) => node.kind === "text" ? [] : [...(node.repeat ? [node.repeat.source] : []), ...repeats(node.children)]);
 const actions = (route: RouteArtifact) => route.interactions.transitions.map((item) => item.action.type);
 
 describe("diagnostic-deck storefront recipe", () => {
+  it("renders for an empty merchant catalog", async () => {
+    const [empty, populated] = await Promise.all([
+      proveStorefrontBundle({
+        bundle: DIAGNOSTIC_DECK_BUNDLE,
+        context: storefrontProofContext(0),
+        routes: ["home", "collection", "search"],
+        viewports: ["mobile"],
+      }),
+      proveStorefrontBundle({
+        bundle: DIAGNOSTIC_DECK_BUNDLE,
+        context: storefrontProofContext(),
+        routes: ["collection"],
+        viewports: ["mobile"],
+      }),
+    ]);
+    expect(empty).toMatchObject({ ok: true, diagnostics: [] });
+    expect(populated).toMatchObject({ ok: true, diagnostics: [] });
+  }, 60_000);
+
   it("compiles a diagnostic terminal deck with exact-unit evidence and complete transactions", () => {
     const { bundle, config, report } = DIAGNOSTIC_DECK_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
@@ -20,7 +41,8 @@ describe("diagnostic-deck storefront recipe", () => {
     expect(bundle.routes.home.html).toContain("Warranty evidence");
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
     expect(repeats(bundle.routes.collection.tree)).toContain("collection.products");
-    expect(actions(bundle.routes.collection)).toEqual(expect.arrayContaining(["collection.filter", "collection.sort", "accordion.toggle"]));
+    expect(actions(bundle.routes.collection)).toEqual(expect.arrayContaining(["collection.filter", "collection.sort"]));
+    expect(bundle.routes.collection.html).toContain("<details");
     expect(bundle.routes.collection.trustedSlots.map((slot) => slot.kind)).toContain("quickViewCommerce");
     expect(repeats(bundle.routes.product.tree)).toEqual(expect.arrayContaining(["product.images", "product.variants"]));
     expect(bundle.routes.product.trustedSlots.map((slot) => slot.kind)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));

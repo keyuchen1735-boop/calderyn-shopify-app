@@ -1,75 +1,63 @@
-// app/routes/__tests__/storefront.layout-experiment.test.ts
-// D4 arm-b vibe override at the LAYOUT root (not the home route): the vibe
-// token packs redeclare on .cd-store, so a running vibe experiment restyles
-// the whole page for a bucketed visitor. Bucketing itself (cookie-only ids,
-// failure isolation) is the shared resolver's contract, unit-tested in
-// store-experiment.server.test.ts — these tests cover the route's use of it.
-import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import StorefrontLayout, { loader } from "../storefront";
 
-const { resolveServedMock, hasRuntime1Mock, loaderDataRef } = vi.hoisted(() => ({
+const { resolveServedMock, loaderDataRef, matchesRef } = vi.hoisted(() => ({
   resolveServedMock: vi.fn(),
-  hasRuntime1Mock: vi.fn(),
   loaderDataRef: { current: null as unknown },
+  matchesRef: { current: [] as unknown[] },
 }));
+
 vi.mock("~/lib/experiments/store-experiment.server", () => ({
   resolveServedExperiment: resolveServedMock,
 }));
-vi.mock("~/lib/storefront-runtime/release-resolution.server", () => ({
-  hasRuntime1Storefront: hasRuntime1Mock,
-}));
 vi.mock("@remix-run/react", () => ({
   useLoaderData: () => loaderDataRef.current,
-  Outlet: () => null,
-  useMatches: () => [],
+  Outlet: () => createElement("span", null, "child"),
+  useMatches: () => matchesRef.current,
 }));
-
-const RUNNING_EXPERIMENT = { id: "exp-1", pageKey: "home" as const, variantSettings: { vibe: "bold" as const } };
-const NOT_SERVED = { experiment: null, experimentId: null, variantKey: null };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  resolveServedMock.mockResolvedValue(NOT_SERVED);
-  hasRuntime1Mock.mockResolvedValue(false);
   loaderDataRef.current = null;
+  matchesRef.current = [];
 });
 
-async function runLoader() {
-  const request = new Request("https://demo.calderyncompany.com/storefront");
-  const res = await loader({ request, params: {}, context: {} } as never);
-  return res.json();
-}
+describe("storefront layout cutover", () => {
+  it("does not read or expose legacy experiments or catalog navigation", async () => {
+    const response = await loader({
+      request: new Request("https://demo.calderyncompany.com/storefront"),
+      params: {},
+      context: {},
+    } as never);
+    const data = await response.json();
 
-describe("storefront layout experiment vibe", () => {
-  it("does not resolve or expose a legacy layout experiment for a bundle storefront", async () => {
-    hasRuntime1Mock.mockResolvedValue(true);
-    const data = await runLoader();
     expect(data.experimentVibe).toBeNull();
     expect(data.collections).toEqual([]);
     expect(resolveServedMock).not.toHaveBeenCalled();
   });
 
-  it("arm b: the layout loader surfaces the challenger vibe from the shared resolver", async () => {
-    resolveServedMock.mockResolvedValue({ experiment: RUNNING_EXPERIMENT, experimentId: "exp-1", variantKey: "b" });
-    const data = await runLoader();
-    expect(data.experimentVibe).toBe("bold");
-    expect(resolveServedMock).toHaveBeenCalledWith("demo-shop", expect.any(Request), "layout");
+  it("renders a runtime-1 child without the platform shell", () => {
+    loaderDataRef.current = {
+      settings: {},
+      experimentVibe: null,
+      collections: [],
+    };
+    matchesRef.current = [{ data: { runtime: 1 } }];
+    const html = renderToStaticMarkup(createElement(StorefrontLayout));
+    expect(html).toBe("<span>child</span>");
   });
 
-  it("arm a: keeps the champion vibe (null override)", async () => {
-    resolveServedMock.mockResolvedValue({ experiment: RUNNING_EXPERIMENT, experimentId: "exp-1", variantKey: "a" });
-    const data = await runLoader();
-    expect(data.experimentVibe).toBeNull();
-  });
-
-  it("not served (no test / first visit / lookup failure inside the resolver): renders the champion shell", async () => {
-    const data = await runLoader();
-    expect(data.experimentVibe).toBeNull();
-
-    loaderDataRef.current = data;
+  it("keeps the platform shell for account and other non-generated routes", async () => {
+    const response = await loader({
+      request: new Request("https://demo.calderyncompany.com/storefront/account"),
+      params: {},
+      context: {},
+    } as never);
+    loaderDataRef.current = await response.json();
     const html = renderToStaticMarkup(createElement(StorefrontLayout));
     expect(html).toContain("cd-store");
+    expect(html).toContain("child");
   });
 });

@@ -31,10 +31,19 @@ beforeEach(() => {
 
 describe("storefront search API", () => {
   it("resolves the tenant before bounded catalog search and returns no-store JSON", async () => {
+    searchStorefront.mockImplementationOnce(async () => {
+      sequence.push("search");
+      return {
+        items: [], facets: {}, nextCursor: null, total: 0,
+        presentationProducts: [{ id: "internal-card" }],
+      };
+    });
     const response = await loader(args(new Request("https://shop.example/storefront/api/search?q=clean")));
     expect(sequence).toEqual(["resolve", "search"]);
     expect(response.headers.get("Cache-Control")).toContain("no-store");
-    expect(await response.json()).toEqual({ ok: true, data: expect.objectContaining({ items: [] }) });
+    const body = await response.json();
+    expect(body).toEqual({ ok: true, data: expect.objectContaining({ items: [] }) });
+    expect(body.data).not.toHaveProperty("presentationProducts");
   });
 
   it("returns a structured 429 without searching", async () => {

@@ -9,24 +9,50 @@ import { getSupabase } from "../supabase.server";
 import { signMediaPaths } from "../catalog/sign-media.server";
 import type {
   StorefrontCatalog,
+  StorefrontCatalogSearchPage,
   StoreProduct,
   StoreVariant,
   StoreCollection,
+} from "./catalog";
+import {
+  decodeProductPageCursor,
+  encodeProductPageCursor,
+  MAX_STOREFRONT_CARD_DESCRIPTION_CODE_POINTS,
+  MAX_PUBLIC_PRODUCT_PAGE_SIZE,
+  MISSING_PRICE_ASC_SORT_VALUE,
+  MISSING_PRICE_DESC_SORT_VALUE,
 } from "./catalog";
 
 type Supa = ReturnType<typeof getSupabase>;
 type Row = Record<string, unknown>;
 
 const DEFAULT_CURRENCY = "USD";
-// Hard cap so a large catalog can't assemble every product (+ sign every image) on
-// one SSR render. The storefront has no pager yet; proper cursor pagination through
-// the loaders is a follow-up. Until then this bounds the per-request cost.
+// Hard cap for bounded/curated reads. Public catalog traversal uses listProductPage.
 const MAX_STOREFRONT_PRODUCTS = 250;
+const POSTGREST_PAGE_SIZE = 1000;
+const POSTGREST_IN_CHUNK_SIZE = 200;
+
+function postgrestLiteral(value: string): string {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
 
 function pushInto<T>(map: Map<string, T[]>, key: string, value: T): void {
   const arr = map.get(key);
   if (arr) arr.push(value);
   else map.set(key, [value]);
+}
+
+async function pagedRows(
+  query: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>,
+): Promise<Row[]> {
+  const rows: Row[] = [];
+  for (let from = 0; ; from += POSTGREST_PAGE_SIZE) {
+    const result = await query(from, from + POSTGREST_PAGE_SIZE - 1);
+    if (result.error) throw result.error;
+    const page = (result.data ?? []) as Row[];
+    rows.push(...page);
+    if (page.length < POSTGREST_PAGE_SIZE) return rows;
+  }
 }
 
 function toVariant(v: Row, ledgerSellable?: number): StoreVariant {
@@ -51,6 +77,7 @@ function toVariant(v: Row, ledgerSellable?: number): StoreVariant {
     // reserved, summed across locations); an untracked variant is always
     // available - but a price-less variant is never available.
     available: priced && (tracked ? stock > 0 : true),
+    hasPrice: priced,
   };
 }
 
@@ -105,43 +132,44 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   const ids = products.map((p) => String(p.id));
   if (!ids.length) return [];
 
-  const [{ data: variants, error: vErr }, { data: media, error: mErr }, { data: pc, error: pcErr }, { data: options, error: oErr }] =
-    await Promise.all([
-      sb
+  const [variants, media, pc, options] = await Promise.all([
+    pagedRows((from, to) => sb
         .from("variant_dim")
         .select("id, product_id, sku, title, retail_price_cents, compare_at_price_cents, currency, inventory_tracked, inventory_on_hand, position")
         .eq("shop_id", shopId)
         .in("product_id", ids)
-        .order("position"),
-      sb
+        .order("position").order("product_id").order("id").range(from, to)),
+    pagedRows((from, to) => sb
         .from("product_media")
-        .select("product_id, storage_path, external_url, alt, position, is_primary")
+        .select("id, product_id, storage_path, external_url, alt, position, is_primary")
         .in("product_id", ids)
-        .order("position"),
-      sb.from("product_collection").select("product_id, collection_id").in("product_id", ids),
-      sb
+        .order("position").order("product_id").order("id").range(from, to)),
+    pagedRows((from, to) => sb.from("product_collection").select("product_id, collection_id")
+      .in("product_id", ids).order("product_id").order("collection_id").range(from, to)),
+    pagedRows((from, to) => sb
         .from("product_option")
-        .select("product_id, name, position, product_option_value(value, position)")
+        .select("id, product_id, name, position, product_option_value(value, position)")
         .in("product_id", ids)
-        .order("position"),
-    ]);
-  if (vErr) throw vErr;
-  if (mErr) throw mErr;
-  if (pcErr) throw pcErr;
-  if (oErr) throw oErr;
+        .order("position").order("product_id").order("id").range(from, to)),
+  ]);
 
   // Resolve collection ids -> handles, scoped to the shop so a foreign id can't
   // surface another tenant's collection handle.
-  const collectionIds = [...new Set((pc ?? []).map((r: Row) => String(r.collection_id)))];
+  const collectionIds = [...new Set(pc.map((r) => String(r.collection_id)))];
   const handleByCollectionId = new Map<string, string>();
   if (collectionIds.length) {
-    const { data: colls, error: cErr } = await sb
-      .from("collection_dim")
-      .select("id, handle")
-      .eq("shop_id", shopId)
-      .in("id", collectionIds);
-    if (cErr) throw cErr;
-    for (const c of (colls ?? []) as Row[]) handleByCollectionId.set(String(c.id), String(c.handle));
+    const chunks: string[][] = [];
+    for (let i = 0; i < collectionIds.length; i += POSTGREST_IN_CHUNK_SIZE)
+      chunks.push(collectionIds.slice(i, i + POSTGREST_IN_CHUNK_SIZE));
+    const pages = await Promise.all(chunks.map((chunk) => pagedRows((from, to) => sb
+        .from("collection_dim")
+        .select("id, handle")
+        .eq("shop_id", shopId)
+        .in("id", chunk)
+        .order("id")
+        .range(from, to))));
+    for (const page of pages)
+      for (const c of page) handleByCollectionId.set(String(c.id), String(c.handle));
   }
 
   // Ledger stock needs the variant ids, so it starts right after the variant fetch
@@ -149,16 +177,16 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   const sellablePromise = sellableByVariant(
     sb,
     shopId,
-    ((variants ?? []) as Row[]).map((v) => String(v.id)),
+    variants.map((v) => String(v.id)),
   );
 
   const signed = await signMediaPaths(
-    ((media ?? []) as Row[]).filter((m) => m.storage_path).map((m) => String(m.storage_path)),
+    media.filter((m) => m.storage_path).map((m) => String(m.storage_path)),
   );
   const sellable = await sellablePromise;
 
   const variantsByProduct = new Map<string, StoreVariant[]>();
-  for (const v of (variants ?? []) as Row[])
+  for (const v of variants)
     pushInto(variantsByProduct, String(v.product_id), toVariant(v, sellable.get(String(v.id))));
 
   // Primary image leads, then by position. A promoted mirror image carries an
@@ -166,7 +194,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   // image carries a private-bucket storage_path resolved through a signed url.
   // Rows that resolve to neither are dropped.
   const imagesByProduct = new Map<string, { url: string; alt: string | null }[]>();
-  const orderedMedia = [...((media ?? []) as Row[])].sort(
+  const orderedMedia = media.slice().sort(
     (a, b) => Number(Boolean(b.is_primary)) - Number(Boolean(a.is_primary)) || Number(a.position ?? 0) - Number(b.position ?? 0),
   );
   for (const m of orderedMedia) {
@@ -177,13 +205,13 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   }
 
   const handlesByProduct = new Map<string, string[]>();
-  for (const r of (pc ?? []) as Row[]) {
+  for (const r of pc) {
     const handle = handleByCollectionId.get(String(r.collection_id));
     if (handle) pushInto(handlesByProduct, String(r.product_id), handle);
   }
 
   const optionsByProduct = new Map<string, Array<{ name: string; values: string[] }>>();
-  for (const option of (options ?? []) as Row[]) {
+  for (const option of options) {
     const values = ((option.product_option_value as Row[] | null) ?? [])
       .slice()
       .sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0))
@@ -208,7 +236,237 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   });
 }
 
+function parseFacets(value: unknown): Array<{ value: string; count: number }> {
+  if (!Array.isArray(value) || value.length > 20) throw new Error("invalid storefront catalog search response");
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error("invalid storefront catalog search response");
+    }
+    const row = entry as Row;
+    if (typeof row.value !== "string" || !Number.isSafeInteger(row.count) || Number(row.count) < 1) {
+      throw new Error("invalid storefront catalog search response");
+    }
+    return { value: row.value, count: Number(row.count) };
+  });
+}
+
+interface ParsedSearchImage {
+  storagePath: string | null;
+  externalUrl: string | null;
+  alt: string | null;
+}
+
+interface ParsedSearchCard {
+  product: StoreProduct;
+  image: ParsedSearchImage | null;
+}
+
+function invalidSearchResponse(): never {
+  throw new Error("invalid storefront catalog search response");
+}
+
+function parseSearchVariant(value: unknown): StoreVariant | null {
+  if (value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return invalidSearchResponse();
+  const row = value as Row;
+  const price = row.price_cents;
+  const compareAt = row.compare_at_price_cents;
+  if (typeof row.id !== "string" || !row.id
+    || (row.sku !== null && typeof row.sku !== "string")
+    || typeof row.title !== "string"
+    || (price !== null && (!Number.isSafeInteger(price) || Number(price) < 0))
+    || (compareAt !== null && (!Number.isSafeInteger(compareAt) || Number(compareAt) < 0))
+    || typeof row.currency !== "string" || !row.currency
+    || typeof row.available !== "boolean"
+    || (price === null && row.available)) return invalidSearchResponse();
+  return {
+    id: row.id,
+    sku: row.sku as string | null,
+    title: row.title,
+    priceCents: price === null ? 0 : Number(price),
+    compareAtPriceCents: compareAt === null ? null : Number(compareAt),
+    currency: row.currency,
+    available: row.available,
+    hasPrice: price !== null,
+  };
+}
+
+function parseSearchImage(value: unknown): ParsedSearchImage | null {
+  if (value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return invalidSearchResponse();
+  const row = value as Row;
+  const storagePath = row.storage_path;
+  const externalUrl = row.external_url;
+  if ((storagePath !== null && (typeof storagePath !== "string" || !storagePath))
+    || (externalUrl !== null && (typeof externalUrl !== "string" || !externalUrl))
+    || (row.alt !== null && typeof row.alt !== "string")
+    || (storagePath === null && externalUrl === null)) return invalidSearchResponse();
+  return {
+    storagePath: storagePath as string | null,
+    externalUrl: externalUrl as string | null,
+    alt: row.alt as string | null,
+  };
+}
+
+function parseSearchCard(value: unknown): ParsedSearchCard {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return invalidSearchResponse();
+  const row = value as Row;
+  if (typeof row.id !== "string" || !row.id
+    || typeof row.handle !== "string" || !row.handle
+    || typeof row.title !== "string"
+    || typeof row.description !== "string"
+    || [...row.description].length > MAX_STOREFRONT_CARD_DESCRIPTION_CODE_POINTS) return invalidSearchResponse();
+  const variant = parseSearchVariant(row.variant);
+  return {
+    product: {
+      id: row.id,
+      handle: row.handle,
+      title: row.title,
+      description: row.description,
+      images: [],
+      variants: variant ? [variant] : [],
+      collections: [],
+      category: null,
+      tags: [],
+    },
+    image: parseSearchImage(row.image),
+  };
+}
+
+function parseSearchResponse(
+  value: unknown,
+  opts: { sort: string; limit: number },
+): Omit<StorefrontCatalogSearchPage, "items"> & { cards: ParsedSearchCard[] } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return invalidSearchResponse();
+  }
+  const row = value as Row;
+  const cards = Array.isArray(row.cards) ? row.cards.map(parseSearchCard) : null;
+  const facets = row.facets;
+  if (!cards || cards.length > Math.min(opts.limit, MAX_PUBLIC_PRODUCT_PAGE_SIZE)
+    || new Set(cards.map(({ product }) => product.id)).size !== cards.length
+    || !Number.isSafeInteger(row.total) || Number(row.total) < 0
+    || Number(row.total) < cards.length
+    || typeof row.has_next_page !== "boolean"
+    || !facets || typeof facets !== "object" || Array.isArray(facets)) {
+    return invalidSearchResponse();
+  }
+  const boundaryRow = row.boundary;
+  const priceSort = opts.sort === "price_asc" || opts.sort === "price_desc";
+  let boundary: { sortValue: string | number; productId: string } | null = null;
+  if (boundaryRow !== null) {
+    if (!boundaryRow || typeof boundaryRow !== "object" || Array.isArray(boundaryRow)) return invalidSearchResponse();
+    const candidate = boundaryRow as Row;
+    if (typeof candidate.product_id !== "string" || !candidate.product_id
+      || (priceSort
+        ? !Number.isSafeInteger(candidate.sort_value)
+          || (Number(candidate.sort_value) < 0
+            && !(opts.sort === "price_desc" && candidate.sort_value === MISSING_PRICE_DESC_SORT_VALUE))
+        : typeof candidate.sort_value !== "string")) return invalidSearchResponse();
+    boundary = { sortValue: candidate.sort_value as string | number, productId: candidate.product_id };
+  }
+  const last = cards.at(-1)?.product;
+  const lastVariant = last?.variants[0];
+  const expectedSortValue = priceSort
+    ? lastVariant && lastVariant.hasPrice !== false
+      ? lastVariant.priceCents
+      : opts.sort === "price_desc" ? MISSING_PRICE_DESC_SORT_VALUE : MISSING_PRICE_ASC_SORT_VALUE
+    : last?.title;
+  if (row.has_next_page
+    ? !last || !boundary || boundary.productId !== last.id || boundary.sortValue !== expectedSortValue
+    : boundary !== null) return invalidSearchResponse();
+  const facetRows = facets as Row;
+  return {
+    cards,
+    boundary,
+    total: Number(row.total),
+    hasNextPage: row.has_next_page,
+    facets: {
+      categories: parseFacets(facetRows.categories),
+      tags: parseFacets(facetRows.tags),
+      collections: parseFacets(facetRows.collections),
+    },
+  };
+}
+
 export const ownedCatalog: StorefrontCatalog = {
+  async searchProductPage(shopId, opts) {
+    const sb = getSupabase();
+    const { data, error } = await sb.rpc("storefront_catalog_search_page", {
+      p_shop_id: shopId,
+      p_query: opts.query,
+      p_collection: opts.collection,
+      p_category: opts.category,
+      p_tag: opts.tag,
+      p_available: opts.available,
+      p_sort: opts.sort,
+      p_after_value: opts.after ? String(opts.after.sortValue) : null,
+      p_after_product_id: opts.after?.productId ?? null,
+      p_limit: opts.limit,
+    });
+    if (error) throw error;
+    const { cards, ...metadata } = parseSearchResponse(data, opts);
+    const paths = [...new Set(cards.flatMap(({ image }) =>
+      image?.storagePath && !image.externalUrl ? [image.storagePath] : []))];
+    const signed = await signMediaPaths(paths);
+    return {
+      ...metadata,
+      items: cards.map(({ product, image }) => {
+        if (!image) return product;
+        const url = image.externalUrl ?? (image.storagePath ? signed.get(image.storagePath) : null);
+        return url ? { ...product, images: [{ url, alt: image.alt }] } : product;
+      }),
+    };
+  },
+
+  async listProductPage(shopId, opts) {
+    const sb = getSupabase();
+    let collectionId: string | null = null;
+    if (opts.collection) {
+      const { data, error } = await sb
+        .from("collection_dim")
+        .select("id")
+        .eq("shop_id", shopId)
+        .eq("handle", opts.collection)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) return { items: [], nextCursor: null };
+      collectionId = String(data.id);
+    }
+
+    const products = sb.from("product_dim");
+    let q = (collectionId
+      ? products.select("id, handle, title, description, category, tags, product_collection!inner(collection_id)")
+      : products.select("id, handle, title, description, category, tags"))
+      .eq("shop_id", shopId)
+      .eq("status", "active");
+    if (collectionId) q = q.eq("product_collection.collection_id", collectionId);
+    if (opts.query) {
+      const literal = opts.query
+        .replaceAll("\\", "\\\\")
+        .replaceAll("%", "\\%")
+        .replaceAll("_", "\\_");
+      q = q.ilike("title", `%${literal}%`);
+    }
+    if (opts.cursor) {
+      const cursor = decodeProductPageCursor(opts.cursor);
+      const title = postgrestLiteral(cursor.title);
+      q = q.or(`title.gt.${title},and(title.eq.${title},id.gt.${postgrestLiteral(cursor.id)})`);
+    }
+    const requested = Number.isFinite(opts.limit) ? Math.trunc(opts.limit) : 1;
+    const limit = Math.min(Math.max(requested, 1), MAX_PUBLIC_PRODUCT_PAGE_SIZE);
+    const { data, error } = await q.order("title").order("id").limit(limit + 1);
+    if (error) throw error;
+    const rows = ((data ?? []) as unknown as Row[]).slice(0, limit);
+    const last = rows.at(-1);
+    return {
+      items: await assemble(sb, shopId, rows),
+      nextCursor: last && (data ?? []).length > limit
+        ? encodeProductPageCursor(String(last.title), String(last.id))
+        : null,
+    };
+  },
+
   async listProducts(shopId, opts) {
     const sb = getSupabase();
 

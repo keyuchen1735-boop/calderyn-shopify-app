@@ -11,17 +11,16 @@ import type { StorefrontReleaseError } from "./release.server";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 
-const { rpc, from, versionResult, hasRunningExperiment, prepareLegacyCapturePayload } = vi.hoisted(() => ({
+const { rpc, from, versionResult, hasRunningExperiment, abortSignal } = vi.hoisted(() => ({
   rpc: vi.fn(),
   from: vi.fn(),
   versionResult: { current: { data: null as unknown, error: null as unknown } },
   hasRunningExperiment: vi.fn(),
-  prepareLegacyCapturePayload: vi.fn(),
+  abortSignal: vi.fn(),
 }));
 
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ rpc, from }) }));
 vi.mock("~/lib/experiments/store-experiment.server", () => ({ hasRunningExperiment }));
-vi.mock("./legacy.server", () => ({ prepareLegacyCapturePayload }));
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const VERSION = "22222222-2222-2222-2222-222222222222";
@@ -30,13 +29,6 @@ const BASE = "33333333-3333-3333-3333-333333333333";
 beforeEach(() => {
   vi.clearAllMocks();
   hasRunningExperiment.mockResolvedValue(false);
-  prepareLegacyCapturePayload.mockResolvedValue({
-    snapshot: { runtimeVersion: 0 },
-    assetManifest: { entries: [] },
-    artifactHash: `sha256:${"b".repeat(64)}`,
-    validationReport: { valid: true, legacyAdapter: "validated" },
-    captureToken: `sha256:${"c".repeat(64)}`,
-  });
   rpc.mockImplementation(async (name: string) => ({
     data: name === "hash_storefront_artifact" ? `sha256:${"a".repeat(64)}` : VERSION,
     error: null,
@@ -45,6 +37,8 @@ beforeEach(() => {
   chain.select = () => chain;
   chain.eq = () => chain;
   chain.maybeSingle = () => Promise.resolve(versionResult.current);
+  chain.abortSignal = abortSignal;
+  abortSignal.mockImplementation(() => chain);
   from.mockReturnValue(chain);
   versionResult.current = {
     data: {
@@ -130,12 +124,24 @@ describe("storefront bundle release repository", () => {
       .rejects.toEqual(expect.objectContaining<Partial<StorefrontReleaseError>>({ code: "storefront_draft_conflict", status: 409 }));
   });
 
+  it("preserves a generic SQLSTATE 40001 as a trusted 409 fallback conflict", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "serialization failure", code: "40001" } });
+    await expect(publishStorefrontRelease({
+      shopId: SHOP,
+      expectedDraftVersionId: VERSION,
+      expectedPublishedVersionId: BASE,
+    })).rejects.toEqual(expect.objectContaining<Partial<StorefrontReleaseError>>({
+      code: "storefront_publish_failed",
+      status: 409,
+    }));
+  });
+
   it("passes compare-and-swap pointers to install, publish, and rollback RPCs", async () => {
     await installStorefrontDraft({ shopId: SHOP, versionId: VERSION, expectedDraftVersionId: BASE, actorId: null });
     await publishStorefrontRelease({ shopId: SHOP, expectedDraftVersionId: VERSION, expectedPublishedVersionId: BASE, actorId: null });
     await rollbackStorefrontRelease({ shopId: SHOP, targetVersionId: BASE, expectedPublishedVersionId: VERSION, actorId: null });
     expect(rpc).toHaveBeenNthCalledWith(1, "install_storefront_draft", expect.objectContaining({ p_expected_draft_version_id: BASE }));
-    expect(rpc).toHaveBeenNthCalledWith(2, "publish_storefront_release", expect.objectContaining({
+    expect(rpc).toHaveBeenNthCalledWith(2, "publish_storefront_runtime1_release", expect.objectContaining({
       p_expected_draft_version_id: VERSION,
       p_expected_published_version_id: BASE,
     }));
@@ -158,25 +164,66 @@ describe("storefront bundle release repository", () => {
       expectedDraftVersionId: VERSION,
       expectedPublishedVersionId: BASE,
     })).rejects.toMatchObject({ code: "storefront_bundle_revalidation_failed", status: 422 });
-    expect(rpc).not.toHaveBeenCalledWith("publish_storefront_release", expect.anything());
+    expect(rpc).not.toHaveBeenCalledWith("publish_storefront_runtime1_release", expect.anything());
   });
 
-  it("passes a validated legacy candidate into the single first-publish transaction", async () => {
+  it("publishes a first runtime-1 release without creating a runtime-0 predecessor", async () => {
     await expect(publishStorefrontRelease({
       shopId: SHOP,
       expectedDraftVersionId: VERSION,
       expectedPublishedVersionId: null,
       actorId: null,
     })).resolves.toBe(VERSION);
-    expect(prepareLegacyCapturePayload).toHaveBeenCalledWith(SHOP);
-    expect(rpc).toHaveBeenCalledWith("publish_storefront_release", expect.objectContaining({
+    expect(rpc).toHaveBeenCalledWith("publish_storefront_runtime1_release", {
+      p_shop_id: SHOP,
+      p_expected_draft_version_id: VERSION,
       p_expected_published_version_id: null,
-      p_legacy_snapshot: { runtimeVersion: 0 },
-      p_legacy_asset_manifest: { entries: [] },
-      p_legacy_artifact_hash: `sha256:${"b".repeat(64)}`,
-      p_legacy_validation_report: { valid: true, legacyAdapter: "validated" },
-      p_legacy_capture_token: `sha256:${"c".repeat(64)}`,
-    }));
+      p_actor_id: null,
+    });
+  });
+
+  it("never publishes a runtime-0 draft", async () => {
+    versionResult.current = {
+      data: { runtime_version: 0, status: "validated", bundle_json: { sourceKind: "legacy" } },
+      error: null,
+    };
+
+    await expect(publishStorefrontRelease({
+      shopId: SHOP,
+      expectedDraftVersionId: VERSION,
+      expectedPublishedVersionId: BASE,
+    })).rejects.toMatchObject({ code: "storefront_bundle_revalidation_failed", status: 422 });
+    expect(rpc).not.toHaveBeenCalledWith("publish_storefront_runtime1_release", expect.anything());
+  });
+
+  it("returns fresh install success when cancellation races with the terminal CAS", async () => {
+    const controller = new AbortController();
+    rpc.mockImplementation(async (name: string) => {
+      if (name === "install_storefront_draft") controller.abort();
+      return { data: VERSION, error: null };
+    });
+
+    await expect(installStorefrontDraft({
+      shopId: SHOP,
+      versionId: VERSION,
+      expectedDraftVersionId: null,
+      signal: controller.signal,
+    })).resolves.toBe(VERSION);
+  });
+
+  it("returns publish success when cancellation races with the terminal CAS", async () => {
+    const controller = new AbortController();
+    rpc.mockImplementation(async (name: string) => {
+      if (name === "publish_storefront_runtime1_release") controller.abort();
+      return { data: VERSION, error: null };
+    });
+
+    await expect(publishStorefrontRelease({
+      shopId: SHOP,
+      expectedDraftVersionId: VERSION,
+      expectedPublishedVersionId: BASE,
+      signal: controller.signal,
+    })).resolves.toBe(VERSION);
   });
 
   it("sends the complete replayable edit audit to the atomic edit RPC", async () => {
