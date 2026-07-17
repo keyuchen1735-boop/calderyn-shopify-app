@@ -683,6 +683,7 @@ export default function AssistantPanel({
         ref={panelRef}
         className="cd-chat-panel"
         data-state={state}
+        data-tour-anchor="assistant-panel"
         role="dialog"
         aria-label="Ask Calderyn"
         aria-hidden={tourDemoActive ? true : undefined}
