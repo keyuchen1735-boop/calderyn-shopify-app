@@ -69,6 +69,11 @@ function productValue(product: DesignerStoreData["products"][number], path: stri
 }
 
 function rootValue(data: DesignerStoreData, path: string): string {
+  // Generated imagery: {{asset.hero}} etc. Absent assets fall back to the
+  // neutral image so an img src never renders empty/broken.
+  if (path.startsWith("asset.")) {
+    return data.assets?.[path.slice("asset.".length)] ?? NEUTRAL_IMAGE;
+  }
   switch (path) {
     case "store.name": return escapeHtml(data.storeName);
     case "store.tagline": return escapeHtml(data.tagline ?? "");
@@ -103,7 +108,7 @@ export function renderDesignerBody(input: {
     products.map((product) =>
       body.replace(/\{\{(product\.[a-zA-Z]+)\}\}/g, (m, path: string) => productValue(product, path)),
     ).join("\n"));
-  const filled = withLoops.replace(/\{\{([a-zA-Z.]+)\}\}/g, (match, path: string) =>
+  const filled = withLoops.replace(/\{\{([a-zA-Z0-9_.-]+)\}\}/g, (match, path: string) =>
     path.startsWith("product.")
       ? (contextProduct ? productValue(contextProduct, path) : "")
       : rootValue(input.data, path));

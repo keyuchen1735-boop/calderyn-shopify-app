@@ -13,6 +13,7 @@ import type { StoreTemplateId } from "../storefront-bundle/types";
 import type { StudioDesignModel } from "../storebuilder/studio-types";
 import { convertTemplateToDocuments, DESIGNER_ROUTES } from "./convert.server";
 import { artDirectionFor, scratchSeedFiles, type ArtDirection } from "./direction.server";
+import { generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
 import { applyDesignerEdits, parseDesignerReply, type DesignerEdit } from "./edits";
 import { scrubDesignerCss, scrubDesignerHtml } from "./render.server";
 import type { DesignerReply, DesignerRoute, DesignerStoreData } from "./types";
@@ -35,7 +36,7 @@ FILE: home.html
 Rules:
 - The SEARCH text must be copied character-for-character from the file so it can be found. Keep each block small and scoped; use several blocks for several spots. To replace an entire file, use a single block whose SEARCH is just *
 - Files you may edit: base.css (fonts, colors, shared layout) and, for the page being discussed, <route>.html and <route>.css.
-- Placeholders like {{store.name}}, {{product.title}}, {{product.price}}, {{product.image}}, {{product.url}} and the {{#products}}...{{/products}} loop bind live store data. Keep them working; never invent new placeholder names.
+- Placeholders like {{store.name}}, {{product.title}}, {{product.price}}, {{product.image}}, {{product.url}} and the {{#products}}...{{/products}} loop bind live store data; {{asset.hero}} binds this store's generated hero photograph when one exists. Keep them working; never invent new placeholder names.
 - Never add scripts, iframes, forms, event handlers, or references to external URLs. Fonts come only from the @font-face files already in base.css. Images: template art under /storefront-recipes/ and the product placeholders.
 - Conversion widgets are declared, not scripted. To add an email/coupon capture popup, place exactly one marker on the home page (the runtime turns it into a real, dismissible popup and wires the behavior): <div data-designer-widget="coupon" data-code="WELCOME10" data-headline="10 percent off your first order" data-sub="Join the list for early access and member pricing."></div>. Style it by editing base.css variables it inherits; never write its script. An announcement bar is ordinary styled markup you author at the very top of the shell (a thin full-width bar with a shipping-threshold or promo line) — it needs no script.
 - Design taste: one accent color per store, saturation under 80 percent, never pure black or pure white, no AI-purple gradients, no neon glows. Text must stay readable against its background (4.5:1). Headlines short and confident. No dash characters in copy, no exclamation marks, no filler verbs (elevate, unleash, seamless).
@@ -115,14 +116,16 @@ async function appendHistory(shopId: string, role: "user" | "assistant", body: s
 }
 
 export async function loadDesignerStoreData(shopId: string): Promise<DesignerStoreData> {
-  const [settings, products] = await Promise.all([
+  const [settings, products, assets] = await Promise.all([
     getStoreSettings(shopId),
     getCatalog().listProducts(shopId, { limit: 12 }),
+    loadDesignerAssets(shopId),
   ]);
   return {
     storeName: settings.storeName,
     tagline: settings.voiceTagline,
     logoUrl: settings.logoUrl,
+    assets,
     products: products.map((product) => ({
       id: product.id,
       handle: product.handle,
@@ -320,6 +323,7 @@ function firstBuildInstruction(input: {
   templateId: string;
   direction: ArtDirection;
   donePages: DesignerRoute[];
+  heroAssetUrl?: string | null;
 }): string {
   const base = input.mode === "template"
     ? `First build, page "${input.route}": this store was just attached to the "${input.templateId}" template. Rework this page so it belongs to THIS merchant: their copy, their accent, their category names. Keep template structure only where it genuinely serves the page — restructure anything that hurts scanning (stacked one-per-row product lists become grids, oversized imagery gets contained), and fully style anything the template left plain.`
@@ -328,7 +332,10 @@ function firstBuildInstruction(input: {
   const continuity = input.donePages.length > 0
     ? `Pages already designed this build: ${input.donePages.join(", ")}. base.css already carries the design system from those pages — reuse it, do not fork new token names for the same concepts.`
     : "This is the first page of the build; establish the design system tokens in base.css here.";
-  return `${input.brief}\n\n(${base}\n${direction}\n${continuity}\nEvery section must end launch-ready: no default browser styling, no placeholder copy, price and availability visible wherever a product shows.)`;
+  const hero = input.heroAssetUrl
+    ? `A custom photograph was generated for this store: use the placeholder {{asset.hero}} as an image src (hero media, a section background image, or a large brand moment). It is a real photo matching the brief and art direction — prefer it over template art for the hero.`
+    : "";
+  return `${input.brief}\n\n(${base}\n${direction}\n${continuity}\n${hero}\nEvery section must end launch-ready: no default browser styling, no placeholder copy, price and availability visible wherever a product shows.)`;
 }
 
 /** The first build: designs EVERY page, saving and reporting page by page so
@@ -364,6 +371,16 @@ export async function designerFirstBuild(input: {
   // merchant's intent in history rather than an empty conversation.
   await appendHistory(input.shopId, "user", input.message);
 
+  // One generated hero photograph per build (cheap image tier, quota-metered,
+  // fail-soft). Generated before the pages so every page can reference it.
+  const heroAssetUrl = await generateDesignerAsset({
+    shopId: input.shopId,
+    key: "hero",
+    prompt: `Photorealistic lifestyle/product photograph for an online store. Brief: ${input.message.slice(0, 500)}. Mood: ${direction.mood}. Palette leaning: ${direction.palette}. Editorial commercial photography, natural light, no text, no logos, no watermarks, no people's identifiable faces.`,
+    signal: input.signal,
+  });
+  if (heroAssetUrl) data.assets = { ...(data.assets ?? {}), hero: heroAssetUrl };
+
   const donePages: DesignerRoute[] = [];
   let rejected = 0;
   for (const route of DESIGNER_ROUTES) {
@@ -372,7 +389,7 @@ export async function designerFirstBuild(input: {
       files,
       templateId,
       route,
-      userMessage: firstBuildInstruction({ brief: input.message, route, mode, templateId, direction, donePages }),
+      userMessage: firstBuildInstruction({ brief: input.message, route, mode, templateId, direction, donePages, heroAssetUrl }),
       history: [],
       data,
       model: input.model,

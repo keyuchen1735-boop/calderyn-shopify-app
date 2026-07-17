@@ -12,9 +12,14 @@ export interface DesignerStoreData {
     available: boolean;
     imageUrl: string | null;
   }>;
+  /** Generated imagery by key, resolved via the {{asset.<key>}} placeholder. */
+  assets?: Record<string, string>;
 }
 
 export type DesignerRoute = "home" | "collection" | "product" | "search" | "cart" | "checkout";
+
+// DesignerStoreData.assets: generated imagery by key, resolved through the
+// {{asset.<key>}} placeholder (e.g. {{asset.hero}}).
 
 /** Loader payload for a PUBLISHED designer page served on the public
  *  storefront. Client-safe: route components render it bare (no layout
