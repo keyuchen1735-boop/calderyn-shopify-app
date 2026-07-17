@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compileBundle } from "../storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "../storefront-compiler/__fixtures__/valid-bundle";
@@ -27,6 +29,16 @@ import { STOREFRONT_RECIPES } from "../storefront-recipes";
 import { INVALID_SHADER_PROOF_SOURCE } from "./verify.server";
 
 describe("storefront browser proof matrix", () => {
+  it("embeds Axe in the server bundle instead of resolving it from node_modules at runtime", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "app/lib/storefront-validation/browser.server.ts"),
+      "utf8",
+    );
+
+    expect(source).toContain('from "axe-core/axe.min.js?raw"');
+    expect(source).not.toContain('require.resolve("axe-core/axe.min.js")');
+  });
+
   it("covers every route at the three validation-profile viewports", () => {
     const cases = buildStorefrontProofCases(compileBundle(VALID_BUNDLE_SOURCE).bundle);
 
