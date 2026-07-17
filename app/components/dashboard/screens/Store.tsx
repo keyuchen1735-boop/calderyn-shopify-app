@@ -62,6 +62,7 @@ import type { StudioExperimentKind } from "~/lib/storebuilder/studio-types";
 import SectionsPanel from "../store/SectionsPanel";
 import type { DashboardCtx } from "../context";
 import ChatRail from "../store/ChatRail";
+import DesignerDock from "../store/DesignerDock";
 import TopBar, { type Device } from "../store/TopBar";
 import WelcomeOverlay from "../store/WelcomeOverlay";
 import type { ChatAction, ChatMsg } from "../store/chat-types";
@@ -1221,44 +1222,45 @@ export default function Store({ app }: { app: DashboardCtx }) {
   // The designer engine renders its own invite inside the preview instead.
   const promptCanvas = !designerOn && showPromptCanvas(data);
 
+  const designerModeChips =
+    designerOn && !data.designerReady ? (
+      <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "0 2px 8px" }}>
+        <span className="cd-caption" style={{ marginRight: 2 }}>Start from</span>
+        {(["template", "scratch"] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            className="cd-chip"
+            aria-pressed={designerMode === mode}
+            style={designerMode === mode ? { borderColor: "var(--cd-accent, #6366f1)", fontWeight: 600 } : undefined}
+            onClick={() => setDesignerMode(mode)}
+          >
+            {mode === "template" ? "A template" : "Scratch"}
+          </button>
+        ))}
+      </div>
+    ) : undefined;
+
   return (
     <div className="cd-screen cd-screen-storefront" data-screen-label="Store">
-      <div className="cd-studio">
-        <ChatRail
-          messages={messages}
-          prompt={prompt}
-          onPromptChange={setPrompt}
-          onSend={onComposerSend}
-          onStop={stopGeneration}
-          busy={chatBusy || building}
-          stoppable={stoppable}
-          attaching={attaching}
-          onAttachFiles={onAttachFiles}
-          attachments={attachments.map((a) => ({ id: a.id, url: a.url, name: a.file.name }))}
-          onRemoveAttachment={onRemoveAttachment}
-          model={designModel}
-          onModelChange={setDesignModelBoth}
-          placeholder={designerOn && !data.designerReady ? "Describe your store and Calderyn builds every page…" : undefined}
-          composerExtra={
-            designerOn && !data.designerReady ? (
-              <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "0 2px 8px" }}>
-                <span className="cd-caption" style={{ marginRight: 2 }}>Start from</span>
-                {(["template", "scratch"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    className="cd-chip"
-                    aria-pressed={designerMode === mode}
-                    style={designerMode === mode ? { borderColor: "var(--cd-accent, #6366f1)", fontWeight: 600 } : undefined}
-                    onClick={() => setDesignerMode(mode)}
-                  >
-                    {mode === "template" ? "A template" : "Scratch"}
-                  </button>
-                ))}
-              </div>
-            ) : undefined
-          }
-        />
+      <div className="cd-studio" data-dock={designerOn ? "1" : "0"}>
+        {!designerOn && (
+          <ChatRail
+            messages={messages}
+            prompt={prompt}
+            onPromptChange={setPrompt}
+            onSend={onComposerSend}
+            onStop={stopGeneration}
+            busy={chatBusy || building}
+            stoppable={stoppable}
+            attaching={attaching}
+            onAttachFiles={onAttachFiles}
+            attachments={attachments.map((a) => ({ id: a.id, url: a.url, name: a.file.name }))}
+            onRemoveAttachment={onRemoveAttachment}
+            model={designModel}
+            onModelChange={setDesignModelBoth}
+          />
+        )}
 
         <div className="cd-stage">
           {promptCanvas ? (
@@ -1399,6 +1401,24 @@ export default function Store({ app }: { app: DashboardCtx }) {
               )}
             </div>
           </div>
+
+          {designerOn && (
+            <DesignerDock
+              messages={messages}
+              prompt={prompt}
+              onPromptChange={setPrompt}
+              onSend={onComposerSend}
+              onStop={stopGeneration}
+              busy={chatBusy || building}
+              stoppable={stoppable}
+              attaching={attaching}
+              onAttachFiles={onAttachFiles}
+              model={designModel}
+              onModelChange={setDesignModelBoth}
+              placeholder={!data.designerReady ? "Describe your store and Calderyn builds every page…" : undefined}
+              composerExtra={designerModeChips}
+            />
+          )}
             </>
           )}
         </div>
