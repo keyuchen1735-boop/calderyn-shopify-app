@@ -2,16 +2,19 @@
 // floating bottom dock. Self-contained on purpose — the classic Store screen
 // mounts it behind a two-line branch, so builder rewrites can't silently
 // take the secret surface with them again.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { cachedScreenData, cacheScreenData } from "~/lib/dashboard/screen-cache";
-import {
-  fetchDesignerState,
-  publishDesignerSite,
-  sendDesignerMessage,
-  type DesignerStateVM,
-} from "~/lib/designer/client";
+import { fetchDesignerState, publishDesignerSite, type DesignerStateVM } from "~/lib/designer/client";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
+import {
+  designerNewId,
+  getDesignerSession,
+  pushDesignerMsg,
+  runDesignerTurn,
+  seedDesignerMessages,
+  subscribeDesignerSession,
+} from "~/lib/designer/session";
 import type { DashboardCtx } from "../context";
 import DesignerDock from "../store/DesignerDock";
 import type { ChatMsg } from "../store/chat-types";
@@ -42,29 +45,22 @@ export default function DesignerStudio({ app }: { app: DashboardCtx }) {
     };
   }, []);
 
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const msgSeq = useRef(0);
-  const newId = () => {
-    msgSeq.current += 1;
-    return msgSeq.current;
-  };
-  const pushMsg = useCallback((msg: ChatMsg) => setMessages((m) => [...m, msg]), []);
+  // The chat session lives OUTSIDE this screen (module singleton) so a
+  // running build keeps streaming while the merchant explores other tabs;
+  // remounting simply re-attaches to whatever is in flight.
+  const session = useSyncExternalStore(subscribeDesignerSession, getDesignerSession, getDesignerSession);
+  const messages = session.messages;
+  const busy = session.busy;
+  const newId = designerNewId;
+  const pushMsg = useCallback((msg: ChatMsg) => pushDesignerMsg(msg), []);
   const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState(false);
-  const busyRef = useRef(false);
-  const setBusyBoth = (v: boolean) => {
-    busyRef.current = v;
-    setBusy(v);
-  };
   const [publishing, setPublishing] = useState(false);
   const publishingRef = useRef(false);
   const [model, setModel] = useState<StudioDesignModel>("sonnet");
   const [mode, setMode] = useState<"template" | "scratch">("template");
   const [page, setPage] = useState<DesignerPageKey>("home");
   const [device, setDevice] = useState<"desktop" | "mobile">("desktop");
-  const [previewVersion, setPreviewVersion] = useState(0);
-  const reloadPreview = () => setPreviewVersion((v) => v + 1);
-  const seededRef = useRef(false);
+  const previewVersion = session.previewVersion;
 
   const refresh = useCallback(async () => {
     try {
@@ -72,20 +68,9 @@ export default function DesignerStudio({ app }: { app: DashboardCtx }) {
       if (!aliveRef.current) return;
       cacheScreenData(DESIGNER_STATE_CACHE_KEY, next);
       setState(next);
-      // Reload recovery: an empty local thread re-seeds from the saved chat so
-      // the merchant keeps their history after a refresh.
-      if (!seededRef.current) {
-        seededRef.current = true;
-        setMessages((current) =>
-          current.length > 0
-            ? current
-            : next.chat.map((row) => ({
-                id: newId(),
-                kind: row.role === "user" ? ("user-text" as const) : ("ai-text" as const),
-                text: row.body,
-              })),
-        );
-      }
+      // Reload recovery: the session seeds from the saved chat exactly once,
+      // and never over a thread with live messages.
+      seedDesignerMessages(next.chat);
     } catch {
       // Cached state (or the fresh-build default) keeps the studio usable.
     }
@@ -96,52 +81,22 @@ export default function DesignerStudio({ app }: { app: DashboardCtx }) {
 
   const ready = state?.ready === true;
 
-  const runDesignerChat = async (text: string) => {
-    if (busyRef.current) return;
-    setBusyBoth(true);
-    const firstBuild = !ready;
-    const thinkId = newId();
-    pushMsg({ id: thinkId, kind: "ai-thinking" });
-    try {
-      const turn = await sendDesignerMessage({
-        message: text,
-        page,
-        model,
-        ...(firstBuild ? { mode } : {}),
-        onPage: (event) => {
-          if (!aliveRef.current) return;
-          setMessages((m) => {
-            const without = m.filter((x) => x.id !== thinkId);
-            return [
-              ...without,
-              { id: newId(), kind: "ai-text", text: `${event.reply} (${event.index}/${event.total} pages ready — it's in the preview.)` },
-              { id: thinkId, kind: "ai-thinking" },
-            ];
-          });
-          reloadPreview();
-        },
-      });
-      if (!aliveRef.current) return;
-      if (turn.changed) reloadPreview();
-      setMessages((m) => m.filter((x) => x.id !== thinkId).concat({ id: newId(), kind: "ai-text", text: turn.reply }));
-      if (firstBuild) void refresh();
-    } catch (err) {
-      if (!aliveRef.current) return;
-      const msg = err instanceof DashboardApiError ? err.message : "Couldn't make that change. Try again.";
-      setMessages((m) => m.filter((x) => x.id !== thinkId).concat({ id: newId(), kind: "ai-text", text: msg }));
-      if (firstBuild) void refresh();
-    } finally {
-      if (aliveRef.current) setBusyBoth(false);
-    }
-  };
-
   const onSend = () => {
-    if (busyRef.current) return;
+    if (busy) return;
     const text = prompt.trim();
     if (!text) return;
     setPrompt("");
     pushMsg({ id: newId(), kind: "user-text", text });
-    void runDesignerChat(text);
+    runDesignerTurn({
+      message: text,
+      page,
+      model,
+      mode,
+      firstBuild: !ready,
+      onSettled: () => {
+        if (!ready && aliveRef.current) void refresh();
+      },
+    });
   };
 
   const onPublish = async () => {
@@ -225,6 +180,7 @@ export default function DesignerStudio({ app }: { app: DashboardCtx }) {
             onSend={onSend}
             onStop={() => {}}
             busy={busy}
+            busySince={session.busySince}
             stoppable={false}
             attaching={false}
             onAttachFiles={() => toast("Image attachments aren't supported in the designer beta yet.", "warn")}

@@ -96,6 +96,7 @@ export default function DesignerDock({
   onModelChange,
   placeholder,
   composerExtra,
+  busySince,
 }: {
   messages: ChatMsg[];
   prompt: string;
@@ -110,6 +111,8 @@ export default function DesignerDock({
   onModelChange: (m: StudioDesignModel) => void;
   placeholder?: string;
   composerExtra?: ReactNode;
+  /** Wall-clock start of the running turn (survives screen switches). */
+  busySince?: number | null;
 }) {
   const [open, setOpen] = useState(false);
   const [flash, setFlash] = useState(false);
@@ -125,7 +128,7 @@ export default function DesignerDock({
   // clock, false stamps "Worked for …" and briefly lights the row up.
   useEffect(() => {
     if (busy) {
-      startedAtRef.current = Date.now();
+      startedAtRef.current = busySince ?? Date.now();
       setTurnStartedAt(startedAtRef.current);
       return;
     }
@@ -137,6 +140,8 @@ export default function DesignerDock({
       const timer = setTimeout(() => setFlash(false), 1400);
       return () => clearTimeout(timer);
     }
+    // busySince is stable for the life of a turn; busy drives the effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy]);
 
   // Entrance: the dock rises in once when the designer mounts.
