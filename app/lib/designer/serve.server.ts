@@ -54,6 +54,7 @@ async function storeDataFor(
     compareAtPriceCents: p.variants[0]?.compareAtPriceCents ?? null,
     available: true,
     imageUrl: p.images[0]?.url ?? null,
+    variantId: p.variants[0]?.id ?? null,
   });
 
   if (context.kind === "product") {
@@ -103,12 +104,14 @@ export async function resolveDesignerPublicPage(
     css: `${publication.baseCss}\n${publication.css}`,
     data,
   });
-  // Attach the context product's variant to add-to-cart buttons so the cart
-  // script has something real to add. Server-owned post-processing.
+  // Fill only the add-to-cart buttons render left un-stamped — the single loose
+  // product-detail button outside the products loop — with the context
+  // product's variant so the cart script has something real to add. Looped
+  // cards already carry their own product's variant. Server-owned post-processing.
   let bodyHtml = rendered.bodyHtml;
   if (data.contextVariantId) {
     bodyHtml = bodyHtml.replace(
-      /class="designer-add-to-cart"/g,
+      /class="designer-add-to-cart"(?![^>]*\bdata-variant-id=)/g,
       `class="designer-add-to-cart" data-variant-id="${data.contextVariantId}"`,
     );
   }

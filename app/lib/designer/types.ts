@@ -11,6 +11,7 @@ export interface DesignerStoreData {
     compareAtPriceCents: number | null;
     available: boolean;
     imageUrl: string | null;
+    variantId?: string | null;
   }>;
 }
 

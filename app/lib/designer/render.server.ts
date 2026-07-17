@@ -100,9 +100,12 @@ export function renderDesignerBody(input: {
   const products = input.data.products.slice(0, input.maxProducts ?? 12);
   const contextProduct = products[0];
   const withLoops = scrubbedHtml.replace(/\{\{#products\}\}([\s\S]*?)\{\{\/products\}\}/g, (match, body: string) =>
-    products.map((product) =>
-      body.replace(/\{\{(product\.[a-zA-Z]+)\}\}/g, (m, path: string) => productValue(product, path)),
-    ).join("\n"));
+    products.map((product) => {
+      const rendered = body.replace(/\{\{(product\.[a-zA-Z]+)\}\}/g, (m, path: string) => productValue(product, path));
+      return product.variantId
+        ? rendered.replace(/class="designer-add-to-cart"(?![^>]*\bdata-variant-id=)/g, `class="designer-add-to-cart" data-variant-id="${product.variantId}"`)
+        : rendered;
+    }).join("\n"));
   const filled = withLoops.replace(/\{\{([a-zA-Z.]+)\}\}/g, (match, path: string) =>
     path.startsWith("product.")
       ? (contextProduct ? productValue(contextProduct, path) : "")

@@ -116,6 +116,22 @@ describe("renderDesignerDocument", () => {
     expect(out).not.toContain("alt='Kids' Pack'");
   });
 
+  it("stamps each looped add-to-cart button with its own product's variant", () => {
+    const twoVariants: DesignerStoreData = {
+      ...data,
+      products: [
+        { ...data.products[0], variantId: "var-alpha" },
+        { ...data.products[1], variantId: "var-beta" },
+      ],
+    };
+    const html = '{{#products}}<article><button class="designer-add-to-cart" type="button">Add</button></article>{{/products}}';
+    const { bodyHtml } = renderDesignerBody({ html, css: "", data: twoVariants });
+    expect(bodyHtml).toContain('class="designer-add-to-cart" data-variant-id="var-alpha"');
+    expect(bodyHtml).toContain('class="designer-add-to-cart" data-variant-id="var-beta"');
+    // Each card carries a distinct variant — not both stamped with the first.
+    expect((bodyHtml.match(/data-variant-id="var-alpha"/g) ?? []).length).toBe(1);
+  });
+
   it("respects maxProducts", () => {
     const out = renderDesignerDocument({ html: "{{#products}}<li>{{product.title}}</li>{{/products}}", css: "", data, maxProducts: 1 });
     expect((out.match(/<li>/g) ?? []).length).toBe(1);
