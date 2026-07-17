@@ -21,7 +21,7 @@ import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 export const config = { maxDuration: 800 };
 
 const MESSAGE_MAX = 4_000;
-const ROUTES = new Set(["home", "collection", "product", "search", "cart"]);
+const ROUTES = new Set(["home", "collection", "product", "search", "cart", "checkout"]);
 
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);

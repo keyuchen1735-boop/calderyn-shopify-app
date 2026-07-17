@@ -18,6 +18,7 @@ import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dash
 import {
   addProductFromImage,
   buildStudioStoreStream,
+  publishDesignerSite,
   sendDesignerMessage,
   decideStoreExperiment,
   editStudioStorefrontStream,
@@ -77,6 +78,19 @@ const DEFAULT_HERO: StudioHero = { headline: "Welcome", subhead: "Shop our lates
 const PREVIEW_PATH = "/dashboard/store/preview";
 
 const PAGE_LABEL: Record<string, string> = { home: "home", pdp: "product", collection: "collection" };
+
+// Every surface the designer engine owns; the switcher shows all of them when
+// the designer is on. Checkout is design-only — the live checkout stays on the
+// transactional runtime route regardless of what gets published.
+type DesignerPageKey = "home" | "collection" | "product" | "search" | "cart" | "checkout";
+const DESIGNER_PAGE_OPTIONS: { key: DesignerPageKey; label: string; icon: string }[] = [
+  { key: "home", label: "Home page", icon: "home" },
+  { key: "collection", label: "Collection", icon: "grid" },
+  { key: "product", label: "Product page", icon: "tag" },
+  { key: "search", label: "Search", icon: "search" },
+  { key: "cart", label: "Cart", icon: "bag" },
+  { key: "checkout", label: "Checkout", icon: "card" },
+];
 const VIBE_LABEL: Record<StudioVibe, string> = { minimal: "clean, minimal", bold: "bold, dramatic", warm: "warm, earthy" };
 
 const clampPct = (v: number): number => Math.min(100, Math.max(0, v));
@@ -160,6 +174,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
   // Designer first-build starting point. Template attaches a curated design
   // and personalizes it; scratch has the model author every page itself.
   const [designerMode, setDesignerMode] = useState<"template" | "scratch">("template");
+  // The designer designs more surfaces than the runtime preview exposes; its
+  // page switcher runs on its own state so the runtime's PageKey stays intact.
+  const [designerPage, setDesignerPage] = useState<DesignerPageKey>("home");
   const designModelRef = useRef<StudioDesignModel>("sonnet");
   const setDesignModelBoth = (m: StudioDesignModel) => {
     designModelRef.current = m;
@@ -651,7 +668,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
     try {
       const turn = await sendDesignerMessage({
         message: text,
-        page,
+        page: designerPage,
         model: designModel,
         ...(firstBuild ? { mode: designerMode } : {}),
         // First build: each finished page lands in the chat and the preview
@@ -754,6 +771,11 @@ export default function Store({ app }: { app: DashboardCtx }) {
     setPage(p);
     setPreviewEditContext(undefined);
   };
+  const onDesignerPageChange = (p: string) => {
+    if (markupOn) exitMarkup();
+    setDesignerPage(p as DesignerPageKey);
+    setPreviewEditContext(undefined);
+  };
   const onDeviceChange = (d: Device) => {
     if (markupOn) exitMarkup();
     setDevice(d);
@@ -781,10 +803,16 @@ export default function Store({ app }: { app: DashboardCtx }) {
   const submitMarkupNote = () => {
     const note = noteText.trim();
     if (!note) return;
-    const pageLabel = PAGE_LABEL[page] ?? "store";
+    const designerActive = data?.settings.composerEnabled === true;
+    const pageLabel = designerActive ? designerPage : (PAGE_LABEL[page] ?? "store");
     const intent = parseChatIntent(note, "note");
     pushMsg({ id: newId(), kind: "user-text", text: `[Marked up the ${pageLabel} page] ${note}` });
     exitMarkup();
+    // Designer mode: a markup note is just a conversational turn on the page.
+    if (designerActive) {
+      void runDesignerChat(note);
+      return;
+    }
     if (data?.release.draftRuntime === 1 && data.release.draftVersionId) {
       void runRuntime1Edit(note, previewEditContext);
       return;
@@ -1068,9 +1096,18 @@ export default function Store({ app }: { app: DashboardCtx }) {
       // Flush any in-flight deterministic edit first, so the published
       // snapshot matches the last requested vibe/accent/hero change.
       await mutationChain.current;
-      const { storefrontUrl } = await publishStudioStore();
+      const designerActive = data.settings.composerEnabled === true;
+      const { storefrontUrl } = designerActive ? await publishDesignerSite() : await publishStudioStore();
       if (!aliveRef.current) return;
-      window.location.assign(storefrontUrl);
+      // Publishing stays in the studio: confirm here, link out on demand —
+      // never yank the merchant away from where they were working.
+      toast("Your site is live", "check");
+      pushMsg({
+        id: newId(),
+        kind: "ai-text",
+        text: "Published. Your latest design is live on your site.",
+        actions: [{ label: "Visit your site", kind: "primary", onClick: () => window.open(storefrontUrl, "_blank", "noopener") }],
+      });
     } catch (err) {
       if (!aliveRef.current) return;
       const msg = err instanceof DashboardApiError ? err.message : "Could not publish.";
@@ -1172,7 +1209,7 @@ export default function Store({ app }: { app: DashboardCtx }) {
   });
   const designerOn = data.settings.composerEnabled === true;
   const previewSrc = designerOn
-    ? `/dashboard/designer/preview?page=${page}&v=${previewVersion}`
+    ? `/dashboard/designer/preview?page=${designerPage}&v=${previewVersion}`
     : `${PREVIEW_PATH}?page=${page}&v=${previewVersion}`;
   // Before the first build → invite a prompt; after one build the full studio takes over.
   // The designer engine renders its own invite inside the preview instead.
@@ -1236,8 +1273,9 @@ export default function Store({ app }: { app: DashboardCtx }) {
             experiment={data.experiment}
             onDecideExperiment={(d) => void onDecideExperiment(d)}
             decidingExperiment={decidingExperiment}
-            page={page}
-            onPageChange={onPageChange}
+            page={designerOn ? designerPage : page}
+            onPageChange={designerOn ? onDesignerPageChange : ((p: string) => onPageChange(p as PageKey))}
+            pageOptions={designerOn ? DESIGNER_PAGE_OPTIONS : undefined}
             device={device}
             onDeviceChange={onDeviceChange}
             markupOn={markupOn}

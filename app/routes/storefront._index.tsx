@@ -24,6 +24,7 @@ import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-
 import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
 import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
+import { serveDesignerPageIfPublished } from "~/lib/designer/serve.server";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) =>
   data && "seoMeta" in data ? data.seoMeta : [{ title: "Store" }];
@@ -38,6 +39,10 @@ interface ExperimentArm {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const shopId = await resolveStorefrontShop(request);
+  // Designer-published shops (hidden Labs) serve their snapshot instead of
+  // the runtime renderer; shops without a publication are untouched.
+  const designer = await serveDesignerPageIfPublished(shopId, { kind: "home" });
+  if (designer) throw designer;
   const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "home" } });
   if (runtime1) {
     const nonce = randomBytes(18).toString("base64url");

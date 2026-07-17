@@ -57,6 +57,7 @@ import {
   STOREFRONT_POLICY_TITLE_MAX,
 } from "~/lib/storefront/policies.server";
 import { setComposerEnabled } from "~/lib/storefront/settings.server";
+import { publishDesignerSite } from "~/lib/designer/publish.server";
 
 // Store studio read model: brand settings, home hero copy, preview products,
 // draft/published flags, and the latest generation run.
@@ -608,6 +609,16 @@ export async function action({ request }: ActionFunctionArgs) {
       return dashboardJson(async () => {
         await saveStudioVibe(session.shopId, vibe as StudioVibe);
         return { vibe };
+      });
+    }
+
+    case "designer-publish": {
+      // Publishes the designer engine's document snapshot to the public
+      // storefront (hidden Labs). Display pages only; cart/checkout stay on
+      // the functional runtime routes.
+      return releaseResponse(async () => {
+        const storefrontUrl = await publishDesignerSite(session.shopId);
+        return { publishedAt: new Date().toISOString(), storefrontUrl };
       });
     }
 

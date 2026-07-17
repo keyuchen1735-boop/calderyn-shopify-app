@@ -61,7 +61,7 @@ async function refuseMidTest(shopId: string, what: string): Promise<void> {
   }
 }
 
-async function requirePublishableTenantDomain(shopId: string): Promise<string> {
+export async function requirePublishableTenantDomain(shopId: string): Promise<string> {
   if (process.env.NODE_ENV === "development") return "/storefront";
   const sb = getSupabase();
   const { data, error } = await sb

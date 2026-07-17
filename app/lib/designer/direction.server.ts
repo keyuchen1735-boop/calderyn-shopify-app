@@ -131,5 +131,7 @@ export function scratchSeedFiles(direction: ArtDirection, data: DesignerStoreDat
     "search.css": "",
     "cart.html": skeleton("cart", `<h1>Your cart</h1><p>Basket: {{cart.count}}</p><a href="/storefront/checkout">Checkout</a>`),
     "cart.css": "",
+    "checkout.html": skeleton("checkout", `<h1>Checkout</h1><p>Order summary for {{store.name}}</p><a href="/storefront/cart">Back to cart</a>`),
+    "checkout.css": "",
   };
 }

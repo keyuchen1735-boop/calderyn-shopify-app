@@ -347,6 +347,14 @@ export async function publishStudioStore(): Promise<{ publishedAt: string; store
   });
 }
 
+/** Publish the designer engine's page snapshot to the public storefront
+ *  (hidden Labs). Display pages only; cart and checkout stay functional. */
+export async function publishDesignerSite(): Promise<{ publishedAt: string; storefrontUrl: string }> {
+  return apiSend<{ publishedAt: string; storefrontUrl: string }>("POST", "/dashboard/api/store", {
+    action: "designer-publish",
+  });
+}
+
 /** "red-ceramic_mug.v2.jpg" → "Red ceramic mug v2" — a starter title for a
  *  product created from a chat-box image attachment. */
 export function productTitleFromFilename(filename: string): string {

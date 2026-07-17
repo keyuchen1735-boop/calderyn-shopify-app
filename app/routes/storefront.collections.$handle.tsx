@@ -23,6 +23,7 @@ import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 import { InvalidSearchRequestError, parseStorefrontCollectionParams } from "~/lib/storefront/search.server";
 import { storefrontError } from "~/lib/storefront/cart-api.server";
+import { serveDesignerPageIfPublished } from "~/lib/designer/serve.server";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Collection" }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
@@ -30,6 +31,9 @@ export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
   const shopId = await resolveStorefrontShop(request);
+  // Designer-published shops (hidden Labs) serve their snapshot instead.
+  const designer = await serveDesignerPageIfPublished(shopId, { kind: "collection", handle });
+  if (designer) throw designer;
   let runtime1: Awaited<ReturnType<typeof resolveRuntime1Route>> = null;
   if (await hasRuntime1Storefront({ shopId, request })) {
     try {

@@ -31,6 +31,7 @@ import { isRuntime1RenderData, renderStorefrontSurface } from "~/lib/storefront-
 import { markStorefrontBundleRendered } from "~/lib/storefront-runtime/csp.server";
 import { storefrontCacheHeaders } from "~/lib/storefront-runtime/cache.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
+import { serveDesignerPageIfPublished } from "~/lib/designer/serve.server";
 
 export const meta: MetaFunction<typeof loader> = ({ data }) => data?.seoMeta ?? [{ title: "Product" }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
@@ -53,6 +54,10 @@ async function redirectRenamedProductHandle(request: Request, shopId: string, ha
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
   const shopId = await resolveStorefrontShop(request);
+  // Designer-published shops (hidden Labs): serve the snapshot; an unknown
+  // handle returns null so the runtime's 404/redirect handling still runs.
+  const designer = await serveDesignerPageIfPublished(shopId, { kind: "product", handle });
+  if (designer) throw designer;
   const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "product", handle } });
   if (runtime1) {
     if (runtime1.data.notFound) {
