@@ -63,12 +63,27 @@ describe("renderDesignerDocument", () => {
     expect((out.match(/<article>/g) ?? []).length).toBe(2);
   });
 
-  it("fills root placeholders and blanks unknown or out-of-loop product paths", () => {
-    const out = renderDesignerDocument({ html: "<h1>{{store.name}}</h1><p>{{store.tagline}}</p><i>{{product.title}}</i><b>{{bogus.path}}</b>", css: "", data });
+  it("fills root placeholders and blanks unknown paths", () => {
+    const out = renderDesignerDocument({ html: "<h1>{{store.name}}</h1><p>{{store.tagline}}</p><b>{{bogus.path}}</b>", css: "", data });
     expect(out).toContain("<h1>Peak &amp; Pine</h1>");
     expect(out).toContain("<p>Built for the long trail</p>");
-    expect(out).toContain("<i></i>");
     expect(out).toContain("<b></b>");
+  });
+
+  it("previews out-of-loop product placeholders with the first product", () => {
+    const out = renderDesignerDocument({
+      html: '<h1>{{product.title}}</h1><span>{{product.price}}</span><img src="{{product.image}}">',
+      css: "",
+      data,
+    });
+    expect(out).toContain("<h1>Summit &lt;Tee&gt;</h1>");
+    expect(out).toContain("<span>$59.00</span>");
+    expect(out).toContain('src="/img/tee.webp"');
+  });
+
+  it("blanks out-of-loop product placeholders when the catalog is empty", () => {
+    const out = renderDesignerDocument({ html: "<i>{{product.title}}</i>", css: "", data: { ...data, products: [] } });
+    expect(out).toContain("<i></i>");
   });
 
   it("escapes single quotes so titles cannot break out of single-quoted attributes", () => {
