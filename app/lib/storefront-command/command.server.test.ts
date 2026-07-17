@@ -438,6 +438,7 @@ describe("runStoreCommand", () => {
       resolveDesign: vi.fn().mockReturnValue({
         ...resolution,
         templateId: "soft-chemistry",
+        templateVersion: 3,
       }),
       loadRecipe: vi.fn().mockResolvedValue({
         bundle: structuredClone(SOFT_CHEMISTRY_BUNDLE),
