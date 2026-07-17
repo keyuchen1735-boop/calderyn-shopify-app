@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DesignerStoreData } from "./types";
-import { renderDesignerDocument, scrubDesignerCss, scrubDesignerHtml } from "./render.server";
+import { renderDesignerBody, renderDesignerDocument, scrubDesignerCss, scrubDesignerHtml } from "./render.server";
 
 const data: DesignerStoreData = {
   storeName: "Peak & Pine",
@@ -64,15 +64,23 @@ describe("scrubDesignerCss", () => {
 });
 
 describe("renderDesignerDocument", () => {
-  it("repeats the products loop and fills product placeholders escaped", () => {
+  it("repeats the products loop and fills product placeholders escaped (body keeps links)", () => {
     const html = "{{#products}}<article><h3>{{product.title}}</h3><span>{{product.price}}</span><img src=\"{{product.image}}\" alt=\"{{product.title}}\"><a href=\"{{product.url}}\">View</a></article>{{/products}}";
+    const { bodyHtml } = renderDesignerBody({ html, css: "", data });
+    expect(bodyHtml).toContain("Summit &lt;Tee&gt;");
+    expect(bodyHtml).toContain("$59.00");
+    expect(bodyHtml).toContain('src="/img/tee.webp"');
+    expect(bodyHtml).toContain('href="/storefront/products/crest%20pack"');
+    expect(bodyHtml).toContain('src="data:image/svg+xml'); // neutral fallback for missing image
+    expect((bodyHtml.match(/<article>/g) ?? []).length).toBe(2);
+  });
+
+  it("makes the preview document inert: links keep their text but lose navigation", () => {
+    const html = '<a href="/storefront/products/x">View</a><button type="button" class="designer-add-to-cart">Add</button>';
     const out = renderDesignerDocument({ html, css: "", data });
-    expect(out).toContain("Summit &lt;Tee&gt;");
-    expect(out).toContain("$59.00");
-    expect(out).toContain('src="/img/tee.webp"');
-    expect(out).toContain('href="/storefront/products/crest%20pack"');
-    expect(out).toContain('src="data:image/svg+xml'); // neutral fallback for missing image
-    expect((out.match(/<article>/g) ?? []).length).toBe(2);
+    expect(out).toContain(">View</a>");
+    expect(out).not.toContain('href="/storefront/products/x"');
+    expect(out).toContain("Add"); // buttons still render
   });
 
   it("fills root placeholders and blanks unknown paths", () => {

@@ -112,6 +112,9 @@ export async function resolveDesignerPublicPage(
       `class="designer-add-to-cart" data-variant-id="${data.contextVariantId}"`,
     );
   }
+  // The cart wiring is always live; the coupon widget's behavior only when the
+  // page actually declared one (rendered.widgetScript is empty otherwise).
+  const runtimeScript = `${CART_SCRIPT}\n${rendered.widgetScript}`;
   const nonce = randomBytes(18).toString("base64url");
   const headers = storefrontCacheHeaders({ routeId: ROUTE_FOR_KIND[context.kind], personalized: false, shopId });
   headers.set("cache-control", "no-store");
@@ -122,7 +125,7 @@ export async function resolveDesignerPublicPage(
       bodyHtml,
       css: rendered.css,
       nonce,
-      cartScript: CART_SCRIPT,
+      cartScript: runtimeScript,
       seoMeta: [{ title: data.storeName }],
     },
     headers,

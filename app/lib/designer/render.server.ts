@@ -4,6 +4,7 @@
 // no-script CSP with an iframe sandbox so anything the scrub missed is inert
 // in the browser.
 import type { DesignerStoreData } from "./types";
+import { expandCouponWidget } from "./widgets";
 
 const BLOCKED_TAGS = /<\/?(?:script|iframe|object|embed|base|form|link|meta)\b[^>]*>/gi;
 // Event handlers in every quote style, including unquoted (onclick=steal()).
@@ -91,7 +92,10 @@ export function renderDesignerBody(input: {
   css: string;
   data: DesignerStoreData;
   maxProducts?: number;
-}): { bodyHtml: string; css: string } {
+  /** Preview renders widgets inertly (no behavior script); live serving wires
+   *  the returned widgetScript through a nonce. */
+  preview?: boolean;
+}): { bodyHtml: string; css: string; widgetScript: string } {
   const scrubbedHtml = scrubDesignerHtml(input.html);
   const products = input.data.products.slice(0, input.maxProducts ?? 12);
   const contextProduct = products[0];
@@ -103,18 +107,30 @@ export function renderDesignerBody(input: {
     path.startsWith("product.")
       ? (contextProduct ? productValue(contextProduct, path) : "")
       : rootValue(input.data, path));
-  return { bodyHtml: filled, css: scrubDesignerCss(input.css).replace(/<\/style/gi, "") };
+  // Expand any declared conversion widget (coupon popup). In the body path
+  // this is the live-storefront render, so behavior is wired by the caller
+  // via the returned script; preview uses renderDesignerDocument below.
+  const widget = expandCouponWidget(filled, { preview: input.preview === true });
+  const css = `${scrubDesignerCss(input.css)}\n${widget.css}`.replace(/<\/style/gi, "");
+  return { bodyHtml: widget.html, css, widgetScript: widget.script };
 }
 
-/** Full standalone document for the sandboxed preview iframe. */
+/** Full standalone document for the sandboxed preview iframe. In the preview
+ *  every link is inert (the iframe has no scripts and its own route can't serve
+ *  storefront paths, so a click would navigate to a dead URL). Neutralize
+ *  navigation by dropping href/action and disabling submit-type buttons — the
+ *  design still renders exactly, it just doesn't try to go anywhere. */
 export function renderDesignerDocument(input: {
   html: string;
   css: string;
   data: DesignerStoreData;
   maxProducts?: number;
 }): string {
-  const { bodyHtml, css } = renderDesignerBody(input);
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>${bodyHtml}</body></html>`;
+  const { bodyHtml, css } = renderDesignerBody({ ...input, preview: true });
+  const inert = bodyHtml
+    .replace(/\s(href|action|formaction)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/<a(\s|>)/gi, '<a style="cursor:default"$1');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><base target="_self"><style>${css}</style></head><body>${inert}</body></html>`;
 }
 
 // img-src allows https: because catalog imagery is injected server-side after
