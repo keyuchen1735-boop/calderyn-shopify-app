@@ -7,7 +7,7 @@ export function throwIfVersionSkew(res: Response): void {
   const isVersionSkew =
     res.status !== 401 &&
     res.status < 500 &&
-    res.headers.get("content-type")?.toLowerCase().includes("text/html");
+    res.headers?.get("content-type")?.toLowerCase().includes("text/html");
   if (!isVersionSkew) return;
 
   let canReload = false;
