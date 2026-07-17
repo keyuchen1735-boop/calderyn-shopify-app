@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { Btn, Card, Toggle, Segmented, Pill, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
+import { fetchDesignerState, setDesignerEnabled } from "~/lib/designer/client";
+import { DESIGNER_STATE_CACHE_KEY } from "./DesignerStudio";
 import { money } from "../format";
 import {
   putConsent,
@@ -314,7 +316,65 @@ function CodeRow({ text, app }: { text: string; app: DashboardCtx }) {
   );
 }
 
+/** Hidden designer-engine switch, revealed by the dimmed sparkle in the
+ *  footer. Flips store_settings.composer_enabled through the designer's own
+ *  API and writes through the studio cache so the Store tab swaps engines on
+ *  the very next visit. */
+function DesignerSwitch() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetchDesignerState()
+      .then((state) => {
+        if (alive) setEnabled(state.enabled);
+      })
+      .catch(() => {
+        if (alive) setEnabled(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const flip = async (next: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    const previous = enabled;
+    setEnabled(next);
+    try {
+      await setDesignerEnabled(next);
+      const cached = cachedScreenData<{ enabled?: boolean }>(DESIGNER_STATE_CACHE_KEY);
+      cacheScreenData(DESIGNER_STATE_CACHE_KEY, { ...(cached ?? { ready: false, unbuiltRoutes: [], chat: [] }), enabled: next });
+    } catch {
+      setEnabled(previous);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="cd-card" style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", marginTop: 14 }}>
+      <CDIcon name="sparkle" size={16} strokeWidth={2} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600 }}>Designer engine</div>
+        <div className="cd-sub" style={{ margin: 0 }}>
+          Chat edits the store's code directly, starting from a template. Experimental.
+        </div>
+      </div>
+      <Toggle
+        value={enabled === true}
+        onChange={(next) => void flip(next)}
+        disabled={busy || enabled === null}
+        ariaLabel="Designer engine"
+      />
+    </div>
+  );
+}
+
 export default function Settings({ app }: { app: DashboardCtx }) {
+  const [showDesigner, setShowDesigner] = useState(false);
   // Local editable copy of guardrails, seeded from app.guardrails and re-synced
   // whenever the shell refreshes it. Optimistic edits write here first; a failed
   // PUT reverts the touched field back to the server value.
@@ -1391,8 +1451,19 @@ export default function Settings({ app }: { app: DashboardCtx }) {
           string opens the hidden "Autopilot replay" demo (screens/Labs). The
           mark is the Calderyn logo (same inline hexagon as the sidebar brand),
           not a Lucide icon. */}
+      {showDesigner && <DesignerSwitch />}
+
       <div className="cd-secret-foot">
         <span>Calderyn for Shopify · v2.4.1 · build 1180</span>
+        <button
+          type="button"
+          className="cd-secret-dot"
+          onClick={() => setShowDesigner((v) => !v)}
+          title="Designer beta"
+          aria-label="Designer beta"
+        >
+          <CDIcon name="sparkle" size={13} strokeWidth={2} />
+        </button>
         <button
           type="button"
           className="cd-secret-dot"

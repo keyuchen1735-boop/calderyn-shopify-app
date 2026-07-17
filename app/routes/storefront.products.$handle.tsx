@@ -1,5 +1,8 @@
 // app/routes/storefront.products.$handle.tsx
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs, MetaDescriptor, MetaFunction } from "@remix-run/node";
+import { resolveDesignerPublicPage } from "~/lib/designer/serve.server";
+import DesignerPublicView from "~/components/storefront/DesignerPublicView";
+import { isDesignerPublicPage } from "~/lib/designer/types";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { resolveHandleRedirect } from "~/lib/storefront/handle-redirect.server";
@@ -44,6 +47,10 @@ async function redirectRenamedProductHandle(request: Request, shopId: string, ha
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const handle = params.handle ?? "";
   const shopId = await resolveStorefrontShop(request);
+  // Designer-published shops (hidden Labs) serve their snapshot instead of
+  // the runtime renderer; shops without a publication are untouched.
+  const designer = await resolveDesignerPublicPage(shopId, { kind: "product", handle });
+  if (designer) return json(designer.page, { headers: designer.headers });
   const runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "product", handle } });
   if (!runtime1) throw new Response("Storefront is temporarily unavailable.", { status: 503 });
   if (runtime1.data.notFound) {
@@ -135,6 +142,9 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function StorefrontProduct() {
   const loaded = useLoaderData<typeof loader>();
+  if (isDesignerPublicPage(loaded)) {
+    return <DesignerPublicView page={loaded} />;
+  }
   if (!isRuntime1RenderData(loaded)) throw new Error("Product data is unavailable.");
   return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "product", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="product" data={loaded.data} mode="public" /></>;
 }

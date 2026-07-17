@@ -1,5 +1,8 @@
 // app/routes/storefront.collections.$handle.tsx
 import type { HeadersFunction, LoaderFunctionArgs, MetaDescriptor, MetaFunction } from "@remix-run/node";
+import { resolveDesignerPublicPage } from "~/lib/designer/serve.server";
+import DesignerPublicView from "~/components/storefront/DesignerPublicView";
+import { isDesignerPublicPage } from "~/lib/designer/types";
 import { json } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
@@ -34,6 +37,10 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   let runtime1;
   try {
     const searchInput = parseStorefrontCollectionParams(new URL(request.url).searchParams, handle);
+  // Designer-published shops (hidden Labs) serve their snapshot instead of
+  // the runtime renderer; shops without a publication are untouched.
+  const designer = await resolveDesignerPublicPage(shopId, { kind: "collection", handle });
+  if (designer) return json(designer.page, { headers: designer.headers });
     runtime1 = await resolveRuntime1Route({ shopId, request, route: { kind: "collection", handle, searchInput } });
   } catch (error) {
     if (error instanceof InvalidSearchRequestError) throw storefrontError(422, "invalid_search_request");
@@ -72,6 +79,9 @@ function CollectionNextPage({ href }: { href: string | null }) {
 
 export default function StorefrontCollection() {
   const loaded = useLoaderData<typeof loader>();
+  if (isDesignerPublicPage(loaded)) {
+    return <DesignerPublicView page={loaded} />;
+  }
   if (!isRuntime1RenderData(loaded)) throw new Error("Collection data is unavailable.");
   return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: "collection", data: loaded.data, nonce: loaded.nonce, mode: "public", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId="collection" data={loaded.data} mode="public" /><CollectionNextPage href={loaded.nextPageHref} /></>;
 }
