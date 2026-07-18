@@ -7,6 +7,7 @@ These self-hosted Latin webfonts are distributed under the SIL Open Font License
 - Fraunces
 - IBM Plex Mono
 - Inter
+- JetBrains Mono
 - Roboto Slab
 - Source Serif 4
 - Space Grotesk

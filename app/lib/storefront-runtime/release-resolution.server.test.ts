@@ -382,4 +382,13 @@ describe("storefront release resolution", () => {
       reader: reader(null, []),
     })).rejects.toMatchObject({ code: "no_compatible_storefront_release", status: 503 });
   });
+
+  it("route resolution returns null for an unpublished shop instead of throwing", async () => {
+    await expect(resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "home" },
+      bundleReadEnabled: true,
+      reader: reader(null, []),
+    })).resolves.toBeNull();
+  });
 });
