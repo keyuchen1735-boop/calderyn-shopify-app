@@ -37,6 +37,10 @@ vi.mock("~/lib/storefront-runtime/preview-commerce.server", () => ({
   commitPreviewCommerceSession: vi.fn(),
 }));
 vi.mock("~/lib/storefront-recipes", () => ({ getStorefrontRecipe: getRecipeMock }));
+vi.mock("~/lib/dashboard/http.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/lib/dashboard/http.server")>()),
+  requireSameOrigin: vi.fn(),
+}));
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const settings = {
