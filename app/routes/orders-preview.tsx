@@ -18,6 +18,13 @@ export const links: LinksFunction = () => [
   { rel: "stylesheet", href: dashboard },
 ];
 
+export function loader() {
+  if (process.env.NODE_ENV === "production") {
+    throw new Response("Not Found", { status: 404 });
+  }
+  return null;
+}
+
 const now = Date.now();
 const ago = (days: number, hours = 0) =>
   new Date(now - (days * 24 + hours) * 60 * 60 * 1000).toISOString();
