@@ -1,4 +1,4 @@
-import { isUuid } from "../ids";
+﻿import { isUuid } from "../ids";
 import type {
   StorefrontRouteId,
   StoreTemplateId,
@@ -74,8 +74,11 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-function hasExactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).length === allowed.length && Object.keys(value).every((key) => allowed.includes(key));
+// Subset semantics on purpose: callers pass optional keys (a prompt command
+// may omit context/attachments), so this rejects unknown keys only; required
+// and optional keys are validated per-field by each caller.
+function hasNoUnknownKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
 }
 
 function nonEmptyString(value: unknown): value is string {
@@ -89,7 +92,7 @@ function boundedString(value: unknown, cap: number): value is string {
 export function isPreviewSlotContext(value: unknown): value is PreviewSlotContext {
   const input = record(value);
   return input !== null
-    && hasExactKeys(input, ["routeId", "slot"])
+    && hasNoUnknownKeys(input, ["routeId", "slot"])
     && typeof input.routeId === "string"
     && ROUTE_IDS.has(input.routeId as StorefrontRouteId)
     && boundedString(input.slot, STORE_COMMAND_LIMITS.contextSlotCodePoints);
@@ -98,11 +101,11 @@ export function isPreviewSlotContext(value: unknown): value is PreviewSlotContex
 function isStoreAttachment(value: unknown): value is StoreAttachment {
   const input = record(value);
   if (input?.kind === "design_reference") {
-    return hasExactKeys(input, ["kind", "assetRef"])
+    return hasNoUnknownKeys(input, ["kind", "assetRef"])
       && boundedString(input.assetRef, STORE_COMMAND_LIMITS.designReferenceAssetRefCodePoints);
   }
   if (input?.kind === "fragment_shader") {
-    return hasExactKeys(input, ["kind", "source"])
+    return hasNoUnknownKeys(input, ["kind", "source"])
       && nonEmptyString(input.source)
       && shaderSourceWithinCap(input.source);
   }
@@ -126,7 +129,7 @@ export function parseStoreCommand(value: unknown): ParseStoreCommandResult {
   if (!input || typeof input.kind !== "string") return invalidStoreCommand();
 
   if (input.kind === "prompt") {
-    if (!hasExactKeys(input, ["kind", "prompt", "expectedDraftVersionId", "context", "attachments"])
+    if (!hasNoUnknownKeys(input, ["kind", "prompt", "expectedDraftVersionId", "context", "attachments"])
       || !nonEmptyString(input.prompt)
       || Array.from(input.prompt).length > STORE_COMMAND_LIMITS.promptCodePoints
       || (input.expectedDraftVersionId !== null
@@ -149,7 +152,7 @@ export function parseStoreCommand(value: unknown): ParseStoreCommandResult {
   }
 
   if (input.kind === "undo") {
-    if (!hasExactKeys(input, ["kind", "targetVersionId", "expectedDraftVersionId"])
+    if (!hasNoUnknownKeys(input, ["kind", "targetVersionId", "expectedDraftVersionId"])
       || typeof input.targetVersionId !== "string"
       || !isUuid(input.targetVersionId)
       || typeof input.expectedDraftVersionId !== "string"
@@ -167,7 +170,7 @@ export function parseStoreCommand(value: unknown): ParseStoreCommandResult {
   }
 
   if (input.kind === "publish") {
-    if (!hasExactKeys(input, ["kind", "expectedDraftVersionId"])
+    if (!hasNoUnknownKeys(input, ["kind", "expectedDraftVersionId"])
       || typeof input.expectedDraftVersionId !== "string"
       || !isUuid(input.expectedDraftVersionId)) {
       return invalidStoreCommand();
