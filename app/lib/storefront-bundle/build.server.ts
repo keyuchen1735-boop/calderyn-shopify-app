@@ -113,6 +113,12 @@ export async function loadStorefrontRecipe(templateId: StoreTemplateId, template
     case "atelier-nine":
       recipe = (await import("~/lib/storefront-recipes/atelier-nine/bundle")).ATELIER_GRID_RECIPE;
       break;
+    default:
+      throw new StorefrontBuildError(
+        "storefront_recipe_version_unavailable",
+        "That storefront recipe version is not available.",
+        409,
+      );
   }
   if (recipe.bundle.source.kind !== "recipe" || recipe.bundle.source.templateVersion !== templateVersion) {
     throw new StorefrontBuildError(

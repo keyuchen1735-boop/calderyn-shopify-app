@@ -723,7 +723,15 @@ async function serveProofRequest(
     return;
   }
   const publicRoot = resolve(process.cwd(), "public");
-  const filePath = resolve(publicRoot, `.${decodeURIComponent(parsed.pathname)}`);
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(parsed.pathname);
+  } catch {
+    unexpected.push(url);
+    await request.respond({ status: 400, body: "Bad request" });
+    return;
+  }
+  const filePath = resolve(publicRoot, `.${decodedPath}`);
   if (!filePath.startsWith(`${publicRoot}${sep}`)) {
     unexpected.push(url);
     await request.respond({ status: 403, body: "Forbidden" });

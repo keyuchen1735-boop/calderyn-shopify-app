@@ -82,7 +82,7 @@ export default function ChatRail({
   useEffect(() => {
     const thread = threadRef.current;
     if (thread) thread.scrollTop = thread.scrollHeight;
-  }, [messages.length]);
+  }, [messages]);
 
   const canSend = canSendComposer({ prompt, busy: busy || attaching });
   const send = () => {
