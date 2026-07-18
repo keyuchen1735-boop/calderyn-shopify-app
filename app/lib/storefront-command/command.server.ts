@@ -591,7 +591,10 @@ export async function runStoreCommand(
       ...(currentTemplateId ? { currentTemplateId } : {}),
       excludedTemplateIds: priorExclusions,
       ...(state.draft ? { bundle: state.draft.bundle } : {}),
-      productCandidates: classificationAssembly.context.products.slice(0, 100).map(({ id, title }) => ({ id, title })),
+      productCandidates: classificationAssembly.context.products
+        .filter(({ title }) => title.trim().length > 0)
+        .slice(0, 100)
+        .map(({ id, title }) => ({ id, title })),
       ...(input.command.context ? { context: input.command.context } : {}),
       ...(input.command.attachments ? { attachments: input.command.attachments } : {}),
       ...(verifiedReferenceImages.length > 0 ? {
