@@ -6,6 +6,7 @@ import { useLoaderData, Outlet, useMatches } from "@remix-run/react";
 import storefrontCss from "~/styles/storefront.css?url";
 import { resolveStorefrontShop } from "~/lib/storefront/shop.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
+import { rendersOwnDocument } from "~/lib/storefront/shell-bypass";
 import { detectAiBot, logAiCrawl } from "~/lib/seo/crawlers.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
@@ -45,10 +46,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export default function StorefrontLayout() {
   const { settings, experimentVibe } = useLoaderData<typeof loader>();
   const matches = useMatches();
-  if (matches.some((match) => {
-    const data = match.data;
-    return Boolean(data && typeof data === "object" && "runtime" in data && data.runtime === 1);
-  })) return <Outlet />;
+  if (matches.some((match) => rendersOwnDocument(match.data))) return <Outlet />;
   return (
     <div
       className="cd-store"
