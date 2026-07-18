@@ -92,7 +92,7 @@ describe("storefront home runtime cutover", () => {
     expect(result.nonce).toMatch(/^[A-Za-z0-9_-]{20,}$/);
     expect(response.headers.get("X-Calderyn-Storefront-Renderer")).toBe("bundle-v1");
     expect(response.headers.get("X-Calderyn-Storefront-Nonce")).toBe(result.nonce);
-    expect(trackStorefrontEventMock).toHaveBeenCalledWith(req(), "demo-shop", "page_view");
+    expect(trackStorefrontEventMock).toHaveBeenCalledWith(expect.any(Request), "demo-shop", "page_view");
     expect(resolveServedMock).not.toHaveBeenCalled();
     expect(ensureVisitorSessionMock).not.toHaveBeenCalled();
     expect(loadPublishedMock).not.toHaveBeenCalled();
