@@ -6,6 +6,7 @@ import { useLoaderData } from "@remix-run/react";
 import { randomBytes } from "node:crypto";
 import storefrontCss from "~/styles/storefront.css?url";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
+import { requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getCatalog, getPreviewCatalog } from "~/lib/storefront/catalog.server";
 import { isStorefrontBundleReadEnabled } from "~/lib/storefront-runtime/csp.server";
 import {
@@ -129,6 +130,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  requireSameOrigin(request);
   const session = await requireDashboardSession(request);
   const shopId = session.shopId;
   const selectedTemplateId = new URL(request.url).searchParams.get("template");
@@ -169,6 +171,9 @@ export async function action({ request }: ActionFunctionArgs) {
     const lineId = form.get("lineId");
     const quantity = Number(form.get("quantity"));
     if (typeof lineId !== "string") throw new Response("lineId is required", { status: 400 });
+    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 99) {
+      throw new Response("Invalid preview quantity", { status: 400 });
+    }
     adapter.setQuantity(lineId, quantity);
   } else if (intent === "remove") {
     const lineId = form.get("lineId");
