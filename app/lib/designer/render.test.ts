@@ -1,5 +1,8 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DesignerStoreData } from "./types";
+import { DESIGNER_FONT_IDS } from "./direction.server";
 import { renderDesignerBody, renderDesignerDocument, scrubDesignerCss, scrubDesignerHtml } from "./render.server";
 
 const data: DesignerStoreData = {
@@ -60,6 +63,35 @@ describe("scrubDesignerCss", () => {
 
   it("disables IE expression()", () => {
     expect(scrubDesignerCss("a{width:expression(alert(1))}")).not.toContain("expression(");
+  });
+
+  it("rewrites font files outside the curated set to a shipped substitute, keeping the alias", () => {
+    const css = [
+      '@font-face{font-family:"futura-display";src:url(/storefront-fonts/futura-display-latin.woff2)}',
+      '@font-face{font-family:"fira-code";src:url(/storefront-fonts/fira-code-latin.woff2)}',
+      '@font-face{font-family:"crimson-serif";src:url(/storefront-fonts/crimson-serif-latin.woff2)}',
+      '@font-face{font-family:"inter";src:url(/storefront-fonts/inter-latin.woff2)}',
+    ].join("\n");
+    const out = scrubDesignerCss(css);
+    expect(out).toContain('font-family:"futura-display";src:url(/storefront-fonts/inter-latin.woff2)');
+    expect(out).toContain('font-family:"fira-code";src:url(/storefront-fonts/ibm-plex-mono-latin.woff2)');
+    expect(out).toContain('font-family:"crimson-serif";src:url(/storefront-fonts/source-serif-4-latin.woff2)');
+    expect(out).toContain("url(/storefront-fonts/inter-latin.woff2)");
+    expect(out).not.toContain("futura-display-latin.woff2");
+  });
+
+  it("keeps every curated font file untouched", () => {
+    for (const id of DESIGNER_FONT_IDS) {
+      const css = `@font-face{src:url(/storefront-fonts/${id}-latin.woff2)}`;
+      expect(scrubDesignerCss(css)).toContain(`/storefront-fonts/${id}-latin.woff2`);
+    }
+  });
+
+  it("every curated designer font id ships as a real file", () => {
+    for (const id of DESIGNER_FONT_IDS) {
+      const fontPath = resolve(process.cwd(), `public/storefront-fonts/${id}-latin.woff2`);
+      expect(existsSync(fontPath), `${id}-latin.woff2 missing from public/storefront-fonts`).toBe(true);
+    }
   });
 });
 

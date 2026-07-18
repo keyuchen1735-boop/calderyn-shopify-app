@@ -11,7 +11,7 @@ import { STORE_TEMPLATE_REGISTRY } from "../storefront-bundle/registry";
 import type { StoreTemplateId } from "../storefront-bundle/types";
 import type { StudioDesignModel } from "../storebuilder/studio-types";
 import { convertTemplateToDocuments, DESIGNER_ROUTES } from "./convert.server";
-import { artDirectionFor, scratchSeedFiles, type ArtDirection } from "./direction.server";
+import { artDirectionFor, DESIGNER_FONT_IDS, scratchSeedFiles, type ArtDirection } from "./direction.server";
 import { generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
 import { applyAssetOverrides, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
 import { editContext, fileContext, summarizeChanges } from "./context";
@@ -428,7 +428,7 @@ function firstBuildInstruction(input: {
   const base = input.mode === "template"
     ? `First build, page "${input.route}": this store was just attached to the "${input.templateId}" template. Rework this page so it belongs to THIS merchant: their copy, their accent, their category names. Keep template structure only where it genuinely serves the page — restructure anything that hurts scanning (stacked one-per-row product lists become grids, oversized imagery gets contained), and fully style anything the template left plain.`
     : `First build, page "${input.route}": you are designing this store from scratch. Author the complete page (whole-file rewrites with * are expected) with committed art direction, not a wireframe.`;
-  const direction = `Art direction for this store (starting point, adapt to the merchant's brief if they conflict): display font "${input.direction.displayFont}", body font "${input.direction.bodyFont}"; palette: ${input.direction.palette}; layout: ${input.direction.layout}; mood: ${input.direction.mood}. Add @font-face rules to base.css only for these self-hosted fonts (/storefront-fonts/<id>-latin.woff2).`;
+  const direction = `Art direction for this store (starting point, adapt to the merchant's brief if they conflict): display font "${input.direction.displayFont}", body font "${input.direction.bodyFont}"; palette: ${input.direction.palette}; layout: ${input.direction.layout}; mood: ${input.direction.mood}. Add @font-face rules to base.css only for these self-hosted fonts (/storefront-fonts/<id>-latin.woff2), where <id> must be one of: ${DESIGNER_FONT_IDS.join(", ")}. No other font files exist.`;
   const continuity = input.donePages.length > 0
     ? `Pages already designed this build: ${input.donePages.join(", ")}. base.css already carries the design system from those pages — reuse it, do not fork new token names for the same concepts.`
     : "This is the first page of the build; establish the design system tokens in base.css here.";
