@@ -161,6 +161,13 @@ export function explicitStoreTemplateExclusions(
   return recipeNameHits(prompt, registry).negative;
 }
 
+export function explicitStoreTemplateSelections(
+  prompt: string,
+  registry: VersionedStoreTemplateRegistry,
+): StoreTemplateId[] {
+  return recipeNameHits(prompt, registry).positive.map(({ templateId }) => templateId);
+}
+
 function catalogMatches(
   template: VersionedStoreTemplate,
   evidence: CatalogRoutingEvidence,
