@@ -108,13 +108,13 @@ async function loadProductContributions(
   const sb = getSupabase();
   const [nativeOrders, importedOrders, nativeRefunds, importedRefunds] = await Promise.all([
     readPaged<{ id: string; subtotal_cents: number }>("orders", shopId, ROW_CAP, (from, to) =>
-      sb.from("orders").select("id, subtotal_cents").eq("shop_id", shopId).in("state", SALE_STATES).gte("created_at", sinceIso).range(from, to)),
+      sb.from("orders").select("id, subtotal_cents").eq("shop_id", shopId).in("state", SALE_STATES).gte("created_at", sinceIso).order("id", { ascending: true }).range(from, to)),
     readPaged<{ id: string; discount_cents: number }>("imported_order", shopId, ROW_CAP, (from, to) =>
-      sb.from("imported_order").select("id, discount_cents").eq("shop_id", shopId).in("financial_status", IMPORTED_SALE_STATES).gte("processed_at", sinceIso).range(from, to)),
+      sb.from("imported_order").select("id, discount_cents").eq("shop_id", shopId).in("financial_status", IMPORTED_SALE_STATES).gte("processed_at", sinceIso).order("id", { ascending: true }).range(from, to)),
     readPaged<{ sku_id: string | null; subtotal_cents: number }>("refund_fact", shopId, ROW_CAP, (from, to) =>
-      sb.from("refund_fact").select("sku_id, subtotal_cents").eq("shop_id", shopId).like("external_id", "gid://calderyn/%").gte("processed_at", sinceIso).range(from, to)),
+      sb.from("refund_fact").select("sku_id, subtotal_cents").eq("shop_id", shopId).like("external_id", "gid://calderyn/%").gte("processed_at", sinceIso).order("id", { ascending: true }).range(from, to)),
     readPaged<{ sku_id: string | null; subtotal_cents: number }>("imported_refund", shopId, ROW_CAP, (from, to) =>
-      sb.from("imported_refund").select("sku_id, subtotal_cents").eq("shop_id", shopId).gte("processed_at", sinceIso).range(from, to)),
+      sb.from("imported_refund").select("sku_id, subtotal_cents").eq("shop_id", shopId).gte("processed_at", sinceIso).order("id", { ascending: true }).range(from, to)),
   ]);
   const nativeIds = nativeOrders.map((row) => String(row.id));
   const importedIds = importedOrders.map((row) => String(row.id));
@@ -122,7 +122,7 @@ async function loadProductContributions(
   const nativeLines: Array<Record<string, unknown>> = [];
   for (let i = 0; i < nativeIds.length; i += IN_CHUNK) {
     nativeLines.push(...await readPaged<Record<string, unknown>>("order_line", shopId, ROW_CAP, (from, to) =>
-      sb.from("order_line").select("order_id, variant_id, title_snapshot, quantity, unit_price_cents, unit_cost_cents_snapshot").eq("shop_id", shopId).in("order_id", nativeIds.slice(i, i + IN_CHUNK)).range(from, to)));
+      sb.from("order_line").select("order_id, variant_id, title_snapshot, quantity, unit_price_cents, unit_cost_cents_snapshot").eq("shop_id", shopId).in("order_id", nativeIds.slice(i, i + IN_CHUNK)).order("id", { ascending: true }).range(from, to)));
   }
   const nativeGross = new Map<string, number>();
   for (const row of nativeLines) {
@@ -137,7 +137,7 @@ async function loadProductContributions(
   const importedLines: Array<Record<string, unknown>> = [];
   for (let i = 0; i < importedIds.length; i += IN_CHUNK) {
     importedLines.push(...await readPaged<Record<string, unknown>>("imported_order_line", shopId, ROW_CAP, (from, to) =>
-      sb.from("imported_order_line").select("imported_order_id, sku_id, quantity, total_cents, unit_cost_cents_snapshot").eq("shop_id", shopId).in("imported_order_id", importedIds.slice(i, i + IN_CHUNK)).range(from, to)));
+      sb.from("imported_order_line").select("imported_order_id, sku_id, quantity, total_cents, unit_cost_cents_snapshot").eq("shop_id", shopId).in("imported_order_id", importedIds.slice(i, i + IN_CHUNK)).order("id", { ascending: true }).range(from, to)));
   }
 
   const ids = [...new Set([
