@@ -7,7 +7,10 @@ import {
   type StorefrontReferenceMediaType,
 } from "../storefront-ai/contracts";
 import { getStoreTemplate, isStoreTemplateId, STORE_TEMPLATE_REGISTRY } from "../storefront-bundle/registry";
-import { explicitStoreTemplateExclusions } from "../storefront-bundle/routing";
+import {
+  explicitStoreTemplateExclusions,
+  explicitStoreTemplateSelections,
+} from "../storefront-bundle/routing";
 import type { StorefrontBundleV1, StoreTemplateId, VisualLayerSpec } from "../storefront-bundle/types";
 import { hexToRgb, shaderSourceWithinCap } from "../storebuilder/fx/shader";
 import { canApplyStoreTextSlot } from "./apply";
@@ -274,12 +277,15 @@ function parseVisualLayer(value: unknown): VisualLayerSpec | null {
 
 function exclusions(input: ClassifyStoreIntentInput): StoreTemplateId[] {
   if (!validTemplateIds(input.excludedTemplateIds ?? [])) invalid();
+  const explicitSelections = explicitStoreTemplateSelections(input.prompt, STORE_TEMPLATE_REGISTRY);
   const values = [
-    ...(input.excludedTemplateIds ?? []),
+    ...(input.excludedTemplateIds ?? []).filter((templateId) => !explicitSelections.includes(templateId)),
     ...explicitStoreTemplateExclusions(input.prompt, STORE_TEMPLATE_REGISTRY),
   ];
   const currentTemplateId = templateId(input);
-  if (currentTemplateId && !values.includes(currentTemplateId)) values.push(currentTemplateId);
+  if (currentTemplateId && !explicitSelections.includes(currentTemplateId) && !values.includes(currentTemplateId)) {
+    values.push(currentTemplateId);
+  }
   return [...new Set(values)];
 }
 

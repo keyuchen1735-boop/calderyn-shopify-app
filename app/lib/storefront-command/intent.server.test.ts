@@ -391,6 +391,17 @@ describe("classifyStoreIntent", () => {
     });
   });
 
+  it("clears a stale exclusion when the merchant explicitly names that design", async () => {
+    const provider = vi.fn(async () => classified(
+      '{"kind":"select_design","prompt":"Use Soft Chemistry","excludedTemplateIds":[]}'));
+
+    await expect(classifyStoreIntent({ ...input, prompt: "Use Soft Chemistry" }, { provider })).resolves.toEqual({
+      kind: "select_design",
+      prompt: "Use Soft Chemistry",
+      excludedTemplateIds: ["custom-bench"],
+    });
+  });
+
   it("routes the original design prompt and its explicit exclusions, not a model rewrite", async () => {
     const provider = vi.fn(async () => classified(
       '{"kind":"select_design","prompt":"clean skincare","excludedTemplateIds":[]}'));
