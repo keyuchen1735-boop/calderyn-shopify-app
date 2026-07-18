@@ -899,6 +899,24 @@ describe("runStoreCommand", () => {
     }
   });
 
+  it("maps intent-classification rejection to actionable 422 copy, not the generic failure", async () => {
+    const deps = dependencies({
+      classify: vi.fn().mockRejectedValue(
+        Object.assign(new Error("The store request could not be safely understood."), {
+          code: "invalid_store_intent",
+        }),
+      ),
+    });
+    await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(null) }, deps))
+      .rejects.toMatchObject({
+        code: "storefront_command_rejected",
+        status: 422,
+        message: expect.stringContaining("one change at a time"),
+      });
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.install).not.toHaveBeenCalled();
+  });
+
   it("does not install when cancellation arrives after immutable version creation", async () => {
     const controller = new AbortController();
     const deps = dependencies({

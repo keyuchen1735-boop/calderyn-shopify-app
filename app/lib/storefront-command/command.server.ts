@@ -298,6 +298,13 @@ function publicError(code: string): StoreCommandError {
       409,
     );
   }
+  if (code === "invalid_store_intent") {
+    return new StoreCommandError(
+      "storefront_command_rejected",
+      "I couldn't act on that request as written. Try one change at a time, like \"make the hero warmer\" or just \"build my store\". Your current draft was not changed.",
+      422,
+    );
+  }
   if (code === "storefront_command_invalid" || code === "storefront_command_proof_failed") {
     return new StoreCommandError(
       "storefront_command_rejected",
