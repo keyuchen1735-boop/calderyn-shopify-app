@@ -75,7 +75,7 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 function hasExactKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
-  return Object.keys(value).every((key) => allowed.includes(key));
+  return Object.keys(value).length === allowed.length && Object.keys(value).every((key) => allowed.includes(key));
 }
 
 function nonEmptyString(value: unknown): value is string {
