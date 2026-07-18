@@ -348,7 +348,21 @@ export async function resolveRuntime1Route(input: {
 }): Promise<Runtime1RouteData | null> {
   if (!(input.bundleReadEnabled ?? isStorefrontBundleReadEnabled())) return null;
   if (!isUuid(input.shopId)) return null;
-  const release = await resolveStorefrontRelease(input);
+  let release: ResolvedStorefrontRelease;
+  try {
+    release = await resolveStorefrontRelease(input);
+  } catch (error) {
+    // A shop with nothing published has nothing to serve — that's the
+    // callers' clean 503 path, not an unhandled crash in the error logs
+    // (crawlers hit unpublished tenant domains constantly).
+    if (
+      error instanceof StorefrontReleaseResolutionError
+      && error.code === "no_compatible_storefront_release"
+    ) {
+      return null;
+    }
+    throw error;
+  }
   if (release.kind !== "runtime1") return null;
   return resolveRuntime1VersionRoute({ ...input, version: release.version });
 }
