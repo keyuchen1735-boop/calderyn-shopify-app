@@ -2112,6 +2112,71 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+/* Compact-rail tooltip: one fixed bubble beside the rail (the aside clips
+   horizontal overflow, so it can't live inside). Same surface language as
+   .cd-htip-pop, with the arrow pointing back at the rail. */
+.cd-rail-tip {
+  position: fixed;
+  z-index: 80;
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: 240px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  background: var(--card-solid);
+  color: var(--text-1);
+  box-shadow: var(--shadow-pop);
+  font-size: calc(12.5px * var(--type-scale));
+  font-weight: 460;
+  line-height: 1.42;
+  letter-spacing: -0.004em;
+  pointer-events: none;
+  animation: cdRailTipIn 0.14s ease;
+}
+.cd-rail-tip::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  translate: 0 -50%;
+  border: 5px solid transparent;
+  border-right-color: var(--card-solid);
+}
+@keyframes cdRailTipIn {
+  from { opacity: 0; transform: translateY(-50%) translateX(-4px); }
+  to { opacity: 1; transform: translateY(-50%); }
+}
+/* Hover invite: the whole compact rail is a click-to-expand surface. Hovering
+   warms the rail, lights an accent seam on its edge, and the floating expand
+   pill answers with a ring and a beckoning chevron nudge. */
+.cd-sidebar[data-compact="1"] {
+  cursor: pointer;
+  transition: box-shadow 0.25s ease;
+}
+.cd-sidebar[data-compact="1"]:hover {
+  box-shadow: inset -2.5px 0 0 color-mix(in oklch, var(--accent) 55%, transparent);
+}
+.cd-sidebar[data-compact="1"]:hover + .cd-store-focus-toggle {
+  color: var(--text-1);
+  border-color: color-mix(in oklch, var(--accent) 60%, transparent);
+  box-shadow:
+    0 0 0 4px color-mix(in oklch, var(--accent) 16%, transparent),
+    var(--shadow-card);
+}
+/* The chevron nudges, not the pill: GSAP owns the pill's transform (x slide on
+   compact/expand), so animating the button itself would fight it. */
+.cd-sidebar[data-compact="1"]:hover + .cd-store-focus-toggle svg {
+  animation: cdExpandNudge 1.1s ease-in-out infinite;
+}
+@keyframes cdExpandNudge {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(2.5px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cd-rail-tip { animation: none; }
+  .cd-sidebar[data-compact="1"] { transition: none; }
+  .cd-sidebar[data-compact="1"]:hover + .cd-store-focus-toggle svg { animation: none; }
+}
 .cd-sidebar[data-compact="1"] .cd-apswitch { display: none; }
 .cd-sidebar[data-compact="1"] .cd-nav-count {
   position: absolute;
