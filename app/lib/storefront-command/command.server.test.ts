@@ -456,6 +456,40 @@ describe("runStoreCommand", () => {
     expect(carried.visualLayer).toEqual(visualLayer);
   });
 
+  it("installs an explicitly named design verbatim instead of carrying old design copy", async () => {
+    const currentBundle = applyStoreIntent(
+      CUSTOM_BENCH_BUNDLE,
+      getStoreTemplate("custom-bench"),
+      { kind: "update_text", slot: "heroTitle", value: "Merchant hero copy" },
+    ).bundle;
+    const current = state([]);
+    current.draft!.bundle = currentBundle;
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(current),
+      classify: vi.fn().mockResolvedValue({
+        kind: "select_design",
+        prompt: "Use Soft Chemistry",
+        excludedTemplateIds: ["custom-bench"],
+      }),
+      resolveDesign: vi.fn().mockReturnValue({
+        ...resolution,
+        templateId: "soft-chemistry",
+        templateVersion: 3,
+      }),
+      loadRecipe: vi.fn().mockResolvedValue({
+        bundle: structuredClone(SOFT_CHEMISTRY_BUNDLE),
+        report: { profileVersion: 1, ok: true, diagnostics: [] },
+      }),
+      applyIntent: applyStoreIntent,
+    });
+
+    await runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT, "Use Soft Chemistry") }, deps);
+
+    const installed = vi.mocked(deps.prove).mock.calls[0]![0].bundle;
+    expect(installed.routes.home.html).toContain("Skin, in its softer state.");
+    expect(installed.routes.home.html).not.toContain("Merchant hero copy");
+  });
+
   it("returns unchanged without a write for exhausted, unsupported, and no-op commands", async () => {
     const exhausted = dependencies({
       loadState: vi.fn().mockResolvedValue(state()),

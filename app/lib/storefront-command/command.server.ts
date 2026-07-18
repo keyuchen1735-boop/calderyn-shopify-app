@@ -33,7 +33,11 @@ import {
   type PublishStorefrontReleaseInput,
 } from "~/lib/storefront-bundle/release.server";
 import { buildCatalogRoutingEvidence } from "~/lib/storefront-bundle/routing-evidence.server";
-import { explicitStoreTemplateExclusions, resolveStoreDesign } from "~/lib/storefront-bundle/routing";
+import {
+  explicitStoreTemplateExclusions,
+  explicitStoreTemplateSelections,
+  resolveStoreDesign,
+} from "~/lib/storefront-bundle/routing";
 import type {
   CatalogRoutingEvidence,
   StoreDesignRequest,
@@ -646,12 +650,18 @@ export async function runStoreCommand(
           throw new StoreCommandError("storefront_command_unavailable", "No approved storefront design is available.", 503);
         }
         const recipe = await loadSelectedRecipe(designResolution, dependencies);
-        nextBundle = carryDeclaredOverrides(
-          state.draft.bundle,
-          recipe.bundle,
-          classificationAssembly,
-          dependencies,
-        );
+        const explicitlyNamed = explicitStoreTemplateSelections(
+          input.command.prompt,
+          STORE_TEMPLATE_REGISTRY,
+        ).includes(designResolution.templateId);
+        nextBundle = explicitlyNamed
+          ? recipe.bundle
+          : carryDeclaredOverrides(
+            state.draft.bundle,
+            recipe.bundle,
+            classificationAssembly,
+            dependencies,
+          );
       } else {
         if (!currentTemplateId) {
           return ready(input, unchanged("That change is not available for this storefront yet."));
