@@ -22,6 +22,7 @@ export const DESIGNER_FONT_IDS = [
   "fraunces",
   "ibm-plex-mono",
   "inter",
+  "jetbrains-mono",
   "roboto-slab",
   "source-serif-4",
   "space-grotesk",

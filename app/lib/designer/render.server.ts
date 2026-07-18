@@ -4,6 +4,7 @@
 // no-script CSP with an iframe sandbox so anything the scrub missed is inert
 // in the browser.
 import type { DesignerStoreData } from "./types";
+import { DESIGNER_FONT_IDS } from "./direction.server";
 import { expandCouponWidget } from "./widgets";
 
 const BLOCKED_TAGS = /<\/?(?:script|iframe|object|embed|base|form|link|meta)\b[^>]*>/gi;
@@ -35,8 +36,35 @@ export function scrubDesignerHtml(html: string): string {
   );
 }
 
+/** Model-authored CSS can reference any /storefront-fonts/<id> it invents,
+ *  but only the curated ids exist on disk — an unknown id 404s on every page
+ *  view (a published store shipped "jetbrains-mono" this way before it was
+ *  curated). Unknown ids get a curated substitute file, so the @font-face
+ *  alias the model chose still resolves to a real font. */
+const CURATED_FONT_FILE_IDS = new Set<string>(DESIGNER_FONT_IDS);
+
+function substituteFontId(id: string): string {
+  if (/mono|code/.test(id)) return "ibm-plex-mono";
+  if (/serif|slab|garamond|playfair|georgia/.test(id)) return "source-serif-4";
+  return "inter";
+}
+
+export function enforceCuratedFontFiles(css: string): string {
+  return css.replace(
+    /\/storefront-fonts\/([a-z0-9-]+)-latin\.woff2/gi,
+    (match, id: string) => {
+      const slug = id.toLowerCase();
+      return CURATED_FONT_FILE_IDS.has(slug)
+        ? match
+        : `/storefront-fonts/${substituteFontId(slug)}-latin.woff2`;
+    },
+  );
+}
+
 export function scrubDesignerCss(css: string): string {
-  return scrubExternalUrls(css).replace(BLOCKED_TAGS, "").replace(/expression\s*\(/gi, "invalid(");
+  return enforceCuratedFontFiles(
+    scrubExternalUrls(css).replace(BLOCKED_TAGS, "").replace(/expression\s*\(/gi, "invalid("),
+  );
 }
 
 function escapeHtml(value: string): string {
