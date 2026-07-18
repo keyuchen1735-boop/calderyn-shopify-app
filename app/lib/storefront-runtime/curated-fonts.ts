@@ -1,4 +1,4 @@
-import type { CuratedFontId, StorefrontBundleV1 } from "~/lib/storefront-bundle/types";
+import type { CuratedFontId, StorefrontBundleV1, StoreTemplateId } from "~/lib/storefront-bundle/types";
 
 interface CuratedFontDefinition {
   family: string;
@@ -43,7 +43,7 @@ function fontStack(fontId: CuratedFontId): string {
 }
 
 /** Creates only closed, runtime-owned CSS from the already compiled design system. */
-export function storefrontDesignSystemCss(designSystem: StorefrontBundleV1["designSystem"]): string {
+export function storefrontDesignSystemCss(designSystem: StorefrontBundleV1["designSystem"], templateId?: StoreTemplateId): string {
   const fontIds = [...new Set([designSystem.displayFontId, designSystem.bodyFontId])];
   const faces = fontIds.map(fontFace).join("");
   const tokens = Object.entries(designSystem.tokens)
@@ -78,5 +78,10 @@ export function storefrontDesignSystemCss(designSystem: StorefrontBundleV1["desi
     ':where([data-cd-bundle-runtime]) :where(section:not([class])):has(>:where(div:not([class]))>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"])){display:grid;grid-template-columns:repeat(auto-fill,minmax(16rem,1fr));gap:1rem;align-items:start;padding:1rem}',
     ':where([data-cd-bundle-runtime]) :where(section:not([class]))>:where(div:not([class])):has(>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"])){min-width:0}',
     ':where([data-cd-bundle-runtime]) :where(section:not([class]))>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"]:only-child){max-width:26rem;margin:0.35rem 1rem}',
+    ...(templateId === "soft-chemistry" ? [
+      ':where([data-cd-bundle-route="product"])>main:has(>section:not([class])>[data-cd-trusted-slot="variantPicker"]){position:relative}',
+      ':where([data-cd-bundle-route="product"])>main>section:not([class]):has(>[data-cd-trusted-slot="variantPicker"]){position:absolute;right:max(47px,calc((100% - 1090px)/2 + 47px));bottom:34px;display:grid;grid-template-columns:auto 1fr;gap:.5rem;width:min(450px,calc(48% - 68px));font-size:10px;text-transform:uppercase}',
+      '@media(max-width:780px){:where([data-cd-bundle-route="product"])>main>section:not([class]):has(>[data-cd-trusted-slot="variantPicker"]){position:static;width:auto;margin:0 34px 34px}}',
+    ] : []),
   ].join("");
 }

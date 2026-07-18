@@ -427,7 +427,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["skincare", "skin care", "serum", "clean beauty", "sensitive skin", "moisturizer"],
     legacyVibe: "minimal",
     generationInstructions: "Use clinical softness, ingredient transparency, routine building, and skin-concern filters.",
-  }, 4),
+  }, 5),
   recipe({
     id: "companion-field-guide",
     name: "Companion Field Guide",

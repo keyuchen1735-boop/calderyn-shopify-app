@@ -102,6 +102,7 @@ describe("compiled-node server renderer", () => {
       const fontPath = resolve(process.cwd(), `public/storefront-fonts/${fontId}-latin.woff2`);
 
       expect(html).toContain('data-cd-bundle-style="tokens"');
+      expect(html).not.toContain("width:min(450px,calc(48% - 68px))");
       expect(html).toContain("--ink:#123456");
       expect(html).toContain("--rhythm:clamp(1rem, 2vw, 2rem)");
       expect(html).toContain(`--font-display:${expectedFamilies[fontId]}`);
@@ -673,6 +674,7 @@ describe("compiled-node server renderer", () => {
     }));
 
     expect(html).toContain('data-cd-media-fallback="true"');
+    expect(html).toContain("width:min(450px,calc(48% - 68px))");
     expect(html).toContain('src="/storefront-recipes/soft-chemistry/hero.webp"');
     expect(html).not.toContain('src="data:image/svg+xml,');
   });

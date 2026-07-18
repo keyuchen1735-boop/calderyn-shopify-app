@@ -7,7 +7,7 @@ describe("Soft Chemistry storefront recipe", () => {
   it("compiles a clinical editorial routine across the full commerce contract", () => {
     const { bundle, config, report } = SOFT_CHEMISTRY_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 4 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 5 });
     expect(config.archetype).toMatchObject({ composition: "clinical-editorial", hero: "ingredient-routine-hero", scroll: "soft-reveal", cards: "ingredient-dossiers" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "source-serif-4", bodyFontId: "inter" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
@@ -29,12 +29,10 @@ describe("Soft Chemistry storefront recipe", () => {
       expect.objectContaining({ path: "product.title" }), expect.objectContaining({ path: "product.price" }), expect.objectContaining({ path: "product.availability" }),
     ]));
     expect(bundle.routes.collection.interactions.transitions.map((transition) => transition.action.type)).toEqual(expect.arrayContaining(["collection.filter", "collection.sort"]));
-    expect(bundle.routes.product.html).toContain("Unavailable formulas retain their ingredient dossier");
     expect(bundle.routes.product.bindings.map((binding) => binding.ref)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: "product.primaryImage" }), expect.objectContaining({ path: "product.description" }), expect.objectContaining({ path: "variant.title" }),
+      expect.objectContaining({ path: "product.primaryImage" }), expect.objectContaining({ path: "product.description" }),
     ]));
     expect(bundle.routes.product.trustedSlots.map((slot) => slot.kind)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
-    expect(bundle.routes.product.interactions.transitions.map((transition) => transition.action.type)).toContain("accordion.toggle");
     expect(bundle.routes.search.interactions.transitions.map((transition) => transition.action.type)).toEqual(expect.arrayContaining(["search.update", "search.submit", "search.clear"]));
     expect(bundle.routes.search.html).toContain("No formula or ingredient result");
     expect(bundle.routes.cart.trustedSlots.map((slot) => slot.kind)).toEqual(expect.arrayContaining(["cartLineControls", "cartSummary"]));
@@ -67,8 +65,13 @@ describe("Soft Chemistry storefront recipe", () => {
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="gallery"'));
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="detail"'));
     expect(config.surfaces.product.source.html).toContain('data-cd-asset="texture"');
-    expect(config.surfaces.product.source.html).toContain('data-cd-slot="variantPicker"');
+    expect(config.surfaces.product.source.html).toContain('<section><div data-cd-slot="variantPicker"');
     expect(config.surfaces.product.source.html).toContain('data-cd-slot="addToCart"');
+    expect(config.surfaces.product.source.html).not.toContain("Unavailable formulas retain");
+    expect(config.surfaces.product.source.html).not.toContain('data-cd-repeat="product.variants"');
+    expect(config.surfaces.product.source.css).toContain("width:min(1090px,calc(100% - 26px))");
+    expect(config.surfaces.product.source.css).toContain("font-size:52px");
+    expect(config.surfaces.product.source.css).toContain("-webkit-line-clamp:3");
     expect(config.surfaces.search.source.css).toContain("white-space:nowrap");
     expect(config.surfaces.cart.source.html).toContain('class="cart-intro"');
     expect(config.surfaces.checkout.source.html).toContain('class="checkout-frame"');
