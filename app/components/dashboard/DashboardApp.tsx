@@ -396,6 +396,10 @@ export default function DashboardApp({
   const [storeSidebarExpanded, setStoreSidebarExpanded] = useState(false);
   const storeFocus = nav.screen === "storefront";
   const sidebarCompact = shouldCompactStoreSidebar(nav.screen, storeSidebarExpanded);
+  // Compact-rail tooltip: the rail clips horizontal overflow, so the bubble is
+  // one fixed-position element beside it, fed by delegated hover/focus over
+  // anything carrying data-tip (nav icons, night toggle, account, expand pill).
+  const [railTip, setRailTip] = useState<{ label: string; top: number; left: number } | null>(null);
   const [tourPending, setTourPending] = useState(productTourPending);
   const [tourOpen, setTourOpen] = useState(false);
   const [assistantTourDemo, setAssistantTourDemo] = useState<{ n: number } | null>(null);
@@ -1403,6 +1407,56 @@ export default function DashboardApp({
   const sidebarToggleRef = useRef<HTMLButtonElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const firstScreenPaint = useRef(true);
+
+  // Delegated hover/focus over the compact rail (and its floating expand pill)
+  // drives the single fixed rail-tip bubble. Listeners only exist while the
+  // rail is compact; expanding tears them down and clears any open tip.
+  useEffect(() => {
+    if (!sidebarCompact) {
+      setRailTip(null);
+      return;
+    }
+    const aside = sidebarRef.current;
+    if (!aside) return;
+    const surfaces = [aside, sidebarToggleRef.current].filter(
+      (el): el is HTMLElement => el instanceof HTMLElement,
+    );
+    const show = (el: HTMLElement) => {
+      const label = el.getAttribute("data-tip");
+      if (!label) return;
+      const item = el.getBoundingClientRect();
+      const rail = aside.getBoundingClientRect();
+      setRailTip({ label, top: item.top + item.height / 2, left: Math.max(rail.right, item.right) + 10 });
+    };
+    const over = (e: Event) => {
+      const el = (e.target as HTMLElement | null)?.closest?.("[data-tip]");
+      if (el instanceof HTMLElement) show(el);
+    };
+    const out = (e: MouseEvent) => {
+      const next = (e.relatedTarget as HTMLElement | null)?.closest?.("[data-tip]");
+      if (!next) setRailTip(null);
+    };
+    const clear = () => setRailTip(null);
+    for (const el of surfaces) {
+      el.addEventListener("mouseover", over);
+      el.addEventListener("mouseout", out);
+      el.addEventListener("focusin", over);
+      el.addEventListener("focusout", clear);
+    }
+    // Nav-rail scrolling moves the anchors out from under the bubble; capture
+    // catches the inner scroller. Dismiss-on-scroll, not track.
+    aside.addEventListener("scroll", clear, true);
+    return () => {
+      for (const el of surfaces) {
+        el.removeEventListener("mouseover", over);
+        el.removeEventListener("mouseout", out);
+        el.removeEventListener("focusin", over);
+        el.removeEventListener("focusout", clear);
+      }
+      aside.removeEventListener("scroll", clear, true);
+      setRailTip(null);
+    };
+  }, [sidebarCompact]);
   useGSAP(
     () => {
       if (firstScreenPaint.current) {
@@ -1507,7 +1561,8 @@ export default function DashboardApp({
             data-active={activeNav === item.id ? "1" : "0"}
             data-tour-anchor={item.id}
             style={{ width: "100%", paddingRight: 52 }}
-            title={sidebarCompact ? item.label : undefined}
+            data-tip={item.label}
+            aria-label={item.label}
             onClick={() => navigate(item.id)}
           >
             <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
@@ -1552,7 +1607,8 @@ export default function DashboardApp({
             data-tour-anchor={item.id}
             data-expanded={expanded ? "1" : "0"}
             aria-expanded={expanded}
-            title={sidebarCompact ? item.label : undefined}
+            data-tip={item.label}
+            aria-label={item.label}
             onClick={() => navigate(target.screen, null, target.sub)}
           >
             <span style={{ position: "relative", display: "inline-flex" }}>
@@ -1598,7 +1654,8 @@ export default function DashboardApp({
         type="button"
         className="cd-nav-item"
         data-active={activeNav === item.id ? "1" : "0"}
-        title={sidebarCompact ? item.label : undefined}
+        data-tip={item.label}
+        aria-label={item.label}
         data-tour-anchor={item.id}
         onClick={() => navigate(item.id)}
       >
@@ -1639,6 +1696,13 @@ export default function DashboardApp({
         className="cd-sidebar"
         data-compact={sidebarCompact ? "1" : "0"}
         data-screen-label="Sidebar"
+        onClick={(e) => {
+          // Compact rail: any click on non-interactive rail space expands it
+          // back — the whole rail is the affordance, not just the edge toggle.
+          if (!sidebarCompact) return;
+          if ((e.target as HTMLElement).closest("button, a, input, [role='switch']")) return;
+          setStoreSidebarExpanded(true);
+        }}
       >
         <div className="cd-side-brand" onClick={() => navigate("dashboard")}>
           <svg
@@ -1669,7 +1733,8 @@ export default function DashboardApp({
           <button
             type="button"
             className="cd-ask-btn"
-            title={sidebarCompact ? "Ask Calderyn" : undefined}
+            data-tip="Ask Calderyn"
+            aria-label="Ask Calderyn"
             data-tour-anchor="assistant"
             onClick={() => setAssistantSignal((n) => n + 1)}
           >
@@ -1698,7 +1763,7 @@ export default function DashboardApp({
               className="cd-foot-night"
               aria-label="Night mode"
               aria-pressed={dark}
-              title={dark ? "Switch to light mode" : "Switch to night mode"}
+              data-tip={dark ? "Switch to light mode" : "Switch to night mode"}
               onClick={() => setNightMode(!dark)}
             >
               <CDIcon name={dark ? "sun" : "moon"} size={16} strokeWidth={1.9} />
@@ -1733,7 +1798,7 @@ export default function DashboardApp({
               aria-expanded={sidebarCompact ? undefined : acctOpen}
               aria-haspopup={sidebarCompact ? undefined : "menu"}
               aria-label={sidebarCompact ? "Account settings" : undefined}
-              title={sidebarCompact ? "Account settings" : undefined}
+              data-tip="Account settings"
               onClick={() => {
                 if (sidebarCompact) navigate("settings");
                 else setAcctOpen((v) => !v);
@@ -1760,7 +1825,8 @@ export default function DashboardApp({
           aria-controls="cd-dashboard-sidebar"
           aria-expanded={!sidebarCompact}
           aria-label={sidebarCompact ? "Expand dashboard sidebar" : "Minimize dashboard sidebar"}
-          title={sidebarCompact ? "Expand sidebar" : "Minimize sidebar"}
+          data-tip="Expand sidebar"
+          title={sidebarCompact ? undefined : "Minimize sidebar"}
           onClick={() => setStoreSidebarExpanded((expanded) => !expanded)}
         >
           <CDIcon
@@ -1769,6 +1835,16 @@ export default function DashboardApp({
             strokeWidth={2.2}
           />
         </button>
+      )}
+
+      {sidebarCompact && railTip && (
+        <div
+          className="cd-rail-tip"
+          style={{ top: railTip.top, left: railTip.left }}
+          aria-hidden="true"
+        >
+          {railTip.label}
+        </div>
       )}
 
       {/* Main */}
