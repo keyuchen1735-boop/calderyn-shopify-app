@@ -85,7 +85,7 @@ describe("OnboardingTour", () => {
     for (let index = 0; index < 6; index += 1) {
       advance();
     }
-    expect(host.textContent).toContain("Start on Home.");
+    expect(host.textContent).toContain("Your first three moves.");
     expect(onOutcome).not.toHaveBeenCalled();
     advance();
     expect(onOutcome).toHaveBeenCalledWith("complete");

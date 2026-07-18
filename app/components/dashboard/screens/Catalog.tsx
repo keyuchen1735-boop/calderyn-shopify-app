@@ -55,14 +55,14 @@ function isoToDateInputValue(iso: string | undefined): string {
   return iso ? iso.slice(0, 10) : "";
 }
 
-/** Ship-data cell copy — "Validated · <weight>kg" only when the product truly
+/** Shipping cell copy — "Ready · <weight>kg" only when the product truly
  * passes the activation shipping check; the weight is the heaviest recorded
  * physical variant. No weight recorded (all-digital) drops the suffix. */
 function shipLabel(p: client.ProductSummaryVM): string {
-  if (!p.shipDataOk) return "Missing dims";
-  if (p.shipWeightGrams == null) return "Validated";
+  if (!p.shipDataOk) return "Add size & weight";
+  if (p.shipWeightGrams == null) return "Ready";
   const kg = (p.shipWeightGrams / 1000).toLocaleString("en-US", { maximumFractionDigits: 2 });
-  return `Validated · ${kg}kg`;
+  return `Ready · ${kg}kg`;
 }
 
 type CatalogPage = { products: client.ProductSummaryVM[]; total: number };
@@ -326,7 +326,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
           value: products.filter((p) => p.status === "active").length.toLocaleString("en-US"),
         },
         {
-          label: "ship data gaps",
+          label: "missing size & weight",
           value: products.filter((p) => !p.shipDataOk).length.toLocaleString("en-US"),
         },
       ];
@@ -475,7 +475,7 @@ export default function Catalog({ app }: { app: DashboardCtx }) {
                 dir={headerSort.dir}
                 onSort={sortByColumn}
               />
-              <span>Ship data</span>
+              <span>Shipping</span>
               <span />
             </>
           }
