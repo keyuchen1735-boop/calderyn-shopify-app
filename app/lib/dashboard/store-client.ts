@@ -1,4 +1,4 @@
-import { apiGet, DashboardApiError } from "./client";
+import { apiGet, DashboardApiError, redirectToLogin } from "./client";
 import { throwIfVersionSkew } from "./version-skew";
 import type { StudioState } from "~/lib/storebuilder/studio-types";
 import type { StoreCommand, StoreCommandEvent, StoreCommandReceipt } from "~/lib/storefront-command/types";
@@ -108,6 +108,10 @@ export async function sendStoreCommand(
     throw new DashboardApiError(0, "storefront_command_network_error", "Could not reach the storefront service.");
   }
   throwIfVersionSkew(response);
+  // A lapsed session must route to re-login like every other dashboard call —
+  // a dead-end stream error would strand the merchant mid-build with no
+  // recovery path.
+  if (response.status === 401) redirectToLogin();
   if (!response.ok) throw await httpError(response);
   if (!response.body) {
     throw new DashboardApiError(502, "storefront_command_stream_incomplete", "The storefront response ended early.");
