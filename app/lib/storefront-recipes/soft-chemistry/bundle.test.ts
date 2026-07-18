@@ -7,12 +7,18 @@ describe("Soft Chemistry storefront recipe", () => {
   it("compiles a clinical editorial routine across the full commerce contract", () => {
     const { bundle, config, report } = SOFT_CHEMISTRY_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 3 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 4 });
     expect(config.archetype).toMatchObject({ composition: "clinical-editorial", hero: "ingredient-routine-hero", scroll: "soft-reveal", cards: "ingredient-dossiers" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "source-serif-4", bodyFontId: "inter" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
-    expect(bundle.assets.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 40456 })]);
-    expect(existsSync(resolve(process.cwd(), "public/storefront-recipes/soft-chemistry", `${bundle.assets.entries[0]?.key}.webp`))).toBe(true);
+    expect(bundle.assets.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "hero", byteSize: 40456 }),
+      expect.objectContaining({ key: "collection" }),
+      expect.objectContaining({ key: "texture" }),
+    ]));
+    for (const asset of bundle.assets.entries) {
+      expect(existsSync(resolve(process.cwd(), "public/storefront-recipes/soft-chemistry", `${asset.key}.webp`))).toBe(true);
+    }
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
     expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
     expect(bundle.routes.home.html).toContain("Skin, in its softer state.");
@@ -51,11 +57,21 @@ describe("Soft Chemistry storefront recipe", () => {
     expect(config.surfaces.home.source.html).toContain('data-cd-src="product.primaryImage"');
     expect(config.surfaces.home.source.html).toContain('data-cd-text="product.description"');
     expect(config.surfaces.home.source.css).toContain("@keyframes spin");
+    expect(config.surfaces.home.source.css).toContain("animation:counter-spin 30s linear infinite");
+    expect(config.surfaces.home.source.css).toContain("@keyframes counter-spin");
     expect(config.surfaces.collection.source.html).toEqual(expect.stringContaining('class="col-head"'));
+    expect(config.surfaces.collection.source.html).toContain('data-cd-asset="collection"');
     expect(config.surfaces.collection.source.html).toEqual(expect.stringContaining('class="filters"'));
     expect(config.surfaces.collection.source.html).toEqual(expect.stringContaining('class="grid"'));
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="pdp"'));
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="gallery"'));
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="detail"'));
+    expect(config.surfaces.product.source.html).toContain('data-cd-asset="texture"');
+    expect(config.surfaces.product.source.html).toContain('data-cd-slot="variantPicker"');
+    expect(config.surfaces.product.source.html).toContain('data-cd-slot="addToCart"');
+    expect(config.surfaces.search.source.css).toContain("white-space:nowrap");
+    expect(config.surfaces.cart.source.html).toContain('class="cart-intro"');
+    expect(config.surfaces.checkout.source.html).toContain('class="checkout-frame"');
+    expect(config.surfaces.shell.source.css).toContain(".niche-icon,.brand-live,.account-link{display:none;color:inherit;text-decoration:none}");
   });
 });

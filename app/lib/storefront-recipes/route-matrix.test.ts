@@ -152,15 +152,18 @@ describe("storefront recipe route matrix", () => {
     }
   });
 
-  it("ships each declared hero from an owned, hash-verified static path", () => {
+  it("ships each declared asset from an owned, hash-verified static path", () => {
     for (const { bundle, config } of STOREFRONT_RECIPES) {
-      expect(bundle.assets.entries).toHaveLength(1);
-      const asset = bundle.assets.entries[0];
-      expect(asset).toMatchObject({ key: "hero", mediaType: "image/webp" });
-      const assetPath = path.join(ROOT, "public", "storefront-recipes", config.templateId, `${asset.key}.webp`);
-      expect(existsSync(assetPath)).toBe(true);
-      expect(statSync(assetPath).size).toBe(asset.byteSize);
-      expect(createHash("sha256").update(readFileSync(assetPath)).digest("hex")).toBe(asset.contentHash);
+      expect(bundle.assets.entries).toEqual(expect.arrayContaining([
+        expect.objectContaining({ key: "hero", mediaType: "image/webp" }),
+      ]));
+      for (const asset of bundle.assets.entries) {
+        expect(asset.mediaType).toBe("image/webp");
+        const assetPath = path.join(ROOT, "public", "storefront-recipes", config.templateId, `${asset.key}.webp`);
+        expect(existsSync(assetPath)).toBe(true);
+        expect(statSync(assetPath).size).toBe(asset.byteSize);
+        expect(createHash("sha256").update(readFileSync(assetPath)).digest("hex")).toBe(asset.contentHash);
+      }
       expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
       expect(JSON.stringify(bundle)).not.toMatch(/https?:\/\/|url\s*\(/i);
 

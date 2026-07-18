@@ -352,7 +352,7 @@ describe("compiled-node server renderer", () => {
     expect(html).toContain("/dashboard/store/preview?route=collection&amp;template=atelier-nine");
   });
 
-  it("never sends bare collection navigation to the missing collection index", () => {
+  it("routes bare collection navigation to the virtual all-products collection", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.shell.html = `<a data-cd-route="collection">Shop</a>`;
     const bundle = compileBundle(source).bundle;
@@ -383,7 +383,7 @@ describe("compiled-node server renderer", () => {
     }));
 
     expect(collectionHtml).toContain('href="/storefront/collections/featured"');
-    expect(fallbackHtml).toContain('href="/storefront/search"');
+    expect(fallbackHtml).toContain('href="/storefront/collections/all"');
     expect(`${collectionHtml}${fallbackHtml}`).not.toContain('href="/storefront/collections"');
   });
 
