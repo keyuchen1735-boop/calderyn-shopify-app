@@ -566,6 +566,8 @@ function ClassicStore({ app }: { app: DashboardCtx }) {
                   <iframe
                     key={previewSrc}
                     className="cd-canvas-frame"
+                    data-fade="0"
+                    onLoad={(e) => { e.currentTarget.dataset.fade = "1"; }}
                     title="Store preview"
                     src={previewSrc}
                     sandbox="allow-same-origin allow-scripts allow-popups"

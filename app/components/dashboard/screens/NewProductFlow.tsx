@@ -905,18 +905,21 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
               ) : (
                 <>
                   <div className="cd-h2">What are you selling?</div>
+                  <p className="cd-caption" style={{ maxWidth: 420, textAlign: "center" }}>
+                    Describe it in one line. Calderyn drafts the name, price, and description; you review and change anything before it goes anywhere.
+                  </p>
                   <div style={{ display: "flex", gap: 8, width: "100%", maxWidth: 520 }}>
                     <input
                       className="cd-input"
                       style={{ flex: "1 1 0", minWidth: 0 }}
-                      placeholder='"t shirt for my brand"'
+                      placeholder="Hand-poured cedar candle, $18"
                       maxLength={PROMPT_MAX}
                       value={prompt}
                       onChange={(e) => setPrompt(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") runPrompt();
                       }}
-                      aria-label="Prompt"
+                      aria-label="Describe your product"
                     />
                     <Btn kind="primary" icon="sparkle" onClick={runPrompt}>
                       Draft it

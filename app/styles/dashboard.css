@@ -109,7 +109,9 @@
     border-radius: 8px; cursor: pointer;
     font-size: calc(13.5px * var(--type-scale)); font-weight: 480; color: var(--text-1);
     letter-spacing: -0.008em;
-    transition: background 0.13s ease;
+    /* Width/padding tween with the store-focus sidebar collapse so entering
+       the Store tab reads as one motion instead of a snap. */
+    transition: background 0.13s ease, width 0.3s ease, padding 0.3s ease;
     font-family: inherit; text-align: left;
   }
   .cd-nav-item svg { color: var(--accent); opacity: 0.85; }
@@ -2402,8 +2404,8 @@
 .cd-engine {
   --eg-bg: #0e0f12;
   --eg-line: rgba(255, 255, 255, 0.09);
-  --eg-2: #8a8f98;
-  --eg-3: #5c616b;
+  --eg-2: #9aa1ac;
+  --eg-3: #848c99;
   position: relative;
   overflow: hidden;
   border-radius: var(--radius);
@@ -5185,7 +5187,11 @@
 .cd-canvas-frame-wrap[data-device="mobile"] { max-width: 396px; margin: 0 auto; border-radius: 14px; box-shadow: var(--shadow-pop); }
 /* Live storefront preview: a server-rendered iframe of the draft doc. Fills
    the stage so it reads like a browser preview and scrolls internally. */
-.cd-canvas-frame { display: block; width: 100%; flex: 1; min-height: 320px; border: 0; background: #fff; }
+/* Transparent until the document paints: a hard-white rectangle flashing over
+   the dark shell was the single most jarring frame of opening the Store tab.
+   The frame fades in once its doc fires load (data-fade set by the host). */
+.cd-canvas-frame { display: block; width: 100%; flex: 1; min-height: 320px; border: 0; background: transparent; transition: opacity 0.3s ease; }
+.cd-canvas-frame[data-fade="0"] { opacity: 0; }
 .cd-canvas-veil { position: absolute; inset: 0; z-index: 5; display: none; align-items: center; justify-content: center; backdrop-filter: blur(2px); background: color-mix(in srgb, var(--bg) 45%, transparent); }
 .cd-canvas-veil[data-on="1"] { display: flex; }
 /* Building skeleton: a storefront-shaped shimmer shown while a store generates, so the wait reads
@@ -5387,11 +5393,13 @@
   --accent: #f2f2f4;
   --on-accent: #131419;
   --accent-bg: rgba(255, 255, 255, 0.09);
-  --hairline: rgba(255, 255, 255, 0.055);
-  --hairline-strong: rgba(255, 255, 255, 0.1);
+  --hairline: rgba(255, 255, 255, 0.075);
+  --hairline-strong: rgba(255, 255, 255, 0.13);
   --text-1: #f4f5f7;
-  --text-2: #9197a1;
-  --text-3: #5c616b;
+  /* Muted tiers stay >=4.5:1 on --bg; the old #5c616b sat at 3:1 and read as
+     near-invisible on dim panels. */
+  --text-2: #a3aab4;
+  --text-3: #848c99;
   --gray-bg: rgba(255, 255, 255, 0.05);
   --green: #4ed17f;
   --green-bg: rgba(78, 209, 127, 0.16);

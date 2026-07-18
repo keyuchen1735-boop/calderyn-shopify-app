@@ -109,8 +109,8 @@ const TOUR_STEPS: readonly TourStep[] = [
   },
   {
     eyebrow: "Ready",
-    title: "Start on Home.",
-    body: "That's the loop: check Home, ask Calderyn, let Autopilot help.",
+    title: "Your first three moves.",
+    body: "Add a product under Products, press Build my store under Store, then connect payments under Payments. After that, check Home each day and Calderyn takes it from there.",
     example: "You can replay this tour from your account menu.",
     demo: "ready",
     destination: "dashboard",
