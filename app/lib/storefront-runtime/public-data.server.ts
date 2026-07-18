@@ -235,13 +235,19 @@ export async function resolvePublicData(
   if (hasRequirement(input, "currentCollection")) {
     if (input.route.kind !== "collection") throw new PublicDataPlanError("currentCollection requires a collection route");
     const collectionHandle = input.route.handle;
-    if (!catalog.getCollection) throw new PublicDataPlanError("Catalog does not support bounded collection lookup");
-    const collection = await catalog.getCollection(input.shopId, collectionHandle);
+    const virtualAll = collectionHandle === "" || collectionHandle === "all";
+    if (!virtualAll && !catalog.getCollection) throw new PublicDataPlanError("Catalog does not support bounded collection lookup");
+    const collection = virtualAll
+      ? { id: "all", handle: "all", title: "All formulas", description: "The complete live catalog." }
+      : await catalog.getCollection!(input.shopId, collectionHandle);
     if (!collection) {
       data.notFound = { kind: "collection", handle: collectionHandle };
     } else {
-      const defaultParams = new URLSearchParams({ collection: collection.handle, limit: "24" });
-      const searchInput = input.route.searchInput ?? parseStorefrontSearchParams(defaultParams);
+      const defaultParams = new URLSearchParams({ limit: "24" });
+      if (!virtualAll) defaultParams.set("collection", collection.handle);
+      const searchInput = input.route.searchInput
+        ? { ...input.route.searchInput, ...(virtualAll ? { collection: null } : {}) }
+        : parseStorefrontSearchParams(defaultParams);
       const searched = await fullSearchProducts(
         input.shopId,
         catalog,

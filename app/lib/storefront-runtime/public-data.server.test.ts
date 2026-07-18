@@ -189,6 +189,23 @@ describe("runtime-1 public data plans", () => {
     expect(data.collection?.productCount).toBe(40);
   });
 
+  it.each(["", "all"])("hydrates the full catalog for the virtual %s collection", async (handle) => {
+    const products = [product("one"), product("two")];
+    const fake = catalog(products);
+    const searchInput = parseStorefrontSearchParams(new URLSearchParams({ collection: handle || "all", limit: "24" }));
+
+    const data = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "currentCollection" }],
+      route: { kind: "collection", handle, searchInput },
+    }, { catalog: fake, settingsLoader });
+
+    expect(fake.getCollection).not.toHaveBeenCalled();
+    expect(fake.searchProductPage).toHaveBeenCalledWith(SHOP, expect.objectContaining({ collection: null }));
+    expect(data.collection).toMatchObject({ handle: "all", title: "All formulas", productCount: 2 });
+    expect(data.collection?.products.map((entry) => entry.handle)).toEqual(["one", "two"]);
+  });
+
   it("carries the cursor through runtime collection data until all 61 products are reached once", async () => {
     const products = Array.from({ length: 61 }, (_, index) => product(index.toString().padStart(2, "0")));
     const fake = catalog(products);

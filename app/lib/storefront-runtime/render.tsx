@@ -280,8 +280,8 @@ function targetHref(target: RouteTarget, context: RenderContext): string {
   );
   if (target.routeId === "collection") {
     const handle = params.handle || context.data.collection?.handle ||
-      context.data.search?.facets.collections.find(({ value }) => value.length > 0)?.value;
-    return handle ? `${path}/${encodeURIComponent(handle)}` : PATHS.search;
+      context.data.search?.facets.collections.find(({ value }) => value.length > 0)?.value || "all";
+    return `${path}/${encodeURIComponent(handle)}`;
   }
   if (target.routeId === "product" && params.handle) {
     path += `/${encodeURIComponent(params.handle)}`;

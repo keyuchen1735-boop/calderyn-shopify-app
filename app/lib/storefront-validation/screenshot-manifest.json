@@ -338,158 +338,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "cf20275fa6ed81dce00fcce341ac0192fb4789d1f1865b02b58aa9f6056bbf20",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-mobile.webp"
+          "sha256": "f67cc66e80279741c4c9ebe0e85798950059764ea127270a9f2fef2d4704a290",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "ff1c18e26e69784358feb68c425610ae73f3e0e5172365cba6db756aa66bfd1b",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-tablet.webp"
+          "sha256": "cb56ee4ebd9bbb74ec225701592d207b575112b4dcccfa0f8dd2d50a26dce861",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "6618aba6d3b37da0d31ea6a6184bbe88f06a425fe97c35170b9e1d119dcfbaa4",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-desktop.webp"
+          "sha256": "a68186d0be5b769129abc3c6373ad8b4b4aceb8ccf33d8027ba256b7007154fb",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "5408c0ecab632f890884ef2acb8111d7f27f3c0adf6efce05592334106c906f3",
+          "sha256": "1627e90925c3902985e5814203efbe3f170413e2f94d983e4d4e07d8386992cf",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-collection-mobile.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "20dd84bdd17f5ec91b8e1a3760ec43a15448d264e5ac8437c67043a3c850941c",
+          "sha256": "3cc6345adec070b1bce7b278fd968c931ab144c12768c2d14d751493b7873a81",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-collection-tablet.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "8cbdfe0bd5ff2ab395b614abd2eddbdfb88e1b434769af5e1f6b2a8b3370bc08",
+          "sha256": "42921bdaf7eb60a2897c5bf6b414311f88af57766fbb2e0b4c00ec8f436bd631",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-collection-desktop.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "982c07ca53d516ba640416fb336103a2f127d1831f73a7f240234155bccbe693",
+          "sha256": "df81adc7d8203a914e29e8b02f4832d0658e91c5f873239a0e5f26834955a0d6",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-collection-24-mobile.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "2d006aa00c7d55408e0d985e731d6b407045f36ed93bfc5b492a0558e167a961",
+          "sha256": "6fc9bba5cfc5eccff5e90aa9ea0964fad94765668d7f1d257906da7a8f7b5032",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-collection-24-tablet.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "22721f9e6d0e4eceea3cb1ec040cd792165cef791816bec0e36311b16341a522",
+          "sha256": "9de04f7f6ef54e567cf9d798d83a7d8c37867e2cade06c292aa32bf67bfb7b89",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-collection-24-desktop.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "285e9f1601a6a9a3bf26f0af397bd0bd07d89594994b3a6ee79230c0df525f16",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-product-mobile.webp"
+          "sha256": "58df22c786c292fa8e4b8c925bff59cb0df7e331c09764801f1294e4b27836ae",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "0095836c6bd7abc11222150fe7debc1e72c21f14f58f18519b93293ae61ae84e",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-product-tablet.webp"
+          "sha256": "58669a6adddd1412afa82c681ef12313a241e0e73bb79966c815f07a98ba1eee",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "6a0c5a90910e67166433bcfb153bee9d0c06154de0c6b9d2618cb4dc73f613a2",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-product-desktop.webp"
+          "sha256": "1fda6835435262c5d9db60eea76bda0fbfca0257d2a742f745369b5265d3d5b1",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "ef75cbc65ef46f66e27a5861188ea70afd1b2ea4339e961949757a6bf6404079",
+          "sha256": "8bcfb161399ee7cf6b847f8c726ae0bd5c4f3cc69780fb935317db4d81f68c39",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-search-mobile.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "b11e0a190a8b4eac16239a9b9114a62939e8e2f7344a08a574210a31b8c53a39",
+          "sha256": "e3439ae24cff700325c07425695437de35b2aad6358b33d5ae734774b4b807fa",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-search-tablet.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "bd45cc9211ff0eef331a3682066b45600e417984705b650094c6a68da81e7292",
+          "sha256": "82630eacee75a622890f20cca380243d316fb71cbd2df6c5e8a3b17a9a5e20b7",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-search-desktop.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "3b4f4fd110cc46dbbf58842e06bcf126e520f4709e8e1a933741d56d33bd0466",
+          "sha256": "1de8b03f983b19553951711c84955f0812bc0fa7e330b49c3695c091ed9b799c",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-search-24-mobile.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "1033fe48bd4952574a7270198b31c15f603b61db099e93130e3e4c9ea00ed06b",
+          "sha256": "02a1e9733c9debb3b6de88f4d9c327206a8959824fb26a9416bf808d103437e0",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-search-24-tablet.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "a56e0df4af19b5f93a511efa2827a4daace82cc2f7bb64f056edb459cc0e04c0",
+          "sha256": "312fdbf1bd181cbcdc0b950cbffae8de51d935b79989a75cdfe98db9b52b62af",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-search-24-desktop.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "773a694eb56bb9c3ccc202ca29bfbf0becb14b9c74da1f26b288b04da702a02f",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-cart-mobile.webp"
+          "sha256": "ba934cf66bad361db012b65f56dde847fd99a2a1748e354cb6a227c8f996c38d",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "80ad4b355d90dae195d80974c3a8c31703cb4b727096e5b0372123ffe34f0506",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-cart-tablet.webp"
+          "sha256": "406847e0a243e08205d23ac1b4ad679855a92e94caf85f884222b16ef72523d2",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "5610aafd25877088d88c1254fa9c3e425b0b7ddcb45bb39c7b240e943d76c767",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-cart-desktop.webp"
+          "sha256": "9edec8e78d5ef41c861a5e518dc056894b23e9636b3b56b9445a796ba9fc3808",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "3bb2a25d1b23e89deb715228eaf198b60899506d3e63240d2a205b1ecbb9fcea",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-checkout-mobile.webp"
+          "sha256": "b9e3086a4ec4eb74a1b5c214fb47014bc7bf00ca3f2155ae8685ba9c2351f2cb",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "fd171c977b4e21ce38be346795716e9cbfed1538503ee17df919bd4e904b76d9",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-checkout-tablet.webp"
+          "sha256": "2b1cb40519dcfa862856801516ef905a6a2106da86a09dec813251d70d2a02f3",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "9ddc2226ffce084094e1066df702df48337732d75dfada4c591cf96bceec579d",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v3-checkout-desktop.webp"
+          "sha256": "0421059398824325f085db828a8d2cad795788cf975238c39223ca7d984318ab",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v4-checkout-desktop.webp"
         }
       ]
     },
