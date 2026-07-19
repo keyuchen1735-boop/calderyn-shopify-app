@@ -19,11 +19,11 @@ describe("rep-rest storefront recipe", () => {
   it("compiles a split training and recovery journey with complete commerce contracts", () => {
     const { bundle, config, report } = REP_REST_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "rep-rest", templateVersion: 3 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "rep-rest", templateVersion: 4 });
     expect(config.archetype).toEqual({ composition: "split-performance", hero: "training-recovery-split", scroll: "sticky-workout", cards: "comparison-rails", iconography: ["training interval marks", "recovery status glyphs"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "archivo-narrow", bodyFontId: "inter", iconStyle: "interval arrows and recovery-state glyphs", motionStyle: "sticky workout chapters with kinetic split transitions" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
-    expect(REP_REST_ASSETS.entries).toEqual([expect.objectContaining({ key: "hero", mediaType: "image/webp", byteSize: 170844 })]);
+    expect(REP_REST_ASSETS.entries).toEqual([expect.objectContaining({ key: "hero", mediaType: "image/webp", byteSize: 122192 })]);
     expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
     expect(bundle.routes.home.html).toContain("Training");
     expect(bundle.routes.home.html).toContain("Recovery");

@@ -27,6 +27,7 @@ import { storefrontPolicyLinks } from "../storefront/policies.server";
 import { shaderSourceWithinCap } from "../storebuilder/fx/shader";
 import { STOREFRONT_RECIPES } from "../storefront-recipes";
 import { INVALID_SHADER_PROOF_SOURCE } from "./verify.server";
+import { getStoreTemplate } from "../storefront-bundle/registry";
 
 describe("storefront browser proof matrix", () => {
   it("embeds Axe in the server bundle instead of resolving it from node_modules at runtime", () => {
@@ -149,6 +150,28 @@ describe("storefront browser proof matrix", () => {
 
     expect(result.diagnostics.filter(({ code }) =>
       code === "story.generated-images" || code === "network.unexpected" || code === "asset.failed")).toEqual([]);
+  }, 60_000);
+
+  it("proves a historical derived recipe with its immutable content-addressed hero", async () => {
+    const bundle = structuredClone(STOREFRONT_RECIPES[0].bundle);
+    const version = getStoreTemplate("custom-bench").versions[1]!;
+    bundle.source = {
+      kind: "custom",
+      generationId: "historical-derived-proof",
+      promptHash: "sha256:historical-derived-proof",
+      derivedFromTemplateId: "custom-bench",
+      derivedFromTemplateVersion: version.templateVersion,
+    };
+    bundle.assets = structuredClone(version.assets);
+
+    const result = await proveStorefrontBundle({
+      bundle,
+      routes: ["home"],
+      viewports: ["mobile"],
+    });
+
+    expect(result.diagnostics.filter(({ code }) =>
+      code === "asset.persisted-missing" || code === "network.unexpected" || code === "asset.failed")).toEqual([]);
   }, 60_000);
 
   it("requires the complete PDP description and the expected visual-layer outcome", () => {

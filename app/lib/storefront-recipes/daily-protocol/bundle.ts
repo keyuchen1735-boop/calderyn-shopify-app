@@ -46,7 +46,7 @@ const checkout = {
 } satisfies RecipeConfig<"daily-protocol">["surfaces"]["checkout"]["source"];
 
 const config = {
-  templateId: "daily-protocol", templateVersion: 3,
+  templateId: "daily-protocol", templateVersion: 4,
   concept: { name: "Daily Protocol", rationale: "A timed ledger organizes wellness products by when and how they are used.", noveltySignature: ["time arc", "protocol stack", "dense dose ledger"] },
   designSystem: { displayFontId: "inter", bodyFontId: "ibm-plex-mono", tokens: { fog: "#e9eeeb", paper: "#f8faf7", ink: "#111914", cobalt: "#2848d8", soft: "#b8c7ef", line: "#68736c", muted: "#68736c", "space-protocol": "20px" }, breakpoints: { mobile: 720, wide: 1180 }, iconStyle: "time block markers and dosage data glyphs", motionStyle: "routine timeline switching with direct state feedback and restrained reveals", globalCss: `.protocol-long-copy { overflow-wrap: anywhere }` },
   archetype: { composition: "protocol-ledger", hero: "time-of-day-protocol", scroll: "routine-timeline", cards: "protocol-stacks", iconography: ["time block markers", "dosage data glyphs"] },

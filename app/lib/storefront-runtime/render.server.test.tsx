@@ -140,7 +140,7 @@ describe("compiled-node server renderer", () => {
       bundle, routeId: "home", data, nonce: "asset-nonce", mode: "public",
     }));
 
-    expect(html).toContain('src="/storefront-recipes/atelier-nine/hero.webp"');
+    expect(html).toContain(`src="/storefront-recipes/atelier-nine/${"a".repeat(64)}.webp"`);
     expect(html).toContain('data-cd-asset-key="hero"');
   });
 
@@ -675,7 +675,7 @@ describe("compiled-node server renderer", () => {
 
     expect(html).toContain('data-cd-media-fallback="true"');
     expect(html).toContain("width:min(450px,calc(48vw - 68px))");
-    expect(html).toContain('src="/storefront-recipes/soft-chemistry/hero.webp"');
+    expect(html).toContain(`src="/storefront-recipes/soft-chemistry/${SOFT_CHEMISTRY_BUNDLE.assets.entries[0]!.contentHash}.webp"`);
     expect(html).not.toContain('src="data:image/svg+xml,');
   });
 

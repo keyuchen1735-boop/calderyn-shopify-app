@@ -9,6 +9,7 @@ import { hasRuntime1Storefront, resolveRuntime1Route, resolveStorefrontRelease }
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 import { ATELIER_GRID_BUNDLE } from "~/lib/storefront-recipes/atelier-nine/bundle";
+import { CUSTOM_BENCH_BUNDLE } from "~/lib/storefront-recipes/custom-bench/bundle";
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const originalBundleRead = process.env.STOREFRONT_BUNDLE_READ;
@@ -188,13 +189,19 @@ describe("storefront release resolution", () => {
   });
 
   it("serves recipe-derived custom assets from same-origin only when provenance matches the registered recipe exactly", async () => {
-    const bundle = structuredClone(ATELIER_GRID_BUNDLE);
+    const bundle = structuredClone(CUSTOM_BENCH_BUNDLE);
+    bundle.assets.entries = [{
+      key: "hero",
+      contentHash: "f6f25c15de46bf6dd431ae685202f90fbbc3ba00e8051f6a6f4afaa8b89cdde9",
+      mediaType: "image/webp",
+      byteSize: 132568,
+    }];
     bundle.source = {
       kind: "custom",
       generationId: "edit-generation",
       promptHash: `sha256:${"c".repeat(64)}`,
       derivedFromVersionId: "recipe-version",
-      derivedFromTemplateId: "atelier-nine",
+      derivedFromTemplateId: "custom-bench",
       derivedFromTemplateVersion: 2,
     };
     const live = {
@@ -217,7 +224,7 @@ describe("storefront release resolution", () => {
 
     expect(assetUrlLoader).not.toHaveBeenCalled();
     expect(result?.data.storefrontAssetUrls).toEqual({
-      hero: "/storefront-recipes/atelier-nine/hero.webp",
+      hero: "/storefront-recipes/custom-bench/f6f25c15de46bf6dd431ae685202f90fbbc3ba00e8051f6a6f4afaa8b89cdde9.webp",
     });
   });
 
@@ -230,7 +237,7 @@ describe("storefront release resolution", () => {
       derivedFromTemplateId: "atelier-nine",
       derivedFromTemplateVersion: 2,
     };
-    bundle.assets.entries[0] = { ...bundle.assets.entries[0]!, contentHash: "d".repeat(64) };
+    bundle.assets.entries = [{ ...bundle.assets.entries[0]!, contentHash: "d".repeat(64) }];
     const live = {
       ...version("tampered-assets", 1, "2026-07-02T00:00:00Z"),
       artifact: { sourceKind: "custom" as const, bundle },

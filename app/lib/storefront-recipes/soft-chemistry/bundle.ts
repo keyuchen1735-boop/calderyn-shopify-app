@@ -73,7 +73,7 @@ const checkout = {
 
 export const SOFT_CHEMISTRY_RECIPE = defineRecipe({
   templateId: "soft-chemistry",
-  templateVersion: 7,
+  templateVersion: 8,
   concept: {
     name: "Soft Chemistry",
     rationale:

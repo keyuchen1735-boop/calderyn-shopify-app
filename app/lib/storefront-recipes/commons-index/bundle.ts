@@ -56,7 +56,7 @@ const checkout = {
 } satisfies RecipeConfig<"commons-index">["surfaces"]["checkout"]["source"];
 
 const config = {
-  templateId: "commons-index", templateVersion: 4,
+  templateId: "commons-index", templateVersion: 5,
   concept: { name: "Commons Index", rationale: "A cooperative ledger makes sourcing and circular use part of browsing.", noveltySignature: ["civic atlas rail", "provenance records", "refill loop trace"] },
   designSystem: { displayFontId: "fraunces", bodyFontId: "atkinson-hyperlegible", tokens: { paper: "#f1efe3", forest: "#17352a", acid: "#d9ff3f", signal: "#f0522d", line: "#8f9883", "space-ledger": "22px" }, breakpoints: { mobile: 760, wide: 1160 }, iconStyle: "civic index marks and material provenance stamps", motionStyle: "indexed ledger expansion with deliberate refill tracing", globalCss: `.durable-copy { overflow-wrap: anywhere }` },
   archetype: { composition: "cooperative-directory", hero: "impact-ledger-intro", scroll: "indexed-ledger", cards: "provenance-records", iconography: ["civic index marks", "material provenance stamps"] },

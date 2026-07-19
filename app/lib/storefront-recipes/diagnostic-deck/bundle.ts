@@ -2,7 +2,7 @@ import { defineRecipe, prependRecipeLandmark, type RecipeConfig } from "../facto
 import { DIAGNOSTIC_DECK_ASSETS } from "./assets";
 
 const config = {
-  templateId: "diagnostic-deck", templateVersion: 3,
+  templateId: "diagnostic-deck", templateVersion: 4,
   concept: { name: "Diagnostic Deck", rationale: "A dense exact-unit exchange where grade, inspection, and warranty evidence precede price.", noveltySignature: ["diagnostic-terminal", "exact-unit-passports", "deck-snap-comparison"] },
   designSystem: {
     displayFontId: "archivo-narrow", bodyFontId: "ibm-plex-mono",

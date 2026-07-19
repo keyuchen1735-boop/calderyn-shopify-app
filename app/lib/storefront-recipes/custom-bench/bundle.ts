@@ -171,7 +171,7 @@ const checkout = {
 
 export const CUSTOM_BENCH_RECIPE = defineRecipe({
   templateId: "custom-bench",
-  templateVersion: 5,
+  templateVersion: 6,
   concept: {
     name: "Custom Bench",
     rationale: "A workshop interface turns personalization into a legible proofing sequence.",

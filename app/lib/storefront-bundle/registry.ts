@@ -52,19 +52,31 @@ const PROTECTED_SLOTS = new Set([
   "variantPicker", "addToCart", "productDescription", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce", "checkoutRoot",
 ]);
 const PROTECTED_HERO_ASSET_KEY = "hero";
-const ASSET_MANIFEST_BY_TEMPLATE_ID = {
-  "custom-bench": CUSTOM_BENCH_ASSETS,
-  "commons-index": COMMONS_INDEX_ASSETS,
-  "soft-chemistry": SOFT_CHEMISTRY_ASSETS,
-  "companion-field-guide": COMPANION_FIELD_GUIDE_ASSETS,
-  "daily-protocol": DAILY_PROTOCOL_ASSETS,
-  "room-modes": ROOM_MODES_ASSETS,
-  "rep-rest": REP_REST_ASSETS,
-  "diagnostic-deck": DIAGNOSTIC_DECK_ASSETS,
-  "ritual-almanac": RITUAL_ALMANAC_ASSETS,
-  "broadcast-patch-bay": BROADCAST_PATCH_BAY_ASSETS,
-  "atelier-nine": ATELIER_GRID_ASSETS,
-} satisfies Readonly<Record<StoreTemplateId, AssetManifest>>;
+function heroManifest(contentHash: string, byteSize: number): AssetManifest {
+  return { entries: [{ key: "hero", contentHash, mediaType: "image/webp", byteSize }] };
+}
+
+function repeatManifest(manifest: AssetManifest, count: number): readonly AssetManifest[] {
+  return Array.from({ length: count }, () => manifest);
+}
+
+const softChemistryLegacyHero = heroManifest("4639c3cfe144d901162c2ede0053cd6174e26379460e3d63a3bef64f286f482f", 40456);
+const softChemistryLegacyFull = {
+  entries: [...softChemistryLegacyHero.entries, ...SOFT_CHEMISTRY_ASSETS.entries.filter(({ key }) => key !== "hero")],
+} satisfies AssetManifest;
+const VERSIONED_ASSET_MANIFESTS_BY_TEMPLATE_ID = {
+  "custom-bench": [...repeatManifest(heroManifest("f6f25c15de46bf6dd431ae685202f90fbbc3ba00e8051f6a6f4afaa8b89cdde9", 132568), 5), CUSTOM_BENCH_ASSETS],
+  "commons-index": [...repeatManifest(heroManifest("9201028ef1da24dd4318d0dafd8b4e18f32d16e12ba921c5ded28765b0cbaca1", 130446), 4), COMMONS_INDEX_ASSETS],
+  "soft-chemistry": [...repeatManifest(softChemistryLegacyHero, 3), ...repeatManifest(softChemistryLegacyFull, 4), SOFT_CHEMISTRY_ASSETS],
+  "companion-field-guide": [...repeatManifest(heroManifest("305b7c4a9f43578032dba1e95a63869d9e17b370585c24438b7b963aa0a9a2d6", 158522), 3), COMPANION_FIELD_GUIDE_ASSETS],
+  "daily-protocol": [...repeatManifest(heroManifest("798fb222ba0b6975c3f83d7d95f6640227f781b2e4582f758cc712a0f45a8054", 81984), 3), DAILY_PROTOCOL_ASSETS],
+  "room-modes": [...repeatManifest(heroManifest("ed779ae096effacc6af8a58f5ab55b79faad5ae2b3b5fba892b796e310586d30", 80050), 3), ROOM_MODES_ASSETS],
+  "rep-rest": [...repeatManifest(heroManifest("b404cf72b60022837096e1e8b02d539b5369a9ff09d4bda742378b7aae71d9c1", 170844), 3), REP_REST_ASSETS],
+  "diagnostic-deck": [...repeatManifest(heroManifest("dca1f96a14f60dcc2b1305f84ac97b480f8007a25709ac9995eee71ac8e2db9e", 101094), 3), DIAGNOSTIC_DECK_ASSETS],
+  "ritual-almanac": [...repeatManifest(heroManifest("747c24090ce37d341af9d22a7057f5830c26dc74181da0d82bb5aa07ffafe8f8", 242494), 3), RITUAL_ALMANAC_ASSETS],
+  "broadcast-patch-bay": [...repeatManifest(heroManifest("c95d86839d3b7efea39f439452011aaad78e4519e9928890246f67b0bf9f5363", 78150), 4), BROADCAST_PATCH_BAY_ASSETS],
+  "atelier-nine": repeatManifest(ATELIER_GRID_ASSETS, 4),
+} satisfies Readonly<Record<StoreTemplateId, readonly AssetManifest[]>>;
 
 const TEXT_SLOTS_BY_TEMPLATE_ID = {
   "custom-bench": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
@@ -362,25 +374,30 @@ function recipe(
     cart: blueprint("cart"),
     checkout: blueprint("checkout"),
   } satisfies Record<StorefrontRecipeBlueprintId, StoreTemplateRouteBlueprint>;
-  const version = (templateVersion: number): StoreTemplateVersionRecord => ({
-    templateVersion,
-    baselineArtifact:
-      value.id === "atelier-nine"
-        ? "public/atelier-grid/index.html"
-        : `docs/superpowers/prototypes/storefront-recipes/${value.id}.html`,
-    screenshots: {
-      desktop: `public/storefront-recipes/${value.id}/baselines/v${templateVersion}-desktop.webp`,
-      mobile: `public/storefront-recipes/${value.id}/baselines/v${templateVersion}-mobile.webp`,
-    },
-    visualLayer: {
-      slotId: `visual:${value.id}:v${templateVersion}`,
-      fallbackAssetKey: PROTECTED_HERO_ASSET_KEY,
-      placement: "hero-background",
-      pointerEvents: "none",
-    },
-    productPlaceholderAssetKey: PROTECTED_HERO_ASSET_KEY,
-    routeBlueprints,
-  });
+  const version = (templateVersion: number): StoreTemplateVersionRecord => {
+    const assets = VERSIONED_ASSET_MANIFESTS_BY_TEMPLATE_ID[value.id][templateVersion - 1];
+    if (!assets) throw new Error(`Missing recipe assets for ${value.id}@${templateVersion}`);
+    return {
+      templateVersion,
+      assets,
+      baselineArtifact:
+        value.id === "atelier-nine"
+          ? "public/atelier-grid/index.html"
+          : `docs/superpowers/prototypes/storefront-recipes/${value.id}.html`,
+      screenshots: {
+        desktop: `public/storefront-recipes/${value.id}/baselines/v${templateVersion}-desktop.webp`,
+        mobile: `public/storefront-recipes/${value.id}/baselines/v${templateVersion}-mobile.webp`,
+      },
+      visualLayer: {
+        slotId: `visual:${value.id}:v${templateVersion}`,
+        fallbackAssetKey: PROTECTED_HERO_ASSET_KEY,
+        placement: "hero-background",
+        pointerEvents: "none",
+      },
+      productPlaceholderAssetKey: PROTECTED_HERO_ASSET_KEY,
+      routeBlueprints,
+    };
+  };
   return {
     ...value,
     activeVersion,
@@ -403,7 +420,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["engraving", "engraved", "monogram", "personalization", "made to order", "customizable"],
     legacyVibe: "minimal",
     generationInstructions: "Use a tactile workshop configurator with material swatches, engraved previews, and stepwise customization.",
-  }, 5),
+  }, 6),
   recipe({
     id: "commons-index",
     name: "Commons Index",
@@ -415,7 +432,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["refill", "reusable", "compostable", "zero waste", "low waste", "plastic free"],
     legacyVibe: "minimal",
     generationInstructions: "Use a cooperative directory, impact ledger, refill loops, and material provenance with civic editorial typography.",
-  }, 4),
+  }, 5),
   recipe({
     id: "soft-chemistry",
     name: "Soft Chemistry",
@@ -427,7 +444,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["skincare", "skin care", "serum", "clean beauty", "sensitive skin", "moisturizer"],
     legacyVibe: "minimal",
     generationInstructions: "Use clinical softness, ingredient transparency, routine building, and skin-concern filters.",
-  }, 7),
+  }, 8),
   recipe({
     id: "companion-field-guide",
     name: "Companion Field Guide",
@@ -439,7 +456,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["pet supplement", "pet health", "pet wellness", "dog health", "cat wellness", "pet care", "canine"],
     legacyVibe: "warm",
     generationInstructions: "Use field-guide navigation, pet profiles, species filters, dosage facts, and friendly slab typography.",
-  }, 3),
+  }, 4),
   recipe({
     id: "daily-protocol",
     name: "Daily Protocol",
@@ -451,7 +468,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["wellness", "vitamin", "supplements", "daily routine", "protocol", "recovery"],
     legacyVibe: "minimal",
     generationInstructions: "Use a routine ledger, time-of-day shopping, protocol stacks, and mono dosage facts.",
-  }, 3),
+  }, 4),
   recipe({
     id: "room-modes",
     name: "Room Modes",
@@ -463,7 +480,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["smart home", "smart lighting", "home decor", "matter compatible", "home automation", "room scene"],
     legacyVibe: "minimal",
     generationInstructions: "Use scene-based browsing, room modes, device protocol facts, and architectural spatial transitions.",
-  }, 3),
+  }, 4),
   recipe({
     id: "rep-rest",
     name: "Rep / Rest",
@@ -475,7 +492,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["fitness equipment", "workout gear", "training", "athleisure", "home gym", "recovery gear"],
     legacyVibe: "bold",
     generationInstructions: "Use split training and recovery journeys, high-contrast performance type, and sticky workout storytelling.",
-  }, 3),
+  }, 4),
   recipe({
     id: "diagnostic-deck",
     name: "Diagnostic Deck",
@@ -487,7 +504,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["refurbished", "certified refurbished", "electronics", "device grade", "warranty", "open box"],
     legacyVibe: "bold",
     generationInstructions: "Use diagnostic cards, grade and warranty evidence, spec comparisons, and terminal inventory signals.",
-  }, 3),
+  }, 4),
   recipe({
     id: "ritual-almanac",
     name: "Ritual Almanac",
@@ -499,7 +516,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["functional food", "functional beverage", "adaptogen", "specialty tea", "specialty coffee", "ritual"],
     legacyVibe: "warm",
     generationInstructions: "Use time-and-ritual browsing, flavor and sourcing stories, and subscription cadence.",
-  }, 3),
+  }, 4),
   recipe({
     id: "broadcast-patch-bay",
     name: "Broadcast Patch Bay",
@@ -511,7 +528,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["gaming gear", "streaming gear", "creator tools", "broadcast", "microphone", "capture card"],
     legacyVibe: "bold",
     generationInstructions: "Use a modular signal-chain builder, rig modes, compatibility graphs, and neon broadcast UI.",
-  }, 4),
+  }, 5),
   recipe({
     id: "atelier-nine",
     name: "Atelier Grid",
@@ -622,6 +639,7 @@ function freezeTemplate(template: VersionedStoreTemplate): VersionedStoreTemplat
     ) as Record<StorefrontRecipeBlueprintId, StoreTemplateRouteBlueprint>;
     return Object.freeze({
       ...version,
+      assets: Object.freeze({ entries: Object.freeze(version.assets.entries.map((entry) => Object.freeze({ ...entry }))) }),
       screenshots: Object.freeze({ ...version.screenshots }),
       visualLayer: Object.freeze({ ...version.visualLayer }),
       routeBlueprints: Object.freeze(routeBlueprints),
@@ -656,10 +674,10 @@ export function createStoreTemplateRegistry(
   for (const template of templates) {
     if (ids.has(template.id)) throw new Error(`Duplicate template ID: ${template.id}`);
     ids.add(template.id);
-    const ownedAssetKeys = new Set(ASSET_MANIFEST_BY_TEMPLATE_ID[template.id].entries.map(({ key }) => key));
     if (template.activeVersion < 1 || !Number.isInteger(template.activeVersion)) throw new Error(`Invalid active version: ${template.id}`);
     const versionNumbers = new Set<number>();
     for (const version of template.versions) {
+      const ownedAssetKeys = new Set(version.assets.entries.map(({ key }) => key));
       if (version.templateVersion < 1 || !Number.isInteger(version.templateVersion) || versionNumbers.has(version.templateVersion)) {
         throw new Error(`Invalid template version record: ${template.id}`);
       }

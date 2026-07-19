@@ -22,11 +22,11 @@ describe("Commons Index storefront recipe", () => {
   it("compiles a cooperative provenance ledger across every commerce surface", () => {
     const { bundle, config, report } = COMMONS_INDEX_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 4 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 5 });
     expect(config.archetype).toMatchObject({ composition: "cooperative-directory", hero: "impact-ledger-intro", scroll: "indexed-ledger", cards: "provenance-records" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "fraunces", bodyFontId: "atkinson-hyperlegible" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
-    expect(bundle.assets.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 130446 })]);
+    expect(bundle.assets.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 156350 })]);
     expect(existsSync(resolve(process.cwd(), "public/storefront-recipes/commons-index", `${bundle.assets.entries[0]?.key}.webp`))).toBe(true);
     expect(bundle.shell.bindings.map((binding) => binding.ref)).toContainEqual(expect.objectContaining({ path: "store.name" }));
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");

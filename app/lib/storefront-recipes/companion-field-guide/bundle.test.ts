@@ -29,11 +29,11 @@ describe("Companion Field Guide storefront recipe", () => {
   it("compiles a chaptered pet care guide across the complete commerce contract", () => {
     const { bundle, config, report } = COMPANION_FIELD_GUIDE_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 3 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 4 });
     expect(config.archetype).toMatchObject({ composition: "field-guide", hero: "pet-profile-hero", scroll: "chaptered-guide", cards: "field-notes" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "roboto-slab", bodyFontId: "atkinson-hyperlegible" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
-    expect(bundle.assets.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 158522 })]);
+    expect(bundle.assets.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 266598 })]);
     expect(existsSync(resolve(process.cwd(), "public/storefront-recipes/companion-field-guide", `${bundle.assets.entries[0]?.key}.webp`))).toBe(true);
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
     expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');

@@ -34,7 +34,7 @@ describe("Custom Bench storefront recipe", () => {
     const { bundle, config, report } = CUSTOM_BENCH_RECIPE;
 
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "custom-bench", templateVersion: 5 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "custom-bench", templateVersion: 6 });
     expect(config.archetype).toMatchObject({
       composition: "workshop-configurator",
       hero: "configurator-workbench",
@@ -45,7 +45,7 @@ describe("Custom Bench storefront recipe", () => {
     expect(bundle.designSystem).toMatchObject({ displayFontId: "space-grotesk", bodyFontId: "ibm-plex-mono" });
     expect(contrastRatio(bundle.designSystem.tokens.signal!, "#ffffff")).toBeGreaterThanOrEqual(4.5);
     expect(bundle.assets.entries).toEqual([
-      expect.objectContaining({ key: "hero", mediaType: "image/webp", byteSize: 132568 }),
+      expect.objectContaining({ key: "hero", mediaType: "image/webp", byteSize: 121470 }),
     ]);
     expect(existsSync(resolve(process.cwd(), "public/storefront-recipes/custom-bench", `${bundle.assets.entries[0]?.key}.webp`))).toBe(true);
 

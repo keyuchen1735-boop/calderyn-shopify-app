@@ -159,7 +159,7 @@ describe("storefront recipe route matrix", () => {
       ]));
       for (const asset of bundle.assets.entries) {
         expect(asset.mediaType).toBe("image/webp");
-        const assetPath = path.join(ROOT, "public", "storefront-recipes", config.templateId, `${asset.key}.webp`);
+        const assetPath = path.join(ROOT, "public", "storefront-recipes", config.templateId, `${asset.contentHash}.webp`);
         expect(existsSync(assetPath)).toBe(true);
         expect(statSync(assetPath).size).toBe(asset.byteSize);
         expect(createHash("sha256").update(readFileSync(assetPath)).digest("hex")).toBe(asset.contentHash);

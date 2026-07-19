@@ -109,12 +109,20 @@ function assertDistinctSurfaceSignatures(config: RecipeConfig): void {
   }
 }
 
+function assertDeclaredHomeHero(config: RecipeConfig): void {
+  const hero = config.assets.entries.find(({ key }) => key === "hero");
+  if (hero?.mediaType !== "image/webp" || !config.surfaces.home.source.html.includes('data-cd-asset="hero"')) {
+    throw new Error(`Recipe ${config.templateId} must include a declared home hero image`);
+  }
+}
+
 /** Compile a full recipe whose route markup and CSS remain owned by that recipe. */
 export function defineRecipe<const TTemplateId extends StoreTemplateId>(
   config: RecipeConfig<TTemplateId>,
 ): DefinedRecipe<TTemplateId> {
   assertArchetypeMatchesRegistry(config);
   assertDistinctSurfaceSignatures(config);
+  assertDeclaredHomeHero(config);
   const result = compileBundle({
     source: {
       kind: "recipe",

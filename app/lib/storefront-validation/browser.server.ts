@@ -1072,11 +1072,20 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       const asset = provided.get(entry.key);
       if (!asset) {
         const derivedTemplateId = input.bundle.source.derivedFromTemplateId;
-        if (derivedTemplateId && entry.mediaType === "image/webp") {
+        const derivedTemplateVersion = input.bundle.source.derivedFromTemplateVersion;
+        const registeredAsset = derivedTemplateId && derivedTemplateVersion && isStoreTemplateId(derivedTemplateId)
+          ? getStoreTemplate(derivedTemplateId).versions
+            .find(({ templateVersion }) => templateVersion === derivedTemplateVersion)
+            ?.assets.entries.find(({ key }) => key === entry.key)
+          : undefined;
+        if (registeredAsset && entry.mediaType === "image/webp"
+          && registeredAsset.contentHash === entry.contentHash
+          && registeredAsset.mediaType === entry.mediaType
+          && registeredAsset.byteSize === entry.byteSize) {
           try {
-            const publicBytes = await readFile(resolve(process.cwd(), `public/storefront-recipes/${derivedTemplateId}/${entry.key}.webp`));
+            const publicBytes = await readFile(resolve(process.cwd(), `public/storefront-recipes/${derivedTemplateId}/${registeredAsset.contentHash}.webp`));
             if (publicBytes.byteLength === entry.byteSize && createHash("sha256").update(publicBytes).digest("hex") === entry.contentHash) {
-              customAssetUrls[entry.key] = `/storefront-recipes/${derivedTemplateId}/${entry.key}.webp`;
+              customAssetUrls[entry.key] = `/storefront-recipes/${derivedTemplateId}/${registeredAsset.contentHash}.webp`;
               continue;
             }
           } catch {

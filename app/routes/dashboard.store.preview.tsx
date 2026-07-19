@@ -61,7 +61,7 @@ function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteDat
   if (runtime1.bundle.source.kind === "recipe") {
     for (const asset of runtime1.bundle.assets.entries) {
       if (asset.mediaType === "image/webp") {
-        urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.key}.webp`;
+        urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.contentHash}.webp`;
       }
     }
   }

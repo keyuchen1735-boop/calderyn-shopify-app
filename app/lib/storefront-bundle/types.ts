@@ -213,6 +213,7 @@ export interface TemplateVisualLayer {
 
 export interface StoreTemplateVersionRecord {
   templateVersion: number;
+  assets: AssetManifest;
   baselineArtifact: string;
   screenshots: Readonly<{
     desktop: string;
@@ -343,7 +344,7 @@ export interface AssetManifestEntry {
 }
 
 export interface AssetManifest {
-  entries: AssetManifestEntry[];
+  entries: readonly AssetManifestEntry[];
 }
 
 export type CompiledBindingKind = "text" | "money" | "src" | "alt";
