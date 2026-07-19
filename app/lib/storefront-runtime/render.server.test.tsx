@@ -674,9 +674,25 @@ describe("compiled-node server renderer", () => {
     }));
 
     expect(html).toContain('data-cd-media-fallback="true"');
-    expect(html).toContain("width:min(450px,calc(48% - 68px))");
+    expect(html).toContain("width:min(450px,calc(48vw - 68px))");
     expect(html).toContain('src="/storefront-recipes/soft-chemistry/hero.webp"');
     expect(html).not.toContain('src="data:image/svg+xml,');
+  });
+
+  it("keeps published Soft Chemistry v5 commerce geometry while v6 uses the overlay controls", () => {
+    const legacyBundle = structuredClone(SOFT_CHEMISTRY_BUNDLE);
+    if (legacyBundle.source.kind !== "recipe") throw new Error("Expected recipe bundle");
+    legacyBundle.source.templateVersion = 5;
+    const legacyHtml = renderToStaticMarkup(renderStorefrontSurface({
+      bundle: legacyBundle,
+      routeId: "home",
+      data,
+      nonce: "legacy-soft-chemistry",
+      mode: "public",
+    }));
+
+    expect(legacyHtml).toContain("width:min(450px,calc(48% - 68px))");
+    expect(legacyHtml).not.toContain('main.overlay{position:fixed}');
   });
 
   it("shows design empty copy only when the route repeat is actually empty", () => {
@@ -698,8 +714,8 @@ describe("compiled-node server renderer", () => {
       mode: "public",
     }));
 
-    expect(render([publicProduct])).not.toContain("No formulas match this concern");
-    expect(render([])).toContain("No formulas match this concern");
+    expect(render([publicProduct])).not.toContain("No formulas found.");
+    expect(render([])).toContain("No formulas found.");
   });
 
   it("returns a platform-owned 404 instead of rendering a generated missing-record route", () => {

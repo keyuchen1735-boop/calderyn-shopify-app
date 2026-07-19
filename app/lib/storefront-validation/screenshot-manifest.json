@@ -338,158 +338,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "f67cc66e80279741c4c9ebe0e85798950059764ea127270a9f2fef2d4704a290",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-mobile.webp"
+          "sha256": "0c0eb30bda6354667ff97688ba676d8a7e8bde4aefbc2004d94aec24b3be60d4",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "cb56ee4ebd9bbb74ec225701592d207b575112b4dcccfa0f8dd2d50a26dce861",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-tablet.webp"
+          "sha256": "83eeb4c37693e5994b7f72b4a1f519497b22785021c26d161c8ef3bd3dbef54b",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "a68186d0be5b769129abc3c6373ad8b4b4aceb8ccf33d8027ba256b7007154fb",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-desktop.webp"
+          "sha256": "e8dbed86c63d0bb7446f30adfbd3b111b98b89f44d38a23da3f2e164e7b88df3",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "1627e90925c3902985e5814203efbe3f170413e2f94d983e4d4e07d8386992cf",
+          "sha256": "764f0af4a34ba999bb4facc4a1c590b3a354974eda6b124c511fbe535b516906",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-collection-mobile.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "3cc6345adec070b1bce7b278fd968c931ab144c12768c2d14d751493b7873a81",
+          "sha256": "651352e86565118d96830ecf7f432639fbcbe7f8efaa18f77aa2a0d5cca0fb0c",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-collection-tablet.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "42921bdaf7eb60a2897c5bf6b414311f88af57766fbb2e0b4c00ec8f436bd631",
+          "sha256": "1605c41047ea2b9f84218222c70ba9cb868c3d4ae943cd9ae3a8876c1d697f8e",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-collection-desktop.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "df81adc7d8203a914e29e8b02f4832d0658e91c5f873239a0e5f26834955a0d6",
+          "sha256": "447fc069ab238b17c3a44b8c409e71ce78d0fd311e2acb0b1d55f8b1edc6a066",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-collection-24-mobile.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "6fc9bba5cfc5eccff5e90aa9ea0964fad94765668d7f1d257906da7a8f7b5032",
+          "sha256": "de0d8c268fc8633bb9ad447c3d5e00ead984c1589ded96e6fa0aaffcfd0d6bd1",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-collection-24-tablet.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "9de04f7f6ef54e567cf9d798d83a7d8c37867e2cade06c292aa32bf67bfb7b89",
+          "sha256": "3a896b0aec2c9fcea7e2527f96e53338ce9e6f59b0ed0c8921f7af8f63c54875",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-collection-24-desktop.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "430872df02fea477c072481ab10382a71a219be7ad97163a843cf7457ebb24ad",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-product-mobile.webp"
+          "sha256": "aa419aafe146d962491e0a138e438bb320a58a0d0f437b71845623df55339b0f",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "be7df2389351382a5d670f8aa5f3b80ab07b760b62cf2c12c515fbe0f9ae68c2",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-product-tablet.webp"
+          "sha256": "a2dfa27d927d7318138309891caad5666887962040700ae93a17459367589540",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "44d2414d7d8f528b2a52aa831523df026c929a55ee7d3eec43529e1513497340",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-product-desktop.webp"
+          "sha256": "34934e8f261d7cd2b6c2681831bcfe0fb8122a3786f18fb27e29d4c36cebe007",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "8bcfb161399ee7cf6b847f8c726ae0bd5c4f3cc69780fb935317db4d81f68c39",
+          "sha256": "d79053cf950d7b60fb1c58afc4382d5967a245e1889233bbce9e162606d1c224",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-search-mobile.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "e3439ae24cff700325c07425695437de35b2aad6358b33d5ae734774b4b807fa",
+          "sha256": "28f9071c9df1d1c5ef71b58b5d92133c0e34bda15d06c31b28e7ef50376c05c7",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-search-tablet.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "82630eacee75a622890f20cca380243d316fb71cbd2df6c5e8a3b17a9a5e20b7",
+          "sha256": "70ed9ed2030c350c93cc4df5a426cc26049663a08032a5e4427caafcfb32d05a",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-search-desktop.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "1de8b03f983b19553951711c84955f0812bc0fa7e330b49c3695c091ed9b799c",
+          "sha256": "1f5beea086fdfeb94ceb31b554a39cf1651c05e910d192c04d4fba8b983641aa",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-search-24-mobile.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "02a1e9733c9debb3b6de88f4d9c327206a8959824fb26a9416bf808d103437e0",
+          "sha256": "f3964c0b294ea28101b1780229c8713864eeb5cae757a2df196dbf344c2f29e7",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-search-24-tablet.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "312fdbf1bd181cbcdc0b950cbffae8de51d935b79989a75cdfe98db9b52b62af",
+          "sha256": "bda340ebcade9150a37f721a523538c4e3611032e37b0621a3f28f2e4cfd2465",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-search-24-desktop.webp"
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "ba934cf66bad361db012b65f56dde847fd99a2a1748e354cb6a227c8f996c38d",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-cart-mobile.webp"
+          "sha256": "da0c7f3772052042944c950eef606d345a13078df458bc33e5552bed9f7fa231",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "406847e0a243e08205d23ac1b4ad679855a92e94caf85f884222b16ef72523d2",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-cart-tablet.webp"
+          "sha256": "1f3068ed5943c02552ba0cec2ff821b14dd5145d766da9139f6b04712677f616",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "9edec8e78d5ef41c861a5e518dc056894b23e9636b3b56b9445a796ba9fc3808",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-cart-desktop.webp"
+          "sha256": "c81573ca05204504a98932b79cdb713ea3f8f0c9cff4c533e5572fb8604257d7",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "b9e3086a4ec4eb74a1b5c214fb47014bc7bf00ca3f2155ae8685ba9c2351f2cb",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-checkout-mobile.webp"
+          "sha256": "e99e8b1c7c750338f5c97e0bf930058d1655d74050c7751bc0206b18cf83bae8",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "2b1cb40519dcfa862856801516ef905a6a2106da86a09dec813251d70d2a02f3",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-checkout-tablet.webp"
+          "sha256": "a3d1efb1777ba66c919b8c229f83f0713826570e11b9a8657b5821b1d2633712",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "0421059398824325f085db828a8d2cad795788cf975238c39223ca7d984318ab",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v5-checkout-desktop.webp"
+          "sha256": "a4faaa4286ecbe1e0c51c12f78232dff20e440418d3c0655eb124ce2036a42a2",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v6-checkout-desktop.webp"
         }
       ]
     },
@@ -1838,17 +1838,17 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "5e07b61fe2221e13266f04d3d50a3d28cd323a1e9cb0a054ed78f4ccdc05b344"
+          "sha256": "7fa2acfe6d5e3b7e47aea7ed6490757c4766fd79cc7c004abf61b60af098cbd0"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "2c04630fafbf0a2866451ca40a538a4e83aec23ace46673e1ac8730d9340efdd"
+          "sha256": "51ecf3ed0d72aa6ebf83ef13b1ebe3e53a597b186811e72d26cfccdda96cf2ef"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "b86efec248c53e3520ecc9d7a44a9422b10f06cb3cdecad6b2a99399560d8fec"
+          "sha256": "39da68877ea2d96e41e7c84e567d34fbe879197f591cf725e6af7dfb34bdd07e"
         }
       ]
     },
@@ -2069,17 +2069,17 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "5d4e053fd2b952e760a142a1011bdab7fcecfcf29e554a63c46af71f1fcff95e"
+          "sha256": "5c5b277b638c5e7b1ae1e5f6013eeeadd14a94b5e9b3c19f95930075aa8c820f"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "7b36a65873662ad4436ec6659f252e00403c5b5bac4f5f79ed9cf7591bf0185d"
+          "sha256": "6582028d2f0ee03bc4b01e89e54607b9e95c825ad339d8a015c86c7dff89eb5b"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "35c925a90ea9628d8837dba30233212e1ea560e63c0ea7861dbacb92fbebbd6e"
+          "sha256": "423d266ac253efed67d3aa940542925c892962cdd7ac32ef70fdd7ce50ba3150"
         }
       ]
     },
@@ -2300,17 +2300,17 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "62f3027b3e2c83c98c24049ef936562675b28cc65705154b20a7478f3884eca9"
+          "sha256": "bf95d36c886a7bf8f2531dfb4b58f40e22c09158cc3f5797dd43f7948357ecad"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "61b8c56bbdc63512f08907405b6020e53b16b64c7434f0b3f8539a376fbc2b54"
+          "sha256": "a0f4f814521f367f735f9ecae06dfc41a8d13f06dbd9d3c344179e5af4330e49"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "c98c46806e93b6416c6325ec4dc38c242ae32bea73f190710b41442248bc1cdd"
+          "sha256": "57074bb42f6296e2d5e1632000cc644fb47542d9fd17bb18239b49fc44a2c33f"
         }
       ]
     },
@@ -2663,83 +2663,83 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "022699aad72aed1998777b33fc9c0db7218c033533d3da8ca0446328f1b8ea4b"
+          "sha256": "23feec64d13f9310d0439d9fb90306aa8048bdc5c57c4a043ff95be2f28e288c"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "ce183bcdea3becab034af7e8f188f2ea2bd00d8673830e691e7ec4f411b20993"
+          "sha256": "821afdc61e4a4a695f3f4d4f19ec509942f2aa3d42441f1809f3b3c1f7fc4473"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "ca5c4ab4a566a492de56d46fd92353ee9a18bb2bb4acdabfa3ccdd4ede7169cf"
+          "sha256": "47f693dc3956d873e137c656de8a67b4527e99ef6abe598c1f82580563eba915"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "8b19be72fc47d1341201faf725318bdead13ba0e3d73deb2c353dd3d35ef6b8e",
+          "sha256": "80b8596b429aa002e9a96cf708c3b1853e7c1a8321bb34bd7ccb3dc2cd8ce1e0",
           "catalogOffset": 0
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "5115d65338c7b312b7e421522372afc6c34bcb101008c584df111e1a221fe012",
+          "sha256": "c1b8732caf4c83da980566da052443ed31f147e9922f287f0f2ee76ca73345c5",
           "catalogOffset": 0
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "a710e2aa41765ce83df8ade20092331b20472f5de243d7c383230171c85df225",
+          "sha256": "4d796db595791a5262cf251066e4571c1a2df16d169f14a2bdfd962ab33be3e7",
           "catalogOffset": 0
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "10eafec93e8e145a54fdac6ac273bc6e488b20c02df18d0b73f47ad74e63a904",
+          "sha256": "1958f483ec04ea4bc98f000c9169c7a2570d061e6566e20712f5ed438613eadb",
           "catalogOffset": 0
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "a3b4c5fc60b4def8500b4f56e036b6219a820c524b441a7bb62ba109f8c305cf",
+          "sha256": "bd033a052b3417b850a4c578f720d274e970c3c10d1862a76fd38119119f1101",
           "catalogOffset": 0
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "010321ce260f282db97059d6e0eac0fdc09c72397b86d89c49020dffed14b6d2",
+          "sha256": "6624a447cb681894722463d13b558f3cf2b6af8cab999680ba98c6989e91c0dc",
           "catalogOffset": 0
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "ff8f7224fe89456680dba7deceb641108c909e28a826bb49e56934247b4439ff"
+          "sha256": "aee4a5f4700d85d190a6a6d32d386147e1fa3f7a11aea7a97f10389f789b2b2c"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "692d6c1c77d99bb0361fb11916762fd55526214af4963f37325c2df863ab2759"
+          "sha256": "37912b3af44bae82cc3dad97538401271e7a2ac4108aefa5166ba861db037e3f"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "ce93566e0ccfd0683332e0d6b1791bf410f5101bee35c1d8cc0fc9fb387fb00f"
+          "sha256": "af464c0043a99356f5fc6e0850b1a37963040f6bbda05f476cfaec30360a5941"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "4481ebd8fb8725072aec1cec2a6dd7641f7ae94951228f96f9aaa5f61327232e"
+          "sha256": "43ee0d5caece79c01f10f94b8d3d1adb5b3440f37ad3efd0bf3144d237450894"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "60921f5bda628b24fdaefba43ec0419451012a0d0bc1c9e35543d9fd00a67e3a"
+          "sha256": "a0448609835fcdc4021785d3dd472d0bbe5a1fafc904e64cd966af21f982ad36"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "bcb5c2758e045322b3c9a913d8962d1cd31851448fb71df577d45a2b89a032f9"
+          "sha256": "7dd1a8ee9069d7c12116591428f0044ada7d80d97b56f9612220cb0ee572aeb3"
         }
       ]
     },

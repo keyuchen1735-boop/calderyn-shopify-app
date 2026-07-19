@@ -116,4 +116,29 @@ describe("runtime-1 route adapters", () => {
       body: JSON.stringify({ variantId: "v2", quantity: 1 }),
     })));
   });
+
+  it("applies square yellow commerce controls only to an explicitly opted-in bundle", () => {
+    const mountStyle = (squareAccentCommerce: boolean) => {
+      const adapters = createRuntimeAdapters({ mode: "public", data: quickViewData, squareAccentCommerce });
+      const host = document.createElement("div");
+      host.style.setProperty("--ink", "#231e27");
+      host.style.setProperty("--milk", "#f4f0eb");
+      host.style.setProperty("--yellow", "#ecff5b");
+      document.body.append(host);
+      const shadowRoot = host.attachShadow({ mode: "open" });
+      adapters.commerce?.mount({
+        host,
+        shadowRoot,
+        authorityKey: "product:p1",
+        slot: { id: "slot", kind: "quickViewCommerce", hostSize: "inline", themeTokenIds: ["milk", "ink", "yellow"] },
+        bridge: vi.fn(),
+      });
+      return shadowRoot.querySelector("style")?.textContent ?? "";
+    };
+
+    expect(mountStyle(false)).toContain("border-radius:.2rem");
+    expect(mountStyle(false)).not.toContain("background:#ecff5b");
+    expect(mountStyle(true)).toContain("border-radius:0");
+    expect(mountStyle(true)).toContain("background:#ecff5b");
+  });
 });

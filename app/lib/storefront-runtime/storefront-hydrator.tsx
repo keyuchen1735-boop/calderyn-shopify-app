@@ -73,7 +73,7 @@ function relativeLuminance([red, green, blue]: [number, number, number]): number
   return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
 }
 
-function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext): HTMLStyleElement {
+function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext, squareAccentCommerce: boolean): HTMLStyleElement {
   const ownerDocument = host.ownerDocument;
   const computedHost = ownerDocument.defaultView?.getComputedStyle(host);
   const colors = slot.themeTokenIds.flatMap((tokenId) => {
@@ -97,15 +97,23 @@ function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext):
       }
     }
   }
+  const accent = squareAccentCommerce && slot.themeTokenIds.includes("yellow")
+    ? computedHost?.getPropertyValue("--yellow").trim() ?? ""
+    : "";
+  const accentForeground = computedHost?.getPropertyValue("--ink").trim() ?? "";
+  const buttonTheme = rgb(accent) && rgb(accentForeground)
+    ? `background:${accent};color:${accentForeground};border-color:${accentForeground};text-transform:uppercase`
+    : "";
   const style = ownerDocument.createElement("style");
   style.nonce = ownerDocument.querySelector<HTMLStyleElement>("style[nonce]")?.nonce ?? "";
-  style.textContent = `:host{display:block;min-width:44px;min-height:44px;font:inherit;color:${foreground}}:host([hidden]){display:none!important}div{display:flex;align-items:center;gap:.5rem}button,select,input{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:.2rem;background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
+  style.textContent = `:host{display:block;min-width:44px;min-height:44px;font:inherit;color:${foreground}}:host([hidden]){display:none!important}div{display:flex;align-items:center;gap:.5rem}button,select,input{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:${squareAccentCommerce ? "0" : ".2rem"};background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700;${buttonTheme}}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
   return style;
 }
 
 export function createRuntimeAdapters(input: {
   mode: RuntimeMode;
   previewTemplateId?: StoreTemplateId;
+  squareAccentCommerce?: boolean;
   data?: PublicPresentationData;
   fetcher?: RuntimeFetcher;
   refresh?: () => void;
@@ -181,7 +189,7 @@ export function createRuntimeAdapters(input: {
     commerce: {
       mount(context) {
         const { shadowRoot, slot, authorityKey, bridge } = context;
-        shadowRoot.append(trustedCommerceStyle(context));
+        shadowRoot.append(trustedCommerceStyle(context, input.squareAccentCommerce === true));
         if (slot.kind === "quickViewCommerce") {
           const productId = authorityKey.startsWith("product:") ? authorityKey.slice("product:".length) : "";
           const product = productById(productId);
@@ -290,6 +298,9 @@ export function StorefrontHydrator(props: {
       mode: props.mode,
       data: props.data,
       previewTemplateId: props.mode === "preview" && props.bundle.source.kind === "recipe" ? props.bundle.source.templateId : undefined,
+      squareAccentCommerce: props.bundle.source.kind === "recipe"
+        && props.bundle.source.templateId === "soft-chemistry"
+        && props.bundle.source.templateVersion === 6,
     });
     const handles: StorefrontRuntimeHandle[] = [];
     const visualLayer = props.bundle.visualLayer?.kind === "fragment_shader" ? props.bundle.visualLayer : undefined;

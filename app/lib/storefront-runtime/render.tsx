@@ -563,7 +563,7 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
   }
   return (
     <div data-cd-bundle="global" data-cd-bundle-runtime="1" data-cd-bundle-source={bundle.source.kind}>
-      <StorefrontStyle nonce={nonce} css={storefrontDesignSystemCss(bundle.designSystem, recipeSource?.templateId)} kind="tokens" />
+      <StorefrontStyle nonce={nonce} css={storefrontDesignSystemCss(bundle.designSystem, recipeSource?.templateId, recipeSource?.templateVersion)} kind="tokens" />
       {bundle.designSystem.globalCss ? <StorefrontStyle nonce={nonce} css={bundle.designSystem.globalCss} kind="global" /> : null}
       <div data-cd-bundle="shell" data-cd-bundle-shell={routeId}>
         {bundle.shell.css ? <StorefrontStyle nonce={nonce} css={bundle.shell.css} kind="shell" /> : null}
