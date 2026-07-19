@@ -4,10 +4,25 @@ import { describe, expect, it } from "vitest";
 import { COMMONS_INDEX_RECIPE } from "./bundle";
 
 describe("Commons Index storefront recipe", () => {
+  it("preserves the approved civic atlas around live provenance records", () => {
+    const home = COMMONS_INDEX_RECIPE.config.surfaces.home.source;
+
+    for (const className of ["atlas", "atlas-rail", "atlas-main", "hero-img", "hero-copy", "hero-bottom", "evidence", "specimens", "strip", "ledger", "ledger-copy", "ledger-map"]) {
+      expect(home.html).toContain(`class="${className}`);
+    }
+    expect(home.html).toContain("A living index of small-batch goods");
+    expect(home.html).toContain("Proof before promise.");
+    expect(home.html).toContain('data-cd-repeat="featured.products"');
+    expect(home.html).toContain('data-cd-src="product.primaryImage"');
+    expect(home.html).toContain('data-cd-text="product.title"');
+    expect(home.html).toContain('data-cd-money="product.price"');
+    expect(home.css).toContain("grid-template-columns:220px 1fr");
+  });
+
   it("compiles a cooperative provenance ledger across every commerce surface", () => {
     const { bundle, config, report } = COMMONS_INDEX_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 4 });
     expect(config.archetype).toMatchObject({ composition: "cooperative-directory", hero: "impact-ledger-intro", scroll: "indexed-ledger", cards: "provenance-records" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "fraunces", bodyFontId: "atkinson-hyperlegible" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

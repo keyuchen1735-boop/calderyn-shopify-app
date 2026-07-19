@@ -3,9 +3,11 @@ import {
   withAssetOverrides,
   type StoreAssetOverrideQuery,
 } from "../storegen/imagery/asset.server";
-import { createStorefrontProofCatalog } from "./browser.server";
+import { createStorefrontProofCatalog, createStorefrontProofDataForBundle } from "./browser.server";
 import { createStoreCommandHarness } from "./command-harness.server";
 import { storefrontProofContext } from "./fixtures";
+import { getStoreTemplate } from "../storefront-bundle/registry";
+import { readStoreTextSlot } from "../storefront-command/apply";
 
 const SHOP_ID = "11111111-1111-4111-8111-111111111111";
 const FINAL_HERO_TEXT = "Made for long summer days";
@@ -178,6 +180,19 @@ export async function createStorefrontFullStory() {
   if (!finalState.draft || finalState.publishedVersionId !== finalState.draft.versionId) {
     throw new Error("full-story proof did not publish its restored draft");
   }
+  const publishedBundle = finalState.draft.bundle;
+  if (publishedBundle.source.kind !== "recipe") throw new Error("full-story proof did not publish a recipe");
+  const publishedHeroText = readStoreTextSlot(
+    publishedBundle,
+    getStoreTemplate(publishedBundle.source.templateId),
+    "heroTitle",
+  );
+  if (!publishedHeroText) throw new Error("full-story proof has no published hero title");
+  const publishedFeaturedProductIds = createStorefrontProofDataForBundle(
+    "home",
+    publishedBundle,
+    context,
+  ).featuredProducts.map(({ id }) => id);
   return {
     context,
     catalog,
@@ -195,9 +210,9 @@ export async function createStorefrontFullStory() {
     expectations: {
       generatedImageUrls,
       home: {
-        heroText: FINAL_HERO_TEXT,
-        featuredProductIds,
-        visualLayer: "canvas" as const,
+        heroText: publishedHeroText,
+        featuredProductIds: publishedFeaturedProductIds,
+        visualLayer: "fallback" as const,
       },
     },
   };

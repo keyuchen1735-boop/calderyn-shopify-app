@@ -44,7 +44,7 @@ const promptCommand = (
 const resolution = {
   kind: "recipe" as const,
   templateId: "custom-bench" as const,
-  templateVersion: 2,
+  templateVersion: 5,
   selectionKind: "niche_match" as const,
   routingVersion: 1,
   registryVersion: 2,
@@ -411,7 +411,7 @@ describe("runStoreCommand", () => {
     ["select_design", "Switch design", { kind: "select_design" as const, prompt: "Switch design", excludedTemplateIds: ["custom-bench" as const] }],
     ["Try another", "Try another", { kind: "select_design" as const, prompt: "Try another", excludedTemplateIds: ["custom-bench" as const] }],
     ["Start over", "Start over", { kind: "start_over" as const, prompt: "Start over" }],
-  ])("carries only compatible declared overrides through %s", async (_label, prompt, intent) => {
+  ])("installs the immutable recipe through %s without translating the previous design", async (_label, prompt, intent) => {
     let currentBundle = applyStoreIntent(
       CUSTOM_BENCH_BUNDLE,
       getStoreTemplate("custom-bench"),
@@ -438,7 +438,7 @@ describe("runStoreCommand", () => {
       resolveDesign: vi.fn().mockReturnValue({
         ...resolution,
         templateId: "soft-chemistry",
-        templateVersion: 5,
+        templateVersion: 7,
       }),
       loadRecipe: vi.fn().mockResolvedValue({
         bundle: structuredClone(SOFT_CHEMISTRY_BUNDLE),
@@ -449,11 +449,8 @@ describe("runStoreCommand", () => {
 
     await runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT, prompt) }, deps);
 
-    const carried = vi.mocked(deps.prove).mock.calls[0]![0].bundle;
-    expect(carried.source).toMatchObject({ kind: "recipe", templateId: "soft-chemistry" });
-    expect(carried.routes.home.html).toContain("Merchant hero copy");
-    expect(carried.featuredProductIds).toEqual(["product-a"]);
-    expect(carried.visualLayer).toEqual(visualLayer);
+    const installed = vi.mocked(deps.prove).mock.calls[0]![0].bundle;
+    expect(installed).toEqual(SOFT_CHEMISTRY_BUNDLE);
   });
 
   it("installs an explicitly named design verbatim instead of carrying old design copy", async () => {
@@ -474,7 +471,7 @@ describe("runStoreCommand", () => {
       resolveDesign: vi.fn().mockReturnValue({
         ...resolution,
         templateId: "soft-chemistry",
-        templateVersion: 5,
+        templateVersion: 7,
       }),
       loadRecipe: vi.fn().mockResolvedValue({
         bundle: structuredClone(SOFT_CHEMISTRY_BUNDLE),
@@ -1153,7 +1150,7 @@ describe("runStoreCommand", () => {
     }],
     ["template version", (bundle: typeof CUSTOM_BENCH_BUNDLE) => {
       if (bundle.source.kind !== "recipe") throw new Error("recipe fixture required");
-      bundle.source.templateVersion = 3;
+      bundle.source.templateVersion = 6;
     }],
     ["source kind", (bundle: typeof CUSTOM_BENCH_BUNDLE) => {
       bundle.source = { kind: "custom", generationId: "mismatch", promptHash: "sha256:mismatch" };
@@ -1356,14 +1353,7 @@ describe("runStoreCommand", () => {
     expect(startedOver.versionId).not.toBe(beforeStartOver);
     const startedOverRecipe = STOREFRONT_RECIPES.find(({ config }) => config.templateId === startedOverTemplateId);
     expect(startedOverRecipe).toBeDefined();
-    expect(current.draft!.bundle.assets).toEqual(startedOverRecipe!.bundle.assets);
-    expect(current.draft!.bundle.routes.home.css).toBe(startedOverRecipe!.bundle.routes.home.css);
-    expect(current.draft!.bundle.routes.home.html).toContain("Made for long summer days");
-    expect(current.draft!.bundle.featuredProductIds).toEqual(merchant.products.slice(0, 12).map(({ id }) => id));
-    expect(current.draft!.bundle.visualLayer).toMatchObject({
-      kind: "fragment_shader",
-      source: "void main(){gl_FragColor=vec4(u_color2,1.0);}",
-    });
+    expect(current.draft!.bundle).toEqual(startedOverRecipe!.bundle);
 
     const beforeStaleAttempt = current.draft!.versionId;
     await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(initial.versionId, "Update the title") }, deps))

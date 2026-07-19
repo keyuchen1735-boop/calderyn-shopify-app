@@ -14,11 +14,19 @@ function actionsIn(route: RouteArtifact): string[] {
 }
 
 describe("room-modes storefront recipe", () => {
+  it("keeps the original viewport room-scene geometry", () => {
+    expect(ROOM_MODES_RECIPE.bundle.routes.home.css).toContain("min-height:100dvh");
+  });
+
+  it("renders live availability in object search results", () => {
+    expect(ROOM_MODES_RECIPE.bundle.routes.search.bindings.map((binding) => binding.ref.kind === "data" ? binding.ref.path : null)).toContain("product.availability");
+  });
+
   it("compiles the approved spatial scene system across every commerce route", () => {
     const { bundle, config, report } = ROOM_MODES_RECIPE;
 
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 3 });
     expect(config.archetype).toEqual({
       composition: "spatial-scenes",
       hero: "room-mode-scene",

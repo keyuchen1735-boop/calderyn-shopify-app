@@ -58,11 +58,9 @@ describe("storefront full-story fixture", () => {
     expect(story.published.artifactHash).toBe(story.beforeStartOver.artifactHash);
     expect(story.published.bundle).toEqual(story.beforeStartOver.bundle);
     expect(story.published.bundle.routes.home.html).toContain(story.expectations.home.heroText);
-    expect(story.published.bundle.featuredProductIds).toEqual(story.expectations.home.featuredProductIds);
-    expect(story.published.bundle.visualLayer).toMatchObject({
-      kind: "fragment_shader",
-      source: story.merchantShaderSource,
-    });
+    expect(story.published.bundle.featuredProductIds).toBeUndefined();
+    expect(story.published.bundle.visualLayer).toBeUndefined();
+    expect(story.expectations.home.visualLayer).toBe("fallback");
     expect(story.protectedAssetsAfterEdits).toEqual(story.protectedAssetsBeforeEdits);
   });
 

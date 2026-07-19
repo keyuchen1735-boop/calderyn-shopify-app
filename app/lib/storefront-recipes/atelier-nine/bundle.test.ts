@@ -37,7 +37,7 @@ describe("Atelier Grid recipe contract", () => {
 
   it("compiles the approved asymmetric editorial identity through validation profile v1", () => {
     expect(ATELIER_GRID_RECIPE.report).toMatchObject({ ok: true, profileVersion: 1 });
-    expect(ATELIER_GRID_BUNDLE.source).toEqual({ kind: "recipe", templateId: "atelier-nine", templateVersion: 3 });
+    expect(ATELIER_GRID_BUNDLE.source).toEqual({ kind: "recipe", templateId: "atelier-nine", templateVersion: 4 });
     expect(ATELIER_GRID_BUNDLE.validationProfileVersion).toBe(1);
     expect(ATELIER_GRID_BUNDLE.designSystem).toMatchObject({
       displayFontId: "archivo-narrow",
@@ -68,10 +68,10 @@ describe("Atelier Grid recipe contract", () => {
 
   it("provides merchant-bound merchandising on every browse and purchase route", () => {
     expect(bindingPaths(ATELIER_GRID_BUNDLE.shell)).toContain("store.name");
-    expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.home)).toEqual(expect.arrayContaining(["product.title", "product.price"]));
+    expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.home)).toEqual(expect.arrayContaining(["product.primaryImage", "product.title", "product.description", "product.price", "product.availability"]));
     expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.collection)).toEqual(expect.arrayContaining(["collection.title", "collection.description", "product.title", "product.price"]));
     expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.product)).toEqual(expect.arrayContaining(["product.title", "product.description", "product.price", "product.availability"]));
-    expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.search)).toEqual(expect.arrayContaining(["search.query", "product.title", "product.price"]));
+    expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.search)).toEqual(expect.arrayContaining(["search.query", "product.primaryImage", "product.title", "product.description", "product.price", "product.availability"]));
     expect(bindingPaths(ATELIER_GRID_BUNDLE.routes.cart)).toEqual(expect.arrayContaining(["cartLine.title", "cartLine.quantity", "cartLine.total", "cart.subtotal", "cart.total"]));
     expect(ATELIER_GRID_BUNDLE.routes.checkout.bindings.map((binding) => binding.ref.kind === "data" ? binding.ref.path : null)).toContain("store.name");
   });

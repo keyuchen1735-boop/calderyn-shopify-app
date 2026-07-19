@@ -2,7 +2,7 @@ import { defineRecipe, prependRecipeLandmark, wrapRecipeComposition, type Recipe
 import { RITUAL_ALMANAC_ASSETS } from "./assets";
 
 const config = {
-  templateId: "ritual-almanac", templateVersion: 2,
+  templateId: "ritual-almanac", templateVersion: 3,
   concept: { name: "Ritual Almanac", rationale: "An editorial pantry organized by hour, flavor chapter, and recurring ritual instead of benefit-card claims.", noveltySignature: ["ritual-time-wheel", "almanac-chapters", "cadence-led-pantry"] },
   designSystem: {
     displayFontId: "fraunces", bodyFontId: "inter",
@@ -44,6 +44,13 @@ const config = {
   }, assets: RITUAL_ALMANAC_ASSETS,
 } satisfies RecipeConfig<"ritual-almanac">;
 
+config.surfaces.home.source.html = config.surfaces.home.source.html
+  .replace(`</figure></section><section class="time-chapter">`, `<span class="hero-seal">A pantry for every hour</span></figure></section><section class="time-chapter">`)
+  .replace(`<button value="recover"`, `<button value="move" data-cd-on="click" data-cd-action="tabs.select" data-cd-target="moment">Move</button><button value="recover"`);
+config.surfaces.home.source.css += `.ritual-image{position:relative}.hero-seal{position:absolute;right:1rem;bottom:1rem;display:grid;width:7rem;aspect-ratio:1;place-items:center;padding:1rem;border-radius:50%;background:var(--sun);text-align:center}`;
+config.surfaces.search.source.html = config.surfaces.search.source.html
+  .replace(`<article data-cd-key="product.id"><h2`, `<article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="520" height="620"><h2`)
+  .replace(`</b><a data-cd-route="product"`, `</b><span data-cd-text="product.availability"></span><a data-cd-route="product"`);
 config.surfaces.shell.source.css += `.almanac-shell{display:flex;align-items:center;gap:1.25rem;min-height:4rem;padding:.75rem 1rem;background:var(--milk);color:var(--ink);border-bottom:1px solid var(--moss)}.almanac-shell nav{margin-left:auto}.almanac-shell a{color:var(--ink);text-decoration:none}.almanac-shell~footer{display:flex;flex-wrap:wrap;gap:1rem;padding:1rem;background:var(--paper);color:var(--ink)}.almanac-shell~footer a{color:var(--ink);text-decoration:none}@media(max-width:720px){.almanac-shell{grid-template-columns:1fr}.almanac-shell nav{margin-left:0}}`;
 
 const distinguishedConfig = {

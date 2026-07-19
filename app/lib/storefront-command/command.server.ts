@@ -35,7 +35,6 @@ import {
 import { buildCatalogRoutingEvidence } from "~/lib/storefront-bundle/routing-evidence.server";
 import {
   explicitStoreTemplateExclusions,
-  explicitStoreTemplateSelections,
   resolveStoreDesign,
 } from "~/lib/storefront-bundle/routing";
 import type {
@@ -54,7 +53,7 @@ import { requirePublishableTenantDomain } from "~/lib/storebuilder/studio.server
 import { getPreviewCatalog } from "~/lib/storefront/catalog.server";
 import { generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
 import { storefrontAiBrowserProof } from "~/lib/storefront-validation/browser.server";
-import { applyStoreIntent, canApplyStoreTextSlot, readStoreTextSlot } from "./apply";
+import { applyStoreIntent } from "./apply";
 import { classifyStoreIntent, type StoreIntentClassificationOptions } from "./intent.server";
 import {
   STORE_COMMAND_LIMITS,
@@ -450,41 +449,6 @@ function hasOwnedProducts(assembly: StorefrontContextAssembly, productIds: reado
   return productIds.every((id) => availableIds.has(id));
 }
 
-function carryDeclaredOverrides(
-  source: StorefrontBundleV1,
-  target: StorefrontBundleV1,
-  assembly: StorefrontContextAssembly,
-  dependencies: StoreCommandDependencies,
-): StorefrontBundleV1 {
-  if (source.source.kind !== "recipe" || target.source.kind !== "recipe") return target;
-  const sourceTemplate = getStoreTemplate(source.source.templateId);
-  const targetTemplate = getStoreTemplate(target.source.templateId);
-  let result = target;
-  const heroTitle = readStoreTextSlot(source, sourceTemplate, "heroTitle");
-  if (heroTitle && canApplyStoreTextSlot(result, targetTemplate, "heroTitle")) {
-    result = dependencies.applyIntent(result, targetTemplate, {
-      kind: "update_text",
-      slot: "heroTitle",
-      value: heroTitle,
-    }).bundle;
-  }
-  const ownedIds = new Set(Object.values(assembly.references.products).map(({ id }) => id));
-  const featuredProductIds = (source.featuredProductIds ?? []).filter((id) => ownedIds.has(id));
-  if (featuredProductIds.length > 0) {
-    result = dependencies.applyIntent(result, targetTemplate, {
-      kind: "update_merchandising",
-      productIds: featuredProductIds,
-    }).bundle;
-  }
-  if (source.visualLayer !== undefined) {
-    result = dependencies.applyIntent(result, targetTemplate, {
-      kind: "update_visual_layer",
-      visualLayer: source.visualLayer,
-    }).bundle;
-  }
-  return result;
-}
-
 function operationAudit(intent: StoreIntent | null, resolution: StoreDesignResolution | null): Record<string, unknown> {
   if (intent?.kind === "update_text") return { kind: intent.kind, slot: intent.slot };
   if (intent?.kind === "update_merchandising") return { kind: intent.kind, productIds: intent.productIds };
@@ -660,18 +624,7 @@ export async function runStoreCommand(
           throw new StoreCommandError("storefront_command_unavailable", "No approved storefront design is available.", 503);
         }
         const recipe = await loadSelectedRecipe(designResolution, dependencies);
-        const explicitlyNamed = explicitStoreTemplateSelections(
-          input.command.prompt,
-          STORE_TEMPLATE_REGISTRY,
-        ).includes(designResolution.templateId);
-        nextBundle = explicitlyNamed
-          ? recipe.bundle
-          : carryDeclaredOverrides(
-            state.draft.bundle,
-            recipe.bundle,
-            classificationAssembly,
-            dependencies,
-          );
+        nextBundle = recipe.bundle;
       } else {
         if (!currentTemplateId) {
           return ready(input, unchanged("That change is not available for this storefront yet."));

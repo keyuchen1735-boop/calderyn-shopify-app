@@ -7,10 +7,20 @@ const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((nod
 const actions = (route: RouteArtifact) => route.interactions.transitions.map((item) => item.action.type);
 
 describe("ritual-almanac storefront recipe", () => {
+  it("keeps the original arched hero seal and five-part day wheel", () => {
+    expect(RITUAL_ALMANAC_RECIPE.bundle.routes.home.html).toContain("A pantry for every hour");
+    expect(RITUAL_ALMANAC_RECIPE.bundle.routes.home.html).toContain(">Move</button>");
+  });
+
+  it("renders provision imagery and availability in almanac search results", () => {
+    const paths = RITUAL_ALMANAC_RECIPE.bundle.routes.search.bindings.map((binding) => binding.ref.kind === "data" ? binding.ref.path : null);
+    expect(paths).toEqual(expect.arrayContaining(["product.primaryImage", "product.title", "product.description", "product.price", "product.availability"]));
+  });
+
   it("compiles editorial ritual chapters, cadence selection, and every commerce surface", () => {
     const { bundle, config, report } = RITUAL_ALMANAC_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ritual-almanac", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ritual-almanac", templateVersion: 3 });
     expect(config.archetype).toEqual({ composition: "editorial-almanac", hero: "ritual-time-hero", scroll: "almanac-chapters", cards: "ritual-entries", iconography: ["time ritual marks", "flavor note symbols"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "fraunces", bodyFontId: "inter", iconStyle: "time-of-day marks and restrained flavor-note symbols", motionStyle: "chapter reveals with ritual-time tab transitions" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

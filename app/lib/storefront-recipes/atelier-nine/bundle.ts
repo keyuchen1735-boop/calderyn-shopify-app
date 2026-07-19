@@ -61,7 +61,7 @@ const homeHtml = `
       <div class="product-grid">
         <article class="product" data-cd-repeat="featured.products">
           <a class="atelier-link" data-cd-key="product.id" data-cd-route="product" data-cd-param-handle="product.handle">
-            <div class="product-media"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="800" height="1000" loading="lazy"><span class="product-badge">Edition</span></div>
+            <div class="product-media"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="800" height="1000" loading="lazy"><span class="product-badge" data-cd-text="product.availability"></span></div>
             <div class="product-info"><span data-cd-text="product.title"></span><span class="atelier-price" data-cd-money="product.price"></span><span class="atelier-card-description" data-cd-text="product.description"></span></div>
           </a>
         </article>
@@ -258,6 +258,7 @@ const searchHtml = `
         <span class="atelier-search-name" data-cd-text="product.title"></span>
         <span class="atelier-price" data-cd-money="product.price"></span>
         <span class="atelier-card-description" data-cd-text="product.description"></span>
+        <span class="atelier-search-availability" data-cd-text="product.availability"></span>
       </a>
     </article>
   </section>
@@ -279,7 +280,8 @@ const searchCss = `
 .atelier-search-result { border-right:1px solid #aaa49b; border-bottom:1px solid #aaa49b }
 .atelier-search-name, .atelier-search-result .atelier-price { display:block; padding:.7rem .8rem 0 }
 .atelier-search-result .atelier-price { padding:.2rem .8rem 0 }
-.atelier-search-result .atelier-card-description { padding:.45rem .8rem 1rem }
+.atelier-search-result .atelier-card-description { padding:.45rem .8rem 0 }
+.atelier-search-availability { display:block; padding:.2rem .8rem 1rem; color:#706c65; font-family:var(--font-body); font-size:.76rem }
 .atelier-search-image { aspect-ratio:4 / 5 }
 @media (max-width:760px) {
   .atelier-search-tools { overflow-x:auto }
@@ -357,7 +359,7 @@ const checkoutCss = `
 
 const config = {
   templateId: "atelier-nine",
-  templateVersion: 3,
+  templateVersion: 4,
   concept: {
     name: "Atelier Grid",
     rationale: "A complete commerce journal that treats products as an edited fashion issue without obscuring purchase paths.",

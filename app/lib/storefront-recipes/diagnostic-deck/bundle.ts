@@ -2,7 +2,7 @@ import { defineRecipe, prependRecipeLandmark, type RecipeConfig } from "../facto
 import { DIAGNOSTIC_DECK_ASSETS } from "./assets";
 
 const config = {
-  templateId: "diagnostic-deck", templateVersion: 2,
+  templateId: "diagnostic-deck", templateVersion: 3,
   concept: { name: "Diagnostic Deck", rationale: "A dense exact-unit exchange where grade, inspection, and warranty evidence precede price.", noveltySignature: ["diagnostic-terminal", "exact-unit-passports", "deck-snap-comparison"] },
   designSystem: {
     displayFontId: "archivo-narrow", bodyFontId: "ibm-plex-mono",
@@ -46,8 +46,17 @@ const config = {
 
 config.surfaces.shell.source.css += `.terminal-shell{display:grid;grid-template-columns:auto minmax(10rem,1fr) auto auto;align-items:center;gap:1rem;min-height:4rem;padding:.75rem 1rem;background:var(--ink);color:var(--paper);border-bottom:1px solid var(--green)}.terminal-shell a{color:var(--paper);text-decoration:none}.terminal-shell nav a:hover{background:var(--green);color:var(--ink)}.terminal-shell~footer{display:flex;flex-wrap:wrap;gap:1rem;padding:1rem;background:var(--panel);color:var(--paper)}.terminal-shell~footer a{color:var(--paper);text-decoration:none}@media(max-width:720px){.terminal-shell{grid-template-columns:1fr}.terminal-shell nav{padding-bottom:.25rem}}`;
 config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
+  `</figure><div class="scan-copy`,
+  `<span class="scan-line" aria-hidden="true"></span><span class="target-reticle" aria-hidden="true"></span></figure><div class="scan-copy`,
+);
+config.surfaces.home.source.css += `.scan-hero figure{position:relative;overflow:hidden}.scan-line{position:absolute;inset:50% 0 auto;border-top:2px solid var(--green);box-shadow:0 0 1rem var(--green)}.target-reticle{position:absolute;inset:50% auto auto 50%;width:5rem;height:5rem;border:1px solid var(--green);transform:translate(-50%,-50%)}`;
+config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
   `class="readout-bank"`,
   `class="readout-bank" tabindex="0" aria-label="Diagnostic readouts"`,
+);
+config.surfaces.search.source.html = config.surfaces.search.source.html.replace(
+  `<article data-cd-key="product.id"><h2`,
+  `<article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="520" height="390"><h2`,
 );
 const distinguishedConfig = {
   ...config,

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
 import { BROADCAST_PATCH_BAY_ASSETS } from "./assets";
@@ -5,12 +8,39 @@ import { BROADCAST_PATCH_BAY_RECIPE } from "./bundle";
 
 const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((node) => node.kind === "text" ? [] : [...(node.repeat ? [node.repeat.source] : []), ...repeats(node.children)]);
 const actions = (route: RouteArtifact) => route.interactions.transitions.map((item) => item.action.type);
+const CANONICAL_HTML = readFileSync(path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../../docs/superpowers/prototypes/storefront-recipes/broadcast-patch-bay.html",
+), "utf8");
 
 describe("broadcast-patch-bay storefront recipe", () => {
+  it("preserves the approved split hero geometry and concise source copy", () => {
+    const { html, css } = BROADCAST_PATCH_BAY_RECIPE.config.surfaces.home.source;
+    for (const className of ["hero", "heroCopy", "heroMedia", "heroTag", "wave"]) {
+      expect(CANONICAL_HTML).toMatch(new RegExp(`class="[^"]*\\b${className}\\b`));
+      expect(html).toMatch(new RegExp(`class="[^"]*\\b${className}\\b`));
+      expect(css).toContain(`.${className}`);
+    }
+    expect(html).toContain("Build the clean signal.");
+    expect(html).toContain("Low-latency controls, clear audio and the exact links between.");
+  });
+
+  it("preserves the signal-chain, live merchandising, and loadout compositions", () => {
+    const { html, css } = BROADCAST_PATCH_BAY_RECIPE.config.surfaces.home.source;
+    for (const className of ["signalSection", "sectionHead", "chain", "channel", "merch", "productGrid", "loadout", "builder", "switches", "rack"]) {
+      expect(CANONICAL_HTML).toMatch(new RegExp(`class="[^"]*\\b${className}\\b`));
+      expect(html).toMatch(new RegExp(`class="[^"]*\\b${className}\\b`));
+      expect(css).toContain(`.${className}`);
+    }
+    expect(html).toContain("Every node is a live collection role.");
+    expect(html).toContain("One desk.<br>One clean<br>route.");
+    expect(actions(BROADCAST_PATCH_BAY_RECIPE.bundle.routes.home)).toContain("tabs.select");
+  });
+
   it("compiles a modular signal patch bay and complete creator-commerce route matrix", () => {
     const { bundle, config, report } = BROADCAST_PATCH_BAY_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 4 });
     expect(config.archetype).toEqual({ composition: "signal-patch-bay", hero: "rig-signal-chain", scroll: "modular-patching", cards: "signal-modules", iconography: ["signal path glyphs", "compatibility port marks"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "space-grotesk", bodyFontId: "ibm-plex-mono", iconStyle: "signal-path glyphs and compatibility-port marks", motionStyle: "modular patch transitions with reduced-motion static routing" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
