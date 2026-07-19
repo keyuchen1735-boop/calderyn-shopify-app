@@ -44,6 +44,111 @@ export function actionStreamWindow<T>(items: readonly T[], start: number, size: 
   );
 }
 
+export interface KpiReaction {
+  kind: "approve" | "reject";
+  impactCents: number;
+  protectedBeforeCents: number;
+  pendingBeforeCents: number;
+  queueBefore: number;
+  confidenceBefore: number;
+  confidenceAfter: number;
+}
+
+function KpiGraph({
+  label,
+  before,
+  after,
+  format,
+  formatDelta,
+  tone,
+}: {
+  label: string;
+  before: number;
+  after: number;
+  format: (value: number) => string;
+  formatDelta: (value: number) => string;
+  tone: KpiReaction["kind"] | "idle";
+}) {
+  const span = Math.max(Math.abs(before), Math.abs(after), 1);
+  const y = (value: number) => 50 - (value / span) * 32;
+  const beforeY = y(before);
+  const afterY = y(after);
+  const delta = after - before;
+
+  return (
+    <div className="cd-ap-map-kpi" data-tone={delta === 0 ? "idle" : tone}>
+      <div className="cd-ap-map-kpi-head">
+        <span>{label}</span>
+        <span className="cd-ap-map-kpi-live">
+          <b key={after} className="tabular-nums" data-kpi-value>{format(after)}</b>
+          <small className="tabular-nums" data-kpi-delta>
+            {delta === 0 ? "—" : formatDelta(delta)}
+          </small>
+        </span>
+      </div>
+      <svg
+        data-kpi-graph
+        viewBox="0 0 180 62"
+        role="img"
+        aria-label={`${label}: ${format(before)} to ${format(after)}`}
+      >
+        <path className="cd-ap-map-grid" d="M8 50H172 M8 18H172" />
+        <path className="cd-ap-map-line" d={`M14 ${beforeY} L166 ${afterY}`} />
+        <line className="cd-ap-map-event" x1="90" y1="10" x2="90" y2="54" />
+        <circle className="cd-ap-map-dot" cx="14" cy={beforeY} r="3.5" />
+        <circle className="cd-ap-map-dot cd-ap-map-dot-after" cx="166" cy={afterY} r="4.5" />
+      </svg>
+      <div className="cd-ap-map-axis"><span>Before</span><span>Now</span></div>
+    </div>
+  );
+}
+
+export function AutopilotKpis({
+  queue,
+  protectedCents,
+  calibrationPct,
+  reaction,
+}: {
+  queue: QueueProposalVM[];
+  protectedCents: number;
+  calibrationPct: number;
+  reaction: KpiReaction | null;
+}) {
+  const pendingNow = queue.reduce(
+    (sum, proposal) => sum + Math.max(0, proposal.dollar_impact),
+    0,
+  );
+  const fallbackConfidence = queue[0]?.confidence ?? calibrationPct;
+  const impact = reaction?.impactCents ?? 0;
+  const protectedBefore = reaction?.protectedBeforeCents ?? protectedCents;
+  const pendingBefore = reaction?.pendingBeforeCents ?? pendingNow;
+  const queueBefore = reaction?.queueBefore ?? queue.length;
+  const confidenceBefore = reaction?.confidenceBefore ?? fallbackConfidence;
+  const protectedAfter = reaction?.kind === "approve" ? protectedBefore + impact : protectedBefore;
+  const pendingAfter = reaction ? Math.max(0, pendingBefore - impact) : pendingBefore;
+  const queueAfter = reaction ? Math.max(0, queueBefore - 1) : queueBefore;
+  const confidenceAfter = reaction?.confidenceAfter ?? confidenceBefore;
+  const tone = reaction?.kind ?? "idle";
+  const moneyDelta = (value: number) => `${value > 0 ? "+" : "−"}${money(Math.abs(value))}`;
+  const countDelta = (value: number) => `${value > 0 ? "+" : "−"}${Math.abs(value)}`;
+  const percentDelta = (value: number) => `${value > 0 ? "+" : "−"}${Math.abs(Math.round(value))} pts`;
+
+  return (
+    <section className="cd-card cd-ap-map" aria-labelledby="cd-ap-map-title">
+      <div className="cd-ap-map-head">
+        <h2 id="cd-ap-map-title" className="cd-h2">Decision impact</h2>
+        <span className="cd-caption">Updates after every Action Queue decision</span>
+      </div>
+      <div className="cd-ap-map-kpis" aria-live="polite">
+        <KpiGraph label="Protected this week" before={protectedBefore} after={protectedAfter} format={money} formatDelta={moneyDelta} tone={tone} />
+        <KpiGraph label="Revenue at risk" before={pendingBefore} after={pendingAfter} format={money} formatDelta={moneyDelta} tone={tone} />
+        <KpiGraph label="Queue items" before={queueBefore} after={queueAfter} format={(value) => String(value)} formatDelta={countDelta} tone={tone} />
+        <KpiGraph label="Action confidence" before={confidenceBefore} after={confidenceAfter} format={(value) => `${Math.round(value)}%`} formatDelta={percentDelta} tone={tone} />
+      </div>
+    </section>
+  );
+}
+
 const STREAM_SIZE = 4;
 const STREAM_INTERVAL_MS = 3200;
 const STREAM_MOVE_MS = 520;
@@ -69,6 +174,7 @@ export function CalibrationTrainer({
   const [streamStart, setStreamStart] = useState(0);
   const [streamMoving, setStreamMoving] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [reaction, setReaction] = useState<KpiReaction | null>(null);
 
   const queue = app.actionQueue;
   const atStake = queue.reduce((n, p) => n + (p.dollar_impact > 0 ? p.dollar_impact : 0), 0);
@@ -160,6 +266,25 @@ export function CalibrationTrainer({
       p.action_kind,
     );
 
+  const rowTitle = (p: QueueProposalVM): string =>
+    sayLine(p.action_kind, p.title) ??
+    `${featureLabel(p.detector_id, p.action_kind as ActionKind)}: ${p.title}`;
+
+  const reactionFor = (
+    p: QueueProposalVM,
+    kind: KpiReaction["kind"],
+    confidenceBefore: number,
+    confidenceAfter: number,
+  ): KpiReaction => ({
+    kind,
+    impactCents: Math.max(0, p.dollar_impact),
+    protectedBeforeCents: app.liveEngine?.moneyProtectedWeekCents ?? 0,
+    pendingBeforeCents: atStake,
+    queueBefore: queue.length,
+    confidenceBefore,
+    confidenceAfter,
+  });
+
   const approve = async (p: QueueProposalVM) => {
     if (teachingBusy) return;
     const alert = app.alerts.find((a) => a.id === p.alertId);
@@ -170,8 +295,17 @@ export function CalibrationTrainer({
     setApproving(p.alertId);
     try {
       // Real platform execution; the error toast fires inside executeAction.
-      const { ok } = await app.executeAction(alert, p.action_kind);
-      if (ok) app.refresh();
+      const { ok, receipt } = await app.executeAction(alert, p.action_kind);
+      if (ok) {
+        setReaction(reactionFor(
+          p,
+          "approve",
+          receipt?.before ?? p.confidence,
+          receipt?.after ?? p.confidence,
+        ));
+        app.refresh();
+        app.refreshLiveEngine();
+      }
     } finally {
       setApproving(null);
     }
@@ -181,13 +315,14 @@ export function CalibrationTrainer({
     if (teachingBusy) return;
     setRejectBusy(true);
     try {
-      await client.rejectProposal({
+      const receipt = await client.rejectProposal({
         alertId: p.alertId,
         reason,
         ...(noteText ? { note: noteText } : {}),
       });
       setOpenRow(null);
       setNote("");
+      setReaction(reactionFor(p, "reject", receipt.before, receipt.after));
       app.toast("Feedback saved. Calderyn will factor it in.", "check");
       app.refresh();
     } catch (err) {
@@ -208,7 +343,17 @@ export function CalibrationTrainer({
         const alert = app.alerts.find((a) => a.id === p.alertId);
         // oneClickKind re-narrows the string kind; callers only pass groups
         // where every item already passed canOneClick.
-        if (alert && oneClickKind(p.action_kind)) await app.executeAction(alert, p.action_kind);
+        if (alert && oneClickKind(p.action_kind)) {
+          const { ok, receipt } = await app.executeAction(alert, p.action_kind);
+          if (ok) {
+            setReaction(reactionFor(
+              p,
+              "approve",
+              receipt?.before ?? p.confidence,
+              receipt?.after ?? p.confidence,
+            ));
+          }
+        }
         setBatchLeft((n) => (n === null ? null : Math.max(0, n - 1)));
       }
       app.refresh();
@@ -216,10 +361,6 @@ export function CalibrationTrainer({
       setBatchLeft(null);
     }
   };
-
-  const rowTitle = (p: QueueProposalVM): string =>
-    sayLine(p.action_kind, p.title) ??
-    `${featureLabel(p.detector_id, p.action_kind as ActionKind)}: ${p.title}`;
 
   const renderActionRow = (
     p: QueueProposalVM,
@@ -340,6 +481,12 @@ export function CalibrationTrainer({
 
   return (
     <>
+      <AutopilotKpis
+        queue={queue}
+        protectedCents={app.liveEngine?.moneyProtectedWeekCents ?? 0}
+        calibrationPct={pct}
+        reaction={reaction}
+      />
       <div className="cd-card cd-ap-stream-card">
         <div className="cd-calib-split">
           <div className="cd-calib-left cd-ap-stream-kpis">
