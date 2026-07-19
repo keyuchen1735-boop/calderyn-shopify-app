@@ -6,7 +6,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardCtx } from "../context";
 import type * as DashboardUI from "../ui";
 import type { QueueProposalVM } from "../view-models";
-import { actionStreamWindow, CalibrationTrainer } from "../screens/Autopilot";
+import {
+  actionStreamWindow,
+  AutopilotKpis,
+  CalibrationTrainer,
+  type KpiReaction,
+} from "../screens/Autopilot";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -69,6 +74,15 @@ describe("CalibrationTrainer action stream", () => {
     expect(host.querySelectorAll(".cd-ap-stream-row")).toHaveLength(4);
     expect(host.textContent).toContain("46%");
     expect(host.textContent).toContain("$4.8k");
+    const kpis = host.querySelector(".cd-ap-map");
+    const actionQueue = host.querySelector(".cd-ap-stream-card");
+    expect(kpis).not.toBeNull();
+    expect(actionQueue).not.toBeNull();
+    expect(
+      kpis && actionQueue
+        ? Boolean(kpis.compareDocumentPosition(actionQueue) & Node.DOCUMENT_POSITION_FOLLOWING)
+        : false,
+    ).toBe(true);
 
     act(() => vi.advanceTimersByTime(3_200));
     expect(host.querySelectorAll(".cd-ap-stream-row")).toHaveLength(5);
@@ -99,6 +113,76 @@ describe("CalibrationTrainer action stream", () => {
     expect(host.querySelector(".cd-ap-stream-row")?.getAttribute("data-alert-id")).toBe(
       "alert-4",
     );
+
+    act(() => root.unmount());
+    host.remove();
+  });
+});
+
+describe("Autopilot KPI small multiples", () => {
+  const queue = [proposal(1), proposal(2)];
+
+  const renderMap = (reaction: KpiReaction | null) => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        <AutopilotKpis
+          queue={queue}
+          protectedCents={540_000}
+          calibrationPct={46}
+          reaction={reaction}
+        />,
+      );
+    });
+    return { host, root };
+  };
+
+  it("shows concise reactive values without duplicating feature status", () => {
+    const reaction: KpiReaction = {
+      kind: "approve",
+      impactCents: 64_000,
+      protectedBeforeCents: 540_000,
+      pendingBeforeCents: 96_000,
+      queueBefore: 2,
+      confidenceBefore: 82,
+      confidenceAfter: 87,
+    };
+    const { host, root } = renderMap(reaction);
+
+    expect(host.querySelectorAll("[data-kpi-graph]")).toHaveLength(4);
+    expect(
+      Array.from(host.querySelectorAll("[data-kpi-value]"), (node) => node.textContent),
+    ).toEqual(["$6,040", "$320", "1", "87%"]);
+    expect(
+      Array.from(host.querySelectorAll("[data-kpi-delta]"), (node) => node.textContent),
+    ).toEqual(["+$640", "−$640", "−1", "+5 pts"]);
+    expect(host.textContent).not.toContain("→");
+    expect(host.querySelector("[aria-label='Autopilot feature states']")).toBeNull();
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("leaves protected money unchanged when the action is rejected", () => {
+    const reaction: KpiReaction = {
+      kind: "reject",
+      impactCents: 64_000,
+      protectedBeforeCents: 540_000,
+      pendingBeforeCents: 96_000,
+      queueBefore: 2,
+      confidenceBefore: 82,
+      confidenceAfter: 74,
+    };
+    const { host, root } = renderMap(reaction);
+
+    expect(
+      Array.from(host.querySelectorAll("[data-kpi-value]"), (node) => node.textContent),
+    ).toEqual(["$5,400", "$320", "1", "74%"]);
+    expect(
+      Array.from(host.querySelectorAll("[data-kpi-delta]"), (node) => node.textContent),
+    ).toEqual(["—", "−$640", "−1", "−8 pts"]);
 
     act(() => root.unmount());
     host.remove();
