@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { LinksFunction, MetaFunction } from "@remix-run/node";
 
 import AssistantPanel from "~/components/dashboard/AssistantPanel";
+import { CalderynHexMark } from "~/components/CalderynHexMark";
 import { CDIcon } from "~/components/dashboard/icons";
 import Orders from "~/components/dashboard/screens/Orders";
 import type { DashboardCtx, NavState, Screen } from "~/components/dashboard/context";
@@ -391,10 +392,7 @@ export default function OrdersPreview() {
     <div className={`cd-root${dark ? " cd-dark" : ""}`} style={{ "--radius": "14px", "--glass": 0.72, "--density": 0.82, "--type-scale": 0.9 } as React.CSSProperties}>
       <aside className="cd-sidebar">
         <div className="cd-side-brand" onClick={() => setNav({ screen: "orders", param: null, sub: "orders" })}>
-          <svg className="cd-logo cd-logo-mark" viewBox="0 0 32 32" fill="none" aria-label="Calderyn">
-            <path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z" fill="var(--accent)" />
-            <path d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85" stroke="var(--on-accent)" strokeWidth="3.6" strokeLinejoin="round" strokeLinecap="round" />
-          </svg>
+          <CalderynHexMark className="cd-logo cd-logo-mark" size={32} />
           <div><div className="cd-brand-name">Calderyn</div><div className="cd-brand-sub">Peak & Pine</div></div>
         </div>
         <nav className="cd-side-nav cd-nav-scroll">

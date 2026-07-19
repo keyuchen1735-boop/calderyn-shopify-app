@@ -179,9 +179,9 @@ export default function AutopilotHero(props: AutopilotHeroProps) {
         <div className="ha-head" style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
           <span className="ha-fx" style={{ flex: "0 0 auto", display: "inline-flex", filter: "drop-shadow(0 5px 12px rgba(0,0,0,.28))" }}>
             <svg width="50" height="50" viewBox="0 0 32 32" fill="none">
-              <path className="ha-hexbase" d="M16 2.4 L27.86 9 L27.86 22.9 L16 29.6 L4.14 22.9 L4.14 9 Z" fill="#111113" stroke="rgba(255,255,255,.16)" strokeWidth="1.4" strokeLinejoin="round" />
-              <path className="ha-hexprog" d="M16 2.4 L27.86 9 L27.86 22.9 L16 29.6 L4.14 22.9 L4.14 9 Z" pathLength={1} fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" strokeDasharray="1 1" strokeDashoffset={1} />
-              <path className="ha-hexc" d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85" fill="none" stroke="#fff" strokeWidth="3.2" strokeLinejoin="round" strokeLinecap="round" />
+              <path className="ha-hexbase" d="M16 4.182 L26.23 10.091 L26.23 21.909 L16 27.818 L5.77 21.909 L5.77 10.091 Z" fill="#111113" stroke="rgba(255,255,255,.16)" strokeWidth="1.4" strokeLinejoin="round" />
+              <path className="ha-hexprog" d="M16 4.182 L26.23 10.091 L26.23 21.909 L16 27.818 L5.77 21.909 L5.77 10.091 Z" pathLength={1} fill="none" strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" strokeDasharray="1 1" strokeDashoffset={1} />
+              <path className="ha-hexc" d="M16 7.457 L23.398 11.728 L23.398 20.272 L16 24.543 L8.602 20.272 L8.602 11.728 Z M16 9.739 L21.422 12.87 L21.422 19.13 L16 22.261 L10.578 19.13 L10.578 12.87 Z M21.422 14.469 L23.398 14.469 L23.398 17.531 L21.422 17.531 Z" fill="#fff" fillRule="evenodd" />
             </svg>
           </span>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>

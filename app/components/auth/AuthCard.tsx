@@ -6,6 +6,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { authErrorMessage, AUTH_NOTICE_MESSAGES } from "~/lib/auth/messages";
+import { CalderynHexMark } from "~/components/CalderynHexMark";
 import { CDIcon } from "~/components/dashboard/icons";
 
 export function AuthShell({ children }: { children: ReactNode }) {
@@ -15,16 +16,7 @@ export function AuthShell({ children }: { children: ReactNode }) {
         <div className="cd-auth-card">
           <a className="cd-auth-brand" href="https://calderyncompany.com">
             <span className="cd-auth-brand-mark">
-              <svg viewBox="0 0 32 32" fill="none" aria-hidden>
-                <path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z" fill="var(--accent)" />
-                <path
-                  d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
-                  stroke="var(--on-accent)"
-                  strokeWidth="3.6"
-                  strokeLinejoin="round"
-                  strokeLinecap="round"
-                />
-              </svg>
+              <CalderynHexMark />
             </span>
             Calderyn
           </a>

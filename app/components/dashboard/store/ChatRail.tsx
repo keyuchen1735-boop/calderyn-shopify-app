@@ -1,22 +1,12 @@
 import { useEffect, useRef, type ChangeEvent, type KeyboardEvent } from "react";
+import { CalderynHexMark } from "~/components/CalderynHexMark";
 import { CDIcon } from "../icons";
 import { buildSteps, canSendComposer } from "../screens/store-logic";
 import BuildStepsCard from "./BuildStepsCard";
 import type { ChatMsg } from "./chat-types";
 
 function RailMark() {
-  return (
-    <svg className="cd-rail-mark" viewBox="0 0 32 32" fill="none" role="img" aria-label="Calderyn">
-      <path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z" fill="var(--accent)" />
-      <path
-        d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
-        stroke="var(--on-accent)"
-        strokeWidth="3.6"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+  return <CalderynHexMark className="cd-rail-mark" size={18} />;
 }
 
 function Bubble({ message }: { message: ChatMsg }) {

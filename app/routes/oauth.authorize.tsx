@@ -14,6 +14,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 import oauthConnectStyles from "~/styles/oauth-connect.css?url";
+import { CalderynHexMark } from "~/components/CalderynHexMark";
 import { getClient, signPendingOauth } from "~/lib/mcp_oauth.server";
 import { buildAppConnectUrl, SHOP_RE } from "~/lib/connect-deeplink";
 import { readShopHintCookie } from "~/lib/connect-deeplink.server";
@@ -149,18 +150,7 @@ function ClaudeMark() {
 
 /** The Calderyn hex brand mark — same glyph as the dashboard shell. */
 function CalderynHex() {
-  return (
-    <svg className="cdc-hex" viewBox="0 0 32 32" fill="none" role="img" aria-label="Calderyn">
-      <path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z" fill="#24556E" />
-      <path
-        d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
-        stroke="#fff"
-        strokeWidth="3.6"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+  return <CalderynHexMark className="cdc-hex" size={38} color="var(--text-1)" />;
 }
 
 export default function AuthorizeInterstitial() {

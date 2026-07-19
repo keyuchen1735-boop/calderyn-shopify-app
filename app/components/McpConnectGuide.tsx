@@ -59,7 +59,7 @@ function Hero() {
           marginBottom: 12,
         }}
       >
-        <CalderynHexMark size={34} />
+        <CalderynHexMark size={34} color="#111827" />
       </div>
       <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.01em" }}>
         Calderyn MCP for Claude
