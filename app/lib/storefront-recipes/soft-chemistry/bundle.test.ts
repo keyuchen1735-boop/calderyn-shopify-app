@@ -7,12 +7,12 @@ describe("Soft Chemistry storefront recipe", () => {
   it("compiles a clinical editorial routine across the full commerce contract", () => {
     const { bundle, config, report } = SOFT_CHEMISTRY_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 7 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 9 });
     expect(config.archetype).toMatchObject({ composition: "clinical-editorial", hero: "ingredient-routine-hero", scroll: "soft-reveal", cards: "ingredient-dossiers" });
-    expect(bundle.designSystem).toMatchObject({ displayFontId: "source-serif-4", bodyFontId: "inter" });
+    expect(bundle.designSystem).toMatchObject({ displayFontId: "cormorant-garamond", bodyFontId: "manrope" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
     expect(bundle.assets.entries).toEqual(expect.arrayContaining([
-      expect.objectContaining({ key: "hero", byteSize: 40456 }),
+      expect.objectContaining({ key: "hero", byteSize: 184188 }),
       expect.objectContaining({ key: "collection" }),
       expect.objectContaining({ key: "texture" }),
     ]));
@@ -81,7 +81,7 @@ describe("Soft Chemistry storefront recipe", () => {
     expect(config.surfaces.search.source.css).toContain("white-space:nowrap");
     expect(config.surfaces.cart.source.html).not.toContain('class="cart-intro"');
     expect(config.surfaces.checkout.source.html).toContain('class="checkout-frame"');
-    expect(config.surfaces.shell.source.html).toContain('class="visually-hidden" data-cd-route="account"');
+    expect(config.surfaces.shell.source.html).toContain('data-cd-route="account"');
     expect(config.surfaces.shell.source.html).toContain('class="visually-hidden" data-cd-policy-links');
   });
 });

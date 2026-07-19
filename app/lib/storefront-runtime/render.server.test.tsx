@@ -9,6 +9,7 @@ import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 import { SOFT_CHEMISTRY_BUNDLE } from "~/lib/storefront-recipes/soft-chemistry/bundle";
 import { resolveStorefrontVisualPlacement } from "./visual-layer.server";
+import { CURATED_STOREFRONT_FONTS } from "./curated-fonts";
 import {
   renderStorefrontSurface,
   renderCheckoutRoute,
@@ -76,17 +77,6 @@ function artifact(overrides: Partial<RouteArtifact> = {}): RouteArtifact {
 
 describe("compiled-node server renderer", () => {
   it("emits validated design tokens and every curated self-hosted font beneath the bundle root", () => {
-    const expectedFamilies: Record<(typeof CURATED_FONT_IDS)[number], string> = {
-      "archivo-narrow": "CD Archivo Narrow",
-      "atkinson-hyperlegible": "CD Atkinson Hyperlegible",
-      fraunces: "CD Fraunces",
-      "ibm-plex-mono": "CD IBM Plex Mono",
-      inter: "CD Inter",
-      "roboto-slab": "CD Roboto Slab",
-      "source-serif-4": "CD Source Serif 4",
-      "space-grotesk": "CD Space Grotesk",
-    };
-
     for (const fontId of CURATED_FONT_IDS) {
       const source = structuredClone(VALID_BUNDLE_SOURCE);
       source.designSystem.displayFontId = fontId;
@@ -99,19 +89,23 @@ describe("compiled-node server renderer", () => {
         nonce: "font-nonce",
         mode: "public",
       }));
-      const fontPath = resolve(process.cwd(), `public/storefront-fonts/${fontId}-latin.woff2`);
+      const definition = CURATED_STOREFRONT_FONTS[fontId];
+      const family = definition.family.startsWith("CD ") ? definition.family : `'${definition.family}'`;
 
       expect(html).toContain('data-cd-bundle-style="tokens"');
       expect(html).not.toContain("width:min(450px,calc(48% - 68px))");
       expect(html).toContain("--ink:#123456");
       expect(html).toContain("--rhythm:clamp(1rem, 2vw, 2rem)");
-      expect(html).toContain(`--font-display:${expectedFamilies[fontId]}`);
-      expect(html).toContain(`--font-body:${expectedFamilies[fontId]}`);
-      expect(html).toContain(`/storefront-fonts/${fontId}-latin.woff2`);
+      expect(html).toContain(`--font-display:${family}`);
+      expect(html).toContain(`--font-body:${family}`);
       expect(html).not.toContain("fonts.googleapis.com");
       expect(html).not.toContain("fonts.gstatic.com");
-      expect(existsSync(fontPath)).toBe(true);
-      expect(existsSync(fontPath) ? statSync(fontPath).size : 0).toBeGreaterThan(1_000);
+      for (const { file } of definition.faces) {
+        const fontPath = resolve(process.cwd(), `public/storefront-fonts/${file}-latin.woff2`);
+        expect(html).toContain(`/storefront-fonts/${file}-latin.woff2`);
+        expect(existsSync(fontPath)).toBe(true);
+        expect(existsSync(fontPath) ? statSync(fontPath).size : 0).toBeGreaterThan(1_000);
+      }
     }
   });
 
@@ -140,7 +134,7 @@ describe("compiled-node server renderer", () => {
       bundle, routeId: "home", data, nonce: "asset-nonce", mode: "public",
     }));
 
-    expect(html).toContain('src="/storefront-recipes/atelier-nine/hero.webp"');
+    expect(html).toContain(`src="/storefront-recipes/atelier-nine/${"a".repeat(64)}.webp"`);
     expect(html).toContain('data-cd-asset-key="hero"');
   });
 
@@ -225,6 +219,27 @@ describe("compiled-node server renderer", () => {
     }));
 
     expect(html).not.toContain("data-cd-visual-host");
+    expect(html.match(/data-cd-asset-key="hero"/g)).toHaveLength(2);
+  });
+
+  it("uses the first static fallback when source-faithful editorial layouts reuse the hero asset", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "atelier-nine", templateVersion: 1 };
+    source.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
+    source.routes.home.html = `<main><figure><img data-cd-asset="hero" alt="Primary editorial look"></figure><figure><img data-cd-asset="hero" alt="Secondary editorial look"></figure></main>`;
+    const bundle = compileBundle(source).bundle;
+    bundle.visualLayer = {
+      kind: "fragment_shader",
+      source: "void main(){gl_FragColor=vec4(1.0);}",
+      colors: ["#000000", "#111111", "#222222"],
+    };
+
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "visual-nonce", mode: "public",
+      visualLayerPlacement: resolveStorefrontVisualPlacement(bundle, "home"),
+    }));
+
+    expect(html.match(/data-cd-visual-host=/g)).toHaveLength(1);
     expect(html.match(/data-cd-asset-key="hero"/g)).toHaveLength(2);
   });
 
@@ -675,7 +690,7 @@ describe("compiled-node server renderer", () => {
 
     expect(html).toContain('data-cd-media-fallback="true"');
     expect(html).toContain("width:min(450px,calc(48vw - 68px))");
-    expect(html).toContain('src="/storefront-recipes/soft-chemistry/hero.webp"');
+    expect(html).toContain(`src="/storefront-recipes/soft-chemistry/${SOFT_CHEMISTRY_BUNDLE.assets.entries[0]!.contentHash}.webp"`);
     expect(html).not.toContain('src="data:image/svg+xml,');
   });
 

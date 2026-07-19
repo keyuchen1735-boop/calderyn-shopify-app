@@ -26,7 +26,7 @@ describe("room-modes storefront recipe", () => {
     const { bundle, config, report } = ROOM_MODES_RECIPE;
 
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 3 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 5 });
     expect(config.archetype).toEqual({
       composition: "spatial-scenes",
       hero: "room-mode-scene",
@@ -35,15 +35,15 @@ describe("room-modes storefront recipe", () => {
       iconography: ["architectural plan symbols", "device protocol marks"],
     });
     expect(bundle.designSystem).toMatchObject({
-      displayFontId: "space-grotesk",
-      bodyFontId: "ibm-plex-mono",
+      displayFontId: "syne",
+      bodyFontId: "dm-mono",
       iconStyle: "architectural plan marks and protocol indicators",
       motionStyle: "vertical scene snap with reduced-motion linear fallback",
     });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
 
     expect(ROOM_MODES_ASSETS.entries).toEqual([
-      expect.objectContaining({ key: "hero", mediaType: "image/webp", byteSize: 80050 }),
+      expect.objectContaining({ key: "hero", mediaType: "image/webp", byteSize: 196856 }),
     ]);
     expect(bundle.assets).toEqual(ROOM_MODES_ASSETS);
     expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');

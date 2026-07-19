@@ -4,6 +4,10 @@ import { defineRecipe, type RecipeConfig } from "./factory";
 
 function testConfig(): RecipeConfig<"atelier-nine"> {
   const source = structuredClone(VALID_BUNDLE_SOURCE);
+  source.routes.home.html = `<main><img data-cd-asset="hero" alt="Test hero"><h1 data-cd-text="store.name"></h1></main>`;
+  source.assets = {
+    entries: [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 1 }],
+  };
   return {
     templateId: "atelier-nine",
     templateVersion: 1,
@@ -51,5 +55,12 @@ describe("storefront recipe factory", () => {
     for (const surface of Object.values(config.surfaces)) surface.signature = "generic storefront route";
 
     expect(() => defineRecipe(config)).toThrow(/distinct route composition signatures/i);
+  });
+
+  it("rejects recipes without a declared home hero image", () => {
+    const config = testConfig();
+    config.assets.entries = [];
+
+    expect(() => defineRecipe(config)).toThrow(/declared home hero image/i);
   });
 });

@@ -1,11 +1,12 @@
-import { defineRecipe, prependRecipeLandmark, type RecipeConfig } from "../factory";
+import sourceTemplate from "../../../../docs/superpowers/prototypes/storefront-recipes/diagnostic-deck.html?raw";
+import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, type RecipeConfig } from "../factory";
 import { DIAGNOSTIC_DECK_ASSETS } from "./assets";
 
 const config = {
-  templateId: "diagnostic-deck", templateVersion: 3,
+  templateId: "diagnostic-deck", templateVersion: 5,
   concept: { name: "Diagnostic Deck", rationale: "A dense exact-unit exchange where grade, inspection, and warranty evidence precede price.", noveltySignature: ["diagnostic-terminal", "exact-unit-passports", "deck-snap-comparison"] },
   designSystem: {
-    displayFontId: "archivo-narrow", bodyFontId: "ibm-plex-mono",
+    displayFontId: "archivo-black", bodyFontId: "dm-mono",
     tokens: { paper: "#e9e8df", ink: "#141613", green: "#b4ff47", amber: "#ffb727", red: "#ff5a48", panel: "#20231f", rule: "#353831", "terminal-gap": "20px" },
     breakpoints: { compact: 850, wide: 1280 }, iconStyle: "terminal condition marks and warranty-status glyphs", motionStyle: "deck snap with evidence-panel expansion",
     globalCss: `.terminal-title{font-family:var(--font-display);font-weight:700;letter-spacing:-.055em;line-height:.86;text-transform:uppercase}.diagnostic-label{font-family:var(--font-body);letter-spacing:.12em;text-transform:uppercase}`,
@@ -45,6 +46,8 @@ const config = {
 } satisfies RecipeConfig<"diagnostic-deck">;
 
 config.surfaces.shell.source.css += `.terminal-shell{display:grid;grid-template-columns:auto minmax(10rem,1fr) auto auto;align-items:center;gap:1rem;min-height:4rem;padding:.75rem 1rem;background:var(--ink);color:var(--paper);border-bottom:1px solid var(--green)}.terminal-shell a{color:var(--paper);text-decoration:none}.terminal-shell nav a:hover{background:var(--green);color:var(--ink)}.terminal-shell~footer{display:flex;flex-wrap:wrap;gap:1rem;padding:1rem;background:var(--panel);color:var(--paper)}.terminal-shell~footer a{color:var(--paper);text-decoration:none}@media(max-width:720px){.terminal-shell{grid-template-columns:1fr}.terminal-shell nav{padding-bottom:.25rem}}`;
+config.surfaces.shell.source.html = `<div class="sysbar"><span><i class="pulse"></i>All systems operational</span><span>Bench verified inventory / Toronto node / 13 Jul 2026</span><span>Warranty protocol 01</span></div><nav class="nav"><div class="logo">Diagnostic Deck<span>Refurbished device exchange</span></div><div class="command" id="command"><input id="navSearch" type="search" name="q" value="" placeholder="SEARCH MODEL / SPEC / USE CASE" aria-label="Search inventory" data-cd-on="input" data-cd-action="search.update"></div><div class="actions"><button class="sq" data-cd-route="home">Home</button><button class="sq" data-cd-route="collection">Inventory</button><button class="sq" data-cd-route="search">⌕</button><button class="sq" data-cd-route="cart">Cart <i class="cartCount" data-cd-text="cart.count">0</i></button></div></nav><aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="paper ink green"></aside><footer data-cd-policy-links></footer>`;
+config.surfaces.shell.source.css = sourceTemplateCss(sourceTemplate, config.surfaces.shell.source.html, { display: "Archivo Black", body: "DM Mono" });
 config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
   `</figure><div class="scan-copy`,
   `<span class="scan-line" aria-hidden="true"></span><span class="target-reticle" aria-hidden="true"></span></figure><div class="scan-copy`,
@@ -58,6 +61,37 @@ config.surfaces.search.source.html = config.surfaces.search.source.html.replace(
   `<article data-cd-key="product.id"><h2`,
   `<article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="520" height="390"><h2`,
 );
+config.surfaces.home.source.html = `<main class="home"><section class="hero"><div class="heroImage"><img data-cd-asset="hero" alt="Refurbished laptop on inspection bench"><div class="scan"></div><div class="target"></div><span class="scanLabel">UNIT ID / MBP-14-037</span></div><div class="heroData"><div class="crumb">Featured diagnostic / Grade A / Ready</div><h1>Known<br><em>condition.</em><br>Zero guesswork.</h1><p>Every device arrives with the evidence: battery cycles, port tests, repair history, exact-unit photography and a twelve-month bench warranty.</p><div class="readouts"><div class="readout"><label>Battery health</label><b>94%</b><small>Excellent</small></div><div class="readout"><label>Tests passed</label><b>36/36</b><small>Verified</small></div><div class="readout"><label>You save</label><b>$487</b><small>vs original</small></div></div><button class="primary" data-cd-route="collection"><span>Inspect featured device</span><span>Open →</span></button></div></section><section class="trust"><div><b>⌁ 36-point test</b><span>Documented per unit</span></div><div><b>▰ Battery stated</b><span>Health and cycle count</span></div><div><b>⌘ Ports verified</b><span>Every physical connection</span></div><div><b>□ 12-month cover</b><span>Parts and bench labour</span></div></section><section class="section"><div class="sectionHead"><h2>Live inventory matrix</h2><p>A dense, evidence-first view of the devices actually on the shelf. Expand any unit passport without leaving the matrix.</p></div><div class="deck"><div class="deckHeader"><span>#</span><span>Exact unit</span><span>Grade</span><span>Price</span><span>Battery</span><span>Ports</span><span>Passport</span></div><div class="matrix" data-cd-repeat="featured.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Open passport</a></article></div></div></section><section class="impact"><div class="impactCopy"><div class="crumb">A second useful life</div><h2>Keep the<br><span>good parts</span><br>working.</h2><p>Repairability and honest condition beat sealed-box theatre. Shop the current bench, not a fictional warehouse.</p><button class="primary" data-cd-route="collection">Open full inventory <span>→</span></button></div><img data-cd-asset="hero" alt="Electronics repair workbench"></section><p class="bench-empty resilient-copy" data-cd-empty-state>0 matching records.</p></main><section data-cd-repeat="featured.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>`;
+config.surfaces.collection.source.html = `<main class="collection"><header class="collectionTop"><div><div class="crumb">Bench inventory / live units</div><h1 data-cd-text="collection.title"></h1></div><span><b data-cd-text="collection.productCount"></b> records</span></header><div class="filters"><button value="all" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">All</button><button value="laptop" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Laptops</button><button value="phone" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Phones</button><button value="tablet" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Tablets</button><button value="console" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Consoles</button><select data-cd-on="change" data-cd-action="collection.filter" data-cd-facet="tag"><option value="all">All grades</option><option value="a">A</option><option value="a-minus">A-</option><option value="b-plus">B+</option></select><select data-cd-on="change" data-cd-action="collection.sort"><option value="featured">Bench order</option><option value="low">Price ↑</option><option value="battery">Battery ↓</option></select></div><div class="deck"><div class="deckHeader"><span>#</span><span>Exact unit</span><span>Grade</span><span>Price</span><span>Battery</span><span>Ports</span><span>Passport</span></div><div class="matrix" data-cd-repeat="collection.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Open exact unit</a></article></div></div><p class="zero-records resilient-copy" data-cd-empty-state>0 matching records.</p></main>`;
+config.surfaces.collection.source.html = config.surfaces.collection.source.html
+  .replace(
+    '<select data-cd-on="change" data-cd-action="collection.filter"',
+    '<select value="all" data-cd-on="change" data-cd-action="collection.filter"',
+  )
+  .replace(
+    '<select data-cd-on="change" data-cd-action="collection.sort">',
+    '<select value="title_asc" data-cd-on="change" data-cd-action="collection.sort">',
+  );
+config.surfaces.collection.source.html = config.surfaces.collection.source.html
+  .replace('<select value="all"', '<select aria-label="Filter by grade" value="all"')
+  .replace('<select value="title_asc"', '<select aria-label="Sort devices" value="title_asc"');
+config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(
+  "</a></article>",
+  '</a><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div></article>',
+);
+config.surfaces.home.source.html = config.surfaces.home.source.html
+  .replace("<h1>Known", '<h1 id="heroTitle">Known')
+  .replace('<div class="crumb">Featured diagnostic', '<div id="heroEyebrow" class="crumb">Featured diagnostic');
+config.surfaces.home.source.css = sourceTemplateCss(
+  sourceTemplate,
+  config.surfaces.home.source.html,
+  { display: "Archivo Black", body: "DM Mono" },
+) + ".heroData>.crumb,.readout label,.trust span{color:#62675f}.impact .crumb{color:#b9bdb5}";
+config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(
+  '<p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Open exact unit</a>',
+  '<b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><details class="passport-evidence"><summary>Expand evidence</summary><p data-cd-text="product.description"></p><a data-cd-route="product" data-cd-param-handle="product.handle">Open exact unit</a></details>',
+);
+
 const distinguishedConfig = {
   ...config,
   surfaces: {

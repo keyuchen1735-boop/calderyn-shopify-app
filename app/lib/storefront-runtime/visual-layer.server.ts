@@ -30,6 +30,6 @@ export function resolveStorefrontVisualPlacement(
     node.children.forEach((child) => visit(child, node.id, repeated));
   };
   [...bundle.shell.tree, ...routeTree].forEach((node) => visit(node));
-  const match = matches.length === 1 && !matches[0].repeated ? matches[0] : null;
+  const match = matches.find(({ repeated }) => !repeated) ?? null;
   return match ? { hostNodeId: match.hostNodeId, fallbackNodeId: match.fallbackNodeId } : null;
 }

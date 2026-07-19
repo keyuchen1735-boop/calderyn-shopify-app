@@ -3,18 +3,35 @@ import type { CuratedFontId, StorefrontBundleV1, StoreTemplateId } from "~/lib/s
 interface CuratedFontDefinition {
   family: string;
   fallback: string;
-  weight: string;
+  faces: readonly { file: string; style: "normal" | "italic"; weight: string }[];
 }
 
+const face = (file: string, weight: string, style: "normal" | "italic" = "normal") =>
+  [{ file, style, weight }] as const;
+
 export const CURATED_STOREFRONT_FONTS: Readonly<Record<CuratedFontId, CuratedFontDefinition>> = Object.freeze({
-  "archivo-narrow": { family: "CD Archivo Narrow", fallback: "Arial Narrow, sans-serif", weight: "100 900" },
-  "atkinson-hyperlegible": { family: "CD Atkinson Hyperlegible", fallback: "Arial, sans-serif", weight: "400" },
-  fraunces: { family: "CD Fraunces", fallback: "Georgia, serif", weight: "100 900" },
-  "ibm-plex-mono": { family: "CD IBM Plex Mono", fallback: "ui-monospace, monospace", weight: "400" },
-  inter: { family: "CD Inter", fallback: "Arial, sans-serif", weight: "100 900" },
-  "roboto-slab": { family: "CD Roboto Slab", fallback: "Georgia, serif", weight: "100 900" },
-  "source-serif-4": { family: "CD Source Serif 4", fallback: "Georgia, serif", weight: "100 900" },
-  "space-grotesk": { family: "CD Space Grotesk", fallback: "Arial, sans-serif", weight: "300 700" },
+  "archivo-black": { family: "Archivo Black", fallback: "Arial Black, sans-serif", faces: face("archivo-black-400", "400") },
+  "archivo-narrow": { family: "CD Archivo Narrow", fallback: "Arial Narrow, sans-serif", faces: face("archivo-narrow", "100 900") },
+  "atkinson-hyperlegible": { family: "CD Atkinson Hyperlegible", fallback: "Arial, sans-serif", faces: face("atkinson-hyperlegible", "400") },
+  "barlow-condensed": { family: "Barlow Condensed", fallback: "Arial Narrow, sans-serif", faces: [500, 600, 700, 800].map((weight) => ({ file: `barlow-condensed-${weight}`, style: "normal" as const, weight: String(weight) })) },
+  "chakra-petch": { family: "Chakra Petch", fallback: "Arial, sans-serif", faces: [400, 500, 600, 700].map((weight) => ({ file: `chakra-petch-${weight}`, style: "normal" as const, weight: String(weight) })) },
+  "cormorant-garamond": { family: "Cormorant Garamond", fallback: "Georgia, serif", faces: [
+    ...[400, 500, 600].map((weight) => ({ file: `cormorant-garamond-${weight}`, style: "normal" as const, weight: String(weight) })),
+    { file: "cormorant-garamond-500-italic", style: "italic", weight: "500" },
+  ] },
+  "dm-mono": { family: "DM Mono", fallback: "ui-monospace, monospace", faces: [300, 400, 500].map((weight) => ({ file: `dm-mono-${weight}`, style: "normal" as const, weight: String(weight) })) },
+  fraunces: { family: "CD Fraunces", fallback: "Georgia, serif", faces: face("fraunces", "100 900") },
+  "ibm-plex-mono": { family: "CD IBM Plex Mono", fallback: "ui-monospace, monospace", faces: face("ibm-plex-mono", "400") },
+  inter: { family: "CD Inter", fallback: "Arial, sans-serif", faces: face("inter", "100 900") },
+  manrope: { family: "Manrope", fallback: "Arial, sans-serif", faces: face("manrope", "400 700") },
+  newsreader: { family: "Newsreader", fallback: "Georgia, serif", faces: face("newsreader", "400 600") },
+  oswald: { family: "Oswald", fallback: "Arial Narrow, sans-serif", faces: face("oswald", "400 700") },
+  "roboto-slab": { family: "CD Roboto Slab", fallback: "Georgia, serif", faces: face("roboto-slab", "100 900") },
+  "source-fraunces": { family: "Fraunces", fallback: "Georgia, serif", faces: face("source-fraunces", "400 700") },
+  "source-serif-4": { family: "CD Source Serif 4", fallback: "Georgia, serif", faces: face("source-serif-4", "100 900") },
+  "space-grotesk": { family: "CD Space Grotesk", fallback: "Arial, sans-serif", faces: face("space-grotesk", "300 700") },
+  syne: { family: "Syne", fallback: "Arial, sans-serif", faces: face("syne", "400 700") },
+  "young-serif": { family: "Young Serif", fallback: "Georgia, serif", faces: face("young-serif-400", "400") },
 });
 
 function safeTokenId(value: string): boolean {
@@ -34,12 +51,16 @@ function safeTokenValue(value: string): boolean {
 
 function fontFace(fontId: CuratedFontId): string {
   const definition = CURATED_STOREFRONT_FONTS[fontId];
-  return `@font-face{font-family:${definition.family};src:url(/storefront-fonts/${fontId}-latin.woff2);font-style:normal;font-weight:${definition.weight};font-display:swap}`;
+  const family = definition.family.startsWith("CD ") ? definition.family : `'${definition.family}'`;
+  return definition.faces.map(({ file, style, weight }) =>
+    `@font-face{font-family:${family};src:url(/storefront-fonts/${file}-latin.woff2);font-style:${style};font-weight:${weight};font-display:swap}`,
+  ).join("");
 }
 
 function fontStack(fontId: CuratedFontId): string {
   const definition = CURATED_STOREFRONT_FONTS[fontId];
-  return `${definition.family},${definition.fallback}`;
+  const family = definition.family.startsWith("CD ") ? definition.family : `'${definition.family}'`;
+  return `${family},${definition.fallback}`;
 }
 
 /** Creates only closed, runtime-owned CSS from the already compiled design system. */

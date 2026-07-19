@@ -1,3 +1,3 @@
 import type { AssetManifest } from "~/lib/storefront-bundle/types";
 
-export const RITUAL_ALMANAC_ASSETS: AssetManifest = { entries: [{ key: "hero", contentHash: "747c24090ce37d341af9d22a7057f5830c26dc74181da0d82bb5aa07ffafe8f8", mediaType: "image/webp", byteSize: 242494 }] };
+export const RITUAL_ALMANAC_ASSETS: AssetManifest = { entries: [{ key: "hero", contentHash: "17eb9713bfc652eb445769c84f886ef591e26d3e8171728c20f32aa26612e8a0", mediaType: "image/webp", byteSize: 303882 }] };

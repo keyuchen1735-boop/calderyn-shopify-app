@@ -4,9 +4,9 @@ export const SOFT_CHEMISTRY_ASSETS = {
   entries: [
     {
       key: "hero",
-      contentHash: "4639c3cfe144d901162c2ede0053cd6174e26379460e3d63a3bef64f286f482f",
+      contentHash: "3e4065d68a9fd398f6d9d0ee492ee3ad099d7b7f31f669d822a07504b1f584e8",
       mediaType: "image/webp",
-      byteSize: 40456,
+      byteSize: 184188,
     },
     {
       key: "collection",

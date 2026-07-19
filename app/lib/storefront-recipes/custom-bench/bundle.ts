@@ -1,20 +1,9 @@
-import { defineRecipe, type RecipeConfig } from "../factory";
+import sourceTemplate from "../../../../docs/superpowers/prototypes/storefront-recipes/custom-bench.html?raw";
+import { defineRecipe, sourceTemplateCss, type RecipeConfig } from "../factory";
 import { CUSTOM_BENCH_ASSETS } from "./assets";
 
 const shell = {
-  html: `
-    <header class="workshop-shell">
-      <a class="brand-mark" data-cd-route="home"><span class="niche-icon niche-icon--bench" aria-hidden="true">&#9638;</span><span data-cd-text="store.name"></span><b>Custom Bench</b></a>
-      <nav class="workshop-nav" aria-label="Primary navigation">
-        <a data-cd-route="collection">Objects</a>
-        <a data-cd-route="search">Search</a>
-        <a data-cd-route="account">Account</a>
-        <a data-cd-route="cart">Cart <span data-cd-text="cart.count"></span></a>
-      </nav>
-      <div id="cart-drawer" data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink cobalt paper"></div>
-    </header>
-    <footer class="workshop-footer"><span data-cd-text="store.name"></span><nav data-cd-policy-links></nav></footer>
-  `,
+  html: `<div class="top"><span>Proofs prepared in 1–2 business days</span><span>Custom-made in Toronto · Live inventory</span></div><header class="head"><button class="ghost mobile-menu" data-cd-route="collection">Shop</button><a class="brand" data-cd-route="home">The Custom <i>Bench</i></a><nav class="nav"><button class="ghost" data-cd-route="collection">Objects</button><button class="ghost" data-cd-route="collection">Occasions</button><button class="ghost" data-cd-route="home">Our process</button></nav><div class="tools"><button class="ghost" data-cd-route="search">Search</button><button class="ghost" data-cd-route="cart">Cart (<span data-cd-text="cart.count"></span>)</button></div></header><aside class="visually-hidden" data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink cobalt paper"></aside><footer class="visually-hidden" data-cd-policy-links></footer>`,
   css: `
     .brand-mark { color: var(--ink); font-family: var(--font-display); font-size: 1.4rem; font-weight: 700; text-decoration: none }
     .brand-mark b { color: var(--signal); display: block; font-family: var(--font-body); font-size: .65rem; letter-spacing: .12em; text-transform: uppercase }
@@ -28,13 +17,14 @@ const shell = {
 };
 
 shell.css += `.workshop-footer{display:flex;justify-content:space-between;gap:1rem;padding:1rem;border-top:1px solid var(--line)}.workshop-footer nav{display:flex;flex-wrap:wrap;gap:1rem}.workshop-footer a{color:var(--ink);text-decoration:none}`;
+shell.css = sourceTemplateCss(sourceTemplate, shell.html, { display: "Barlow Condensed", body: "Manrope" });
 
 const home = {
   html: `
-    <main class="bench-home">
+    <main class="view">
       <section id="configurator" class="hero" data-cd-state-id="bench-step" data-cd-state-type="enum" data-cd-state-initial="choose" data-cd-state-values="choose personalize approve" data-cd-bind-state="bench-step" data-cd-bind-property="classToken">
-        <div class="proof-copy"><div><div class="eyebrow hero-eyebrow">Commission / live proof</div><h1>Your mark, <span>made real.</span></h1></div><div class="intro"><p>Personal objects composed one detail at a time. Choose the piece, set your mark, and approve the proof before we make it.</p><a class="cta" data-cd-route="collection"><span class="cta-label">Choose an object</span> <b>→</b></a></div></div>
-        <div class="proof"><div class="stepper"><button class="step" value="choose" data-cd-on="click" data-cd-action="state.set" data-cd-state="bench-step"><b>1</b><span>Choose</span></button><button class="step" value="personalize" data-cd-on="click" data-cd-action="state.set" data-cd-state="bench-step"><b>2</b><span>Personalize</span></button><button class="step" value="approve" data-cd-on="click" data-cd-action="state.set" data-cd-state="bench-step"><b>3</b><span>Approve your proof</span></button></div><div class="stage"><img data-cd-asset="hero" alt="Personalized object on the Custom Bench worktable"><div class="crop"></div><div class="monogram">A.E.</div><span class="proof-tag">Preview / not to scale</span></div><div class="controls"><div class="control"><b>Your initials</b><span>A.E.</span></div><div class="control"><b>Foil</b><span>Natural / Cobalt / Signal</span></div><div class="control"><b>Placement</b><span>Centered</span></div></div></div>
+        <div class="proof-copy"><div><div id="heroEyebrow" class="eyebrow">Commission / live proof</div><h1 id="heroTitle">Your mark, <span>made real.</span></h1></div><div class="intro"><p>Personal objects composed one detail at a time. Choose the piece, set your mark, and approve the proof before we make it.</p><button class="cta" data-cd-route="collection">Choose an object <b>→</b></button></div></div>
+        <div class="proof"><div class="stepper"><div class="step"><b>1</b><span>Choose</span></div><div class="step"><b>2</b><span>Personalize</span></div><div class="step"><b>3</b><span>Approve your proof</span></div></div><div class="stage"><img data-cd-asset="hero" alt="Personalized object on the Custom Bench worktable"><div class="crop"></div><div class="monogram">A.E.</div><span class="proof-tag">Preview / not to scale</span></div><div class="controls"><div class="control"><label>Your initials</label><input value="A.E." aria-label="Your initials"><label>Foil</label><div class="swatches" data-cd-state-id="bench-foil" data-cd-state-type="enum" data-cd-state-initial="natural" data-cd-state-values="natural cobalt signal"><button aria-label="Natural foil" value="natural" data-cd-on="click" data-cd-action="state.set" data-cd-state="bench-foil"></button><button aria-label="Cobalt foil" value="cobalt" data-cd-on="click" data-cd-action="state.set" data-cd-state="bench-foil"></button><button aria-label="Signal foil" value="signal" data-cd-on="click" data-cd-action="state.set" data-cd-state="bench-foil"></button></div></div><div class="control"><label>Placement</label><select aria-label="Placement"><option>Centered</option><option>Lower right</option></select></div></div></div>
       </section>
       <section class="rail-section"><div class="section-head"><h2>Start with an object</h2><p>Each piece is pulled from live store inventory. Personalization options change with the selected product.</p></div><div class="rail" data-cd-repeat="featured.products"><article class="card" data-cd-key="product.id"><a data-cd-route="product" data-cd-param-handle="product.handle"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy"><div class="card-info"><h3 data-cd-text="product.title"></h3><p class="recipe-copy" data-cd-text="product.description"></p><b data-cd-money="product.price"></b><small data-cd-text="product.availability"></small></div></a></article></div></section>
       <section class="showcase"><img data-cd-asset="hero" alt="Personalized work approved at the bench"><div class="showcopy"><span>Bench notes / 04</span><h2>Made after you approve.</h2><p>Nothing begins until the proof feels exactly right. Your choices travel with the order from cart to workshop.</p></div></section>
@@ -51,13 +41,12 @@ const home = {
 };
 
 home.css += `.proof-copy{min-width:0}.proof-copy h1{overflow-wrap:anywhere}`;
+home.css += `.monogram{color:var(--ink)}`;
 home.html = home.html
-  .replace(`<h1>Your mark, <span>made real.</span></h1>`, `<h1>Your mark, made real.</h1>`)
-  .replace(
-    `<img data-cd-asset="hero" alt="Personalized work approved at the bench">`,
-    `<div class="showcase-art" role="img" aria-label="Personalized work approved at the bench"></div>`,
-  );
-home.css += `.showcase-art{min-height:30rem;background:linear-gradient(135deg,var(--cobalt),var(--signal))}.monogram{color:var(--ink)}`;
+  .replace("Commission / live proof", "Commission no. 0247 / live proof")
+  .replace("Approve your proof", "Approve")
+  .replace('<input value="A.E."', '<input data-cd-native-control value="A.E."')
+  .replace('<select aria-label="Placement">', '<select data-cd-native-control aria-label="Placement">');
 
 const collection = {
   html: `
@@ -171,15 +160,15 @@ const checkout = {
 
 export const CUSTOM_BENCH_RECIPE = defineRecipe({
   templateId: "custom-bench",
-  templateVersion: 5,
+  templateVersion: 7,
   concept: {
     name: "Custom Bench",
     rationale: "A workshop interface turns personalization into a legible proofing sequence.",
     noveltySignature: ["step configurator", "material specimen index", "work-order cart ledger"],
   },
   designSystem: {
-    displayFontId: "space-grotesk",
-    bodyFontId: "ibm-plex-mono",
+    displayFontId: "barlow-condensed",
+    bodyFontId: "manrope",
     tokens: { paper: "#eee9dd", ink: "#11100e", cobalt: "#2148ff", signal: "#b83a29", rule: "#746f65", line: "#746f65", "space-workshop": "20px" },
     breakpoints: { mobile: 760, wide: 1180 },
     iconStyle: "square workshop glyphs and dimension-line indicators",

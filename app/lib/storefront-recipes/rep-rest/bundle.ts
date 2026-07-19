@@ -1,11 +1,12 @@
-import { defineRecipe, prependRecipeLandmark, type RecipeConfig } from "../factory";
+import sourceTemplate from "../../../../docs/superpowers/prototypes/storefront-recipes/rep-rest.html?raw";
+import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, type RecipeConfig } from "../factory";
 import { REP_REST_ASSETS } from "./assets";
 
 const config = {
-  templateId: "rep-rest", templateVersion: 3,
+  templateId: "rep-rest", templateVersion: 5,
   concept: { name: "Rep / Rest", rationale: "A high-contrast split journey that treats training and recovery as equal halves of one system.", noveltySignature: ["training-recovery-split", "sticky-workout-chapters", "comparison-rails"] },
   designSystem: {
-    displayFontId: "archivo-narrow", bodyFontId: "inter",
+    displayFontId: "oswald", bodyFontId: "manrope",
     tokens: { ink: "#131611", acid: "#d7ff43", cream: "#f2f0e8", orange: "#ff5d34", line: "#777970", interval: "24px" },
     breakpoints: { compact: 800, wide: 1240 }, iconStyle: "interval arrows and recovery-state glyphs", motionStyle: "sticky workout chapters with kinetic split transitions",
     globalCss: `.performance-title{font-family:var(--font-display);font-weight:700;letter-spacing:-.055em;line-height:.82;text-transform:uppercase}.interval-mark{font-family:var(--font-body);font-weight:700;letter-spacing:.14em;text-transform:uppercase}`,
@@ -45,6 +46,7 @@ const config = {
 } satisfies RecipeConfig<"rep-rest">;
 
 config.surfaces.home.source.css += `.training-copy a{color:var(--cream)}.recovery-copy{color:var(--ink)}`;
+config.surfaces.home.source.html = config.surfaces.home.source.html.replace("<h1>Earn", '<h1 id="heroTitle">Earn');
 config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
   `</section><nav class="state-toggle">`,
   `</section><p class="movement-ticker" aria-label="Training lanes">Mobility · Strength · Endurance · Recovery</p><nav class="state-toggle">`,
@@ -55,6 +57,28 @@ config.surfaces.search.source.html = config.surfaces.search.source.html
   .replace(`</b><a data-cd-route="product"`, `</b><span data-cd-text="product.availability"></span><a data-cd-route="product"`);
 config.surfaces.search.source.css += `.search-lane{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(16rem,24rem);gap:1px;overflow-x:auto;scroll-snap-type:x mandatory}.search-lane article{scroll-snap-align:start}.search-lane img{width:100%;aspect-ratio:4/5;object-fit:cover}`;
 config.surfaces.shell.source.css += `.performance-bar{display:flex;align-items:center;gap:1rem;min-height:4rem;padding:.75rem 1rem;background:var(--ink);color:var(--cream);border-bottom:1px solid var(--acid)}.performance-bar nav{margin-left:auto}.performance-bar a{color:var(--cream);text-decoration:none}.performance-bar~footer{display:flex;flex-wrap:wrap;gap:1rem;padding:1rem;background:var(--cream);color:var(--ink)}.performance-bar~footer a{color:var(--ink);text-decoration:none}@media(max-width:720px){.performance-bar{grid-template-columns:1fr}.performance-bar nav{margin-left:0}.performance-bar nav a{color:var(--ink)}}`;
+config.surfaces.shell.source.html = `<div class="bar">Free movement consult with orders over $120 · Live inventory demo</div><nav class="nav"><button class="mobileMenu iconbtn" data-cd-route="home">☰</button><div class="logo">Rep<i>/</i>Rest</div><div class="navlinks"><button data-cd-route="home">Train</button><button data-cd-route="collection">Wear</button><button data-cd-route="collection">Equip</button><button data-cd-route="collection">Recover</button></div><div class="tools"><button class="iconbtn" data-cd-route="search">Search</button><button class="iconbtn" data-cd-route="cart">Bag <span class="count" data-cd-text="cart.count">0</span></button></div></nav><aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="cream ink acid"></aside><footer data-cd-policy-links></footer>`;
+config.surfaces.shell.source.css = sourceTemplateCss(sourceTemplate, config.surfaces.shell.source.html, { display: "Oswald", body: "Manrope" });
+config.surfaces.home.source.html = `<main class="home"><section class="hero"><div class="heroCopy"><div class="eyebrow">Season 04 · Built to move</div><h1>Earn<br><span>the rest.</span></h1><p>Technical layers and compact training tools for the work between starting and stopping. Every piece tested through a full range of motion.</p><button class="cta" data-cd-route="collection">Enter the collection</button></div><div class="heroMedia"><img data-cd-asset="hero" alt="Runner training outdoors"><div class="heroStat"><span><b>07</b>movement systems</span></div></div></section><div class="ticker"><span>Mobility <i>◆</i> Strength <i>◆</i> Endurance <i>◆</i> Recovery <i>◆</i> Mobility <i>◆</i> Strength <i>◆</i> Endurance <i>◆</i> Recovery <i>◆</i></span></div><section class="section"><div class="sectionHead"><h2>Choose your lane</h2><p>Not categories. Training states. Start with what today needs from you and build the kit around the movement.</p></div><div class="lanes"><article class="lane"><img data-cd-asset="hero" alt="Athlete sprinting"><div class="laneText"><div class="laneIcon">↗</div><h3>Run / 01</h3><p>Breathable layers · impact control · 12 products</p><span class="go">→</span></div></article><article class="lane"><img data-cd-asset="hero" alt="Strength training"><div class="laneText"><div class="laneIcon">＋</div><h3>Lift / 02</h3><p>Stable bases · grip systems · 18 products</p><span class="go">→</span></div></article><article class="lane"><img data-cd-asset="hero" alt="Stretching and recovery"><div class="laneText"><div class="laneIcon">○</div><h3>Recover / 03</h3><p>Soft tissue · downshift · 9 products</p><span class="go">→</span></div></article></div></section><section class="section gear"><div class="sectionHead"><h2>Work set</h2><p>Current stock, ready to ship. Tap any piece to inspect variants, movement notes and availability.</p></div><div class="productGrid" data-cd-repeat="featured.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h3 data-cd-text="product.title"></h3><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Inspect movement</a></article></div></section><section class="movement"><div class="movementCopy"><div class="eyebrow">Movement study 12</div><h2>Nothing static.</h2><p>Four-way stretch, no-roll waistbands and equipment scaled for small spaces. Designed for the session you will actually do.</p><button class="cta" data-cd-route="collection">Shop the system</button></div><img data-cd-asset="hero" alt="Home fitness training session"></section><p class="home-empty resilient-copy" data-cd-empty-state>No gear matches this training state.</p></main><section data-cd-repeat="featured.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>`;
+config.surfaces.collection.source.html = `<main class="collection"><header class="collectionHero"><div><div class="eyebrow">Training inventory</div><h1 data-cd-text="collection.title"></h1></div><span><b data-cd-text="collection.productCount"></b> live units</span></header><div class="filters"><button class="filter" value="all" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">All</button><button class="filter" value="apparel" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Apparel</button><button class="filter" value="equipment" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Equipment</button><button class="filter" value="recovery" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Recovery</button><select data-cd-on="change" data-cd-action="collection.sort"><option value="featured">Featured</option><option value="low">Price low</option><option value="high">Price high</option></select></div><div class="productGrid" data-cd-repeat="collection.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Open movement notes</a></article></div><p class="inventory-empty resilient-copy" data-cd-empty-state>No gear matches this training state.</p></main>`;
+
+config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(
+  '<select data-cd-on="change" data-cd-action="collection.sort">',
+  '<select aria-label="Sort training inventory" value="relevance" data-cd-on="change" data-cd-action="collection.sort">',
+);
+config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
+  '<div class="lanes">',
+  '<div class="lanes" tabindex="0" aria-label="Training lanes">',
+);
+config.surfaces.home.source.css = sourceTemplateCss(
+  sourceTemplate,
+  config.surfaces.home.source.html,
+  { display: "Oswald", body: "Manrope" },
+) + ".resilient-copy{overflow-wrap:anywhere}.gear .sectionHead p{color:#55584f}.movementCopy{color:#131611}";
+config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(
+  "</a></article>",
+  '</a><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div></article>',
+);
 
 const distinguishedConfig = {
   ...config,

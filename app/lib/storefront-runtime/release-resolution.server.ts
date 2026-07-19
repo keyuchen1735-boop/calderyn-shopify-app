@@ -3,7 +3,7 @@ import { resolveVerifiedStorefrontAssetUrls } from "~/lib/storefront-bundle/asse
 import { getStoreTemplate } from "~/lib/storefront-bundle/registry";
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
-import { getStorefrontRecipe, STOREFRONT_RECIPE_BY_ID } from "~/lib/storefront-recipes";
+import { STOREFRONT_RECIPE_BY_ID } from "~/lib/storefront-recipes";
 import { isolateCompiledShellCss } from "~/lib/storefront-compiler/css";
 import { isStorefrontBundleReadEnabled } from "./csp.server";
 import { resolveStorefrontVisualPlacement, type StorefrontVisualPlacement } from "./visual-layer.server";
@@ -61,13 +61,13 @@ function recipeDerivedStaticAssets(bundle: StorefrontBundleV1): {
   if (!Object.hasOwn(STOREFRONT_RECIPE_BY_ID, templateId)) {
     return { urls: {}, ownedManifest: bundle.assets };
   }
-  const recipe = getStorefrontRecipe(templateId);
-  if (!getStoreTemplate(templateId).versions.some(
-    (version) => version.templateVersion === templateVersion,
-  )) {
+  const version = getStoreTemplate(templateId).versions.find(
+    (candidate) => candidate.templateVersion === templateVersion,
+  );
+  if (!version) {
     return { urls: {}, ownedManifest: bundle.assets };
   }
-  const registered = new Map(recipe.bundle.assets.entries.map((entry) => [entry.key, entry]));
+  const registered = new Map(version.assets.entries.map((entry) => [entry.key, entry]));
   const staticEntries = new Set<string>();
   for (const entry of bundle.assets.entries) {
     const expected = registered.get(entry.key);
@@ -78,7 +78,7 @@ function recipeDerivedStaticAssets(bundle: StorefrontBundleV1): {
   }
   const urls = Object.fromEntries([...staticEntries].map((key) => [
     key,
-    `/storefront-recipes/${templateId}/${key}.webp`,
+    `/storefront-recipes/${templateId}/${registered.get(key)!.contentHash}.webp`,
   ]));
   return {
     urls,

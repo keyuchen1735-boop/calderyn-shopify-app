@@ -213,6 +213,7 @@ export interface TemplateVisualLayer {
 
 export interface StoreTemplateVersionRecord {
   templateVersion: number;
+  assets: AssetManifest;
   baselineArtifact: string;
   screenshots: Readonly<{
     desktop: string;
@@ -255,14 +256,25 @@ export interface VersionedStoreTemplateRegistry {
 }
 
 export const CURATED_FONT_IDS = [
+  "archivo-black",
   "archivo-narrow",
   "atkinson-hyperlegible",
+  "barlow-condensed",
+  "chakra-petch",
+  "cormorant-garamond",
+  "dm-mono",
   "fraunces",
   "ibm-plex-mono",
   "inter",
+  "manrope",
+  "newsreader",
+  "oswald",
   "roboto-slab",
+  "source-fraunces",
   "source-serif-4",
   "space-grotesk",
+  "syne",
+  "young-serif",
 ] as const;
 
 export type CuratedFontId = (typeof CURATED_FONT_IDS)[number];
@@ -343,7 +355,7 @@ export interface AssetManifestEntry {
 }
 
 export interface AssetManifest {
-  entries: AssetManifestEntry[];
+  entries: readonly AssetManifestEntry[];
 }
 
 export type CompiledBindingKind = "text" | "money" | "src" | "alt";

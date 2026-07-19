@@ -538,7 +538,8 @@ describe("Store vertical command path", () => {
       }),
     );
     expect(currentVersion).toBe(RESULT);
-    expect(JSON.stringify(currentBundle)).toContain("Summer starts here");
+    expect(currentBundle?.routes.home.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " "))
+      .toContain("Summer starts here");
     expect(fakes.loadStudioState).toHaveBeenCalledTimes(2);
     expect(
       host.querySelector<HTMLIFrameElement>('iframe[title="Store preview"]')!

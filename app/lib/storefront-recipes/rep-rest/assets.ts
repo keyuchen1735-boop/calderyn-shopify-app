@@ -1,3 +1,3 @@
 import type { AssetManifest } from "~/lib/storefront-bundle/types";
 
-export const REP_REST_ASSETS: AssetManifest = { entries: [{ key: "hero", contentHash: "b404cf72b60022837096e1e8b02d539b5369a9ff09d4bda742378b7aae71d9c1", mediaType: "image/webp", byteSize: 170844 }] };
+export const REP_REST_ASSETS: AssetManifest = { entries: [{ key: "hero", contentHash: "ba5abf2b75b5327574e7fa788b6be80ac2f847dfd560d00c1cf892104208ddcf", mediaType: "image/webp", byteSize: 122192 }] };

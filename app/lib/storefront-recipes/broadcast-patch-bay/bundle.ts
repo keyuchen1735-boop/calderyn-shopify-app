@@ -1,11 +1,12 @@
-import { defineRecipe, prependRecipeLandmark, wrapRecipeComposition, type RecipeConfig } from "../factory";
+import sourceTemplate from "../../../../docs/superpowers/prototypes/storefront-recipes/broadcast-patch-bay.html?raw";
+import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, wrapRecipeComposition, type RecipeConfig } from "../factory";
 import { BROADCAST_PATCH_BAY_ASSETS } from "./assets";
 
 const config = {
-  templateId: "broadcast-patch-bay", templateVersion: 4,
+  templateId: "broadcast-patch-bay", templateVersion: 6,
   concept: { name: "Broadcast Patch Bay", rationale: "A modular creator storefront that routes the catalog as an input-to-output signal chain.", noveltySignature: ["signal-patch-bay", "rig-mode-routing", "compatibility-modules"] },
   designSystem: {
-    displayFontId: "space-grotesk", bodyFontId: "ibm-plex-mono",
+    displayFontId: "chakra-petch", bodyFontId: "dm-mono",
     tokens: { black: "#0b0d12", panel: "#151923", panel2: "#202634", white: "#eff3f8", muted: "#8993a3", blue: "#2453d4", amber: "#ffb31a", signal: "#4df3b5", red: "#ff5362", "rack-gap": "18px" },
     breakpoints: { compact: 850, wide: 1300 }, iconStyle: "signal-path glyphs and compatibility-port marks", motionStyle: "modular patch transitions with reduced-motion static routing",
     globalCss: `.broadcast-title{font-family:var(--font-display);font-weight:700;letter-spacing:-.06em;line-height:.84;text-transform:uppercase}.channel-label{font-family:var(--font-body);font-size:.64rem;letter-spacing:.16em;text-transform:uppercase;color:var(--signal)}`,
@@ -56,6 +57,8 @@ config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
   `<b data-cd-text="product.title"></b><p data-cd-text="product.description"></p><span data-cd-money="product.price"></span></article>`,
 );
 config.surfaces.home.source.html = config.surfaces.home.source.html
+  .replace("Current live stock, platform compatibility and dispatch state.", "Current live stock, platform compatibility and dispatch state. Open any module for the complete spec deck.")
+  .replace('class="heroCopy resilient-copy"', 'class="heroCopy"')
   .replace(
     `<h1 class="broadcast-title">Build the<br><span>clean signal.</span></h1>`,
     `<h1 class="broadcast-title">Build the clean signal.</h1>`,
@@ -70,6 +73,30 @@ config.surfaces.home.source.html = config.surfaces.home.source.html
 config.surfaces.home.source.css = config.surfaces.home.source.css
   .replace(`.rack[data-cd-active-value]`, `.builder[data-cd-active-value]`)
   + `.heroMedia{min-height:614px}.heroVisual{position:absolute;inset:0}.heroVisual img{height:100%;min-height:0}@media(max-width:850px){.heroMedia{min-height:50dvh}}`;
+config.surfaces.home.source.html = config.surfaces.home.source.html
+  .replace('<small class="label">Channel 01 / Play</small>', '<div id="heroEyebrow" class="label">Channel 01 / Play</div>')
+  .replace('<h1 class="broadcast-title">Build the clean signal.</h1>', '<h1 id="heroTitle">Build the<br><span>clean signal.</span></h1>')
+  .replace('<a class="cta" data-cd-route="collection">Route the catalog <span>↗</span></a>', '<button class="cta" data-cd-route="collection"><span>Route the catalog</span><span>↗</span></button>')
+  .replace('<figure class="heroMedia">', '<div class="heroMedia">')
+  .replace('<div class="heroVisual"><img data-cd-asset="hero" alt="Gaming and creator desk setup" width="1600" height="1200"></div>', '<img data-cd-asset="hero" alt="Gaming and creator desk setup" width="1600" height="1200">')
+  .replace('</div></figure></section><section class="signalSection">', '</div></div></section><section class="signalSection">')
+  .replaceAll('<a data-cd-route="collection">Open channel →</a>', '<button data-cd-route="collection">Open channel →</button>')
+  .replace('<h2>Your signal chain</h2>', '<h2 id="sectionHeading">Your signal chain</h2>')
+  .replace('<small class="label">Loadout patcher / beta</small>', '<div class="label">Loadout patcher / beta</div>')
+  .replace('</article></div></div></section></main>', '</article></div><div class="rackTotal"><span>Solo stream / live modules</span><span>Current total</span></div><button class="cta" data-cd-route="cart"><span>Add complete loadout</span><span>＋</span></button></div></section></main>');
+config.surfaces.collection.source.html = `<main class="collection"><header class="collectionHero"><div class="label">Catalog matrix / live stock</div><h1 data-cd-text="collection.title"></h1><p><b data-cd-text="collection.productCount"></b> compatible modules</p></header><div class="filters"><button value="all" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">All roles</button><button value="control" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Control</button><button value="audio" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Audio</button><button value="capture" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Capture</button><button value="light" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Light</button><button value="output" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Output</button><select data-cd-on="change" data-cd-action="collection.sort"><option value="featured">Signal order</option><option value="low">Price low</option><option value="high">Price high</option></select></div><div class="productGrid" data-cd-repeat="collection.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Inspect module</a></article></div><p class="module-empty resilient-copy" data-cd-empty-state>No compatible signal found.</p></main>`;
+
+config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(
+  '<select data-cd-on="change" data-cd-action="collection.sort">',
+  '<select aria-label="Sort compatible modules" value="relevance" data-cd-on="change" data-cd-action="collection.sort">',
+);
+config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(
+  "</a></article>",
+  '</a><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div></article>',
+);
+config.surfaces.shell.source.html = `<div class="status"><span><i class="onair">On air</i> Store signal / stable</span><span>Live inventory routing · 13 Jul 2026 · latency 18ms</span><span>Support ch.01</span></div><nav class="nav"><div class="logo">Patch Bay<small>Gaming + creator supply</small></div><div class="modes"><button class="mode" data-cd-route="collection">Play</button><button class="mode" data-cd-route="collection">Stream</button><button class="mode" data-cd-route="collection">Record</button><button class="mode" data-cd-route="collection">Publish</button></div><div class="tools"><button class="tool" data-cd-route="collection">Catalog</button><button class="tool" data-cd-route="search">Search</button><button class="tool" data-cd-route="cart">Loadout <span class="count" data-cd-text="cart.count">0</span></button></div></nav><aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="black panel blue signal"></aside><footer data-cd-policy-links></footer>`;
+config.surfaces.shell.source.css = sourceTemplateCss(sourceTemplate, config.surfaces.shell.source.html, { display: "Chakra Petch", body: "DM Mono" })
+  + ".status{background:#1f4fc4;color:#fff}.onair{background:#a7192c}.nav,.nav button{color:#eff3f8}";
 
 const distinguishedConfig = {
   ...config,

@@ -59,6 +59,23 @@ describe("compileHtml", () => {
     expect(result.html).toContain('value="featured"');
   });
 
+  it("preserves source form structure while compiling controls into safe runtime actions", () => {
+    const result = compileHtml(
+      `<button data-cd-route="collection">Shop</button><label><input type="radio" name="kind" value="dog" data-cd-on="change" data-cd-action="collection.filter" data-cd-facet="category"> Dog</label><select aria-label="Sort products" value="relevance" data-cd-on="change" data-cd-action="collection.sort"><option value="featured">Featured</option></select>`,
+      { namespace: "home" },
+    );
+
+    expect(result.tree[0]).toMatchObject({ tag: "button", routeTarget: { routeId: "collection" } });
+    expect(result.html).toContain('type="radio"');
+    expect(result.html).toContain('<label');
+    expect(result.html).toContain('<select');
+    expect(result.html).toContain('<option');
+    expect(result.interactions.transitions.map(({ action }) => action.type)).toEqual([
+      "collection.filter",
+      "collection.sort",
+    ]);
+  });
+
   it.each([
     `<input type="password">`,
     `<input type="hidden">`,

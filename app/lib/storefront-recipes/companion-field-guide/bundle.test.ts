@@ -29,17 +29,16 @@ describe("Companion Field Guide storefront recipe", () => {
   it("compiles a chaptered pet care guide across the complete commerce contract", () => {
     const { bundle, config, report } = COMPANION_FIELD_GUIDE_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 3 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 5 });
     expect(config.archetype).toMatchObject({ composition: "field-guide", hero: "pet-profile-hero", scroll: "chaptered-guide", cards: "field-notes" });
-    expect(bundle.designSystem).toMatchObject({ displayFontId: "roboto-slab", bodyFontId: "atkinson-hyperlegible" });
+    expect(bundle.designSystem).toMatchObject({ displayFontId: "newsreader", bodyFontId: "manrope" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
-    expect(bundle.assets.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 158522 })]);
+    expect(bundle.assets.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 266598 })]);
     expect(existsSync(resolve(process.cwd(), "public/storefront-recipes/companion-field-guide", `${bundle.assets.entries[0]?.key}.webp`))).toBe(true);
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
     expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
-    expect(bundle.routes.home.html).toContain("Build a companion profile");
-    expect(bundle.routes.home.interactions.state).toEqual(expect.arrayContaining([expect.objectContaining({ type: "enum", allowedValues: ["all", "dog", "cat", "senior"] })]));
-    expect(bundle.routes.home.interactions.transitions.map((transition) => transition.action.type)).toEqual(expect.arrayContaining(["state.set", "scroll.to"]));
+    expect(bundle.routes.home.html).toContain("Choose a care path");
+    expect(bundle.routes.home.interactions.transitions.map((transition) => transition.action.type)).toContain("collection.filter");
     expect(bundle.routes.collection.html).toContain("No essentials match this care chapter");
     expect(bundle.routes.collection.bindings.map((binding) => binding.ref)).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: "collection.title" }), expect.objectContaining({ path: "product.primaryImage" }),

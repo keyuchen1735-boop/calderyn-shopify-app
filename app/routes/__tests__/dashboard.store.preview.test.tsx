@@ -101,7 +101,7 @@ describe("dashboard.store.preview loader", () => {
       const result = await loaderData("https://dashboard.example.com/dashboard/store/preview?template=commons-index&route=home");
       expect(result).toMatchObject({ runtime: 1, bundleId: "preview:commons-index", routeId: "home" });
       expect(result.data.storefrontAssetUrls).toEqual({
-        hero: "https://app.example.com/storefront-recipes/commons-index/hero.webp",
+        hero: `https://app.example.com/storefront-recipes/commons-index/${"a".repeat(64)}.webp`,
       });
       expect(getRecipeMock).toHaveBeenCalledWith("commons-index");
       expect(getPreviewCatalogMock).toHaveBeenCalled();

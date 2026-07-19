@@ -4,7 +4,6 @@ import {
   createStoreTemplateRegistry,
   getStoreTemplate,
 } from "./registry";
-import { CUSTOM_BENCH_ASSETS } from "../storefront-recipes/custom-bench/assets";
 import provenance from "../storefront-validation/design-provenance.json";
 
 const EXPECTED_TEXT_SLOTS = {
@@ -40,10 +39,11 @@ describe("versioned storefront recipe registry", () => {
     expect(STORE_TEMPLATE_REGISTRY.routingVersion).toBe(1);
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
       expect(recipe.activeVersion).toBe(
-        recipe.id === "soft-chemistry" ? 7
-          : recipe.id === "custom-bench" ? 5
-          : recipe.id === "atelier-nine" || recipe.id === "commons-index" || recipe.id === "broadcast-patch-bay" ? 4
-          : 3,
+        recipe.id === "soft-chemistry" ? 9
+          : recipe.id === "custom-bench" ? 7
+          : recipe.id === "commons-index" || recipe.id === "broadcast-patch-bay" ? 6
+          : recipe.id === "atelier-nine" ? 4
+          : 5,
       );
       expect(recipe.routeCapabilities).toEqual(["home", "collection", "product", "search", "cart", "checkout"]);
       expect(recipe.overrideSurface.designTokens.length).toBeGreaterThan(0);
@@ -170,14 +170,13 @@ describe("versioned storefront recipe registry", () => {
   });
 
   it("rejects a registry fallback removed from its recipe manifest", () => {
-    const entries = CUSTOM_BENCH_ASSETS.entries.splice(0);
-    try {
-      expect(() => createStoreTemplateRegistry([STORE_TEMPLATE_REGISTRY.templates[0]])).toThrow(
-        /owned visual fallback/i,
-      );
-    } finally {
-      CUSTOM_BENCH_ASSETS.entries.push(...entries);
-    }
+    const base = STORE_TEMPLATE_REGISTRY.templates[0];
+    expect(() => createStoreTemplateRegistry([{
+      ...base,
+      versions: base.versions.map((version, index) => index === 0
+        ? { ...version, assets: { entries: [] } }
+        : version),
+    }])).toThrow(/owned visual fallback/i);
   });
 
   it("rejects collection or product blueprints without protected descriptions", () => {

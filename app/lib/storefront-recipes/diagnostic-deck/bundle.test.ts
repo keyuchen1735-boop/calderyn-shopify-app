@@ -10,8 +10,8 @@ const actions = (route: RouteArtifact) => route.interactions.transitions.map((it
 
 describe("diagnostic-deck storefront recipe", () => {
   it("keeps the original scan line and target reticle over the hero evidence image", () => {
-    expect(DIAGNOSTIC_DECK_RECIPE.bundle.routes.home.html).toContain("scan-line");
-    expect(DIAGNOSTIC_DECK_RECIPE.bundle.routes.home.html).toContain("target-reticle");
+    expect(DIAGNOSTIC_DECK_RECIPE.bundle.routes.home.html).toContain('class="scan"');
+    expect(DIAGNOSTIC_DECK_RECIPE.bundle.routes.home.html).toContain('class="target"');
   });
 
   it("renders exact-unit imagery and availability in diagnostic search results", () => {
@@ -41,14 +41,14 @@ describe("diagnostic-deck storefront recipe", () => {
   it("compiles a diagnostic terminal deck with exact-unit evidence and complete transactions", () => {
     const { bundle, config, report } = DIAGNOSTIC_DECK_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "diagnostic-deck", templateVersion: 3 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "diagnostic-deck", templateVersion: 5 });
     expect(config.archetype).toEqual({ composition: "diagnostic-terminal", hero: "grade-diagnostic-hero", scroll: "deck-snap", cards: "diagnostic-cards", iconography: ["terminal condition marks", "warranty status glyphs"] });
-    expect(bundle.designSystem).toMatchObject({ displayFontId: "archivo-narrow", bodyFontId: "ibm-plex-mono", iconStyle: "terminal condition marks and warranty-status glyphs", motionStyle: "deck snap with evidence-panel expansion" });
+    expect(bundle.designSystem).toMatchObject({ displayFontId: "archivo-black", bodyFontId: "dm-mono", iconStyle: "terminal condition marks and warranty-status glyphs", motionStyle: "deck snap with evidence-panel expansion" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
-    expect(DIAGNOSTIC_DECK_ASSETS.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 101094 })]);
+    expect(DIAGNOSTIC_DECK_ASSETS.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 61226 })]);
     expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
-    expect(bundle.routes.home.html).toContain("Known condition");
-    expect(bundle.routes.home.html).toContain("Warranty evidence");
+    expect(bundle.routes.home.html).toContain("Known<br");
+    expect(bundle.routes.home.html).toContain("12-month cover");
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
     expect(repeats(bundle.routes.collection.tree)).toContain("collection.products");
     expect(actions(bundle.routes.collection)).toEqual(expect.arrayContaining(["collection.filter", "collection.sort"]));

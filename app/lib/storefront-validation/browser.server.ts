@@ -846,6 +846,8 @@ async function auditPage(
     const sources = new Set((transitions as Array<{ sourceId: string }>).map((entry) => entry.sourceId));
     const inertControls = [...document.querySelectorAll<HTMLElement>("button,input,select,textarea")]
       .filter((element) => visible(element) && !element.closest("[data-cd-trusted-slot]") && !element.closest("[data-cd-checkout-platform-root]"))
+      .filter((element) => !element.hasAttribute("data-cd-native-control"))
+      .filter((element) => !element.hasAttribute("data-cd-route-target"))
       .filter((element) => !sources.has(element.id.replace(/-i-[a-z0-9]+$/, "")))
       .map((element) => element.id || element.outerHTML.slice(0, 120));
     const protectedFailures = [...document.querySelectorAll<HTMLElement>("[data-cd-trusted-slot]")].flatMap((host) => {
@@ -879,16 +881,19 @@ async function auditPage(
     const shell = document.querySelector<HTMLElement>("[data-cd-bundle='shell']");
     const belongsToShell = (element: Element): boolean => element.closest("[data-cd-bundle]") === shell;
     const shellHeader = [...(shell?.querySelectorAll<HTMLElement>("header") ?? [])].find(belongsToShell);
-    const shellNav = shellHeader?.querySelector<HTMLElement>("nav");
-    const shellLink = shellNav?.querySelector<HTMLElement>("a[href]");
+    const shellNav = shellHeader?.querySelector<HTMLElement>("nav")
+      ?? [...(shell?.querySelectorAll<HTMLElement>("nav") ?? [])].find(belongsToShell);
+    const shellLink = shellNav?.querySelector<HTMLElement>("a[href],[data-cd-route-target]");
     const shellStyleFailures: string[] = [];
-    if (!shell || !shellHeader || !shellNav || !shellLink) {
+    if (!shell || !shellNav || !shellLink) {
       shellStyleFailures.push("missing-shell-header-nav-link");
     } else {
       const navStyle = getComputedStyle(shellNav);
       const linkStyle = getComputedStyle(shellLink);
-      const headerHeight = shellHeader.getBoundingClientRect().height;
-      if (navStyle.display !== "flex" && navStyle.display !== "grid") {
+      const headerHeight = (shellHeader ?? shellNav).getBoundingClientRect().height;
+      const visibleRouteControl = [...(shellHeader?.querySelectorAll<HTMLElement>("[data-cd-route-target]") ?? [])]
+        .some((control) => control.getClientRects().length > 0 && getComputedStyle(control).visibility !== "hidden");
+      if (navStyle.display !== "flex" && navStyle.display !== "grid" && !(navStyle.display === "none" && visibleRouteControl)) {
         shellStyleFailures.push(`nav-display:${navStyle.display}`);
       }
       if (headerHeight < 44) shellStyleFailures.push(`header-height:${headerHeight.toFixed(1)}px`);
@@ -991,7 +996,7 @@ async function auditPage(
       catalogProductHandles,
     };
   }, {
-    transitions: route?.interactions.transitions ?? [],
+    transitions: [...bundle.shell.interactions.transitions, ...(route?.interactions.transitions ?? [])],
     route: routeId,
     supportedRoutePattern: STOREFRONT_PROOF_ROUTE_RE.source,
     protectedFallbackKey: fallbackAssetKey,
@@ -1072,11 +1077,20 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       const asset = provided.get(entry.key);
       if (!asset) {
         const derivedTemplateId = input.bundle.source.derivedFromTemplateId;
-        if (derivedTemplateId && entry.mediaType === "image/webp") {
+        const derivedTemplateVersion = input.bundle.source.derivedFromTemplateVersion;
+        const registeredAsset = derivedTemplateId && derivedTemplateVersion && isStoreTemplateId(derivedTemplateId)
+          ? getStoreTemplate(derivedTemplateId).versions
+            .find(({ templateVersion }) => templateVersion === derivedTemplateVersion)
+            ?.assets.entries.find(({ key }) => key === entry.key)
+          : undefined;
+        if (registeredAsset && entry.mediaType === "image/webp"
+          && registeredAsset.contentHash === entry.contentHash
+          && registeredAsset.mediaType === entry.mediaType
+          && registeredAsset.byteSize === entry.byteSize) {
           try {
-            const publicBytes = await readFile(resolve(process.cwd(), `public/storefront-recipes/${derivedTemplateId}/${entry.key}.webp`));
+            const publicBytes = await readFile(resolve(process.cwd(), `public/storefront-recipes/${derivedTemplateId}/${registeredAsset.contentHash}.webp`));
             if (publicBytes.byteLength === entry.byteSize && createHash("sha256").update(publicBytes).digest("hex") === entry.contentHash) {
-              customAssetUrls[entry.key] = `/storefront-recipes/${derivedTemplateId}/${entry.key}.webp`;
+              customAssetUrls[entry.key] = `/storefront-recipes/${derivedTemplateId}/${registeredAsset.contentHash}.webp`;
               continue;
             }
           } catch {
@@ -1246,8 +1260,10 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
       let previewImage: Buffer | undefined;
       if (shouldVerifyStorefrontPreview(routeId, viewport.name, input.artifacts)) {
         await page.setViewport({ width: 1200, height: 800, deviceScaleFactor: 1 });
-        await page.evaluate(() => new Promise((resolveFrame) =>
-          requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame)));
+        });
         previewImage = Buffer.from(await page.screenshot({ type: "webp", quality: 90, fullPage: false }));
         if (!shouldWriteStorefrontPreview(routeId, viewport.name, input.artifacts)) {
           try {

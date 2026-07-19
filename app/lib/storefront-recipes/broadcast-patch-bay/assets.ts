@@ -1,3 +1,3 @@
 import type { AssetManifest } from "~/lib/storefront-bundle/types";
 
-export const BROADCAST_PATCH_BAY_ASSETS: AssetManifest = { entries: [{ key: "hero", contentHash: "c95d86839d3b7efea39f439452011aaad78e4519e9928890246f67b0bf9f5363", mediaType: "image/webp", byteSize: 78150 }] };
+export const BROADCAST_PATCH_BAY_ASSETS: AssetManifest = { entries: [{ key: "hero", contentHash: "69ccaff50a8fd6fed877c3b442b477a77bd2437fa803593e4b9cd0cc46fcea2d", mediaType: "image/webp", byteSize: 201692 }] };

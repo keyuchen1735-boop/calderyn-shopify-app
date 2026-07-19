@@ -3,8 +3,8 @@ import type { AssetManifest } from "../../storefront-bundle/types";
 export const CUSTOM_BENCH_ASSETS = {
   entries: [{
     key: "hero",
-    contentHash: "f6f25c15de46bf6dd431ae685202f90fbbc3ba00e8051f6a6f4afaa8b89cdde9",
+    contentHash: "4057747b344149325da07a76b2ac90cdf5f820a9c8f0f649d635daf9ff3cf5c1",
     mediaType: "image/webp",
-    byteSize: 132568,
+    byteSize: 121470,
   }],
 } satisfies AssetManifest;

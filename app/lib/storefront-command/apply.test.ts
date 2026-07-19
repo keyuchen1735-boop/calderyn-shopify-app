@@ -19,7 +19,8 @@ describe("applyStoreIntent", () => {
       value: "Summer starts here",
     });
 
-    expect(result.bundle.routes.home.html).toContain("Summer starts here");
+    expect(result.bundle.routes.home.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain("Summer starts here");
+    expect(result.bundle.routes.home.html).not.toContain("made real");
     expect(Object.keys(result.bundle.routes)).toEqual(Object.keys(original.routes));
     expect(result.bundle.assets).toEqual(original.assets);
     expect(result.bundle.routes.home.css).toBe(original.routes.home.css);
@@ -113,6 +114,12 @@ describe("applyStoreIntent", () => {
     if (!root || root.kind !== "element") throw new Error("Missing home root");
     const hero = root.children.find((node) => node.kind === "element" && node.tag === "section");
     if (!hero || hero.kind !== "element") throw new Error("Missing home hero");
+    const boundTitle = hero.children
+      .flatMap((node) => node.kind === "element" ? node.children : [])
+      .flatMap((node) => node.kind === "element" ? node.children : [])
+      .find((node) => node.kind === "element" && node.tag === "h1");
+    if (!boundTitle || boundTitle.kind !== "element") throw new Error("Missing bound home title");
+    boundTitle.id = "unbound-title";
     hero.children.push(
       {
         kind: "element",
