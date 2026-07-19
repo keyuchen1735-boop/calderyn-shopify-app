@@ -54,6 +54,7 @@ function firstElementOrNull(nodes: readonly CompiledNode[], tag: string): Compil
 function ambiguousHeroBundle(): StorefrontBundleV1 {
   const result = structuredClone(CUSTOM_BENCH_BUNDLE);
   const source = firstElement(result.routes.home.tree, "h1");
+  source.id = "unbound-title";
   const hero = firstElement(result.routes.home.tree, "section");
   for (const suffix of ["one", "two"]) {
     hero.children.push({

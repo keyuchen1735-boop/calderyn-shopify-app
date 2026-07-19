@@ -25,8 +25,8 @@ export { CompilerError } from "./bindings";
 const ALLOWED_TAGS = new Set([
   "a", "abbr", "address", "article", "aside", "b", "blockquote", "br", "button", "cite", "code",
   "dd", "details", "dfn", "div", "dl", "dt", "em", "figcaption", "figure", "footer", "h1", "h2",
-  "h3", "h4", "h5", "h6", "header", "hr", "i", "img", "kbd", "li", "main", "mark", "nav", "ol",
-  "p", "picture", "pre", "q", "s", "section", "small", "source", "span", "strong", "sub", "summary", "input",
+  "h3", "h4", "h5", "h6", "header", "hr", "i", "img", "kbd", "label", "li", "main", "mark", "nav", "ol",
+  "option", "p", "picture", "pre", "q", "s", "section", "select", "small", "source", "span", "strong", "sub", "summary", "input",
   "sup", "time", "u", "ul",
 ]);
 
@@ -37,7 +37,7 @@ export function isAllowedCompiledTag(value: unknown): value is string {
 const VOID_TAGS = new Set(["br", "hr", "img", "source", "input"]);
 const STATIC_ATTRIBUTES = new Set([
   "class", "title", "role", "tabindex", "alt", "width", "height", "loading", "decoding", "open", "href", "for",
-  "data-cd-empty-state",
+  "data-cd-empty-state", "data-cd-native-control",
 ]);
 const IDREF_ATTRIBUTES = new Set(["aria-controls", "aria-labelledby", "aria-describedby", "aria-owns", "aria-activedescendant", "for"]);
 const BINDING_ATTRIBUTES = new Map([
@@ -142,7 +142,7 @@ function assertAllowedAttribute(name: string, value: string, tagName: string): v
     throw new CompilerError("html.inline_style", "Inline style attributes are forbidden");
   }
   if (name === "type") {
-    if (tagName === "input" && (value === "search" || value === "text")) return;
+    if (tagName === "input" && ["search", "text", "radio", "checkbox"].includes(value)) return;
     throw new CompilerError("html.control_type", `Unsupported ${tagName} type ${JSON.stringify(value)}`);
   }
   if (name === "name") {
@@ -154,7 +154,7 @@ function assertAllowedAttribute(name: string, value: string, tagName: string): v
     throw new CompilerError("html.control_attribute", `Invalid ${tagName} placeholder`);
   }
   if (name === "value") {
-    if ((tagName === "input" || tagName === "button") && value.length <= 120 && !hasControlCharacter(value)) return;
+    if ((tagName === "input" || tagName === "button" || tagName === "option" || tagName === "select") && value.length <= 120 && !hasControlCharacter(value)) return;
     throw new CompilerError("html.control_attribute", `Invalid ${tagName} value`);
   }
   if (name === "data-cd-empty-state" && value !== "") {
@@ -484,7 +484,7 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
       if (sourceNode.tagName === "a" && routeTarget === undefined && attributes.href === undefined) {
         throw new CompilerError("html.inert_control", "Visible anchors require a route target or resolved fragment");
       }
-      if (sourceNode.tagName === "button" && actionName === undefined) {
+      if (sourceNode.tagName === "button" && actionName === undefined && routeTarget === undefined) {
         throw new CompilerError("html.inert_control", "Visible buttons require an allowed action");
       }
       output.push(compiledNode);

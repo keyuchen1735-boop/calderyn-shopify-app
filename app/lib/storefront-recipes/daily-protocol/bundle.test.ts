@@ -7,9 +7,10 @@ describe("Daily Protocol storefront recipe", () => {
   it("preserves the approved day arc and dense live product ledger", () => {
     const home = DAILY_PROTOCOL_RECIPE.config.surfaces.home.source;
 
-    for (const className of ["day-arc", "arc-map", "page", "nav", "hero", "hero-image", "hero-copy", "hero-metrics", "protocol-section", "protocol-stack", "ledger-section", "ledger", "ledger-row"]) {
+    for (const className of ["day-arc", "arc-map", "page", "hero", "hero-image", "hero-copy", "hero-metrics", "protocol-section", "protocol-stack", "ledger-section", "ledger", "ledger-row"]) {
       expect(home.html).toContain(`class="${className}`);
     }
+    expect(DAILY_PROTOCOL_RECIPE.config.surfaces.shell.source.html).toContain('class="nav"');
     expect(home.html).toContain("A clear daily protocol built from products you can understand");
     expect(home.html).toContain("Dense by design: timing, form, serving, stock, and price");
     expect(home.html).toContain('data-cd-repeat="featured.products"');
@@ -22,9 +23,9 @@ describe("Daily Protocol storefront recipe", () => {
   it("compiles a timed protocol ledger across the complete commerce contract", () => {
     const { bundle, config, report } = DAILY_PROTOCOL_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "daily-protocol", templateVersion: 4 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "daily-protocol", templateVersion: 5 });
     expect(config.archetype).toMatchObject({ composition: "protocol-ledger", hero: "time-of-day-protocol", scroll: "routine-timeline", cards: "protocol-stacks" });
-    expect(bundle.designSystem).toMatchObject({ displayFontId: "inter", bodyFontId: "ibm-plex-mono" });
+    expect(bundle.designSystem).toMatchObject({ displayFontId: "manrope", bodyFontId: "dm-mono" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
     expect(bundle.assets.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 297054 })]);
     expect(existsSync(resolve(process.cwd(), "public/storefront-recipes/daily-protocol", `${bundle.assets.entries[0]?.key}.webp`))).toBe(true);

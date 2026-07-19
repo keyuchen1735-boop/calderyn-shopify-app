@@ -68,7 +68,7 @@ const COMPILED_ATTRIBUTES = new Set([
   "type", "name", "placeholder", "value",
   "data-cd-repeat-id", "data-cd-bind-text", "data-cd-bind-money", "data-cd-bind-src", "data-cd-bind-alt",
   "data-cd-route-target", "data-cd-trusted-slot-id", "data-cd-platform-content", "data-cd-asset-key",
-  "data-cd-empty-state",
+  "data-cd-empty-state", "data-cd-native-control",
 ]);
 
 function record(value: unknown): UnknownRecord | null {
@@ -108,10 +108,10 @@ function hasControlCharacter(value: string): boolean {
 }
 
 function validControlAttribute(tag: unknown, name: string, value: string): boolean {
-  if (name === "type") return tag === "input" && (value === "search" || value === "text");
+  if (name === "type") return tag === "input" && ["search", "text", "radio", "checkbox"].includes(value);
   if (name === "name") return tag === "input" && isIdentifier(value) && value.length <= 80;
   if (name === "placeholder") return tag === "input" && value.length <= 160 && !hasControlCharacter(value);
-  if (name === "value") return (tag === "input" || tag === "button") && value.length <= 120 && !hasControlCharacter(value);
+  if (name === "value") return (tag === "input" || tag === "button" || tag === "option" || tag === "select") && value.length <= 120 && !hasControlCharacter(value);
   return true;
 }
 
@@ -712,7 +712,7 @@ function validateRoute(value: unknown, namespace: string, path: string, add: Add
   const interactions = parseInteractions(input.interactions, `${path}.interactions`, tree, add);
   for (const element of tree.elements.values()) {
     if (element.tag === "a" && !element.routeTarget && !element.attributes.href) add("tree.inert_control", `${path}.tree.${element.id}`, "Compiled anchor is inert");
-    if (element.tag === "button" && !interactions.transitions.some((transition) => transition.sourceId === element.id)) add("tree.inert_control", `${path}.tree.${element.id}`, "Compiled button is inert");
+    if (element.tag === "button" && !element.routeTarget && !interactions.transitions.some((transition) => transition.sourceId === element.id)) add("tree.inert_control", `${path}.tree.${element.id}`, "Compiled button is inert");
   }
   const slots = parseSlots(input.trustedSlots, `${path}.trustedSlots`, tree, add);
   for (const [index, slot] of slots.entries()) {

@@ -1,17 +1,18 @@
-import { defineRecipe, type RecipeConfig } from "../factory";
+import sourceTemplate from "../../../../docs/superpowers/prototypes/storefront-recipes/room-modes.html?raw";
+import { defineRecipe, sourceTemplateCss, type RecipeConfig } from "../factory";
 import { ROOM_MODES_ASSETS } from "./assets";
 
 const config = {
   templateId: "room-modes",
-  templateVersion: 4,
+  templateVersion: 5,
   concept: {
     name: "Room Modes",
     rationale: "A spatial storefront that begins with room scenes, then resolves into a precise object index.",
     noveltySignature: ["room-mode-scenes", "spatial-snap", "architectural-object-index"],
   },
   designSystem: {
-    displayFontId: "space-grotesk",
-    bodyFontId: "ibm-plex-mono",
+    displayFontId: "syne",
+    bodyFontId: "dm-mono",
     tokens: {
       chalk: "#eef0ed",
       ink: "#111412",
@@ -42,16 +43,11 @@ const config = {
       signature: "fixed architectural masthead with object-index navigation and cart utility bay",
       source: {
         html: `
-          <header class="room-masthead">
-            <span class="niche-icon niche-icon--room" aria-hidden="true">&#8962;</span>
-            <a class="room-brand type-display" data-cd-route="home" data-cd-text="store.name">Room Modes</a>
-            <nav class="room-nav" aria-label="Store navigation">
-              <a data-cd-route="home">Scenes</a>
-              <a data-cd-route="collection">Objects</a>
-              <a data-cd-route="search">Search</a>
-              <a data-cd-route="account">Account</a>
-              <a data-cd-route="cart">Cart <span data-cd-text="cart.count"></span></a>
-            </nav>
+          <header class="site-nav">
+            <a class="brand" data-cd-route="home">ROOM / MODES</a>
+            <nav class="nav-center"><a data-cd-route="home">Scenes</a><a data-cd-route="collection">Objects</a><a data-cd-route="home">Compatibility</a></nav>
+            <button class="mobile-menu" data-cd-route="collection">Menu</button>
+            <div class="nav-tools"><button data-cd-route="search">Search ⌕</button><button data-cd-route="cart">Cart <b data-cd-text="cart.count"></b></button></div>
           </header>
           <aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="chalk ink amber"></aside>
           <footer data-cd-policy-links></footer>
@@ -67,33 +63,16 @@ const config = {
       signature: "viewport-height room scene with mode rail, owned hero image, and spatial product hotspots",
       source: {
         html: `
-          <main class="room-state" data-cd-state-id="room-mode" data-cd-state-type="enum" data-cd-state-initial="living" data-cd-state-values="living studio sleep" data-cd-bind-state="room-mode" data-cd-bind-property="classToken">
-            <section class="scene-hero">
-              <figure class="scene-image"><img data-cd-asset="hero" alt="Connected living room arranged as a product scene" width="1600" height="1200"></figure>
-              <div class="scene-copy resilient-copy">
-                <small class="protocol-copy">Welcome mode</small>
-                <h1 class="type-display">Light that reads the room.</h1>
-                <p>Connected objects shape a space, then recede when the room settles.</p>
-                <a data-cd-route="collection">Open the object index</a>
-              </div>
-            </section>
-            <nav class="mode-rail" aria-label="Room modes">
-              <button value="living" data-cd-on="click" data-cd-action="state.set" data-cd-state="room-mode">Living</button>
-              <button value="studio" data-cd-on="click" data-cd-action="state.set" data-cd-state="room-mode">Studio</button>
-              <button value="sleep" data-cd-on="click" data-cd-action="state.set" data-cd-state="room-mode">Sleep</button>
-              <span>Scene view</span><span>Object index</span>
-            </nav>
-            <section aria-label="Objects in this room" data-cd-repeat="featured.products">
-              <article data-cd-key="product.id">
-                <img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy" width="640" height="640">
-                <h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b>
-                <span data-cd-text="product.availability"></span>
-                <a data-cd-route="product" data-cd-param-handle="product.handle">Inspect object</a>
-                <div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div>
-              </article>
-            </section>
-            <p class="home-empty resilient-copy" data-cd-empty-state>No objects match this room mode. Try the complete object index.</p>
+          <main>
+            <div class="scene-view">
+              <section class="room"><img class="room-bg" data-cd-asset="hero" alt="Modern living room with warm ambient lighting"><div class="room-copy"><span class="eyebrow">Scene 01 / living</span><h1>Light that reads the room.</h1><p>Connected objects with enough presence to shape a space—and enough restraint to disappear into it.</p><button class="cta" data-cd-route="collection">Shop the living room</button></div><span class="scene-index">01 / WELCOME MODE / 18:42</span><button class="hotspot" data-cd-route="collection" aria-label="View Halo Floor Light">+</button><button class="hotspot" data-cd-route="collection" aria-label="View Weave Speaker">+</button><button class="hotspot" data-cd-route="collection" aria-label="View Matter Home Hub">+</button><div class="scene-products"><button class="scene-product" data-cd-route="collection"><small>LIGHT / MATTER</small><b>Halo Floor Light</b><span>$289 · 8 in stock</span></button><button class="scene-product" data-cd-route="collection"><small>AUDIO / WI-FI</small><b>Weave Speaker</b><span>$219 · 5 in stock</span></button><button class="scene-product" data-cd-route="collection"><small>CONTROL / MATTER</small><b>Matter Home Hub</b><span>$149 · 14 in stock</span></button></div></section>
+              <section class="room"><img class="room-bg" data-cd-asset="hero" alt="Architectural home workspace with daylight"><div class="room-copy"><span class="eyebrow">Scene 02 / studio</span><h2>Focus, held in space.</h2><p>Quiet monitoring, directional light, and tactile controls for the room where ideas become work.</p><button class="cta" data-cd-route="collection">Shop the studio</button></div><span class="scene-index">02 / FOCUS MODE / 09:16</span><button class="hotspot" data-cd-route="collection">+</button><button class="hotspot" data-cd-route="collection">+</button><div class="scene-products"><button class="scene-product" data-cd-route="collection"><small>LIGHT / DIRECTIONAL</small><b>Line Task Light</b><span>$179 · 11 in stock</span></button><button class="scene-product" data-cd-route="collection"><small>AIR / THREAD</small><b>Air Index Monitor</b><span>$129 · 3 in stock</span></button></div></section>
+              <section class="room"><img class="room-bg" data-cd-asset="hero" alt="Minimal bedroom with soft low light"><div class="room-copy"><span class="eyebrow">Scene 03 / sleep</span><h2>Technology after dark.</h2><p>Low-glare, silent, and designed to make the room feel less connected when the day is done.</p><button class="cta" data-cd-route="collection">Shop the sleep room</button></div><span class="scene-index">03 / UNWIND MODE / 22:08</span><button class="hotspot" data-cd-route="collection">+</button><button class="hotspot" data-cd-route="collection">+</button><div class="scene-products"><button class="scene-product" data-cd-route="collection"><small>TIME / LOW GLARE</small><b>Quiet Bedside Clock</b><span>$98 · 20 in stock</span></button><button class="scene-product" data-cd-route="collection"><small>LIGHT / MATTER</small><b>Halo Floor Light</b><span>$289 · 8 in stock</span></button></div></section>
+            </div>
+            <section class="catalog-view"><div class="catalog-head"><div><span class="eyebrow">Live merchant collection</span><h1>Objects for living systems.</h1></div><p>Browse canonical products by room, protocol, finish, and real variant availability.</p></div><div class="catalog-tools"><div class="chips"><button class="chip" value="all" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">All objects</button><button class="chip" value="living" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Living</button><button class="chip" value="studio" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Studio</button><button class="chip" value="sleep" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Sleep</button><button class="chip" value="matter" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Matter</button></div><select aria-label="Sort products" value="relevance" data-cd-on="change" data-cd-action="collection.sort"><option value="featured">Architect's order</option><option value="low">Price low → high</option><option value="high">Price high → low</option></select></div><div class="product-grid" data-cd-repeat="featured.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Inspect object</a></article></div><p class="home-empty resilient-copy" data-cd-empty-state>No objects match this room mode.</p></section>
           </main>
+          <nav class="control-dock"><div class="room-controls"><button class="room-control" data-cd-route="home"><i>01</i><span><b>Living</b><small>WELCOME MODE</small></span></button><button class="room-control" data-cd-route="home"><i>02</i><span><b>Studio</b><small>FOCUS MODE</small></span></button><button class="room-control" data-cd-route="home"><i>03</i><span><b>Sleep</b><small>UNWIND MODE</small></span></button></div><div class="view-toggle"><button data-cd-route="home">Scene view</button><button data-cd-route="collection">Object index</button></div></nav>
+          <section data-cd-repeat="featured.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>
         `,
         css: `
           .scene-hero{position:relative;display:grid;min-height:100dvh;overflow:hidden;background:var(--smoke);color:var(--chalk)}.scene-hero:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(17,20,18,.72),transparent 70%)}
@@ -221,6 +200,23 @@ const config = {
   },
   assets: ROOM_MODES_ASSETS,
 } satisfies RecipeConfig<"room-modes">;
+
+config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
+  "<h1>Light that reads the room.</h1>",
+  '<h1 id="heroTitle">Light that reads the room.</h1>',
+)
+  .replace('<span class="eyebrow">Scene 01 / living</span>', '<span id="heroEyebrow" class="eyebrow">Scene 01 / living</span>')
+  .replace('<p>Connected objects with enough presence', '<p id="heroBody">Connected objects with enough presence');
+config.surfaces.shell.source.css = sourceTemplateCss(
+  sourceTemplate,
+  config.surfaces.shell.source.html,
+  { display: "Syne", body: "DM Mono" },
+);
+config.surfaces.home.source.css = sourceTemplateCss(
+  sourceTemplate,
+  config.surfaces.home.source.html,
+  { display: "Syne", body: "DM Mono" },
+);
 
 export const ROOM_MODES_RECIPE = defineRecipe(config);
 export const ROOM_MODES_BUNDLE = ROOM_MODES_RECIPE.bundle;

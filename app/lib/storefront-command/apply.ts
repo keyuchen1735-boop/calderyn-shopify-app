@@ -110,22 +110,25 @@ function textTargets(bundle: StorefrontBundleV1, slot: string): TextTarget[] {
   return exact.length ? exact : (roles.length ? roles : homeFallbacks);
 }
 
-function slotTextNodes(element: CompiledElementNode): Array<Extract<CompiledNode, { kind: "text" }>> {
+function slotTextNodes(
+  element: CompiledElementNode,
+  includeNestedWithDirect = false,
+): Array<Extract<CompiledNode, { kind: "text" }>> {
   const direct = element.children.filter((child): child is Extract<CompiledNode, { kind: "text" }> => child.kind === "text");
-  if (direct.length) return direct;
-  const nested: Array<Extract<CompiledNode, { kind: "text" }>> = [];
+  if (direct.length && !includeNestedWithDirect) return direct;
+  const textNodes: Array<Extract<CompiledNode, { kind: "text" }>> = [];
   const visit = (nodes: readonly CompiledNode[]): void => {
     for (const node of nodes) {
-      if (node.kind === "text") nested.push(node);
+      if (node.kind === "text") textNodes.push(node);
       else visit(node.children);
     }
   };
   visit(element.children);
-  return nested;
+  return textNodes;
 }
 
-function replaceSlotText(element: CompiledElementNode, value: string): void {
-  const nodes = slotTextNodes(element);
+function replaceSlotText(element: CompiledElementNode, value: string, includeNestedWithDirect = false): void {
+  const nodes = slotTextNodes(element, includeNestedWithDirect);
   if (!nodes.length) fail();
   if (nodes.length === 1) {
     nodes[0]!.value = value;
@@ -198,7 +201,7 @@ function normalized(bundle: StorefrontBundleV1, intent: StoreIntent, target?: Te
   const copy = structuredClone(bundle);
   if (intent.kind === "update_text" && target) {
     const element = findElement(tree(copy, target.blueprintId), target.id) ?? fail();
-    const nodes = slotTextNodes(element);
+    const nodes = slotTextNodes(element, intent.slot === "heroTitle");
     if (!nodes.length) fail();
     nodes.forEach((node, index) => { node.value = `__slot_text_${index}__`; });
     rewriteHtml(copy, target.blueprintId);
@@ -246,7 +249,7 @@ export function readStoreTextSlot(
     if (targets.length !== 1) return null;
     const target = targets[0]!;
     const element = findElement(tree(bundle, target.blueprintId), target.id);
-    const value = element ? slotTextNodes(element).map(({ value: text }) => text).join(" ").trim() : "";
+    const value = element ? slotTextNodes(element, slot === "heroTitle").map(({ value: text }) => text).join(" ").trim() : "";
     return value || null;
   } catch {
     return null;
@@ -288,7 +291,7 @@ function applyText(
   }
   const result = structuredClone(bundle);
   const element = findElement(tree(result, target.blueprintId), target.id) ?? fail();
-  replaceSlotText(element, intent.value.trim());
+  replaceSlotText(element, intent.value.trim(), intent.slot === "heroTitle");
   rewriteHtml(result, target.blueprintId);
   assertPreserved(bundle, result, template, intent, target);
   return { bundle: result };

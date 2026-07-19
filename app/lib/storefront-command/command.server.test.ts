@@ -44,7 +44,7 @@ const promptCommand = (
 const resolution = {
   kind: "recipe" as const,
   templateId: "custom-bench" as const,
-  templateVersion: 6,
+  templateVersion: 7,
   selectionKind: "niche_match" as const,
   routingVersion: 1,
   registryVersion: 2,
@@ -438,7 +438,7 @@ describe("runStoreCommand", () => {
       resolveDesign: vi.fn().mockReturnValue({
         ...resolution,
         templateId: "soft-chemistry",
-        templateVersion: 8,
+        templateVersion: 9,
       }),
       loadRecipe: vi.fn().mockResolvedValue({
         bundle: structuredClone(SOFT_CHEMISTRY_BUNDLE),
@@ -471,7 +471,7 @@ describe("runStoreCommand", () => {
       resolveDesign: vi.fn().mockReturnValue({
         ...resolution,
         templateId: "soft-chemistry",
-        templateVersion: 8,
+        templateVersion: 9,
       }),
       loadRecipe: vi.fn().mockResolvedValue({
         bundle: structuredClone(SOFT_CHEMISTRY_BUNDLE),
@@ -1150,7 +1150,7 @@ describe("runStoreCommand", () => {
     }],
     ["template version", (bundle: typeof CUSTOM_BENCH_BUNDLE) => {
       if (bundle.source.kind !== "recipe") throw new Error("recipe fixture required");
-      bundle.source.templateVersion = 7;
+      bundle.source.templateVersion = 6;
     }],
     ["source kind", (bundle: typeof CUSTOM_BENCH_BUNDLE) => {
       bundle.source = { kind: "custom", generationId: "mismatch", promptHash: "sha256:mismatch" };
@@ -1318,7 +1318,8 @@ describe("runStoreCommand", () => {
     const protectedHeroHash = current.draft!.bundle.assets.entries.find(({ key }) => key === "hero")?.contentHash;
     expect(protectedHeroHash).toEqual(expect.any(String));
     await prompt("Update the title");
-    expect(current.draft!.bundle.routes.home.html).toContain("Made for long summer days");
+    expect(current.draft!.bundle.routes.home.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " "))
+      .toContain("Made for long summer days");
     await prompt("Feature the collection");
     expect(current.draft!.bundle.featuredProductIds).toEqual(merchant.products.slice(0, 12).map(({ id }) => id));
     await prompt("Generate an effect");

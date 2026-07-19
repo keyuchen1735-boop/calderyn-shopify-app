@@ -1,3 +1,4 @@
+import postcss from "postcss";
 import {
   type AssetManifest,
   type RecipeCardIdentity,
@@ -73,6 +74,75 @@ export function wrapRecipeComposition<TSource extends { html: string }>(
   return { ...source, html: `<${wrapper} class="${className}">${source.html}</${wrapper}>` };
 }
 
+/** Keeps source-template CSS for the classes and semantic tags retained by a safe recipe surface. */
+export function sourceTemplateCss(
+  sourceHtml: string,
+  surfaceHtml: string,
+  fonts: { display: string; body: string },
+): string {
+  const css = sourceHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i)?.[1] ?? "";
+  const classes = new Set([...surfaceHtml.matchAll(/class=["']([^"']+)["']/g)]
+    .flatMap(([, value]) => value!.split(/\s+/).filter(Boolean)));
+  const tags = new Set([...surfaceHtml.matchAll(/<([a-z][a-z0-9-]*)\b/gi)].map(([, tag]) => tag!.toLowerCase()));
+  const rootClass = surfaceHtml.match(/^\s*<[a-z][^>]*\bclass=["']([^"'\s]+)/i)?.[1];
+  const rootTag = surfaceHtml.match(/^\s*<([a-z][a-z0-9-]*)\b/i)?.[1]?.toLowerCase();
+  const rootSelector = rootClass ? `.${rootClass}` : rootTag;
+  const root = postcss.parse(css);
+  const sourceVariables = new Map<string, string>();
+  root.walkRules((rule) => {
+    if (!rule.selectors.some((selector) => selector.trim() === ":root")) return;
+    rule.walkDecls(/^--/, (declaration) => {
+      sourceVariables.set(declaration.prop, declaration.value);
+    });
+  });
+  root.walkRules((rule) => {
+    if (rule.parent?.type === "atrule" && rule.parent.name.toLowerCase() === "keyframes") return;
+    const selectors = rule.selectors.flatMap((selector) => {
+      const trimmed = selector.trim();
+      if (trimmed === "*" && rootSelector) return [rootSelector, ...[...classes].map((name) => `.${name}`)];
+      const universalPseudo = trimmed.match(/^\*((?:::?)(?:before|after))$/i)?.[1];
+      if (universalPseudo && rootSelector) {
+        return [`${rootSelector}${universalPseudo}`, ...[...classes].map((name) => `.${name}${universalPseudo}`)];
+      }
+      if (/^body\b/i.test(trimmed) && rootSelector) selector = trimmed.replace(/^body\b/i, rootSelector);
+      if (/^\s*(?::root|html\b|body\b)/i.test(selector)) return [];
+      if (/\.(?:active|open)(?![\w-])/.test(selector)) return [];
+      if ([...classes].some((name) => new RegExp(`\\.${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(selector))) return [selector];
+      const tag = selector.trim().match(/^([a-z][a-z0-9-]*)$/i)?.[1]?.toLowerCase();
+      return tag !== undefined && tags.has(tag) ? [selector] : [];
+    });
+    if (selectors.length === 0) rule.remove();
+    else rule.selectors = selectors;
+  });
+  root.walkAtRules((rule) => {
+    if (rule.name.toLowerCase() !== "media" && rule.name.toLowerCase() !== "keyframes") rule.remove();
+    else if (rule.nodes?.length === 0) rule.remove();
+  });
+  const replaceFont = (value: string, family: string, variable: string) => value.replace(
+    new RegExp(`(["']?)${family.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\1`, "gi"),
+    variable,
+  );
+  root.walkDecls((declaration) => {
+    if (declaration.prop === "font" || declaration.prop === "font-family") {
+      declaration.value = replaceFont(
+        replaceFont(declaration.value, fonts.display, "var(--font-display)"),
+        fonts.body,
+        "var(--font-body)",
+      );
+    }
+    for (let prior = ""; prior !== declaration.value;) {
+      prior = declaration.value;
+      declaration.value = declaration.value.replace(/var\((--[\w-]+)\)/g, (reference, variable: string) => (
+        sourceVariables.get(variable) ?? reference
+      ));
+    }
+    if (declaration.prop === "position" && declaration.value.trim() === "fixed") {
+      declaration.value = "sticky";
+    }
+  });
+  return `${root.toString()}.resilient-copy,#heroTitle{overflow-wrap:anywhere}`;
+}
+
 const SURFACE_IDS = ["shell", "home", "collection", "product", "search", "cart", "checkout"] as const;
 
 function assertArchetypeMatchesRegistry(config: RecipeConfig): void {
@@ -116,31 +186,65 @@ function assertDeclaredHomeHero(config: RecipeConfig): void {
   }
 }
 
+function withRequiredShellBindings<const TTemplateId extends StoreTemplateId>(
+  config: RecipeConfig<TTemplateId>,
+): RecipeConfig<TTemplateId> {
+  let html = config.surfaces.shell.source.html;
+  if (!html.includes('data-cd-text="store.name"')) {
+    html += `<span class="recipe-platform-binding" data-cd-text="store.name"></span>`;
+  }
+  if (!html.includes('data-cd-route="account"')) {
+    html += `<a class="recipe-platform-binding" data-cd-route="account">Account</a>`;
+  }
+  if (!html.includes('data-cd-route="home"')) {
+    html += `<a class="recipe-platform-binding" data-cd-route="home">Home</a>`;
+  }
+  if (!html.includes("niche-icon")) {
+    html += `<span class="niche-icon recipe-platform-binding" aria-hidden="true">${config.templateId}</span>`;
+  }
+  if (html === config.surfaces.shell.source.html) return config;
+  return {
+    ...config,
+    surfaces: {
+      ...config.surfaces,
+      shell: {
+        ...config.surfaces.shell,
+        source: {
+          ...config.surfaces.shell.source,
+          html,
+          css: `${config.surfaces.shell.source.css}footer,footer nav{display:flex;flex-wrap:wrap;gap:1rem}footer{padding:1rem}footer a,.recipe-platform-binding{color:inherit;text-decoration:none}.recipe-platform-binding{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}`,
+        },
+      },
+    },
+  };
+}
+
 /** Compile a full recipe whose route markup and CSS remain owned by that recipe. */
 export function defineRecipe<const TTemplateId extends StoreTemplateId>(
   config: RecipeConfig<TTemplateId>,
 ): DefinedRecipe<TTemplateId> {
-  assertArchetypeMatchesRegistry(config);
-  assertDistinctSurfaceSignatures(config);
-  assertDeclaredHomeHero(config);
+  const boundConfig = withRequiredShellBindings(config);
+  assertArchetypeMatchesRegistry(boundConfig);
+  assertDistinctSurfaceSignatures(boundConfig);
+  assertDeclaredHomeHero(boundConfig);
   const result = compileBundle({
     source: {
       kind: "recipe",
-      templateId: config.templateId,
-      templateVersion: config.templateVersion,
+      templateId: boundConfig.templateId,
+      templateVersion: boundConfig.templateVersion,
     },
-    concept: config.concept,
-    designSystem: config.designSystem,
-    shell: config.surfaces.shell.source,
+    concept: boundConfig.concept,
+    designSystem: boundConfig.designSystem,
+    shell: boundConfig.surfaces.shell.source,
     routes: {
-      home: config.surfaces.home.source,
-      collection: config.surfaces.collection.source,
-      product: config.surfaces.product.source,
-      search: config.surfaces.search.source,
-      cart: config.surfaces.cart.source,
-      checkout: config.surfaces.checkout.source,
+      home: boundConfig.surfaces.home.source,
+      collection: boundConfig.surfaces.collection.source,
+      product: boundConfig.surfaces.product.source,
+      search: boundConfig.surfaces.search.source,
+      cart: boundConfig.surfaces.cart.source,
+      checkout: boundConfig.surfaces.checkout.source,
     },
-    assets: config.assets,
+    assets: boundConfig.assets,
   });
-  return { ...result, config };
+  return { ...result, config: boundConfig };
 }

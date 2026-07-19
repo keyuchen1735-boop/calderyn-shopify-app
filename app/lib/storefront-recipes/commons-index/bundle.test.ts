@@ -22,16 +22,16 @@ describe("Commons Index storefront recipe", () => {
   it("compiles a cooperative provenance ledger across every commerce surface", () => {
     const { bundle, config, report } = COMMONS_INDEX_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 5 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 6 });
     expect(config.archetype).toMatchObject({ composition: "cooperative-directory", hero: "impact-ledger-intro", scroll: "indexed-ledger", cards: "provenance-records" });
-    expect(bundle.designSystem).toMatchObject({ displayFontId: "fraunces", bodyFontId: "atkinson-hyperlegible" });
+    expect(bundle.designSystem).toMatchObject({ displayFontId: "source-fraunces", bodyFontId: "dm-mono" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
     expect(bundle.assets.entries).toEqual([expect.objectContaining({ key: "hero", byteSize: 156350 })]);
     expect(existsSync(resolve(process.cwd(), "public/storefront-recipes/commons-index", `${bundle.assets.entries[0]?.key}.webp`))).toBe(true);
     expect(bundle.shell.bindings.map((binding) => binding.ref)).toContainEqual(expect.objectContaining({ path: "store.name" }));
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
     expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
-    expect(bundle.routes.home.html).toContain("Trace the refill loop");
+    expect(bundle.routes.home.html).toContain("Browse all evidence");
     expect(bundle.routes.home.interactions.transitions.map((transition) => transition.action.type)).toEqual(expect.arrayContaining(["accordion.toggle", "scroll.to"]));
     expect(bundle.routes.collection.html).toContain("No records match this evidence filter");
     expect(bundle.routes.collection.bindings.map((binding) => binding.ref)).toEqual(expect.arrayContaining([

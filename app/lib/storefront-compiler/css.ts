@@ -142,7 +142,10 @@ function compileSelector(
     return selectorParser((root) => {
       root.each((selectorNode) => {
         if (selectorCanMatchProtected(selectorNode, protectedNodes, protectedSourceIds)) {
-          throw new CompilerError("css.protected_selector", "Generated CSS selector can match a protected commerce host or ancestor");
+          throw new CompilerError(
+            "css.protected_selector",
+            `Generated CSS selector ${JSON.stringify(selectorNode.toString())} can match a protected commerce host or ancestor`,
+          );
         }
       });
       root.walkTags((tag) => {

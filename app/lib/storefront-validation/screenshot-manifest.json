@@ -14,182 +14,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "093bd339bd564d6d708fbbfa4d53585f39b3af4aba7d608e80434278e0744f9d",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "3f2cbd5e1494387f27d0279164ab6a71e678c2eca5e7b581fdaf456a6a628f8b",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "69971e0b9e49d96e4188cf3a43a1fb8d86e3c790945641103498766131bf24ac",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "7b439cec36d36940cb559422b97e37fca5dd419e90d80e91a34243f1defe4816",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "214d46f987d515f8dd7f49a609d217058679cb2f7ebccfd5a2c161c4858e8d43",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "ca65b81c17a410de9d6dbc563d3940921f8a87380e3ba841c930d19fbe86713c",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "f14e509d9b5c2b92b9db4970a65b1cd2c69733d4769d54c81a075925b1f84344",
+          "sha256": "1327fe3c93deba4550d55b0dfbabeb5cafdf4ca261913416cea0b9fff218fa6d",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-collection-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "01edc87d07d756e4817a4e6c0dbaface5fe9543ed7b318f48f3166e741b0d370",
+          "sha256": "90fe481c92447e65871c5fe5cac45e438c138a9c6a8f66b075f905c0abdeab27",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-collection-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "bab159c7a343554fc55d293849d9b9c4e1bea139b36947c1bbe5f8861a17a690",
+          "sha256": "143276973a140c474fd8048286e54136f46648d87d6a1b0b99637f38826f0e7e",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-collection-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "f14e509d9b5c2b92b9db4970a65b1cd2c69733d4769d54c81a075925b1f84344",
+          "sha256": "21f93ec2d642f2ee8cb35805d50c73d4cbfa8bcf5154e521eead65dbe6c3ad48",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-collection-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "bda72d42474fb4539d1214c5d5a4624f17fcde386ff29c1dea4cff0ecfe3bfc9",
+          "sha256": "9c562275073615e3ea97900cf0c8b431ae9bec22e0df07dc61d2536357afd281",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-collection-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "bab159c7a343554fc55d293849d9b9c4e1bea139b36947c1bbe5f8861a17a690",
+          "sha256": "0e3e6552a56f30f00f2df042fa777db77a0cdafac0b9aaa635376264ac812fee",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-collection-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "c71f8110f931f84c531230758dc47d9fda0964e0c12bb8389f9c19c85a92ef87",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-product-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "d51de57095fc883715915e0db7a4f2b4dc114abcb025efaaf73ed6d2837c452a",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "805d49629e99e9f8f92b03496171946c1029ccc50a856002221edea06878f88c",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-product-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "9966e4bf9d4e64d19b5454c159e3693c190c4aba702e6abf0c259c688fe3f5e4",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "834584eafe6efa144285944e00bc372183cd3829609d78522480db3cc308f13a",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-product-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "d2dcb70b791365b54f16fcb2ecec999ccd0f3114b03aeaa13c0988c62a7a96c3",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "a5d98f5cb6dbca00dd09d938a38c4c57c22d4327937860548aec22079eb900d2",
+          "sha256": "2b720d47ae3ac81f0452eac64bbb3a8cf5b6e6111c649714223fcd497d2375bd",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-search-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "f592a57eb571ede8f6428b3fcc36b4bc6fb3efbb448564b25fcd09ad8b9e85ac",
+          "sha256": "376ef364a397bc4862582b6a46fae9a1f1d4d8c0ccd504d476f4e4eb9a356a8d",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-search-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "df0e1a23290df874a1c23cc0c6c6c3311ddd297ff68988d6db6165a7ac8a93c2",
+          "sha256": "ae8b911c787bee71cc7df147b7094398bd33b734c78133b391559d8de13fea48",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-search-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "3f3a594eef4c988a73a091a30ae007a1533861743a8b6b70fd878988371dbc4d",
+          "sha256": "ebb8926990c25690c871cc363838bfa88477c340aac8911ac5353e5a0697d7e6",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-search-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "362f94c2c7a817da03166db25c6ab5209d5797db63b39fdc32bc9436e20a579e",
+          "sha256": "10d074c32527cd1329a73ff448b95570f6b029aec32e21b383059d093ae68333",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-search-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "b76c5a7c43a3e147559fa7c2ac4f900271ed235a1acac1ee8a6cba8ceeecc17f",
+          "sha256": "9c7b3a231e49741c760837387248616ba5894c828cea630d00341c91906e78c5",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-search-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "bd6b95b8cadd3d98ada31d8244f28603e9818f4ac63401c54c87d5695bda6fbf",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-cart-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "ca59c0c1a10a4efe8070193b6a8cbb9ffb5b052303345f3379ecc15079bf416f",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "b139fa285c377e2f08a6e7b4009ad632188d9244b7b8f0c858ef04543a8393a0",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-cart-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "e1e791bd55dd706774a98046d8edebcd22f9b33168edf87d9047f1f2eafbc31c",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "9c8a1951be4da749741c71272a75cda1125356921ae120f89f61aeee96327505",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-cart-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "5ee860d2ff3582e9cb906751674f163f02fb751ec32086af5b5be1eb94dc1edf",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "1cd5ebf237ce94af51512d9b6497d8811b87836f58289626d641d36b13cd2f4e",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-checkout-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "6a8485b8a4cadc64917b0315184ce12b38b11aa078af0d9ff0c4cb0dd409c746",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "fdffa9a6eaed8d79176793b9a6b0e6eb6584a4ef6b2c4a219ad880648471f2e8",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-checkout-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "68e59c2fc8d7fb663debe4d29bbf3b9b004a3d13efdc072353b3716477318d30",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "7d9c9cd1c3b4edf5bc4201a84ba4882da486be74fb10ce40211ca2ca6e627ed2",
-          "baseline": "public/storefront-recipes/custom-bench/baselines/v6-checkout-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "a66c028f9c2f4276cfee664381409907f0b45ba9836f3f236ca2b7b7399bf4ae",
+          "baseline": "public/storefront-recipes/custom-bench/baselines/v7-checkout-desktop.webp"
         }
       ]
     },
@@ -200,182 +176,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "741dea87c4c31b4df8b413048e59c730f48d39cd04afcad997fc70f53e77bfd5",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "f1e03336a5acb960a000ea38e6aa74eac5494e4b11bd94d4f074fe7f16b456d3",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "8ecee74c3781e12405a35803d5f749f1e8fc7e6185334e61487ae1e2740ab944",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "cfdfebf8ec0f5b8804139312e885608cc428fbe956b8d1c60c6092ffaecaf4a9",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "d2a5aa0cc2dc49dce09164a8dbe5033d9fc8eaacf7ed22dd7f454f3ce1bfb5e1",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "179aca41a5fc58e2ad2903c36471d7e0db89c732705f7f69604232f0a769c522",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "17efe7833fac24e5ecaf293728b0619a42d96ce45b594857c5230f6892f59446",
+          "sha256": "59db689c7c9ee3c3a47fae4d2d69e591bf382216adbcabd3e3944e8a1d06d7c0",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-collection-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "e4f8e942943938980a021a2fe5366232698a62ce6e18a6a893bba8ecb5698270",
+          "sha256": "6240679dfd04523e64cbe7b49f830b2af6785cb1af142e8f9ace8f9666b00130",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-collection-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "9d7beac159a83485371020b2cc79af45cb57d531dcfabd97d096786db02aa592",
+          "sha256": "1e7bc32843bc9685f06e796c9a2879c6dea00645819749ebfd25aca944d59b5a",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-collection-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "17efe7833fac24e5ecaf293728b0619a42d96ce45b594857c5230f6892f59446",
+          "sha256": "59db689c7c9ee3c3a47fae4d2d69e591bf382216adbcabd3e3944e8a1d06d7c0",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-collection-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "6a735fbb89259beabda047e453c13cf2ae2fd585c4cd51bafc7b341172a1e2f1",
+          "sha256": "4a79c924d8ad7bdb76e8a01355f3d7c7b164edd337ca904f8ad9b65ea5868229",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-collection-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "9d7beac159a83485371020b2cc79af45cb57d531dcfabd97d096786db02aa592",
+          "sha256": "1e7bc32843bc9685f06e796c9a2879c6dea00645819749ebfd25aca944d59b5a",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-collection-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "2e17233062326f97bd6cc84668f2be964855f222aeac31740682fa2e4a14bc28",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-product-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "b9a5170260b9ee0b00d13d50d5a269322e089a98abc3acbffe7edb7389295f76",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "320f900f1de138435d07ee3d0906c60f3749b09649f10acfbc2021b56a078529",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-product-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "b33cb72b9879a76a1d27d7108770c8ffd514e6c248380bf36e17455d466a5afe",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "58ddb3e12de18b507a013ba0e06f8d61343c82992e09e041f787e4a57d4d9475",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-product-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "d2cf4679dde6ebc1da78c39ef32509b7f246a76e890b68178a2ed8cb03f28dd4",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "2fc34227bb32220c07e3a3316a2a649a7b84c9d8bb6d4d73188007c826dc342b",
+          "sha256": "4a6e6f6550f13848847db1159d9fd6ff129957b3722e55d65f5742a4da35eb08",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-search-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "e6dcd3f01dba9c02ff21eeecaa2a7c5ad22358f295c41792b58904c218b52e4e",
+          "sha256": "2af0923f60ac8ec2755b564c73a7a01b959532355cd258fd3b9922f4106b524e",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-search-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "f989bb73bd3d19232823018af1f63c7394c7c6d617982134211e70cb529459ce",
+          "sha256": "a80de7e06eaa85a2bf90db9dde03455c8af03a9d612de2ed9823f60f54b064f3",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-search-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "0b87232703698b13d8a1d43b7344cc236eebbb1b1742d7018911898ea34916de",
+          "sha256": "be3895df511ba97eba8d6ac0b206b67a43afbedf065802bb85821c7e30174112",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-search-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "540fa567cff75cfad83ae3f1e7cc4ed66c7c51be2cb347b2117a37da14b50843",
+          "sha256": "93e20409e04b254326fefef33ee954f50702ce9dd1b271b69803fbc139735c8e",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-search-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "939e4c047b8f495fef2418643a84900b1b20bada08d00293ce37d1aad3c28df0",
+          "sha256": "4b6f300efcf3b2ec80a2f2b56bb32cfd584dd2f099ba3a15c0d6373fd572d80e",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-search-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "78a10544d0db0c2da124355ccd0fe28a3cf472655ad55c7dfdd1fdded6e1a786",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-cart-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "918b6525db323d22d55c687986de33d96c49fae5376f411fff2d2ebb4243b45d",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "ed42e65ebbd161d184bd0c04bf42c215ded2969911d62b2228db438626043854",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-cart-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "360e9c10e22970334fbc6102570169be5e069d3ea9dc48c59ed43a7133014471",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "0a1eedaff877dde6859005e8c84fb21fa1db4dd65e0dd9886c0e00927046009b",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-cart-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "ff8137a4987318799d32afdf2c30bf8ab3c1f030da06129b00233e312ff52a4e",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "912da1bbdb545dcc4f5740b0ac8cf5c133cf15ff87be2924feefc32137862399",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-checkout-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "cfe5bff33af037be093513764901da3c9d8043a3ea7ff7c9387eea5843ed3574",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "f2e6243dbe818d50d9b305092ff4a4d26622b20da420302af9ac75c042b9da22",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-checkout-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "4136c00b4e48e463137d55a5f1c47229eb6bb0f3de70e5c34ae313e7bedcb409",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "3bdc18fc7a2d0209e59a933a46b541b5bb02e73eaa3feee460c145ef0b850ff0",
-          "baseline": "public/storefront-recipes/commons-index/baselines/v5-checkout-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "e1b79ab0bffe80bbb244799c8ef3ce69a2d24e5caf8e132f56ef8108a71a39b2",
+          "baseline": "public/storefront-recipes/commons-index/baselines/v6-checkout-desktop.webp"
         }
       ]
     },
@@ -386,182 +338,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "417d2a8a0cb2110feca00b7053a14e94bec2750151a14ba2afea732a4fa00368",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "1e1658e401f58236e39b6efbe4ba4ee5f21a5231143e3a813ae86311583453e7",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "9f3572c82a5a45091add03d5bacfdf52f12749bc2769a0812d9a30784e57d7e5",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "14ee5298fad412ea0d0003b1a94f4d49172e3d32ca7e9c3f9f7c3c653fdbe1d4",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "179d3006f9670d4728619a503f4758df24c33c162e7999589a7574e4eefa28f9",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "246fb4fc9b5f48687d816f6e1d7dd230d18b469cfa181e9421e8d4f02e0faa20",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "764f0af4a34ba999bb4facc4a1c590b3a354974eda6b124c511fbe535b516906",
+          "sha256": "5e6545ed5808585e886111fe42e262d4ecfe904259dc64fe01045d515b31f37b",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-collection-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "651352e86565118d96830ecf7f432639fbcbe7f8efaa18f77aa2a0d5cca0fb0c",
+          "sha256": "15c6c5b9d6aaf333b719fbcb5b2892ff44dfd5a17449b65be48318c8168c77c7",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-collection-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "1605c41047ea2b9f84218222c70ba9cb868c3d4ae943cd9ae3a8876c1d697f8e",
+          "sha256": "2cba660662d85325b43bb4a662a14e6170e3ad88da169f67ca125bd68fbf56e8",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-collection-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "447fc069ab238b17c3a44b8c409e71ce78d0fd311e2acb0b1d55f8b1edc6a066",
+          "sha256": "22237f9b57fe3a868aaaae4ad75bce8f114a8f40da515d592aaabe60fc556033",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-collection-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "de0d8c268fc8633bb9ad447c3d5e00ead984c1589ded96e6fa0aaffcfd0d6bd1",
+          "sha256": "9a4aa0e0fd31d019a2481edc807fa16bb0b3cd0b8d59e096e4d1b0ba8e9c8c28",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-collection-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "3a896b0aec2c9fcea7e2527f96e53338ce9e6f59b0ed0c8921f7af8f63c54875",
+          "sha256": "d76b9f7b34fa1e7c4cd2dc1f11f36d18d01055abdea7c24a229badfc5712e272",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-collection-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "aa419aafe146d962491e0a138e438bb320a58a0d0f437b71845623df55339b0f",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-product-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "ca27ed885ab22ef95d398d172b7a1ca4b3dc1ac60d4f38616fb5626e86a68365",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "a2dfa27d927d7318138309891caad5666887962040700ae93a17459367589540",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-product-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "36a6e593d71abc42433d7576a9d8f0fe08ff7b567b4c35d7adeae35c35a0378f",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "34934e8f261d7cd2b6c2681831bcfe0fb8122a3786f18fb27e29d4c36cebe007",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-product-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "5fe98731e78e501e3bf5edb20aedd488aed7d4fb7e0cbe0fd71922c852e23179",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "75146bbaf9dc985b92656554fee97d4637c5e000ee7d8f386eb82689626fe956",
+          "sha256": "697f1a83a3472f532955b8f0bd18b76b062d397c841711b96e6b30c26ae4521c",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-search-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "3d077efac9e18676a419f3957e36a263749ad07e0a9ff9832365c350cdec5fe4",
+          "sha256": "9d7948ec6f8ca78886fa7f4d2a629fe362de31cc9dbab2ba1f18882935c83424",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-search-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "3dd4634e7bc84ac55ae6c60b9e462f04c30506454e65dc917f598e68e0ea503b",
+          "sha256": "25b722886dec7820ed1248c8ac358be565c8fe8dccf706c6624bcddb7c38d170",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-search-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "1f5beea086fdfeb94ceb31b554a39cf1651c05e910d192c04d4fba8b983641aa",
+          "sha256": "36490909b3be016df1b4844e19b1d0ed5641f073b7c685075b1db55c823b2a58",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-search-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "f3964c0b294ea28101b1780229c8713864eeb5cae757a2df196dbf344c2f29e7",
+          "sha256": "7eed4aa7d070aa5c9e971e933489320bad040b6c43f369e7eb8051afc2889aef",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-search-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "bda340ebcade9150a37f721a523538c4e3611032e37b0621a3f28f2e4cfd2465",
+          "sha256": "c5829d69e8dac3d6477fbeba9fc72fc97453450f392e043a1c1ed6c75923bdf2",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-search-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "da0c7f3772052042944c950eef606d345a13078df458bc33e5552bed9f7fa231",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-cart-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "c7235fedd30df06f7b2ddbecf9f4f67c75c647a8808417603f479bfd0fe9da11",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "1f3068ed5943c02552ba0cec2ff821b14dd5145d766da9139f6b04712677f616",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-cart-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "89aa69739a98c1bfd707ff37ad42350b91ae2f39d58fd10a6517ba3c8eec6998",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "c81573ca05204504a98932b79cdb713ea3f8f0c9cff4c533e5572fb8604257d7",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-cart-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "994fef84514bc0dfa3c6afdda3707c08af69e2daae9c2f6b7701dd67c8f71a38",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "e99e8b1c7c750338f5c97e0bf930058d1655d74050c7751bc0206b18cf83bae8",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-checkout-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "2a0d6a5ad6ee7b74d567a24dfbe974eb69604c6232cabfd2f98469b20b9c0b28",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "a3d1efb1777ba66c919b8c229f83f0713826570e11b9a8657b5821b1d2633712",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-checkout-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "338e6faf79c66e0a960191bc9214fdfe9b677e6277cd39bc64a922bfe0f4ee43",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "a4faaa4286ecbe1e0c51c12f78232dff20e440418d3c0655eb124ce2036a42a2",
-          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v8-checkout-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "04a097c8e204ea8bdf3e04f11140a02b0a75ba6deef0ea41c739812a9825e999",
+          "baseline": "public/storefront-recipes/soft-chemistry/baselines/v9-checkout-desktop.webp"
         }
       ]
     },
@@ -572,182 +500,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "b863dffb75dd4113bd93aee6c703d169c3f4f3655cf3bad41a18e05ad287cdbc",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "a14fc38b47cb77ad367590cba3381e25f84b43e2176a8a1efcc4fb2467d333e1",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "7b41d60b2f13c0b15b74867be12cdc14e55f1bf044e92223e75c33c82a304e66",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "52e565840f3d799dbc75d0d895a211dbf5c5839a9d5bc02c367275c859cbd4f7",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "7af1d910d1a3e3ac1ed52609767e64c52dbb48e80f29e4b5a50827b28bc54281",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "ea436c327186e2f1237467e8576b4cbea9ed12f0ed019d13f3084d406f315e58",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "e846dbb4d670275dcf1ab73c4b1c0f30fb8466f67745c1bd39f0a57467ba3640",
+          "sha256": "d070338b7eaab443568af490ff9c166ddfd38fb2dcd71ec140e9770cdf598c04",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-collection-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "247c091c42d60370a2a102d1130ac0ca0c8200205f21a759d7b7d7eb938a79f3",
+          "sha256": "305aa4f55bff61603d219f69e6865c2ea3661764ea0bb56a78c7d3a08eeb2fdc",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-collection-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "55ba8f19975bc37906a940618d283dde5c5a97070671b19c6b44f3c270e3bc3c",
+          "sha256": "fe0b9b63e1f80ebf23863807825932be808e0038562d74f9fb18082f29a94d81",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-collection-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "e846dbb4d670275dcf1ab73c4b1c0f30fb8466f67745c1bd39f0a57467ba3640",
+          "sha256": "d070338b7eaab443568af490ff9c166ddfd38fb2dcd71ec140e9770cdf598c04",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-collection-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "6f42fc024d652a4d1d307e4971a2f6e2a4b011aabb67868751fec49b9b2b5219",
+          "sha256": "980c5e6c9dc9dbf7c7252969e4213df13c0546daf2c5ca9219629e76c3d5224f",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-collection-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "8f5776856fd113adf1c5bdafe079434f457248356532034947e22b0edf9224f2",
+          "sha256": "557ee9dd99a00fc0467c3732151886419ee809ef7536f1d3328b768a97527d7d",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-collection-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "057222ff4e16e5a05147047b373aea6855262bcc82741765e643f3f798c4c212",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-product-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "10518c4f1d28f6a8a6a6ab83b8d35f6c8eb1d39f634643624ec2559421920401",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "48f9acd0f83e166957253c45d76687fd4883c6f9acd8f21559f8dbe29051a101",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-product-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "edc356b571019d00ddcdc78563da1b55b53b246da2e8b8e18ecd7e1cd1e6f85a",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "6129eb4bb1371cce70b8e030e739ada6d1e0425307019b76400c09776515f89a",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-product-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "6d9fc0b22dfdd8f85cf94ffd801379df1b080a5a733d6782419a338f16cba3a2",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "7c16e5b5873f5d2e07f6a3d6a1b2aec0f4673bc28368dc42aff7a1c4f2847e7f",
+          "sha256": "0845b9b9dbc6edcd08ee178187841a3bbaa1ebf9172f5f9f1f51d970bb643c7b",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-search-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "341b53ed357a87708aed0ed5146f5c956a63f3f26f81e408b0fbd60c0a7c3eda",
+          "sha256": "a52cf493e6a4cb69f5e71705a6cff3433a7f2f11164116db7a291d4da73dc70a",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-search-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "9dda171e4e56e763e7585f585b136df4cdd472f060aea256777b386ccf9f8ca8",
+          "sha256": "ca7a4a32119c1fe9afc04c91b1e0ef5f1f38f45d45f410d651ecb0c9d88b6325",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-search-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "107818103efe6bb4a5b2904cad85fb78bad6345785ab32a442cfe76145850d18",
+          "sha256": "93015701ec46e608c695729caf363b11d62521d73a4f4b44f7c26bf2faee4ac9",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-search-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "1cc4ae5d48d6ffe52de9356cc8d98add3c573da0e607b43b19da26de1adfb5be",
+          "sha256": "f3567f2bbaef65a6fccde42677d25b316cf16f8187699a8111319f21798b03be",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-search-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "dcb7babcee9f5b42e769ed9396ffd6ad61c24fee858a811baa3db3ce92c6b3f9",
+          "sha256": "f55b5c4714db77d0044d119fb6beb5e62aa26d529cf28d34cb5881e69cf4092f",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-search-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "433b87387631cf34abe25ae09942ae9703088b0fdc1fb4436aa5ea847394d686",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-cart-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "2a3efb47c6d0966c5de5a232a02db9660bf82469e0bb2aaf973d351bb706dd36",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "254a31ce282ce5ff679d8ab32c71e715d5526f8cb5eddd1b33202aa3afd6948a",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-cart-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "c1f5f4461fe8ceae53e266dd57d260ed3e16bcd03442530721a24094c75b4449",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "bac7e48916a8edf84c88eb0a0632a2932e29e439a13f4e963c6c352c8a5dddb6",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-cart-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "9197416617219308656487fadd620f92d19cd1d2e5f5de08f8be118c3dbb9042",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "c62250e276068c5f4624d987f13d5900cfad8f580f39281751004011ae42f9b4",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-checkout-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "132303d0d3c65017f81dd99b74b8e746ff6c110daf5a7c6119c21be6af7428b0",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "f76349309a92db97f60c8b6516a0d782c731e486e9b01185b2dded92b46c13bd",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-checkout-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "334389d5ebc367e09c8f22d14e9065ddd8a3d442a112a879de282bc17e6fa021",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "32911c799250bb836d3a4a54127ca6281d2a180db9fcfe2df5ca741304119b2a",
-          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v4-checkout-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "175fe688bbafd4a2d11d14032eba4b6cceaa04c45c52ca8e87f732d31347324f",
+          "baseline": "public/storefront-recipes/companion-field-guide/baselines/v5-checkout-desktop.webp"
         }
       ]
     },
@@ -758,182 +662,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "876013902af994a02c5042aeb8d90a13d06b7297cfff689745090bff9a465194",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "7bd3890a101de55b0f9196da9d7dc0f24df80fcea41e61e706ff8d299a37cc5e",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "c94bade817caea7855b0bbb23eb2081840ed3789a3fe1a34c2f9956bab3c2c6a",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "6022a5ab59fc026407af4575bb7686b63f2e09d8357b8f1b29eda3c093d8b244",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "8fbb1f916037788c54718c9525331761602573256685367543ff7c3da4ab3939",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "8c5b2fd9e44dc638fbe1d3ff257422b567fac1bec3a420e3fa399e12a0ba7ce8",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "b1d07abb0a633a03b5b7292dd8f4233f989103070776faa923bdfee36d1c67eb",
+          "sha256": "fecf4d568669be0adf02c62cdf6a47accd9b34a9d295a3c1162220a248c0f0e3",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-collection-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "a0d13294f88340b849137a72576a37d97b499c65f0a874a5302c84b1b8c5a2b4",
+          "sha256": "0321245ea87d808c55e64fa14680c32afdeb313d8fea7eb00c375ede47b052e3",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-collection-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "0980df8020f9b427626d38a6f6c6e25c6e71fa3f2a90010f82720bae6ce75389",
+          "sha256": "f45f2047b644967761f73e301723f08a118d7e3e4e53fbba1a5911c9ad72473f",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-collection-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "b1d07abb0a633a03b5b7292dd8f4233f989103070776faa923bdfee36d1c67eb",
+          "sha256": "fecf4d568669be0adf02c62cdf6a47accd9b34a9d295a3c1162220a248c0f0e3",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-collection-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "2a1961fe6d431fa78c559e6e717af2c23ee18f9c5de9691f9ffd582032371d94",
+          "sha256": "e1206720680c157b1554e79da52fe6cbe15f2bc9d4d4e473ac7c2b2cb11e2f3a",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-collection-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "de34eb29902387731cbf79d93073d7e033b1b3520c674516e5d3f48616172211",
+          "sha256": "3ef3f2c6bad38b6d1151d524228abbe31608542de90d3870d6b15bac172d97c7",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-collection-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "132a86cb801a72a451aa19d2ef585aca91ead5813940b24230ee69f96edf2c5b",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-product-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "5f6bc0eece33bede0f3b3440acf1b776c9742ed4b87678e42232865ad70e1d5d",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "52da7e1f2b23b30fc114d8eba2e22b02a0902d3eb9858f96fd91e12085a4229e",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-product-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "fae198292c2ed92a6d60f80803c3484f0fae874b2ad65864578e4d7be930ad95",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "5a57b34c638c807cfd6a06d4cf194dd6c0c6c3744cd177ca399d2e435fc5e61a",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-product-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "afef6fe67615f967ad178fc3bba7a83e5a97e6019063f92d8694193928069f97",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "8faa054ad3dd840adf34a0ff14fd689bfb71149cdbaf0c9494b2b603fce503d7",
+          "sha256": "7b1554f0e27c3915b8f116ab2f391986a602153dc28d7bcdcf93d481a56ce61e",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-search-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "bba6bf3966e56903e4a3dab9d776604cab30c835ab51204437a9e0525f683bee",
+          "sha256": "4d1514f16a47dda1f0957ed7c2fa7576f9148fa52cab9896fdefe39e87f235dc",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-search-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "e827a5247525358b4c1d0b0d9138d6e52f5ba3b510f1f142c50c6589a585c15c",
+          "sha256": "0aecad401b1f81e64ba6a784f10da8921220f9175340eb229d90cdcf8da94f05",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-search-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "b92fd54bb66366de43be7922beb39e1344ecdccdde041e4b3fc4760370859417",
+          "sha256": "ef33d1aa9459bef80d4ec6ef87c93d8531157344c8408f7f2016b9b4cf09b5b9",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-search-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "e1c97b4dcce2cd5c7cc260a12f13da3290305545efbd6997fdde23ce93f1725e",
+          "sha256": "f3f89cf1a99f339ba5b3fe156ae590d9bcee991c5a42800cc4391d189fdec512",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-search-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "b5217e0166cd6220e75658d09f5683ce98212d7a6f3de7db0075131ca760917c",
+          "sha256": "fad40069c5347016c0480ee518334ba0bb984a15f7eaff066d8800ecbb806be9",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-search-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "ea809512e17a002ca70570dda1b64f14aed205d9e56e61ba4342df3e846ffe66",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-cart-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "5d0f2122a9a7c87b0c14ca6ff892a3bbf249c6165d82ed8af550fe992a25526e",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "2e4c56d2537dda22bdc23e304c70d95c74504bda8c3bde9a44063368ca727aab",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-cart-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "2bd07a893d0a4178e5a3dd1b501244a7872b9186d7a480fb1c46cdb7c2c535f6",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "6b50f5713bef77445660941e24e09d3f66de82a6ea7410288dbc04880fa19428",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-cart-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "da176b578213aa08d93a10983bdf322baafcb5bc568cf1ca432a619756864ed2",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "a5ba11ffe1844ddad43215c2fa232dc4eacfbcd5ec41487ca83a60b7cf23574c",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-checkout-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "8ae05c596caa4153ebbacda2cf54033ddf416b8bd6396f7dcb8677b794da1a63",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "470297e4c3db27e0bbd1c06e575267cd1bc095fa9de472e52fdac9a2bc65f0fc",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-checkout-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "db2e562ed9afa8564ea2a7932bc96e5f75f845cc8ee87e6c3dfb16e459da905d",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "9a56de2ba0d20e0d22d0f6467ffde0a091dbec1eed1796d65692038a16d50b91",
-          "baseline": "public/storefront-recipes/daily-protocol/baselines/v4-checkout-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "41c20bd4f4c520cabea6058b97f32c6f43f3bd4b8bf2b27c87dc8e5ace4eb660",
+          "baseline": "public/storefront-recipes/daily-protocol/baselines/v5-checkout-desktop.webp"
         }
       ]
     },
@@ -944,182 +824,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "35f225b1c76e1f33d10f2a9d67a6333fffe12942c63a17146f8fa7781c369c99",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "fc130465e674771f6047de797c06c697d61d82f92109ee6531f7715ab1c986c2",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "12c3dc3448c7aa875876b6b92bd8174b113f68afcc7c9b0d95bd53dc3ca03c68",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "e8b38bb1c5d12ab69f0a5cb0ff8ab6290ef429e18eaa354f16cfc2c326ae4430",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "e30bfe17dc6d8b2e5b999232eaf3de3263c554f9579088993ef50a310cb1dbc0",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "a8236ff8b667a7ce96aa1c416971d90136a2ea6b19f68a4b8a7251c9961d0b32",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "e59a0dbad97432cd3d47fd3a9b3f78a860832994306056e0bd3600b4652e0ca7",
+          "sha256": "b72f250694132930afadcb251d7ad1a33ec4d845085300b937e3ac15b64aa83b",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-collection-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "5f52f68bef47877ce9259d54151d225eb41d8d43819fb98a5a4af67894dd6352",
+          "sha256": "5f7e2a71e967c48a02c3ef221b14d70c32b7ed7389ece367494a4e3ebeeb68c4",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-collection-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "2810d69f5a93a697919d20cacb4cf171fdda1c64038503c26eab27bf3cdae44c",
+          "sha256": "f30b3c99938ea3bb02a93fc09e266e6b6089c43caaef37d56f226a6655835f72",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-collection-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "e59a0dbad97432cd3d47fd3a9b3f78a860832994306056e0bd3600b4652e0ca7",
+          "sha256": "b72f250694132930afadcb251d7ad1a33ec4d845085300b937e3ac15b64aa83b",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-collection-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "bd512af783cdb290dcb3d8d7a3b2948f1214f26bc89fb91ac5e29929d3745518",
+          "sha256": "355b4ae391773eaed5861e5ddbcfe95329f00fb923a4cdd6a73feea8bc50c023",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-collection-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "2810d69f5a93a697919d20cacb4cf171fdda1c64038503c26eab27bf3cdae44c",
+          "sha256": "f30b3c99938ea3bb02a93fc09e266e6b6089c43caaef37d56f226a6655835f72",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-collection-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "976ee8c5cf9f0a2f47f7ea5cb75995a4ea79e91521dfc375380f03e8bce11152",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-product-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "2f51478a5189f33e9cbeb860ae1fba47b11a9842b72ed3baf1ecf86b136fd54d",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "272f607a85194e21d549de3073fc1cbee4c4090cdd65cd3e143077c56f8fcc28",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-product-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "47ab2192448dfa130bd8dd35acf3c976db68e258c9be35bd2f9c2d1f3d4294cf",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "4e60636bacd54c8cd9e5ce5199cd616ff8252234f2ba16b092363167f32e657b",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-product-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "e63f807253318d63a3eeb9e416d438cee79f3567277e102a7cbeace004f9ee85",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "659ad1bb9b1bc9378d897dc677af985ed41acf2c0090d2534d7f4636b6b31e3a",
+          "sha256": "3ca0073eb86cdd3390ea9c5101b41bc2c5b58f9fc6746c952f9eefe55494a497",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-search-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "d2c0f7ce2b7af7cf92de6a52fd82d25d0c66e1e6da1e37bf3b52c236812b9890",
+          "sha256": "eec0879bfe9db145b3f0d8a48142e442683c1486545a193cf7f6d85a7f5b0089",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-search-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "5a18d67a22fd8b0c46f2b8a831e1bc4aa7db3a95c55217589394c3b992def49a",
+          "sha256": "f7a0b56d452c0f53921b2374188bb94cda3529852ca77de5b01c54e8d99c7eee",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-search-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "a02e416d997fb3953f71d1947d36b3ff8655c87c1352e127e2eb9b7c2c2a677e",
+          "sha256": "d2d94589019a14ef9b4f1b66e2c372b26a0b67bd67266e47e470313c5f001817",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-search-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "1d74362d783c5a6372d28b2efaadfdf32553ffc17ca4d336b23f100b8ac97040",
+          "sha256": "f9ffbf82ff0daf905d00e4e91912433b3ea98327164ce0e12623153d314e5440",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-search-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "615fedf690d29b93c7c007852980bd044a3e983810094e42c4ecbfa8f446f72a",
+          "sha256": "76e0ab6b8e261de919d80b57e569890b751d5806b7c90745f111410f7c174536",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-search-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "c8522734c7f0674ce779c8071ebd6e2ee1190f915dc327d8190acb6f40d89b14",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-cart-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "a5a0a01bfd1e5558a9767aeab7bdd7a63d6d9da8f4215f0fe7286c6d28f3ce32",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "18040aaf4c7582546a990655ec247bf4350bf3a00664f7654388ec3ad178bc5a",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-cart-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "7e93cdceaad46fa249886b85e7142baa781c7f8f3fd71ec6d9b788ea81b6e9d9",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "028a80c13cbd04e910813fabbf18d9099e811a0f3dd9655e420a60d07b6af478",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-cart-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "10843f168e94a1a25ef89df2ed713629b6acd45eb00e760d81ad551e1a45b451",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "517652db24058ee0aab911e74fbb0891e7d2413a11838de79ddb5453ab293af4",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-checkout-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "010a356210973e0fd9be63a1d655ba9b3efe45165c97e884c8e7d147d7869535",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "50a628c63ad34fa90d704b92e11edd20a5a05f89e3cbc2fa6f796f599445cfb1",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-checkout-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "7b7f755c7b046c55aa1700378036176f41a77ab4004c390dba0b6506f5e76107",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "c99f2ca9d8f44ef3eab21d0c1d686f9d4db00d86078833193f7e4e0a12d5cb63",
-          "baseline": "public/storefront-recipes/room-modes/baselines/v4-checkout-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "f4727c1dfb23952faf465890c122aff7edd767155b9b46d85e7cf2358783ac5c",
+          "baseline": "public/storefront-recipes/room-modes/baselines/v5-checkout-desktop.webp"
         }
       ]
     },
@@ -1130,182 +986,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "43854f3c24b0607170aae2f8af803e86aeb06a4f4f1c638a3755bef5e6f52685",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "da50e99f2f84589f7edb938cd18f2b2351edefb0310f8c2750a3cfef8bf89b75",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "3b3794212df414e7a61d8b71e1bf0520a9267c08e423554f767d5f7d5a388a0e",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "61a740e2fd6954a747b98ab67500e559af6b510887277e0010a44409bbd91a29",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "4c37eef23ba4d83b3988ed8f667ddf91cdf7ff32f3c1389101e6240020e41aa0",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "cde61cf4c451c97aa0266eb92d18355ba33cdf8dfe1e7a0145673c4c781475b7",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "35a9dbfeed94847f6759a52313ee41c99a7220fd8da92cdc0f32f01b60120c25",
+          "sha256": "35d3968ae4f128875dbf3ed137f8bd8bc2e68471d8c10427849dd7d617f52f8d",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-collection-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "d2d03d14853348e47b7b969df5544e4f32d95c36af5578705d0496e5379f7643",
+          "sha256": "9707ea658b983037d85ccb1ae3b51971555bfdc99d8a50eccd51d2a8cd438179",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-collection-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "5caea8695e90a0bd568b0cb639428e8e09e9da7b8a56796628d4753a844ef89b",
+          "sha256": "d7d82f1de9543486c487b325236a2beb0a7e64a8a28de17186a8c2c1e631b4b5",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-collection-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "f3b87cf6aa3ce884a1eefd8809abf16b518d7ce7400db9c6a76394e6d1bd260d",
+          "sha256": "089af01c68606a10704e6eee3e3faf3487984942b3ce0c23d8c4f1521be2da8b",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-collection-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "cfd2b23b4669e6fc9cdbe438978af8833575798f7991f7dc41e4f824eda6c8da",
+          "sha256": "105a339975e3e323c04afc092f6b87be77208420e11225ddba97db4aba1d4ff2",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-collection-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "b9da8d15611df22fb91ae6e3dc68ef42100026cbf409b7e0cdc7231225c1c98f",
+          "sha256": "1d17d2c2411d33b62c90006b1b4de8757b2266e7b608bf94e67a969134d5a594",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-collection-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "5bb18f57ab13a004fdae05da15e449bcd327cbc5da8629e962f2a58113798b9f",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-product-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "bce0d83729b9d51989e7050c62e1f746f721b08ab504a08299e12a3e8801903f",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "f7d7764d99db4567d007df6f070d5d8b2113aa92dbeb4280644715c2c60bf624",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-product-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "1cd40f420d350e56e68e6c3e9e66c09c0f8ae27b2dc879c0d742629d45e3ce7d",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "a45d69f6a160217813bd527357cf568331960c9f9f16ebc3febf8ee9fe03c31f",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-product-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "999fe22ed75a5c6114dcc34201cec96eb49265e6a84862687e081b5a6018c3b6",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "54f1cbfe2250ba8345b2b7cf1a8676b536cff939dfa930fdc66b749a6b94261d",
+          "sha256": "a465aea86367135b1aebc643bed4afc4a49802d12156d22637bf21404abb8e7a",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-search-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "97be79e75d3cbf6f6f40c4f27130f79b62f7064731881c79a0956d11c9e7ecf4",
+          "sha256": "d1c59b26dc946f5ce8563814c70a2a88c12c1873126f3002d4dccf0c81943719",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-search-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "e7e6aefde665691a43e86d08edcfcd40ab932fe11902d631f8fddc4251470099",
+          "sha256": "1aaa6e0825168a8660d1ec88be3ce1cefe38f3d940a3e7822baf20e2a2c3b18e",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-search-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "7bc09851120a8cdaf51e8be402ca7588fb3df901d1ae5ec9b837dc75caf89cd4",
+          "sha256": "044e40f62076e9a5272b1abe2de3a05fc17824c30b78d2575d338b405c8ca482",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-search-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "542f74e123bad02d521c8589f4847303f1699f72c7f83a903dfcefa4da0b7ea3",
+          "sha256": "277d1f10e465460a8b0ba0eda5458e4d34bc1df2bd56eb68c505164d463ca7b4",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-search-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "73df863d5f5b997875727ac6020ec38bd2318c5885b04587ae13367275b6b6dd",
+          "sha256": "3f7a379dfe6e040be592992f0726d9da7fa545db8b414bee0c92397af0519209",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-search-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "51b788e3947cc8ae92c6c4560355c7b7f2fdbfe3c66cee631a72bbc37dc4305a",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-cart-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "b6916813f3d5ae60ff44b68f9c93aa6b639340e541b574c83070346511f5a624",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "df9236efec10f2f7e9b8916d9ab870f1737b1abe27a5592dfc75f736fc69e491",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-cart-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "521f4a2548bdba8ce3da39a7b3235489879e9306acab44d3245156c819066fc8",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "67f177da2b07db581dfd7f96394174482fb90767e553623f4fc90d564ca2fe3b",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-cart-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "fff9b5b05f1766e366fbf65eb3c5a9de20396ccba071166cf01d29dd55eccd18",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "37d955e1dcae99eb64730fa7d66c6c84b71311a31cf6557df5472605d28a42d3",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-checkout-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "a2995eaa7bef9e117520a2a5dfe01dc5e029df377c20534216f0f31b640833b2",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "f748b68aede6a0ae8ec129fed283996cba73d94cc3bb816d90775d45f01bf594",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-checkout-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "f16d164c6e84ac85e34eb5510e0c747e5fd9774a32d3c7ed929bb3bcef6c9955",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "ed075dd6a7495f7abb6766d0887c779d014ce4e2669c0bb6230e5c752ee08b7c",
-          "baseline": "public/storefront-recipes/rep-rest/baselines/v4-checkout-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "41c63b404b9cc6bfcdf7494147e918923942536b3d2e6f566ae46ec0a54852ca",
+          "baseline": "public/storefront-recipes/rep-rest/baselines/v5-checkout-desktop.webp"
         }
       ]
     },
@@ -1316,182 +1148,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "a10cb6a31c638c511ea0f04a31ed6469515ab52d627d46cf7132d63c9bb4cbff",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "2d5d5fef03c1ccedb9697166115c0c10cfc3811adba23557e99a707e6601a793",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "8571570cb3bdf459380b1b9967f21a9b8de3edcbc3d9d9221602ae81093db106",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "e4bafa880ca328cc5450295e742c4defc6f342145597beaa6db71fd60c0719f2",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "d85427a9e0bc6a8b3c309dbe67e828ebb531031e3a63b2ee3d3b3978f1a7a563",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "392c5fbd36f45d80aea9d9cdfcc4952d6bd8cfc5dc644ba3e79bc3b3266ad6c4",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "3809c3a7f25919a6937f80833514d079bbb69b25254a395d8832b157590e04a6",
+          "sha256": "42d7edb0026c0b7d3a51d985d885a7d2f5cf2af5fd91a4acbda19fb09ce09436",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-collection-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "b2692ebf1fe93307afe48e38391c1a00207c414f16afaf7801ef17afe4a43e75",
+          "sha256": "8cad0d28f6c0b4a6647004b73717376316971462c130451d61e6f6c682431286",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-collection-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "766c41d90307fd73f999f307a39cb2c2e9ab6bf3b4a0d5573a3db60748bafc7f",
+          "sha256": "8988fbc39ebefb429edbef5145999dc8d043923acec6cdeb3306ecc2a17fe249",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-collection-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "30e90a0bcc1e5473c0bf0a5a2e20b0419663739f3c24f41ae721994b6813309c",
+          "sha256": "a4194c99fdf1574a3dc1ecea716cafd3133a235d6b6ea6866173a558726a7b6b",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-collection-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "f64beda599df6890931c9790def4f8119240f2f17e6762ed48b5da34cafc0425",
+          "sha256": "a543335ac5826befcee0fbbb47bd9f001dd6b8f7b0a8a2db745be499c8108871",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-collection-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "614d8718474a110f3186461879aaca119bcb31f3e37d19df1b2b4ee916cb35c3",
+          "sha256": "d711edec2dde2c71e1ac9725b50d5ba68a6affc4222f1e55c2c883b445b668dd",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-collection-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "fc46b75551762dbc56a1a59091b5e71a786391a68012e8208dc5a243864dc6c4",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-product-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "21b137ce0bd56cc7c029832344f60e518782be3073e2554911e4632984a9a6fe",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "4bc93b884e5a977bf0818e8a19b62b4c5bc0b960298d809689f13f5b2d43e7d2",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-product-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "7d7e3d7bea8ce6ce1234a38bce8e9bc3ddbfc287e478a4c20caf540e49ad49ce",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "87400e039b4e5aec1d3e6e60bc5eba7ed93563717397954ab07d999dc8b4d678",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-product-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "4fec37f2481de42a1d447339a081e66a439be9d3834f6819c64202fef37aedbf",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "c6066cf60f1c92c7cb9d79ff6a4fdcc825867f9fed9b9e7d965612cb6773b577",
+          "sha256": "cf0c04053d3e6203b7d42731fdc6e5a431784cb4fee86915a7bdb6b730f755f8",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-search-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "8c8609fdd475323ad114fac3b0462db5dfcd1f0e583c1adbdbb1cceeed7935a8",
+          "sha256": "1a691bbc64bed2d718979993ba623718bacb6e1928d3adb14d3bbbdcac2a6579",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-search-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "387e45416f1e0e4c3919f2ce9e1c3f8af5ddd0bed9b7a7a37d9f2d5f513202d8",
+          "sha256": "96b8fb59bd4d5d3fb2bd4cd6784392ed4934ffa9329b95dd8333683afea86e61",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-search-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "65723a6a23c2646a9ffe0d93dd03c6a83af446db9b0acd2803a0853da04337d5",
+          "sha256": "292db16b1b7b4b17678954500fede5a49940a84b058a944cb98ff2400d73e52b",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-search-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "0891435642d8cca9482a7210ba2a45cc93d409fe582feb713600234be015b0f9",
+          "sha256": "4bc4f8a023128acdab287a5d09ac8100883a03e87629f52af428158216eb51fb",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-search-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "6409be53b211c4e997c3dcdc2c25b2b005069556a24a25c856038bc639d21cfd",
+          "sha256": "f9d353a365905c01d408abae977c89f0549ec7d0903b95f69a088c6da344bb8c",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-search-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "2c2d9eb939d7c7a2e8fb618eb26b35646333b71a9da80aed356a2dff9faf9c87",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-cart-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "ab0e032a4ccf80fb78c7ecce22129fd651e096aa0fc425c3c24cdc581b97c20d",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "117f253792e0879c078ea2b8dfdf7461bd5b403eb99b11ba990c32e5525d9125",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-cart-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "4236b86ae9a4ae811a7f90bdbc92758d7515eafd88e87863037552cddd6728c7",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "66664de2843d3dc5765f74104c822c046b6157bd1af4dc4b59b4eb866ebe7a78",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-cart-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "0c6229d26fccd092e58e64f469ebcf695afa0168bddb49e3bef66328697a206c",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "3d5a13b59f4e1ed0b736a5726d58b857c6b7a53c9f9967518aeebb70522950ef",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-checkout-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "109aa7c74c894b510d5ffe2971fc2d541162e88b326e69b946267a27447986e2",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "76499760f1d824eb071274763ec5e58f728656d0bd431ac6674af147f5f5bb3e",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-checkout-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "4b0497f815efb74fa13b0f4a01fd9fc03758bcee83a20533561cbca08ab32789",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "4dc0296baedee1168f1c73c34ea58d065f21a84fe5569183874c2e86bac0949b",
-          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v4-checkout-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "6c2bdc3fa4351202b630458b65dfca95df29fe052b256db7f5448ec3a8414308",
+          "baseline": "public/storefront-recipes/diagnostic-deck/baselines/v5-checkout-desktop.webp"
         }
       ]
     },
@@ -1502,182 +1310,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "3b95e1dc279794c6a1a7efb51b1740ab3c732b1a657ff368cfa052f5e9d36ede",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "3213bd07bdd51cda0cbdb275f82ae5a69c478f8a7be2525c717e7f70fa3c39ba",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "18e915f888049be181903905d58c7cef9c5ac2f35da219a8409db329b45534ca",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "75e6566560ec9fc00035237ef1a7301126bfa084df352d34149522430eafb26a",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "1ebe5b64f95475cf0077dac4e3a60a374c299038b5068604c37dd7813199e631",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "ea120bb0aaa988bd7d4c2fa356aa511e6246dd23162e97e5a6936be2fc1d52f4",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "28521933e4f1aa0fd2d3ca42c7f5f47ed524a668523565791b853230bdded512",
+          "sha256": "cec602b08b619988282d541a7d23e528b029a2f7d22388852562e225e0c6c5a6",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-collection-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "90ac7378497faf0b4bf85b6ab5642a4f3072a2f289951de45b180ad4ef866297",
+          "sha256": "a052ca6711e6ab9d05159d3be42ce23d174d7a3d4f0e36789fba75bfcf64dfd7",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-collection-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "cf382bffff5677996153b89193f4cfd94f3dec8798d853624dd6dea034d22134",
+          "sha256": "6b15394af960dfcbe6c51e34b652ea38cecb94f4fd27f89a81dffb174df63434",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-collection-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "d7490f11a69c568acfd90ed93ec95be93a9a2b3250418c89aab4efe0e9180782",
+          "sha256": "fbf5150596947e85f8f1763430a9e6b7655716e27b798b90f3d315d573532367",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-collection-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "e39385bbc8eb0917f517f45b0ece3ecad31c288df10d1bef2e7da370215ec453",
+          "sha256": "7670e27547286b1c0b3fba0b8614dfe2f1b5c77fa662273a6913d46a33b3dbac",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-collection-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "4c9ba7b43e5da39f03f2be1092bdb55ab2f4b118e0722a72e2a01cfa83307788",
+          "sha256": "6b15394af960dfcbe6c51e34b652ea38cecb94f4fd27f89a81dffb174df63434",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-collection-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "cf3326e5d3964e53546cc2dd4fe1cfd7b776bd60005e1f99e8996dd4f864d98c",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-product-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "455a9d5ae403611e59227a55c5b4d08811018fd5e1be6df09160210f0d854374",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "34407e51a790c7423f089f3bbd4584e27cc41b766c397b7bb4daa87a288f6853",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-product-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "5d61b77c46fbada40aea56af28f720d7d4d1f21a30faa9dea7f58f0b05c06b5f",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "029fcb579739ef52417678cd2e5a8feb9c33dfba6e6175448bba7cf1ba0f2f9c",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-product-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "bd6f01ccc0c6e1265557a07d4d7b5d4b99a860d4576b2418b3024140a8ba7e10",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "9215af2a47001536b88dda3aa3c11adea30b058e973d5179cd2b294e2d06d2e7",
+          "sha256": "2afe51d6cd44c166e033908017460fefa20c7923b210e38315c432273b580bed",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-search-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "2c75bc1c5c07ee4e944c4ef244777824fc8b19780f7e213daae5aa2c56f3a9c8",
+          "sha256": "106c574001ae2cc2411bd6ee8d29d71ba49c9902fb744c00709ddb46ddbb32c9",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-search-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "d9f9e038fbaf3a6ce7414216cb6acdf0f11ee398c3101cf342e7237bca3854a2",
+          "sha256": "bb2aae69b8bb032cddfb27b4ff8324561d2a7cf900def05dff835eeaa85b2cc7",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-search-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "47bf28c43b9f0b1d353ec27e01c5fdbc8c9395c5cb436cc275d02923d8e13761",
+          "sha256": "0f5c2946a15735f2d422586f985d82806867913f306e433337e09bde91a4e657",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-search-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "11b993c4eb9b1afb0903038e29fcbe8176d06d94200dc546a1ab1d7c482548d2",
+          "sha256": "065485de690dea85d4e512f429b990e47f9b97f445718b2848fea393baffa04b",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-search-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "021d037af0b110c636f6a728b1e7717e0f16e31343e3617de96a8ead6524aaf2",
+          "sha256": "e377a1ed3e46ae9490c7c241a42f679145447f8839db07e5695b5abceab65af8",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-search-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "528bf2ce03243b751a7ab4aea6e0f9de0130de5d9366c90f4d5b78e749a2e073",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-cart-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "9974cd25be934061299ecd571b2c3a8051f7182a913fde786504d1a95bcd691d",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "28ee2a9142c0c7e8d83ca1f4d4d973adeef4df9d0df755591ce173a8d86686ff",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-cart-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "de075b6548f85407b1415dc62c74160512a5fe6f4c1dd678a2288d6e4915559e",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "384dc8158534369ba9729cfa2b811b797014a1f559b7c969c826ff236f7e5be7",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-cart-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "4c1f6ba9c23588c8b1e3f1cbb161dff82dc13b5e07dd63f4f19d6e9a90eba3ab",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "fe5a2bdc789b764745efaa26ed4d89f0bbc1fef5bdda98bfbc9034813c9f40a6",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-checkout-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "b6c0aba0fa5162f7ca8db7e322b3260acb14fa506af27221b8837f5e636a9e4c",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "7780a2099e9c441840f2ba1b403783e868842bbfb14046344a3775894aa5106d",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-checkout-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "5bce45fb2601b234d9bdad2a876ff4dd24afe50ab05559a638c0dba4ce9438a0",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "7a8b93d1218638d2faeba89d622b9cb63a412427b0786aaf325f20b01808d1e6",
-          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v4-checkout-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "93edbe0036690b82987d7fe624f711c00fb2127f92276d26c230c1c06477706b",
+          "baseline": "public/storefront-recipes/ritual-almanac/baselines/v5-checkout-desktop.webp"
         }
       ]
     },
@@ -1688,182 +1472,158 @@
         {
           "routeId": "home",
           "viewport": "mobile",
-          "sha256": "b4d3d3b2600f4a4bf6e550c16162f8630b876f98fb2c1e07031d019717abc618",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "2ae76af3e6f73b56e48a126677f40a67cd3e8fbb189873fa3e0e506e4f8de540",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-mobile.webp"
         },
         {
           "routeId": "home",
           "viewport": "tablet",
-          "sha256": "65b347c716e0f791d4215fc836a5d438112907220a0e7a8fcaaae762943de7e3",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "1b3482b58ab615cd0858f3f8fe50777682bee45a47b6d29dae1e3a951034d9cd",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-tablet.webp"
         },
         {
           "routeId": "home",
           "viewport": "desktop",
-          "sha256": "50a12b5579e5fb713ff6f035ccf81926e18572d7ee1c351fbedc44180e283926",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "abc08a9d415ce924e679a3f6b6435c9efb374f7b509345d6a92afd97bea5ec38",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "bc614fd888172106c2a29a726d08f737beee38335986744e1c8dc9e6f3f4df5d",
+          "sha256": "de0a8c7dd7042744502ab524fc9a7fa4ddbdcd16ba57507a3d43a23a023ad463",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-collection-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-collection-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "6c39d49ed9934b56248664ae78e61fd94476201a2e78353eb83f3e15d2ed511c",
+          "sha256": "5aa69344eab61a589244dd09ebe850a92afa439517fa58d8474b513307921bb2",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-collection-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-collection-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "4caab8037296994749aa329d82c3f7c858576cebdea9d6d879587ee835a4d267",
+          "sha256": "0ecc24a45fdcef1d4b60dbf822b9d32b61e2c94db284b81a3cfd845b0e42caf4",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-collection-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-collection-desktop.webp"
         },
         {
           "routeId": "collection",
           "viewport": "mobile",
-          "sha256": "ea93c1f17f8b26d832c2612b15bfcfa403115b0267789321f7fe209b4518b3d1",
+          "sha256": "4703621bd35de1ae88bf516fc84cabf7fe0d32b0c6720500e3451775222d040c",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-collection-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-collection-24-mobile.webp"
         },
         {
           "routeId": "collection",
           "viewport": "tablet",
-          "sha256": "6cb2e2394151e1bb2d9f0160058901935277c4322a3c69edfa2efb0348d20623",
+          "sha256": "9c93907fdf34629445bc71329e95baf6fb144d4137ac70a4b3dc544630b80624",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-collection-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-collection-24-tablet.webp"
         },
         {
           "routeId": "collection",
           "viewport": "desktop",
-          "sha256": "6bef006d566ef49df91c93684a7c7e3f8dab35f23681339d31126dce5e36cad6",
+          "sha256": "b5e859f62f1ba805a851228b9df785c43cf45ef4f5139e35e2a5a479de7782b7",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-collection-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-collection-24-desktop.webp"
         },
         {
           "routeId": "product",
           "viewport": "mobile",
-          "sha256": "2aff61f7ec45f78164b46a6dac70757544220924f72923c9fe4908ecc6bb8a89",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-product-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "17eb6b43a5f75122f5d64dd719fed074c9b3be708c64a6eb8c6bb91f3bf48897",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-product-mobile.webp"
         },
         {
           "routeId": "product",
           "viewport": "tablet",
-          "sha256": "7f4fe1571f73dc98cf1decfd18ed6923f47a48a6dd63bbbaed4ad39a21e1951e",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-product-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "9ff1af01337f33b488a55a1358bac765a3e67994cb32ca6b60dc451f505bf818",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-product-tablet.webp"
         },
         {
           "routeId": "product",
           "viewport": "desktop",
-          "sha256": "c2f309e9a11be99a492ef40b68b7a3865d06f5dafa14accadf440db4c278d952",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-product-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "d240a23b39a90c1f615588fd4c4f2571a85f97b2661d27089cfc454077108699",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-product-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "655a3e5f17650c800b2e257c77cdefed30aa8575ed008fb020c360b1ca48907c",
+          "sha256": "35643524d9897e94f899368b1d949c632b75965cc351aa0532817bf587b2452b",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-search-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-search-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "89ccc329d6e58a291ab4553216b341e65e68868dfeabb4bb1183525a7c35fd5f",
+          "sha256": "6ea54283dac9d696856be1cd9886d744325fa9a5ad345913c2b943f86ea1be65",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-search-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-search-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "c8472ba765102041a98a17d12b51c24353811ca242be912919cba4b812402d65",
+          "sha256": "9a98766cd849c064e406a74395bbf5c9a8742470df644d2385b5dba0f082d562",
           "catalogOffset": 0,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-search-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-search-desktop.webp"
         },
         {
           "routeId": "search",
           "viewport": "mobile",
-          "sha256": "e76cdde169e501bee46369083495b1cab5dd3195fcf73dcfe3448e9c1a1f75f4",
+          "sha256": "724260d562783343ca826e84dc51f1a2582f75080d6875761baecc99a11204e4",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-search-24-mobile.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-search-24-mobile.webp"
         },
         {
           "routeId": "search",
           "viewport": "tablet",
-          "sha256": "1b6516adb771cf808e9cc08551c4501070f8664ec4ecea9be3ad00215197192b",
+          "sha256": "f07547bd15d0266987890a0751fa5f0accaffb4ce7d745db924d5f83313b70b0",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-search-24-tablet.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-search-24-tablet.webp"
         },
         {
           "routeId": "search",
           "viewport": "desktop",
-          "sha256": "0be7cdc50ae55a32a3a00dd4023653ce77447f098708cbc18badf8329867befd",
+          "sha256": "855cb61524cd780efb3f350ef5a2751ca410a8b7f1eb0eaf8e44d228d142a488",
           "catalogOffset": 24,
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-search-24-desktop.webp",
-          "pixelDiffRatio": 0
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-search-24-desktop.webp"
         },
         {
           "routeId": "cart",
           "viewport": "mobile",
-          "sha256": "84a5f545053b460f4d89cb4d5054efa9789fa75b7dd4dc966a898ff5c07dc55d",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-cart-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "89148c272fa2c4235259f6e641dcc338f93182db4a864dc7b0a405daa23f4772",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-cart-mobile.webp"
         },
         {
           "routeId": "cart",
           "viewport": "tablet",
-          "sha256": "d5ea0f47c28ccc55ec69990d8f1ab00fa5f876715b9d74726977ac6286425262",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-cart-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "6707585c4c1d400ec4fe65869a90b383e57212a980361faa54150fc9cd3f9cba",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-cart-tablet.webp"
         },
         {
           "routeId": "cart",
           "viewport": "desktop",
-          "sha256": "03ce50580b7dbdf3bff2275ac3d108f0f89914b48cf332ca0de7268f5ff0505a",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-cart-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "9582278f5a57b205e0ecc6da480987a66774798e88b598fc6f1af41bf94b347d",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-cart-desktop.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "mobile",
-          "sha256": "b23a1fede0af3de9f5a1b7ee3fc4a4314a47cc4bb5016e53b028afab839e2f49",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-checkout-mobile.webp",
-          "pixelDiffRatio": 0
+          "sha256": "e5051da53e62d4a139c15e3d5032072439a123d8fa3a7a197869893fde95e705",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-checkout-mobile.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "tablet",
-          "sha256": "f291c8bea74069e949602e92ee42272bd230629e64dc6ca5ebeb68187c11772a",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-checkout-tablet.webp",
-          "pixelDiffRatio": 0
+          "sha256": "49fd5133e903b301de07612b02aaed58d7c9cbb30b11ed003cab5f3742cb982d",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-checkout-tablet.webp"
         },
         {
           "routeId": "checkout",
           "viewport": "desktop",
-          "sha256": "6b9516c0dfe23855ceae5347547bdbf0c600e223e01c92ac9f09726c0e8b9000",
-          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v5-checkout-desktop.webp",
-          "pixelDiffRatio": 0
+          "sha256": "816ac2f1e455ae4e606003aae2abc4d06cbd40aa138b5946c5813e30c6d5eb05",
+          "baseline": "public/storefront-recipes/broadcast-patch-bay/baselines/v6-checkout-desktop.webp"
         }
       ]
     },

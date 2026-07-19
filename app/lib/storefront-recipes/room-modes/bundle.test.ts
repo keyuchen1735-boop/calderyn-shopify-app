@@ -26,7 +26,7 @@ describe("room-modes storefront recipe", () => {
     const { bundle, config, report } = ROOM_MODES_RECIPE;
 
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 4 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 5 });
     expect(config.archetype).toEqual({
       composition: "spatial-scenes",
       hero: "room-mode-scene",
@@ -35,8 +35,8 @@ describe("room-modes storefront recipe", () => {
       iconography: ["architectural plan symbols", "device protocol marks"],
     });
     expect(bundle.designSystem).toMatchObject({
-      displayFontId: "space-grotesk",
-      bodyFontId: "ibm-plex-mono",
+      displayFontId: "syne",
+      bodyFontId: "dm-mono",
       iconStyle: "architectural plan marks and protocol indicators",
       motionStyle: "vertical scene snap with reduced-motion linear fallback",
     });
