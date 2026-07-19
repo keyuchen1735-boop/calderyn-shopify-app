@@ -12,6 +12,8 @@ describe("Companion Field Guide storefront recipe", () => {
     }
     expect(home.html).toContain("Food, support, and everyday tools selected around species");
     expect(home.html).toContain("Portraits of everyday care.");
+    expect(home.html).toContain('<div class="guide-layout"><aside class="species-rail">');
+    expect(home.html).toContain('</aside><div class="page"><main>');
     expect(home.html).toContain('data-cd-repeat="featured.products"');
     expect(home.html).toContain('data-cd-src="product.primaryImage"');
     expect(home.html).toContain('data-cd-text="product.title"');
@@ -29,7 +31,7 @@ describe("Companion Field Guide storefront recipe", () => {
   it("compiles a chaptered pet care guide across the complete commerce contract", () => {
     const { bundle, config, report } = COMPANION_FIELD_GUIDE_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 5 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 6 });
     expect(config.archetype).toMatchObject({ composition: "field-guide", hero: "pet-profile-hero", scroll: "chaptered-guide", cards: "field-notes" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "newsreader", bodyFontId: "manrope" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

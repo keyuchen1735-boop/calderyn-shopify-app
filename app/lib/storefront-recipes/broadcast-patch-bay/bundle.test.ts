@@ -23,6 +23,7 @@ describe("broadcast-patch-bay storefront recipe", () => {
     }
     expect(html).toContain("Build the<br><span>clean signal.</span>");
     expect(html).toContain("Low-latency controls, clear audio and the exact links between.");
+    expect(css).toContain(".heroCopy h1{margin:30px 0;font-family:var(--font-display);font-weight:700;letter-spacing:-.065em;line-height:.82;text-transform:uppercase}");
   });
 
   it("preserves the signal-chain, live merchandising, and loadout compositions", () => {
@@ -40,7 +41,7 @@ describe("broadcast-patch-bay storefront recipe", () => {
   it("compiles a modular signal patch bay and complete creator-commerce route matrix", () => {
     const { bundle, config, report } = BROADCAST_PATCH_BAY_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 6 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 7 });
     expect(config.archetype).toEqual({ composition: "signal-patch-bay", hero: "rig-signal-chain", scroll: "modular-patching", cards: "signal-modules", iconography: ["signal path glyphs", "compatibility port marks"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "chakra-petch", bodyFontId: "dm-mono", iconStyle: "signal-path glyphs and compatibility-port marks", motionStyle: "modular patch transitions with reduced-motion static routing" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

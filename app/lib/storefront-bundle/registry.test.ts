@@ -40,8 +40,8 @@ describe("versioned storefront recipe registry", () => {
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
       expect(recipe.activeVersion).toBe(
         recipe.id === "soft-chemistry" ? 9
-          : recipe.id === "custom-bench" ? 7
-          : recipe.id === "commons-index" || recipe.id === "broadcast-patch-bay" ? 6
+          : recipe.id === "custom-bench" || recipe.id === "broadcast-patch-bay" ? 7
+          : recipe.id === "commons-index" || recipe.id === "companion-field-guide" ? 6
           : recipe.id === "atelier-nine" ? 4
           : 5,
       );

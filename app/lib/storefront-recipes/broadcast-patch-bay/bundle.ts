@@ -3,7 +3,7 @@ import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, wrapRecipeCompo
 import { BROADCAST_PATCH_BAY_ASSETS } from "./assets";
 
 const config = {
-  templateId: "broadcast-patch-bay", templateVersion: 6,
+  templateId: "broadcast-patch-bay", templateVersion: 7,
   concept: { name: "Broadcast Patch Bay", rationale: "A modular creator storefront that routes the catalog as an input-to-output signal chain.", noveltySignature: ["signal-patch-bay", "rig-mode-routing", "compatibility-modules"] },
   designSystem: {
     displayFontId: "chakra-petch", bodyFontId: "dm-mono",
@@ -84,6 +84,7 @@ config.surfaces.home.source.html = config.surfaces.home.source.html
   .replace('<h2>Your signal chain</h2>', '<h2 id="sectionHeading">Your signal chain</h2>')
   .replace('<small class="label">Loadout patcher / beta</small>', '<div class="label">Loadout patcher / beta</div>')
   .replace('</article></div></div></section></main>', '</article></div><div class="rackTotal"><span>Solo stream / live modules</span><span>Current total</span></div><button class="cta" data-cd-route="cart"><span>Add complete loadout</span><span>＋</span></button></div></section></main>');
+config.surfaces.home.source.css += ".heroCopy h1{margin:30px 0;font-family:var(--font-display);font-weight:700;letter-spacing:-.065em;line-height:.82;text-transform:uppercase}";
 config.surfaces.collection.source.html = `<main class="collection"><header class="collectionHero"><div class="label">Catalog matrix / live stock</div><h1 data-cd-text="collection.title"></h1><p><b data-cd-text="collection.productCount"></b> compatible modules</p></header><div class="filters"><button value="all" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">All roles</button><button value="control" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Control</button><button value="audio" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Audio</button><button value="capture" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Capture</button><button value="light" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Light</button><button value="output" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Output</button><select data-cd-on="change" data-cd-action="collection.sort"><option value="featured">Signal order</option><option value="low">Price low</option><option value="high">Price high</option></select></div><div class="productGrid" data-cd-repeat="collection.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Inspect module</a></article></div><p class="module-empty resilient-copy" data-cd-empty-state>No compatible signal found.</p></main>`;
 
 config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(

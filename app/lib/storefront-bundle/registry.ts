@@ -68,13 +68,13 @@ const VERSIONED_ASSET_MANIFESTS_BY_TEMPLATE_ID = {
   "custom-bench": [...repeatManifest(heroManifest("f6f25c15de46bf6dd431ae685202f90fbbc3ba00e8051f6a6f4afaa8b89cdde9", 132568), 5), CUSTOM_BENCH_ASSETS, CUSTOM_BENCH_ASSETS],
   "commons-index": [...repeatManifest(heroManifest("9201028ef1da24dd4318d0dafd8b4e18f32d16e12ba921c5ded28765b0cbaca1", 130446), 4), COMMONS_INDEX_ASSETS, COMMONS_INDEX_ASSETS],
   "soft-chemistry": [...repeatManifest(softChemistryLegacyHero, 3), ...repeatManifest(softChemistryLegacyFull, 4), SOFT_CHEMISTRY_ASSETS, SOFT_CHEMISTRY_ASSETS],
-  "companion-field-guide": [...repeatManifest(heroManifest("305b7c4a9f43578032dba1e95a63869d9e17b370585c24438b7b963aa0a9a2d6", 158522), 3), COMPANION_FIELD_GUIDE_ASSETS, COMPANION_FIELD_GUIDE_ASSETS],
+  "companion-field-guide": [...repeatManifest(heroManifest("305b7c4a9f43578032dba1e95a63869d9e17b370585c24438b7b963aa0a9a2d6", 158522), 3), COMPANION_FIELD_GUIDE_ASSETS, COMPANION_FIELD_GUIDE_ASSETS, COMPANION_FIELD_GUIDE_ASSETS],
   "daily-protocol": [...repeatManifest(heroManifest("798fb222ba0b6975c3f83d7d95f6640227f781b2e4582f758cc712a0f45a8054", 81984), 3), DAILY_PROTOCOL_ASSETS, DAILY_PROTOCOL_ASSETS],
   "room-modes": [...repeatManifest(heroManifest("ed779ae096effacc6af8a58f5ab55b79faad5ae2b3b5fba892b796e310586d30", 80050), 3), ROOM_MODES_ASSETS, ROOM_MODES_ASSETS],
   "rep-rest": [...repeatManifest(heroManifest("b404cf72b60022837096e1e8b02d539b5369a9ff09d4bda742378b7aae71d9c1", 170844), 3), REP_REST_ASSETS, REP_REST_ASSETS],
   "diagnostic-deck": [...repeatManifest(heroManifest("dca1f96a14f60dcc2b1305f84ac97b480f8007a25709ac9995eee71ac8e2db9e", 101094), 3), DIAGNOSTIC_DECK_ASSETS, DIAGNOSTIC_DECK_ASSETS],
   "ritual-almanac": [...repeatManifest(heroManifest("747c24090ce37d341af9d22a7057f5830c26dc74181da0d82bb5aa07ffafe8f8", 242494), 3), RITUAL_ALMANAC_ASSETS, RITUAL_ALMANAC_ASSETS],
-  "broadcast-patch-bay": [...repeatManifest(heroManifest("c95d86839d3b7efea39f439452011aaad78e4519e9928890246f67b0bf9f5363", 78150), 4), BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS],
+  "broadcast-patch-bay": [...repeatManifest(heroManifest("c95d86839d3b7efea39f439452011aaad78e4519e9928890246f67b0bf9f5363", 78150), 4), BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS],
   "atelier-nine": repeatManifest(ATELIER_GRID_ASSETS, 4),
 } satisfies Readonly<Record<StoreTemplateId, readonly AssetManifest[]>>;
 
@@ -456,7 +456,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["pet supplement", "pet health", "pet wellness", "dog health", "cat wellness", "pet care", "canine"],
     legacyVibe: "warm",
     generationInstructions: "Use field-guide navigation, pet profiles, species filters, dosage facts, and friendly slab typography.",
-  }, 5),
+  }, 6),
   recipe({
     id: "daily-protocol",
     name: "Daily Protocol",
@@ -528,7 +528,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["gaming gear", "streaming gear", "creator tools", "broadcast", "microphone", "capture card"],
     legacyVibe: "bold",
     generationInstructions: "Use a modular signal-chain builder, rig modes, compatibility graphs, and neon broadcast UI.",
-  }, 6),
+  }, 7),
   recipe({
     id: "atelier-nine",
     name: "Atelier Grid",
