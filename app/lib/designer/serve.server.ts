@@ -52,7 +52,9 @@ async function storeDataFor(
     description: p.description || null,
     priceCents: p.variants[0]?.priceCents ?? null,
     compareAtPriceCents: p.variants[0]?.compareAtPriceCents ?? null,
-    available: true,
+    // Real availability drives {{product.availability}} — a sold-out product
+    // must not render "In stock" on its published page.
+    available: p.variants.some((v) => v.available),
     imageUrl: p.images[0]?.url ?? null,
   });
 
@@ -65,7 +67,9 @@ async function storeDataFor(
       tagline: settings.voiceTagline,
       logoUrl: settings.logoUrl,
       products: [product, ...rest].map(toProduct),
-      contextVariantId: product.variants[0]?.id ?? null,
+      // Prefer a buyable variant so the add-to-cart button binds to something
+      // that will actually add rather than bounce as unavailable.
+      contextVariantId: (product.variants.find((v) => v.available) ?? product.variants[0])?.id ?? null,
     };
   }
   const options =
@@ -78,7 +82,8 @@ async function storeDataFor(
     tagline: settings.voiceTagline,
     logoUrl: settings.logoUrl,
     products: products.map(toProduct),
-    contextVariantId: products[0]?.variants[0]?.id ?? null,
+    contextVariantId:
+      (products[0]?.variants.find((v) => v.available) ?? products[0]?.variants[0])?.id ?? null,
   };
 }
 
@@ -95,7 +100,12 @@ export async function resolveDesignerPublicPage(
   });
   if (!publication) return null;
 
-  const data = await storeDataFor(shopId, context);
+  // Like the publication read above, a catalog/settings hiccup must never take
+  // the storefront down — fall through to the runtime renderer instead of 500ing.
+  const data = await storeDataFor(shopId, context).catch((err) => {
+    console.error("[designer/serve] store data lookup failed", err);
+    return null;
+  });
   if (!data) return null;
 
   const rendered = renderDesignerBody({
@@ -104,12 +114,16 @@ export async function resolveDesignerPublicPage(
     data,
   });
   // Attach the context product's variant to add-to-cart buttons so the cart
-  // script has something real to add. Server-owned post-processing.
+  // script has something real to add. Server-owned post-processing. The button
+  // may carry extra classes (the model is told to fully style it), so match the
+  // class token anywhere in the attribute rather than the exact value — an
+  // unmatched button would get no variant id and silently do nothing on click.
   let bodyHtml = rendered.bodyHtml;
   if (data.contextVariantId) {
+    const variantAttr = ` data-variant-id="${data.contextVariantId.replace(/"/g, "&quot;")}"`;
     bodyHtml = bodyHtml.replace(
-      /class="designer-add-to-cart"/g,
-      `class="designer-add-to-cart" data-variant-id="${data.contextVariantId}"`,
+      /<[a-zA-Z][^>]*\sclass="[^"]*\bdesigner-add-to-cart\b[^"]*"[^>]*>/g,
+      (tag) => (/\sdata-variant-id=/.test(tag) ? tag : tag.replace(/>$/, `${variantAttr}>`)),
     );
   }
   const nonce = randomBytes(18).toString("base64url");

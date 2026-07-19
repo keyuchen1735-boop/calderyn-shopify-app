@@ -108,6 +108,16 @@ describe("renderDesignerDocument", () => {
     expect(out).not.toContain("alt='Kids' Pack'");
   });
 
+  it("escapes image urls so a quote cannot break out of the src attribute", () => {
+    const withQuote: DesignerStoreData = {
+      ...data,
+      products: [{ ...data.products[0], imageUrl: '/x.webp"><img onerror=alert(1)' }],
+    };
+    const out = renderDesignerDocument({ html: '<img src="{{product.image}}">', css: "", data: withQuote });
+    expect(out).not.toContain('src="/x.webp"><img');
+    expect(out).toContain("&quot;&gt;&lt;img");
+  });
+
   it("respects maxProducts", () => {
     const out = renderDesignerDocument({ html: "{{#products}}<li>{{product.title}}</li>{{/products}}", css: "", data, maxProducts: 1 });
     expect((out.match(/<li>/g) ?? []).length).toBe(1);
