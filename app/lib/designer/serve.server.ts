@@ -127,7 +127,12 @@ export async function resolveDesignerPublicPage(
   });
   if (!publication) return null;
 
-  const data = await storeDataFor(shopId, context);
+  // Like the settings/publication reads above, a catalog/settings hiccup must
+  // never take the storefront down — fall through to the runtime renderer.
+  const data = await storeDataFor(shopId, context).catch((err) => {
+    console.error("[designer/serve] store data lookup failed", err);
+    return null;
+  });
   if (!data) return null;
 
   const rendered = renderDesignerBody({
