@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useMemo } from "react";
+import { CalderynHexMark } from "~/components/CalderynHexMark";
 import { Btn, Card, Placeholder, TickGauge } from "../ui";
 import { hasEngineSignals } from "../first-run";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
@@ -667,13 +668,7 @@ function LiveEnginePanel({
         <div className="cd-eg-top">
           <div style={{ display: "flex", gap: 13, alignItems: "flex-start", minWidth: 0 }}>
             <span className="cd-eg-mark">
-              <svg viewBox="0 0 32 32" width="22" height="22" fill="none" role="img" aria-label="Calderyn">
-                <path
-                  d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                />
-              </svg>
+              <CalderynHexMark size={22} />
             </span>
             <div style={{ minWidth: 0 }}>
               <div className="cd-eg-status">Calderyn Live Engine</div>

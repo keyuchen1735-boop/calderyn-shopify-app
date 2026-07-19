@@ -1334,7 +1334,7 @@
   width: 13px; height: 13px; padding: 0; border: none; background: none; cursor: pointer;
   opacity: 0.28; transition: opacity 0.18s ease, transform 0.18s ease; display: inline-flex;
 }
-.cd-secret-dot svg { width: 13px; height: 13px; color: var(--accent); }
+.cd-secret-dot svg { width: 13px; height: 13px; color: var(--text-3); }
 .cd-secret-dot:hover { opacity: 1; transform: scale(1.18); }
 
 /* ---- lab bar ---- */
@@ -1916,7 +1916,7 @@
   fill: #ffffff;
   stroke: rgba(0, 0, 0, 0.14);
 }
-.ha[data-theme="light"] .ha-hexc { stroke: #111113; }
+.ha[data-theme="light"] .ha-hexc { fill: #111113; }
 .ha-word { background: var(--ha-word-grad); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; animation: ha-shimmer 2.6s linear infinite; }
 @keyframes ha-shimmer { from { background-position: 0% 0; } to { background-position: -200% 0; } }
 .ha-drift { animation: ha-drift 15s ease-in-out infinite; }
