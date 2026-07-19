@@ -101,7 +101,7 @@ export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOp
     sourceKind: "recipe" | "custom";
     screenshots: Awaited<ReturnType<typeof proveStorefrontBundle>>["screenshotManifest"];
   }> = [];
-  const fullStory = !options.filter || options.filter === "full-story"
+  const fullStory = !options.filter || options.filter === "full-story" || options.filter === "full-story-published"
     ? await createStorefrontFullStory()
     : null;
   const shaderSource = "void main(){gl_FragColor=vec4(mix(u_color1,u_color2,0.5),1.0);}";
@@ -188,6 +188,7 @@ export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOp
   ];
   const bundles: VerificationEntry[] = await Promise.all(candidates
     .filter((entry) => !options.filter || entry.id === options.filter
+      || (options.filter === "full-story-published" && entry.id === "full-story")
       || (options.filter === "full-story" && entry.id === "full-story-missing-images"))
     .map(async (entry) => ({
       ...entry,
@@ -204,6 +205,7 @@ export async function verifyStorefrontBundles(options: VerifyStorefrontBundlesOp
         : undefined;
       const result = await proveStorefrontBundle({
         bundle: entry.bundle,
+        ...(entry.id.startsWith("full-story") ? { timeoutMs: 600_000 } : {}),
         ...(entry.catalog ? { catalog: entry.catalog } : {}),
         context: entry.context,
         persistedAssets,

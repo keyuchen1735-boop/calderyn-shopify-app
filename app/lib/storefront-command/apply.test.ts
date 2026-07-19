@@ -49,7 +49,7 @@ describe("applyStoreIntent", () => {
     })).toThrowError(expect.objectContaining({ code: "storefront_template_integrity_failed" }));
 
     expect(original.routes.home.html).not.toContain("Made for long weekends");
-    expect(original.routes.home.html).toContain("Objects on the bench");
+    expect(original.routes.home.html).toContain("Start with an object");
   });
 
   it("uses the first home heading when a design has no hero class", () => {

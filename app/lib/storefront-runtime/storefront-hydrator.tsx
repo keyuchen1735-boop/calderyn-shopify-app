@@ -300,7 +300,7 @@ export function StorefrontHydrator(props: {
       previewTemplateId: props.mode === "preview" && props.bundle.source.kind === "recipe" ? props.bundle.source.templateId : undefined,
       squareAccentCommerce: props.bundle.source.kind === "recipe"
         && props.bundle.source.templateId === "soft-chemistry"
-        && props.bundle.source.templateVersion === 6,
+        && props.bundle.source.templateVersion >= 6,
     });
     const handles: StorefrontRuntimeHandle[] = [];
     const visualLayer = props.bundle.visualLayer?.kind === "fragment_shader" ? props.bundle.visualLayer : undefined;

@@ -9,6 +9,16 @@ const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((nod
 const actions = (route: RouteArtifact) => route.interactions.transitions.map((item) => item.action.type);
 
 describe("diagnostic-deck storefront recipe", () => {
+  it("keeps the original scan line and target reticle over the hero evidence image", () => {
+    expect(DIAGNOSTIC_DECK_RECIPE.bundle.routes.home.html).toContain("scan-line");
+    expect(DIAGNOSTIC_DECK_RECIPE.bundle.routes.home.html).toContain("target-reticle");
+  });
+
+  it("renders exact-unit imagery and availability in diagnostic search results", () => {
+    const paths = DIAGNOSTIC_DECK_RECIPE.bundle.routes.search.bindings.map((binding) => binding.ref.kind === "data" ? binding.ref.path : null);
+    expect(paths).toEqual(expect.arrayContaining(["product.primaryImage", "product.title", "product.description", "product.price", "product.availability"]));
+  });
+
   it("renders for an empty merchant catalog", async () => {
     const [empty, populated] = await Promise.all([
       proveStorefrontBundle({
@@ -31,7 +41,7 @@ describe("diagnostic-deck storefront recipe", () => {
   it("compiles a diagnostic terminal deck with exact-unit evidence and complete transactions", () => {
     const { bundle, config, report } = DIAGNOSTIC_DECK_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "diagnostic-deck", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "diagnostic-deck", templateVersion: 3 });
     expect(config.archetype).toEqual({ composition: "diagnostic-terminal", hero: "grade-diagnostic-hero", scroll: "deck-snap", cards: "diagnostic-cards", iconography: ["terminal condition marks", "warranty status glyphs"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "archivo-narrow", bodyFontId: "ibm-plex-mono", iconStyle: "terminal condition marks and warranty-status glyphs", motionStyle: "deck snap with evidence-panel expansion" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

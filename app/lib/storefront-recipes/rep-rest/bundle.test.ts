@@ -7,10 +7,19 @@ const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((nod
 const actions = (route: RouteArtifact): string[] => route.interactions.transitions.map((item) => item.action.type);
 
 describe("rep-rest storefront recipe", () => {
+  it("keeps the original movement ticker between the split hero and work set", () => {
+    expect(REP_REST_RECIPE.bundle.routes.home.html).toContain("Mobility · Strength · Endurance · Recovery");
+  });
+
+  it("renders live product imagery and availability in search results", () => {
+    const paths = REP_REST_RECIPE.bundle.routes.search.bindings.map((binding) => binding.ref.kind === "data" ? binding.ref.path : null);
+    expect(paths).toEqual(expect.arrayContaining(["product.primaryImage", "product.title", "product.description", "product.price", "product.availability"]));
+  });
+
   it("compiles a split training and recovery journey with complete commerce contracts", () => {
     const { bundle, config, report } = REP_REST_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "rep-rest", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "rep-rest", templateVersion: 3 });
     expect(config.archetype).toEqual({ composition: "split-performance", hero: "training-recovery-split", scroll: "sticky-workout", cards: "comparison-rails", iconography: ["training interval marks", "recovery status glyphs"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "archivo-narrow", bodyFontId: "inter", iconStyle: "interval arrows and recovery-state glyphs", motionStyle: "sticky workout chapters with kinetic split transitions" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

@@ -2,7 +2,7 @@ import { defineRecipe, prependRecipeLandmark, type RecipeConfig } from "../facto
 import { REP_REST_ASSETS } from "./assets";
 
 const config = {
-  templateId: "rep-rest", templateVersion: 2,
+  templateId: "rep-rest", templateVersion: 3,
   concept: { name: "Rep / Rest", rationale: "A high-contrast split journey that treats training and recovery as equal halves of one system.", noveltySignature: ["training-recovery-split", "sticky-workout-chapters", "comparison-rails"] },
   designSystem: {
     displayFontId: "archivo-narrow", bodyFontId: "inter",
@@ -45,6 +45,15 @@ const config = {
 } satisfies RecipeConfig<"rep-rest">;
 
 config.surfaces.home.source.css += `.training-copy a{color:var(--cream)}.recovery-copy{color:var(--ink)}`;
+config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
+  `</section><nav class="state-toggle">`,
+  `</section><p class="movement-ticker" aria-label="Training lanes">Mobility · Strength · Endurance · Recovery</p><nav class="state-toggle">`,
+);
+config.surfaces.home.source.css += `.movement-ticker{margin:0;padding:.65rem 1rem;overflow:hidden;background:var(--acid);font-weight:800;letter-spacing:.12em;text-align:center;text-transform:uppercase;white-space:nowrap}`;
+config.surfaces.search.source.html = config.surfaces.search.source.html
+  .replace(`<section data-cd-repeat="search.results"><article data-cd-key="product.id"><h2`, `<section class="search-lane" data-cd-repeat="search.results"><article data-cd-key="product.id"><figure><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="520" height="620"></figure><h2`)
+  .replace(`</b><a data-cd-route="product"`, `</b><span data-cd-text="product.availability"></span><a data-cd-route="product"`);
+config.surfaces.search.source.css += `.search-lane{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(16rem,24rem);gap:1px;overflow-x:auto;scroll-snap-type:x mandatory}.search-lane article{scroll-snap-align:start}.search-lane img{width:100%;aspect-ratio:4/5;object-fit:cover}`;
 config.surfaces.shell.source.css += `.performance-bar{display:flex;align-items:center;gap:1rem;min-height:4rem;padding:.75rem 1rem;background:var(--ink);color:var(--cream);border-bottom:1px solid var(--acid)}.performance-bar nav{margin-left:auto}.performance-bar a{color:var(--cream);text-decoration:none}.performance-bar~footer{display:flex;flex-wrap:wrap;gap:1rem;padding:1rem;background:var(--cream);color:var(--ink)}.performance-bar~footer a{color:var(--ink);text-decoration:none}@media(max-width:720px){.performance-bar{grid-template-columns:1fr}.performance-bar nav{margin-left:0}.performance-bar nav a{color:var(--ink)}}`;
 
 const distinguishedConfig = {

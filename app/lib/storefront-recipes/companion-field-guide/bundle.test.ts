@@ -4,6 +4,21 @@ import { describe, expect, it } from "vitest";
 import { COMPANION_FIELD_GUIDE_RECIPE } from "./bundle";
 
 describe("Companion Field Guide storefront recipe", () => {
+  it("preserves the approved companion guide around live field essentials", () => {
+    const home = COMPANION_FIELD_GUIDE_RECIPE.config.surfaces.home.source;
+
+    for (const className of ["species-rail", "species-nav", "page", "hero", "hero-copy", "hero-proof", "hero-media", "care-paths", "portrait-paths", "shop", "shop-layout", "product-grid"]) {
+      expect(home.html).toContain(`class="${className}`);
+    }
+    expect(home.html).toContain("Food, support, and everyday tools selected around species");
+    expect(home.html).toContain("Portraits of everyday care.");
+    expect(home.html).toContain('data-cd-repeat="featured.products"');
+    expect(home.html).toContain('data-cd-src="product.primaryImage"');
+    expect(home.html).toContain('data-cd-text="product.title"');
+    expect(home.html).toContain('data-cd-money="product.price"');
+    expect(home.css).toContain("grid-template-columns:220px 1fr");
+  });
+
   it("keeps the mobile profile heading on its own row above bounded controls", () => {
     const css = COMPANION_FIELD_GUIDE_RECIPE.config.surfaces.home.source.css;
     expect(css).toContain(".profile-rail { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.5rem; position:static }");
@@ -14,7 +29,7 @@ describe("Companion Field Guide storefront recipe", () => {
   it("compiles a chaptered pet care guide across the complete commerce contract", () => {
     const { bundle, config, report } = COMPANION_FIELD_GUIDE_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 3 });
     expect(config.archetype).toMatchObject({ composition: "field-guide", hero: "pet-profile-hero", scroll: "chaptered-guide", cards: "field-notes" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "roboto-slab", bodyFontId: "atkinson-hyperlegible" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

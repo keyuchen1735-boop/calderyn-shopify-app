@@ -14,11 +14,27 @@ function contrastRatio(foreground: string, background: string): number {
 }
 
 describe("Custom Bench storefront recipe", () => {
+  it("preserves the approved proof workbench around live merchant products", () => {
+    const { config } = CUSTOM_BENCH_RECIPE;
+    const home = config.surfaces.home.source;
+
+    for (const className of ["hero", "proof-copy", "proof", "stepper", "stage", "controls", "rail-section", "rail", "showcase"]) {
+      expect(home.html).toContain(`class="${className}`);
+    }
+    expect(home.html).toContain("Personal objects composed one detail at a time.");
+    expect(home.html).toContain("Made after you approve.");
+    expect(home.html).toContain('data-cd-repeat="featured.products"');
+    expect(home.html).toContain('data-cd-src="product.primaryImage"');
+    expect(home.html).toContain('data-cd-text="product.title"');
+    expect(home.html).toContain('data-cd-money="product.price"');
+    expect(home.css).toContain("grid-template-columns:44% 56%");
+  });
+
   it("compiles the workshop configurator across the full commerce contract", () => {
     const { bundle, config, report } = CUSTOM_BENCH_RECIPE;
 
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "custom-bench", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "custom-bench", templateVersion: 5 });
     expect(config.archetype).toMatchObject({
       composition: "workshop-configurator",
       hero: "configurator-workbench",

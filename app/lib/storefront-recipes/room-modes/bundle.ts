@@ -3,7 +3,7 @@ import { ROOM_MODES_ASSETS } from "./assets";
 
 const config = {
   templateId: "room-modes",
-  templateVersion: 2,
+  templateVersion: 3,
   concept: {
     name: "Room Modes",
     rationale: "A spatial storefront that begins with room scenes, then resolves into a precise object index.",
@@ -96,13 +96,13 @@ const config = {
           </main>
         `,
         css: `
-          .scene-hero{display:grid;grid-template-columns:1.25fr .75fr;min-height:78dvh;background:var(--smoke);color:var(--chalk)}
-          .scene-image{margin:0;min-width:0}.scene-image img{display:block;width:100%;height:78dvh;object-fit:cover}.scene-copy{align-self:end;padding:clamp(1.5rem,5vw,5rem)}.scene-copy a{color:var(--chalk)}
-          .scene-copy h1{font-size:clamp(3.7rem,8vw,8.5rem);max-width:7ch}.mode-rail{display:flex;gap:.5rem;padding:1rem;overflow:auto;background:var(--chalk)}
+          .scene-hero{position:relative;display:grid;min-height:100dvh;overflow:hidden;background:var(--smoke);color:var(--chalk)}.scene-hero:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(17,20,18,.72),transparent 70%)}
+          .scene-image{position:absolute;inset:0;margin:0}.scene-image img{display:block;width:100%;height:100%;object-fit:cover}.scene-copy{position:relative;z-index:1;align-self:center;padding:clamp(1.5rem,5vw,5rem)}.scene-copy a{color:var(--chalk)}
+          .scene-copy h1{font-size:clamp(3.7rem,8vw,8.5rem);max-width:7ch}.mode-rail{position:sticky;z-index:2;bottom:0;display:flex;gap:.5rem;padding:1rem;overflow:auto;background:var(--chalk)}
           .mode-rail button{border:1px solid var(--line);background:transparent;padding:.75rem 1.1rem}.mode-rail span{padding:.75rem;color:var(--smoke)}
           .room-state[data-cd-class-token="living"] .scene-copy{border-right:6px solid var(--amber)}.room-state[data-cd-class-token="studio"] .scene-copy{border-right:6px solid var(--blue)}.room-state[data-cd-class-token="sleep"] .scene-copy{border-right:6px solid var(--violet)}
           .home-empty,.resilient-copy{overflow-wrap:anywhere}.home-empty{padding:1.25rem;border-top:1px solid var(--line)}
-          @media(max-width:700px){.scene-hero{grid-template-columns:1fr}.scene-image img{height:52dvh}.scene-copy h1{font-size:3.6rem}.mode-rail{scroll-snap-type:x mandatory}}
+          @media(max-width:700px){.scene-copy h1{font-size:3.6rem}.mode-rail{scroll-snap-type:x mandatory}}
           @media(prefers-reduced-motion:reduce){.mode-rail{scroll-snap-type:none}}
         `,
         requiredData: [],
@@ -171,7 +171,7 @@ const config = {
         html: `
           <main>
             <header class="query-board resilient-copy"><small class="protocol-copy">Search room, object, protocol, or finish</small><h1 data-cd-text="search.query">Object search</h1><input aria-label="Object search" type="search" name="q" value="" placeholder="Room, object, protocol, or finish" data-cd-on="input" data-cd-action="search.update"><button value="submit" data-cd-on="click" data-cd-action="search.submit">Run object query</button><button value="clear" data-cd-on="click" data-cd-action="search.clear">Clear room query</button></header>
-            <section data-cd-repeat="search.results"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="560" height="420"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><a data-cd-route="product" data-cd-param-handle="product.handle">Open result</a></article></section>
+            <section data-cd-repeat="search.results"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="560" height="420"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Open result</a></article></section>
             <p class="query-empty resilient-copy" data-cd-empty-state>No object or room found. Search a finish, protocol, or collection name.</p>
           </main>
         `,

@@ -76,7 +76,7 @@ window.__CD_HYDRATE_STOREFRONT_PROOF__ = ({ bundle, routeId, data }) => {
     locationAssign,
     squareAccentCommerce: bundle.source.kind === "recipe"
       && bundle.source.templateId === "soft-chemistry"
-      && bundle.source.templateVersion === 6,
+      && bundle.source.templateVersion >= 6,
   });
   const commerce = baseAdapters.commerce;
   if (!commerce) throw new Error("Storefront commerce adapter is missing");

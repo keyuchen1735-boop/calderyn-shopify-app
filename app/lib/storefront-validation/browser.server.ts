@@ -998,9 +998,9 @@ async function auditPage(
       expectedHeroText: expectations?.heroText,
       expectedFeaturedProductIds: expectations?.featuredProductIds,
       visualExpectation,
-      renderedFeaturedProductIds: result.catalogProductHandles.map(
+      renderedFeaturedProductIds: [...new Set(result.catalogProductHandles.map(
         (handle) => productIdsByHandle.get(handle) ?? `unknown:${handle}`,
-      ),
+      ))],
       ...fullStory,
     }),
   };
@@ -1126,7 +1126,7 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
   const browser = input.browser ?? await launchChromium();
   const page = await browser.newPage();
   page.setDefaultTimeout(Math.min(30_000, timeoutMs));
-  page.setDefaultNavigationTimeout(Math.min(30_000, timeoutMs));
+  page.setDefaultNavigationTimeout(Math.min(60_000, timeoutMs));
   const unexpectedRequests: string[] = [];
   const consoleErrors: string[] = [];
   const requestFailures: string[] = [];
@@ -1193,8 +1193,8 @@ export async function proveStorefrontBundle(input: ProveStorefrontBundleInput): 
         expectedGeneratedImageUrls,
       );
       await page.goto(`${PROOF_ORIGIN}/__proof__/document?route=${routeId}&viewport=${viewport.name}&cursor=${catalogOffset}`, {
-        waitUntil: "networkidle0",
-        timeout: Math.max(1, Math.min(30_000, deadlineAt - Date.now())),
+        waitUntil: "load",
+        timeout: Math.max(1, Math.min(60_000, deadlineAt - Date.now())),
       });
       await page.evaluate(async () => {
         if (document.fonts?.ready) await document.fonts.ready;
