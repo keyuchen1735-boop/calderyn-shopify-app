@@ -29,15 +29,18 @@ describe("fizz storefront recipe", () => {
     expect(bundle.source).toEqual({ kind: "recipe", templateId: "fizz", templateVersion: 1 });
     expect(FIZZ_RECIPE_CONFIG.archetype.composition).toBe("flavor-playground");
     expect(bundle.routes.home.html).toContain("Find your fizz");
-    expect(bundle.routes.home.html).toContain("Plan up to four picks");
+    expect(bundle.routes.home.html).toContain("Build a four-flavor pack");
     expect(repeatsIn(bundle.routes.home.tree)).toContain("featured.products");
     expect(bundle.routes.home.interactions.state).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "enum", initial: "explore", allowedValues: ["explore", "bright", "juicy", "crisp"] }),
-      expect.objectContaining({ type: "index", initial: 0, min: 0, max: 4 }),
+    ]));
+    expect(bundle.routes.home.trustedSlots).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "bundleBuilder", slotCount: 4, hostSize: "block" }),
     ]));
     expect(bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(
       expect.arrayContaining(["variantPicker", "addToCart"]),
     );
+    expect(repeatsIn(bundle.routes.product.tree)).toContain("product.facts");
     expect(bundle.routes.cart.html).toContain("fizz-cart-progress");
     expect(bundle.routes.cart.trustedSlots.map(({ kind }) => kind)).toEqual(
       expect.arrayContaining(["cartLineControls", "cartSummary"]),
@@ -45,7 +48,7 @@ describe("fizz storefront recipe", () => {
 
     const copy = Object.values(FIZZ_RECIPE_CONFIG.surfaces).map(({ source }) => source.html).join(" ");
     expect(copy).not.toMatch(/free shipping|guaranteed|limited time|\d+% off/i);
-    expect(bundle.routes.home.html).not.toMatch(/build a variety pack|fit this flavor direction/i);
+    expect(bundle.routes.home.html).not.toMatch(/fit this flavor direction/i);
     expect(copy).toContain("Eligible first-order offers appear at checkout.");
 
     expect(FIZZ_VIDEO_ROLES).toEqual(["hero", "hero-alt", "pdp-detail"]);
@@ -58,7 +61,7 @@ describe("fizz storefront recipe", () => {
     expect(bundle.routes.home.css).toContain("prefers-reduced-motion:reduce");
   });
 
-  it("hydrates truthful flavor guidance and clamps the comparison planner to four", () => {
+  it("hydrates truthful flavor guidance while commerce stays in the protected pack builder", () => {
     const route = FIZZ_RECIPE.bundle.routes.home;
     document.body.innerHTML = route.html;
     vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
@@ -66,7 +69,11 @@ describe("fizz storefront recipe", () => {
 
     const runtime = hydrateStorefront({
       root: document.body,
-      artifact: route,
+      artifact: {
+        ...route,
+        requiredCapabilities: route.requiredCapabilities.filter((capability) => capability !== "commerce"),
+        trustedSlots: [],
+      },
       adapters: { navigate: vi.fn() },
     });
     expect(runtime.hydrated).toBe(true);
@@ -78,16 +85,9 @@ describe("fizz storefront recipe", () => {
     expect(quizResult.textContent).toContain("sharp, tart, or dry");
     expect(quizResult.textContent).toContain("Browse every live product");
 
-    const planner = document.querySelector<HTMLElement>("[data-cd-active-index]")!;
-    const increment = [...document.querySelectorAll<HTMLButtonElement>("button")].find(({ textContent }) => textContent === "Add a comparison pick")!;
-    const decrement = [...document.querySelectorAll<HTMLButtonElement>("button")].find(({ textContent }) => textContent === "Remove a comparison pick")!;
-    expect(planner.dataset.cdActiveIndex).toBe("0");
-    for (let index = 0; index < 6; index += 1) increment.click();
-    expect(planner.dataset.cdActiveIndex).toBe("4");
-    const visibleResult = [...planner.children].filter((child) => !(child as HTMLElement).hidden);
-    expect(visibleResult).toHaveLength(1);
-    expect(visibleResult[0]?.textContent).toContain("Planner full");
-    for (let index = 0; index < 6; index += 1) decrement.click();
-    expect(planner.dataset.cdActiveIndex).toBe("0");
+    expect(route.trustedSlots).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "bundleBuilder", slotCount: 4 }),
+    ]));
+    expect(route.html).not.toMatch(/Add a comparison pick|Remove a comparison pick/);
   });
 });
