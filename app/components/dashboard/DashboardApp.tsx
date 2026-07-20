@@ -1705,25 +1705,7 @@ export default function DashboardApp({
         }}
       >
         <div className="cd-side-brand" onClick={() => navigate("dashboard")}>
-          <svg
-            className="cd-logo cd-logo-mark"
-            viewBox="0 0 32 32"
-            fill="none"
-            role="img"
-            aria-label="Calderyn"
-          >
-            <path
-              d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z"
-              fill="var(--accent)"
-            />
-            <path
-              d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
-              stroke="var(--on-accent)"
-              strokeWidth="3.6"
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-          </svg>
+          <img className="cd-logo cd-logo-mark" src="/assets/calderyn-logo.png" alt="Calderyn" />
           <div className="cd-sidebar-copy">
             <div className="cd-brand-name">Calderyn</div>
             <div className="cd-brand-sub">{storeLabel}</div>
