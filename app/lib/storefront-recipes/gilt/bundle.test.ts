@@ -18,7 +18,7 @@ describe("Gilt storefront recipe", () => {
     expect(bundle.designSystem.tokens).toMatchObject({ cream: "#f3ead8", black: "#0b0a08", gold: "#9a6b22" });
   });
 
-  it("keeps live variants and gifting choices beside trusted purchase controls", () => {
+  it("keeps live variants and merchant policies beside safe purchase controls", () => {
     const { bundle } = compileRecipeConfig(GILT_RECIPE_CONFIG);
     const product = bundle.routes.product;
     expect(product.bindings.map(({ ref }) => ref)).toEqual(expect.arrayContaining([
@@ -29,15 +29,22 @@ describe("Gilt storefront recipe", () => {
       expect.objectContaining({ path: "variant.availability" }),
     ]));
     expect(product.trustedSlots.map(({ kind }) => kind)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
-    const stateIds = product.interactions.state.map(({ id }) => id);
-    for (const id of ["gilt-engraving", "gilt-wrap", "gilt-recipient", "gilt-recipient-name"]) {
-      expect(stateIds.some((candidate) => candidate.endsWith(id))).toBe(true);
-    }
-    expect(product.html).toContain("Gift note");
-    expect(product.html).toContain("Recipient");
-    expect(product.html).toContain("Proof shown only when supplied by the merchant");
+    expect(product.interactions.state).toEqual([]);
+    expect(GILT_RECIPE_CONFIG.surfaces.product.source.html).not.toContain("data-cd-native-control");
+    expect(GILT_RECIPE_CONFIG.surfaces.product.source.html).not.toMatch(/Engraving|Gift note|Recipient name/);
+    expect(product.requiredData.map(({ kind }) => kind)).toContain("policyLinks");
+    expect(product.html).toContain("Review the merchant's current return and shipping terms");
+    expect(product.html).not.toMatch(/Proof shown|social proof/i);
     const addToCartId = product.trustedSlots.find(({ kind }) => kind === "addToCart")!.id;
-    expect(product.html.indexOf("Proof shown only when supplied by the merchant")).toBeLessThan(product.html.indexOf(addToCartId));
+    expect(product.html.indexOf("Review the merchant's current return and shipping terms")).toBeLessThan(product.html.indexOf(addToCartId));
+  });
+
+  it("uses one honest all-products path until live collection data is available", () => {
+    const collections = GILT_RECIPE_CONFIG.surfaces.collections.source.html;
+    expect(collections).toContain("All products");
+    expect(collections).toContain('data-cd-route="collection"');
+    expect(collections).not.toMatch(/Nine rooms|Collections of meaning/);
+    expect(GILT_RECIPE_CONFIG.surfaces.checkout.source.html).not.toMatch(/engraving|recipient details|in the bag/i);
   });
 
   it("declares exactly three blocked video roles without invented approvals", () => {
