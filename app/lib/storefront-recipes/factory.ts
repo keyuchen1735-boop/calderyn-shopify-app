@@ -317,9 +317,10 @@ function assertApprovedReferencedVideos(config: RecipeConfig): void {
           return match ? [match[1]!] : [];
         });
         const role = referencedRoles[0];
+        const expectedSourceKeys = role ? [`${role}-mp4`, `${role}-webm`] : [];
         if (node.attributes["data-cd-video"] !== "" || !role || !approvedRoles.has(role) ||
           referencedRoles.some((candidate) => candidate !== role) || poster !== `${role}-poster` ||
-          !sourceKeys.includes(`${role}-webm`) || !sourceKeys.includes(`${role}-mp4`)) {
+          JSON.stringify([...sourceKeys].sort()) !== JSON.stringify(expectedSourceKeys)) {
           throw new Error(`Recipe ${config.templateId} video on ${surfaceId} requires one trusted poster-first approved media role`);
         }
         roles.add(role);

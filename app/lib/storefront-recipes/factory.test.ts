@@ -245,4 +245,19 @@ describe("storefront recipe factory", () => {
     ];
     expect(() => defineRecipe(config)).toThrow(/video.*poster|approval|proof/i);
   });
+
+  it("rejects an approved video role with an extra unapproved source", () => {
+    const config = videoHeroConfig();
+    config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
+      "</video>",
+      `<source data-cd-asset="ambient-webm" type="video/webm"></video>`,
+    );
+    config.assets.entries = [...config.assets.entries, {
+      key: "ambient-webm",
+      contentHash: "e".repeat(64),
+      mediaType: "video/webm",
+      byteSize: 1,
+    }];
+    expect(() => defineRecipe(config)).toThrow(/video.*source|approved media role/i);
+  });
 });
