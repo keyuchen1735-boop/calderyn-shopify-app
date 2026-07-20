@@ -86,6 +86,7 @@ function dashboardApp(param: string | null): DashboardCtx {
 
 function renderCampaigns(param: string | null = null) {
   const host = document.createElement("div");
+  host.className = "cd-root";
   document.body.append(host);
   const root = createRoot(host);
   roots.push(root);
@@ -119,6 +120,7 @@ describe("campaign list controls", () => {
     const editor = document.body.querySelector('[role="dialog"][aria-label="Edit campaign type"]');
     expect(editor).not.toBeNull();
     expect(editor?.closest(".cd-pan")).toBeNull();
+    expect(editor?.closest(".cd-root")).toBe(host);
   });
 });
 

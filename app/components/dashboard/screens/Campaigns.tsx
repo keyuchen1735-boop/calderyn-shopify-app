@@ -332,6 +332,7 @@ function ClassificationEditor({
   const [saleType, setSaleType] = useState(c.sale_type ?? "General Sale");
   const [busy, setBusy] = useState(false);
   const narrow = useNarrowViewport(760);
+  const triggerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setKind(c.campaign_kind);
@@ -418,9 +419,11 @@ function ClassificationEditor({
       )}
     </div>
   );
+  const portalRoot = triggerRef.current?.closest<HTMLElement>(".cd-root");
 
   return (
     <div
+      ref={triggerRef}
       className="cd-campaign-classification"
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
@@ -440,8 +443,8 @@ function ClassificationEditor({
         </Btn>
       </Tooltip>
       {editing &&
-        (narrow && typeof document !== "undefined"
-          ? createPortal(editor, document.body)
+        (narrow && portalRoot
+          ? createPortal(editor, portalRoot)
           : editor)}
     </div>
   );
