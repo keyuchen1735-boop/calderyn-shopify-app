@@ -380,7 +380,7 @@ export default function OrdersPreview() {
     nav,
     navigate,
     setNightMode,
-    alerts: [], campaigns: [], audit: [], guardrails: null, integrations: [], setIntegrations: () => {}, consent: true, overview: null,
+    alerts: [], campaigns: [], campaignReport: { window: 30, campaigns: [], status: "ready", targetWindow: null, error: null, requestId: null }, audit: [], guardrails: null, integrations: [], setIntegrations: () => {}, consent: true, overview: null,
     feed: [], liveOn: true, setLiveOn: () => {}, executeAction: async () => ({ ok: true, receipt: null }), undoAction: () => {}, weatherIntent: async () => true,
     pushAdDraft: () => {}, toast, relTime: () => "just now", openAssistant: () => setAssistantSignal((value) => value + 1), calibration: null, refreshCalibration: () => {},
     actionQueue: [], liveEngine: null, refresh: () => {}, refreshLiveEngine: () => {}, loading: false, booted: true,

@@ -72,3 +72,11 @@ export function missingCampaignCostLabels(costSources: string[]): string[] {
   if (costSources.includes("missing:carrier")) labels.push("carrier cost");
   return labels;
 }
+
+export function campaignCostSourceLabels(costSources: string[]): string[] {
+  const labels: string[] = [];
+  if (costSources.includes("snapshot")) labels.push("Order snapshot");
+  if (costSources.includes("quickbooks")) labels.push("QuickBooks");
+  if (costSources.includes("catalog")) labels.push("Catalog");
+  return labels;
+}

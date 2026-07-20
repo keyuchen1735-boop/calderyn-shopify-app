@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import Campaigns from "../Campaigns";
 import type { DashboardCtx } from "../../context";
 import type { CampaignVM } from "../../view-models";
+import { updateCampaignClassification } from "~/lib/dashboard/client";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -72,9 +73,17 @@ function setNarrowViewport(narrow: boolean) {
   });
 }
 
-function dashboardApp(param: string | null, overrides: Partial<DashboardCtx> = {}): DashboardCtx {
+function dashboardApp(param: string | null, overrides: Record<string, unknown> = {}): DashboardCtx {
+  const report = {
+    window: 30,
+    campaigns: [campaign],
+    status: "ready",
+    targetWindow: null,
+    error: null,
+  };
   return {
     campaigns: [campaign],
+    campaignReport: report,
     nav: { screen: "campaigns", param, sub: null },
     loading: false,
     storeLabel: "Test store",
@@ -85,7 +94,7 @@ function dashboardApp(param: string | null, overrides: Partial<DashboardCtx> = {
   } as unknown as DashboardCtx;
 }
 
-function renderCampaigns(param: string | null = null, overrides: Partial<DashboardCtx> = {}) {
+function renderCampaigns(param: string | null = null, overrides: Record<string, unknown> = {}) {
   const host = document.createElement("div");
   host.className = "cd-root";
   document.body.append(host);
@@ -124,32 +133,63 @@ describe("campaign list controls", () => {
     expect(editor?.closest(".cd-root")).toBe(host);
   });
 
-  it("keeps the committed window until matching data succeeds and retains a retryable error", async () => {
+  it("renders the shell's committed and pending reporting windows", () => {
     setNarrowViewport(false);
-    let reject!: (error: Error) => void;
-    let resolve!: () => void;
-    const first = new Promise<void>((_resolve, fail) => { reject = fail; });
-    const second = new Promise<void>((done) => { resolve = done; });
-    const setCampaignWindow = vi.fn()
-      .mockReturnValueOnce(first)
-      .mockReturnValueOnce(second);
-    const host = renderCampaigns(null, { setCampaignWindow });
+    const host = renderCampaigns(null, {
+      campaignReport: {
+        window: 30,
+        campaigns: [campaign],
+        status: "loading",
+        targetWindow: 90,
+        error: null,
+      },
+    });
     const group = () => host.querySelector('[role="group"][aria-label="Reporting window"]')!;
-    const ninety = () => [...group().querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "90")!;
-
-    act(() => ninety().click());
     expect(group().querySelector('[aria-pressed="true"]')?.textContent).toBe("30");
     expect(host.querySelector('[aria-live="polite"]')?.textContent).toContain("Loading 90-day metrics");
+  });
 
-    await act(async () => reject(new Error("metrics unavailable")));
-    expect(group().querySelector('[aria-pressed="true"]')?.textContent).toBe("30");
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Retry");
+  it("uses shell state on a storage-denied remount", () => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get: () => { throw new DOMException("blocked", "SecurityError"); },
+    });
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
+    });
+    const host = renderCampaigns(null, {
+      campaignReport: {
+        window: 90,
+        campaigns: [campaign],
+        status: "ready",
+        targetWindow: null,
+        error: null,
+      },
+    });
+    const group = host.querySelector('[role="group"][aria-label="Reporting window"]')!;
+    expect(group.querySelector('[aria-pressed="true"]')?.textContent).toBe("90");
+  });
 
-    act(() => ninety().click());
-    await act(async () => resolve());
-    expect(group().querySelector('[aria-pressed="true"]')?.textContent).toBe("90");
-    expect(window.localStorage.setItem).toHaveBeenCalledWith("calderyn:campaign-window", "90");
+  it("renders a persistent retry instead of the create flow after initial campaign failure", () => {
+    setNarrowViewport(false);
+    const retry = vi.fn();
+    const host = renderCampaigns(null, {
+      campaigns: [],
+      campaignReport: {
+        window: 30,
+        campaigns: [],
+        status: "error",
+        targetWindow: 30,
+        error: "Campaign metrics unavailable.",
+      },
+      setCampaignWindow: retry,
+    });
+
+    const alert = host.querySelector<HTMLElement>('[role="alert"]')!;
+    expect(alert.textContent).toContain("Campaign metrics unavailable");
+    act(() => alert.querySelector<HTMLButtonElement>("button")!.click());
+    expect(retry).toHaveBeenCalledWith(30);
   });
 
   it("gives the mobile editor modal semantics, Escape dismissal, and focus restoration", () => {
@@ -165,6 +205,38 @@ describe("campaign list controls", () => {
     act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(host.querySelector('[role="dialog"][aria-label="Edit campaign type"]')).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("restores focus to the classification trigger after a successful save", async () => {
+    setNarrowViewport(true);
+    vi.mocked(updateCampaignClassification).mockResolvedValueOnce({
+      campaign_kind: "regular",
+      sale_type: null,
+      classification_source: "merchant",
+    });
+    const host = renderCampaigns();
+    const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Edit campaign type"]')!;
+    act(() => trigger.click());
+    const save = host.querySelector<HTMLButtonElement>('[role="dialog"] button:not([aria-label])')!;
+
+    await act(async () => save.click());
+
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("exposes complete campaign cost lineage in the profit tooltip", () => {
+    setNarrowViewport(false);
+    const complete = { ...campaign, cost_sources: ["snapshot", "quickbooks", "catalog"] };
+    const host = renderCampaigns(null, {
+      campaigns: [complete],
+      campaignReport: {
+        window: 30, campaigns: [complete], status: "ready", targetWindow: null, error: null,
+      },
+    });
+
+    expect(host.querySelector('[aria-label*="Order snapshot"][aria-label*="QuickBooks"][aria-label*="Catalog"]'))
+      .not.toBeNull();
   });
 });
 

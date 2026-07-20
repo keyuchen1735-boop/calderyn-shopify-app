@@ -1,4 +1,5 @@
 from decimal import Decimal
+from pathlib import Path
 
 import asyncpg
 import pytest
@@ -14,6 +15,10 @@ CAMPAIGN_CATALOG = "92000000-0000-0000-0000-000000000003"
 CAMPAIGN_MISSING_COGS = "92000000-0000-0000-0000-000000000004"
 CAMPAIGN_B = "92000000-0000-0000-0000-000000000005"
 CAMPAIGN_MISSING_CARRIER = "92000000-0000-0000-0000-000000000006"
+CAMPAIGN_FALLBACK_CARRIER = "92000000-0000-0000-0000-000000000007"
+SHOP_TIMEZONE = "91000000-0000-0000-0000-000000000003"
+CAMPAIGN_TIMEZONE = "92000000-0000-0000-0000-000000000008"
+SKU_TIMEZONE = "93000000-0000-0000-0000-000000000005"
 SKU_SNAPSHOT = "93000000-0000-0000-0000-000000000001"
 SKU_QB = "93000000-0000-0000-0000-000000000002"
 SKU_CATALOG = "93000000-0000-0000-0000-000000000003"
@@ -109,7 +114,7 @@ async def _insert_order(
         )
 
 
-async def _seed_performance(conn):
+async def _ensure_transaction_ledger(conn):
     # Engine tests intentionally carry only warehouse migrations; production's
     # native-payment ledger is a dashboard prerequisite for this reporting RPC.
     await conn.execute(
@@ -123,6 +128,10 @@ async def _seed_performance(conn):
         )
         """
     )
+
+
+async def _seed_performance(conn):
+    await _ensure_transaction_ledger(conn)
     for sku_id, title in (
         (SKU_SNAPSHOT, "Snapshot SKU"),
         (SKU_QB, "QuickBooks SKU"),
@@ -146,6 +155,7 @@ async def _seed_performance(conn):
     await _insert_campaign(conn, CAMPAIGN_CATALOG, SHOP_A, "Catalog Sale")
     await _insert_campaign(conn, CAMPAIGN_MISSING_COGS, SHOP_A, "Missing COGS")
     await _insert_campaign(conn, CAMPAIGN_MISSING_CARRIER, SHOP_A, "Missing Carrier")
+    await _insert_campaign(conn, CAMPAIGN_FALLBACK_CARRIER, SHOP_A, "Fallback Carrier")
     await _insert_campaign(conn, CAMPAIGN_B, SHOP_B, "Other Shop Sale")
 
     await conn.execute(
@@ -200,7 +210,7 @@ async def _seed_performance(conn):
         campaign_id=CAMPAIGN_A,
         sku_id=SKU_QB,
         day_offset=ANCHOR_OFFSET - 29,
-        attributed_revenue_cents=2000,
+        attributed_revenue_cents=5000,
         ship_cost_cents=200,
     )
     await conn.execute(
@@ -244,6 +254,42 @@ async def _seed_performance(conn):
         day_offset=ANCHOR_OFFSET,
         attributed_revenue_cents=1000,
         ship_cost_cents=None,
+    )
+    await _insert_order(
+        conn,
+        order_id="94000000-0000-0000-0000-000000000007",
+        campaign_id=CAMPAIGN_FALLBACK_CARRIER,
+        sku_id=SKU_CATALOG,
+        day_offset=ANCHOR_OFFSET,
+        attributed_revenue_cents=1000,
+        ship_cost_cents=0,
+    )
+    await conn.execute(
+        """
+        update public.order_fact
+           set ship_cost_source = 'fallback'
+         where id = '94000000-0000-0000-0000-000000000007'
+        """
+    )
+    await conn.execute(
+        """
+        update public.order_fact
+           set ship_cost_source = 'fallback', ship_cost_manual_cents = 100
+         where id = '94000000-0000-0000-0000-000000000003'
+        """
+    )
+    await conn.execute(
+        """
+        insert into public.order_fact
+          (id, shop_id, external_id, order_number, created_at_source,
+           total_cents, subtotal_cents, financial_status, source_version,
+           ship_cost_cents)
+        values ('94000000-0000-0000-0000-000000000008', $1, 'unattributed',
+                'unattributed', current_date + $2::integer + interval '12 hours',
+                99000, 99000, 'paid', 999, 100)
+        """,
+        SHOP_A,
+        ANCHOR_OFFSET,
     )
     await _insert_order(
         conn,
@@ -410,6 +456,7 @@ async def test_campaign_performance_scopes_tenant_and_calculates_profit(pg_pool,
     assert by_id[CAMPAIGN_A]["cost_complete"] is True
     assert set(by_id[CAMPAIGN_A]["cost_sources"]) == {"snapshot", "quickbooks"}
     assert by_id[CAMPAIGN_CATALOG]["cost_sources"] == ["catalog"]
+    assert by_id[CAMPAIGN_CATALOG]["cost_complete"] is True
     assert by_id[CAMPAIGN_MISSING_COGS]["cost_complete"] is False
     assert "missing:cogs" in by_id[CAMPAIGN_MISSING_COGS]["cost_sources"]
     assert by_id[CAMPAIGN_MISSING_COGS]["profit_cents"] == 841
@@ -417,6 +464,9 @@ async def test_campaign_performance_scopes_tenant_and_calculates_profit(pg_pool,
     assert by_id[CAMPAIGN_MISSING_CARRIER]["cost_complete"] is False
     assert "missing:carrier" in by_id[CAMPAIGN_MISSING_CARRIER]["cost_sources"]
     assert by_id[CAMPAIGN_MISSING_CARRIER]["profit_cents"] == 766
+    assert by_id[CAMPAIGN_FALLBACK_CARRIER]["cost_complete"] is False
+    assert "missing:carrier" in by_id[CAMPAIGN_FALLBACK_CARRIER]["cost_sources"]
+    assert by_id[CAMPAIGN_FALLBACK_CARRIER]["profit_cents"] == 766
     assert window_spend == {7: 6, 30: 42, 90: 161}
     assert CAMPAIGN_A in {str(row["id"]) for row in explicit_rows}
     assert CAMPAIGN_B not in {str(row["id"]) for row in explicit_rows}
@@ -436,8 +486,127 @@ async def test_campaign_performance_has_targeted_shop_join_indexes(pg_pool):
                  or indexdef like '%(shop_id, order_id)%')
             """
         )
+        function_definition = await conn.fetchval(
+            "select pg_get_functiondef('public.campaign_performance(integer, uuid)'::regprocedure)"
+        )
 
     assert len(definitions) == 3
+    assert "o.created_at_source >= b.start_at" in function_definition
+    assert "o.created_at_source < b.end_at" in function_definition
+    assert "(o.created_at_source at time zone" not in function_definition
+
+
+@pytest.mark.asyncio
+async def test_no_spend_window_uses_the_configured_reporting_timezone(pg_pool, seed_shop):
+    await seed_shop(SHOP_TIMEZONE)
+    async with pg_pool.acquire() as conn:
+        await _ensure_transaction_ledger(conn)
+        timezone = await conn.fetchval(
+            """
+            select case
+              when (current_timestamp at time zone 'Pacific/Kiritimati')::date <> current_date
+                then 'Pacific/Kiritimati'
+              else 'America/Adak'
+            end
+            """
+        )
+        assert await conn.fetchval(
+            "select (current_timestamp at time zone $1)::date <> current_date", timezone
+        )
+        await conn.execute(
+            "update public.guardrail_config set timezone = $2 where shop_id = $1",
+            SHOP_TIMEZONE,
+            timezone,
+        )
+        await conn.execute(
+            """
+            insert into public.sku_dim (id, shop_id, external_id, product_id, sku, title)
+            values ($1, $2, 'tz-sku', 'tz-product', 'tz-sku', 'Timezone SKU')
+            """,
+            SKU_TIMEZONE,
+            SHOP_TIMEZONE,
+        )
+        await _insert_campaign(conn, CAMPAIGN_TIMEZONE, SHOP_TIMEZONE, "Timezone Sale")
+        for suffix, local_day_offset, amount in (("1", -6, 1000), ("2", -7, 9000)):
+            order_id = f"94000000-0000-0000-0000-00000000010{suffix}"
+            await conn.execute(
+                """
+                insert into public.order_fact
+                  (id, shop_id, external_id, order_number, created_at_source,
+                   total_cents, subtotal_cents, financial_status, source_version,
+                   ship_cost_cents)
+                values ($1, $2, $3, $3,
+                        (((current_timestamp at time zone $4)::date + $5::integer + time '12:00')
+                          at time zone $4),
+                        $6, $6, 'paid', $7, 100)
+                """,
+                order_id,
+                SHOP_TIMEZONE,
+                f"tz-order-{suffix}",
+                timezone,
+                local_day_offset,
+                amount,
+                int(suffix),
+            )
+            await conn.execute(
+                """
+                insert into public.order_line_fact
+                  (shop_id, order_id, sku_id, external_line_id, quantity, price_cents,
+                   total_cents, unit_cost_cents_snapshot)
+                values ($1, $2, $3, $4, 1, $5, $5, 100)
+                """,
+                SHOP_TIMEZONE,
+                order_id,
+                SKU_TIMEZONE,
+                f"tz-line-{suffix}",
+                amount,
+            )
+            await conn.execute(
+                """
+                insert into public.attribution_fact
+                  (shop_id, order_id, campaign_id, platform, attributed_revenue_cents,
+                   attribution_method)
+                values ($1, $2, $3, 'meta', $4, 'utm_exact')
+                """,
+                SHOP_TIMEZONE,
+                order_id,
+                CAMPAIGN_TIMEZONE,
+                amount,
+            )
+        async with with_shop_context(conn, SHOP_TIMEZONE):
+            row = await conn.fetchrow(
+                "select * from campaign_performance(7) where id = $1", CAMPAIGN_TIMEZONE
+            )
+
+    assert row["orders"] == 1
+    assert row["revenue_cents"] == 1000
+
+
+@pytest.mark.asyncio
+async def test_campaign_classification_migration_backfills_existing_rows(pg_pool, seed_shop):
+    await seed_shop(SHOP_A)
+    campaign_id = "92000000-0000-0000-0000-000000000109"
+    async with pg_pool.acquire() as conn:
+        await conn.execute("alter table public.ad_campaign_dim disable trigger user")
+        try:
+            await _insert_campaign(conn, campaign_id, SHOP_A, "BFCM Existing")
+        finally:
+            await conn.execute("alter table public.ad_campaign_dim enable trigger user")
+        migration = (
+            Path(__file__).parents[3]
+            / "supabase/migrations/20260719190000_campaign_sales_profit_metrics.sql"
+        ).read_text()
+        await conn.execute(migration)
+        row = await conn.fetchrow(
+            """
+            select campaign_kind, sale_type, classification_source
+              from public.ad_campaign_dim
+             where id = $1
+            """,
+            campaign_id,
+        )
+
+    assert tuple(row) == ("sales", "Black Friday", "detected")
 
 
 @pytest.mark.asyncio

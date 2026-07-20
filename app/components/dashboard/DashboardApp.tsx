@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import { getDesignerSession, subscribeDesignerSession } from "~/lib/designer/session";
 import { useLocation, useNavigate, useNavigationType } from "@remix-run/react";
 import { CALDERYN_MARK_PATH } from "~/components/CalderynHexMark";
@@ -9,8 +9,9 @@ import * as client from "~/lib/dashboard/client";
 import { DashboardApiError } from "~/lib/dashboard/client";
 import { applyWeatherSuggestion, type CustomersPage } from "~/lib/dashboard/customers-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
-import { bootDashboardData } from "~/lib/dashboard/boot";
-import { readCampaignWindow } from "./screens/campaign-list-state";
+import { bootDashboardData, type DashboardBootFetchers } from "~/lib/dashboard/boot";
+import { readCampaignWindow, writeCampaignWindow } from "./screens/campaign-list-state";
+import { campaignReportReducer, initialCampaignReport } from "./campaign-report-state";
 import { warmScreenCaches } from "~/lib/dashboard/prefetch";
 import { presentActionOutcome } from "~/lib/action-outcome";
 import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
@@ -518,11 +519,22 @@ export default function DashboardApp({
 
   // ----- data state (fetched on mount; client.ts hits /dashboard/api/*) -----
   const [alerts, setAlerts] = useState<AlertVM[]>([]);
-  const [campaigns, setCampaigns] = useState<CampaignVM[]>([]);
-  const campaignWindowRef = useRef<CampaignWindow>(
-    readCampaignWindow(typeof window === "undefined" ? undefined : window.localStorage),
+  const initialCampaignWindow = (() => {
+    try {
+      return readCampaignWindow(typeof window === "undefined" ? undefined : window.localStorage);
+    } catch {
+      return 30 as CampaignWindow;
+    }
+  })();
+  const [campaignReport, dispatchCampaignReport] = useReducer(
+    campaignReportReducer,
+    initialCampaignWindow,
+    initialCampaignReport,
   );
-  const [, rerenderCampaignWindow] = useState(0);
+  const campaignReportRef = useRef(campaignReport);
+  campaignReportRef.current = campaignReport;
+  const campaignRequestId = useRef(0);
+  const campaigns = campaignReport.campaigns;
   const [audit, setAudit] = useState<AuditVM[]>([]);
   const [guardrails, setGuardrails] = useState<GuardrailVM | null>(null);
   const [integrations, setIntegrations] = useState<IntegrationVM[]>([]);
@@ -675,13 +687,34 @@ export default function DashboardApp({
   const loadGen = useRef(0);
   const load = useCallback(async () => {
     const gen = ++loadGen.current;
+    const window = campaignReportRef.current.targetWindow ?? campaignReportRef.current.window;
+    const requestId = ++campaignRequestId.current;
+    dispatchCampaignReport({ type: "start", requestId, window });
     const fresh =
       <T,>(set: (v: T) => void) =>
       (v: T) => {
         if (loadGen.current === gen) set(v);
       };
+    const fetchers: DashboardBootFetchers = {
+      ...client,
+      fetchCampaigns: async () => {
+        try {
+          return await client.fetchCampaigns(window);
+        } catch (error) {
+          dispatchCampaignReport({
+            type: "failure",
+            requestId,
+            window,
+            error: error instanceof DashboardApiError ? error.message : "Campaign metrics unavailable.",
+          });
+          throw error;
+        }
+      },
+    };
     await bootDashboardData({
-      campaigns: fresh(setCampaigns),
+      campaigns: (nextCampaigns) => dispatchCampaignReport({
+        type: "success", requestId, window, campaigns: nextCampaigns,
+      }),
       overview: fresh(setOverview),
       alerts: fresh(setAlerts),
       audit: fresh(setAudit),
@@ -691,9 +724,19 @@ export default function DashboardApp({
       calibration: fresh(setCalibration),
       actionQueue: fresh(setActionQueue),
       liveEngine: fresh(setLiveEngine),
-    }, client, campaignWindowRef.current);
+    }, fetchers, window);
     if (loadGen.current === gen) setBooted(true);
   }, []);
+
+  useEffect(() => {
+    if (campaignReport.status === "ready") {
+      try {
+        writeCampaignWindow(window.localStorage, campaignReport.window);
+      } catch {
+        // Accessing localStorage itself can be denied; reducer state remains authoritative.
+      }
+    }
+  }, [campaignReport.status, campaignReport.window]);
 
   useEffect(() => {
     let alive = true;
@@ -732,11 +775,21 @@ export default function DashboardApp({
   }, [load, toast]);
 
   const setCampaignWindow = useCallback(async (next: CampaignWindow) => {
-    if (campaignWindowRef.current === next) return;
-    const nextCampaigns = await client.fetchCampaigns(next);
-    setCampaigns(nextCampaigns);
-    campaignWindowRef.current = next;
-    rerenderCampaignWindow((version) => version + 1);
+    if (campaignReportRef.current.status === "ready" && campaignReportRef.current.window === next) return;
+    loadGen.current += 1;
+    const requestId = ++campaignRequestId.current;
+    dispatchCampaignReport({ type: "start", requestId, window: next });
+    try {
+      const nextCampaigns = await client.fetchCampaigns(next);
+      dispatchCampaignReport({ type: "success", requestId, window: next, campaigns: nextCampaigns });
+    } catch (error) {
+      dispatchCampaignReport({
+        type: "failure",
+        requestId,
+        window: next,
+        error: error instanceof DashboardApiError ? error.message : "Campaign metrics unavailable.",
+      });
+    }
   }, []);
 
   // Lighter than refresh(): only re-pulls /dashboard/api/live-engine. Used by the
@@ -829,12 +882,12 @@ export default function DashboardApp({
   // ----- live engine: poll real endpoints, stream genuine changes -----
   useLiveFeed({
     liveOn,
-    campaignWindow: campaignWindowRef.current,
+    campaignWindow: campaignReport.window,
     onOverview: useCallback((ov: OverviewVM) => {
       setOverview(ov);
     }, []),
-    onCampaigns: useCallback((cs: CampaignVM[]) => {
-      setCampaigns(cs);
+    onCampaigns: useCallback((cs: CampaignVM[], window: CampaignWindow) => {
+      dispatchCampaignReport({ type: "poll", window, campaigns: cs });
     }, []),
     onGuardrails: useCallback((g: GuardrailVM) => {
       setGuardrails(g);
@@ -966,14 +1019,15 @@ export default function DashboardApp({
           // arrives here as a 200 and is queued, not a success.
           if (view.succeeded) {
             markResolved();
-            setCampaigns((cs) =>
-              cs.map((c) => {
-                if (c.id !== campId) return c;
-                if (kind === "pause_campaign") return { ...c, status: "paused" };
-                if (kind === "resume_campaign") return { ...c, status: "active" };
-                return { ...c, daily_budget_cents: targetBudget ?? c.daily_budget_cents };
-              }),
-            );
+            dispatchCampaignReport({
+              type: "patch",
+              id: campId,
+              patch: kind === "pause_campaign"
+                ? { status: "paused" }
+                : kind === "resume_campaign"
+                  ? { status: "active" }
+                  : { daily_budget_cents: targetBudget },
+            });
           }
           // Re-fetch audit so the server's authoritative row replaces our optimistic one.
           client
@@ -1370,6 +1424,7 @@ export default function DashboardApp({
     setNightMode,
     alerts,
     campaigns,
+    campaignReport,
     audit,
     guardrails,
     integrations,

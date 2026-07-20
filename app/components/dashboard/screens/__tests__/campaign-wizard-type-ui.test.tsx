@@ -12,7 +12,7 @@ vi.mock("gsap", () => ({ default: { registerPlugin: vi.fn(), timeline: () => ({ 
 afterEach(() => { document.body.innerHTML = ""; vi.clearAllMocks(); });
 
 describe("campaign wizard type selection", () => {
-  it("exposes Regular and Sales as a labelled single-choice group with fixed-window copy", () => {
+  it("supports roving focus and arrow-key selection in the labelled campaign type group", () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
       value: () => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
@@ -32,6 +32,14 @@ describe("campaign wizard type selection", () => {
     const group = host.querySelector('[role="radiogroup"][aria-label="Campaign type"]')!;
     expect(group.querySelector('[role="radio"][aria-checked="true"]')?.textContent).toContain("Regular");
     expect(group.querySelectorAll('[role="radio"]')).toHaveLength(2);
+    const regular = group.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')!;
+    regular.focus();
+    act(() => regular.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+    const sales = group.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')!;
+    expect(sales.textContent).toContain("Sales");
+    expect(document.activeElement).toBe(sales);
+    expect(regular.tabIndex).toBe(-1);
+    expect(sales.tabIndex).toBe(0);
     expect(host.textContent).toContain("7, 30, or 90-day reporting window");
     expect(host.textContent).not.toContain("promotion period");
     act(() => root.unmount());

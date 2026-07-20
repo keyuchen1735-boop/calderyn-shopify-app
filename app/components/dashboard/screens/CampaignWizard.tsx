@@ -882,11 +882,25 @@ function CampaignTypeStep({
         style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
         role="radiogroup"
         aria-label="Campaign type"
+        onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          const next = event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "Home"
+            ? "regular"
+            : "sales";
+          const radios = event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]');
+          radios[next === "regular" ? 0 : 1]?.focus();
+          dispatch({
+            type: "campaignType",
+            campaignKind: next,
+            saleType: next === "sales" && state.campaignKind === "sales" ? state.saleType : null,
+          });
+        }}
       >
         <div
           role="radio"
           aria-checked={state.campaignKind === "regular"}
-          tabIndex={0}
+          tabIndex={state.campaignKind === "regular" ? 0 : -1}
           onClick={() =>
             dispatch({
               type: "campaignType",
@@ -910,7 +924,7 @@ function CampaignTypeStep({
         <div
           role="radio"
           aria-checked={state.campaignKind === "sales"}
-          tabIndex={0}
+          tabIndex={state.campaignKind === "sales" ? 0 : -1}
           onClick={() =>
             dispatch({
               type: "campaignType",

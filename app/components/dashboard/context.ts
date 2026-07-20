@@ -11,6 +11,7 @@ import type {
   QueueProposalVM,
 } from "./view-models";
 import type { CampaignWindow } from "../../lib/types";
+import type { CampaignReportState } from "./campaign-report-state";
 
 export type Screen =
   | "dashboard"
@@ -124,6 +125,8 @@ export interface DashboardCtx {
   // --- data (view-models, fetched on mount) ---
   alerts: AlertVM[];
   campaigns: CampaignVM[];
+  /** Authoritative reporting window, rows, and request lifecycle. */
+  campaignReport: CampaignReportState;
   audit: AuditVM[];
   guardrails: GuardrailVM | null;
   integrations: IntegrationVM[];

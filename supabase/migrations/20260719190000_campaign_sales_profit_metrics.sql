@@ -6,6 +6,9 @@ alter table public.ad_campaign_dim
   add column if not exists classification_source text not null default 'detected'
     check (classification_source in ('detected', 'merchant'));
 
+alter table public.order_fact
+  add column if not exists ship_cost_source text;
+
 create or replace function public.detect_campaign_sale_type(campaign_name text)
 returns text
 language sql
@@ -109,13 +112,24 @@ begin
     select coalesce(
       (select g.timezone from public.guardrail_config g where g.shop_id = v_shop_id),
       'America/New_York'
-    ) as timezone
+    ) as timezone,
+    (current_timestamp at time zone coalesce(
+      (select g.timezone from public.guardrail_config g where g.shop_id = v_shop_id),
+      'America/New_York'
+    ))::date as reporting_today
   ),
   anchor_day as (
-    select coalesce(max(s.day), current_date) as end_day,
-           coalesce(max(s.day), current_date) - (p_window_days - 1) as start_day
-    from public.ad_spend_fact s
-    where s.shop_id = v_shop_id
+    select coalesce(max(s.day), rc.reporting_today) as end_day,
+           coalesce(max(s.day), rc.reporting_today) - (p_window_days - 1) as start_day
+    from reporting_config rc
+    left join public.ad_spend_fact s on s.shop_id = v_shop_id
+    group by rc.reporting_today
+  ),
+  window_bounds as (
+    select (a.start_day::timestamp at time zone rc.timezone) as start_at,
+           ((a.end_day + 1)::timestamp at time zone rc.timezone) as end_at
+    from anchor_day a
+    cross join reporting_config rc
   ),
   spend as (
     select s.campaign_id, sum(s.spend_cents)::bigint as spend_cents
@@ -132,19 +146,23 @@ begin
            o.total_cents,
            o.created_at_source,
            sum(a.attributed_revenue_cents)::bigint as attributed_revenue_cents,
-           coalesce(o.ship_cost_manual_cents, o.ship_cost_cents)::bigint as carrier_cost_cents
+           case
+             when o.ship_cost_manual_cents is not null then o.ship_cost_manual_cents
+             when o.ship_cost_source = 'fallback' then null
+             else o.ship_cost_cents
+           end::bigint as carrier_cost_cents
     from public.attribution_fact a
     join public.order_fact o
       on o.id = a.order_id
      and o.shop_id = v_shop_id
-    cross join anchor_day d
-    cross join reporting_config rc
+    cross join window_bounds b
     where a.shop_id = v_shop_id
-      and (o.created_at_source at time zone rc.timezone)::date between d.start_day and d.end_day
+      and o.created_at_source >= b.start_at
+      and o.created_at_source < b.end_at
       and lower(coalesce(o.financial_status, '')) in
         ('paid', 'partially_paid', 'partially_refunded', 'refunded')
     group by a.campaign_id, o.id, o.order_number, o.total_cents, o.created_at_source,
-             o.ship_cost_manual_cents, o.ship_cost_cents
+             o.ship_cost_manual_cents, o.ship_cost_cents, o.ship_cost_source
   ),
   effective_cogs as (
     select ao.campaign_id,
@@ -222,7 +240,7 @@ begin
   order_metrics as (
     select ao.campaign_id,
            ao.order_id,
-           greatest(ao.attributed_revenue_cents - r.refund_cents, 0)::bigint as revenue_cents,
+           greatest(least(ao.attributed_revenue_cents, cp.captured_revenue_cents) - r.refund_cents, 0)::bigint as revenue_cents,
            c.cogs_cents,
            cc.carrier_cost_cents,
            f.fee_cents,
@@ -231,6 +249,7 @@ begin
     join cogs c using (campaign_id, order_id)
     join refunds r using (campaign_id, order_id)
     join carrier_costs cc using (campaign_id, order_id)
+    join captures cp using (campaign_id, order_id)
     join fees f using (campaign_id, order_id)
   ),
   campaign_orders as (

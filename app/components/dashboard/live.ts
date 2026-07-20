@@ -48,7 +48,7 @@ export interface LivePollFetchers {
 
 export interface LivePollCallbacks {
   onOverview?: (overview: OverviewVM) => void;
-  onCampaigns?: (campaigns: CampaignVM[]) => void;
+  onCampaigns?: (campaigns: CampaignVM[], window: CampaignWindow) => void;
   onGuardrails?: (guardrails: GuardrailVM) => void;
   onNewAudit?: (entry: AuditVM) => void;
   onNewAlerts?: (alert: AlertVM) => void;
@@ -80,7 +80,7 @@ export async function pollLiveTick(
     ]);
 
     cb.onOverview?.(overview);
-    cb.onCampaigns?.(campaigns);
+    cb.onCampaigns?.(campaigns, campaignWindow);
     cb.onGuardrails?.(guardrails);
 
     if (state.seenAudit === null) {
@@ -136,7 +136,7 @@ export function useLiveFeed({ liveOn, campaignWindow = 30, ...callbacks }: UseLi
     };
     const guarded: LivePollCallbacks = {
       onOverview: (o) => alive && cbRef.current.onOverview?.(o),
-      onCampaigns: (c) => alive && cbRef.current.onCampaigns?.(c),
+      onCampaigns: (c, window) => alive && cbRef.current.onCampaigns?.(c, window),
       onGuardrails: (g) => alive && cbRef.current.onGuardrails?.(g),
       onNewAudit: (e) => alive && cbRef.current.onNewAudit?.(e),
       onNewAlerts: (a) => alive && cbRef.current.onNewAlerts?.(a),

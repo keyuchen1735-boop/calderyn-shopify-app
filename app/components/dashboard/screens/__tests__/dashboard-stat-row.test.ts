@@ -130,6 +130,7 @@ function makeApp(overrides: Partial<DashboardCtx> = {}): DashboardCtx {
   setNightMode: () => {},
     alerts: [],
     campaigns: CAMPAIGNS,
+    campaignReport: { window: 30, campaigns: CAMPAIGNS, status: "ready", targetWindow: null, error: null, requestId: null },
     audit: [],
     guardrails: GUARDRAILS,
     integrations: [],

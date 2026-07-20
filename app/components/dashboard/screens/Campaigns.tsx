@@ -50,10 +50,9 @@ import type { CampaignVM } from "../view-models";
 import type { CampaignGradeRow, CampaignKind, CampaignWindow, DailyRoasRow } from "~/lib/types";
 import {
   filterCampaigns,
+  campaignCostSourceLabels,
   missingCampaignCostLabels,
-  readCampaignWindow,
   summarizeCampaigns,
-  writeCampaignWindow,
   type CampaignFilter,
 } from "./campaign-list-state";
 
@@ -365,7 +364,7 @@ function ClassificationEditor({
         sale_type: saved.sale_type,
         classification_source: saved.classification_source,
       });
-      setEditing(false);
+      closeEditor();
       app.toast("Campaign type updated.", "check", "success");
     } catch (err) {
       app.toast(
@@ -483,6 +482,11 @@ function CampaignRow({
   const losing = hasPerformanceData && c.true_roas != null && c.true_roas < c.breakeven_roas;
   const paused = c.status === "paused";
   const missingCosts = missingCampaignCostLabels(c.cost_sources);
+  const knownCosts = campaignCostSourceLabels(c.cost_sources);
+  const costLineage = [
+    knownCosts.length ? `Cost sources: ${knownCosts.join(", ")}` : null,
+    missingCosts.length ? `Missing cost data: ${missingCosts.join(", ")}` : null,
+  ].filter(Boolean).join(". ");
   return (
     // A div with button semantics rather than a real <button>: the row nests
     // the per-row action buttons (pause/resume, edit budget, duplicate),
@@ -527,7 +531,9 @@ function CampaignRow({
         {c.orders.toLocaleString()}
       </div>
       <div className="tabular-nums">
-        <div>{c.profit_cents == null ? "—" : money(c.profit_cents)}</div>
+        <Tooltip content={costLineage}>
+          <div>{c.profit_cents == null ? "—" : money(c.profit_cents)}</div>
+        </Tooltip>
         {missingCosts.length > 0 && (
           <Tooltip content={`Missing cost data: ${missingCosts.join(", ")}`}>
             <div className="cd-caption">Missing {missingCosts.join(" + ")}</div>
@@ -1389,6 +1395,7 @@ function CampaignList({
   pendingWindow,
   windowError,
   onRetryWindow,
+  reportStatus,
 }: {
   app: DashboardCtx;
   joined: CampaignVM[];
@@ -1398,6 +1405,7 @@ function CampaignList({
   pendingWindow: CampaignWindow | null;
   windowError: string | null;
   onRetryWindow: () => void;
+  reportStatus: DashboardCtx["campaignReport"]["status"];
 }) {
   const screenRef = useRef<HTMLDivElement>(null);
   // Owned campaign drafts render alongside synced campaigns. Fetched on mount,
@@ -1500,6 +1508,9 @@ function CampaignList({
   const missingCosts = Array.from(new Set(merged.flatMap((campaign) =>
     missingCampaignCostLabels(campaign.cost_sources),
   )));
+  const knownCosts = Array.from(new Set(merged.flatMap((campaign) =>
+    campaignCostSourceLabels(campaign.cost_sources),
+  )));
 
   // Active campaigns sort to the top; within each status group, highest 7d
   // spend first. Paused rows still render (dimmed), just below the active ones.
@@ -1530,7 +1541,7 @@ function CampaignList({
     }));
   };
 
-  const loading = app.loading && joined.length === 0;
+  const loading = reportStatus === "loading" && joined.length === 0;
 
   // Membership changes animate. Routine analytics polling does not replay
   // the collection entrance and look like a page refresh.
@@ -1651,7 +1662,12 @@ function CampaignList({
             </Card>
             <Card className="cd-campaign-metric-card">
               <span>Profit</span>
-              <strong>{summary.profitCents == null ? "—" : <CountMoney cents={summary.profitCents} />}</strong>
+              <Tooltip content={[
+                knownCosts.length ? `Cost sources: ${knownCosts.join(", ")}` : null,
+                missingCosts.length ? `Missing cost data: ${missingCosts.join(", ")}` : null,
+              ].filter(Boolean).join(". ")}>
+                <strong>{summary.profitCents == null ? "—" : <CountMoney cents={summary.profitCents} />}</strong>
+              </Tooltip>
               {missingCosts.length > 0 && (
                 <Tooltip content={`Missing cost data: ${missingCosts.join(", ")}`}>
                   <small>Missing {missingCosts.join(" + ")}</small>
@@ -1698,7 +1714,13 @@ function CampaignList({
           )}
         </>
       )}
-      {loading || (merged.length === 0 && drafts.length === 0) ? (
+      {reportStatus === "error" && merged.length === 0 ? (
+        <Card>
+          <div role="alert">
+            {windowError ?? "Campaign metrics unavailable."} <button type="button" onClick={onRetryWindow}>Retry</button>
+          </div>
+        </Card>
+      ) : loading || (merged.length === 0 && drafts.length === 0) ? (
         <div
           className="cd-card cd-campaign-table"
           style={{ overflow: "hidden" }}
@@ -1802,12 +1824,7 @@ function CampaignList({
 
 /* ---------- Screen ---------- */
 export default function Campaigns({ app }: { app: DashboardCtx }) {
-  const [campaignWindow, setCampaignWindow] = useState<CampaignWindow>(() =>
-    readCampaignWindow(typeof window === "undefined" ? undefined : window.localStorage),
-  );
-  const [pendingWindow, setPendingWindow] = useState<CampaignWindow | null>(null);
-  const [failedWindow, setFailedWindow] = useState<CampaignWindow | null>(null);
-  const [windowError, setWindowError] = useState<string | null>(null);
+  const { window: campaignWindow, targetWindow: pendingWindow, status: reportStatus, error: windowError } = app.campaignReport;
   // Real grades + break-even come from fetchAnalytics(); join by campaign_id.
   // While this is in flight the campaigns render with whatever grade they carry.
   const [grades, setGrades] = useState<CampaignGradeRow[]>([]);
@@ -1841,7 +1858,7 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   const gradeFor = (id: string) => grades.find((g) => g.campaign_id === id);
   const joined: CampaignVM[] = useMemo(
     () =>
-      app.campaigns.map((c) => {
+      app.campaignReport.campaigns.map((c) => {
         const g = grades.find((row) => row.campaign_id === c.id);
         if (!g) return c;
         // Resolve via the shared grader so a no-revenue grade row shows "no data"
@@ -1852,24 +1869,12 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
           breakeven_roas: g.break_even_roas,
         };
       }),
-    [app.campaigns, grades],
+    [app.campaignReport.campaigns, grades],
   );
 
-  const changeCampaignWindow = async (next: CampaignWindow) => {
-    if (pendingWindow || next === campaignWindow) return;
-    setPendingWindow(next);
-    setWindowError(null);
-    try {
-      await app.setCampaignWindow?.(next);
-      setCampaignWindow(next);
-      writeCampaignWindow(window.localStorage, next);
-      setFailedWindow(null);
-    } catch {
-      setFailedWindow(next);
-      setWindowError("metrics_failed");
-    } finally {
-      setPendingWindow(null);
-    }
+  const changeCampaignWindow = (next: CampaignWindow) => {
+    if (pendingWindow || (reportStatus === "ready" && next === campaignWindow)) return;
+    void app.setCampaignWindow?.(next);
   };
 
   if (app.nav.param === "new") {
@@ -1910,8 +1915,9 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
       onCampaignWindowChange={(next) => void changeCampaignWindow(next)}
       pendingWindow={pendingWindow}
       windowError={windowError}
+      reportStatus={reportStatus}
       onRetryWindow={() => {
-        if (failedWindow) void changeCampaignWindow(failedWindow);
+        void app.setCampaignWindow?.(pendingWindow ?? campaignWindow);
       }}
     />
   );

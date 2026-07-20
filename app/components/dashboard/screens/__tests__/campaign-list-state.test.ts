@@ -3,6 +3,7 @@ import type { CampaignVM } from "../../view-models";
 import {
   filterCampaigns,
   missingCampaignCostLabels,
+  campaignCostSourceLabels,
   readCampaignWindow,
   summarizeCampaigns,
   writeCampaignWindow,
@@ -109,5 +110,10 @@ describe("campaign list state", () => {
   it("names each missing cost component from RPC metadata", () => {
     expect(missingCampaignCostLabels(["quickbooks", "missing:cogs", "missing:carrier"]))
       .toEqual(["product costs", "carrier cost"]);
+  });
+
+  it("names each known complete cost source from RPC metadata", () => {
+    expect(campaignCostSourceLabels(["snapshot", "quickbooks", "catalog"]))
+      .toEqual(["Order snapshot", "QuickBooks", "Catalog"]);
   });
 });
