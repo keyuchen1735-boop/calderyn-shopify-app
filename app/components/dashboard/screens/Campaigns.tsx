@@ -487,6 +487,7 @@ function CampaignRow({
     knownCosts.length ? `Cost sources: ${knownCosts.join(", ")}` : null,
     missingCosts.length ? `Missing cost data: ${missingCosts.join(", ")}` : null,
   ].filter(Boolean).join(". ");
+  const profitLabel = c.profit_cents == null ? "—" : money(c.profit_cents);
   return (
     // A div with button semantics rather than a real <button>: the row nests
     // the per-row action buttons (pause/resume, edit budget, duplicate),
@@ -531,9 +532,13 @@ function CampaignRow({
         {c.orders.toLocaleString()}
       </div>
       <div className="tabular-nums">
-        <Tooltip content={costLineage}>
-          <div>{c.profit_cents == null ? "—" : money(c.profit_cents)}</div>
-        </Tooltip>
+        {costLineage ? (
+          <Tooltip content={`Profit ${profitLabel}. ${costLineage}`} escapeClipping>
+            <div>{profitLabel}</div>
+          </Tooltip>
+        ) : (
+          <div>{profitLabel}</div>
+        )}
         {missingCosts.length > 0 && (
           <Tooltip content={`Missing cost data: ${missingCosts.join(", ")}`}>
             <div className="cd-caption">Missing {missingCosts.join(" + ")}</div>
@@ -1662,12 +1667,17 @@ function CampaignList({
             </Card>
             <Card className="cd-campaign-metric-card">
               <span>Profit</span>
-              <Tooltip content={[
-                knownCosts.length ? `Cost sources: ${knownCosts.join(", ")}` : null,
-                missingCosts.length ? `Missing cost data: ${missingCosts.join(", ")}` : null,
-              ].filter(Boolean).join(". ")}>
+              {knownCosts.length || missingCosts.length ? (
+                <Tooltip content={[
+                  `Profit ${summary.profitCents == null ? "—" : money(summary.profitCents)}`,
+                  knownCosts.length ? `Cost sources: ${knownCosts.join(", ")}` : null,
+                  missingCosts.length ? `Missing cost data: ${missingCosts.join(", ")}` : null,
+                ].filter(Boolean).join(". ")}>
+                  <strong>{summary.profitCents == null ? "—" : <CountMoney cents={summary.profitCents} />}</strong>
+                </Tooltip>
+              ) : (
                 <strong>{summary.profitCents == null ? "—" : <CountMoney cents={summary.profitCents} />}</strong>
-              </Tooltip>
+              )}
               {missingCosts.length > 0 && (
                 <Tooltip content={`Missing cost data: ${missingCosts.join(", ")}`}>
                   <small>Missing {missingCosts.join(" + ")}</small>
@@ -1824,7 +1834,8 @@ function CampaignList({
 
 /* ---------- Screen ---------- */
 export default function Campaigns({ app }: { app: DashboardCtx }) {
-  const { window: campaignWindow, targetWindow: pendingWindow, status: reportStatus, error: windowError } = app.campaignReport;
+  const { window: campaignWindow, targetWindow, status: reportStatus, error: windowError } = app.campaignReport;
+  const pendingWindow = reportStatus === "loading" ? targetWindow : null;
   // Real grades + break-even come from fetchAnalytics(); join by campaign_id.
   // While this is in flight the campaigns render with whatever grade they carry.
   const [grades, setGrades] = useState<CampaignGradeRow[]>([]);
@@ -1917,7 +1928,7 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
       windowError={windowError}
       reportStatus={reportStatus}
       onRetryWindow={() => {
-        void app.setCampaignWindow?.(pendingWindow ?? campaignWindow);
+        void app.setCampaignWindow?.(targetWindow ?? campaignWindow);
       }}
     />
   );

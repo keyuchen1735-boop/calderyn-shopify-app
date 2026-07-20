@@ -885,11 +885,17 @@ function CampaignTypeStep({
         onKeyDown={(event) => {
           if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
           event.preventDefault();
-          const next = event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "Home"
-            ? "regular"
-            : "sales";
           const radios = event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]');
-          radios[next === "regular" ? 0 : 1]?.focus();
+          const focusedIndex = Array.from(radios).indexOf(event.target as HTMLElement);
+          const nextIndex = event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? radios.length - 1
+              : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                ? (focusedIndex - 1 + radios.length) % radios.length
+                : (focusedIndex + 1) % radios.length;
+          const next = nextIndex === 0 ? "regular" : "sales";
+          radios[nextIndex]?.focus();
           dispatch({
             type: "campaignType",
             campaignKind: next,

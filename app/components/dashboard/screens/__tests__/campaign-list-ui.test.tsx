@@ -192,6 +192,28 @@ describe("campaign list controls", () => {
     expect(retry).toHaveBeenCalledWith(30);
   });
 
+  it("keeps a failed target for retry without locking another window choice", () => {
+    setNarrowViewport(false);
+    const selectWindow = vi.fn();
+    const host = renderCampaigns(null, {
+      campaignReport: {
+        window: 30,
+        campaigns: [campaign],
+        status: "error",
+        targetWindow: 90,
+        error: "Campaign metrics unavailable.",
+      },
+      setCampaignWindow: selectWindow,
+    });
+
+    expect(host.querySelector('[aria-live="polite"]')).toBeNull();
+    const seven = Array.from(
+      host.querySelectorAll<HTMLButtonElement>('[aria-label="Reporting window"] button'),
+    ).find((button) => button.textContent === "7")!;
+    act(() => seven.click());
+    expect(selectWindow).toHaveBeenCalledWith(7);
+  });
+
   it("gives the mobile editor modal semantics, Escape dismissal, and focus restoration", () => {
     setNarrowViewport(true);
     const host = renderCampaigns();
@@ -235,8 +257,22 @@ describe("campaign list controls", () => {
       },
     });
 
-    expect(host.querySelector('[aria-label*="Order snapshot"][aria-label*="QuickBooks"][aria-label*="Catalog"]'))
-      .not.toBeNull();
+    const tooltip = host.querySelector<HTMLElement>(
+      '.cd-campaign-item [aria-label*="Order snapshot"][aria-label*="QuickBooks"][aria-label*="Catalog"]',
+    )!;
+    expect(tooltip.getAttribute("aria-label")).toContain("$80");
+    act(() => tooltip.focus());
+    const portal = host.querySelector(".cd-htip-pop--portal");
+    expect(portal).not.toBeNull();
+    expect(portal?.closest(".cd-pan")).toBeNull();
+  });
+
+  it("does not render profit tooltips without cost lineage", () => {
+    setNarrowViewport(false);
+    const host = renderCampaigns();
+
+    expect(host.querySelector('.cd-campaign-item [aria-label*="Cost sources"]')).toBeNull();
+    expect(host.querySelector(".cd-campaign-item")?.textContent).toContain("$80");
   });
 });
 
