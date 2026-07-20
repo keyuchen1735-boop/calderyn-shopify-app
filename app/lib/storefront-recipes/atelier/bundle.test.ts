@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { hydrateStorefront } from "../../storefront-runtime/hydrate";
 import { compileRecipeConfig } from "../factory";
 import { ATELIER_ASSETS } from "./assets";
-import { ATELIER_RECIPE_CONFIG } from "./bundle";
+import { ATELIER_RECIPE, ATELIER_RECIPE_CONFIG } from "./bundle";
 
 const ROUTES = [
   "home",
@@ -44,24 +44,16 @@ describe("Atelier storefront recipe", () => {
     expect(JSON.stringify(ATELIER_RECIPE_CONFIG)).not.toMatch(
       /asymmetric-magazine|editorial-grid-hero|magazine-grid/,
     );
-    // Remove this base-version allowlist when the shared video validator patch lands.
-    const temporaryBaseVersionVideoDiagnostics = new Set([
-      "route.html_mismatch",
-      "tree.control_attribute",
-    ]);
     expect(
       new Set(
         result.report.diagnostics
-          .filter(
-            ({ code }) => !temporaryBaseVersionVideoDiagnostics.has(code),
-          )
           .map(({ code }) => code),
       ),
-    ).toEqual(new Set(["asset.reference_missing"]));
+    ).toEqual(new Set(["asset.reference_missing", "asset.media_mismatch"]));
   });
 
   it("binds live garments and variants to the fit and purchase flow", () => {
-    const { bundle } = compileRecipeConfig(ATELIER_RECIPE_CONFIG);
+    const { bundle } = ATELIER_RECIPE;
     const product = bundle.routes.product;
 
     expect(
@@ -89,6 +81,9 @@ describe("Atelier storefront recipe", () => {
         "product.description",
         "product.price",
         "product.availability",
+        "fact.label",
+        "fact.value",
+        "fact.url",
         "variant.title",
         "variant.availability",
       ]),
@@ -99,6 +94,15 @@ describe("Atelier storefront recipe", () => {
     expect(
       product.trustedSlots.filter(({ kind }) => kind === "addToCart"),
     ).toHaveLength(1);
+    expect(ATELIER_RECIPE_CONFIG.surfaces.product.source.html).toContain(
+      'data-cd-repeat="product.facts"',
+    );
+    expect(ATELIER_RECIPE_CONFIG.surfaces.product.source.html).toContain(
+      'data-cd-href="fact.url"',
+    );
+    expect(ATELIER_RECIPE_CONFIG.surfaces.product.source.html).toContain(
+      'data-cd-slot="addToCart" data-cd-product="product.id"',
+    );
     expect(bundle.shell.trustedSlots.map(({ kind }) => kind)).toContain(
       "cartDrawer",
     );
@@ -196,6 +200,11 @@ describe("Atelier storefront recipe", () => {
       '[data-cd-slot="addToCart"]',
     );
     expect(purchaseHosts).toHaveLength(1);
+    expect(
+      document.querySelector(
+        'main [data-cd-slot="addToCart"]',
+      ),
+    ).toBe(purchaseHosts[0]);
     expect(purchaseHosts[0]?.previousElementSibling).toMatchObject({
       dataset: { cdSlot: "variantPicker" },
     });
@@ -211,8 +220,8 @@ describe("Atelier storefront recipe", () => {
             source: {
               ...productSource,
               html: productSource.html.replace(
-                "</main><section>",
-                '</main><section class="atelier-purchase-frame">',
+                '<section><div data-cd-slot="variantPicker"',
+                '<section class="atelier-purchase-frame"><div data-cd-slot="variantPicker"',
               ),
               css: `${productSource.css}.atelier-purchase-frame{position:sticky;bottom:0}`,
             },
