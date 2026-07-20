@@ -30,13 +30,14 @@ describe("haven storefront recipe", () => {
     expect(HAVEN_RECIPE_CONFIG.archetype).toMatchObject({ composition: "spatial-studies", hero: "material-room-hero" });
     expect(repeatsIn(bundle.routes.home.tree)).toContain("featured.products");
     expect(repeatsIn(bundle.routes.collection.tree)).toContain("collection.products");
-    expect(repeatsIn(bundle.routes.product.tree)).toEqual(expect.arrayContaining(["product.images", "product.variants"]));
+    expect(repeatsIn(bundle.routes.product.tree)).toEqual(expect.arrayContaining(["product.images", "product.variants", "product.facts"]));
     expect(bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
     expect(bundle.routes.cart.trustedSlots.map(({ kind }) => kind)).toEqual(expect.arrayContaining(["cartLineControls", "cartSummary"]));
 
     const copy = Object.values(HAVEN_RECIPE_CONFIG.surfaces).map(({ source }) => source.html).join(" ");
-    expect(copy).toContain("No room-fit result is calculated here");
-    expect(copy).toContain("This checklist does not measure a room or calculate fit");
+    expect(copy).toContain("No automatic room-fit result is calculated");
+    expect(copy).toContain("Compare the listed dimensions with your own room measurements");
+    expect(copy).not.toContain("use only the merchant-supplied product description");
     expect(HAVEN_RECIPE_CONFIG.concept.noveltySignature).not.toContain("measurement-checklist");
     expect(copy).toContain("Delivery timing appears only when checkout provides it");
     expect(copy).not.toMatch(/fits your room|arrives? (?:in|by)|view in (?:your )?room|AR preview|swatch(?:es)? available|\b\d+(?:\.\d+)?\s*(?:in|cm|ft)\b/i);
@@ -51,6 +52,10 @@ describe("haven storefront recipe", () => {
     expect(purchaseColumn?.querySelector('[data-cd-slot="addToCart"]')).not.toBeNull();
     expect(purchaseColumn?.querySelectorAll('.haven-material-tray [data-cd-repeat="product.images"] img')).toHaveLength(1);
     expect(purchaseColumn?.querySelectorAll('.haven-material-tray [data-cd-repeat="product.variants"]')).toHaveLength(1);
+    expect(purchaseColumn?.querySelectorAll('.haven-product-facts [data-cd-repeat="product.facts"]')).toHaveLength(1);
+    expect(purchaseColumn?.querySelector('.haven-product-facts [data-cd-text="fact.label"]')).not.toBeNull();
+    expect(purchaseColumn?.querySelector('.haven-product-facts [data-cd-text="fact.value"]')).not.toBeNull();
+    expect(purchaseColumn?.querySelector('.haven-product-facts [data-cd-href="fact.url"]')).not.toBeNull();
 
     expect(HAVEN_VIDEO_ROLES).toEqual(["hero", "hero-alt", "pdp-detail"]);
     expect(HAVEN_VIDEO_ASSET_KEYS).toHaveLength(9);
