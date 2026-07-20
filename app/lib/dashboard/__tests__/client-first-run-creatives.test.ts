@@ -17,6 +17,8 @@ const responseBody = {
 const generationContext = {
   placement: "instagram" as const,
   budgetCents: 1500,
+  campaignKind: "sales" as const,
+  saleType: "Holiday",
   selectedCreativeIndex: 0,
   draftId: null,
 };
@@ -73,6 +75,8 @@ describe("first-run creative client", () => {
       expect.objectContaining({
         placement: "instagram",
         budgetCents: 1500,
+        campaignKind: "sales",
+        saleType: "Holiday",
         selectedCreativeIndex: 0,
         draftId: null,
       }),
@@ -90,6 +94,21 @@ describe("first-run creative client", () => {
       1,
       generationContext,
     );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not share an in-flight request after classification changes", async () => {
+    const fetchMock = vi.fn(() => new Promise<Response>(() => undefined));
+    vi.stubGlobal("fetch", fetchMock);
+    const { generateFirstRunCreatives } = await import("../client");
+
+    void generateFirstRunCreatives("product-2", "run-2", 1, {
+      ...generationContext,
+      campaignKind: "regular",
+      saleType: null,
+    });
+    void generateFirstRunCreatives("product-2", "run-2", 1, generationContext);
+
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

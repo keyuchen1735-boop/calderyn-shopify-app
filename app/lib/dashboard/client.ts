@@ -633,9 +633,15 @@ export async function generateFirstRunCreatives(
     budgetCents: number;
     selectedCreativeIndex: number;
     draftId: string | null;
+    campaignKind: CampaignKind;
+    saleType: string | null;
   },
 ): Promise<FirstRunCreativeResponse> {
-  const requestKey = `${runId}:${productId}:${attempt}`;
+  const classificationKey =
+    context.campaignKind === "sales"
+      ? `sales:${context.saleType?.trim() ?? ""}`
+      : "regular";
+  const requestKey = `${runId}:${productId}:${attempt}:${classificationKey}`;
   const pending = firstRunCreativeRequests.get(requestKey);
   if (pending) return pending;
 
@@ -666,6 +672,8 @@ export interface FirstRunCreateInput {
   runId: string;
   productId: string;
   budgetCents: number;
+  campaignKind: CampaignKind;
+  saleType: string | null;
   placement?: "facebook" | "instagram";
   creative: {
     headline: string;
@@ -691,6 +699,8 @@ export async function createFirstCampaignRun(
     runId: input.runId,
     productId: input.productId,
     budgetCents: input.budgetCents,
+    campaignKind: input.campaignKind,
+    saleType: input.saleType,
     placement: input.placement,
     creative: input.creative,
   });

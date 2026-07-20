@@ -12,6 +12,7 @@ import {
   type CampaignDraftRow,
   type CampaignDraftState,
 } from "./campaign-draft-types";
+import type { CampaignKind } from "~/lib/types";
 
 interface GeneratedVariant {
   headline: string;
@@ -43,6 +44,8 @@ export interface GeneratedCampaignDraftInput {
   productId: string;
   productTitle: string;
   budgetCents: number;
+  campaignKind: CampaignKind;
+  saleType: string | null;
   selectedCreativeIndex: number;
   attempt: number;
   response: GeneratedCreativeResponse;
@@ -138,6 +141,8 @@ export function buildGeneratedCampaignDraftState(
 
   return {
     version: 1,
+    campaignKind: input.campaignKind,
+    saleType: input.campaignKind === "sales" ? input.saleType : null,
     runId: input.runId,
     placement: input.placement,
     productId: input.productId,

@@ -23,6 +23,7 @@ import { insertAuditWithIdempotency } from "~/lib/actions/execute.server";
 import type { CreativeInput } from "~/lib/screener/types";
 import { isUuid } from "~/lib/ids";
 import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
+import { parseCampaignClassification } from "~/lib/ads/campaign-draft-types";
 
 // GET: Meta preflight for the first-campaign wizard (connected/scope/page/funding).
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -49,6 +50,8 @@ export type ParsedFirstRun =
       ok: true;
       runId: string;
       productId: string;
+      campaignKind: "sales" | "regular";
+      saleType: string | null;
       budgetCents: number;
       placement: "facebook" | "instagram" | null;
       creative: {
@@ -85,6 +88,20 @@ export function parseFirstRunBody(
   if (!productId) return fail("missing_product_id", "productId is required");
   if (!isUuid(productId))
     return fail("invalid_product_id", "productId must be a valid UUID");
+
+  const classification = parseCampaignClassification(
+    body.campaignKind,
+    body.saleType,
+  );
+  if (!classification)
+    return fail(
+      body.campaignKind === "sales"
+        ? "invalid_sale_type"
+        : "invalid_campaign_kind",
+      body.campaignKind === "sales"
+        ? "saleType must be between 1 and 80 characters"
+        : "campaignKind must be sales or regular",
+    );
 
   const placementRaw = str(body.placement);
   const placement =
@@ -165,6 +182,7 @@ export function parseFirstRunBody(
     ok: true,
     runId,
     productId,
+    ...classification,
     budgetCents,
     placement,
     creative: {
@@ -287,6 +305,8 @@ export async function action({ request }: ActionFunctionArgs) {
     const inputRecord = {
       product_id: parsed.productId,
       budget_cents: parsed.budgetCents,
+      campaign_kind: parsed.campaignKind,
+      sale_type: parsed.saleType,
       ...(parsed.placement ? { placement: parsed.placement } : {}),
       creative: canonicalCreative,
     };
@@ -503,6 +523,9 @@ export async function action({ request }: ActionFunctionArgs) {
           name: parsed.creative.headline,
           status: "paused",
           daily_budget_cents: parsed.budgetCents,
+          campaign_kind: parsed.campaignKind,
+          sale_type: parsed.saleType,
+          classification_source: "merchant",
         },
         { onConflict: "shop_id,platform,external_id" },
       )
@@ -552,6 +575,8 @@ export async function action({ request }: ActionFunctionArgs) {
           run_id: parsed.runId,
           product_id: parsed.productId,
           budget_cents: parsed.budgetCents,
+          campaign_kind: parsed.campaignKind,
+          sale_type: parsed.saleType,
           // v_audit_view's target coalesce reads campaign_name/campaign_id —
           // without these the audit row renders with a blank target.
           campaign_id: campaignDimId,

@@ -25,6 +25,8 @@ function input(
     productId: PRODUCT_ID,
     productTitle: "Trail pack",
     budgetCents: 1500,
+    campaignKind: "sales",
+    saleType: "Holiday",
     selectedCreativeIndex: 0,
     attempt: 1,
     response: {
@@ -72,6 +74,10 @@ describe("generated campaign draft persistence", () => {
     );
     expect(state.selectedCreativeIndex).toBe(0);
     expect(state.regenerationsLeft).toBe(2);
+    expect(state).toMatchObject({
+      campaignKind: "sales",
+      saleType: "Holiday",
+    });
   });
 
   it("normalizes oversized model text before it can make a draft unresumable", () => {

@@ -56,6 +56,9 @@ vi.stubEnv("SHOPIFY_APP_URL", ORIGIN);
 
 // The route under test — imported after all mocks are registered.
 const { action } = await import("../dashboard.api.campaigns.$id.action");
+const { parseFirstRunBody } = await import(
+  "../dashboard.api.campaigns.first-run"
+);
 
 const SHOP_ID = "shop-uuid-campaigns-cal";
 const SHOP_DOMAIN = "calibration-test.myshopify.com";
@@ -68,6 +71,25 @@ const ALERT = {
   severity: "high",
   status: "open",
 };
+
+function validFirstRunBody(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    runId: "11111111-1111-4111-8111-111111111111",
+    productId: "22222222-2222-4222-8222-222222222222",
+    budgetCents: 1500,
+    placement: "facebook",
+    creative: {
+      headline: "Holiday offer",
+      primaryText: "A seasonal offer for returning customers.",
+      cta: "SHOP_NOW",
+      imageUrl: "https://cdn.example.com/holiday.jpg",
+      destinationUrl: "https://shop.example/products/holiday",
+    },
+    ...overrides,
+  };
+}
 
 function makeRequest(body: Record<string, unknown>): Request {
   return new Request(`${ORIGIN}/dashboard/api/campaigns/${CAMPAIGN_ID}/action`, {
@@ -96,6 +118,76 @@ beforeEach(() => {
   alertsGetSpy.mockResolvedValue(ALERT);
   recordApprovalSpy.mockResolvedValue(undefined);
   recordActionFailureSpy.mockResolvedValue(undefined);
+});
+
+describe("first-run campaign classification parser", () => {
+  it("defaults legacy input to a regular campaign", () => {
+    expect(parseFirstRunBody(validFirstRunBody())).toMatchObject({
+      ok: true,
+      campaignKind: "regular",
+      saleType: null,
+    });
+  });
+
+  it("accepts sales input and trims its sale type", () => {
+    expect(
+      parseFirstRunBody(
+        validFirstRunBody({
+          campaignKind: "sales",
+          saleType: "  Cyber Monday  ",
+        }),
+      ),
+    ).toMatchObject({
+      ok: true,
+      campaignKind: "sales",
+      saleType: "Cyber Monday",
+    });
+  });
+
+  it("rejects sales input without a 1-80 character sale type", () => {
+    for (const saleType of [undefined, "   ", "x".repeat(81)]) {
+      const parsed = parseFirstRunBody(
+        validFirstRunBody({ campaignKind: "sales", saleType }),
+      );
+
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: { code: "invalid_sale_type" },
+      });
+    }
+  });
+
+  it("accepts a trimmed custom sale type at the 80-character limit", () => {
+    const custom = "x".repeat(80);
+
+    expect(
+      parseFirstRunBody(
+        validFirstRunBody({
+          campaignKind: "sales",
+          saleType: `  ${custom}  `,
+        }),
+      ),
+    ).toMatchObject({
+      ok: true,
+      campaignKind: "sales",
+      saleType: custom,
+    });
+  });
+
+  it("clears a supplied sale type from regular input", () => {
+    expect(
+      parseFirstRunBody(
+        validFirstRunBody({
+          campaignKind: "regular",
+          saleType: "Holiday",
+        }),
+      ),
+    ).toMatchObject({
+      ok: true,
+      campaignKind: "regular",
+      saleType: null,
+    });
+  });
 });
 
 describe("dashboard.api.campaigns.$id.action — calibration signal (serverless-safe)", () => {

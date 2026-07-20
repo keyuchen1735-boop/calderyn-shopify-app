@@ -7,6 +7,8 @@ import {
 
 const state: CampaignDraftState = {
   version: 1,
+  campaignKind: "regular",
+  saleType: null,
   runId: "11111111-1111-4111-8111-111111111111",
   placement: "instagram",
   productId: "22222222-2222-4222-8222-222222222222",
@@ -58,6 +60,74 @@ describe("campaign draft state", () => {
       ok: true,
       value: { name: "Old draft", platform: "google", state: undefined },
     });
+  });
+
+  it("defaults legacy version-1 state to a regular campaign", () => {
+    const { campaignKind: _campaignKind, saleType: _saleType, ...legacy } =
+      state;
+
+    expect(parseCampaignDraftState(legacy)).toEqual({
+      ...state,
+      campaignKind: "regular",
+      saleType: null,
+    });
+  });
+
+  it("round-trips a sales campaign and trims its sale type", () => {
+    expect(
+      parseCampaignDraftState({
+        ...state,
+        campaignKind: "sales",
+        saleType: "  Black Friday  ",
+      }),
+    ).toEqual({
+      ...state,
+      campaignKind: "sales",
+      saleType: "Black Friday",
+    });
+  });
+
+  it("rejects sales campaigns without a 1-80 character sale type", () => {
+    expect(
+      parseCampaignDraftState({
+        ...state,
+        campaignKind: "sales",
+        saleType: "   ",
+      }),
+    ).toBeNull();
+    expect(
+      parseCampaignDraftState({
+        ...state,
+        campaignKind: "sales",
+        saleType: "x".repeat(81),
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts a trimmed custom sale type at the 80-character limit", () => {
+    const custom = "x".repeat(80);
+
+    expect(
+      parseCampaignDraftState({
+        ...state,
+        campaignKind: "sales",
+        saleType: `  ${custom}  `,
+      }),
+    ).toEqual({
+      ...state,
+      campaignKind: "sales",
+      saleType: custom,
+    });
+  });
+
+  it("clears a supplied sale type from regular campaigns", () => {
+    expect(
+      parseCampaignDraftState({
+        ...state,
+        campaignKind: "regular",
+        saleType: "Black Friday",
+      }),
+    ).toEqual(state);
   });
 
   it("rejects a placement that disagrees with the stored platform", () => {
