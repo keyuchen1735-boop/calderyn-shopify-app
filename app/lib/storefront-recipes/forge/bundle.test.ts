@@ -50,13 +50,16 @@ describe("Forge storefront recipe", () => {
     expect(dataPaths(bundle.routes.home)).toEqual(expect.arrayContaining([
       "product.primaryImage", "product.title", "product.description", "product.price", "product.availability",
     ]));
-    expect(bundle.routes.home.html).toContain("Add verified items one at a time");
-    expect(bundle.routes.home.trustedSlots.map((slot) => slot.kind)).toContain("quickViewCommerce");
+    expect(bundle.routes.home.html).toContain("Build a three-line project kit");
+    expect(bundle.routes.home.trustedSlots).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "bundleBuilder", slotCount: 3 }),
+      expect.objectContaining({ kind: "quickViewCommerce" }),
+    ]));
 
     expect(repeats(bundle.routes.collection.tree)).toContain("collection.products");
     expect(actions(bundle.routes.collection)).toEqual(expect.arrayContaining(["collection.filter", "collection.sort"]));
     expect(bundle.routes.collection.interactions.transitions.filter((item) => item.action.type === "collection.filter"))
-      .toSatisfy((items: RouteArtifact["interactions"]["transitions"]) => items.length >= 4);
+      .toSatisfy((items: RouteArtifact["interactions"]["transitions"]) => items.length >= 5);
     expect(bundle.routes.collection.html).toContain("Project filters / live catalog tags");
     expect(bundle.routes.collection.html).toContain("Only live products carrying the selected catalog tag appear");
     expect(dataPaths(bundle.routes.collection)).toEqual(expect.arrayContaining([
@@ -65,10 +68,10 @@ describe("Forge storefront recipe", () => {
     ]));
     expect(bundle.routes.collection.trustedSlots.map((slot) => slot.kind)).toContain("quickViewCommerce");
 
-    expect(repeats(bundle.routes.product.tree)).toEqual(expect.arrayContaining(["product.images", "product.variants"]));
+    expect(repeats(bundle.routes.product.tree)).toEqual(expect.arrayContaining(["product.images", "product.facts", "product.variants"]));
     expect(dataPaths(bundle.routes.product)).toEqual(expect.arrayContaining([
       "product.primaryImage", "product.title", "product.description", "product.price", "product.availability",
-      "variant.title", "variant.price", "variant.availability",
+      "fact.label", "fact.value", "fact.url", "variant.title", "variant.price", "variant.availability",
     ]));
     expect(bundle.routes.product.html).toContain("Merchant compatibility record");
     expect(bundle.routes.product.trustedSlots.map((slot) => slot.kind)).toEqual(
@@ -120,16 +123,23 @@ describe("Forge storefront recipe", () => {
       .find((button) => button.textContent === "Framing");
     expect(framingControl).toBeTruthy();
     framingControl?.click();
+    const compatibilityControl = root.querySelector<HTMLInputElement>('input[name="compatibility"]');
+    expect(compatibilityControl).toBeTruthy();
+    if (compatibilityControl) {
+      compatibilityControl.value = "Model X";
+      compatibilityControl.dispatchEvent(new Event("change", { bubbles: true }));
+    }
 
     expect(assign.mock.calls.map(([href]) => href)).toEqual([
       "/storefront/collections/tools?sort=relevance",
       "/storefront/collections/tools?sort=price_asc",
       "/storefront/collections/tools?sort=price_desc",
       "/storefront/collections/tools?filter.tag=framing",
+      "/storefront/collections/tools?filter.fact-compatibility=Model+X",
     ]);
     for (const [href] of assign.mock.calls) {
       const url = new URL(href, window.location.origin);
-      expect([...url.searchParams.keys()].every((key) => key === "sort" || key === "filter.tag")).toBe(true);
+      expect([...url.searchParams.keys()].every((key) => key === "sort" || key === "filter.tag" || key === "filter.fact-compatibility")).toBe(true);
     }
     runtime.teardown();
   });
