@@ -937,9 +937,10 @@ export function calderynClient(shop: string) {
       },
       async performance(window: CampaignWindow, _signal?: AbortSignal): Promise<CampaignPerformance[]> {
         try {
-          await shopIdP;
+          const shopId = await shopIdP;
           const { data, error } = await supabase.rpc("campaign_performance", {
             p_window_days: window,
+            p_shop_id: shopId,
           });
           if (error) throw error;
           return (data ?? []).map(rowToCampaignPerformance);

@@ -14,6 +14,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 type Row = Record<string, any>;
 const store: Record<string, Row[]> = {};
+const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
 
 function makeBuilder(table: string) {
   const filters: Array<[string, any]> = [];
@@ -36,8 +37,15 @@ function makeBuilder(table: string) {
 }
 
 vi.mock("../supabase.server", () => ({
-  getSupabase: () => ({ from: (t: string) => makeBuilder(t) }),
+  getSupabase: () => ({
+    from: (t: string) => makeBuilder(t),
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      rpcCalls.push({ name, args });
+      return { data: [], error: null };
+    },
+  }),
   resolveShopId: async (domain: string) => {
+    if (domain === "shop-1") return "shop-1";
     if (domain === "a.myshopify.com") return "shop-A";
     if (domain === "b.myshopify.com") return "shop-B";
     throw new Error(`unknown shop ${domain}`);
@@ -51,6 +59,7 @@ const A = "a.myshopify.com";
 const B = "b.myshopify.com";
 
 beforeEach(() => {
+  rpcCalls.length = 0;
   for (const k of Object.keys(store)) delete store[k];
   // Two shops, identical-shaped rows in every per-shop view/table.
   store["v_alerts_view"] = [
@@ -104,6 +113,14 @@ describe("calderynClient enforces shop scoping on every read", () => {
 
   it("campaigns.list returns only the calling shop's campaigns", async () => {
     expect((await calderynClient(A).campaigns.list()).map((x) => x.id)).toEqual(["a-camp"]);
+  });
+
+  it("campaigns.performance passes the resolved shop to the RPC", async () => {
+    await calderynClient("shop-1").campaigns.performance(30);
+    expect(rpcCalls).toEqual([{
+      name: "campaign_performance",
+      args: { p_window_days: 30, p_shop_id: "shop-1" },
+    }]);
   });
 
   it("campaigns.get cannot fetch another shop's campaign by id", async () => {

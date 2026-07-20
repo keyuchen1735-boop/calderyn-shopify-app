@@ -56,7 +56,10 @@ set sale_type = public.detect_campaign_sale_type(name),
     end
 where classification_source = 'detected';
 
-create or replace function public.campaign_performance(p_window_days integer)
+create or replace function public.campaign_performance(
+  p_window_days integer,
+  p_shop_id uuid default null
+)
 returns table (
   id uuid,
   name text,
@@ -79,25 +82,40 @@ stable
 security invoker
 set search_path = public, pg_catalog
 as $$
+declare
+  v_context_shop_id uuid := public.current_shop_id();
+  v_shop_id uuid;
 begin
   if p_window_days is null or p_window_days not in (7, 30, 90) then
     raise exception 'unsupported campaign window: %', p_window_days
       using errcode = '22023';
   end if;
 
+  if v_context_shop_id is not null then
+    if p_shop_id is not null and p_shop_id <> v_context_shop_id then
+      raise exception 'campaign shop context mismatch'
+        using errcode = '42501';
+    end if;
+    v_shop_id := v_context_shop_id;
+  elsif current_user in ('service_role', 'postgres') and p_shop_id is not null then
+    v_shop_id := p_shop_id;
+  else
+    raise exception 'campaign shop context required'
+      using errcode = '42501';
+  end if;
+
   return query
   with anchor_day as (
     select coalesce(max(s.day), current_date) as end_day,
-           coalesce(max(s.day), current_date) - (p_window_days - 1) as start_day,
-           public.current_shop_id() as shop_id
+           coalesce(max(s.day), current_date) - (p_window_days - 1) as start_day
     from public.ad_spend_fact s
-    where s.shop_id = public.current_shop_id()
+    where s.shop_id = v_shop_id
   ),
   spend as (
     select s.campaign_id, sum(s.spend_cents)::bigint as spend_cents
     from public.ad_spend_fact s
     cross join anchor_day a
-    where s.shop_id = a.shop_id
+    where s.shop_id = v_shop_id
       and s.day between a.start_day and a.end_day
     group by s.campaign_id
   ),
@@ -110,9 +128,9 @@ begin
     from public.attribution_fact a
     join public.order_fact o
       on o.id = a.order_id
-     and o.shop_id = a.shop_id
+     and o.shop_id = v_shop_id
     cross join anchor_day d
-    where a.shop_id = d.shop_id
+    where a.shop_id = v_shop_id
       and o.created_at_source::date between d.start_day and d.end_day
       and lower(coalesce(o.financial_status, '')) in
         ('paid', 'partially_paid', 'partially_refunded', 'refunded')
@@ -132,12 +150,14 @@ begin
              else null
            end as cost_source
     from attributed_orders ao
-    join public.order_line_fact l on l.order_id = ao.order_id
+    join public.order_line_fact l
+      on l.order_id = ao.order_id
+     and l.shop_id = v_shop_id
     left join lateral (
       select c.unit_cost_cents, c.source
       from public.cogs_fact c
       where c.sku_id = l.sku_id
-        and c.shop_id = public.current_shop_id()
+        and c.shop_id = v_shop_id
         and c.effective_from <= ao.created_at_source
         and (c.effective_to is null or c.effective_to > ao.created_at_source)
       order by (c.source = 'quickbooks') desc, c.effective_from desc
@@ -161,7 +181,7 @@ begin
     from attributed_orders ao
     left join public.refund_fact r
       on r.order_id = ao.order_id
-     and r.shop_id = public.current_shop_id()
+     and r.shop_id = v_shop_id
     group by ao.campaign_id, ao.order_id
   ),
   carrier_costs as (
@@ -237,11 +257,11 @@ begin
   left join spend s on s.campaign_id = c.id
   left join campaign_orders o on o.campaign_id = c.id
   left join campaign_cost_sources cs on cs.campaign_id = c.id
-  where c.shop_id = a.shop_id
+  where c.shop_id = v_shop_id
   order by c.name, c.id;
 end;
 $$;
 
-revoke all on function public.campaign_performance(integer) from public;
-revoke all on function public.campaign_performance(integer) from anon;
-grant execute on function public.campaign_performance(integer) to authenticated, service_role;
+revoke all on function public.campaign_performance(integer, uuid) from public;
+revoke all on function public.campaign_performance(integer, uuid) from anon;
+grant execute on function public.campaign_performance(integer, uuid) to authenticated, service_role;

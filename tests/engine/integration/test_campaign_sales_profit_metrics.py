@@ -334,6 +334,9 @@ async def test_campaign_performance_scopes_tenant_and_calculates_profit(pg_pool,
                     for row in window_rows
                     if str(row["id"]) == CAMPAIGN_BOUNDARIES
                 )
+        explicit_rows = await conn.fetch(
+            "select * from campaign_performance($1::integer, $2::uuid)", 30, SHOP_A
+        )
 
     by_id = {str(row["id"]): row for row in rows}
     assert CAMPAIGN_B not in by_id
@@ -351,6 +354,35 @@ async def test_campaign_performance_scopes_tenant_and_calculates_profit(pg_pool,
     assert by_id[CAMPAIGN_MISSING_CARRIER]["cost_complete"] is False
     assert by_id[CAMPAIGN_MISSING_CARRIER]["profit_cents"] == 766
     assert window_spend == {7: 6, 30: 42, 90: 161}
+    assert CAMPAIGN_A in {str(row["id"]) for row in explicit_rows}
+    assert CAMPAIGN_B not in {str(row["id"]) for row in explicit_rows}
+
+
+@pytest.mark.asyncio
+async def test_campaign_performance_rejects_context_shop_mismatch(pg_pool, seed_shop):
+    await seed_shop(SHOP_A)
+    await seed_shop(SHOP_B)
+    async with pg_pool.acquire() as conn:
+        async with with_shop_context(conn, SHOP_A):
+            await conn.execute("set local role authenticated")
+            with pytest.raises(asyncpg.InsufficientPrivilegeError, match="campaign shop context mismatch"):
+                await conn.fetch(
+                    "select * from campaign_performance($1::integer, $2::uuid)", 30, SHOP_B
+                )
+
+
+@pytest.mark.asyncio
+async def test_campaign_performance_rejects_missing_context(pg_pool, seed_shop):
+    await seed_shop(SHOP_A)
+    async with pg_pool.acquire() as conn:
+        tx = conn.transaction()
+        await tx.start()
+        try:
+            await conn.execute("set local role authenticated")
+            with pytest.raises(asyncpg.InsufficientPrivilegeError, match="campaign shop context required"):
+                await conn.fetch("select * from campaign_performance(30)")
+        finally:
+            await tx.rollback()
 
 
 @pytest.mark.parametrize(
