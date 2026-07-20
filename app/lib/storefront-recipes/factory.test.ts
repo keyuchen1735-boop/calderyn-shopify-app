@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
-import { compileRecipeConfig, defineRecipe, type RecipeConfig } from "./factory";
+import { compileRecipeConfig, defineRecipe, type RecipeConfig, type RecipeMediaArtifacts } from "./factory";
 
 function testConfig(): RecipeConfig<"atelier-nine"> {
   const source = structuredClone(VALID_BUNDLE_SOURCE);
@@ -45,7 +45,38 @@ function videoHeroConfig(): RecipeConfig<"atelier-nine"> {
     { key: "hero-webm", contentHash: "b".repeat(64), mediaType: "video/webm", byteSize: 1 },
     { key: "hero-mp4", contentHash: "c".repeat(64), mediaType: "video/mp4", byteSize: 1 },
   ];
+  config.mediaArtifacts = {
+    manifest: {
+      templateId: "atelier-nine",
+      records: [{
+        templateId: "atelier-nine",
+        role: "hero",
+        masterHash: "d".repeat(64),
+        duration: 10,
+        width: 1600,
+        height: 900,
+        entries: [
+          { contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 1, objectPath: `storefront-recipe-assets/atelier-nine/${"a".repeat(64)}.webp` },
+          { contentHash: "b".repeat(64), mediaType: "video/webm", byteSize: 1, objectPath: `storefront-recipe-assets/atelier-nine/${"b".repeat(64)}.webm` },
+          { contentHash: "c".repeat(64), mediaType: "video/mp4", byteSize: 1, objectPath: `storefront-recipe-assets/atelier-nine/${"c".repeat(64)}.mp4` },
+        ],
+      }],
+    },
+    proof: {
+      records: [{
+        templateId: "atelier-nine",
+        role: "hero",
+        masterHash: "d".repeat(64),
+        technicalApproval: { approved: true, masterHash: "d".repeat(64) },
+        visualApproval: { approved: true, scope: "full-loop" },
+      }],
+    },
+  };
   return config;
+}
+
+function videoArtifacts(config: RecipeConfig<"atelier-nine">): RecipeMediaArtifacts {
+  return config.mediaArtifacts!;
 }
 
 describe("storefront recipe factory", () => {
@@ -123,5 +154,67 @@ describe("storefront recipe factory", () => {
       ? { ...entry, mediaType: "image/webp" }
       : entry);
     expect(() => defineRecipe(mistyped)).toThrow(/complete.*home hero|declared home hero/i);
+  });
+
+  it("rejects video heroes without distinct technical and visual approval", () => {
+    const missingArtifacts = videoHeroConfig();
+    delete missingArtifacts.mediaArtifacts;
+    expect(() => defineRecipe(missingArtifacts)).toThrow(/manifest|approval|proof/i);
+
+    const missingProof = videoHeroConfig();
+    videoArtifacts(missingProof).proof.records = [];
+    expect(() => defineRecipe(missingProof)).toThrow(/approval|proof/i);
+
+    const missingTechnical = videoHeroConfig();
+    delete videoArtifacts(missingTechnical).proof.records[0].technicalApproval;
+    expect(() => defineRecipe(missingTechnical)).toThrow(/approval|proof/i);
+
+    const missingVisual = videoHeroConfig();
+    delete videoArtifacts(missingVisual).proof.records[0].visualApproval;
+    expect(() => defineRecipe(missingVisual)).toThrow(/approval|proof/i);
+  });
+
+  it("rejects swapped video hero ownership and role identities", () => {
+    const swappedManifest = videoHeroConfig();
+    videoArtifacts(swappedManifest).manifest.templateId = "volt";
+    expect(() => defineRecipe(swappedManifest)).toThrow(/template|ownership|identity/i);
+
+    const swappedTemplate = videoHeroConfig();
+    videoArtifacts(swappedTemplate).manifest.records[0].templateId = "volt";
+    expect(() => defineRecipe(swappedTemplate)).toThrow(/template|ownership|identity/i);
+
+    const swappedRole = videoHeroConfig();
+    videoArtifacts(swappedRole).manifest.records[0].role = "hero-alt";
+    expect(() => defineRecipe(swappedRole)).toThrow(/role|hero|identity/i);
+
+    const swappedProofTemplate = videoHeroConfig();
+    videoArtifacts(swappedProofTemplate).proof.records[0].templateId = "volt";
+    expect(() => defineRecipe(swappedProofTemplate)).toThrow(/approval|proof|identity/i);
+
+    const swappedProofRole = videoHeroConfig();
+    videoArtifacts(swappedProofRole).proof.records[0].role = "hero-alt";
+    expect(() => defineRecipe(swappedProofRole)).toThrow(/approval|proof|identity/i);
+  });
+
+  it("rejects video hero master and derivative hash mismatches", () => {
+    const masterMismatch = videoHeroConfig();
+    videoArtifacts(masterMismatch).proof.records[0].masterHash = "e".repeat(64);
+    expect(() => defineRecipe(masterMismatch)).toThrow(/master|approval|proof/i);
+
+    const technicalMasterMismatch = videoHeroConfig();
+    videoArtifacts(technicalMasterMismatch).proof.records[0].technicalApproval!.masterHash = "e".repeat(64);
+    expect(() => defineRecipe(technicalMasterMismatch)).toThrow(/master|approval|proof/i);
+
+    const assetMismatch = videoHeroConfig();
+    videoArtifacts(assetMismatch).manifest.records[0].entries[0].contentHash = "f".repeat(64);
+    expect(() => defineRecipe(assetMismatch)).toThrow(/asset|derivative|hash/i);
+  });
+
+  it("rejects incomplete video hero derivative mappings", () => {
+    const config = videoHeroConfig();
+    const hero = videoArtifacts(config).manifest.records[0];
+    hero.entries = hero.entries.slice(0, -1);
+
+    expect(() => defineRecipe(config)).toThrow(/derivative|media|asset/i);
   });
 });

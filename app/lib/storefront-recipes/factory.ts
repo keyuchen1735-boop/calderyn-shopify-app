@@ -33,6 +33,46 @@ export interface RecipeSurface<TSource> {
   source: TSource;
 }
 
+export interface RecipeMediaArtifactEntry {
+  contentHash: string;
+  mediaType: string;
+  byteSize: number;
+  objectPath: string;
+  localPath?: string;
+}
+
+export interface RecipeMediaArtifactRecord {
+  templateId: string;
+  role: string;
+  masterHash: string;
+  duration: number;
+  width: number;
+  height: number;
+  entries: readonly RecipeMediaArtifactEntry[];
+}
+
+export interface RecipeMediaManifestArtifact {
+  templateId: string;
+  records: readonly RecipeMediaArtifactRecord[];
+}
+
+export interface RecipeMediaProofRecord {
+  templateId: string;
+  role: string;
+  masterHash: string;
+  technicalApproval?: { approved: boolean; masterHash: string };
+  visualApproval?: { approved: boolean; scope: string };
+}
+
+export interface RecipeMediaProofArtifact {
+  records: readonly RecipeMediaProofRecord[];
+}
+
+export interface RecipeMediaArtifacts {
+  manifest: RecipeMediaManifestArtifact;
+  proof: RecipeMediaProofArtifact;
+}
+
 export interface RecipeConfig<TTemplateId extends StoreTemplateId = StoreTemplateId> {
   templateId: TTemplateId;
   templateVersion: TTemplateId extends NewStoreTemplateId ? 1 : number;
@@ -52,6 +92,7 @@ export interface RecipeConfig<TTemplateId extends StoreTemplateId = StoreTemplat
     notFound?: RecipeSurface<RouteSource>;
   };
   assets: AssetManifest;
+  mediaArtifacts?: RecipeMediaArtifacts;
 }
 
 export interface DefinedRecipe<TTemplateId extends StoreTemplateId = StoreTemplateId> extends CompiledBundleResult {
@@ -209,6 +250,48 @@ function assertDeclaredHomeHero(config: RecipeConfig): void {
     completeMarkup = containsHeroVideo(compileHtml(homeHtml, { namespace: "home" }).tree);
   }
   if (!completeMarkup) throw new Error(`Recipe ${config.templateId} must include a declared home hero image or complete poster-first home hero video`);
+  assertApprovedVideoHero(config);
+}
+
+function assertApprovedVideoHero(config: RecipeConfig): void {
+  const artifacts = config.mediaArtifacts;
+  if (!artifacts) throw new Error(`Recipe ${config.templateId} video hero requires checked-in media manifest and approval proof`);
+  if (artifacts.manifest.templateId !== config.templateId) {
+    throw new Error(`Recipe ${config.templateId} video hero media manifest has a template identity mismatch`);
+  }
+
+  const heroRecords = artifacts.manifest.records.filter(({ role }) => role === "hero");
+  if (heroRecords.length !== 1) throw new Error(`Recipe ${config.templateId} video hero requires exactly one hero media role`);
+  const hero = heroRecords[0]!;
+  if (hero.templateId !== config.templateId || !/^[a-f0-9]{64}$/.test(hero.masterHash)) {
+    throw new Error(`Recipe ${config.templateId} video hero media ownership or master identity is invalid`);
+  }
+
+  const approvals = artifacts.proof.records.filter((proof) =>
+    proof.templateId === config.templateId && proof.role === "hero" && proof.masterHash === hero.masterHash,
+  );
+  if (approvals.length !== 1) throw new Error(`Recipe ${config.templateId} video hero requires an exact approval proof identity`);
+  const approval = approvals[0]!;
+  if (approval.technicalApproval?.approved !== true || approval.technicalApproval.masterHash !== hero.masterHash ||
+    approval.visualApproval?.approved !== true || approval.visualApproval.scope !== "full-loop") {
+    throw new Error(`Recipe ${config.templateId} video hero requires distinct technical and full-loop visual approval proof`);
+  }
+
+  const expectedAssets = [
+    ["hero-poster", "image/webp"],
+    ["hero-webm", "video/webm"],
+    ["hero-mp4", "video/mp4"],
+  ] as const;
+  if (hero.entries.length !== expectedAssets.length) {
+    throw new Error(`Recipe ${config.templateId} video hero requires a complete derivative asset mapping`);
+  }
+  for (const [assetKey, mediaType] of expectedAssets) {
+    const derivatives = hero.entries.filter((entry) => entry.mediaType === mediaType);
+    const asset = config.assets.entries.find(({ key }) => key === assetKey);
+    if (derivatives.length !== 1 || asset?.mediaType !== mediaType || asset.contentHash !== derivatives[0]!.contentHash) {
+      throw new Error(`Recipe ${config.templateId} video hero derivative asset hash or media type mismatch for ${assetKey}`);
+    }
+  }
 }
 
 function withRequiredShellBindings<const TTemplateId extends StoreTemplateId>(
