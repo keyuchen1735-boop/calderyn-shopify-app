@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
-import { defineRecipe, type RecipeConfig } from "./factory";
+import { compileRecipeConfig, defineRecipe, type RecipeConfig } from "./factory";
 
 function testConfig(): RecipeConfig<"atelier-nine"> {
   const source = structuredClone(VALID_BUNDLE_SOURCE);
@@ -38,6 +38,24 @@ function testConfig(): RecipeConfig<"atelier-nine"> {
 }
 
 describe("storefront recipe factory", () => {
+  it("compiles an unregistered new recipe config without making it registry-valid", () => {
+    const existing = testConfig();
+    const config: RecipeConfig<"volt"> = {
+      ...existing,
+      templateId: "volt",
+      archetype: { composition: "system-architecture", hero: "cinematic-rim-hero", scroll: "system-sequence", cards: "spec-modules", iconography: ["technical line icons"] },
+      surfaces: {
+        ...existing.surfaces,
+        collections: { signature: "ecosystem collection directory", source: existing.surfaces.home.source },
+        story: { signature: "engineering origin narrative", source: existing.surfaces.home.source },
+        notFound: { signature: "lost signal recovery surface", source: existing.surfaces.home.source },
+      },
+    };
+
+    expect(compileRecipeConfig(config).bundle.routes.story).toBeDefined();
+    expect(() => defineRecipe(config)).toThrow(/unknown|registered/i);
+  });
+
   it("compiles complete route-owned compositions without imposing a shared layout", () => {
     const config = testConfig();
     const result = defineRecipe(config);

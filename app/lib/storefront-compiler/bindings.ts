@@ -147,7 +147,7 @@ export function scopeForRepeat(repeat: CompiledRepeat): BindingScope {
   return { id: repeat.scopeId, kind: repeat.itemKind };
 }
 
-const ROUTE_IDS = new Set(["home", "collection", "product", "search", "cart", "checkout", "account", "policy"]);
+const ROUTE_IDS = new Set(["home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound", "account", "policy"]);
 const PARAMS_BY_ROUTE: Readonly<Record<string, ReadonlySet<string>>> = {
   home: new Set(),
   collection: new Set(["handle"]),
@@ -155,6 +155,9 @@ const PARAMS_BY_ROUTE: Readonly<Record<string, ReadonlySet<string>>> = {
   search: new Set(["query"]),
   cart: new Set(),
   checkout: new Set(),
+  collections: new Set(),
+  story: new Set(),
+  notFound: new Set(),
   account: new Set(),
   policy: new Set(["policyId"]),
 };

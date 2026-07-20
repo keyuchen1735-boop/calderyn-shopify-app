@@ -76,6 +76,26 @@ function artifact(overrides: Partial<RouteArtifact> = {}): RouteArtifact {
 }
 
 describe("compiled-node server renderer", () => {
+  it("renders poster-first video with manifest-resolved sources only", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.assets.entries = [
+      { key: "hero-poster", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 },
+      { key: "hero-webm", contentHash: "b".repeat(64), mediaType: "video/webm", byteSize: 84 },
+      { key: "hero-mp4", contentHash: "c".repeat(64), mediaType: "video/mp4", byteSize: 84 },
+    ];
+    source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster" muted autoplay playsinline loop preload="metadata"><source data-cd-asset="hero-webm" type="video/webm"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
+    const bundle = compileBundle(source).bundle;
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "video-nonce", mode: "public",
+      customAssetUrls: { "hero-poster": "/poster.webp", "hero-webm": "/hero.webm", "hero-mp4": "/hero.mp4" },
+    }));
+
+    expect(html).toContain('poster="/poster.webp"');
+    expect(html).toContain('src="/hero.webm"');
+    expect(html).toContain('src="/hero.mp4"');
+    expect(html).toContain("autoplay");
+    expect(html).toContain("playsinline");
+  });
   it("emits validated design tokens and every curated self-hosted font beneath the bundle root", () => {
     for (const fontId of CURATED_FONT_IDS) {
       const source = structuredClone(VALID_BUNDLE_SOURCE);

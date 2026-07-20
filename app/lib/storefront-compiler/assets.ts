@@ -8,6 +8,8 @@ const ALLOWED_MEDIA_TYPES = new Set([
   "image/jpeg",
   "image/svg+xml",
   "font/woff2",
+  "video/webm",
+  "video/mp4",
 ]);
 const ASSET_FIELDS = new Set(["key", "contentHash", "mediaType", "byteSize"]);
 

@@ -54,6 +54,9 @@ export interface StorefrontBundleSourceV1 {
     search: RouteSource;
     cart: RouteSource;
     checkout: CheckoutRouteSource;
+    collections?: RouteSource;
+    story?: RouteSource;
+    notFound?: RouteSource;
   };
   assets: AssetManifest;
 }
@@ -249,7 +252,8 @@ function assertDesignTokenCoverage(bundle: StorefrontBundleV1): void {
       if (!tokenIds.has(tokenId)) throw new CompilerError("design.token_reference", `${path} references missing design token --${tokenId}`);
     }
   }
-  const themeTokenIds = [bundle.shell, bundle.routes.home, bundle.routes.collection, bundle.routes.product, bundle.routes.search, bundle.routes.cart]
+  const themeTokenIds = [bundle.shell, bundle.routes.home, bundle.routes.collection, bundle.routes.product, bundle.routes.search, bundle.routes.cart, bundle.routes.collections, bundle.routes.story, bundle.routes.notFound]
+    .filter((route): route is NonNullable<typeof route> => Boolean(route))
     .flatMap((route) => route.trustedSlots)
     .flatMap((slot) => slot.themeTokenIds);
   const layoutTokenIds = [bundle.routes.checkout.layout.spacingTokenId, ...bundle.routes.checkout.layout.surfaceTokenIds];
@@ -277,7 +281,10 @@ export function compileBundle(source: StorefrontBundleSourceV1): CompiledBundleR
   const product = compileRoute(source.routes.product, "product", "product");
   const search = compileRoute(source.routes.search, "search", "search");
   const cart = compileRoute(source.routes.cart, "cart", "cart");
-  const routes = [shell, home, collection, product, search, cart];
+  const collections = source.routes.collections ? compileRoute(source.routes.collections, "collections", "store") : undefined;
+  const story = source.routes.story ? compileRoute(source.routes.story, "story", "store") : undefined;
+  const notFound = source.routes.notFound ? compileRoute(source.routes.notFound, "notFound", "store") : undefined;
+  const routes = [shell, home, collection, product, search, cart, collections, story, notFound].filter((route): route is NonNullable<typeof route> => Boolean(route));
   const protectedNodes = routes.flatMap((route) => route.protectedNodes);
   const protectedSourceIds = routes.flatMap((route) => route.protectedSourceIds);
   const bundle: StorefrontBundleV1 = {
@@ -299,6 +306,9 @@ export function compileBundle(source: StorefrontBundleSourceV1): CompiledBundleR
       search: search.artifact,
       cart: cart.artifact,
       checkout: compileCheckout(source.routes.checkout),
+      ...(collections ? { collections: collections.artifact } : {}),
+      ...(story ? { story: story.artifact } : {}),
+      ...(notFound ? { notFound: notFound.artifact } : {}),
     },
     assets: compileAssets(source.assets),
   };

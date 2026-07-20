@@ -93,6 +93,81 @@ afterEach(() => {
 });
 
 describe("declarative storefront hydration", () => {
+  it("pauses recipe video off screen and resumes it on return", async () => {
+    document.body.innerHTML = `<main id="root"><video data-cd-video autoplay muted loop playsinline poster="/poster.webp"></video></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const video = root.querySelector("video")!;
+    const pause = vi.spyOn(video, "pause").mockImplementation(() => undefined);
+    const play = vi.spyOn(video, "play").mockResolvedValue(undefined);
+    let callback: IntersectionObserverCallback = () => undefined;
+    const disconnect = vi.fn();
+    class Observer {
+      constructor(next: IntersectionObserverCallback) { callback = next; }
+      observe() {}
+      disconnect() { disconnect(); }
+    }
+    vi.stubGlobal("IntersectionObserver", Observer);
+    hydrateStorefront({ root, artifact: artifact({ requiredCapabilities: [], interactions: { version: 1, state: [], bindings: [], transitions: [] } }) });
+
+    callback([{ target: video, isIntersecting: false } as unknown as IntersectionObserverEntry], {} as IntersectionObserver);
+    expect(pause).toHaveBeenCalledOnce();
+    callback([{ target: video, isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver);
+    await Promise.resolve();
+    expect(play).toHaveBeenCalledOnce();
+  });
+
+  it("pins recipe video to its poster under reduced motion", () => {
+    document.body.innerHTML = `<main id="root"><video data-cd-video autoplay muted loop playsinline poster="/poster.webp"></video></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const video = root.querySelector("video")!;
+    const pause = vi.spyOn(video, "pause").mockImplementation(() => undefined);
+    const play = vi.spyOn(video, "play").mockResolvedValue(undefined);
+    vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
+    vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} });
+
+    hydrateStorefront({ root, artifact: artifact({ requiredCapabilities: [], interactions: { version: 1, state: [], bindings: [], transitions: [] } }) });
+
+    expect(video.autoplay).toBe(false);
+    expect(pause).toHaveBeenCalledOnce();
+    expect(play).not.toHaveBeenCalled();
+    expect(video.poster).toContain("/poster.webp");
+  });
+
+  it("retains the poster when recipe video playback fails", async () => {
+    document.body.innerHTML = `<main id="root"><video data-cd-video autoplay poster="/poster.webp"></video></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const video = root.querySelector("video")!;
+    vi.spyOn(video, "pause").mockImplementation(() => undefined);
+    vi.spyOn(video, "play").mockRejectedValue(new DOMException("blocked", "NotAllowedError"));
+    let callback: IntersectionObserverCallback = () => undefined;
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(next: IntersectionObserverCallback) { callback = next; }
+      observe() {}
+      disconnect() {}
+    });
+    hydrateStorefront({ root, artifact: artifact({ requiredCapabilities: [], interactions: { version: 1, state: [], bindings: [], transitions: [] } }) });
+
+    callback([{ target: video, isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(video.poster).toContain("/poster.webp");
+    expect(video.dataset.cdVideoFallback).toBe("poster");
+  });
+
+  it("disconnects and pauses recipe video during teardown", () => {
+    document.body.innerHTML = `<main id="root"><video data-cd-video autoplay poster="/poster.webp"></video></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    const video = root.querySelector("video")!;
+    const pause = vi.spyOn(video, "pause").mockImplementation(() => undefined);
+    const disconnect = vi.fn();
+    vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() { disconnect(); } });
+    const runtime = hydrateStorefront({ root, artifact: artifact({ requiredCapabilities: [], interactions: { version: 1, state: [], bindings: [], transitions: [] } }) });
+
+    runtime.teardown();
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(pause).toHaveBeenCalledOnce();
+  });
+
   it("mounts a typed visual only at the server-issued host and restores the fallback", () => {
     installWebGl();
     document.body.innerHTML = `<main id="root">

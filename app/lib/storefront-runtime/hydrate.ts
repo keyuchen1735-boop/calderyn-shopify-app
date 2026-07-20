@@ -101,7 +101,7 @@ function validAction(action: RuntimeActionSpec, state: RuntimeState): boolean {
   if (action.type === "collection.page") return validRef(action.cursor, state);
   if (action.type === "search.update" || action.type === "search.submit") return validRef(action.query, state);
   if (action.type === "navigate") {
-    if (!["home", "collection", "product", "search", "cart", "checkout", "account", "policy"].includes(action.target.routeId)) return false;
+    if (!["home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound", "account", "policy"].includes(action.target.routeId)) return false;
     return Object.entries(action.target.params).every(([key, ref]) =>
       ["handle", "query", "policyId"].includes(key) && validRef(ref, state),
     );
@@ -418,6 +418,34 @@ function mountServerIssuedVisualLayer(
   return fallbacks.length === 1 ? mountVisualLayer(hosts[0], visualLayer) : null;
 }
 
+function mountRecipeVideos(root: HTMLElement, reducedMotion: boolean, journal: DomMutationJournal): Array<() => void> {
+  const Observer = root.ownerDocument.defaultView?.IntersectionObserver;
+  return [...root.querySelectorAll<HTMLVideoElement>("video[data-cd-video]")].map((video) => {
+    if (reducedMotion) {
+      journal.capture(video);
+      video.autoplay = false;
+      video.pause();
+      return () => undefined;
+    }
+    if (!Observer) return () => undefined;
+    const observer = new Observer((entries) => {
+      for (const entry of entries) {
+        if (entry.target !== video) continue;
+        if (entry.isIntersecting) void video.play().catch(() => {
+          journal.capture(video);
+          video.dataset.cdVideoFallback = "poster";
+        });
+        else video.pause();
+      }
+    });
+    observer.observe(video);
+    return () => {
+      observer.disconnect();
+      video.pause();
+    };
+  });
+}
+
 export function hydrateStorefront(options: HydrateStorefrontOptions): StorefrontRuntimeHandle {
   const existing = mounted.get(options.root);
   if (existing) return existing;
@@ -468,6 +496,7 @@ export function hydrateStorefront(options: HydrateStorefrontOptions): Storefront
     applyBindings(options.root, options.artifact.interactions, stateFor, journal);
     const visualCleanup = mountServerIssuedVisualLayer(options.root, options.visualLayer);
     if (visualCleanup) removers.push(visualCleanup);
+    removers.push(...mountRecipeVideos(options.root, reducedMotion, journal));
     removers.push(...mountCommerce(options.root, options.artifact.trustedSlots, adapters));
     for (const transition of options.artifact.interactions.transitions) {
       for (const source of localElements(options.root, transition.sourceId)) {

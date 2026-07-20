@@ -60,6 +60,40 @@ afterEach(() => {
 });
 
 describe("storefront release resolution", () => {
+  it("falls back to the platform home surface when an old bundle has no story route", async () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const live = { ...version("old-six-route", 1, "2026-07-02T00:00:00Z"), artifact: { sourceKind: "custom" as const, bundle } };
+    const result = await resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "story" },
+      reader: reader(live, []),
+      bundleReadEnabled: true,
+      dataDependencies: {
+        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
+      },
+    });
+    expect(result?.routeId).toBe("home");
+  });
+
+  it("resolves registered recipe video bytes from immutable public media paths", async () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "volt", templateVersion: 1 };
+    source.assets.entries = [{ key: "hero-mp4", contentHash: "a".repeat(64), mediaType: "video/mp4", byteSize: 42 }];
+    source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-mp4"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
+    const bundle = compileBundle(source).bundle;
+    const live = { ...version("video-recipe", 1, "2026-07-02T00:00:00Z"), sourceKind: "recipe" as const, artifact: { sourceKind: "recipe" as const, bundle } };
+    const result = await resolveRuntime1Route({
+      shopId: SHOP, route: { kind: "home" }, reader: reader(live, []), bundleReadEnabled: true,
+      dataDependencies: {
+        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+      },
+    });
+    expect(result?.data.storefrontAssetUrls?.["hero-mp4"]).toContain(`/storage/v1/object/public/storefront-recipe-assets/volt/${"a".repeat(64)}.mp4`);
+  });
+
   it("resolves one immutable bundle for shell, route artifact, and live data", async () => {
     const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
     const live = {

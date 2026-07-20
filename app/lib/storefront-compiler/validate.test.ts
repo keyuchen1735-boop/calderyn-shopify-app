@@ -31,6 +31,14 @@ function flattenElements(nodes: readonly CompiledNode[]): CompiledElementNode[] 
 }
 
 describe("validation profile v1", () => {
+  it("validates optional route artifacts when present", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE) as typeof VALID_BUNDLE_SOURCE & { routes: typeof VALID_BUNDLE_SOURCE.routes & { story?: typeof VALID_BUNDLE_SOURCE.routes.home } };
+    source.routes.story = { ...source.routes.home, html: `<main>Story</main>` };
+    const bundle = compileBundle(source).bundle;
+    bundle.routes.story!.tree[0] = { kind: "element", id: "cd-story-bad", tag: "script", attributes: {}, children: [] };
+    expect(validateCompiledBundle(bundle).diagnostics.map((item) => item.code)).toContain("tree.tag");
+  });
+
   it("accepts compiled bounded search inputs and static machine values", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.routes.search.html = `<main><input type="search" name="q" placeholder="Search products" value="initial" data-cd-on="input" data-cd-action="search.update"><button value="submit" data-cd-on="click" data-cd-action="search.submit">Search</button></main>`;

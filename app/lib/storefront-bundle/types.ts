@@ -2,7 +2,7 @@ export const STOREFRONT_SCHEMA_VERSION = 1 as const;
 export const STOREFRONT_RUNTIME_VERSION = 1 as const;
 export const STOREFRONT_VALIDATION_PROFILE_VERSION = 1 as const;
 
-export type StoreTemplateId =
+export type ExistingStoreTemplateId =
   | "custom-bench"
   | "commons-index"
   | "soft-chemistry"
@@ -14,6 +14,9 @@ export type StoreTemplateId =
   | "ritual-almanac"
   | "broadcast-patch-bay"
   | "atelier-nine";
+export type NewStoreTemplateId = "volt" | "atelier" | "gilt" | "larder" | "ember" | "roast" | "fizz" | "forge" | "haven" | "glow";
+export type RegisteredStoreTemplateId = ExistingStoreTemplateId;
+export type StoreTemplateId = ExistingStoreTemplateId | NewStoreTemplateId;
 
 export type VisualLayerSpec =
   | { kind: "none" }
@@ -69,7 +72,10 @@ export type StoreDesignResolution =
     });
 
 export type StorefrontRouteId = "home" | "collection" | "product" | "search" | "cart" | "checkout";
-export type StorefrontRecipeBlueprintId = "shell" | StorefrontRouteId;
+export type RequiredStorefrontRouteId = StorefrontRouteId;
+export type OptionalStorefrontRouteId = "collections" | "story" | "notFound";
+export type CompiledStorefrontRouteId = StorefrontRouteId | OptionalStorefrontRouteId;
+export type StorefrontRecipeBlueprintId = "shell" | RequiredStorefrontRouteId;
 
 export const RECIPE_COMPOSITION_FAMILIES = [
   "workshop-configurator",
@@ -83,6 +89,8 @@ export const RECIPE_COMPOSITION_FAMILIES = [
   "editorial-almanac",
   "signal-patch-bay",
   "asymmetric-magazine",
+  "system-architecture", "fit-laboratory", "object-ceremony", "working-pantry", "tasting-counter",
+  "origin-notebook", "flavor-playground", "jobsite-blueprint", "spatial-studies", "clinical-evidence",
 ] as const;
 export type RecipeCompositionIdentity = (typeof RECIPE_COMPOSITION_FAMILIES)[number];
 export const ROUTE_COMPOSITION_PATTERNS = {
@@ -109,6 +117,8 @@ export const RECIPE_HERO_TREATMENTS = [
   "ritual-time-hero",
   "rig-signal-chain",
   "editorial-grid-hero",
+  "cinematic-rim-hero", "fabric-study-hero", "jewelry-ceremony-hero", "pantry-table-hero", "heat-spectrum-hero",
+  "origin-brew-hero", "flavor-play-hero", "exploded-tool-hero", "material-room-hero", "clinical-liquid-hero",
 ] as const;
 export type RecipeHeroIdentity = (typeof RECIPE_HERO_TREATMENTS)[number];
 export const ROUTE_HERO_PATTERNS = {
@@ -135,6 +145,8 @@ export const RECIPE_SCROLL_MODELS = [
   "almanac-chapters",
   "modular-patching",
   "restrained-editorial",
+  "system-sequence", "fit-study", "intimate-ceremony", "pantry-rhythm", "heat-tasting",
+  "brew-notebook", "flavor-modules", "blueprint-flow", "spatial-quiet", "clinical-proof",
 ] as const;
 export type RecipeScrollIdentity = (typeof RECIPE_SCROLL_MODELS)[number];
 export const ROUTE_SCROLL_PATTERNS = {
@@ -161,6 +173,8 @@ export const RECIPE_CARD_TOPOLOGIES = [
   "ritual-entries",
   "signal-modules",
   "magazine-grid",
+  "spec-modules", "garment-studies", "object-vignettes", "pantry-shelves", "tasting-flights",
+  "origin-cards", "flavor-tiles", "tool-diagrams", "material-panels", "evidence-cards",
 ] as const;
 export type RecipeCardIdentity = (typeof RECIPE_CARD_TOPOLOGIES)[number];
 export const ROUTE_CARD_PATTERNS = {
@@ -430,7 +444,7 @@ export type PublicDataRef =
   | { kind: "literal"; value: string | number | boolean | null };
 
 export interface RouteTarget {
-  routeId: StorefrontRouteId | "account" | "policy";
+  routeId: CompiledStorefrontRouteId | "account" | "policy";
   params: Partial<Record<"handle" | "query" | "policyId", PublicDataRef>>;
 }
 
@@ -520,6 +534,9 @@ export interface StorefrontBundleV1 {
     search: RouteArtifact;
     cart: RouteArtifact;
     checkout: CheckoutRouteArtifact;
+    collections?: RouteArtifact;
+    story?: RouteArtifact;
+    notFound?: RouteArtifact;
   };
   assets: AssetManifest;
 }

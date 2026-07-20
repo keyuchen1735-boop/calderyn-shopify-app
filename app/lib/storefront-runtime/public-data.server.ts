@@ -1,4 +1,4 @@
-import type { DataRequirement, StorefrontRouteId } from "~/lib/storefront-bundle/types";
+import type { CompiledStorefrontRouteId, DataRequirement } from "~/lib/storefront-bundle/types";
 import type { StorefrontCatalog, StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 import { selectStorefrontPriceVariant } from "~/lib/storefront/catalog";
 import { getCatalog } from "~/lib/storefront/catalog.server";
@@ -93,7 +93,7 @@ export interface PublicPresentationData {
 }
 
 export type PublicRouteContext =
-  | { kind: "home" | "cart" | "checkout" }
+  | { kind: "home" | "cart" | "checkout" | "collections" | "story" | "notFound" }
   | { kind: "product"; handle: string }
   | { kind: "collection"; handle: string; searchInput?: StorefrontSearchInput }
   | { kind: "search"; query: string; searchInput?: StorefrontSearchInput };
@@ -326,6 +326,6 @@ export async function resolvePublicData(
   return data;
 }
 
-export function routeIdForPublicContext(route: PublicRouteContext): StorefrontRouteId {
+export function routeIdForPublicContext(route: PublicRouteContext): CompiledStorefrontRouteId {
   return route.kind;
 }

@@ -1,5 +1,5 @@
 import { getStoreTemplate, isStoreTemplateId } from "~/lib/storefront-bundle/registry";
-import type { CompiledNode, StorefrontBundleV1, StorefrontRouteId } from "~/lib/storefront-bundle/types";
+import type { CompiledNode, CompiledStorefrontRouteId, StorefrontBundleV1 } from "~/lib/storefront-bundle/types";
 import { isVisualLayerSpec } from "~/lib/storebuilder/fx/shader";
 
 export interface StorefrontVisualPlacement {
@@ -9,7 +9,7 @@ export interface StorefrontVisualPlacement {
 
 export function resolveStorefrontVisualPlacement(
   bundle: StorefrontBundleV1,
-  routeId: StorefrontRouteId,
+  routeId: CompiledStorefrontRouteId,
 ): StorefrontVisualPlacement | null {
   if (!isVisualLayerSpec(bundle.visualLayer) || bundle.visualLayer.kind !== "fragment_shader") return null;
   const source = bundle.source;
@@ -19,7 +19,9 @@ export function resolveStorefrontVisualPlacement(
   );
   if (!version) return null;
 
-  const routeTree = routeId === "checkout" ? bundle.routes.checkout.decorativeTree : bundle.routes[routeId].tree;
+  const artifact = bundle.routes[routeId];
+  if (!artifact) return null;
+  const routeTree = "tree" in artifact ? artifact.tree : artifact.decorativeTree;
   const matches: Array<StorefrontVisualPlacement & { repeated: boolean }> = [];
   const visit = (node: CompiledNode, parentId?: string, insideRepeat = false): void => {
     if (node.kind !== "element") return;

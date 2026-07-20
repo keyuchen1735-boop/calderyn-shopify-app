@@ -11,6 +11,7 @@ import type {
   RouteHeroPattern,
   RouteScrollPattern,
   StoreTemplateId,
+  RegisteredStoreTemplateId,
   StoreTemplateRouteBlueprint,
   StoreTemplateVersionRecord,
   StorefrontRecipeBlueprintId,
@@ -76,7 +77,7 @@ const VERSIONED_ASSET_MANIFESTS_BY_TEMPLATE_ID = {
   "ritual-almanac": [...repeatManifest(heroManifest("747c24090ce37d341af9d22a7057f5830c26dc74181da0d82bb5aa07ffafe8f8", 242494), 3), RITUAL_ALMANAC_ASSETS, RITUAL_ALMANAC_ASSETS, RITUAL_ALMANAC_ASSETS, RITUAL_ALMANAC_ASSETS, RITUAL_ALMANAC_ASSETS],
   "broadcast-patch-bay": [...repeatManifest(heroManifest("c95d86839d3b7efea39f439452011aaad78e4519e9928890246f67b0bf9f5363", 78150), 4), BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS],
   "atelier-nine": repeatManifest(ATELIER_GRID_ASSETS, 5),
-} satisfies Readonly<Record<StoreTemplateId, readonly AssetManifest[]>>;
+} satisfies Readonly<Record<RegisteredStoreTemplateId, readonly AssetManifest[]>>;
 
 const TEXT_SLOTS_BY_TEMPLATE_ID = {
   "custom-bench": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
@@ -90,7 +91,7 @@ const TEXT_SLOTS_BY_TEMPLATE_ID = {
   "ritual-almanac": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "broadcast-patch-bay": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "atelier-nine": ["announcement", "heroTitle", "heroBody", "ctaLabel"],
-} as const satisfies Readonly<Record<StoreTemplateId, readonly string[]>>;
+} as const satisfies Readonly<Record<RegisteredStoreTemplateId, readonly string[]>>;
 
 const DEFAULT_OVERRIDE_SURFACE = {
   designTokens: ["color", "typography", "spacing", "radius", "motion"],
@@ -186,7 +187,7 @@ const ROUTE_SEMANTIC_LAYERS: Readonly<Record<StorefrontRecipeBlueprintId, RouteS
   },
 };
 
-const RECIPE_SEMANTIC_SIGNATURES: Readonly<Record<StoreTemplateId, RecipeSemanticSignature>> = {
+const RECIPE_SEMANTIC_SIGNATURES: Readonly<Record<RegisteredStoreTemplateId, RecipeSemanticSignature>> = {
   "custom-bench": {
     compositionFamily: "workshop-configurator",
     heroTreatment: "configurator-workbench",
@@ -341,7 +342,7 @@ function routeSemanticValue<Base extends string, Pattern extends string, Route e
 }
 
 function recipe(
-  value: Omit<VersionedStoreTemplate, "activeVersion" | "versions" | "routeCapabilities" | "overrideSurface" | "previewSrc">,
+  value: Omit<VersionedStoreTemplate, "id" | "activeVersion" | "versions" | "routeCapabilities" | "overrideSurface" | "previewSrc"> & { id: RegisteredStoreTemplateId },
   activeVersion = 1,
 ): VersionedStoreTemplate {
   const blueprintRoot = `app/lib/storefront-recipes/${value.id}/bundle.ts`;
@@ -787,7 +788,7 @@ export const STORE_TEMPLATE_REGISTRY = createStoreTemplateRegistry(RECIPES, {
 
 const TEMPLATE_BY_ID = new Map(STORE_TEMPLATE_REGISTRY.templates.map((template) => [template.id, template]));
 
-export function isStoreTemplateId(value: unknown): value is StoreTemplateId {
+export function isStoreTemplateId(value: unknown): value is RegisteredStoreTemplateId {
   return typeof value === "string" && TEMPLATE_BY_ID.has(value as StoreTemplateId);
 }
 

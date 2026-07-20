@@ -46,6 +46,7 @@ async function previewRouteContext(request: Request, shopId: string): Promise<Pu
   }
   if (route === "search") return { kind: "search", query: url.searchParams.get("q")?.slice(0, 200) ?? "" };
   if (route === "cart" || route === "checkout") return { kind: route };
+  if (route === "collections" || route === "story" || route === "notFound") return { kind: route };
   return { kind: "home" };
 }
 
@@ -60,7 +61,7 @@ function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteDat
   const urls: Record<string, string> = { ...runtime1.data.storefrontAssetUrls };
   if (runtime1.bundle.source.kind === "recipe") {
     for (const asset of runtime1.bundle.assets.entries) {
-      if (asset.mediaType === "image/webp") {
+      if (asset.mediaType === "image/webp" && !urls[asset.key]) {
         urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.contentHash}.webp`;
       }
     }

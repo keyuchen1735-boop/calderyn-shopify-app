@@ -44,6 +44,9 @@ export interface RecipeConfig<TTemplateId extends StoreTemplateId = StoreTemplat
     search: RecipeSurface<RouteSource>;
     cart: RecipeSurface<RouteSource>;
     checkout: RecipeSurface<CheckoutRouteSource>;
+    collections?: RecipeSurface<RouteSource>;
+    story?: RecipeSurface<RouteSource>;
+    notFound?: RecipeSurface<RouteSource>;
   };
   assets: AssetManifest;
 }
@@ -227,6 +230,15 @@ export function defineRecipe<const TTemplateId extends StoreTemplateId>(
   assertArchetypeMatchesRegistry(boundConfig);
   assertDistinctSurfaceSignatures(boundConfig);
   assertDeclaredHomeHero(boundConfig);
+  return compileRecipeConfig(boundConfig);
+}
+
+/** Compile isolated recipe source without treating it as a registered production recipe. */
+export function compileRecipeConfig<const TTemplateId extends StoreTemplateId>(
+  config: RecipeConfig<TTemplateId>,
+): DefinedRecipe<TTemplateId> {
+  const boundConfig = withRequiredShellBindings(config);
+  assertDistinctSurfaceSignatures(boundConfig);
   const result = compileBundle({
     source: {
       kind: "recipe",
@@ -243,6 +255,9 @@ export function defineRecipe<const TTemplateId extends StoreTemplateId>(
       search: boundConfig.surfaces.search.source,
       cart: boundConfig.surfaces.cart.source,
       checkout: boundConfig.surfaces.checkout.source,
+      ...(boundConfig.surfaces.collections ? { collections: boundConfig.surfaces.collections.source } : {}),
+      ...(boundConfig.surfaces.story ? { story: boundConfig.surfaces.story.source } : {}),
+      ...(boundConfig.surfaces.notFound ? { notFound: boundConfig.surfaces.notFound.source } : {}),
     },
     assets: boundConfig.assets,
   });

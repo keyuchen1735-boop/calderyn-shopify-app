@@ -27,7 +27,7 @@ const ALLOWED_TAGS = new Set([
   "dd", "details", "dfn", "div", "dl", "dt", "em", "figcaption", "figure", "footer", "h1", "h2",
   "h3", "h4", "h5", "h6", "header", "hr", "i", "img", "kbd", "label", "li", "main", "mark", "nav", "ol",
   "option", "p", "picture", "pre", "q", "s", "section", "select", "small", "source", "span", "strong", "sub", "summary", "input",
-  "sup", "time", "u", "ul",
+  "sup", "time", "u", "ul", "video",
 ]);
 
 export function isAllowedCompiledTag(value: unknown): value is string {
@@ -54,7 +54,10 @@ const SOURCE_ATTRIBUTES = new Set([
   "data-cd-theme-tokens", "data-cd-policy-links", "data-cd-asset", "data-cd-state-id", "data-cd-state-type",
   "data-cd-state-initial", "data-cd-state-values", "data-cd-state-min", "data-cd-state-max",
   "data-cd-bind-state", "data-cd-bind-property",
+  "data-cd-video", "data-cd-poster-asset",
+  "data-cd-motion",
 ]);
+const DECLARATIVE_MOTIONS = new Set(["reveal", "parallax", "count-up", "pinned", "scroll-progress"]);
 const TRUSTED_SLOT_KINDS = new Set<TrustedSlotManifest["kind"]>([
   "variantPicker", "addToCart", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce",
 ]);
@@ -143,7 +146,24 @@ function assertAllowedAttribute(name: string, value: string, tagName: string): v
   }
   if (name === "type") {
     if (tagName === "input" && ["search", "text", "radio", "checkbox"].includes(value)) return;
+    if (tagName === "source" && ["video/webm", "video/mp4"].includes(value)) return;
     throw new CompilerError("html.control_type", `Unsupported ${tagName} type ${JSON.stringify(value)}`);
+  }
+  if (["muted", "autoplay", "playsinline", "loop", "data-cd-video"].includes(name)) {
+    if (tagName === "video" && value === "") return;
+    throw new CompilerError("html.video_attribute", `Invalid ${tagName} ${name}`);
+  }
+  if (name === "preload") {
+    if (tagName === "video" && ["none", "metadata", "auto"].includes(value)) return;
+    throw new CompilerError("html.video_attribute", `Invalid ${tagName} preload`);
+  }
+  if (name === "data-cd-poster-asset") {
+    if (tagName === "video" && isSafeIdentifier(value)) return;
+    throw new CompilerError("asset.key", "Video poster asset keys must be local identifiers");
+  }
+  if (name === "data-cd-motion") {
+    if (DECLARATIVE_MOTIONS.has(value)) return;
+    throw new CompilerError("html.motion", "Unsupported declarative motion");
   }
   if (name === "name") {
     if (tagName === "input" && isSafeIdentifier(value)) return;
@@ -470,6 +490,11 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
         if (!isSafeIdentifier(assetKey)) throw new CompilerError("asset.key", "Asset keys must be local identifiers");
         attributes["data-cd-asset-key"] = assetKey;
       }
+      const posterAssetKey = sourceAttributes.get("data-cd-poster-asset");
+      if (posterAssetKey !== undefined) attributes["data-cd-poster-asset-key"] = posterAssetKey;
+      if (sourceAttributes.has("data-cd-video")) attributes["data-cd-video"] = "";
+      const motion = sourceAttributes.get("data-cd-motion");
+      if (motion !== undefined) attributes["data-cd-motion"] = motion;
 
       const compiledNode: CompiledElementNode = {
         kind: "element",

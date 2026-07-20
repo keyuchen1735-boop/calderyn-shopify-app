@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { RouteArtifact, StorefrontBundleV1, StorefrontRouteId, StoreTemplateId } from "~/lib/storefront-bundle/types";
+import type { CompiledStorefrontRouteId, RouteArtifact, StorefrontBundleV1, StoreTemplateId } from "~/lib/storefront-bundle/types";
 import type { PublicPresentationData } from "./public-data.server";
 import { hydrateStorefront } from "./hydrate";
 import type { StorefrontRuntimeHandle } from "./hydrate";
@@ -20,6 +20,7 @@ function hrefFor(target: ResolvedRouteTarget, mode: RuntimeMode, previewTemplate
   const base: Record<ResolvedRouteTarget["routeId"], string> = {
     home: "/storefront", collection: "/storefront/collections", product: "/storefront/products",
     search: "/storefront/search", cart: "/storefront/cart", checkout: "/storefront/checkout",
+    collections: "/storefront/collections", story: "/storefront/story", notFound: "/storefront",
     account: "/storefront/account", policy: "/storefront/policies",
   };
   let href = base[target.routeId];
@@ -368,7 +369,7 @@ export function placeQuickViewCommerceInCards(
 
 export function StorefrontHydrator(props: {
   bundle: StorefrontBundleV1;
-  routeId: StorefrontRouteId;
+  routeId: CompiledStorefrontRouteId;
   data: PublicPresentationData;
   mode: RuntimeMode;
 }) {
@@ -391,6 +392,7 @@ export function StorefrontHydrator(props: {
       const route = root.querySelector<HTMLElement>(`[data-cd-bundle-route='${props.routeId}']`);
       if (route) {
         const artifact = props.bundle.routes[props.routeId];
+        if (!artifact) return;
         placeQuickViewCommerceInCards(route, artifact);
         handles.push(hydrateStorefront({ root: route, artifact, adapters, visualLayer }));
       }

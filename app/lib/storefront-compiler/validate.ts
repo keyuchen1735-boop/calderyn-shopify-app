@@ -56,7 +56,7 @@ type UnknownRecord = Record<string, unknown>;
 type AddDiagnostic = (code: string, path: string, message: string) => void;
 
 const encoder = new TextEncoder();
-const ROUTE_IDS = new Set(["home", "collection", "product", "search", "cart", "checkout", "account", "policy"]);
+const ROUTE_IDS = new Set(["home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound", "account", "policy"]);
 const EVENTS = new Set(["click", "change", "input", "keydown", "inview", "scrollProgress"]);
 const BINDING_KINDS = new Set<CompiledBindingKind>(["text", "money", "src", "alt"]);
 const SLOT_KINDS = new Set<TrustedSlotManifest["kind"]>([
@@ -65,10 +65,10 @@ const SLOT_KINDS = new Set<TrustedSlotManifest["kind"]>([
 const HOST_SIZES = new Set<TrustedSlotManifest["hostSize"]>(["inline", "block", "panel", "page"]);
 const COMPILED_ATTRIBUTES = new Set([
   "class", "title", "role", "tabindex", "alt", "width", "height", "loading", "decoding", "open", "href", "for",
-  "type", "name", "placeholder", "value",
+  "type", "name", "placeholder", "value", "muted", "autoplay", "playsinline", "loop", "preload", "data-cd-video",
   "data-cd-repeat-id", "data-cd-bind-text", "data-cd-bind-money", "data-cd-bind-src", "data-cd-bind-alt",
   "data-cd-route-target", "data-cd-trusted-slot-id", "data-cd-platform-content", "data-cd-asset-key",
-  "data-cd-empty-state", "data-cd-native-control",
+  "data-cd-empty-state", "data-cd-native-control", "data-cd-poster-asset-key", "data-cd-motion",
 ]);
 
 function record(value: unknown): UnknownRecord | null {
@@ -340,6 +340,7 @@ function parseTree(
     if (element.attributes["data-cd-platform-content"] && element.attributes["data-cd-platform-content"] !== "policyLinks") add("tree.platform_content", `${path}.${element.id}`, "Platform content marker is unsupported");
     if (element.attributes["data-cd-empty-state"] !== undefined && element.attributes["data-cd-empty-state"] !== "") add("tree.empty_state", `${path}.${element.id}`, "Empty-state marker is malformed");
     if (element.attributes["data-cd-asset-key"] && !isIdentifier(element.attributes["data-cd-asset-key"])) add("asset.key", `${path}.${element.id}`, "Compiled asset key is malformed");
+    if (element.attributes["data-cd-poster-asset-key"] && !isIdentifier(element.attributes["data-cd-poster-asset-key"])) add("asset.key", `${path}.${element.id}`, "Compiled poster asset key is malformed");
   }
   return context;
 }
@@ -792,8 +793,9 @@ function validateAssetReferenceSet(bundle: UnknownRecord, trees: readonly TreeCo
   const referencedKeys = new Set<string>();
   for (const tree of trees) {
     for (const element of tree.elements.values()) {
-      const key = element.attributes["data-cd-asset-key"];
-      if (key) referencedKeys.add(key);
+      for (const key of [element.attributes["data-cd-asset-key"], element.attributes["data-cd-poster-asset-key"]]) {
+        if (key) referencedKeys.add(key);
+      }
     }
   }
   for (const key of [...referencedKeys].sort(compareCodeUnits)) {
@@ -874,6 +876,9 @@ function validateDesignTokenCoverage(bundle: UnknownRecord, add: AddDiagnostic):
       `routes.${routeId}.css`,
       record(routes?.[routeId])?.css,
     ] as [string, unknown]),
+    ...(["collections", "story", "notFound"] as const).flatMap((routeId) => routes?.[routeId] === undefined ? [] : [[
+      `routes.${routeId}.css`, record(routes[routeId])?.css,
+    ] as [string, unknown]]),
     ["routes.checkout.decorativeCss", record(routes?.checkout)?.decorativeCss],
   ];
   for (const [path, css] of cssArtifacts) {
@@ -886,7 +891,7 @@ function validateDesignTokenCoverage(bundle: UnknownRecord, add: AddDiagnostic):
       // The artifact-specific CSS validator reports malformed CSS separately.
     }
   }
-  for (const [routeId, route] of [["shell", bundle.shell], ...(["home", "collection", "product", "search", "cart"] as const).map((id) => [id, routes?.[id]])] as Array<[string, unknown]>) {
+  for (const [routeId, route] of [["shell", bundle.shell], ...(["home", "collection", "product", "search", "cart", "collections", "story", "notFound"] as const).map((id) => [id, routes?.[id]])] as Array<[string, unknown]>) {
     const trustedSlots = record(route)?.trustedSlots;
     if (!Array.isArray(trustedSlots)) continue;
     trustedSlots.forEach((slot, index) => {
@@ -924,6 +929,12 @@ export function validateCompiledBundle(value: unknown): BundleValidationReport {
     if (!routes) add("bundle.routes", "routes", "Bundle routes must be an object");
     for (const routeId of ["home", "collection", "product", "search", "cart"] as const) {
       const tree = validateRoute(routes?.[routeId], routeId, `routes.${routeId}`, add);
+      trees.push(tree);
+      protectedNodes.push(...tree.protectedNodes);
+    }
+    for (const routeId of ["collections", "story", "notFound"] as const) {
+      if (routes?.[routeId] === undefined) continue;
+      const tree = validateRoute(routes[routeId], routeId, `routes.${routeId}`, add);
       trees.push(tree);
       protectedNodes.push(...tree.protectedNodes);
     }
