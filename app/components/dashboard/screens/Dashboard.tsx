@@ -36,7 +36,7 @@ const DECK_TOP_N = 3;
 function LiveMark({ on }: { on: boolean }) {
   return (
     <span className={"cd-live-mark" + (on ? " on" : "")} aria-hidden="true">
-      <CalderynHexMark size={13} fill="currentColor" stroke="var(--card-solid)" />
+      <CalderynHexMark size={13} />
     </span>
   );
 }

@@ -37,7 +37,7 @@ const GROUP_ICO: Record<WatchGroup, string> = {
 const CHECK_ICO =
   '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
 const HEX_MARK =
-  '<svg viewBox="0 0 32 32" width="14" height="14" fill="none" stroke="var(--ha-on-accent)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"><path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z"/><path d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"/></svg>';
+  '<svg viewBox="0 0 32 32" width="14" height="14" fill="none"><path fill="var(--ha-on-accent)" fill-rule="evenodd" d="M16 4.182 L26.23 10.091 L26.23 21.909 L16 27.818 L5.77 21.909 L5.77 10.091 Z M16 7.457 L23.398 11.728 L23.398 20.272 L16 24.543 L8.602 20.272 L8.602 11.728 Z M16 9.739 L21.422 12.87 L21.422 19.13 L16 22.261 L10.578 19.13 L10.578 12.87 Z M21.422 14.469 L23.398 14.469 L23.398 17.531 L21.422 17.531 Z"/></svg>';
 
 const CAL_C = 122.52; // circumference of the r=19.5 calibration arc
 

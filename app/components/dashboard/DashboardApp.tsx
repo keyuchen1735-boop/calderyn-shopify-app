@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { getDesignerSession, subscribeDesignerSession } from "~/lib/designer/session";
 import { useLocation, useNavigate, useNavigationType } from "@remix-run/react";
+import { CALDERYN_MARK_PATH } from "~/components/CalderynHexMark";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
@@ -1615,14 +1616,7 @@ export default function DashboardApp({
               <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
               {item.id === "storefront" && designerBusy && (
                 <svg className="cd-nav-busy" viewBox="0 0 32 32" fill="none" role="img" aria-label="Store build running">
-                  <path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z" fill="var(--accent)" />
-                  <path
-                    d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
-                    stroke="var(--on-accent)"
-                    strokeWidth="3.6"
-                    strokeLinejoin="round"
-                    strokeLinecap="round"
-                  />
+                  <path d={CALDERYN_MARK_PATH} fill="var(--accent)" fillRule="evenodd" />
                 </svg>
               )}
             </span>
@@ -1663,14 +1657,7 @@ export default function DashboardApp({
               <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
               {item.id === "storefront" && designerBusy && (
                 <svg className="cd-nav-busy" viewBox="0 0 32 32" fill="none" role="img" aria-label="Store build running">
-                  <path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z" fill="var(--accent)" />
-                  <path
-                    d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
-                    stroke="var(--on-accent)"
-                    strokeWidth="3.6"
-                    strokeLinejoin="round"
-                    strokeLinecap="round"
-                  />
+                  <path d={CALDERYN_MARK_PATH} fill="var(--accent)" fillRule="evenodd" />
                 </svg>
               )}
             </span>
@@ -1917,14 +1904,7 @@ export default function DashboardApp({
               <CDIcon name={item.icon} size={18} strokeWidth={1.8} />
               {item.id === "storefront" && designerBusy && (
                 <svg className="cd-nav-busy" viewBox="0 0 32 32" fill="none" role="img" aria-label="Store build running">
-                  <path d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z" fill="var(--accent)" />
-                  <path
-                    d="M24.4 11.15 L16 6.3 L7.6 11.15 L7.6 20.85 L16 25.7 L24.4 20.85"
-                    stroke="var(--on-accent)"
-                    strokeWidth="3.6"
-                    strokeLinejoin="round"
-                    strokeLinecap="round"
-                  />
+                  <path d={CALDERYN_MARK_PATH} fill="var(--accent)" fillRule="evenodd" />
                 </svg>
               )}
             </span>

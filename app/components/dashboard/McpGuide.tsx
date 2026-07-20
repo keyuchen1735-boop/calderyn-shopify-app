@@ -53,7 +53,7 @@ export function McpGuide({ initialTab = "connector" }: { initialTab?: GuideTab }
     <div className="cd-mcp">
       <div className="cd-mcp-hero">
         <span className="cd-mcp-hero-mark">
-          <CalderynHexMark size={32} />
+          <CalderynHexMark size={32} color="#111827" />
         </span>
         <div className="cd-mcp-hero-title">Calderyn MCP for Claude</div>
         <div className="cd-mcp-hero-sub">

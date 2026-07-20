@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { Btn, Card, Toggle, Segmented, Pill, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
+import { CalderynHexMark } from "~/components/CalderynHexMark";
 import { fetchDesignerState, setDesignerEnabled } from "~/lib/designer/client";
 import { DESIGNER_STATE_CACHE_KEY } from "./DesignerStudio";
 import { money } from "../format";
@@ -1471,12 +1472,7 @@ export default function Settings({ app }: { app: DashboardCtx }) {
           title="Calderyn Labs — Autopilot replay"
           aria-label="Calderyn Labs"
         >
-          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
-            <path
-              d="M16 2 L28.12 9 L28.12 23 L16 30 L3.88 23 L3.88 9 Z"
-              fill="currentColor"
-            />
-          </svg>
+          <CalderynHexMark size={13} />
         </button>
       </div>
     </div>

@@ -1144,11 +1144,7 @@ function CreativeGenerationConfirmationDialog({
         aria-describedby="creative-generation-dialog-detail"
       >
         <span className="cd-cw-generation-consent-mark" aria-hidden="true">
-          <CalderynHexMark
-            size={18}
-            fill="var(--accent)"
-            stroke="var(--on-accent)"
-          />
+          <CalderynHexMark size={18} />
         </span>
         <div className="cd-cw-generation-consent-copy">
           <b id="creative-generation-dialog-title">
@@ -1300,11 +1296,7 @@ function CreativeGenerationStage({
     >
       <div className="cd-cw-generation-copy">
         <span className="cd-cw-generation-pulse" aria-hidden="true">
-          <CalderynHexMark
-            size={16}
-            fill="var(--accent)"
-            stroke="var(--on-accent)"
-          />
+          <CalderynHexMark size={16} />
         </span>
         <div>
           <b>{compact ? "Finding fresh directions" : "Creating three directions"}</b>
