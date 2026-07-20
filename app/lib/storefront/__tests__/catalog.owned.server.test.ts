@@ -310,6 +310,24 @@ describe("ownedCatalog.listProducts", () => {
     expect(eqCalls.product_dim).toContainEqual(["status", "active"]);
   });
 
+  it("loads validated product facts through the same shop-scoped public boundary", async () => {
+    tableRows = {
+      product_dim: [{ id: "p1", handle: "chair", title: "Chair", description: "" }],
+      variant_dim: [], product_media: [], product_collection: [], product_option: [],
+      product_fact: [
+        { id: "f1", shop_id: "shop-1", product_id: "p1", kind: "dimension.width", number_value: 80, unit: "cm", text_value: null, url_value: null },
+        { id: "f2", shop_id: "shop-1", product_id: "p1", kind: "material", text_value: "Walnut", number_value: null, unit: null, url_value: null },
+      ],
+    };
+    const { ownedCatalog } = await import("../catalog.owned.server");
+    const [product] = await ownedCatalog.listProducts("shop-1");
+    expect(eqCalls.product_fact).toContainEqual(["shop_id", "shop-1"]);
+    expect(product.facts).toMatchObject([
+      { id: "f1", kind: "dimension.width", value: "80 cm" },
+      { id: "f2", kind: "material", value: "Walnut" },
+    ]);
+  });
+
   it("derives availability from tracked + on-hand, signs images, and resolves collection handles", async () => {
     tableRows = {
       product_dim: [{ id: "p1", handle: "tee", title: "Tee", description: "Soft" }],

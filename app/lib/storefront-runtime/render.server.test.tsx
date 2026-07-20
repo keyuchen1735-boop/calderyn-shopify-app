@@ -485,6 +485,21 @@ describe("compiled-node server renderer", () => {
     expect(html.match(/data-cd-repeat-owner="true"/g)).toHaveLength(2);
   });
 
+  it("hides an empty product fact repeat and renders only projected safe fact URLs", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.product.html = `<main><dl data-cd-repeat="product.facts"><div data-cd-key="fact.id"><dt data-cd-text="fact.label"></dt><dd data-cd-text="fact.value"></dd><a data-cd-href="fact.url">Open fact</a></div></dl></main>`;
+    const bundle = compileBundle(source).bundle;
+    const empty = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "product", data: { ...data, product: publicProduct }, nonce: "empty-facts", mode: "public",
+    }));
+    expect(empty).not.toContain("Open fact");
+    const withFact = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "product", data: { ...data, product: { ...publicProduct, facts: [{ id: "f1", kind: "document_url", label: "Document", value: "https://cdn.example/spec.pdf", unit: null, url: "https://cdn.example/spec.pdf" }] } }, nonce: "facts", mode: "public",
+    }));
+    expect(withFact).toContain('href="https://cdn.example/spec.pdf"');
+    expect(withFact).toContain("Document");
+  });
+
   it("excerpts repeated product descriptions while preserving the complete PDP description", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.routes.home.html = `<main><section data-cd-repeat="featured.products"><p class="card-description" data-cd-key="product.id" data-cd-text="product.description"></p></section></main>`;

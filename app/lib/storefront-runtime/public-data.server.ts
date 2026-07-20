@@ -47,6 +47,7 @@ export interface PublicProduct {
   price: PublicMoney | null;
   compareAtPrice: PublicMoney | null;
   availability: "In stock" | "Sold out";
+  facts?: Array<{ id: string; kind: string; label: string; value: string; unit: string | null; url: string | null }>;
 }
 
 export interface PublicCollection {
@@ -189,6 +190,7 @@ function presentProduct(product: StoreProduct): PublicProduct {
     price: selected?.price ?? null,
     compareAtPrice: selected?.compareAtPrice ?? null,
     availability: variants.some((variant) => variant.available) ? "In stock" : "Sold out",
+    facts: (product.facts ?? []).map(({ id, kind, label, value, unit, url }) => ({ id, kind, label, value, unit, url })),
   };
 }
 

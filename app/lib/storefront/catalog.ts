@@ -1,3 +1,5 @@
+import type { ProductFact } from "./product-facts";
+
 // app/lib/storefront/catalog.ts
 // The shared catalog read contract. John implements this verbatim against the
 // owned catalog later (master spec §#5); the fixture stub implements it now.
@@ -92,6 +94,7 @@ export interface StoreProduct {
   collections: string[]; // collection handles
   category?: string | null;
   tags?: string[];
+  facts?: ProductFact[];
 }
 
 export interface StoreVariant {

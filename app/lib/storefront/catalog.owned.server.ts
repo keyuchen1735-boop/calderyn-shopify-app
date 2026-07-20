@@ -23,6 +23,7 @@ import {
   MISSING_PRICE_ASC_SORT_VALUE,
   MISSING_PRICE_DESC_SORT_VALUE,
 } from "./catalog";
+import { normalizeProductFacts, type ProductFact } from "./product-facts";
 
 type Supa = ReturnType<typeof getSupabase>;
 type Row = Record<string, unknown>;
@@ -161,7 +162,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   const ids = products.map((p) => String(p.id));
   if (!ids.length) return [];
 
-  const [variants, media, pc, options] = await Promise.all([
+  const [variants, media, pc, options, factRows] = await Promise.all([
     pagedRows((from, to) => sb
         .from("variant_dim")
         .select("id, product_id, sku, title, retail_price_cents, compare_at_price_cents, currency, inventory_tracked, inventory_on_hand, position")
@@ -178,6 +179,12 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     pagedRows((from, to) => sb
         .from("product_option")
         .select("id, product_id, name, position, product_option_value(value, position)")
+        .in("product_id", ids)
+        .order("position").order("product_id").order("id").range(from, to)),
+    pagedRows((from, to) => sb
+        .from("product_fact")
+        .select("id, shop_id, product_id, kind, text_value, number_value, unit, url_value, position")
+        .eq("shop_id", shopId)
         .in("product_id", ids)
         .order("position").order("product_id").order("id").range(from, to)),
   ]);
@@ -253,6 +260,17 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     pushInto(optionsByProduct, String(option.product_id), { name: String(option.name), values });
   }
 
+  const factsByProduct = new Map<string, ProductFact[]>();
+  for (const row of factRows) {
+    const value = row.url_value ?? row.text_value ?? (row.number_value == null ? null : Number(row.number_value));
+    try {
+      const [fact] = normalizeProductFacts([{ id: String(row.id), kind: String(row.kind), value, unit: row.unit as string | null }]);
+      if (fact) pushInto(factsByProduct, String(row.product_id), fact);
+    } catch {
+      // Invalid legacy rows fail closed at the public boundary.
+    }
+  }
+
   return products.map((p): StoreProduct => {
     const id = String(p.id);
     return {
@@ -266,6 +284,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
       collections: handlesByProduct.get(id) ?? [],
       category: (p.category as string | null) ?? null,
       tags: (p.tags as string[] | null) ?? [],
+      facts: factsByProduct.get(id) ?? [],
     };
   });
 }

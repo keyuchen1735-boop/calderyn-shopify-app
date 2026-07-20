@@ -51,6 +51,17 @@ describe("binding and repeat scopes", () => {
     ).toThrow(/binding/i);
   });
 
+  it("allows only closed public facts inside the product facts scope", () => {
+    const result = compileHtml(
+      `<dl data-cd-repeat="product.facts"><div data-cd-key="fact.id"><dt data-cd-text="fact.label"></dt><dd data-cd-text="fact.value"></dd><a data-cd-href="fact.url">Document</a></div></dl>`,
+      { namespace: "product", rootScopeKind: "product" },
+    );
+    expect(result.repeats[0]).toMatchObject({ source: "product.facts", itemKind: "fact", keyPath: "fact.id" });
+    expect(result.bindings.map(({ ref }) => ref.kind === "data" ? ref.path : null)).toEqual(["fact.label", "fact.value", "fact.url"]);
+    expect(() => compileHtml(`<span data-cd-text="product.metafields"></span>`, { namespace: "product", rootScopeKind: "product" })).toThrow(/unsupported/i);
+    expect(() => compileHtml(`<span data-cd-text="fact.value"></span>`, { namespace: "product", rootScopeKind: "product" })).toThrow(/scope/i);
+  });
+
   it("rejects type-confused bindings and repeat sources outside their parent scope", () => {
     expect(() =>
       compileHtml(`<span data-cd-money="product.title"></span>`, {

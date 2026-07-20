@@ -321,6 +321,13 @@ export const PUBLIC_BINDING_PATHS = [
   "product.price",
   "product.compareAtPrice",
   "product.availability",
+  "product.facts",
+  "fact.id",
+  "fact.kind",
+  "fact.label",
+  "fact.value",
+  "fact.unit",
+  "fact.url",
   "variant.id",
   "variant.title",
   "variant.price",
@@ -373,7 +380,7 @@ export interface AssetManifest {
   entries: readonly AssetManifestEntry[];
 }
 
-export type CompiledBindingKind = "text" | "money" | "src" | "alt";
+export type CompiledBindingKind = "text" | "money" | "src" | "alt" | "href";
 
 export interface CompiledBinding {
   id: string;
@@ -389,12 +396,13 @@ export type CompiledRepeatSource =
   | "search.results"
   | "cart.lines"
   | "product.images"
-  | "product.variants";
+  | "product.variants"
+  | "product.facts";
 
 export interface CompiledRepeat {
   scopeId: string;
   source: CompiledRepeatSource;
-  itemKind: "product" | "cartLine" | "image" | "variant";
+  itemKind: "product" | "cartLine" | "image" | "variant" | "fact";
   keyPath: PublicBindingPath;
 }
 

@@ -34,6 +34,7 @@ type ScopeValue =
   | PublicProduct
   | PublicVariant
   | PublicMedia
+  | NonNullable<PublicProduct["facts"]>[number]
   | PublicCart["lines"][number];
 
 interface RenderContext {
@@ -104,6 +105,7 @@ function objectValue(value: unknown, field: string): unknown {
       field === "lines" || field === "subtotal" || field === "discounts" || field === "total" ||
       field === "query" || field === "results" || field === "nextCursor" || field === "quantity" ||
       field === "unitPrice") return record[field] ?? null;
+  if (field === "facts" || field === "kind" || field === "label" || field === "value" || field === "unit" || field === "url") return record[field] ?? null;
   return null;
 }
 
@@ -143,6 +145,15 @@ function formatBinding(binding: CompiledBinding, value: unknown): string | null 
     try {
       const url = new URL(candidate);
       return url.protocol === "https:" ? url.toString() : null;
+    } catch {
+      return null;
+    }
+  }
+  if (binding.kind === "href") {
+    if (typeof value !== "string") return null;
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && !url.username && !url.password ? url.toString() : null;
     } catch {
       return null;
     }
@@ -211,6 +222,7 @@ function repeatValues(node: CompiledElementNode, data: PublicPresentationData): 
     case "cart.lines": return data.cart?.lines ?? [];
     case "product.images": return data.product?.images ?? [];
     case "product.variants": return data.product?.variants ?? [];
+    case "product.facts": return data.product?.facts ?? [];
     default: return [];
   }
 }
@@ -376,6 +388,7 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
       missingBoundProductImage = binding.ref.kind === "data" && binding.ref.path === "product.primaryImage";
     }
     else if (binding.kind === "alt") props.alt = formatted ?? "";
+    else if (binding.kind === "href" && formatted !== null) props.href = formatted;
   }
   if (node.tag === "img" && missingBoundImage && props.src === undefined) {
     props.src = missingBoundProductImage

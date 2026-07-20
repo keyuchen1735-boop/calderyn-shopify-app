@@ -46,6 +46,7 @@ const BINDING_ATTRIBUTES = new Map([
   ["data-cd-money", "money"],
   ["data-cd-src", "src"],
   ["data-cd-alt", "alt"],
+  ["data-cd-href", "href"],
 ] as const);
 const SOURCE_ATTRIBUTES = new Set([
   ...BINDING_ATTRIBUTES.keys(),
@@ -530,7 +531,7 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
       if (repeat) compiledNode.repeat = repeat;
       if (routeTarget) compiledNode.routeTarget = routeTarget;
       if (trustedSlotId) compiledNode.trustedSlotId = trustedSlotId;
-      if (sourceNode.tagName === "a" && routeTarget === undefined && attributes.href === undefined) {
+      if (sourceNode.tagName === "a" && routeTarget === undefined && attributes.href === undefined && sourceAttributes.get("data-cd-href") === undefined) {
         throw new CompilerError("html.inert_control", "Visible anchors require a route target or resolved fragment");
       }
       if (sourceNode.tagName === "button" && actionName === undefined && routeTarget === undefined) {
