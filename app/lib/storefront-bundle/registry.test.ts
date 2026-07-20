@@ -51,7 +51,7 @@ describe("versioned storefront recipe registry", () => {
       "atelier-nine": 5,
     } as const;
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
-      expect(recipe.activeVersion).toBe(activeVersions[recipe.id]);
+      expect(recipe.activeVersion).toBe(activeVersions[recipe.id as keyof typeof activeVersions]);
       expect(recipe.routeCapabilities).toEqual(["home", "collection", "product", "search", "cart", "checkout"]);
       expect(recipe.overrideSurface.designTokens.length).toBeGreaterThan(0);
       expect(recipe.overrideSurface.textSlots.length).toBeGreaterThan(0);
