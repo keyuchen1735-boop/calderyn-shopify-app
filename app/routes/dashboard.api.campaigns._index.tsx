@@ -1,15 +1,22 @@
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { dashboardJson } from "~/lib/dashboard/http.server";
+import { dashboardJson, jsonError } from "~/lib/dashboard/http.server";
 import { calderynClient } from "~/lib/calderyn.server";
 import { resolveCampaignScore } from "~/lib/campaign-score/resolve.server";
+import type { CampaignWindow } from "~/lib/types";
+
+const CAMPAIGN_WINDOWS = new Set(["7", "30", "90"]);
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
+  const rawWindow = new URL(request.url).searchParams.get("window") ?? "30";
+  if (!CAMPAIGN_WINDOWS.has(rawWindow)) return jsonError(400, "invalid_window");
+  const window = Number(rawWindow) as CampaignWindow;
+
   return dashboardJson(async () => {
     const client = calderynClient(session.shopId);
     const [campaigns, grades] = await Promise.all([
-      client.campaigns.list(),
+      client.campaigns.performance(window),
       client.analytics.campaignGrades(),
     ]);
     const gradeById = new Map(grades.map((g) => [g.campaign_id, g]));

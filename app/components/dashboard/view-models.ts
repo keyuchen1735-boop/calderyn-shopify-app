@@ -1,7 +1,12 @@
 // Tips are shared with the screener engine; reuse its (string | {title,detail})
 // union so legacy string tips and structured tips both flow through unchanged.
 import type { Tip } from "~/lib/screener/types";
-import type { CostSource, Integration } from "~/lib/types";
+import type {
+  CampaignKind,
+  CampaignMetrics,
+  CostSource,
+  Integration,
+} from "~/lib/types";
 import type { RegionCode } from "~/lib/ads/actions";
 import type { StateDiffRow } from "~/lib/audit-state-diff";
 import type {
@@ -18,12 +23,15 @@ export type Grade = "winning" | "okay" | "poor" | "nodata";
 /** Platforms enriching a SKU beyond the Shopify sync (mirrors lib/types SkuSource). */
 export type SkuSource = "quickbooks" | "vendor_invoice" | "google" | "meta" | "tiktok";
 
-export interface CampaignVM {
+export interface CampaignVM extends CampaignMetrics {
   id: string;
   name: string;
   platform: Platform;
   status: string;
   daily_budget_cents: number;
+  campaign_kind: CampaignKind;
+  sale_type: string | null;
+  classification_source: "detected" | "merchant";
   spend_7d: number;
   roas_7d: number;
   breakeven_roas: number;

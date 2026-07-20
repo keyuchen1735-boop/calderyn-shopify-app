@@ -114,6 +114,19 @@ export interface AuditEntry {
   cost_sources?: CostSource[];
 }
 
+export type CampaignWindow = 7 | 30 | 90;
+export type CampaignKind = "sales" | "regular";
+
+export interface CampaignMetrics {
+  orders: number;
+  revenue_cents: number;
+  spend_cents: number;
+  profit_cents: number | null;
+  true_roas: number | null;
+  cost_complete: boolean;
+  cost_sources: string[];
+}
+
 export interface Campaign {
   id: string;
   name: string;
@@ -125,6 +138,12 @@ export interface Campaign {
   spend_7d: number;
   /** Blended Calderyn score, attached server-side by the campaigns API loaders. */
   calderynScore?: CampaignCalderynScore | null;
+}
+
+export interface CampaignPerformance extends Campaign, CampaignMetrics {
+  campaign_kind: CampaignKind;
+  sale_type: string | null;
+  classification_source: "detected" | "merchant";
 }
 
 /** Platforms that enrich a SKU beyond the Shopify catalog sync:

@@ -4,6 +4,8 @@
   AuditEntry,
   Calibration,
   Campaign,
+  CampaignPerformance,
+  CampaignWindow,
   CampaignGradeRow,
   CostSource,
   DailyRoasRow,
@@ -230,6 +232,30 @@ function rowToCampaign(r: Record<string, unknown>): Campaign {
     roas_7d: Number(r.roas_7d ?? 0),
     contribution_margin: Number(r.contribution_margin ?? 0),
     spend_7d: Number(r.spend_7d_cents ?? 0),
+  };
+}
+
+function rowToCampaignPerformance(r: Record<string, unknown>): CampaignPerformance {
+  const trueRoas = r.true_roas == null ? null : Number(r.true_roas);
+  const spendCents = Number(r.spend_cents ?? 0);
+  return {
+    ...rowToCampaign({
+      ...r,
+      roas_7d: trueRoas ?? 0,
+      spend_7d_cents: spendCents,
+    }),
+    campaign_kind: r.campaign_kind === "sales" ? "sales" : "regular",
+    sale_type: (r.sale_type as string | null) ?? null,
+    classification_source: r.classification_source === "merchant" ? "merchant" : "detected",
+    orders: Number(r.orders ?? 0),
+    revenue_cents: Number(r.revenue_cents ?? 0),
+    spend_cents: spendCents,
+    profit_cents: r.profit_cents == null ? null : Number(r.profit_cents),
+    true_roas: trueRoas,
+    cost_complete: Boolean(r.cost_complete ?? true),
+    cost_sources: Array.isArray(r.cost_sources)
+      ? r.cost_sources.filter((source): source is string => typeof source === "string")
+      : [],
   };
 }
 
@@ -907,6 +933,18 @@ export function calderynClient(shop: string) {
           return (data ?? []).map(rowToCampaign);
         } catch (err) {
           rethrow("campaigns.list", err);
+        }
+      },
+      async performance(window: CampaignWindow, _signal?: AbortSignal): Promise<CampaignPerformance[]> {
+        try {
+          await shopIdP;
+          const { data, error } = await supabase.rpc("campaign_performance", {
+            p_window_days: window,
+          });
+          if (error) throw error;
+          return (data ?? []).map(rowToCampaignPerformance);
+        } catch (err) {
+          rethrow("campaigns.performance", err);
         }
       },
       async get(id: string, _signal?: AbortSignal): Promise<Campaign> {
