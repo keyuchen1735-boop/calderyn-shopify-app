@@ -24,13 +24,15 @@ describe("atomic bundle cart migration", () => {
 
   it("locks existing cart lines after the parent cart and before every preflight", () => {
     const parentLock = sql.indexOf("from public.cart where shop_id = p_shop_id");
-    const lineLock = sql.toLowerCase().indexOf("lock existing cart lines against direct concurrent updates");
+    const lineLockMatch = /perform 1\s+from public\.cart_line cl\s+where cl\.shop_id = p_shop_id and cl\.cart_id = p_cart_id\s+for update;/.exec(sql);
+    const lineLock = lineLockMatch?.index ?? -1;
     const currencyPreflight = sql.indexOf("select count(distinct lower(currency))");
     const quantityPreflight = sql.indexOf("resulting cart line quantity exceeds 999");
+    const mutation = sql.indexOf("v_added := public.cart_add_line_atomic");
     expect(lineLock).toBeGreaterThan(parentLock);
     expect(lineLock).toBeLessThan(currencyPreflight);
-    expect(lineLock).toBeLessThan(quantityPreflight);
-    expect(sql).toMatch(/perform 1[\s\S]*?from public\.cart_line[\s\S]*?shop_id = p_shop_id[\s\S]*?cart_id = p_cart_id[\s\S]*?for update/);
+    expect(currencyPreflight).toBeLessThan(quantityPreflight);
+    expect(quantityPreflight).toBeLessThan(mutation);
   });
 
   it("preflights every resulting canonical quantity before mutation", () => {
