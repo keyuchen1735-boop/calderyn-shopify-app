@@ -31,6 +31,17 @@ function flattenElements(nodes: readonly CompiledNode[]): CompiledElementNode[] 
 }
 
 describe("validation profile v1", () => {
+  it("accepts compiler-generated merchant fact links through persisted validation", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.product.html = `<main><section data-cd-repeat="product.facts"><a data-cd-key="fact.id" data-cd-href="fact.url">Open merchant fact</a></section></main>`;
+
+    const compiled = compileBundle(source);
+    expect(compiled.report).toMatchObject({ ok: true, diagnostics: [] });
+
+    compiled.bundle.routes.product.bindings = [];
+    expect(validateCompiledBundle(compiled.bundle).diagnostics.map(({ code }) => code)).toContain("tree.inert_control");
+  });
+
   it("accepts compiler-generated video source types through persisted validation", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster" muted autoplay playsinline loop preload="metadata"><source data-cd-asset="hero-webm" type="video/webm"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;

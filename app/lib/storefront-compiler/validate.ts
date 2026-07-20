@@ -59,7 +59,7 @@ type AddDiagnostic = (code: string, path: string, message: string) => void;
 const encoder = new TextEncoder();
 const ROUTE_IDS = new Set(["home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound", "account", "policy"]);
 const EVENTS = new Set(["click", "change", "input", "keydown", "inview", "scrollProgress"]);
-const BINDING_KINDS = new Set<CompiledBindingKind>(["text", "money", "src", "alt"]);
+const BINDING_KINDS = new Set<CompiledBindingKind>(["text", "money", "src", "alt", "href"]);
 const SLOT_KINDS = new Set<TrustedSlotManifest["kind"]>([
   "variantPicker", "addToCart", "bundleBuilder", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce",
 ]);
@@ -67,7 +67,7 @@ const HOST_SIZES = new Set<TrustedSlotManifest["hostSize"]>(["inline", "block", 
 const COMPILED_ATTRIBUTES = new Set([
   "class", "title", "role", "tabindex", "alt", "width", "height", "loading", "decoding", "open", "href", "for",
   "type", "name", "placeholder", "value", "muted", "autoplay", "playsinline", "loop", "preload", "data-cd-video",
-  "data-cd-repeat-id", "data-cd-bind-text", "data-cd-bind-money", "data-cd-bind-src", "data-cd-bind-alt",
+  "data-cd-repeat-id", "data-cd-bind-text", "data-cd-bind-money", "data-cd-bind-src", "data-cd-bind-alt", "data-cd-bind-href",
   "data-cd-route-target", "data-cd-trusted-slot-id", "data-cd-platform-content", "data-cd-asset-key",
   "data-cd-empty-state", "data-cd-native-control", "data-cd-poster-asset-key", "data-cd-motion",
 ]);
@@ -742,7 +742,10 @@ function validateRoute(value: unknown, namespace: string, path: string, add: Add
   if (interactionsJson && bytes(interactionsJson) > validationLimitsV1.interactionManifestBytes) add("interaction.byte_limit", `${path}.interactions`, "Interaction manifest exceeds 40KB");
   const interactions = parseInteractions(input.interactions, `${path}.interactions`, tree, add);
   for (const element of tree.elements.values()) {
-    if (element.tag === "a" && !element.routeTarget && !element.attributes.href) add("tree.inert_control", `${path}.tree.${element.id}`, "Compiled anchor is inert");
+    const hasBoundHref = bindings.some((binding) => binding.targetId === element.id && binding.kind === "href");
+    if (element.tag === "a" && !element.routeTarget && !element.attributes.href && !hasBoundHref) {
+      add("tree.inert_control", `${path}.tree.${element.id}`, "Compiled anchor is inert");
+    }
     if (element.tag === "button" && !element.routeTarget && !interactions.transitions.some((transition) => transition.sourceId === element.id)) add("tree.inert_control", `${path}.tree.${element.id}`, "Compiled button is inert");
   }
   const slots = parseSlots(input.trustedSlots, `${path}.trustedSlots`, tree, add);
