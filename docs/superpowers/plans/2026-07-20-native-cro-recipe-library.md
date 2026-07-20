@@ -6,11 +6,12 @@
 
 **Architecture:** Extend the existing compiler/runtime with backward-compatible optional routes and a trusted poster-first video contract. New recipes own their markup and styling while importing behavior-only fragments. Generated media is uploaded to a public-read, service-write Supabase bucket under immutable hash paths; saved bundles pin manifests and preview/publish resolve the same URLs.
 
-**Tech Stack:** Remix, TypeScript, Vitest, parse5 compiler, React storefront renderer, declarative storefront runtime, Supabase Storage, Unsora MCP `create_video`, ffmpeg/ffprobe, Playwright browser proof.
+**Tech Stack:** Remix, TypeScript, Vitest, parse5 compiler, React storefront renderer, declarative storefront runtime, Supabase Storage, Gemini image/video APIs, ffmpeg/ffprobe, Playwright browser proof.
 
 ## Global Constraints
 
 - New IDs are exactly `volt`, `atelier`, `gilt`, `larder`, `ember`, `roast`, `fizz`, `forge`, `haven`, and `glow` at template version 1.
+- In automatic mode, exactly one active product selects `volt` before niche scoring; manual recipe, explicit recipe-name, and explicit custom choices still win.
 - The existing eleven recipes, their IDs, manifests, screenshots, saved drafts, and published releases remain unchanged.
 - Recipes remain hidden/internal to Store Builder and bind critical content to the logged-in merchant's live catalog.
 - Share trusted behavior only; every recipe owns DOM, CSS, typography, copy, rhythm, and niche composition.
@@ -19,6 +20,8 @@
 - Every recipe supplies `hero`, `hero-alt`, and `pdp-detail` briefs plus approved MP4, WebM, poster, and gradient fallback assets.
 - Video GREEN requires technical proof and full-loop visual approval; a poster fallback never hides a failed video.
 - Preview and publication consume the same immutable bundle version and exact asset hashes.
+- Merchant product photography always uses live catalog media or merchant-owned generated fallback media; proof-fixture product shots never ship into another merchant's store.
+- Show each completed recipe through a no-HMR review page and then through the real saved-draft Store Builder preview after registration.
 - TDD is vertical: one public-interface failing behavior, minimum implementation, green, then the next behavior.
 - Use isolated worktrees. Recipe agents may modify only their recipe folder and task report; shared files are changed only by Tasks 1 and 12.
 
@@ -31,8 +34,9 @@
 - `app/lib/storefront-recipes/<slug>/bundle.ts` — recipe-owned nine-route config and compiled bundle export.
 - `app/lib/storefront-recipes/<slug>/assets.ts` — immutable manifest.
 - `app/lib/storefront-recipes/<slug>/bundle.test.ts` — public compiled-bundle behavior.
-- `app/lib/storefront-recipes/<slug>/video-brief.md` — three exact Sora briefs.
+- `app/lib/storefront-recipes/<slug>/video-brief.md` — three exact generation briefs.
 - `app/lib/storefront-recipes/<slug>/video-proof.json` — hash-pinned visual approval.
+- `docs/superpowers/prototypes/storefront-recipes/<slug>.html` — no-HMR review source and source-parity reference.
 - `scripts/import-storefront-recipe-media.mjs` — normalize, hash, poster, upload, and print manifest entries.
 - `scripts/verify-storefront-recipe-media.mjs` — deterministic media/approval verifier.
 - `supabase/migrations/*_storefront_recipe_assets.sql` — public-read/service-write bucket.
@@ -70,6 +74,8 @@
 - Produces `compileRecipeConfig(config): CompiledBundleResult` for isolated recipe tests; `defineRecipe(config)` remains the only registry-validating production entry point.
 - Produces `videoFragment(options)`, `proofBandFragment(options)`, `productRailFragment(options)`, `stickyPurchaseFragment(options)`, `cartProgressFragment(options)`, and declarative motion helpers.
 - Produces media paths `storefront-recipe-assets/<templateId>/<sha256>.<ext>`.
+
+**Reuse:** Replay the already reviewed shared-spine commits `c08f8b97`, `ddf7f925`, `c2636771`, `ca6ea7b4`, `52515da0`, `ad78ce0e`, and `ee1bcb19` onto current `origin/main`; resolve the `registry.ts` conflict by retaining current-main version history. Do not reimplement equivalent helpers.
 
 - [ ] **Step 1: Write the failing compiler/renderer video tracer**
 
@@ -123,16 +129,48 @@ Commit: `storefront/runtime: add native recipe media and route contract`
 
 ---
 
+### Task 1B: Trusted personalization cart lines
+
+**Files:**
+- Create: `supabase/migrations/202607200002_storefront_cart_line_personalization.sql`
+- Modify: `app/lib/order/cart.server.ts`
+- Modify: `app/lib/storefront/cart-api.server.ts`
+- Modify: `app/routes/storefront.api.cart.add.tsx`
+- Modify: `app/lib/storefront-runtime/trusted-slots.tsx`
+- Test: adjacent cart repository, API route, and trusted-slot tests
+
+**Interfaces:**
+- Produces `StorefrontLinePersonalization` with optional bounded keys `engraving`, `giftNote`, `giftWrap`, and `recipient`.
+- Cart identity remains server-owned; personalization never changes product ID, variant ID, price, inventory, tax, shipping, or discount eligibility.
+- Distinct personalization payloads create distinct cart lines; identical variant plus canonical personalization increments the existing line.
+
+- [ ] Add RED repository tests for canonical JSON equality, distinct engraved lines, identical-line quantity increments, and checkout preservation.
+- [ ] Add RED API tests rejecting unknown keys, more than four keys, keys over 40 code points, values over 240 code points, non-string values, and cross-origin requests.
+- [ ] Add migration columns `personalization jsonb not null default '{}'::jsonb` and `personalization_hash text`, backfill the hash, replace the variant-only unique constraint with `(shop_id, cart_id, variant_id, personalization_hash)`, and update the atomic add RPC.
+- [ ] Thread the validated payload through the protected add-to-cart slot and order snapshot without exposing any pricing authority.
+- [ ] Run focused cart/order tests, migration contract tests, typecheck, and commit `storefront/cart: preserve trusted personalization`.
+
+---
+
 ### Task 2: Volt exemplar
 
-**Files:** Create `app/lib/storefront-recipes/volt/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+**Files:**
+- Create: `app/lib/storefront-recipes/volt/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+- Create: `docs/superpowers/prototypes/storefront-recipes/volt.html`
+- Modify: `app/lib/storefront-bundle/{types.ts,routing.ts,routing-evidence.server.ts,routing.test.ts,routing-evidence.server.test.ts}`
 
 **Interfaces:** Consumes Task 1 fragments, `compileRecipeConfig`, and route/media contracts. Produces `VOLT_RECIPE_CONFIG` without modifying shared registries; Task 12 wraps it with `defineRecipe`.
 
-- [ ] Write one failing public bundle test proving nine routes, live product/collection bindings, video manifest keys, system comparison, ecosystem builder, sticky purchase/cart behaviors, and reduced-motion declarations.
+- Adds `activeProductCount: number` to `CatalogRoutingEvidence`; the stable fingerprint includes the normalized count.
+- `resolveStoreDesign()` precedence is manual recipe, explicit custom, explicit recipe name, then `activeProductCount === 1` selecting `volt`, then niche scoring.
+
+- [ ] Replay the reviewed Volt commits `e815ac72`, `9424575c`, and `7b6b7c91`; do not reuse the localhost auth-bypass preview experiment.
+- [ ] Write one failing public bundle test proving nine routes, live product/collection bindings, no audio-only merchant copy, no proof-fixture product images, video manifest keys, comparison, ecosystem builder, sticky purchase/cart behaviors, and reduced-motion declarations.
+- [ ] Write failing routing tests proving one active product selects `volt` in `auto`, while manual recipe and explicit custom requests still win.
 - [ ] Run `npm test -- --run app/lib/storefront-recipes/volt/bundle.test.ts --maxWorkers=1`; expect RED because the recipe does not exist.
-- [ ] Implement the approved system-first architecture with a dark rim-lit cinematic hero, architectural catalog modules, and dense comparison rail. Use a neutral grotesk/technical mono pairing distinct from existing recipes.
-- [ ] Write exactly three briefs for `hero`, `hero-alt`, and `pdp-detail`; call Unsora `create_video` for each, import the results, inspect each full loop, regenerate failures, and record approved hashes.
+- [ ] Implement the approved universal single-product architecture with a dark rim-lit cinematic hero, architectural catalog modules, and dense comparison rail. All product/niche content binds to merchant data.
+- [ ] Write exactly three briefs for `hero`, `hero-alt`, and `pdp-detail`; generate coherent reference stills and clips through Gemini, import the results, inspect each full loop, regenerate failures, and record approved hashes.
+- [ ] Serve `volt.html` without HMR, open it once for review, then keep production binding parity locked in `source-parity.test.ts`.
 - [ ] Run the focused test plus `node scripts/verify-storefront-recipe-media.mjs --template volt`; expect PASS.
 - [ ] Commit: `storefront/volt: add system-first audio recipe`
 
@@ -140,33 +178,33 @@ Commit: `storefront/runtime: add native recipe media and route contract`
 
 ### Task 3: Atelier fit laboratory
 
-**Files:** Create `app/lib/storefront-recipes/atelier/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+**Files:** Create `app/lib/storefront-recipes/atelier/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}` and `docs/superpowers/prototypes/storefront-recipes/atelier.html`
 
 **Interfaces:** Produces `ATELIER_RECIPE_CONFIG`; no shared-file edits. Tests compile it with `compileRecipeConfig`; Task 12 registers it.
 
-- [ ] RED test: nine routes, garment-measurement composition, live variants, fit finder state, size-confidence evidence, sticky purchase, cart drawer, and all media keys.
+- [ ] Replay reviewed commits `19b871f3`, `230d95f5`, and `a2d4aa44`, then write the remaining RED assertions for nine routes, garment-measurement composition, live variants, fit finder state, truthful size-confidence evidence, sticky purchase, cart drawer, and all media keys.
 - [ ] GREEN implementation: soft stone/oxblood fit laboratory, calm fabric macro, body-aware measurement flow; explicitly reject Atelier Grid's asymmetric magazine structure.
-- [ ] Generate and visually approve three Unsora videos with stable garment geometry and fabric texture; import and verify.
+- [ ] Generate and visually approve three Gemini videos with stable garment geometry and fabric texture; import and verify.
 - [ ] Run focused test/media proof and commit `storefront/atelier: add fit laboratory recipe`.
 
 ---
 
 ### Task 4: Gilt object ceremony
 
-**Files:** Create `app/lib/storefront-recipes/gilt/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+**Files:** Create `app/lib/storefront-recipes/gilt/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}` and `docs/superpowers/prototypes/storefront-recipes/gilt.html`
 
 **Interfaces:** Produces `GILT_RECIPE_CONFIG`; no shared-file edits. Tests compile it with `compileRecipeConfig`; Task 12 registers it.
 
-- [ ] RED test: nine routes, live jewelry variants, engraving state, gift wrap/note/recipient flow, proof near CTA, and media manifest.
+- [ ] Replay reviewed commits `9bcfc457` and `722f35d0`, then write RED tests for nine routes, live jewelry variants, trusted engraving state, gift wrap/note/recipient flow, proof near CTA, and media manifest.
 - [ ] GREEN implementation: dark cream/black/gold object ceremony with floating macro jewelry and guided recipient handoff; not a workshop configurator.
-- [ ] Generate and approve three Unsora videos with stable jewelry topology, reflections, and engraving surfaces; import and verify.
+- [ ] Generate and approve three Gemini videos with stable jewelry topology, reflections, and engraving surfaces; import and verify.
 - [ ] Run focused test/media proof and commit `storefront/gilt: add gifting jewelry recipe`.
 
 ---
 
 ### Task 5: Larder working pantry
 
-**Files:** Create `app/lib/storefront-recipes/larder/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+**Files:** Create `app/lib/storefront-recipes/larder/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}` and `docs/superpowers/prototypes/storefront-recipes/larder.html`
 
 **Interfaces:** Produces `LARDER_RECIPE_CONFIG`; no shared-file edits. Tests compile it with `compileRecipeConfig`; Task 12 registers it.
 
@@ -179,7 +217,7 @@ Commit: `storefront/runtime: add native recipe media and route contract`
 
 ### Task 6: Ember heat spectrum
 
-**Files:** Create `app/lib/storefront-recipes/ember/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+**Files:** Create `app/lib/storefront-recipes/ember/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}` and `docs/superpowers/prototypes/storefront-recipes/ember.html`
 
 **Interfaces:** Produces `EMBER_RECIPE_CONFIG`; no shared-file edits. Tests compile it with `compileRecipeConfig`; Task 12 registers it.
 
@@ -192,7 +230,7 @@ Commit: `storefront/runtime: add native recipe media and route contract`
 
 ### Task 7: Roast brew notebook
 
-**Files:** Create `app/lib/storefront-recipes/roast/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+**Files:** Create `app/lib/storefront-recipes/roast/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}` and `docs/superpowers/prototypes/storefront-recipes/roast.html`
 
 **Interfaces:** Produces `ROAST_RECIPE_CONFIG`; no shared-file edits. Tests compile it with `compileRecipeConfig`; Task 12 registers it.
 
@@ -205,7 +243,7 @@ Commit: `storefront/runtime: add native recipe media and route contract`
 
 ### Task 8: Fizz flavor playground
 
-**Files:** Create `app/lib/storefront-recipes/fizz/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+**Files:** Create `app/lib/storefront-recipes/fizz/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}` and `docs/superpowers/prototypes/storefront-recipes/fizz.html`
 
 **Interfaces:** Produces `FIZZ_RECIPE_CONFIG`; no shared-file edits. Tests compile it with `compileRecipeConfig`; Task 12 registers it.
 
@@ -218,7 +256,7 @@ Commit: `storefront/runtime: add native recipe media and route contract`
 
 ### Task 9: Forge jobsite blueprint
 
-**Files:** Create `app/lib/storefront-recipes/forge/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+**Files:** Create `app/lib/storefront-recipes/forge/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}` and `docs/superpowers/prototypes/storefront-recipes/forge.html`
 
 **Interfaces:** Produces `FORGE_RECIPE_CONFIG`; no shared-file edits. Tests compile it with `compileRecipeConfig`; Task 12 registers it.
 
@@ -231,7 +269,7 @@ Commit: `storefront/runtime: add native recipe media and route contract`
 
 ### Task 10: Haven spatial quiet
 
-**Files:** Create `app/lib/storefront-recipes/haven/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+**Files:** Create `app/lib/storefront-recipes/haven/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}` and `docs/superpowers/prototypes/storefront-recipes/haven.html`
 
 **Interfaces:** Produces `HAVEN_RECIPE_CONFIG`; no shared-file edits. Tests compile it with `compileRecipeConfig`; Task 12 registers it.
 
@@ -244,7 +282,7 @@ Commit: `storefront/runtime: add native recipe media and route contract`
 
 ### Task 11: Glow clinical light
 
-**Files:** Create `app/lib/storefront-recipes/glow/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}`
+**Files:** Create `app/lib/storefront-recipes/glow/{bundle.ts,bundle.test.ts,assets.ts,video-brief.md,video-proof.json}` and `docs/superpowers/prototypes/storefront-recipes/glow.html`
 
 **Interfaces:** Produces `GLOW_RECIPE_CONFIG`; no shared-file edits. Tests compile it with `compileRecipeConfig`; Task 12 registers it.
 
@@ -274,9 +312,9 @@ Assert 21 total registered recipes, exact ten new IDs at version 1, nine surface
 
 Add its imports, semantic signature, routing terms, version record, assets, override surface, and compiled export; run the focused registry/route tests after each addition.
 
-- [ ] **Step 3: Run representative preview proof with Volt first**
+- [ ] **Step 3: Run representative preview proof and show each recipe**
 
-Run the Volt Home/PDP desktop/mobile slice with `storefrontProofContext(27)`. Start local `npx remix vite:dev`, create a fresh recipe-backed draft, and show the user the actual Store Builder preview while remaining recipe integration continues.
+After each recipe registration, run its Home/PDP desktop/mobile slice with `storefrontProofContext(27)` and create a fresh recipe-backed draft. Verify the saved-draft Store Builder route headlessly, then show the corresponding no-HMR review page once; never open a live-reload tab for the user.
 
 - [ ] **Step 4: Run all deterministic media and bundle proof**
 

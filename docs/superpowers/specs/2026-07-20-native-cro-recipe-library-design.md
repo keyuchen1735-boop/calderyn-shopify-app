@@ -28,7 +28,7 @@ The new recipes are:
 
 ### 1.1 Universal single-product routing
 
-In automatic mode, a merchant with exactly one active product resolves to the internal `volt` recipe before niche scoring. Explicit merchant choices still win: a manual recipe override or explicit custom-build request is never replaced by the catalog-size rule.
+In automatic mode, a merchant with exactly one active product resolves to the internal `volt` recipe before niche scoring. Explicit merchant choices still win: a manual recipe override, an explicit recipe name, or an explicit custom-build request is never replaced by the catalog-size rule.
 
 `volt` is therefore a universal single-product composition, not an audio-only storefront. Its cinematic hero, comparison rhythm, proof architecture, and ecosystem builder remain, while product name, description, imagery, variants, specifications, compatible additions, policies, and niche language come from live merchant data. Audio-specific fixture copy is proof-only and never appears in another merchant's store.
 
