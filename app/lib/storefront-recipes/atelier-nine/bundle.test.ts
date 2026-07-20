@@ -37,7 +37,7 @@ describe("Atelier Grid recipe contract", () => {
 
   it("compiles the approved asymmetric editorial identity through validation profile v1", () => {
     expect(ATELIER_GRID_RECIPE.report).toMatchObject({ ok: true, profileVersion: 1 });
-    expect(ATELIER_GRID_BUNDLE.source).toEqual({ kind: "recipe", templateId: "atelier-nine", templateVersion: 4 });
+    expect(ATELIER_GRID_BUNDLE.source).toEqual({ kind: "recipe", templateId: "atelier-nine", templateVersion: 5 });
     expect(ATELIER_GRID_BUNDLE.validationProfileVersion).toBe(1);
     expect(ATELIER_GRID_BUNDLE.designSystem).toMatchObject({
       displayFontId: "archivo-narrow",
@@ -81,6 +81,16 @@ describe("Atelier Grid recipe contract", () => {
     expect(css).toContain(".atelier-collection-grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)) }");
     expect(css).toContain(".atelier-collection-card { grid-column:span 4");
     expect(css).toContain("grid-column:span 6");
+  });
+
+  it("keeps canonical product-card structure and commerce theme tokens on browse surfaces", () => {
+    const { home, collection } = ATELIER_GRID_RECIPE.config.surfaces;
+    for (const surface of [home.source, collection.source]) {
+      expect(surface.html).toContain('class="product-media');
+      expect(surface.html).toContain('class="product-info');
+    }
+    expect(home.source.css).toContain("--commerce-surface:#f5f1e9");
+    expect(collection.source.css).toContain("--commerce-accent:#d63821");
   });
 
   it("uses protected commerce islands and declared interactions instead of inert controls", () => {

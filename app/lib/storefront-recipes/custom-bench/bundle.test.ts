@@ -33,16 +33,38 @@ describe("Custom Bench storefront recipe", () => {
   it("lays out collection products as a material specimen grid on the repeated owner", () => {
     const collection = CUSTOM_BENCH_RECIPE.config.surfaces.collection.source;
 
-    expect(collection.html).toContain('class="catalog-grid" data-cd-repeat="collection.products"');
-    expect(collection.css).toContain(".catalog-grid { display: grid; grid-template-columns: repeat(3, 1fr) }");
-    expect(collection.css).toContain(".catalog-grid { grid-template-columns: 1fr }");
+    expect(collection.html).toContain('<div class="catalog"><section class="catalog-grid" data-cd-repeat="collection.products"');
+    expect(collection.css).toContain(".catalog { display: grid; grid-template-columns: repeat(3, 1fr) }");
+    expect(collection.css).toContain(".catalog-grid { display: contents }");
+    expect(collection.css).toContain(".catalog { grid-template-columns: 1fr }");
+  });
+
+  it("keeps the collection head compact so workshop filters and products enter the first viewport", () => {
+    const collection = CUSTOM_BENCH_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('<header class="catalog-intro"><div class="catalog-copy">');
+    expect(collection.html).toContain('</div><img data-cd-src="collection.image"');
+    expect(collection.css).toContain("min-height: 310px");
+    expect(collection.css).toContain("max-width: 8ch; margin: 12px 0");
+    expect(collection.css).toContain(".catalog-intro img { height: 310px");
+  });
+
+  it("keeps prototype product cards across home and collection", () => {
+    const { home, collection } = CUSTOM_BENCH_RECIPE.config.surfaces;
+    for (const surface of [home.source, collection.source]) {
+      expect(surface.html).toContain('article class="card"');
+      expect(surface.html).toContain('class="card-info"');
+      expect(surface.html).toContain('class="meta"');
+    }
+    expect(home.source.css).toContain("--commerce-surface:var(--paper)");
+    expect(home.source.css).toContain(".card-info{display:grid;grid-template-columns:1fr auto");
   });
 
   it("compiles the workshop configurator across the full commerce contract", () => {
     const { bundle, config, report } = CUSTOM_BENCH_RECIPE;
 
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "custom-bench", templateVersion: 8 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "custom-bench", templateVersion: 11 });
     expect(config.archetype).toMatchObject({
       composition: "workshop-configurator",
       hero: "configurator-workbench",

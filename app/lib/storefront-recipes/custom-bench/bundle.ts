@@ -26,7 +26,7 @@ const home = {
         <div class="proof-copy"><div><div id="heroEyebrow" class="eyebrow">Commission / live proof</div><h1 id="heroTitle">Your mark, <span>made real.</span></h1></div><div class="intro"><p>Personal objects composed one detail at a time. Choose the piece, set your mark, and approve the proof before we make it.</p><button class="cta" data-cd-route="collection">Choose an object <b>→</b></button></div></div>
         <div class="proof"><div class="stepper"><div class="step"><b>1</b><span>Choose</span></div><div class="step"><b>2</b><span>Personalize</span></div><div class="step"><b>3</b><span>Approve your proof</span></div></div><div class="stage"><img data-cd-asset="hero" alt="Personalized object on the Custom Bench worktable"><div class="crop"></div><div class="monogram">A.E.</div><span class="proof-tag">Preview / not to scale</span></div><div class="controls"><div class="control"><label>Your initials</label><input value="A.E." aria-label="Your initials"><label>Foil</label><div class="swatches" data-cd-state-id="bench-foil" data-cd-state-type="enum" data-cd-state-initial="natural" data-cd-state-values="natural cobalt signal"><button aria-label="Natural foil" value="natural" data-cd-on="click" data-cd-action="state.set" data-cd-state="bench-foil"></button><button aria-label="Cobalt foil" value="cobalt" data-cd-on="click" data-cd-action="state.set" data-cd-state="bench-foil"></button><button aria-label="Signal foil" value="signal" data-cd-on="click" data-cd-action="state.set" data-cd-state="bench-foil"></button></div></div><div class="control"><label>Placement</label><select aria-label="Placement"><option>Centered</option><option>Lower right</option></select></div></div></div>
       </section>
-      <section class="rail-section"><div class="section-head"><h2>Start with an object</h2><p>Each piece is pulled from live store inventory. Personalization options change with the selected product.</p></div><div class="rail" data-cd-repeat="featured.products"><article class="card" data-cd-key="product.id"><a data-cd-route="product" data-cd-param-handle="product.handle"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy"><div class="card-info"><h3 data-cd-text="product.title"></h3><p class="recipe-copy" data-cd-text="product.description"></p><b data-cd-money="product.price"></b><small data-cd-text="product.availability"></small></div></a></article></div></section>
+      <section class="rail-section"><div class="section-head"><h2>Start with an object</h2><p>Each piece is pulled from live store inventory. Personalization options change with the selected product.</p></div><div class="rail" data-cd-repeat="featured.products"><article class="card" data-cd-key="product.id"><a data-cd-route="product" data-cd-param-handle="product.handle"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy"><div class="card-info"><h3 data-cd-text="product.title"></h3><b data-cd-money="product.price"></b><span class="meta"><span class="recipe-copy" data-cd-text="product.description"></span> · <span class="stock" data-cd-text="product.availability"></span></span></div></a></article></div></section>
       <section class="showcase"><img data-cd-asset="hero" alt="Personalized work approved at the bench"><div class="showcopy"><span>Bench notes / 04</span><h2>Made after you approve.</h2><p>Nothing begins until the proof feels exactly right. Your choices travel with the order from cart to workshop.</p></div></section>
       <p class="empty-state" data-cd-empty-state>No objects are on the bench yet. Open the catalog to begin.</p>
       <section data-cd-repeat="featured.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="panel" data-cd-theme-tokens="ink cobalt paper"></aside></section>
@@ -47,35 +47,43 @@ home.html = home.html
   .replace("Approve your proof", "Approve")
   .replace('<input value="A.E."', '<input data-cd-native-control value="A.E."')
   .replace('<select aria-label="Placement">', '<select data-cd-native-control aria-label="Placement">');
+home.css += `.card{--commerce-surface:var(--paper);--commerce-foreground:var(--ink);--commerce-accent:var(--cobalt);--commerce-accent-foreground:var(--paper);min-width:280px;flex:0 0 24%;border:1px solid;background:var(--paper)}.card>a{color:inherit;text-decoration:none}.card-info{display:grid;grid-template-columns:1fr auto;gap:5px;padding:13px}.card h3{margin:0;font-family:var(--font-display);font-size:17px;text-transform:uppercase}.meta{grid-column:1/-1;color:#666;font-size:10px;text-transform:uppercase}.stock{color:#276728}`;
 
 const collection = {
   html: `
     <main class="workshop-catalog">
-      <header class="catalog-intro"><small>Material specimen index</small><h1 data-cd-text="collection.title"></h1><p class="recipe-copy" data-cd-text="collection.description"></p><img data-cd-src="collection.image" data-cd-alt="collection.title"></header>
+      <header class="catalog-intro"><div class="catalog-copy"><small>Material specimen index</small><h1 data-cd-text="collection.title"></h1><p class="recipe-copy" data-cd-text="collection.description"></p></div><img data-cd-src="collection.image" data-cd-alt="collection.title"></header>
       <aside class="filters" aria-label="Workshop filters">
         <button value="leather" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Leather</button>
         <button value="paper" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Paper</button>
         <button value="true" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="available">Ready soon</button>
         <button value="price_asc" data-cd-on="click" data-cd-action="collection.sort">Sort by price</button>
       </aside>
-      <section class="catalog-grid" data-cd-repeat="collection.products">
-        <article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy"><h2 data-cd-text="product.title"></h2><p class="recipe-copy" data-cd-text="product.description"></p><p data-cd-money="product.price"></p><small data-cd-text="product.availability"></small><a data-cd-route="product" data-cd-param-handle="product.handle">Open work order</a></article>
-      </section>
+      <div class="catalog"><section class="catalog-grid" data-cd-repeat="collection.products">
+        <article class="card" data-cd-key="product.id"><a data-cd-route="product" data-cd-param-handle="product.handle"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy"><div class="card-info"><h3 data-cd-text="product.title"></h3><b data-cd-money="product.price"></b><span class="meta"><span class="recipe-copy" data-cd-text="product.description"></span> · <span class="stock" data-cd-text="product.availability"></span></span></div></a></article>
+      </section></div>
       <section data-cd-repeat="collection.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline" data-cd-theme-tokens="ink cobalt paper"></aside></section>
       <p class="empty-state" data-cd-empty-state>No objects match these workshop filters. Clear a material filter to reopen the bench.</p>
     </main>
   `,
   css: `
-    .catalog-intro { display: grid; grid-template-columns: 1fr 1fr; min-height: 20rem }
-    .catalog-intro h1 { font-family: var(--font-display); font-size: clamp(4rem, 9vw, 8rem); line-height: .8; text-transform: uppercase }
-    .catalog-intro img { height: 20rem; object-fit: cover; width: 100% }
+    .catalog-intro { display: grid; grid-template-columns: 1fr 1fr; min-height: 310px; border-bottom: 1px solid var(--rule) }
+    .catalog-copy { padding: 40px 18px }
+    .catalog-intro h1 { max-width: 8ch; margin: 12px 0; font-family: var(--font-display); font-size: clamp(4rem, 9vw, 8rem); line-height: .8; text-transform: uppercase }
+    .catalog-intro img { height: 310px; object-fit: cover; width: 100% }
     .filters { display: flex; gap: .5rem; overflow-x: auto; padding: 1rem }
     .filters button { background: transparent; border: 1px solid var(--rule); padding: .75rem 1rem }
-    .catalog-grid { display: grid; grid-template-columns: repeat(3, 1fr) }
+    .catalog { display: grid; grid-template-columns: repeat(3, 1fr) }
+    .catalog-grid { display: contents }
+    .card { --commerce-surface: var(--paper); --commerce-foreground: var(--ink); --commerce-accent: var(--cobalt); --commerce-accent-foreground: var(--paper); min-width: 0; border: 1px solid var(--rule); background: var(--paper) }
+    .card > a { color: inherit; text-decoration: none }
+    .card-info { display: grid; grid-template-columns: 1fr auto; gap: 5px; padding: 13px }
+    .meta { grid-column: 1 / -1; color: #666; font-size: 10px; text-transform: uppercase }
+    .stock { color: #276728 }
     .catalog-grid img { aspect-ratio: 4 / 5; object-fit: cover; width: 100% }
     .catalog-grid h2 { font-family: var(--font-display); text-transform: uppercase }
     .empty-state { border: 1px dashed var(--rule); padding: 2rem; text-align: center }
-    @media (max-width: 760px) { .catalog-intro { grid-template-columns: 1fr } .catalog-intro img { height: 14rem } .catalog-grid { grid-template-columns: 1fr } }
+    @media (max-width: 760px) { .catalog-intro { grid-template-columns: 1fr; min-height: 0 } .catalog-intro img { height: 240px } .catalog { grid-template-columns: 1fr } }
   `,
   requiredData: [],
   requiredCapabilities: [],
@@ -162,7 +170,7 @@ const checkout = {
 
 export const CUSTOM_BENCH_RECIPE = defineRecipe({
   templateId: "custom-bench",
-  templateVersion: 8,
+  templateVersion: 11,
   concept: {
     name: "Custom Bench",
     rationale: "A workshop interface turns personalization into a legible proofing sequence.",

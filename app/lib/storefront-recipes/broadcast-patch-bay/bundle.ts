@@ -3,7 +3,7 @@ import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, wrapRecipeCompo
 import { BROADCAST_PATCH_BAY_ASSETS } from "./assets";
 
 const config = {
-  templateId: "broadcast-patch-bay", templateVersion: 8,
+  templateId: "broadcast-patch-bay", templateVersion: 10,
   concept: { name: "Broadcast Patch Bay", rationale: "A modular creator storefront that routes the catalog as an input-to-output signal chain.", noveltySignature: ["signal-patch-bay", "rig-mode-routing", "compatibility-modules"] },
   designSystem: {
     displayFontId: "chakra-petch", bodyFontId: "dm-mono",
@@ -84,19 +84,29 @@ config.surfaces.home.source.html = config.surfaces.home.source.html
   .replace('<h2>Your signal chain</h2>', '<h2 id="sectionHeading">Your signal chain</h2>')
   .replace('<small class="label">Loadout patcher / beta</small>', '<div class="label">Loadout patcher / beta</div>')
   .replace('</article></div></div></section></main>', '</article></div><div class="rackTotal"><span>Solo stream / live modules</span><span>Current total</span></div><button class="cta" data-cd-route="cart"><span>Add complete loadout</span><span>＋</span></button></div></section></main>');
-config.surfaces.home.source.css += ".heroCopy h1{margin:30px 0;font-family:var(--font-display);font-weight:700;letter-spacing:-.065em;line-height:.82;text-transform:uppercase}";
+config.surfaces.home.source.html = config.surfaces.home.source.html.replace(
+  '<div class="cardBody"><h3 data-cd-text="product.title"></h3><p data-cd-text="product.description"></p><div class="cardLine"><b data-cd-money="product.price"></b><span class="stock" data-cd-text="product.availability"></span></div></div>',
+  '<div class="cardBody"><h3 data-cd-text="product.title"></h3><small data-cd-text="product.description"></small><div class="cardLine"><b data-cd-money="product.price"></b><span class="stock" data-cd-text="product.availability"></span></div></div>',
+);
+config.surfaces.home.source.css += ".heroCopy h1{margin:30px 0;font-family:var(--font-display);font-weight:700;letter-spacing:-.065em;line-height:.82;text-transform:uppercase}.cardBody small{display:block;color:var(--muted);overflow-wrap:anywhere}.card{--commerce-surface:var(--panel);--commerce-foreground:var(--white);--commerce-accent:var(--signal);--commerce-accent-foreground:var(--black)}";
 config.surfaces.collection.source.html = `<main class="collection"><header class="collectionHero"><div class="label">Catalog matrix / live stock</div><h1 data-cd-text="collection.title"></h1><p><b data-cd-text="collection.productCount"></b> compatible modules</p></header><div class="filters"><button value="all" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">All roles</button><button value="control" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Control</button><button value="audio" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Audio</button><button value="capture" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Capture</button><button value="light" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Light</button><button value="output" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Output</button><select data-cd-on="change" data-cd-action="collection.sort"><option value="featured">Signal order</option><option value="low">Price low</option><option value="high">Price high</option></select></div><div class="productGrid" data-cd-repeat="collection.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Inspect module</a></article></div><p class="module-empty resilient-copy" data-cd-empty-state>No compatible signal found.</p></main>`;
 
 config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(
   '<select data-cd-on="change" data-cd-action="collection.sort">',
   '<select aria-label="Sort compatible modules" value="relevance" data-cd-on="change" data-cd-action="collection.sort">',
 );
+config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(
+  '<article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Inspect module</a></article>',
+  '<article class="card" data-cd-key="product.id"><a data-cd-route="product" data-cd-param-handle="product.handle"><div class="cardMedia"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><span class="cardCode" data-cd-text="product.availability"></span></div><div class="cardBody"><h3 data-cd-text="product.title"></h3><small data-cd-text="product.description"></small><div class="cardLine"><b data-cd-money="product.price"></b><span class="stock" data-cd-text="product.availability"></span></div></div></a></article>',
+);
 config.surfaces.collection.source.html += `<section data-cd-repeat="collection.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>`;
 config.surfaces.collection.source.css = sourceTemplateCss(
   sourceTemplate,
   config.surfaces.collection.source.html,
   { display: "Chakra Petch", body: "DM Mono" },
-) + ".collection{display:block}.productGrid a{color:#eff3f8}";
+) + ".collection{display:block}.productGrid a{color:#eff3f8}.card{--commerce-surface:var(--panel);--commerce-foreground:var(--white);--commerce-accent:var(--signal);--commerce-accent-foreground:var(--black)}";
+config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace('<div class="productGrid"', '<div class="productCatalog"><div class="productGrid"').replace('</div><p class="module-empty', '</div></div><p class="module-empty');
+config.surfaces.collection.source.css += `.productCatalog{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:35px 4vw 90px}.productGrid{display:contents}@media(max-width:850px){.productCatalog{grid-template-columns:1fr 1fr}}`;
 config.surfaces.shell.source.html = `<div class="status"><span><i class="onair">On air</i> Store signal / stable</span><span>Live inventory routing · 13 Jul 2026 · latency 18ms</span><span>Support ch.01</span></div><nav class="nav"><div class="logo">Patch Bay<small>Gaming + creator supply</small></div><div class="modes"><button class="mode" data-cd-route="collection">Play</button><button class="mode" data-cd-route="collection">Stream</button><button class="mode" data-cd-route="collection">Record</button><button class="mode" data-cd-route="collection">Publish</button></div><div class="tools"><button class="tool" data-cd-route="collection">Catalog</button><button class="tool" data-cd-route="search">Search</button><button class="tool" data-cd-route="cart">Loadout <span class="count" data-cd-text="cart.count">0</span></button></div></nav><aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="black panel blue signal"></aside><footer data-cd-policy-links></footer>`;
 config.surfaces.shell.source.css = sourceTemplateCss(sourceTemplate, config.surfaces.shell.source.html, { display: "Chakra Petch", body: "DM Mono" })
   + ".status{background:#1f4fc4;color:#fff}.onair{background:#a7192c}.nav,.nav button{color:#eff3f8}";

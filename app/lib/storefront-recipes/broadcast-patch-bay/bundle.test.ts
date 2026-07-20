@@ -38,17 +38,29 @@ describe("broadcast-patch-bay storefront recipe", () => {
     expect(actions(BROADCAST_PATCH_BAY_RECIPE.bundle.routes.home)).toContain("tabs.select");
   });
 
-  it("keeps the live catalog in the approved responsive module grid", () => {
-    const css = BROADCAST_PATCH_BAY_RECIPE.config.surfaces.collection.source.css;
-    expect(css).toContain(".productGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}");
+  it("keeps the live catalog in a static responsive module grid", () => {
+    const { html, css } = BROADCAST_PATCH_BAY_RECIPE.config.surfaces.collection.source;
+    expect(html).toContain('class="productCatalog"><div class="productGrid" data-cd-repeat="collection.products"');
+    expect(css).toContain(".productCatalog{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:35px 4vw 90px}");
+    expect(css).toContain(".productGrid{display:contents}");
     expect(css).toContain(".collection{display:block}");
-    expect(css).toContain(".productGrid{grid-template-columns:1fr 1fr}");
+    expect(css).toContain(".productCatalog{grid-template-columns:1fr 1fr}");
+  });
+
+  it("keeps module cards faithful and themes their purchase controls", () => {
+    const { home, collection } = BROADCAST_PATCH_BAY_RECIPE.config.surfaces;
+    for (const surface of [home, collection]) {
+      expect(surface.source.html).toMatch(/<article class="card"[^>]*><a[^>]*><div class="cardMedia"><img[^>]*><span class="cardCode"/);
+      expect(surface.source.html).toContain('<div class="cardBody"><h3 data-cd-text="product.title"></h3><small data-cd-text="product.description"></small><div class="cardLine"><b data-cd-money="product.price"></b><span class="stock" data-cd-text="product.availability"></span></div></div>');
+      expect(surface.source.css).toContain("--commerce-surface:var(--panel);--commerce-foreground:var(--white);--commerce-accent:var(--signal);--commerce-accent-foreground:var(--black)");
+    }
+    expect(home.source.css).toContain(".cardBody small{display:block;color:var(--muted);overflow-wrap:anywhere}");
   });
 
   it("compiles a modular signal patch bay and complete creator-commerce route matrix", () => {
     const { bundle, config, report } = BROADCAST_PATCH_BAY_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 8 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 10 });
     expect(config.archetype).toEqual({ composition: "signal-patch-bay", hero: "rig-signal-chain", scroll: "modular-patching", cards: "signal-modules", iconography: ["signal path glyphs", "compatibility port marks"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "chakra-petch", bodyFontId: "dm-mono", iconStyle: "signal-path glyphs and compatibility-port marks", motionStyle: "modular patch transitions with reduced-motion static routing" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

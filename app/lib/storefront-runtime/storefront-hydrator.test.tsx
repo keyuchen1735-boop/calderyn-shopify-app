@@ -33,10 +33,10 @@ describe("runtime-1 route adapters", () => {
     const route = document.createElement("div");
     route.innerHTML = `
       <div class="rail" data-cd-repeat-owner="true" data-cd-compiler-id="product-list">
-        <article><h2 data-cd-bind-text="title-binding">Field kit</h2></article>
+        <article><h2 data-cd-bind-text="title-binding">Field kit</h2><div class="commerce-target"><a class="commerce-fallback">View</a></div></article>
       </div>
       <div class="rail" data-cd-repeat-owner="true" data-cd-compiler-id="product-list">
-        <article><h2 data-cd-bind-text="title-binding">Field kit refill</h2></article>
+        <article><h2 data-cd-bind-text="title-binding">Field kit refill</h2><div class="commerce-target"><a class="commerce-fallback">View</a></div></article>
       </div>
       <section data-cd-repeat-owner="true">
         <div data-cd-compiler-id="quick-slot" data-cd-trusted-slot="quickViewCommerce"></div>
@@ -56,6 +56,8 @@ describe("runtime-1 route adapters", () => {
     });
 
     expect(route.querySelectorAll("article [data-cd-trusted-slot='quickViewCommerce']")).toHaveLength(2);
+    expect(route.querySelectorAll(".commerce-target > [data-cd-trusted-slot='quickViewCommerce']")).toHaveLength(2);
+    expect(route.querySelectorAll(".commerce-fallback")).toHaveLength(0);
     expect(route.querySelectorAll(".rail")).toHaveLength(1);
     expect(route.querySelectorAll(".rail > article")).toHaveLength(2);
     expect(route.querySelectorAll("section[data-cd-repeat-owner]")).toHaveLength(0);
@@ -246,5 +248,55 @@ describe("runtime-1 route adapters", () => {
     expect(mountStyle(false)).not.toContain("background:#ecff5b");
     expect(mountStyle(true)).toContain("border-radius:0");
     expect(mountStyle(true)).toContain("background:#ecff5b");
+  });
+
+  it("uses validated recipe commerce colors for trusted controls", () => {
+    const adapters = createRuntimeAdapters({ mode: "public", data: quickViewData });
+    const host = document.createElement("div");
+    host.style.setProperty("--paper", "#f4efe3");
+    host.style.setProperty("--forest", "#163d31");
+    host.style.setProperty("--acid", "#c8ff32");
+    host.style.setProperty("--commerce-surface", "var(--paper)");
+    host.style.setProperty("--commerce-foreground", "var(--forest)");
+    host.style.setProperty("--commerce-accent", "var(--acid)");
+    host.style.setProperty("--commerce-accent-foreground", "var(--forest)");
+    document.body.append(host);
+    const shadowRoot = host.attachShadow({ mode: "open" });
+
+    adapters.commerce?.mount({
+      host,
+      shadowRoot,
+      authorityKey: "product:p1",
+      slot: { id: "slot", kind: "quickViewCommerce", hostSize: "inline", themeTokenIds: [] },
+      bridge: vi.fn(),
+    });
+
+    const style = shadowRoot.querySelector("style")?.textContent ?? "";
+    expect(style).toContain("background:#f4efe3;color:#163d31");
+    expect(style).toContain("background:#c8ff32;color:#163d31");
+  });
+
+  it("rejects low-contrast and transparent recipe commerce colors", () => {
+    const adapters = createRuntimeAdapters({ mode: "public", data: quickViewData });
+    const host = document.createElement("div");
+    host.style.setProperty("--commerce-surface", "#ffffff");
+    host.style.setProperty("--commerce-foreground", "#ffffff");
+    host.style.setProperty("--commerce-accent", "rgba(0, 0, 0, 0)");
+    host.style.setProperty("--commerce-accent-foreground", "#ffffff");
+    document.body.append(host);
+    const shadowRoot = host.attachShadow({ mode: "open" });
+
+    adapters.commerce?.mount({
+      host,
+      shadowRoot,
+      authorityKey: "product:p1",
+      slot: { id: "slot", kind: "quickViewCommerce", hostSize: "inline", themeTokenIds: [] },
+      bridge: vi.fn(),
+    });
+
+    const style = shadowRoot.querySelector("style")?.textContent ?? "";
+    expect(style).toContain("background:rgb(20, 22, 19);color:rgb(255, 255, 255)");
+    expect(style).not.toContain("background:#ffffff;color:#ffffff");
+    expect(style).not.toContain("rgba(0, 0, 0, 0)");
   });
 });

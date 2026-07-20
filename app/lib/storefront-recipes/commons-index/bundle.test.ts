@@ -22,14 +22,36 @@ describe("Commons Index storefront recipe", () => {
   it("keeps collection products in a single-column record table on the repeated owner", () => {
     const collection = COMMONS_INDEX_RECIPE.config.surfaces.collection.source;
 
-    expect(collection.html).toContain('class="record-table" data-cd-repeat="collection.products"');
-    expect(collection.css).toContain(".record-table { display:grid; grid-template-columns:1fr }");
+    expect(collection.html).toContain('<div class="record-catalog"><section class="record-table" data-cd-repeat="collection.products"');
+    expect(collection.css).toContain(".record-catalog { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)) }");
+    expect(collection.css).toContain(".record-table { display:contents }");
+  });
+
+  it("keeps the directory head compact so evidence filters and records enter the first viewport", () => {
+    const collection = COMMONS_INDEX_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('<header class="directory-head"><div class="directory-copy">');
+    expect(collection.html).toContain('</div><img data-cd-src="collection.image"');
+    expect(collection.css).toContain("min-height:330px");
+    expect(collection.css).toContain("margin:10px 0");
+    expect(collection.css).toContain(".directory-head img { height:330px");
+  });
+
+  it("keeps prototype evidence cards across home and collection", () => {
+    const { home, collection } = COMMONS_INDEX_RECIPE.config.surfaces;
+    for (const surface of [home.source, collection.source]) {
+      expect(surface.html).toContain('article class="product"');
+      expect(surface.html).toContain('class="proof"');
+      expect(surface.html).toContain('class="pbody"');
+    }
+    expect(home.source.css).toContain("--commerce-accent:var(--acid)");
+    expect(home.source.css).toContain(".pbody{display:grid;grid-template-columns:1fr auto");
   });
 
   it("compiles a cooperative provenance ledger across every commerce surface", () => {
     const { bundle, config, report } = COMMONS_INDEX_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 7 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 10 });
     expect(config.archetype).toMatchObject({ composition: "cooperative-directory", hero: "impact-ledger-intro", scroll: "indexed-ledger", cards: "provenance-records" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "source-fraunces", bodyFontId: "dm-mono" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

@@ -44,7 +44,7 @@ const promptCommand = (
 const resolution = {
   kind: "recipe" as const,
   templateId: "custom-bench" as const,
-  templateVersion: 7,
+  templateVersion: getStoreTemplate("custom-bench").activeVersion,
   selectionKind: "niche_match" as const,
   routingVersion: 1,
   registryVersion: 2,
@@ -438,7 +438,7 @@ describe("runStoreCommand", () => {
       resolveDesign: vi.fn().mockReturnValue({
         ...resolution,
         templateId: "soft-chemistry",
-        templateVersion: 9,
+        templateVersion: getStoreTemplate("soft-chemistry").activeVersion,
       }),
       loadRecipe: vi.fn().mockResolvedValue({
         bundle: structuredClone(SOFT_CHEMISTRY_BUNDLE),
@@ -471,7 +471,7 @@ describe("runStoreCommand", () => {
       resolveDesign: vi.fn().mockReturnValue({
         ...resolution,
         templateId: "soft-chemistry",
-        templateVersion: 9,
+        templateVersion: getStoreTemplate("soft-chemistry").activeVersion,
       }),
       loadRecipe: vi.fn().mockResolvedValue({
         bundle: structuredClone(SOFT_CHEMISTRY_BUNDLE),
