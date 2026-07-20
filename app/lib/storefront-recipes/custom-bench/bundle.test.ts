@@ -30,11 +30,19 @@ describe("Custom Bench storefront recipe", () => {
     expect(home.css).toContain("grid-template-columns:44% 56%");
   });
 
+  it("lays out collection products as a material specimen grid on the repeated owner", () => {
+    const collection = CUSTOM_BENCH_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('class="catalog-grid" data-cd-repeat="collection.products"');
+    expect(collection.css).toContain(".catalog-grid { display: grid; grid-template-columns: repeat(3, 1fr) }");
+    expect(collection.css).toContain(".catalog-grid { grid-template-columns: 1fr }");
+  });
+
   it("compiles the workshop configurator across the full commerce contract", () => {
     const { bundle, config, report } = CUSTOM_BENCH_RECIPE;
 
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "custom-bench", templateVersion: 7 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "custom-bench", templateVersion: 8 });
     expect(config.archetype).toMatchObject({
       composition: "workshop-configurator",
       hero: "configurator-workbench",

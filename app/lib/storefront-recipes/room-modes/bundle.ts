@@ -4,7 +4,7 @@ import { ROOM_MODES_ASSETS } from "./assets";
 
 const config = {
   templateId: "room-modes",
-  templateVersion: 5,
+  templateVersion: 6,
   concept: {
     name: "Room Modes",
     rationale: "A spatial storefront that begins with room scenes, then resolves into a precise object index.",
@@ -105,17 +105,18 @@ const config = {
                 <img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy" width="720" height="620">
                 <h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span>
                 <a data-cd-route="product" data-cd-param-handle="product.handle">View object</a>
-                <div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div>
               </article>
             </section>
             <p class="collection-empty resilient-copy" data-cd-empty-state>No objects match this room mode. Clear a protocol filter to continue.</p>
           </main>
+          <section data-cd-repeat="collection.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>
         `,
         css: `
           .object-index{display:grid;grid-template-columns:1.2fr .8fr;gap:2rem;padding:clamp(2rem,6vw,6rem)}.object-index h1{font-size:clamp(3.5rem,8vw,8rem)}
           .facet-bench{position:sticky;top:0;display:flex;gap:.5rem;padding:1rem;background:var(--chalk)}.facet-bench button{border:1px solid var(--ink);background:transparent;padding:.7rem}
+          .object-matrix{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
           .collection-empty,.resilient-copy{overflow-wrap:anywhere}.collection-empty{padding:1rem}
-          @media(max-width:700px){.object-index{grid-template-columns:1fr}.facet-bench{overflow:auto}}
+          @media(max-width:700px){.object-index,.object-matrix{grid-template-columns:1fr}.facet-bench{overflow:auto}}
         `,
         requiredData: [],
         requiredCapabilities: [],

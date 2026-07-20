@@ -38,10 +38,17 @@ describe("broadcast-patch-bay storefront recipe", () => {
     expect(actions(BROADCAST_PATCH_BAY_RECIPE.bundle.routes.home)).toContain("tabs.select");
   });
 
+  it("keeps the live catalog in the approved responsive module grid", () => {
+    const css = BROADCAST_PATCH_BAY_RECIPE.config.surfaces.collection.source.css;
+    expect(css).toContain(".productGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}");
+    expect(css).toContain(".collection{display:block}");
+    expect(css).toContain(".productGrid{grid-template-columns:1fr 1fr}");
+  });
+
   it("compiles a modular signal patch bay and complete creator-commerce route matrix", () => {
     const { bundle, config, report } = BROADCAST_PATCH_BAY_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 7 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "broadcast-patch-bay", templateVersion: 8 });
     expect(config.archetype).toEqual({ composition: "signal-patch-bay", hero: "rig-signal-chain", scroll: "modular-patching", cards: "signal-modules", iconography: ["signal path glyphs", "compatibility port marks"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "chakra-petch", bodyFontId: "dm-mono", iconStyle: "signal-path glyphs and compatibility-port marks", motionStyle: "modular patch transitions with reduced-motion static routing" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

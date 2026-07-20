@@ -3,7 +3,7 @@ import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, wrapRecipeCompo
 import { BROADCAST_PATCH_BAY_ASSETS } from "./assets";
 
 const config = {
-  templateId: "broadcast-patch-bay", templateVersion: 7,
+  templateId: "broadcast-patch-bay", templateVersion: 8,
   concept: { name: "Broadcast Patch Bay", rationale: "A modular creator storefront that routes the catalog as an input-to-output signal chain.", noveltySignature: ["signal-patch-bay", "rig-mode-routing", "compatibility-modules"] },
   designSystem: {
     displayFontId: "chakra-petch", bodyFontId: "dm-mono",
@@ -91,10 +91,12 @@ config.surfaces.collection.source.html = config.surfaces.collection.source.html.
   '<select data-cd-on="change" data-cd-action="collection.sort">',
   '<select aria-label="Sort compatible modules" value="relevance" data-cd-on="change" data-cd-action="collection.sort">',
 );
-config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(
-  "</a></article>",
-  '</a><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div></article>',
-);
+config.surfaces.collection.source.html += `<section data-cd-repeat="collection.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>`;
+config.surfaces.collection.source.css = sourceTemplateCss(
+  sourceTemplate,
+  config.surfaces.collection.source.html,
+  { display: "Chakra Petch", body: "DM Mono" },
+) + ".collection{display:block}.productGrid a{color:#eff3f8}";
 config.surfaces.shell.source.html = `<div class="status"><span><i class="onair">On air</i> Store signal / stable</span><span>Live inventory routing · 13 Jul 2026 · latency 18ms</span><span>Support ch.01</span></div><nav class="nav"><div class="logo">Patch Bay<small>Gaming + creator supply</small></div><div class="modes"><button class="mode" data-cd-route="collection">Play</button><button class="mode" data-cd-route="collection">Stream</button><button class="mode" data-cd-route="collection">Record</button><button class="mode" data-cd-route="collection">Publish</button></div><div class="tools"><button class="tool" data-cd-route="collection">Catalog</button><button class="tool" data-cd-route="search">Search</button><button class="tool" data-cd-route="cart">Loadout <span class="count" data-cd-text="cart.count">0</span></button></div></nav><aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="black panel blue signal"></aside><footer data-cd-policy-links></footer>`;
 config.surfaces.shell.source.css = sourceTemplateCss(sourceTemplate, config.surfaces.shell.source.html, { display: "Chakra Petch", body: "DM Mono" })
   + ".status{background:#1f4fc4;color:#fff}.onair{background:#a7192c}.nav,.nav button{color:#eff3f8}";

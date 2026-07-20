@@ -315,11 +315,11 @@ export function placeQuickViewCommerceInCards(
     });
   }
 
-  const repeatedCardContainers = [...new Set(slotHosts.flatMap((host) => {
-    const card = host.closest<HTMLElement>("article");
-    const owner = card?.closest<HTMLElement>('[data-cd-repeat-owner="true"]');
-    return owner && owner !== card && owner.dataset.cdCompilerId && owner.parentElement ? [owner] : [];
-  }))];
+  const repeatedCardContainers = [...root.querySelectorAll<HTMLElement>('[data-cd-repeat-owner="true"]')]
+    .filter((owner) =>
+      owner.tagName !== "ARTICLE" && owner.dataset.cdCompilerId &&
+      owner.parentElement && owner.querySelector("article")
+    );
   for (const owner of repeatedCardContainers) {
     if (!root.contains(owner)) continue;
     const siblings = repeatedCardContainers.filter((candidate) =>

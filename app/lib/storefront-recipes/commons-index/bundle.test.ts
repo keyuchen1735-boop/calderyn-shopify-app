@@ -19,10 +19,17 @@ describe("Commons Index storefront recipe", () => {
     expect(home.css).toContain("grid-template-columns:220px 1fr");
   });
 
+  it("keeps collection products in a single-column record table on the repeated owner", () => {
+    const collection = COMMONS_INDEX_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('class="record-table" data-cd-repeat="collection.products"');
+    expect(collection.css).toContain(".record-table { display:grid; grid-template-columns:1fr }");
+  });
+
   it("compiles a cooperative provenance ledger across every commerce surface", () => {
     const { bundle, config, report } = COMMONS_INDEX_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 6 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 7 });
     expect(config.archetype).toMatchObject({ composition: "cooperative-directory", hero: "impact-ledger-intro", scroll: "indexed-ledger", cards: "provenance-records" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "source-fraunces", bodyFontId: "dm-mono" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

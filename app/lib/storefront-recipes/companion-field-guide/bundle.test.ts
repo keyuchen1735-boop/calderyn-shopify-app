@@ -28,10 +28,18 @@ describe("Companion Field Guide storefront recipe", () => {
     expect(css).toContain(".profile-rail button { min-width:0 }");
   });
 
+  it("lays out collection products as a responsive field-note grid on the repeated owner", () => {
+    const collection = COMPANION_FIELD_GUIDE_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('class="field-note-grid" data-cd-repeat="collection.products"');
+    expect(collection.css).toContain(".field-note-grid { display:grid; grid-template-columns:repeat(3,1fr) }");
+    expect(collection.css).toContain(".field-note-grid { grid-template-columns:1fr }");
+  });
+
   it("compiles a chaptered pet care guide across the complete commerce contract", () => {
     const { bundle, config, report } = COMPANION_FIELD_GUIDE_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 6 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 7 });
     expect(config.archetype).toMatchObject({ composition: "field-guide", hero: "pet-profile-hero", scroll: "chaptered-guide", cards: "field-notes" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "newsreader", bodyFontId: "manrope" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

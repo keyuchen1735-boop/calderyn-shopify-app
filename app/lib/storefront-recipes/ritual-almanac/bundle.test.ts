@@ -17,10 +17,17 @@ describe("ritual-almanac storefront recipe", () => {
     expect(paths).toEqual(expect.arrayContaining(["product.primaryImage", "product.title", "product.description", "product.price", "product.availability"]));
   });
 
+  it("keeps the live pantry in the approved responsive product grid", () => {
+    const css = RITUAL_ALMANAC_RECIPE.config.surfaces.collection.source.css;
+    expect(css).toContain(".productGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}");
+    expect(css).toContain(".collection{display:block}");
+    expect(css).toContain(".productGrid{grid-template-columns:1fr 1fr}");
+  });
+
   it("compiles editorial ritual chapters, cadence selection, and every commerce surface", () => {
     const { bundle, config, report } = RITUAL_ALMANAC_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ritual-almanac", templateVersion: 5 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ritual-almanac", templateVersion: 6 });
     expect(config.archetype).toEqual({ composition: "editorial-almanac", hero: "ritual-time-hero", scroll: "almanac-chapters", cards: "ritual-entries", iconography: ["time ritual marks", "flavor note symbols"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "young-serif", bodyFontId: "manrope", iconStyle: "time-of-day marks and restrained flavor-note symbols", motionStyle: "chapter reveals with ritual-time tab transitions" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
