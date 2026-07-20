@@ -22,7 +22,7 @@ function topology(nodes: readonly CompiledNode[], depth = 0): string {
 
 describe("interactive storefront recipe contracts", () => {
   it("keeps every template's HTML and CSS while binding merchant identity and catalog photography", () => {
-    expect(STOREFRONT_RECIPES).toHaveLength(11);
+    expect(STOREFRONT_RECIPES).toHaveLength(12);
     for (const recipe of STOREFRONT_RECIPES) {
       const { bundle } = recipe;
       expect(bundle.shell.bindings.some((binding) =>
@@ -144,7 +144,7 @@ describe("interactive storefront recipe contracts", () => {
     }
   });
 
-  it("keeps buyer route topologies materially distinct across all eleven stores", () => {
+  it("keeps buyer route topologies materially distinct across all twelve stores", () => {
     for (const routeId of ["product", "search", "cart"] as const) {
       const fingerprints = STOREFRONT_RECIPES.map((recipe) => topology(recipe.bundle.routes[routeId].tree));
       expect(new Set(fingerprints).size, `${routeId} topology count`).toBe(STOREFRONT_RECIPES.length);

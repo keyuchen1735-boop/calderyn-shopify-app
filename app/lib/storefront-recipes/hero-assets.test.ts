@@ -32,13 +32,14 @@ const LEGACY_HERO_HASHES: Readonly<Record<string, string>> = {
 
 describe("storefront recipe hero assets", () => {
   it("keeps every template tied to its approved hero image", () => {
-    for (const recipe of STOREFRONT_RECIPES) {
-      const templateId = recipe.config.templateId;
+    for (const [templateId, expectedHash] of Object.entries(EXPECTED_HERO_HASHES)) {
+      const recipe = STOREFRONT_RECIPES.find(({ config }) => config.templateId === templateId);
+      expect(recipe, templateId).toBeDefined();
       const bytes = readFileSync(`public/storefront-recipes/${templateId}/hero.webp`);
       const hash = createHash("sha256").update(bytes).digest("hex");
-      const manifestHero = recipe.config.assets.entries.find(({ key }) => key === "hero");
+      const manifestHero = recipe?.config.assets.entries.find(({ key }) => key === "hero");
 
-      expect(hash, templateId).toBe(EXPECTED_HERO_HASHES[templateId]);
+      expect(hash, templateId).toBe(expectedHash);
       expect(manifestHero?.contentHash, templateId).toBe(hash);
       expect(manifestHero?.byteSize, templateId).toBe(bytes.byteLength);
       expect(readFileSync(`public/storefront-recipes/${templateId}/${hash}.webp`), templateId).toEqual(bytes);

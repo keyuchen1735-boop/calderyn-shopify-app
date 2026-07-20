@@ -2,7 +2,7 @@ import type { BindingScopeKind } from "~/lib/storefront-compiler/bindings";
 import type { RouteSource } from "~/lib/storefront-compiler/compile";
 import { videoFragment } from "../library/media";
 import { motionAttributes } from "../library/motion";
-import type { RecipeConfig } from "../factory";
+import { compileRecipeConfig, type RecipeConfig } from "../factory";
 import { LARDER_ASSETS, LARDER_MEDIA_ARTIFACTS } from "./assets";
 
 function route(html: string, css: string, rootScopeKind?: BindingScopeKind): RouteSource {
@@ -59,9 +59,9 @@ export const LARDER_RECIPE_CONFIG = {
       signature: "paper pantry label masthead above olive shelf navigation and protected basket drawer",
       source: route(`
         <header class="larder-shell">
-          <a class="larder-wordmark" data-cd-route="home"><span data-cd-text="store.name"></span></a>
+          <a class="larder-wordmark" data-cd-route="home"><span class="niche-icon" aria-hidden="true">◒</span><span data-cd-text="store.name"></span></a>
           <nav aria-label="Pantry shelves"><a data-cd-route="collections">Shelves</a><a data-cd-route="collection">All provisions</a><a data-cd-route="story">The kitchen</a></nav>
-          <div><a data-cd-route="search">Find</a><a data-cd-route="cart">Basket <span data-cd-text="cart.count"></span></a></div>
+          <div><a data-cd-route="search">Find</a><a data-cd-route="account">Account</a><a data-cd-route="cart">Basket <span data-cd-text="cart.count"></span></a></div>
         </header>
         <aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="paper tomato olive"></aside>
         <footer class="larder-footer"><span data-cd-text="store.name"></span><nav data-cd-policy-links></nav></footer>
@@ -87,7 +87,7 @@ export const LARDER_RECIPE_CONFIG = {
         </main><section data-cd-slot="bundleBuilder" data-cd-bundle-slots="6" data-cd-host-size="block" data-cd-theme-tokens="paper tomato olive"></section><section data-cd-repeat="featured.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline" data-cd-theme-tokens="paper tomato olive"></aside></section>
       `, `${sharedCss}
         .larder-hero{position:relative;display:grid;min-height:min(800px,88dvh);align-items:end;overflow:hidden;background:var(--olive);color:var(--cream)}.larder-film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.larder-hero:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(41,37,31,.72),transparent 65%)}.larder-hero-copy{position:relative;z-index:1;max-width:48rem;padding:clamp(2rem,7vw,7rem)}.larder-hero h1{font-size:clamp(4.5rem,10vw,9rem);margin:.6rem 0}.larder-hero p{max-width:34rem;font-size:1.12rem;line-height:1.6}.larder-shelf-tabs{display:grid;grid-template-columns:repeat(4,1fr);border-block:1px solid var(--line);background:var(--olive)}.larder-shelf-tabs a{padding:1rem;color:var(--cream);text-align:center;text-decoration:none;border-right:1px solid var(--paper)}
-        .larder-stock{padding:clamp(3rem,7vw,7rem) clamp(1rem,4vw,4rem)}.larder-stock header{max-width:60rem;margin-bottom:2rem}.larder-stock h2,.larder-box h2{font-size:clamp(3.5rem,7vw,7rem);margin:.5rem 0}.larder-product-shelf{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border-bottom:16px solid var(--wood)}.larder-product-shelf article{display:grid;gap:.75rem;padding:1rem;background:var(--cream)}.larder-product-shelf img{width:100%;aspect-ratio:5/6;object-fit:cover}.larder-product-shelf a{color:inherit;text-decoration:none}.larder-product-shelf article>div{display:flex;justify-content:space-between;gap:1rem}
+        .larder-stock{scroll-margin-top:5rem;padding:clamp(3rem,7vw,7rem) clamp(1rem,4vw,4rem)}.larder-stock header{max-width:60rem;margin-bottom:2rem}.larder-stock h2,.larder-box h2{font-size:clamp(3.5rem,7vw,7rem);margin:.5rem 0}.larder-product-shelf{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border-bottom:16px solid var(--wood)}.larder-product-shelf article{display:grid;gap:.75rem;padding:1rem;background:var(--cream)}.larder-product-shelf img{width:100%;aspect-ratio:5/6;object-fit:cover}.larder-product-shelf a{color:inherit;text-decoration:none}.larder-product-shelf article>div{display:flex;justify-content:space-between;gap:1rem}
         .larder-box{padding:clamp(3rem,7vw,7rem);background:var(--tomato);color:var(--cream)}.larder-box>div{max-width:52rem}
         @media(max-width:720px){.larder-shelf-tabs{grid-template-columns:repeat(2,1fr)}.larder-product-shelf{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){.larder-film,.larder-hero-copy,.larder-stock{animation:none;transition:none}}
       `),
@@ -132,3 +132,6 @@ export const LARDER_RECIPE_CONFIG = {
   assets: LARDER_ASSETS,
   mediaArtifacts: LARDER_MEDIA_ARTIFACTS,
 } satisfies RecipeConfig<"larder">;
+
+export const LARDER_RECIPE = compileRecipeConfig(LARDER_RECIPE_CONFIG);
+export const LARDER_BUNDLE = LARDER_RECIPE.bundle;

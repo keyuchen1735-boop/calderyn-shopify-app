@@ -188,6 +188,7 @@ describe("classifyStoreIntent", () => {
       "ritual-almanac": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
       "broadcast-patch-bay": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
       "atelier-nine": ["announcement", "heroTitle", "heroBody", "ctaLabel"],
+      larder: ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
     } as const;
 
     for (const recipe of STOREFRONT_RECIPES) {

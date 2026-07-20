@@ -118,6 +118,29 @@ describe("dashboard.store.preview loader", () => {
     }
   });
 
+  it("renders selected Larder videos from immutable same-origin public paths", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    bundle.assets.entries = [
+      { key: "hero-poster", contentHash: "b".repeat(64), mediaType: "image/webp", byteSize: 42 },
+      { key: "hero-webm", contentHash: "c".repeat(64), mediaType: "video/webm", byteSize: 42 },
+      { key: "hero-mp4", contentHash: "a".repeat(64), mediaType: "video/mp4", byteSize: 42 },
+    ];
+    getRecipeMock.mockReturnValue({ bundle: { ...bundle, source: { kind: "recipe", templateId: "larder", templateVersion: 1 } } });
+    try {
+      const result = await loaderData("https://dashboard.example.com/dashboard/store/preview?template=larder&route=home");
+      expect(result.data.storefrontAssetUrls).toEqual({
+        "hero-poster": `https://dashboard.example.com/storefront-recipes/larder/${"b".repeat(64)}.webp`,
+        "hero-webm": `https://dashboard.example.com/storefront-recipes/larder/${"c".repeat(64)}.webm`,
+        "hero-mp4": `https://dashboard.example.com/storefront-recipes/larder/${"a".repeat(64)}.mp4`,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
   it("keeps checkout simulation interactive for an ephemeral selected recipe", async () => {
     const previous = process.env.STOREFRONT_BUNDLE_READ;
     process.env.STOREFRONT_BUNDLE_READ = "1";

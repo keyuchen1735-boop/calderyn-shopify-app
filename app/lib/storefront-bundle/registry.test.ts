@@ -18,10 +18,11 @@ const EXPECTED_TEXT_SLOTS = {
   "ritual-almanac": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "broadcast-patch-bay": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "atelier-nine": ["announcement", "heroTitle", "heroBody", "ctaLabel"],
+  larder: ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
 } as const;
 
 describe("versioned storefront recipe registry", () => {
-  it("registers all eleven stable recipe IDs with complete route and override metadata", () => {
+  it("registers the eleven stable recipes plus approved Larder with complete route and override metadata", () => {
     expect(STORE_TEMPLATE_REGISTRY.templates.map((recipe) => recipe.id)).toEqual([
       "custom-bench",
       "commons-index",
@@ -34,6 +35,7 @@ describe("versioned storefront recipe registry", () => {
       "ritual-almanac",
       "broadcast-patch-bay",
       "atelier-nine",
+      "larder",
     ]);
     expect(STORE_TEMPLATE_REGISTRY.registryVersion).toBe(2);
     expect(STORE_TEMPLATE_REGISTRY.routingVersion).toBe(1);
@@ -49,6 +51,7 @@ describe("versioned storefront recipe registry", () => {
       "ritual-almanac": 8,
       "broadcast-patch-bay": 10,
       "atelier-nine": 5,
+      larder: 1,
     } as const;
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
       expect(recipe.activeVersion).toBe(activeVersions[recipe.id as keyof typeof activeVersions]);
@@ -119,6 +122,8 @@ describe("versioned storefront recipe registry", () => {
     });
     expect(new Set(semanticSignatures).size).toBe(STORE_TEMPLATE_REGISTRY.templates.length);
     expect(getStoreTemplate("atelier-nine").name).toBe("Atelier Grid");
+    expect(getStoreTemplate("larder").previewSrc).toBe("/template-previews/larder.webp");
+    expect(getStoreTemplate("larder").versions[0]?.visualLayer.fallbackAssetKey).toBe("hero-poster");
   });
 
   it("requires descriptions, placeholders, heroes, and one visual surface", () => {

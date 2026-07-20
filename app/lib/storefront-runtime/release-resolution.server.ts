@@ -50,10 +50,22 @@ export interface StorefrontReleaseReader {
   readReleaseHistory(shopId: string): Promise<StorefrontReleaseHistoryEntry[]>;
 }
 
+const RECIPE_MEDIA_EXTENSIONS = { "image/webp": "webp", "video/webm": "webm", "video/mp4": "mp4" } as const;
+
 function recipeDerivedStaticAssets(bundle: StorefrontBundleV1): {
   urls: Readonly<Record<string, string>>;
   ownedManifest: StorefrontBundleV1["assets"];
 } {
+  if (bundle.source.kind === "recipe" && bundle.source.templateId === "larder") {
+    const mediaEntries = bundle.assets.entries.filter((entry) => entry.mediaType in RECIPE_MEDIA_EXTENSIONS);
+    return {
+      urls: Object.fromEntries(mediaEntries.map((entry) => [
+        entry.key,
+        `/storefront-recipes/larder/${entry.contentHash}.${RECIPE_MEDIA_EXTENSIONS[entry.mediaType as keyof typeof RECIPE_MEDIA_EXTENSIONS]}`,
+      ])),
+      ownedManifest: { entries: [] },
+    };
+  }
   if (bundle.source.kind === "recipe" && new Set(["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"]).has(bundle.source.templateId)) {
     const templateId = bundle.source.templateId;
     const mediaEntries = bundle.assets.entries.filter((entry) => entry.mediaType === "image/webp" || entry.mediaType === "video/webm" || entry.mediaType === "video/mp4");
@@ -83,14 +95,14 @@ function recipeDerivedStaticAssets(bundle: StorefrontBundleV1): {
   const staticEntries = new Set<string>();
   for (const entry of bundle.assets.entries) {
     const expected = registered.get(entry.key);
-    if (entry.mediaType === "image/webp" && expected &&
+    if (entry.mediaType in RECIPE_MEDIA_EXTENSIONS && expected &&
       expected.contentHash === entry.contentHash && expected.mediaType === entry.mediaType && expected.byteSize === entry.byteSize) {
       staticEntries.add(entry.key);
     }
   }
   const urls = Object.fromEntries([...staticEntries].map((key) => [
     key,
-    `/storefront-recipes/${templateId}/${registered.get(key)!.contentHash}.webp`,
+    `/storefront-recipes/${templateId}/${registered.get(key)!.contentHash}.${RECIPE_MEDIA_EXTENSIONS[registered.get(key)!.mediaType as keyof typeof RECIPE_MEDIA_EXTENSIONS]}`,
   ]));
   return {
     urls,

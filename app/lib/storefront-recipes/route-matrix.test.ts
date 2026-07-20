@@ -35,7 +35,7 @@ describe("storefront recipe route matrix", () => {
     const recipeIds = STOREFRONT_RECIPES.map((recipe) => recipe.config.templateId);
 
     expect(recipeIds).toEqual(registeredIds);
-    expect(new Set(recipeIds).size).toBe(11);
+    expect(new Set(recipeIds).size).toBe(12);
     expect(Object.keys(STOREFRONT_RECIPE_BY_ID).sort()).toEqual([...registeredIds].sort());
     for (const recipe of STOREFRONT_RECIPES) {
       expect(recipe.report).toMatchObject({ ok: true, profileVersion: 1, diagnostics: [] });
@@ -48,12 +48,12 @@ describe("storefront recipe route matrix", () => {
     }
   });
 
-  it("keeps all eleven visual systems structurally distinct", () => {
+  it("keeps all twelve visual systems structurally distinct", () => {
     for (const identity of ["composition", "hero", "scroll", "cards"] as const) {
-      expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.config.archetype[identity])).size).toBe(11);
+      expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.config.archetype[identity])).size).toBe(12);
     }
-    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.iconStyle)).size).toBe(11);
-    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.motionStyle)).size).toBe(11);
+    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.iconStyle)).size).toBe(12);
+    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.motionStyle)).size).toBe(12);
     expect(new Set(STOREFRONT_RECIPES.map((recipe) =>
       `${recipe.bundle.designSystem.displayFontId}/${recipe.bundle.designSystem.bodyFontId}`,
     )).size).toBeGreaterThanOrEqual(8);
@@ -62,10 +62,10 @@ describe("storefront recipe route matrix", () => {
       recipe.bundle.shell.css,
       ...ROUTES.map((routeId) => recipe.bundle.routes[routeId].css),
       recipe.bundle.routes.checkout.decorativeCss,
-    ].join("\n"))).size).toBe(11);
+    ].join("\n"))).size).toBe(12);
     expect(new Set(STOREFRONT_RECIPES.flatMap((recipe) =>
       Object.values(recipe.config.surfaces).map((surface) => surface.signature),
-    )).size).toBe(77);
+    )).size).toBe(87);
   });
 
   it("covers browse, discovery, purchase, cart, and checkout with merchant-bound data", () => {
@@ -154,17 +154,34 @@ describe("storefront recipe route matrix", () => {
 
   it("ships each declared asset from an owned, hash-verified static path", () => {
     for (const { bundle, config } of STOREFRONT_RECIPES) {
-      expect(bundle.assets.entries).toEqual(expect.arrayContaining([
-        expect.objectContaining({ key: "hero", mediaType: "image/webp" }),
-      ]));
-      for (const asset of bundle.assets.entries) {
-        expect(asset.mediaType).toBe("image/webp");
-        const assetPath = path.join(ROOT, "public", "storefront-recipes", config.templateId, `${asset.contentHash}.webp`);
-        expect(existsSync(assetPath)).toBe(true);
-        expect(statSync(assetPath).size).toBe(asset.byteSize);
-        expect(createHash("sha256").update(readFileSync(assetPath)).digest("hex")).toBe(asset.contentHash);
+      if (config.templateId === "larder") {
+        expect(bundle.assets.entries.map(({ key, mediaType }) => [key, mediaType])).toHaveLength(9);
+        expect(bundle.assets.entries.map(({ key, mediaType }) => [key, mediaType])).toEqual(expect.arrayContaining([
+          ["hero-poster", "image/webp"], ["hero-webm", "video/webm"], ["hero-mp4", "video/mp4"],
+          ["hero-alt-poster", "image/webp"], ["hero-alt-webm", "video/webm"], ["hero-alt-mp4", "video/mp4"],
+          ["pdp-detail-poster", "image/webp"], ["pdp-detail-webm", "video/webm"], ["pdp-detail-mp4", "video/mp4"],
+        ]));
+        const extension = { "image/webp": "webp", "video/webm": "webm", "video/mp4": "mp4" } as const;
+        for (const asset of bundle.assets.entries) {
+          const assetPath = path.join(ROOT, "public", "storefront-recipes", config.templateId, `${asset.contentHash}.${extension[asset.mediaType as keyof typeof extension]}`);
+          expect(existsSync(assetPath)).toBe(true);
+          expect(statSync(assetPath).size).toBe(asset.byteSize);
+          expect(createHash("sha256").update(readFileSync(assetPath)).digest("hex")).toBe(asset.contentHash);
+        }
+        expect(bundle.routes.home.html).toContain('data-cd-poster-asset-key="hero-poster"');
+      } else {
+        expect(bundle.assets.entries).toEqual(expect.arrayContaining([
+          expect.objectContaining({ key: "hero", mediaType: "image/webp" }),
+        ]));
+        for (const asset of bundle.assets.entries) {
+          expect(asset.mediaType).toBe("image/webp");
+          const assetPath = path.join(ROOT, "public", "storefront-recipes", config.templateId, `${asset.contentHash}.webp`);
+          expect(existsSync(assetPath)).toBe(true);
+          expect(statSync(assetPath).size).toBe(asset.byteSize);
+          expect(createHash("sha256").update(readFileSync(assetPath)).digest("hex")).toBe(asset.contentHash);
+        }
+        expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
       }
-      expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
       expect(JSON.stringify(bundle)).not.toMatch(/https?:\/\/|url\s*\(/i);
 
       const previewPath = path.join(ROOT, "public", STORE_TEMPLATE_REGISTRY.templates.find(

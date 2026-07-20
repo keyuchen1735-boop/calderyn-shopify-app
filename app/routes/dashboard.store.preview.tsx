@@ -60,9 +60,10 @@ function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteDat
   }
   const urls: Record<string, string> = { ...runtime1.data.storefrontAssetUrls };
   if (runtime1.bundle.source.kind === "recipe") {
+    const extension = { "image/webp": "webp", "video/webm": "webm", "video/mp4": "mp4" } as const;
     for (const asset of runtime1.bundle.assets.entries) {
-      if (asset.mediaType === "image/webp" && !urls[asset.key]) {
-        urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.contentHash}.webp`;
+      if (!urls[asset.key] && asset.mediaType in extension) {
+        urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.contentHash}.${extension[asset.mediaType as keyof typeof extension]}`;
       }
     }
   }
