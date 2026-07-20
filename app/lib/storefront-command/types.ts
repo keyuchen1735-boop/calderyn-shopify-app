@@ -1,4 +1,4 @@
-﻿import { isUuid } from "../ids";
+import { isUuid } from "../ids";
 import type {
   StorefrontRouteId,
   StoreTemplateId,
