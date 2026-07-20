@@ -318,7 +318,6 @@ describe("addCartLine", () => {
   it("keeps one-time and eligible selling-plan lines distinct and rejects mismatches", async () => {
     catalog.products[0]!.variants[0]!.sellingPlans = [{
       id: "plan-monthly", name: "Monthly delivery", cadence: "Every month",
-      group: { id: "group-subscribe", name: "Subscribe" },
       priceAdjustment: { type: "fixed_price", valueCents: 1799, currency: "USD" },
     }];
     const cart = await buildCart("shop-1");

@@ -75,7 +75,6 @@ describe("runtime-1 public data plans", () => {
     const item = product("plan");
     item.variants[0]!.sellingPlans = [{
       id: "plan-1", name: "Monthly", cadence: "Every month",
-      group: { id: "group-1", name: "Subscribe" },
       priceAdjustment: { type: "fixed_price", valueCents: 1099, currency: "USD" },
     }];
     const data = await resolvePublicData({
@@ -84,7 +83,6 @@ describe("runtime-1 public data plans", () => {
     }, { catalog: catalog([item]), settingsLoader });
     expect(data.product?.variants[0]?.sellingPlans).toEqual([{
       id: "plan-1", name: "Monthly", cadence: "Every month",
-      group: { id: "group-1", name: "Subscribe" },
       priceAdjustment: { type: "fixed_price", valueCents: 1099, currency: "USD" },
     }]);
   });

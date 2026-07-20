@@ -31,7 +31,6 @@ export interface PublicVariant {
     id: string;
     name: string;
     cadence: string;
-    group: { id: string; name: string };
     priceAdjustment: { type: "fixed_price"; valueCents: number; currency: string } | null;
   }>;
 }
@@ -173,7 +172,6 @@ function presentProduct(product: StoreProduct): PublicProduct {
       id: plan.id,
       name: plan.name,
       cadence: plan.cadence,
-      group: { id: plan.group.id, name: plan.group.name },
       priceAdjustment: plan.priceAdjustment ? { ...plan.priceAdjustment } : null,
     })),
   }));

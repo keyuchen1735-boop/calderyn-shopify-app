@@ -213,6 +213,9 @@ describe("sendDraftOrderInvoice", () => {
       quantity: 2,
       unit_price_cents: 1999,
       personalization: { giftNote: "For Mina" },
+      selling_plan_id: "plan-monthly",
+      selling_plan_name: "Monthly delivery",
+      selling_plan_cadence: "Every month",
     }); // 3998
 
     const out = await sendDraftOrderInvoice("shop-1", "cart-1", { email: "Buyer@Example.com" });
@@ -255,7 +258,7 @@ describe("sendDraftOrderInvoice", () => {
       expect.objectContaining({
         confirmationToken: out.confirmationToken,
         totalCents: 3998,
-        lines: [{ title: "Cotton Tee - Small", quantity: 2 }],
+        lines: [{ title: "Cotton Tee - Small — Monthly delivery (Every month)", quantity: 2 }],
       }),
     );
     expect(out.emailSent).toBe(true);

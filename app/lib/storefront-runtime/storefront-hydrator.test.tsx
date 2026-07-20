@@ -222,7 +222,7 @@ describe("runtime-1 route adapters", () => {
     const product = structuredClone(quickViewData.featuredProducts[0]!);
     product.variants[0]!.sellingPlans = [{
       id: "plan-monthly", name: "Monthly delivery", cadence: "Every month",
-      group: { id: "group-1", name: "Subscribe" }, priceAdjustment: null,
+      priceAdjustment: null,
     }];
     const adapters = createRuntimeAdapters({ mode: "public", data: { ...quickViewData, product }, fetcher, refresh: vi.fn() });
     const host = document.createElement("div");

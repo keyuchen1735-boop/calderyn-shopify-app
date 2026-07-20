@@ -114,7 +114,6 @@ export interface StoreSellingPlan {
   id: string;
   name: string;
   cadence: string;
-  group: { id: string; name: string };
   priceAdjustment: { type: "fixed_price"; valueCents: number; currency: string } | null;
 }
 

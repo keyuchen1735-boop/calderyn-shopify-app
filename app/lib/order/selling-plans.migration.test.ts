@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const sql = readFileSync("supabase/migrations/202607200003_storefront_selling_plans.sql", "utf8");
+const personalizationSql = readFileSync("supabase/migrations/202607200002_storefront_cart_line_personalization.sql", "utf8");
 
 describe("trusted selling-plan migration", () => {
   it("persists merchant-owned groups, plans, and variant eligibility", () => {
@@ -19,7 +20,10 @@ describe("trusted selling-plan migration", () => {
 
   it("snapshots plan presentation onto orders and retains rolling RPC signatures", () => {
     expect(sql).toMatch(/alter table public\.order_line[\s\S]*selling_plan_id text[\s\S]*selling_plan_name text[\s\S]*selling_plan_cadence text/);
-    expect(sql).toMatch(/p_personalization jsonb, p_selling_plan_id text/);
-    expect(sql).toMatch(/p_title_snapshot text, p_personalization jsonb\s*\) returns jsonb/);
+    expect(sql.match(/create or replace function public\.cart_add_line_atomic\(/g)).toHaveLength(2);
+    expect(personalizationSql).toMatch(/p_title_snapshot text\s*\) returns jsonb[\s\S]*'\{\}'::jsonb/);
+    expect(sql).toMatch(/p_personalization jsonb,\s*p_selling_plan_id text\s*\) returns jsonb/);
+    expect(sql).toMatch(/p_title_snapshot text,\s*p_personalization jsonb\s*\) returns jsonb[\s\S]*p_personalization,\s*null/);
+    expect(sql).not.toContain("drop function if exists public.cart_add_line_atomic");
   });
 });
