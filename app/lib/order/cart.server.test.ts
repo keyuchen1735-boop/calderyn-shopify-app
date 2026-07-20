@@ -100,11 +100,13 @@ const store = vi.hoisted(() => {
     if (!parent) return { data: null, error: { message: "active cart not found for shop (composite FK)" } };
     const personalization = args.p_personalization ?? {};
     const personalizationHash = JSON.stringify(personalization);
+    const sellingPlanId = args.p_selling_plan_id ?? "";
     const existing = db.cart_line.find(
       (row) => row.shop_id === args.p_shop_id
         && row.cart_id === args.p_cart_id
         && row.variant_id === args.p_variant_id
-        && row.personalization_hash === personalizationHash,
+        && row.personalization_hash === personalizationHash
+        && row.selling_plan_id === sellingPlanId,
     );
     if (existing) {
       existing.quantity = Math.min(999, existing.quantity + Number(args.p_quantity));
@@ -121,6 +123,9 @@ const store = vi.hoisted(() => {
       title_snapshot: args.p_title_snapshot,
       personalization,
       personalization_hash: personalizationHash,
+      selling_plan_id: sellingPlanId,
+      selling_plan_name: sellingPlanId ? "Monthly delivery" : null,
+      selling_plan_cadence: sellingPlanId ? "Every month" : null,
     };
     db.cart_line.push(row);
     return { data: { ...row }, error: null };
@@ -308,6 +313,22 @@ describe("addCartLine", () => {
     const cart = await buildCart("shop-A");
     // shop-B trying to attach a line to shop-A's cart id -> composite FK rejects it.
     await expect(addCartLine("shop-B", cart.id, "v-tee-s", 1)).rejects.toThrow(/composite FK/);
+  });
+
+  it("keeps one-time and eligible selling-plan lines distinct and rejects mismatches", async () => {
+    catalog.products[0]!.variants[0]!.sellingPlans = [{
+      id: "plan-monthly", name: "Monthly delivery", cadence: "Every month",
+      group: { id: "group-subscribe", name: "Subscribe" },
+      priceAdjustment: { type: "fixed_price", valueCents: 1799, currency: "USD" },
+    }];
+    const cart = await buildCart("shop-1");
+    await addCartLine("shop-1", cart.id, "v-tee-s", 1);
+    const planned = await addCartLine("shop-1", cart.id, "v-tee-s", 1, {}, "plan-monthly");
+    expect(store.db.cart_line).toHaveLength(2);
+    expect(planned.sellingPlan).toEqual({ id: "plan-monthly", name: "Monthly delivery", cadence: "Every month" });
+    expect(planned.unitPriceCents).toBe(1799);
+    await expect(addCartLine("shop-1", cart.id, "v-tee-s", 1, {}, "plan-other"))
+      .rejects.toThrow(/not eligible/);
   });
 });
 

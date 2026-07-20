@@ -279,6 +279,7 @@ function validCommerceIntent(intent: CommerceIntent): boolean {
     return typeof intent.productId === "string" && intent.productId.length > 0 && intent.productId.length <= 160 &&
       typeof intent.variantId === "string" && intent.variantId.length > 0 && intent.variantId.length <= 160 &&
       Number.isSafeInteger(intent.quantity) && intent.quantity >= 1 && intent.quantity <= 100 &&
+      (intent.sellingPlanId === undefined || (typeof intent.sellingPlanId === "string" && intent.sellingPlanId.length > 0 && intent.sellingPlanId.length <= 128)) &&
       isValidStorefrontLinePersonalization(intent.personalization);
   }
   if (typeof intent.lineId !== "string" || intent.lineId.length === 0 || intent.lineId.length > 160) return false;

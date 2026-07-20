@@ -27,6 +27,13 @@ export interface PublicVariant {
   compareAtPrice: PublicMoney | null;
   availability: "In stock" | "Sold out";
   available: boolean;
+  sellingPlans?: Array<{
+    id: string;
+    name: string;
+    cadence: string;
+    group: { id: string; name: string };
+    priceAdjustment: { type: "fixed_price"; valueCents: number; currency: string } | null;
+  }>;
 }
 
 export interface PublicProduct {
@@ -63,6 +70,7 @@ export interface PublicCart {
     quantity: number;
     unitPrice: PublicMoney;
     total: PublicMoney;
+    sellingPlan?: { id: string; name: string; cadence: string } | null;
   }>;
   subtotal: PublicMoney;
   discounts: PublicMoney;
@@ -161,6 +169,13 @@ function presentProduct(product: StoreProduct): PublicProduct {
     compareAtPrice: money(variant, "compareAtPriceCents"),
     availability: variant.available ? "In stock" : "Sold out",
     available: variant.available,
+    sellingPlans: (variant.sellingPlans ?? []).map((plan) => ({
+      id: plan.id,
+      name: plan.name,
+      cadence: plan.cadence,
+      group: { id: plan.group.id, name: plan.group.name },
+      priceAdjustment: plan.priceAdjustment ? { ...plan.priceAdjustment } : null,
+    })),
   }));
   const selectedId = selectStorefrontPriceVariant(product)?.id;
   const selected = variants.find((variant) => variant.id === selectedId) ?? null;

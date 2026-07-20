@@ -217,6 +217,42 @@ describe("runtime-1 route adapters", () => {
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).not.toHaveProperty("price");
   });
 
+  it("shows only eligible purchase plans in the trusted slot and submits the selected id", async () => {
+    const fetcher = vi.fn<RuntimeFetcher>(async () => new Response("{}", { status: 200 }));
+    const product = structuredClone(quickViewData.featuredProducts[0]!);
+    product.variants[0]!.sellingPlans = [{
+      id: "plan-monthly", name: "Monthly delivery", cadence: "Every month",
+      group: { id: "group-1", name: "Subscribe" }, priceAdjustment: null,
+    }];
+    const adapters = createRuntimeAdapters({ mode: "public", data: { ...quickViewData, product }, fetcher, refresh: vi.fn() });
+    const host = document.createElement("div");
+    const shadowRoot = host.attachShadow({ mode: "open" });
+    adapters.commerce?.mount({
+      host, shadowRoot, authorityKey: "product:p1",
+      slot: { id: "slot", kind: "addToCart", hostSize: "block", themeTokenIds: [] } as never,
+      bridge: (intent) => adapters.commerce?.dispatch({ authorityKey: "product:p1", slotKind: "addToCart", intent }),
+    });
+    const select = shadowRoot.querySelector<HTMLSelectElement>('select[aria-label="Purchase option"]')!;
+    expect(select.hidden).toBe(false);
+    expect([...select.options].map((option) => option.value)).toEqual(["", "plan-monthly"]);
+    select.value = "plan-monthly";
+    shadowRoot.querySelector<HTMLButtonElement>("button")!.click();
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledWith("/storefront/api/cart/add", expect.objectContaining({
+      body: JSON.stringify({ variantId: "v1", quantity: 1, sellingPlanId: "plan-monthly" }),
+    })));
+    const pickerHost = document.createElement("div");
+    const pickerRoot = pickerHost.attachShadow({ mode: "open" });
+    adapters.commerce?.mount({
+      host: pickerHost, shadowRoot: pickerRoot, authorityKey: "product:p1",
+      slot: { id: "picker", kind: "variantPicker", hostSize: "block", themeTokenIds: [] } as never,
+      bridge: vi.fn(),
+    });
+    const picker = pickerRoot.querySelector("select")!;
+    picker.value = "v2";
+    picker.dispatchEvent(new Event("change"));
+    expect(select.hidden).toBe(true);
+  });
+
   it("dispatches preview commerce only to the authenticated preview simulation action", async () => {
     const fetcher = vi.fn<RuntimeFetcher>(async () => new Response(JSON.stringify({ cart: null }), { status: 200 }));
     const adapters = createRuntimeAdapters({ mode: "preview", previewTemplateId: "atelier-nine", fetcher, refresh: vi.fn() });

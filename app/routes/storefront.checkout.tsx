@@ -204,7 +204,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       summary: {
         lines: priced.lines.map((l) => ({
           id: l.id,
-          title: l.titleSnapshot,
+          title: l.sellingPlan ? `${l.titleSnapshot} — ${l.sellingPlan.name} (${l.sellingPlan.cadence})` : l.titleSnapshot,
           quantity: l.quantity,
           unitPriceCents: l.unitPriceCents,
         })),

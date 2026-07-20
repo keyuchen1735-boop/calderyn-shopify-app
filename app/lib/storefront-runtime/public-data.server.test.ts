@@ -71,6 +71,23 @@ const settingsLoader = vi.fn(async () => ({
 }));
 
 describe("runtime-1 public data plans", () => {
+  it("exposes only merchant-authored public selling-plan fields", async () => {
+    const item = product("plan");
+    item.variants[0]!.sellingPlans = [{
+      id: "plan-1", name: "Monthly", cadence: "Every month",
+      group: { id: "group-1", name: "Subscribe" },
+      priceAdjustment: { type: "fixed_price", valueCents: 1099, currency: "USD" },
+    }];
+    const data = await resolvePublicData({
+      shopId: SHOP, requiredData: [{ kind: "currentProduct" }],
+      route: { kind: "product", handle: item.handle },
+    }, { catalog: catalog([item]), settingsLoader });
+    expect(data.product?.variants[0]?.sellingPlans).toEqual([{
+      id: "plan-1", name: "Monthly", cadence: "Every month",
+      group: { id: "group-1", name: "Subscribe" },
+      priceAdjustment: { type: "fixed_price", valueCents: 1099, currency: "USD" },
+    }]);
+  });
   it("loads live merchant policy links with the server-resolved tenant by default", async () => {
     policyLinksLoaderMock.mockResolvedValueOnce([
       { id: "privacy", title: "Privacy policy", href: "/storefront/policies/privacy" },

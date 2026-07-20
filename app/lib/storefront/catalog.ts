@@ -107,6 +107,15 @@ export interface StoreVariant {
   /** False only when the source variant has no price. Omitted means priced for
    *  compatibility with fixture and legacy variant literals. */
   hasPrice?: boolean;
+  sellingPlans?: StoreSellingPlan[];
+}
+
+export interface StoreSellingPlan {
+  id: string;
+  name: string;
+  cadence: string;
+  group: { id: string; name: string };
+  priceAdjustment: { type: "fixed_price"; valueCents: number; currency: string } | null;
 }
 
 export function selectStorefrontPriceVariant(product: StoreProduct): StoreVariant | null {

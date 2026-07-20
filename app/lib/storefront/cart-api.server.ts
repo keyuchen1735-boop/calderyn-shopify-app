@@ -1,6 +1,7 @@
 import { clientIpKey, rateLimit } from "~/lib/rate-limit.server";
 import {
   CartLineNotFoundError,
+  SellingPlanUnavailableError,
   VariantUnavailableError,
   getCartState,
 } from "~/lib/order/cart.server";
@@ -128,6 +129,7 @@ export function cartContextError(context: Exclude<CartContext, { kind: "active" 
 
 export function mapCartError(error: unknown): Response | null {
   if (error instanceof VariantUnavailableError) return storefrontError(409, "variant_unavailable");
+  if (error instanceof SellingPlanUnavailableError) return storefrontError(422, "selling_plan_unavailable");
   if (error instanceof CartLineNotFoundError) return storefrontError(404, "cart_line_not_found");
   return null;
 }

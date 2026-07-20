@@ -42,6 +42,7 @@ function publicCommerceRequest(intent: CommerceIntent): [string, Record<string, 
     ...(intent.personalization === undefined ? {} : {
       personalization: canonicalizeStorefrontLinePersonalization(intent.personalization),
     }),
+    ...(intent.sellingPlanId === undefined ? {} : { sellingPlanId: intent.sellingPlanId }),
   }];
   if (intent.type === "cart.quantity") return ["/storefront/api/cart/quantity", { lineId: intent.lineId, quantity: intent.quantity }];
   if (intent.type === "cart.remove") return ["/storefront/api/cart/remove", { lineId: intent.lineId }];
@@ -160,6 +161,7 @@ export function createRuntimeAdapters(input: {
   const refresh = input.refresh ?? (() => globalThis.window?.location.reload());
   const locationAssign = input.locationAssign ?? ((href: string) => globalThis.window?.location.assign(href));
   let selectedVariant = input.data?.product?.variants.find((entry) => entry.available) ?? null;
+  const sellingPlanRefreshers = new Set<() => void>();
   const productById = (productId: string) => {
     const products = [
       input.data?.product,
@@ -278,6 +280,7 @@ export function createRuntimeAdapters(input: {
             const variant = input.data?.product?.variants.find((entry) => entry.id === select.value) ?? null;
             if (!variant || !input.data?.product) return;
             selectedVariant = variant;
+            sellingPlanRefreshers.forEach((refreshPlans) => refreshPlans());
             bridge({ type: "variant.select", productId: input.data.product.id, variantId: variant.id });
           };
           shadowRoot.append(select);
@@ -303,6 +306,26 @@ export function createRuntimeAdapters(input: {
         const button = document.createElement("button");
         button.type = "button";
         if (slot.kind === "addToCart") {
+          const planSelect = document.createElement("select");
+          planSelect.setAttribute("aria-label", "Purchase option");
+          const refreshPlans = () => {
+            planSelect.replaceChildren();
+            const plans = selectedVariant?.sellingPlans ?? [];
+            planSelect.hidden = plans.length === 0;
+            const oneTime = document.createElement("option");
+            oneTime.value = "";
+            oneTime.textContent = "One-time purchase";
+            planSelect.append(oneTime);
+            for (const plan of plans) {
+              const option = document.createElement("option");
+              option.value = plan.id;
+              option.textContent = `${plan.name} — ${plan.cadence}`;
+              planSelect.append(option);
+            }
+          };
+          sellingPlanRefreshers.add(refreshPlans);
+          refreshPlans();
+          shadowRoot.append(planSelect);
           const personalizationInputs = new Map<keyof StorefrontLinePersonalization, HTMLInputElement | HTMLTextAreaElement>();
           for (const field of slot.personalizationFields ?? []) {
             const label = document.createElement("label");
@@ -323,6 +346,7 @@ export function createRuntimeAdapters(input: {
             bridge({
               type: "cart.add", productId: input.data!.product!.id, variantId: selectedVariant!.id, quantity: 1,
               ...(Object.keys(personalization).length === 0 ? {} : { personalization }),
+              ...(planSelect.value ? { sellingPlanId: planSelect.value } : {}),
             });
           };
         } else if (slot.kind === "cartSummary" || slot.kind === "cartDrawer") {

@@ -12,6 +12,7 @@ import type {
   StorefrontCatalogSearchPage,
   StoreProduct,
   StoreVariant,
+  StoreSellingPlan,
   StoreCollection,
 } from "./catalog";
 import {
@@ -79,6 +80,42 @@ function toVariant(v: Row, ledgerSellable?: number): StoreVariant {
     available: priced && (tracked ? stock > 0 : true),
     hasPrice: priced,
   };
+}
+
+async function sellingPlansByVariant(
+  sb: Supa,
+  shopId: string,
+  variantIds: string[],
+): Promise<Map<string, StoreSellingPlan[]>> {
+  const result = new Map<string, StoreSellingPlan[]>();
+  if (!variantIds.length) return result;
+  const eligibility = await pagedRows((from, to) => sb.from("variant_selling_plan")
+    .select("variant_id, selling_plan_id, price_cents, currency")
+    .eq("shop_id", shopId).in("variant_id", variantIds).order("variant_id").range(from, to));
+  const planIds = [...new Set(eligibility.map((row) => String(row.selling_plan_id)))];
+  if (!planIds.length) return result;
+  const plans = await pagedRows((from, to) => sb.from("selling_plan")
+    .select("id, group_id, name, cadence").eq("shop_id", shopId).in("id", planIds).order("id").range(from, to));
+  const groupIds = [...new Set(plans.map((row) => String(row.group_id)))];
+  const groups = await pagedRows((from, to) => sb.from("selling_plan_group")
+    .select("id, name").eq("shop_id", shopId).in("id", groupIds).order("id").range(from, to));
+  const groupById = new Map(groups.map((row) => [String(row.id), String(row.name)]));
+  const planById = new Map(plans.flatMap((row) => {
+    const groupName = groupById.get(String(row.group_id));
+    return groupName ? [[String(row.id), row] as const] : [];
+  }));
+  for (const row of eligibility) {
+    const plan = planById.get(String(row.selling_plan_id));
+    if (!plan) continue;
+    pushInto(result, String(row.variant_id), {
+      id: String(plan.id), name: String(plan.name), cadence: String(plan.cadence),
+      group: { id: String(plan.group_id), name: groupById.get(String(plan.group_id))! },
+      priceAdjustment: row.price_cents == null ? null : {
+        type: "fixed_price", valueCents: Number(row.price_cents), currency: String(row.currency),
+      },
+    });
+  }
+  return result;
 }
 
 // Sellable stock per variant from the inventory ledger, summed across locations.
@@ -179,15 +216,20 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     shopId,
     variants.map((v) => String(v.id)),
   );
+  const sellingPlansPromise = sellingPlansByVariant(sb, shopId, variants.map((v) => String(v.id)));
 
   const signed = await signMediaPaths(
     media.filter((m) => m.storage_path).map((m) => String(m.storage_path)),
   );
   const sellable = await sellablePromise;
+  const sellingPlans = await sellingPlansPromise;
 
   const variantsByProduct = new Map<string, StoreVariant[]>();
   for (const v of variants)
-    pushInto(variantsByProduct, String(v.product_id), toVariant(v, sellable.get(String(v.id))));
+    pushInto(variantsByProduct, String(v.product_id), {
+      ...toVariant(v, sellable.get(String(v.id))),
+      sellingPlans: sellingPlans.get(String(v.id)) ?? [],
+    });
 
   // Primary image leads, then by position. A promoted mirror image carries an
   // external_url (Shopify CDN, hotlinked) and is used directly; an owned/uploaded
@@ -558,6 +600,7 @@ export const ownedCatalog: StorefrontCatalog = {
     const sellable = await sellableByVariant(sb, shopId, [variantId]);
     const productRow = productResult.data as Row;
     const variant = toVariant(variantRow, sellable.get(variantId));
+    variant.sellingPlans = (await sellingPlansByVariant(sb, shopId, [variantId])).get(variantId) ?? [];
     const product: StoreProduct = {
       id: String(productRow.id),
       handle: String(productRow.handle),

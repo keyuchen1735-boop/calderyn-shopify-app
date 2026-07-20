@@ -14,11 +14,12 @@ const cart = vi.hoisted(() => ({
   getCartState: vi.fn(async (): Promise<string | null> => { calls.push("state"); return "cart"; }),
 }));
 
-const { VariantUnavailableError, CartLineNotFoundError } = vi.hoisted(() => ({
+const { VariantUnavailableError, CartLineNotFoundError, SellingPlanUnavailableError } = vi.hoisted(() => ({
   VariantUnavailableError: class VariantUnavailableError extends Error {
     constructor(readonly variantId: string, readonly reason: "not_found" | "unavailable") { super(reason); }
   },
   CartLineNotFoundError: class CartLineNotFoundError extends Error {},
+  SellingPlanUnavailableError: class SellingPlanUnavailableError extends Error {},
 }));
 
 vi.mock("~/lib/storefront/shop.server", () => ({
@@ -33,6 +34,7 @@ vi.mock("~/lib/order/cart.server", () => ({
   ...cart,
   VariantUnavailableError,
   CartLineNotFoundError,
+  SellingPlanUnavailableError,
 }));
 
 // eslint-disable-next-line import/first -- route imports follow hoisted mocks
@@ -171,6 +173,23 @@ describe("storefront cart JSON bridge", () => {
       giftWrap: "gold",
       recipient: "Mina",
     });
+  });
+
+  it("passes only a bounded selling-plan identity to the server-owned pricing path", async () => {
+    const response = await addAction(actionArgs(await jsonRequest(
+      "/storefront/api/cart/add",
+      { variantId: "v-1", quantity: 2, sellingPlanId: "plan-monthly" },
+    )));
+    expect(response.status).toBe(200);
+    expect(cart.addCartLine).toHaveBeenCalledWith("shop-a", NEW_CART_ID, "v-1", 2, {}, "plan-monthly");
+  });
+
+  it.each(["", "x".repeat(129), 42])("rejects invalid selling-plan identity %j", async (sellingPlanId) => {
+    const response = await addAction(actionArgs(await jsonRequest(
+      "/storefront/api/cart/add", { variantId: "v-1", quantity: 1, sellingPlanId },
+    )));
+    expect(response.status).toBe(422);
+    expect(cart.addCartLine).not.toHaveBeenCalled();
   });
 
   it.each([

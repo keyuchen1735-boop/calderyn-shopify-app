@@ -33,6 +33,12 @@ export class VariantUnavailableError extends Error {
     this.variantId = variantId;
   }
 }
+export class SellingPlanUnavailableError extends Error {
+  constructor(readonly sellingPlanId: string) {
+    super(`selling plan ${sellingPlanId} is not eligible for this variant`);
+    this.name = "SellingPlanUnavailableError";
+  }
+}
 
 /** The demo shell has no shop row; its sentinel id can never key the uuid cart
  *  tables. Fail with a named error here (defense in depth) so any cart entry
@@ -61,9 +67,10 @@ export interface CartLine {
   currency: string;
   titleSnapshot: string;
   personalization: StorefrontLinePersonalization;
+  sellingPlan?: { id: string; name: string; cadence: string } | null;
 }
 
-const LINE_COLS = "id, cart_id, variant_id, quantity, unit_price_cents, currency, title_snapshot, personalization";
+const LINE_COLS = "id, cart_id, variant_id, quantity, unit_price_cents, currency, title_snapshot, personalization, selling_plan_id, selling_plan_name, selling_plan_cadence";
 
 export interface PricedCart {
   cartId: string;
@@ -143,6 +150,7 @@ export async function addCartLine(
   variantId: string,
   quantity: number,
   personalization: StorefrontLinePersonalization = {},
+  sellingPlanId?: string,
 ): Promise<CartLine & { productId: string }> {
   if (!shopId) throw new Error("shopId is required");
   assertPersistableShop(shopId);
@@ -163,16 +171,22 @@ export async function addCartLine(
     throw new VariantUnavailableError(variantId, "unavailable");
   }
   const canonicalPersonalization = canonicalizeStorefrontLinePersonalization(personalization);
+  const sellingPlan = sellingPlanId
+    ? (resolved.variant.sellingPlans ?? []).find((plan) => plan.id === sellingPlanId)
+    : null;
+  if (sellingPlanId && !sellingPlan) throw new SellingPlanUnavailableError(sellingPlanId);
+  const adjustedPrice = sellingPlan?.priceAdjustment;
 
   const { data, error } = await getSupabase().rpc("cart_add_line_atomic", {
     p_shop_id: shopId,
     p_cart_id: cartId,
     p_variant_id: variantId,
     p_quantity: quantity,
-    p_unit_price_cents: resolved.variant.priceCents,
-    p_currency: resolved.variant.currency.toLowerCase(),
+    p_unit_price_cents: adjustedPrice?.valueCents ?? resolved.variant.priceCents,
+    p_currency: (adjustedPrice?.currency ?? resolved.variant.currency).toLowerCase(),
     p_title_snapshot: snapshotTitle(resolved.product, resolved.variant),
     p_personalization: canonicalPersonalization,
+    p_selling_plan_id: sellingPlan?.id ?? null,
   });
   if (error) throw error;
   if (!data || typeof data !== "object" || Array.isArray(data)) {
@@ -383,5 +397,10 @@ function mapLine(row: Record<string, unknown>): CartLine {
     personalization: personalization && typeof personalization === "object" && !Array.isArray(personalization)
       ? canonicalizeStorefrontLinePersonalization(personalization as StorefrontLinePersonalization)
       : {},
+    sellingPlan: row.selling_plan_id == null || row.selling_plan_id === "" ? null : {
+      id: String(row.selling_plan_id),
+      name: String(row.selling_plan_name),
+      cadence: String(row.selling_plan_cadence),
+    },
   };
 }
