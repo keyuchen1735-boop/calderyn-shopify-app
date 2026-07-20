@@ -1,26 +1,78 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const templateIds = ["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"];
 const templateIdSet = new Set(templateIds);
+const requiredRoles = ["hero", "hero-alt", "pdp-detail"];
 
-async function verify(manifestInput, proofInput) {
-  const manifestPath = resolve(manifestInput);
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  const proof = JSON.parse(await readFile(resolve(proofInput), "utf8"));
-  const proofRecords = Array.isArray(proof) ? proof : Array.isArray(proof.records) ? proof.records : [proof];
-  if (!proofRecords.some((record) => record?.masterHash === manifest.masterHash &&
-    record?.technicalApproval?.approved === true && record.technicalApproval.masterHash === manifest.masterHash &&
-    record?.visualApproval?.approved === true && record.visualApproval.scope === "full-loop")) {
-    throw new Error("video-proof.json requires exact-master technical approval and full-loop visual approval");
-  }
-  const expectedTypes = new Set(["video/mp4", "video/webm", "image/webp"]);
-  if (!Array.isArray(manifest.entries) || manifest.entries.length !== 3) throw new Error("Manifest must contain MP4, WebM, and poster entries");
-  for (const entry of manifest.entries) {
-    if (!expectedTypes.delete(entry.mediaType)) throw new Error(`Unexpected or duplicate media type ${entry.mediaType}`);
+function publicAssetBaseUrl() {
+  const explicit = process.env.STOREFRONT_RECIPE_ASSET_BASE_URL?.replace(/\/$/, "");
+  if (explicit) return explicit;
+  const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/$/, "");
+  return supabaseUrl ? `${supabaseUrl}/storage/v1/object/public` : null;
+}
+
+async function resolveMediaPath(entry, manifestPath, downloadDir) {
+  if (typeof entry.localPath === "string" && entry.localPath) {
     const localPath = resolve(dirname(manifestPath), entry.localPath);
+    try {
+      await access(localPath);
+      return localPath;
+    } catch {
+      // Fall through to the immutable public object when a local derivative is absent.
+    }
+  }
+  const baseUrl = publicAssetBaseUrl();
+  if (!baseUrl) throw new Error(`No readable local derivative or public Supabase URL for ${entry.objectPath}`);
+  const url = `${baseUrl}/${entry.objectPath}`;
+  let response;
+  try {
+    response = await fetch(url);
+  } catch (error) {
+    throw new Error(`Failed to fetch immutable media ${url}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response.ok) throw new Error(`Failed to fetch immutable media ${url}: HTTP ${response.status}`);
+  const localPath = join(downloadDir, `${entry.contentHash}.${entry.mediaType === "video/mp4" ? "mp4" : entry.mediaType === "video/webm" ? "webm" : "webp"}`);
+  await writeFile(localPath, Buffer.from(await response.arrayBuffer()));
+  return localPath;
+}
+
+function assertRoleContract(manifest, expectedTemplateId) {
+  if (!templateIdSet.has(manifest.templateId)) throw new Error(`Unknown new recipe template ownership: ${manifest.templateId}`);
+  if (expectedTemplateId && manifest.templateId !== expectedTemplateId) {
+    throw new Error(`Template ownership mismatch: expected ${expectedTemplateId}, received ${manifest.templateId}`);
+  }
+  if (!Array.isArray(manifest.records) || manifest.records.length !== requiredRoles.length) {
+    throw new Error("Media manifest requires exactly one role record for hero, hero-alt, and pdp-detail");
+  }
+  const remaining = new Set(requiredRoles);
+  for (const record of manifest.records) {
+    if (record?.templateId !== manifest.templateId) throw new Error(`Role ownership mismatch for ${record?.role ?? "unknown"}: expected ${manifest.templateId}`);
+    if (!remaining.delete(record.role)) throw new Error(`Unexpected or duplicate media role: ${record.role}`);
+  }
+  if (remaining.size > 0) throw new Error("Media manifest requires exactly one role record for hero, hero-alt, and pdp-detail");
+}
+
+function assertProof(proofRecords, record) {
+  if (!proofRecords.some((proof) => proof?.masterHash === record.masterHash &&
+    proof?.technicalApproval?.approved === true && proof.technicalApproval.masterHash === record.masterHash &&
+    proof?.visualApproval?.approved === true && proof.visualApproval.scope === "full-loop")) {
+    throw new Error(`video-proof.json requires exact-master technical approval and full-loop visual approval for ${record.role}`);
+  }
+}
+
+async function verifyRecord(manifest, record, proofRecords, manifestPath, downloadDir) {
+  assertProof(proofRecords, record);
+  const expectedTypes = new Set(["video/mp4", "video/webm", "image/webp"]);
+  if (!Array.isArray(record.entries) || record.entries.length !== 3) throw new Error(`${record.role} must contain MP4, WebM, and poster entries`);
+  for (const entry of record.entries) {
+    if (!expectedTypes.delete(entry.mediaType)) throw new Error(`Unexpected or duplicate media type ${entry.mediaType} for ${record.role}`);
+    const extension = entry.mediaType === "video/mp4" ? "mp4" : entry.mediaType === "video/webm" ? "webm" : "webp";
+    if (entry.objectPath !== `storefront-recipe-assets/${manifest.templateId}/${entry.contentHash}.${extension}`) throw new Error(`Object path is not content-addressed for ${record.role}`);
+    const localPath = await resolveMediaPath(entry, manifestPath, downloadDir);
     const bytes = await readFile(localPath);
     const hash = createHash("sha256").update(bytes).digest("hex");
     if (hash !== entry.contentHash || bytes.byteLength !== entry.byteSize) throw new Error(`Hash or byte size mismatch for ${localPath}`);
@@ -36,11 +88,23 @@ async function verify(manifestInput, proofInput) {
       if (stream.codec_name !== expectedCodec) throw new Error(`Unexpected codec for ${localPath}`);
     }
     if (entry.mediaType === "image/webp" && stream.codec_name !== "webp") throw new Error(`Unexpected WebP poster codec for ${localPath}`);
-    const extension = entry.mediaType === "video/mp4" ? "mp4" : entry.mediaType === "video/webm" ? "webm" : "webp";
-    if (entry.objectPath !== `storefront-recipe-assets/${manifest.templateId}/${entry.contentHash}.${extension}`) throw new Error(`Object path is not content-addressed for ${localPath}`);
   }
-  if (expectedTypes.size > 0) throw new Error("Manifest is missing a required media derivative");
-  process.stdout.write(`Verified ${manifest.templateId}/${manifest.role} ${manifest.masterHash}\n`);
+  if (expectedTypes.size > 0) throw new Error(`${record.role} is missing a required media derivative`);
+  process.stdout.write(`Verified ${manifest.templateId}/${record.role} ${record.masterHash}\n`);
+}
+
+async function verify(manifestInput, proofInput, expectedTemplateId) {
+  const manifestPath = resolve(manifestInput);
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const proof = JSON.parse(await readFile(resolve(proofInput), "utf8"));
+  const proofRecords = Array.isArray(proof) ? proof : Array.isArray(proof.records) ? proof.records : [proof];
+  assertRoleContract(manifest, expectedTemplateId);
+  const downloadDir = await mkdtemp(join(tmpdir(), "storefront-recipe-verify-"));
+  try {
+    for (const record of manifest.records) await verifyRecord(manifest, record, proofRecords, manifestPath, downloadDir);
+  } finally {
+    await rm(downloadDir, { recursive: true, force: true });
+  }
 }
 
 async function verifyTemplate(templateId) {
@@ -49,7 +113,7 @@ async function verifyTemplate(templateId) {
   const manifestPath = join(recipePath, "media-manifest.json");
   const proofPath = join(recipePath, "video-proof.json");
   try {
-    await verify(manifestPath, proofPath);
+    await verify(manifestPath, proofPath, templateId);
   } catch (error) {
     throw new Error(`Failed to verify ${templateId} using ${manifestPath} and ${proofPath}: ${error instanceof Error ? error.message : String(error)}`);
   }

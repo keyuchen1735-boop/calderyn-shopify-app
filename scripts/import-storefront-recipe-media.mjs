@@ -72,4 +72,15 @@ for (const item of derived) {
   item.objectPath = `storefront-recipe-assets/${objectKey}`;
 }
 const videoStream = masterProbe.streams?.find((stream) => stream.width && stream.height);
-process.stdout.write(`${JSON.stringify({ templateId, role, masterHash, duration, width: videoStream?.width, height: videoStream?.height, proofPath, entries: derived.map(({ bytes: _bytes, path, ...entry }) => ({ ...entry, localPath: relative(dirname(proofPath), path) })) }, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify({
+  templateId,
+  records: [{
+    templateId,
+    role,
+    masterHash,
+    duration,
+    width: videoStream?.width,
+    height: videoStream?.height,
+    entries: derived.map(({ bytes: _bytes, path, ...entry }) => ({ ...entry, localPath: relative(dirname(proofPath), path) })),
+  }],
+}, null, 2)}\n`);
