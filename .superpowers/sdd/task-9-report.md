@@ -1,13 +1,13 @@
 # Task 9 report — Forge
 
-## Outcome
+## Status
 
-Implemented the isolated `forge@1` storefront recipe and static prototype without changing registries or shared runtime code. Forge compiles a nine-route jobsite blueprint using the approved `jobsite-blueprint`, `exploded-tool-hero`, `blueprint-flow`, and `tool-diagrams` archetypes.
+This is an interim isolated `forge@1` recipe slice and static prototype, not a production-complete Forge experience. It does not change registries or shared runtime code. The slice compiles a nine-route jobsite blueprint using the approved `jobsite-blueprint`, `exploded-tool-hero`, `blueprint-flow`, and `tool-diagrams` archetypes.
 
 ## Commerce and evidence boundaries
 
 - Product images, titles, descriptions, prices, availability, variants, collection copy, cart lines, and totals use public live merchant bindings.
-- Project filters invoke `collection.filter` against merchant-supplied `tag` values; sorting invokes `collection.sort`.
+- Recipe-authored project filters invoke `collection.filter` against fixed tag values; only live products that genuinely carry the selected catalog tag appear. Sorting emits the accepted `relevance`, `price_asc`, and `price_desc` values.
 - The project loadout lists live featured products and tells shoppers to verify and add each item individually. It does not claim a hidden kit or synthetic multi-add.
 - Product purchase uses trusted `variantPicker` and `addToCart` hosts. Home/collection quick views, cart line controls, cart summary, and shell cart drawer use trusted hosts outside recipe-styled ancestors.
 - No specification link is rendered because no merchant-owned file binding exists. The recipe contains no PDF URL or download control.
@@ -45,17 +45,19 @@ GREEN:
 
 ```text
 npm test -- app/lib/storefront-recipes/forge/bundle.test.ts app/lib/storefront-recipes/factory.test.ts app/lib/storefront-recipes/interactive-contract.test.ts app/lib/storefront-recipes/route-matrix.test.ts
-4 files passed, 32 tests passed
+4 files passed, 33 tests passed
 ```
+
+The review follow-up first failed against the old single `featured`/`low`/`high` sort control and stale merchant-supplied filter copy. The added jsdom test now hydrates Forge's compiled runtime intents, clicks the three accepted sort controls and a project filter, and verifies the resulting public `sort` and `filter.tag` URL data paths.
 
 ## Verification
 
 - `npm run typecheck` — passed.
-- `npm run lint` — passed with 14 pre-existing warnings and zero errors.
+- Touched-file ESLint for `bundle.ts` and `bundle.test.ts` — passed with zero warnings or errors.
 - `npm run build` — passed, including `verify:client-bundle` across 2,577 client files.
 - `git diff --check` — passed.
 - Self-review confirmed Task 9 owns only the Forge recipe, tests, media metadata/briefs, prototype, and this report. No registry, shared compiler/runtime, or secret files changed.
 
 ## Integration note
 
-Forge remains intentionally unregistered. Task 12 is responsible for registry and runtime exposure after media approval and cross-recipe integration review.
+Forge remains intentionally unregistered. A real multi-item bundle flow, merchant-bound specification file, structured merchant standards/compatibility data, and generated/approved media are still incomplete. Task 12 is responsible for registry and runtime exposure only after those gaps and cross-recipe integration are reviewed.

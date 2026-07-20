@@ -1,7 +1,11 @@
+// @vitest-environment jsdom
+
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
+import { hydrateStorefront } from "~/lib/storefront-runtime/hydrate";
+import { createRuntimeAdapters } from "~/lib/storefront-runtime/storefront-hydrator";
 
 const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((node) =>
   node.kind === "text" ? [] : [...(node.repeat ? [node.repeat.source] : []), ...repeats(node.children)]
@@ -53,7 +57,8 @@ describe("Forge storefront recipe", () => {
     expect(actions(bundle.routes.collection)).toEqual(expect.arrayContaining(["collection.filter", "collection.sort"]));
     expect(bundle.routes.collection.interactions.transitions.filter((item) => item.action.type === "collection.filter"))
       .toSatisfy((items: RouteArtifact["interactions"]["transitions"]) => items.length >= 4);
-    expect(bundle.routes.collection.html).toContain("Merchant-supplied project tags");
+    expect(bundle.routes.collection.html).toContain("Project filters / live catalog tags");
+    expect(bundle.routes.collection.html).toContain("Only live products carrying the selected catalog tag appear");
     expect(dataPaths(bundle.routes.collection)).toEqual(expect.arrayContaining([
       "collection.title", "collection.description", "product.primaryImage", "product.title", "product.description",
       "product.price", "product.availability",
@@ -83,6 +88,50 @@ describe("Forge storefront recipe", () => {
     expect(bundle.routes.cart.trustedSlots.map((slot) => slot.kind)).toEqual(
       expect.arrayContaining(["cartLineControls", "cartSummary"]),
     );
+  });
+
+  it("clicks accepted sort and project-filter controls into public collection URLs", async () => {
+    const module = await import("./bundle");
+    const route = module.FORGE_RECIPE.bundle.routes.collection;
+    const assign = vi.fn();
+    window.history.replaceState({}, "", "/storefront/collections/tools?cursor=stale");
+    document.body.innerHTML = `<div id="forge-runtime">${route.html}</div>`;
+    const root = document.getElementById("forge-runtime") as HTMLElement;
+    const intentArtifact: RouteArtifact = {
+      ...route,
+      bindings: [],
+      trustedSlots: [],
+      interactions: { ...route.interactions, state: [], bindings: [] },
+    };
+    const runtime = hydrateStorefront({
+      root,
+      artifact: intentArtifact,
+      adapters: createRuntimeAdapters({ mode: "public", locationAssign: assign }),
+    });
+    expect(runtime.hydrated).toBe(true);
+
+    const sortControls = route.interactions.transitions
+      .filter((transition) => transition.action.type === "collection.sort")
+      .map((transition) => document.getElementById(transition.sourceId) as HTMLButtonElement | null);
+    expect(sortControls).toHaveLength(3);
+    sortControls.forEach((control) => control?.click());
+
+    const framingControl = [...root.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Framing");
+    expect(framingControl).toBeTruthy();
+    framingControl?.click();
+
+    expect(assign.mock.calls.map(([href]) => href)).toEqual([
+      "/storefront/collections/tools?sort=relevance",
+      "/storefront/collections/tools?sort=price_asc",
+      "/storefront/collections/tools?sort=price_desc",
+      "/storefront/collections/tools?filter.tag=framing",
+    ]);
+    for (const [href] of assign.mock.calls) {
+      const url = new URL(href, window.location.origin);
+      expect([...url.searchParams.keys()].every((key) => key === "sort" || key === "filter.tag")).toBe(true);
+    }
+    runtime.teardown();
   });
 
   it("fails media closed while preserving exactly three trusted video roles", async () => {
@@ -125,8 +174,12 @@ describe("Forge storefront recipe", () => {
 
     expect(prototype).toContain("<!doctype html>");
     expect(prototype).toContain("Merchant compatibility record");
-    expect(prototype).toContain("Merchant-supplied project tags");
+    expect(prototype).toContain("Project filters / live catalog tags");
+    expect(prototype).toContain("Only live products carrying the selected catalog tag appear");
     expect(prototype).not.toMatch(/https?:\/\//);
     expect(brief.match(/^## Video brief:/gm)).toHaveLength(3);
+    const durations = [...brief.matchAll(/^- Duration: (\d+) seconds/gm)].map((match) => Number(match[1]));
+    expect(durations).toHaveLength(3);
+    expect(durations.every((duration) => duration >= 8 && duration <= 12)).toBe(true);
   });
 });
