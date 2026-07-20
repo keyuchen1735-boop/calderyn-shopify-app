@@ -11,12 +11,14 @@ SHOP_B = "91000000-0000-0000-0000-000000000002"
 CAMPAIGN_A = "92000000-0000-0000-0000-000000000001"
 CAMPAIGN_BOUNDARIES = "92000000-0000-0000-0000-000000000002"
 CAMPAIGN_CATALOG = "92000000-0000-0000-0000-000000000003"
-CAMPAIGN_MISSING = "92000000-0000-0000-0000-000000000004"
+CAMPAIGN_MISSING_COGS = "92000000-0000-0000-0000-000000000004"
 CAMPAIGN_B = "92000000-0000-0000-0000-000000000005"
+CAMPAIGN_MISSING_CARRIER = "92000000-0000-0000-0000-000000000006"
 SKU_SNAPSHOT = "93000000-0000-0000-0000-000000000001"
 SKU_QB = "93000000-0000-0000-0000-000000000002"
 SKU_CATALOG = "93000000-0000-0000-0000-000000000003"
 SKU_MISSING = "93000000-0000-0000-0000-000000000004"
+ANCHOR_OFFSET = -120
 
 
 async def _insert_campaign(conn, campaign_id, shop_id, name):
@@ -129,7 +131,8 @@ async def _seed_performance(conn):
     await _insert_campaign(conn, CAMPAIGN_A, SHOP_A, "BFCM Revenue")
     await _insert_campaign(conn, CAMPAIGN_BOUNDARIES, SHOP_A, "Always On")
     await _insert_campaign(conn, CAMPAIGN_CATALOG, SHOP_A, "Catalog Sale")
-    await _insert_campaign(conn, CAMPAIGN_MISSING, SHOP_A, "Missing Costs")
+    await _insert_campaign(conn, CAMPAIGN_MISSING_COGS, SHOP_A, "Missing COGS")
+    await _insert_campaign(conn, CAMPAIGN_MISSING_CARRIER, SHOP_A, "Missing Carrier")
     await _insert_campaign(conn, CAMPAIGN_B, SHOP_B, "Other Shop Sale")
 
     await conn.execute(
@@ -151,18 +154,29 @@ async def _seed_performance(conn):
         order_id="94000000-0000-0000-0000-000000000001",
         campaign_id=CAMPAIGN_A,
         sku_id=SKU_SNAPSHOT,
-        day_offset=0,
+        day_offset=ANCHOR_OFFSET,
         attributed_revenue_cents=4500,
         ship_cost_cents=300,
         unit_cost_cents_snapshot=1000,
         refund_cents=500,
+    )
+    await conn.execute(
+        """
+        insert into public.order_line_fact
+          (shop_id, order_id, sku_id, external_line_id, quantity, price_cents,
+           total_cents, unit_cost_cents_snapshot)
+        values ($1, $2, $3, 'fanout-line', 1, 0, 0, 250)
+        """,
+        SHOP_A,
+        "94000000-0000-0000-0000-000000000001",
+        SKU_SNAPSHOT,
     )
     await _insert_order(
         conn,
         order_id="94000000-0000-0000-0000-000000000002",
         campaign_id=CAMPAIGN_A,
         sku_id=SKU_QB,
-        day_offset=-29,
+        day_offset=ANCHOR_OFFSET - 29,
         attributed_revenue_cents=2000,
         ship_cost_cents=200,
     )
@@ -171,18 +185,37 @@ async def _seed_performance(conn):
         order_id="94000000-0000-0000-0000-000000000003",
         campaign_id=CAMPAIGN_CATALOG,
         sku_id=SKU_CATALOG,
-        day_offset=0,
+        day_offset=ANCHOR_OFFSET,
         attributed_revenue_cents=1000,
         ship_cost_cents=100,
     )
     await _insert_order(
         conn,
         order_id="94000000-0000-0000-0000-000000000004",
-        campaign_id=CAMPAIGN_MISSING,
+        campaign_id=CAMPAIGN_MISSING_COGS,
         sku_id=SKU_MISSING,
-        day_offset=0,
+        day_offset=ANCHOR_OFFSET,
+        attributed_revenue_cents=1000,
+        ship_cost_cents=100,
+    )
+    await _insert_order(
+        conn,
+        order_id="94000000-0000-0000-0000-000000000005",
+        campaign_id=CAMPAIGN_MISSING_CARRIER,
+        sku_id=SKU_CATALOG,
+        day_offset=ANCHOR_OFFSET,
         attributed_revenue_cents=1000,
         ship_cost_cents=None,
+    )
+    await _insert_order(
+        conn,
+        order_id="94000000-0000-0000-0000-000000000006",
+        campaign_id=CAMPAIGN_A,
+        sku_id=SKU_SNAPSHOT,
+        day_offset=ANCHOR_OFFSET - 30,
+        attributed_revenue_cents=900,
+        ship_cost_cents=100,
+        unit_cost_cents_snapshot=100,
     )
 
     await conn.executemany(
@@ -192,16 +225,16 @@ async def _seed_performance(conn):
         values ($1, $2, current_date + $3::integer, $4)
         """,
         [
-            (SHOP_A, CAMPAIGN_A, 0, 1000),
-            (SHOP_A, CAMPAIGN_A, -29, 1000),
-            (SHOP_A, CAMPAIGN_CATALOG, 0, 100),
-            (SHOP_A, CAMPAIGN_BOUNDARIES, -6, 6),
-            (SHOP_A, CAMPAIGN_BOUNDARIES, -7, 7),
-            (SHOP_A, CAMPAIGN_BOUNDARIES, -29, 29),
-            (SHOP_A, CAMPAIGN_BOUNDARIES, -30, 30),
-            (SHOP_A, CAMPAIGN_BOUNDARIES, -89, 89),
-            (SHOP_A, CAMPAIGN_BOUNDARIES, -90, 90),
-            (SHOP_B, CAMPAIGN_B, 0, 9999),
+            (SHOP_A, CAMPAIGN_A, ANCHOR_OFFSET, 1000),
+            (SHOP_A, CAMPAIGN_A, ANCHOR_OFFSET - 29, 1000),
+            (SHOP_A, CAMPAIGN_CATALOG, ANCHOR_OFFSET, 100),
+            (SHOP_A, CAMPAIGN_BOUNDARIES, ANCHOR_OFFSET - 6, 6),
+            (SHOP_A, CAMPAIGN_BOUNDARIES, ANCHOR_OFFSET - 7, 7),
+            (SHOP_A, CAMPAIGN_BOUNDARIES, ANCHOR_OFFSET - 29, 29),
+            (SHOP_A, CAMPAIGN_BOUNDARIES, ANCHOR_OFFSET - 30, 30),
+            (SHOP_A, CAMPAIGN_BOUNDARIES, ANCHOR_OFFSET - 89, 89),
+            (SHOP_A, CAMPAIGN_BOUNDARIES, ANCHOR_OFFSET - 90, 90),
+            (SHOP_B, CAMPAIGN_B, ANCHOR_OFFSET, 9999),
         ],
     )
 
@@ -216,7 +249,10 @@ async def test_detector_precedence_and_insert_trigger(pg_pool, seed_shop):
               detect_campaign_sale_type('Cyber Monday BFCM'),
               detect_campaign_sale_type('BFCM holiday sale'),
               detect_campaign_sale_type('Holiday seasonal sale'),
-              detect_campaign_sale_type('Seasonal sale'),
+              detect_campaign_sale_type('Spring sale'),
+              detect_campaign_sale_type('Back to School'),
+              detect_campaign_sale_type('Spring Awareness'),
+              detect_campaign_sale_type('Waterfall'),
               detect_campaign_sale_type('General sale'),
               detect_campaign_sale_type('Always on awareness')
             ]
@@ -227,6 +263,9 @@ async def test_detector_precedence_and_insert_trigger(pg_pool, seed_shop):
             "Black Friday",
             "Holiday",
             "Seasonal",
+            "Seasonal",
+            None,
+            None,
             "General Sale",
             None,
         ]
@@ -301,21 +340,29 @@ async def test_campaign_performance_scopes_tenant_and_calculates_profit(pg_pool,
     assert by_id[CAMPAIGN_A]["orders"] == 2
     assert by_id[CAMPAIGN_A]["revenue_cents"] == 6000
     assert by_id[CAMPAIGN_A]["spend_cents"] == 2000
-    assert by_id[CAMPAIGN_A]["profit_cents"] == 1851
+    assert by_id[CAMPAIGN_A]["profit_cents"] == 1601
     assert by_id[CAMPAIGN_A]["true_roas"] == Decimal("3.0000")
     assert by_id[CAMPAIGN_A]["cost_complete"] is True
     assert set(by_id[CAMPAIGN_A]["cost_sources"]) == {"snapshot", "quickbooks"}
     assert by_id[CAMPAIGN_CATALOG]["cost_sources"] == ["catalog"]
-    assert by_id[CAMPAIGN_MISSING]["cost_complete"] is False
-    assert by_id[CAMPAIGN_MISSING]["profit_cents"] is None
-    assert by_id[CAMPAIGN_MISSING]["true_roas"] is None
+    assert by_id[CAMPAIGN_MISSING_COGS]["cost_complete"] is False
+    assert by_id[CAMPAIGN_MISSING_COGS]["profit_cents"] == 841
+    assert by_id[CAMPAIGN_MISSING_COGS]["true_roas"] is None
+    assert by_id[CAMPAIGN_MISSING_CARRIER]["cost_complete"] is False
+    assert by_id[CAMPAIGN_MISSING_CARRIER]["profit_cents"] == 766
     assert window_spend == {7: 6, 30: 42, 90: 161}
 
 
+@pytest.mark.parametrize(
+    ("window", "message"),
+    [(14, "unsupported campaign window: 14"), (None, "unsupported campaign window: <NULL>")],
+)
 @pytest.mark.asyncio
-async def test_campaign_performance_rejects_unsupported_window(pg_pool, seed_shop):
+async def test_campaign_performance_rejects_unsupported_window(
+    pg_pool, seed_shop, window, message
+):
     await seed_shop(SHOP_A)
     async with pg_pool.acquire() as conn:
         async with with_shop_context(conn, SHOP_A):
-            with pytest.raises(asyncpg.InvalidParameterValueError, match="unsupported campaign window: 14"):
-                await conn.fetch("select * from campaign_performance(14)")
+            with pytest.raises(asyncpg.InvalidParameterValueError, match=message):
+                await conn.fetch("select * from campaign_performance($1::integer)", window)

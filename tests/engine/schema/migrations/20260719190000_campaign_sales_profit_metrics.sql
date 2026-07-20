@@ -19,7 +19,7 @@ as $$
       then 'Black Friday'
     when lower(coalesce(campaign_name, '')) ~ 'holiday|christmas|xmas|boxing[[:space:]-]*day|new[[:space:]-]*year'
       then 'Holiday'
-    when lower(coalesce(campaign_name, '')) ~ 'seasonal|spring|summer|autumn|fall|winter'
+    when lower(coalesce(campaign_name, '')) ~ '(^|[^a-z0-9])(spring|summer|fall|autumn|winter)[[:space:]-]+sale([^a-z0-9]|$)|(^|[^a-z0-9])back[[:space:]-]+to[[:space:]-]+school([^a-z0-9]|$)'
       then 'Seasonal'
     when lower(coalesce(campaign_name, '')) ~ '(^|[^a-z0-9])(sale|promo|promotion|discount|clearance)([^a-z0-9]|$)'
       then 'General Sale'
@@ -80,16 +80,18 @@ security invoker
 set search_path = public, pg_catalog
 as $$
 begin
-  if p_window_days not in (7, 30, 90) then
+  if p_window_days is null or p_window_days not in (7, 30, 90) then
     raise exception 'unsupported campaign window: %', p_window_days
       using errcode = '22023';
   end if;
 
   return query
   with anchor_day as (
-    select current_date as end_day,
-           current_date - (p_window_days - 1) as start_day,
+    select coalesce(max(s.day), current_date) as end_day,
+           coalesce(max(s.day), current_date) - (p_window_days - 1) as start_day,
            public.current_shop_id() as shop_id
+    from public.ad_spend_fact s
+    where s.shop_id = public.current_shop_id()
   ),
   spend as (
     select s.campaign_id, sum(s.spend_cents)::bigint as spend_cents
@@ -218,15 +220,11 @@ begin
          coalesce(o.orders, 0)::bigint,
          coalesce(o.revenue_cents, 0)::bigint,
          coalesce(s.spend_cents, 0)::bigint,
-         case
-           when coalesce(o.cost_complete, true) then
-             coalesce(o.revenue_cents, 0)
-               - coalesce(o.cogs_cents, 0)
-               - coalesce(o.carrier_cost_cents, 0)
-               - coalesce(o.fee_cents, 0)
-               - coalesce(s.spend_cents, 0)
-           else null
-         end::bigint,
+         (coalesce(o.revenue_cents, 0)
+            - coalesce(o.cogs_cents, 0)
+            - coalesce(o.carrier_cost_cents, 0)
+            - coalesce(o.fee_cents, 0)
+            - coalesce(s.spend_cents, 0))::bigint,
          round(
            coalesce(o.revenue_cents, 0)::numeric
              / nullif(coalesce(s.spend_cents, 0), 0),
