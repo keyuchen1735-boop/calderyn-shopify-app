@@ -32,7 +32,15 @@ describe("runtime-1 route adapters", () => {
   it("moves detached quick-buy controls into their matching product cards", () => {
     const route = document.createElement("div");
     route.innerHTML = `
-      <article><h2 data-cd-bind-text="title-binding">Field kit</h2></article>
+      <div class="rail" data-cd-repeat-owner="true" data-cd-compiler-id="product-list">
+        <article><h2 data-cd-bind-text="title-binding">Field kit</h2></article>
+      </div>
+      <div class="rail" data-cd-repeat-owner="true" data-cd-compiler-id="product-list">
+        <article><h2 data-cd-bind-text="title-binding">Field kit refill</h2></article>
+      </div>
+      <section data-cd-repeat-owner="true">
+        <div data-cd-compiler-id="quick-slot" data-cd-trusted-slot="quickViewCommerce"></div>
+      </section>
       <section data-cd-repeat-owner="true">
         <div data-cd-compiler-id="quick-slot" data-cd-trusted-slot="quickViewCommerce"></div>
       </section>`;
@@ -47,26 +55,35 @@ describe("runtime-1 route adapters", () => {
       }],
     });
 
-    expect(route.querySelector("article [data-cd-trusted-slot='quickViewCommerce']")).not.toBeNull();
-    expect(route.querySelector("[data-cd-repeat-owner]")).toBeNull();
+    expect(route.querySelectorAll("article [data-cd-trusted-slot='quickViewCommerce']")).toHaveLength(2);
+    expect(route.querySelectorAll(".rail")).toHaveLength(1);
+    expect(route.querySelectorAll(".rail > article")).toHaveLength(2);
+    expect(route.querySelectorAll("section[data-cd-repeat-owner]")).toHaveLength(0);
   });
 
   it("places purchase controls inside product cards for every recipe listing", () => {
     const product = quickViewData.featuredProducts[0]!;
+    const products = [product, {
+      ...product,
+      id: "p2",
+      handle: "field-kit-refill",
+      title: "Field kit refill",
+      variants: product.variants.map((variant) => ({ ...variant, id: `${variant.id}-refill` })),
+    }];
     const routeData = {
-      home: quickViewData,
+      home: { ...quickViewData, featuredProducts: products },
       collection: {
         ...quickViewData,
         collection: {
           id: "collection-1", handle: "all", title: "All", description: "",
-          image: null, productCount: 1, products: [product], nextCursor: null,
+          image: null, productCount: products.length, products, nextCursor: null,
         },
       },
       search: {
         ...quickViewData,
         search: {
-          query: "field", results: [product],
-          facets: { categories: [], tags: [], collections: [] }, total: 1, nextCursor: null,
+          query: "field", results: products,
+          facets: { categories: [], tags: [], collections: [] }, total: products.length, nextCursor: null,
         },
       },
     };
@@ -87,6 +104,17 @@ describe("runtime-1 route adapters", () => {
         expect(controls, `${recipe.config.templateId}/${routeId}`).not.toHaveLength(0);
         expect(controls.every((control) => control.closest("article")),
           `${recipe.config.templateId}/${routeId}`).toBe(true);
+        const layoutOwners = [...new Set(controls.flatMap((control) => {
+          const card = control.closest("article");
+          const owner = card?.closest<HTMLElement>('[data-cd-repeat-owner="true"]');
+          return owner && owner !== card ? [owner] : [];
+        }))];
+        for (const owner of layoutOwners) {
+          const siblings = [...(owner.parentElement?.children ?? [])].filter((candidate) =>
+            candidate.getAttribute("data-cd-compiler-id") === owner.dataset.cdCompilerId
+          );
+          expect(siblings, `${recipe.config.templateId}/${routeId} product layout`).toHaveLength(1);
+        }
       }
     }
   });
