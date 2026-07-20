@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { applyStoreIntent } from "./apply";
 import { getStoreTemplate } from "../storefront-bundle/registry";
-import { CUSTOM_BENCH_BUNDLE } from "../storefront-recipes/custom-bench/bundle";
+import { CUSTOM_BENCH_BUNDLE, CUSTOM_BENCH_RECIPE } from "../storefront-recipes/custom-bench/bundle";
 import { SOFT_CHEMISTRY_BUNDLE } from "../storefront-recipes/soft-chemistry/bundle";
 import { STOREFRONT_RECIPES } from "../storefront-recipes";
 import { StorefrontReleaseError } from "../storefront-bundle/release.server";
@@ -10,10 +10,15 @@ import { storefrontProofContext } from "../storefront-validation/fixtures";
 import { proveStorefrontBundle } from "../storefront-validation/browser.server";
 import { launchChromium } from "../browser/chromium.server";
 import { assembleStorefrontContextWithReferences, type StorefrontContextSource } from "../storefront-ai/context.server";
+import {
+  authoringFromRecipe,
+  requireStorefrontAuthoring,
+} from "../storefront-ai/authoring.server";
 import { classifyStoreIntent, type StoreIntentProvider } from "./intent.server";
 import type { StoreCommand, StoreCommandEvent, StoreCommandReceipt, StoreIntent } from "./types";
 import {
   runStoreCommand,
+  parseLoadedStorefrontArtifact,
   StoreCommandError,
   type LoadedStoreCommandVersion,
   type StoreCommandDependencies,
@@ -124,6 +129,46 @@ function state(excludedTemplateIds = ["soft-chemistry" as const]) {
     publishedVersionId: TARGET,
   };
 }
+
+describe("loaded storefront command artifacts", () => {
+  it("retains custom authoring through stored JSON", () => {
+    const stored = JSON.parse(JSON.stringify(authoringFromRecipe(CUSTOM_BENCH_RECIPE, {
+      generationId: "generation-1",
+      promptHash: "sha256:prompt",
+      derivedFromVersionId: CURRENT,
+    })));
+
+    const artifact = parseLoadedStorefrontArtifact(stored);
+
+    expect(artifact).not.toBeNull();
+    expect(requireStorefrontAuthoring(artifact!)).toEqual(stored.authoring);
+  });
+
+  it.each([
+    ["recipe artifact", { sourceKind: "recipe", bundle: CUSTOM_BENCH_BUNDLE }, "recipe"],
+    ["raw recipe bundle", CUSTOM_BENCH_BUNDLE, "recipe"],
+    ["legacy custom artifact", {
+      sourceKind: "custom",
+      bundle: authoringFromRecipe(CUSTOM_BENCH_RECIPE, {
+        generationId: "generation-2",
+        promptHash: "sha256:legacy",
+        derivedFromVersionId: CURRENT,
+      }).bundle,
+    }, "custom"],
+  ] as const)("loads a compatible %s without inventing authoring", (_case, stored, sourceKind) => {
+    const artifact = parseLoadedStorefrontArtifact(JSON.parse(JSON.stringify(stored)));
+
+    expect(artifact).toMatchObject({ sourceKind });
+    expect(artifact).not.toHaveProperty("authoring");
+  });
+
+  it("fails closed instead of inferring over an invalid stored artifact", () => {
+    expect(parseLoadedStorefrontArtifact({
+      sourceKind: "legacy",
+      bundle: CUSTOM_BENCH_BUNDLE,
+    })).toBeNull();
+  });
+});
 
 function dependencies(overrides: Partial<StoreCommandDependencies> = {}): StoreCommandDependencies {
   return {

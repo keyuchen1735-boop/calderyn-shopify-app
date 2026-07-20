@@ -12,6 +12,10 @@ import {
   type StorefrontContextAssembly,
 } from "~/lib/storefront-ai/context.server";
 import {
+  parseStorefrontVersionArtifact,
+  type StorefrontVersionArtifactV1,
+} from "~/lib/storefront-ai/authoring.server";
+import {
   isStorefrontBundlePublishEnabled,
   isStorefrontRecipeBuildEnabled,
   loadStorefrontRecipe,
@@ -69,6 +73,7 @@ const PRODUCTLESS_PROOF_ROUTES = ["home", "collection", "search", "cart", "check
 export interface LoadedStoreCommandVersion {
   versionId: string;
   artifactHash: string;
+  artifact?: StorefrontVersionArtifactV1;
   bundle: StorefrontBundleV1;
   resolution: Record<string, unknown>;
 }
@@ -200,6 +205,19 @@ function extractBundle(value: unknown): StorefrontBundleV1 | null {
   return isBundle(artifact.bundle) ? artifact.bundle : isBundle(value) ? value : null;
 }
 
+export function parseLoadedStorefrontArtifact(value: unknown): StorefrontVersionArtifactV1 | null {
+  const bundle = extractBundle(value);
+  if (!bundle) return null;
+  const stored = value as Record<string, unknown>;
+  try {
+    return parseStorefrontVersionArtifact(
+      "sourceKind" in stored ? stored : { sourceKind: bundle.source.kind, bundle },
+    );
+  } catch {
+    return null;
+  }
+}
+
 async function loadState(shopId: string): Promise<StoreCommandState> {
   const release = await getSupabase()
     .from("storefront_release")
@@ -219,8 +237,8 @@ async function loadState(shopId: string): Promise<StoreCommandState> {
     .maybeSingle();
   if (version.error) throw version.error;
   const row = version.data as Record<string, unknown> | null;
-  const bundle = extractBundle(row?.bundle_json);
-  if (!row || row.status !== "validated" || Number(row.runtime_version) !== 1 || !bundle) {
+  const artifact = parseLoadedStorefrontArtifact(row?.bundle_json);
+  if (!row || row.status !== "validated" || Number(row.runtime_version) !== 1 || !artifact) {
     throw new StoreCommandError(
       "storefront_command_unavailable",
       "This storefront draft cannot be changed with chat yet.",
@@ -234,7 +252,8 @@ async function loadState(shopId: string): Promise<StoreCommandState> {
     draft: {
       versionId: String(row.id),
       artifactHash: String(row.artifact_hash),
-      bundle,
+      artifact,
+      bundle: artifact.bundle,
       resolution,
     },
     publishedVersionId,
