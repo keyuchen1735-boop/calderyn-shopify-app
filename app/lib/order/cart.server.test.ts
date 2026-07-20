@@ -94,12 +94,32 @@ const store = vi.hoisted(() => {
 
   const rpc = vi.fn(async (name: string, args: Row) => {
     if (name === "cart_add_lines_atomic") {
-      const rows = (args.p_lines as Row[]).map((line) => ({
-        id: `cart_line-${db.cart_line.length + 1}`, cart_id: args.p_cart_id,
-        variant_id: line.variant_id, quantity: line.quantity, unit_price_cents: line.unit_price_cents,
-        currency: line.currency, title_snapshot: line.title_snapshot, personalization: {}, selling_plan_id: null,
-      }));
-      db.cart_line.push(...rows.map((row) => ({ ...row, shop_id: args.p_shop_id })));
+      const lines = args.p_lines as Row[];
+      const cartLines = db.cart_line.filter((line) => line.shop_id === args.p_shop_id && line.cart_id === args.p_cart_id);
+      const currencies = new Set([...cartLines.map((line) => line.currency), ...lines.map((line) => line.currency)].map((currency) => String(currency).toLowerCase()));
+      if (currencies.size > 1) return { data: null, error: new Error("bundle currency conflicts with cart currency") };
+      for (const line of lines) {
+        const existing = cartLines.find((candidate) => candidate.variant_id === line.variant_id
+          && JSON.stringify(candidate.personalization ?? {}) === "{}" && (candidate.selling_plan_id ?? "") === "");
+        if (existing && existing.quantity + line.quantity > 999) {
+          return { data: null, error: new Error("resulting cart line quantity exceeds 999") };
+        }
+      }
+      const rows = lines.map((line) => {
+        const existing = cartLines.find((candidate) => candidate.variant_id === line.variant_id
+          && JSON.stringify(candidate.personalization ?? {}) === "{}" && (candidate.selling_plan_id ?? "") === "");
+        if (existing) {
+          existing.quantity += line.quantity;
+          return { ...existing };
+        }
+        const row = {
+          id: `cart_line-${db.cart_line.length + 1}`, shop_id: args.p_shop_id, cart_id: args.p_cart_id,
+          variant_id: line.variant_id, quantity: line.quantity, unit_price_cents: line.unit_price_cents,
+          currency: line.currency, title_snapshot: line.title_snapshot, personalization: {}, selling_plan_id: "",
+        };
+        db.cart_line.push(row);
+        return { ...row };
+      });
       return { data: rows, error: null };
     }
     if (name !== "cart_add_line_atomic") return { data: null, error: { message: `unknown rpc ${name}` } };
@@ -372,6 +392,34 @@ describe("addCartLines", () => {
     ])).rejects.toThrow(/not found/);
     expect(store.client.rpc).not.toHaveBeenCalled();
     expect(store.db.cart_line).toHaveLength(0);
+  });
+
+  it("rejects internally mixed bundle currencies before any line is written", async () => {
+    const cart = await buildCart("shop-1");
+    await expect(addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 }, { variantId: "v-cap", quantity: 1 },
+    ])).rejects.toThrow(/currency/i);
+    expect(store.db.cart_line).toHaveLength(0);
+  });
+
+  it("rejects a bundle currency conflicting with the existing cart without writes", async () => {
+    const cart = await buildCart("shop-1");
+    await addCartLine("shop-1", cart.id, "v-cap", 1);
+    const before = structuredClone(store.db.cart_line);
+    await expect(addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 }, { variantId: "v-tee-s", quantity: 1 },
+    ])).rejects.toThrow(/currency/i);
+    expect(store.db.cart_line).toEqual(before);
+  });
+
+  it("rejects the whole bundle when canonical quantity would exceed 999", async () => {
+    const cart = await buildCart("shop-1");
+    await addCartLine("shop-1", cart.id, "v-tee-s", 998);
+    const before = structuredClone(store.db.cart_line);
+    await expect(addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 }, { variantId: "v-tee-s", quantity: 1 },
+    ])).rejects.toThrow(/999/);
+    expect(store.db.cart_line).toEqual(before);
   });
 });
 

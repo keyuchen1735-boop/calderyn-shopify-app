@@ -7,6 +7,7 @@ declare
   v_line jsonb;
   v_result jsonb := '[]'::jsonb;
   v_added jsonb;
+  v_currency_count integer;
 begin
   if jsonb_typeof(p_lines) <> 'array' or jsonb_array_length(p_lines) < 1 or jsonb_array_length(p_lines) > 12
      or (select sum((value->>'quantity')::integer) from jsonb_array_elements(p_lines)) < 2
@@ -25,6 +26,26 @@ begin
        or v_line->'personalization' <> '{}'::jsonb
        or v_line->'selling_plan_id' <> 'null'::jsonb then
       raise exception 'invalid trusted bundle line snapshot';
+    end if;
+  end loop;
+  select count(distinct lower(currency)) into v_currency_count
+  from (
+    select cl.currency
+    from public.cart_line cl
+    where cl.shop_id = p_shop_id and cl.cart_id = p_cart_id
+    union all
+    select value->>'currency' as currency from jsonb_array_elements(p_lines)
+  ) currencies;
+  if v_currency_count > 1 then raise exception 'bundle currency conflicts with cart currency'; end if;
+  for v_line in select value from jsonb_array_elements(p_lines) loop
+    if exists (
+      select 1 from public.cart_line cl
+      where cl.shop_id = p_shop_id and cl.cart_id = p_cart_id
+        and cl.variant_id = v_line->>'variant_id'
+        and cl.personalization = '{}'::jsonb and cl.selling_plan_id = ''
+        and cl.quantity + (v_line->>'quantity')::integer > 999
+    ) then
+      raise exception 'resulting cart line quantity exceeds 999';
     end if;
   end loop;
   for v_line in select value from jsonb_array_elements(p_lines) loop
