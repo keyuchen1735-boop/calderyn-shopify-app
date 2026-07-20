@@ -44,14 +44,17 @@ describe("Atelier storefront recipe", () => {
     expect(JSON.stringify(ATELIER_RECIPE_CONFIG)).not.toMatch(
       /asymmetric-magazine|editorial-grid-hero|magazine-grid/,
     );
-    const sharedVideoValidatorDiagnostics = new Set([
+    // Remove this base-version allowlist when the shared video validator patch lands.
+    const temporaryBaseVersionVideoDiagnostics = new Set([
       "route.html_mismatch",
       "tree.control_attribute",
     ]);
     expect(
       new Set(
         result.report.diagnostics
-          .filter(({ code }) => !sharedVideoValidatorDiagnostics.has(code))
+          .filter(
+            ({ code }) => !temporaryBaseVersionVideoDiagnostics.has(code),
+          )
           .map(({ code }) => code),
       ),
     ).toEqual(new Set(["asset.reference_missing"]));
@@ -95,7 +98,7 @@ describe("Atelier storefront recipe", () => {
     );
     expect(
       product.trustedSlots.filter(({ kind }) => kind === "addToCart"),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
     expect(bundle.shell.trustedSlots.map(({ kind }) => kind)).toContain(
       "cartDrawer",
     );
@@ -186,11 +189,18 @@ describe("Atelier storefront recipe", () => {
     );
   });
 
-  it("records the shared protected-host layout blocker without styling commerce internals", () => {
+  it("keeps one adjacent protected purchase host until shared responsive layout exists", () => {
     const productSource = ATELIER_RECIPE_CONFIG.surfaces.product.source;
-    expect(productSource.html).toContain('class="atelier-purchase-desktop"');
-    expect(productSource.html).toContain('class="atelier-purchase-mobile"');
-    expect(productSource.css).not.toMatch(/atelier-purchase-(desktop|mobile)/);
+    document.body.innerHTML = productSource.html;
+    const purchaseHosts = document.querySelectorAll(
+      '[data-cd-slot="addToCart"]',
+    );
+    expect(purchaseHosts).toHaveLength(1);
+    expect(purchaseHosts[0]?.previousElementSibling).toMatchObject({
+      dataset: { cdSlot: "variantPicker" },
+    });
+    expect(productSource.html).not.toMatch(/atelier-purchase-(desktop|mobile)/);
+    expect(productSource.css).not.toMatch(/atelier-purchase/);
     expect(() =>
       compileRecipeConfig({
         ...ATELIER_RECIPE_CONFIG,
