@@ -119,7 +119,9 @@ export function sourceTemplateCss(
     else if (rule.nodes?.length === 0) rule.remove();
   });
   const replaceFont = (value: string, family: string, variable: string) => value.replace(
-    new RegExp(`(["']?)${family.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\1`, "gi"),
+    // Boundaries keep a family from matching inside a longer identifier — e.g.
+    // "DM Mono" must not rewrite the middle of "DM-Mono-Bold" or "Manropes".
+    new RegExp(`(?<![\\w-])(["']?)${family.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\1(?![\\w-])`, "gi"),
     variable,
   );
   root.walkDecls((declaration) => {
@@ -130,11 +132,15 @@ export function sourceTemplateCss(
         "var(--font-body)",
       );
     }
-    for (let prior = ""; prior !== declaration.value;) {
-      prior = declaration.value;
-      declaration.value = declaration.value.replace(/var\((--[\w-]+)\)/g, (reference, variable: string) => (
+    // Inline :root custom properties, resolving nested references. Bounded so a
+    // cyclic definition (--a:var(--b);--b:var(--a)) can't hang the build in an
+    // ever-growing or oscillating rewrite; after the cap, unresolved refs stay.
+    for (let pass = 0; pass < 32; pass += 1) {
+      const next = declaration.value.replace(/var\((--[\w-]+)\)/g, (reference, variable: string) => (
         sourceVariables.get(variable) ?? reference
       ));
+      if (next === declaration.value) break;
+      declaration.value = next;
     }
     if (declaration.prop === "position" && declaration.value.trim() === "fixed") {
       declaration.value = "sticky";
