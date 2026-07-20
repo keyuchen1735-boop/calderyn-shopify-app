@@ -3,7 +3,7 @@
 // Same shape as inventory.server.ts / product.server.ts: a typed
 // AdminGraphqlClient, a GraphQL string, and response/userErrors checking that
 // THROWS on failure (rule 12 — a failed price write must never read as success).
-// July25 Admin API: productVariantsBulkUpdate (productVariantUpdate is removed).
+// October25 Admin API: productVariantsBulkUpdate (productVariantUpdate is removed).
 // Price is a Money scalar — a decimal string ("17.25"), not cents.
 
 import type { AdminGraphqlClient } from "./inventory.server";
@@ -79,7 +79,7 @@ export async function readVariantPrice(
 }
 
 const BULK_UPDATE = /* GraphQL */ `
-  mutation calderynVariantPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+  mutation calderynVariantPriceUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
     productVariantsBulkUpdate(productId: $productId, variants: $variants) {
       productVariants {
         id

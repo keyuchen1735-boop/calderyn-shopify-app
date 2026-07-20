@@ -33,7 +33,7 @@ async function resolveShopDomain(shopId: string): Promise<string | null> {
 }
 
 const BILLING_ADDRESS_QUERY = /* GraphQL */ `
-  {
+  query calderynShopBillingAddress {
     shop {
       billingAddress {
         address1

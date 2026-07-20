@@ -34,7 +34,7 @@ if (!g.__cdProcessGuards) {
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY || "508429753f1e60bd48c4dadbe063a27e",
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
-  apiVersion: ApiVersion.July25,
+  apiVersion: ApiVersion.October25,
   scopes: process.env.SCOPES?.split(","),
   appUrl: process.env.SHOPIFY_APP_URL || "https://app.calderyncompany.com",
   authPathPrefix: "/auth",
@@ -68,7 +68,7 @@ const shopify = shopifyApp({
 });
 
 export default shopify;
-export const apiVersion = ApiVersion.July25;
+export const apiVersion = ApiVersion.October25;
 export const addDocumentResponseHeaders = shopify.addDocumentResponseHeaders;
 export const authenticate = shopify.authenticate;
 export const unauthenticated = shopify.unauthenticated;
