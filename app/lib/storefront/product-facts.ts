@@ -77,10 +77,15 @@ export function normalizeProductFacts(inputs: readonly ProductFactInput[]): Prod
 
 const MM: Record<DimensionUnit, number> = { mm: 1, cm: 10, m: 1000, in: 25.4 };
 export function roomFit(facts: readonly ProductFact[], room: { width: number; depth: number; height: number; unit: DimensionUnit }): boolean | null {
-  const dimensions = Object.fromEntries(facts.filter((fact) => DIMENSIONS.has(fact.kind)).map((fact) => [fact.kind, fact]));
-  const width = dimensions["dimension.width"];
-  const depth = dimensions["dimension.depth"];
-  const height = dimensions["dimension.height"];
+  const dimensions = new Map<ProductFactKind, ProductFact>();
+  for (const fact of facts) {
+    if (!DIMENSIONS.has(fact.kind)) continue;
+    if (dimensions.has(fact.kind)) return null;
+    dimensions.set(fact.kind, fact);
+  }
+  const width = dimensions.get("dimension.width");
+  const depth = dimensions.get("dimension.depth");
+  const height = dimensions.get("dimension.height");
   if (!width || !depth || !height || width.numberValue == null || depth.numberValue == null || height.numberValue == null || !width.unit || !depth.unit || !height.unit) return null;
   if (![room.width, room.depth, room.height].every((value) => Number.isFinite(value) && value > 0)) return null;
   return width.numberValue * MM[width.unit] <= room.width * MM[room.unit]

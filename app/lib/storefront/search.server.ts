@@ -9,6 +9,7 @@ import type {
 import {
   capStorefrontCardDescription,
   selectStorefrontPriceVariant,
+  storefrontPriceSortValue,
 } from "~/lib/storefront/catalog";
 import { deriveFactFacets, filterProductsByFacts } from "~/lib/storefront/product-facts";
 
@@ -192,8 +193,8 @@ async function searchByFacts(shopId: string, input: StorefrontSearchInput, catal
   filtered.sort((a, b) => {
     if (input.sort === "title_desc") return b.title.localeCompare(a.title) || a.id.localeCompare(b.id);
     if (input.sort === "price_asc" || input.sort === "price_desc") {
-      const av = variantFor(a)?.priceCents ?? Number.MAX_SAFE_INTEGER;
-      const bv = variantFor(b)?.priceCents ?? Number.MAX_SAFE_INTEGER;
+      const av = storefrontPriceSortValue(a, input.sort);
+      const bv = storefrontPriceSortValue(b, input.sort);
       return (input.sort === "price_asc" ? av - bv : bv - av) || a.id.localeCompare(b.id);
     }
     return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
@@ -205,7 +206,9 @@ async function searchByFacts(shopId: string, input: StorefrontSearchInput, catal
   const last = items.at(-1);
   const hasNextPage = start + items.length < filtered.length;
   const boundary = hasNextPage && last ? {
-    sortValue: input.sort.startsWith("price_") ? variantFor(last)?.priceCents ?? Number.MAX_SAFE_INTEGER : last.title,
+    sortValue: input.sort === "price_asc" || input.sort === "price_desc"
+      ? storefrontPriceSortValue(last, input.sort)
+      : last.title,
     productId: last.id,
   } : null;
   return {

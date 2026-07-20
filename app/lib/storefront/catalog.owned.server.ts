@@ -20,8 +20,8 @@ import {
   encodeProductPageCursor,
   MAX_STOREFRONT_CARD_DESCRIPTION_CODE_POINTS,
   MAX_PUBLIC_PRODUCT_PAGE_SIZE,
-  MISSING_PRICE_ASC_SORT_VALUE,
   MISSING_PRICE_DESC_SORT_VALUE,
+  storefrontPriceSortValue,
 } from "./catalog";
 import { deriveFactFacets, normalizeProductFacts, type ProductFact } from "./product-facts";
 
@@ -429,11 +429,8 @@ function parseSearchResponse(
     boundary = { sortValue: candidate.sort_value as string | number, productId: candidate.product_id };
   }
   const last = cards.at(-1)?.product;
-  const lastVariant = last?.variants[0];
   const expectedSortValue = priceSort
-    ? lastVariant && lastVariant.hasPrice !== false
-      ? lastVariant.priceCents
-      : opts.sort === "price_desc" ? MISSING_PRICE_DESC_SORT_VALUE : MISSING_PRICE_ASC_SORT_VALUE
+    ? last ? storefrontPriceSortValue(last, opts.sort as "price_asc" | "price_desc") : undefined
     : last?.title;
   if (row.has_next_page
     ? !last || !boundary || boundary.productId !== last.id || boundary.sortValue !== expectedSortValue

@@ -233,6 +233,46 @@ describe("searchStorefront", () => {
     expect(catalog.listProducts).toHaveBeenCalledWith("shop-a", { limit: 250 });
   });
 
+  it.each([
+    ["price_asc", ["cheap", "expensive", "missing-a", "missing-b"]],
+    ["price_desc", ["expensive", "cheap", "missing-a", "missing-b"]],
+  ] as const)("keeps fact-filtered missing prices last across every %s cursor page", async (sort, expected) => {
+    const material = normalizeProductFacts([{ kind: "material", value: "Walnut" }]);
+    const pricedAndMissing: StoreProduct[] = [
+      {
+        ...products[0], id: "p-cheap", handle: "cheap", title: "Cheap", facts: material,
+        variants: [{ ...products[0].variants[0], id: "v-cheap", priceCents: 100 }],
+      },
+      {
+        ...products[0], id: "p-expensive", handle: "expensive", title: "Expensive", facts: material,
+        variants: [{ ...products[0].variants[0], id: "v-expensive", priceCents: 900 }],
+      },
+      ...["b", "a"].map((suffix): StoreProduct => ({
+        ...products[0], id: `p-missing-${suffix}`, handle: `missing-${suffix}`,
+        title: `Missing ${suffix}`, facts: material,
+        variants: [{
+          ...products[0].variants[0], id: `v-missing-${suffix}`, priceCents: 0,
+          available: false, hasPrice: false,
+        }],
+      })),
+    ];
+    catalog.listProducts.mockResolvedValue(pricedAndMissing);
+    const input = parseStorefrontSearchParams(
+      new URL(`https://shop.example/?fact.material=Walnut&sort=${sort}&limit=1`).searchParams,
+    );
+    const seen: string[] = [];
+    let cursor: string | null = null;
+
+    do {
+      const page = await searchStorefront("shop-a", { ...input, cursor });
+      seen.push(...page.items.map((item) => item.handle));
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    expect(seen).toEqual(expected);
+    expect(new Set(seen).size).toBe(expected.length);
+  });
+
   it("filters, sorts, and paginates through a shop/query-bound opaque cursor", async () => {
     const firstInput = parseStorefrontSearchParams(
       new URL("https://shop.example/?collection=skin&sort=price_desc&limit=1").searchParams,

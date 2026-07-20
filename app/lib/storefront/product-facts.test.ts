@@ -46,6 +46,20 @@ describe("trusted product facts", () => {
     expect(roomFit(facts.slice(0, 2), { width: 2, depth: 2, height: 2, unit: "m" })).toBeNull();
   });
 
+  it.each(["dimension.width", "dimension.depth", "dimension.height"] as const)(
+    "fails room fit closed when %s appears more than once",
+    (kind) => {
+      const facts = normalizeProductFacts([
+        { kind: "dimension.width", value: 80, unit: "cm" },
+        { kind: "dimension.depth", value: 80, unit: "cm" },
+        { kind: "dimension.height", value: 80, unit: "cm" },
+      ]);
+      const duplicate = { ...facts.find((fact) => fact.kind === kind)!, id: `duplicate-${kind}` };
+
+      expect(roomFit([...facts, duplicate], { width: 1, depth: 1, height: 1, unit: "m" })).toBeNull();
+    },
+  );
+
   it("matches compatibility deterministically and derives filters only from facts", () => {
     const one = normalizeProductFacts([{ kind: "compatibility", value: "Model X" }, { kind: "material", value: "Walnut" }]);
     const two = normalizeProductFacts([{ kind: "compatibility", value: "Model Y" }]);

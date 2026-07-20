@@ -132,6 +132,15 @@ export function selectStorefrontPriceVariant(product: StoreProduct): StoreVarian
   )[0] ?? null;
 }
 
+export function storefrontPriceSortValue(
+  product: StoreProduct,
+  sort: Extract<StorefrontCatalogSearchSort, "price_asc" | "price_desc">,
+): number {
+  const variant = selectStorefrontPriceVariant(product);
+  if (variant && variant.hasPrice !== false) return variant.priceCents;
+  return sort === "price_desc" ? MISSING_PRICE_DESC_SORT_VALUE : MISSING_PRICE_ASC_SORT_VALUE;
+}
+
 export interface StoreCollection {
   id?: string;
   handle: string;
