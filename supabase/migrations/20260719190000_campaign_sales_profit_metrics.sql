@@ -13,11 +13,11 @@ immutable
 parallel safe
 as $$
   select case
-    when lower(coalesce(campaign_name, '')) ~ 'cyber[[:space:]-]*monday|cybermonday'
+    when lower(coalesce(campaign_name, '')) ~ '(^|[^a-z0-9])cyber[[:space:]]+monday([^a-z0-9]|$)'
       then 'Cyber Monday'
-    when lower(coalesce(campaign_name, '')) ~ 'black[[:space:]-]*friday|(^|[^a-z0-9])bfcm([^a-z0-9]|$)'
+    when lower(coalesce(campaign_name, '')) ~ '(^|[^a-z0-9])(black[[:space:]]+friday|bfcm)([^a-z0-9]|$)'
       then 'Black Friday'
-    when lower(coalesce(campaign_name, '')) ~ 'holiday|christmas|xmas|boxing[[:space:]-]*day|new[[:space:]-]*year'
+    when lower(coalesce(campaign_name, '')) ~ '(^|[^a-z0-9])(holiday|christmas|boxing[[:space:]]+day)([^a-z0-9]|$)'
       then 'Holiday'
     when lower(coalesce(campaign_name, '')) ~ '(^|[^a-z0-9])(spring|summer|fall|autumn|winter)[[:space:]-]+sale([^a-z0-9]|$)|(^|[^a-z0-9])back[[:space:]-]+to[[:space:]-]+school([^a-z0-9]|$)'
       then 'Seasonal'
@@ -105,7 +105,13 @@ begin
   end if;
 
   return query
-  with anchor_day as (
+  with reporting_config as (
+    select coalesce(
+      (select g.timezone from public.guardrail_config g where g.shop_id = v_shop_id),
+      'America/New_York'
+    ) as timezone
+  ),
+  anchor_day as (
     select coalesce(max(s.day), current_date) as end_day,
            coalesce(max(s.day), current_date) - (p_window_days - 1) as start_day
     from public.ad_spend_fact s
@@ -122,6 +128,8 @@ begin
   attributed_orders as (
     select a.campaign_id,
            o.id as order_id,
+           o.order_number,
+           o.total_cents,
            o.created_at_source,
            sum(a.attributed_revenue_cents)::bigint as attributed_revenue_cents,
            coalesce(o.ship_cost_manual_cents, o.ship_cost_cents)::bigint as carrier_cost_cents
@@ -130,11 +138,12 @@ begin
       on o.id = a.order_id
      and o.shop_id = v_shop_id
     cross join anchor_day d
+    cross join reporting_config rc
     where a.shop_id = v_shop_id
-      and o.created_at_source::date between d.start_day and d.end_day
+      and (o.created_at_source at time zone rc.timezone)::date between d.start_day and d.end_day
       and lower(coalesce(o.financial_status, '')) in
         ('paid', 'partially_paid', 'partially_refunded', 'refunded')
-    group by a.campaign_id, o.id, o.created_at_source,
+    group by a.campaign_id, o.id, o.order_number, o.total_cents, o.created_at_source,
              o.ship_cost_manual_cents, o.ship_cost_cents
   ),
   effective_cogs as (
@@ -191,11 +200,24 @@ begin
            carrier_cost_cents is not null as carrier_complete
     from attributed_orders
   ),
+  captures as (
+    select ao.campaign_id,
+           ao.order_id,
+           count(tl.id)::bigint as capture_count,
+           coalesce(sum(tl.amount_cents), ao.total_cents)::bigint as captured_revenue_cents
+    from attributed_orders ao
+    left join public.transaction_ledger tl
+      on tl.shop_id = v_shop_id
+     and tl.order_ref = ao.order_number
+     and tl.kind = 'capture'
+    group by ao.campaign_id, ao.order_id, ao.total_cents
+  ),
   fees as (
     select campaign_id,
            order_id,
-           round(attributed_revenue_cents * 0.029)::bigint + 30 as fee_cents
-    from attributed_orders
+           round(captured_revenue_cents * 0.029)::bigint
+             + greatest(capture_count, 1) * 30 as fee_cents
+    from captures
   ),
   order_metrics as (
     select ao.campaign_id,
@@ -223,11 +245,22 @@ begin
     group by om.campaign_id
   ),
   campaign_cost_sources as (
-    select ec.campaign_id,
-           array_agg(distinct ec.cost_source order by ec.cost_source)
-             filter (where ec.cost_source is not null) as cost_sources
-    from effective_cogs ec
-    group by ec.campaign_id
+    select sources.campaign_id,
+           array_agg(distinct sources.cost_source order by sources.cost_source) as cost_sources
+    from (
+      select ec.campaign_id, ec.cost_source
+      from effective_cogs ec
+      where ec.cost_source is not null
+      union all
+      select c.campaign_id, 'missing:cogs'
+      from cogs c
+      where not c.cogs_complete
+      union all
+      select cc.campaign_id, 'missing:carrier'
+      from carrier_costs cc
+      where not cc.carrier_complete
+    ) sources
+    group by sources.campaign_id
   )
   select c.id,
          c.name,
@@ -265,3 +298,19 @@ $$;
 revoke all on function public.campaign_performance(integer, uuid) from public;
 revoke all on function public.campaign_performance(integer, uuid) from anon;
 grant execute on function public.campaign_performance(integer, uuid) to authenticated, service_role;
+
+create index if not exists campaign_perf_ad_spend_shop_day_idx
+  on public.ad_spend_fact (shop_id, day);
+create index if not exists campaign_perf_order_line_shop_order_idx
+  on public.order_line_fact (shop_id, order_id);
+create index if not exists campaign_perf_refund_shop_order_idx
+  on public.refund_fact (shop_id, order_id);
+
+do $$
+begin
+  if to_regclass('public.transaction_ledger') is not null then
+    execute 'create index if not exists campaign_perf_ledger_shop_order_idx
+      on public.transaction_ledger (shop_id, order_ref)';
+  end if;
+end
+$$;

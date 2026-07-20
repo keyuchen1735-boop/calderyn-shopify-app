@@ -40,6 +40,7 @@ import {
   type CampaignDraftRow,
 } from "~/lib/dashboard/campaign-drafts-client";
 import { CampaignWizard } from "./CampaignWizard";
+import { useModalChrome } from "../use-modal-chrome";
 import { CAMPAIGN_DRAFT_PLATFORM_LABELS, MAX_CAMPAIGN_SALE_TYPE_LENGTH } from "~/lib/ads/campaign-draft-types";
 import type { Variant, CreativeInput } from "~/lib/screener/types";
 import { DEFAULT_SPEND_CENTS } from "~/lib/screener/types";
@@ -49,6 +50,7 @@ import type { CampaignVM } from "../view-models";
 import type { CampaignGradeRow, CampaignKind, CampaignWindow, DailyRoasRow } from "~/lib/types";
 import {
   filterCampaigns,
+  missingCampaignCostLabels,
   readCampaignWindow,
   summarizeCampaigns,
   writeCampaignWindow,
@@ -333,6 +335,15 @@ function ClassificationEditor({
   const [busy, setBusy] = useState(false);
   const narrow = useNarrowViewport(760);
   const triggerRef = useRef<HTMLDivElement>(null);
+  const closeEditor = () => {
+    setEditing(false);
+    triggerRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  };
+  const modalChrome = useModalChrome<HTMLDivElement>({
+    enabled: editing && narrow,
+    escape: "capture",
+    onClose: closeEditor,
+  });
 
   useEffect(() => {
     setKind(c.campaign_kind);
@@ -371,10 +382,15 @@ function ClassificationEditor({
     <div
       className="cd-campaign-classification-editor"
       role={narrow ? "dialog" : undefined}
+      aria-modal={narrow ? true : undefined}
       aria-label={narrow ? "Edit campaign type" : undefined}
       data-mobile={narrow ? "1" : "0"}
+      ref={narrow ? modalChrome.ref : undefined}
       onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        modalChrome.onKeyDown(event);
+        event.stopPropagation();
+      }}
     >
       <select
         className="cd-input"
@@ -412,7 +428,7 @@ function ClassificationEditor({
           className="cd-btn-icon"
           ariaLabel="Close campaign type editor"
           disabled={busy}
-          onClick={() => setEditing(false)}
+          onClick={closeEditor}
         >
           {""}
         </Btn>
@@ -466,6 +482,7 @@ function CampaignRow({
   const hasPerformanceData = c.spend_cents > 0;
   const losing = hasPerformanceData && c.true_roas != null && c.true_roas < c.breakeven_roas;
   const paused = c.status === "paused";
+  const missingCosts = missingCampaignCostLabels(c.cost_sources);
   return (
     // A div with button semantics rather than a real <button>: the row nests
     // the per-row action buttons (pause/resume, edit budget, duplicate),
@@ -511,7 +528,11 @@ function CampaignRow({
       </div>
       <div className="tabular-nums">
         <div>{c.profit_cents == null ? "—" : money(c.profit_cents)}</div>
-        {!c.cost_complete && <div className="cd-caption">Incomplete costs</div>}
+        {missingCosts.length > 0 && (
+          <Tooltip content={`Missing cost data: ${missingCosts.join(", ")}`}>
+            <div className="cd-caption">Missing {missingCosts.join(" + ")}</div>
+          </Tooltip>
+        )}
       </div>
       <div className="cd-row-num tabular-nums">
         {c.true_roas == null ? "—" : `${c.true_roas.toFixed(2)}×`}
@@ -1365,12 +1386,18 @@ function CampaignList({
   setDraftPrefill,
   campaignWindow,
   onCampaignWindowChange,
+  pendingWindow,
+  windowError,
+  onRetryWindow,
 }: {
   app: DashboardCtx;
   joined: CampaignVM[];
   setDraftPrefill: (draft: CampaignDraftRow | null) => void;
   campaignWindow: CampaignWindow;
   onCampaignWindowChange: (window: CampaignWindow) => void;
+  pendingWindow: CampaignWindow | null;
+  windowError: string | null;
+  onRetryWindow: () => void;
 }) {
   const screenRef = useRef<HTMLDivElement>(null);
   // Owned campaign drafts render alongside synced campaigns. Fetched on mount,
@@ -1470,6 +1497,9 @@ function CampaignList({
     overrides[c.id] ? { ...c, ...overrides[c.id] } : c,
   );
   const summary = summarizeCampaigns(merged);
+  const missingCosts = Array.from(new Set(merged.flatMap((campaign) =>
+    missingCampaignCostLabels(campaign.cost_sources),
+  )));
 
   // Active campaigns sort to the top; within each status group, highest 7d
   // spend first. Paused rows still render (dimmed), just below the active ones.
@@ -1622,7 +1652,11 @@ function CampaignList({
             <Card className="cd-campaign-metric-card">
               <span>Profit</span>
               <strong>{summary.profitCents == null ? "—" : <CountMoney cents={summary.profitCents} />}</strong>
-              {!summary.costComplete && <small>Incomplete costs</small>}
+              {missingCosts.length > 0 && (
+                <Tooltip content={`Missing cost data: ${missingCosts.join(", ")}`}>
+                  <small>Missing {missingCosts.join(" + ")}</small>
+                </Tooltip>
+              )}
             </Card>
             <Card className="cd-campaign-metric-card">
               <span>True ROAS</span>
@@ -1651,7 +1685,17 @@ function CampaignList({
                 onChange={(next) => onCampaignWindowChange(Number(next) as CampaignWindow)}
               />
             </div>
+            {pendingWindow && (
+              <span className="cd-caption" aria-live="polite">
+                Loading {pendingWindow}-day metrics…
+              </span>
+            )}
           </div>
+          {windowError && (
+            <div className="cd-caption" role="alert">
+              Campaign metrics could not be updated. <button type="button" onClick={onRetryWindow}>Retry</button>
+            </div>
+          )}
         </>
       )}
       {loading || (merged.length === 0 && drafts.length === 0) ? (
@@ -1761,6 +1805,9 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   const [campaignWindow, setCampaignWindow] = useState<CampaignWindow>(() =>
     readCampaignWindow(typeof window === "undefined" ? undefined : window.localStorage),
   );
+  const [pendingWindow, setPendingWindow] = useState<CampaignWindow | null>(null);
+  const [failedWindow, setFailedWindow] = useState<CampaignWindow | null>(null);
+  const [windowError, setWindowError] = useState<string | null>(null);
   // Real grades + break-even come from fetchAnalytics(); join by campaign_id.
   // While this is in flight the campaigns render with whatever grade they carry.
   const [grades, setGrades] = useState<CampaignGradeRow[]>([]);
@@ -1808,6 +1855,23 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
     [app.campaigns, grades],
   );
 
+  const changeCampaignWindow = async (next: CampaignWindow) => {
+    if (pendingWindow || next === campaignWindow) return;
+    setPendingWindow(next);
+    setWindowError(null);
+    try {
+      await app.setCampaignWindow?.(next);
+      setCampaignWindow(next);
+      writeCampaignWindow(window.localStorage, next);
+      setFailedWindow(null);
+    } catch {
+      setFailedWindow(next);
+      setWindowError("metrics_failed");
+    } finally {
+      setPendingWindow(null);
+    }
+  };
+
   if (app.nav.param === "new") {
     return (
       <CampaignWizard
@@ -1843,10 +1907,11 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
       joined={joined}
       setDraftPrefill={setDraftPrefill}
       campaignWindow={campaignWindow}
-      onCampaignWindowChange={(next) => {
-        setCampaignWindow(next);
-        writeCampaignWindow(window.localStorage, next);
-        app.setCampaignWindow?.(next);
+      onCampaignWindowChange={(next) => void changeCampaignWindow(next)}
+      pendingWindow={pendingWindow}
+      windowError={windowError}
+      onRetryWindow={() => {
+        if (failedWindow) void changeCampaignWindow(failedWindow);
       }}
     />
   );

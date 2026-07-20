@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 type Row = Record<string, any>;
 const store: Record<string, Row[]> = {};
 const rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+let rpcRows: Row[] = [];
 
 function makeBuilder(table: string) {
   const filters: Array<[string, any]> = [];
@@ -41,7 +42,7 @@ vi.mock("../supabase.server", () => ({
     from: (t: string) => makeBuilder(t),
     rpc: async (name: string, args: Record<string, unknown>) => {
       rpcCalls.push({ name, args });
-      return { data: [], error: null };
+      return { data: rpcRows, error: null };
     },
   }),
   resolveShopId: async (domain: string) => {
@@ -60,6 +61,7 @@ const B = "b.myshopify.com";
 
 beforeEach(() => {
   rpcCalls.length = 0;
+  rpcRows = [];
   for (const k of Object.keys(store)) delete store[k];
   // Two shops, identical-shaped rows in every per-shop view/table.
   store["v_alerts_view"] = [
@@ -121,6 +123,32 @@ describe("calderynClient enforces shop scoping on every read", () => {
       name: "campaign_performance",
       args: { p_window_days: 30, p_shop_id: "shop-1" },
     }]);
+  });
+
+  it("campaigns.performance preserves legacy analytics beside selected-window metrics", async () => {
+    store["v_campaigns_flat"][0] = {
+      ...store["v_campaigns_flat"][0],
+      roas_7d: 2.25,
+      spend_7d_cents: 777,
+      contribution_margin: 0.42,
+    };
+    rpcRows = [{
+      id: "a-camp", name: "A camp", platform: "meta", status: "active",
+      daily_budget_cents: 5000, campaign_kind: "regular", sale_type: null,
+      classification_source: "detected", orders: 4, revenue_cents: 9000,
+      spend_cents: 3000, profit_cents: 2500, true_roas: 3,
+      cost_complete: true, cost_sources: [],
+    }];
+
+    const [campaign] = await calderynClient(A).campaigns.performance(30);
+
+    expect(campaign).toMatchObject({
+      roas_7d: 2.25,
+      spend_7d: 777,
+      contribution_margin: 0.42,
+      spend_cents: 3000,
+      true_roas: 3,
+    });
   });
 
   it("campaigns.get cannot fetch another shop's campaign by id", async () => {

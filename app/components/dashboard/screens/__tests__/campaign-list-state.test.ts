@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CampaignVM } from "../../view-models";
 import {
   filterCampaigns,
+  missingCampaignCostLabels,
   readCampaignWindow,
   summarizeCampaigns,
   writeCampaignWindow,
@@ -93,5 +94,20 @@ describe("campaign list state", () => {
     writeCampaignWindow(storage, window);
 
     expect(readCampaignWindow(storage)).toBe(window);
+  });
+
+  it("ignores unavailable localStorage instead of blocking reporting", () => {
+    const unavailable = {
+      getItem: () => { throw new DOMException("blocked", "SecurityError"); },
+      setItem: () => { throw new DOMException("full", "QuotaExceededError"); },
+    };
+
+    expect(readCampaignWindow(unavailable)).toBe(30);
+    expect(() => writeCampaignWindow(unavailable, 90)).not.toThrow();
+  });
+
+  it("names each missing cost component from RPC metadata", () => {
+    expect(missingCampaignCostLabels(["quickbooks", "missing:cogs", "missing:carrier"]))
+      .toEqual(["product costs", "carrier cost"]);
   });
 });

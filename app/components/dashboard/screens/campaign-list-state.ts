@@ -47,13 +47,28 @@ export function summarizeCampaigns(campaigns: CampaignVM[]) {
 export function readCampaignWindow(
   storage?: Pick<CampaignWindowStorage, "getItem">,
 ): CampaignWindow {
-  const value = Number(storage?.getItem(STORAGE_KEY));
-  return value === 7 || value === 30 || value === 90 ? value : 30;
+  try {
+    const value = Number(storage?.getItem(STORAGE_KEY));
+    return value === 7 || value === 30 || value === 90 ? value : 30;
+  } catch {
+    return 30;
+  }
 }
 
 export function writeCampaignWindow(
   storage: Pick<CampaignWindowStorage, "setItem">,
   window: CampaignWindow,
 ): void {
-  storage.setItem(STORAGE_KEY, String(window));
+  try {
+    storage.setItem(STORAGE_KEY, String(window));
+  } catch {
+    // Storage can be unavailable in privacy modes; the in-memory selection remains valid.
+  }
+}
+
+export function missingCampaignCostLabels(costSources: string[]): string[] {
+  const labels: string[] = [];
+  if (costSources.includes("missing:cogs")) labels.push("product costs");
+  if (costSources.includes("missing:carrier")) labels.push("carrier cost");
+  return labels;
 }

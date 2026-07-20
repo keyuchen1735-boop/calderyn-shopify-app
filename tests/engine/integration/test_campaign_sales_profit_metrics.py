@@ -53,7 +53,7 @@ async def _insert_order(
           (id, shop_id, external_id, order_number, created_at_source,
            total_cents, subtotal_cents, financial_status, source_version,
            ship_cost_cents)
-        values ($1, $2, $3, $4, current_date + $5::integer,
+        values ($1, $2, $3, $4, current_date + $5::integer + interval '12 hours',
                 $6, $6, 'paid', $7, $8)
         """,
         order_id,
@@ -110,6 +110,19 @@ async def _insert_order(
 
 
 async def _seed_performance(conn):
+    # Engine tests intentionally carry only warehouse migrations; production's
+    # native-payment ledger is a dashboard prerequisite for this reporting RPC.
+    await conn.execute(
+        """
+        create table if not exists public.transaction_ledger (
+          id uuid primary key default gen_random_uuid(),
+          shop_id uuid not null,
+          order_ref text,
+          kind text not null,
+          amount_cents bigint not null
+        )
+        """
+    )
     for sku_id, title in (
         (SKU_SNAPSHOT, "Snapshot SKU"),
         (SKU_QB, "QuickBooks SKU"),
@@ -160,6 +173,16 @@ async def _seed_performance(conn):
         unit_cost_cents_snapshot=1000,
         refund_cents=500,
     )
+    await conn.executemany(
+        """
+        insert into public.transaction_ledger (shop_id, order_ref, kind, amount_cents)
+        values ($1, $2, 'capture', $3)
+        """,
+        [
+            (SHOP_A, "order-94000000-0000-0000-0000-000000000001", 2500),
+            (SHOP_A, "order-94000000-0000-0000-0000-000000000001", 2000),
+        ],
+    )
     await conn.execute(
         """
         insert into public.order_line_fact
@@ -179,6 +202,21 @@ async def _seed_performance(conn):
         day_offset=ANCHOR_OFFSET - 29,
         attributed_revenue_cents=2000,
         ship_cost_cents=200,
+    )
+    await conn.execute(
+        """
+        update public.order_fact
+           set total_cents = 5000, subtotal_cents = 5000,
+               financial_status = 'partially_paid'
+         where id = '94000000-0000-0000-0000-000000000002'
+        """
+    )
+    await conn.execute(
+        """
+        insert into public.transaction_ledger (shop_id, order_ref, kind, amount_cents)
+        values ($1, 'order-94000000-0000-0000-0000-000000000002', 'capture', 2000)
+        """,
+        SHOP_A,
     )
     await _insert_order(
         conn,
@@ -254,7 +292,11 @@ async def test_detector_precedence_and_insert_trigger(pg_pool, seed_shop):
               detect_campaign_sale_type('Spring Awareness'),
               detect_campaign_sale_type('Waterfall'),
               detect_campaign_sale_type('General sale'),
-              detect_campaign_sale_type('Always on awareness')
+              detect_campaign_sale_type('Always on awareness'),
+              detect_campaign_sale_type('CyberMonday'),
+              detect_campaign_sale_type('Holidayish'),
+              detect_campaign_sale_type('Xmas sale'),
+              detect_campaign_sale_type('New Year launch')
             ]
             """
         )
@@ -264,6 +306,10 @@ async def test_detector_precedence_and_insert_trigger(pg_pool, seed_shop):
             "Holiday",
             "Seasonal",
             "Seasonal",
+            None,
+            None,
+            "General Sale",
+            None,
             None,
             None,
             "General Sale",
@@ -337,25 +383,61 @@ async def test_campaign_performance_scopes_tenant_and_calculates_profit(pg_pool,
         explicit_rows = await conn.fetch(
             "select * from campaign_performance($1::integer, $2::uuid)", 30, SHOP_A
         )
+        await conn.execute(
+            "update public.guardrail_config set timezone = 'America/Los_Angeles' where shop_id = $1",
+            SHOP_A,
+        )
+        await conn.execute(
+            """
+            update public.order_fact
+               set created_at_source = (current_date + $1::integer + 1)::timestamp + interval '1 hour'
+             where id = '94000000-0000-0000-0000-000000000006'
+            """,
+            ANCHOR_OFFSET,
+        )
+        async with with_shop_context(conn, SHOP_A):
+            timezone_row = await conn.fetchrow(
+                "select * from campaign_performance(30) where id = $1", CAMPAIGN_A
+            )
 
     by_id = {str(row["id"]): row for row in rows}
     assert CAMPAIGN_B not in by_id
     assert by_id[CAMPAIGN_A]["orders"] == 2
     assert by_id[CAMPAIGN_A]["revenue_cents"] == 6000
     assert by_id[CAMPAIGN_A]["spend_cents"] == 2000
-    assert by_id[CAMPAIGN_A]["profit_cents"] == 1601
+    assert by_id[CAMPAIGN_A]["profit_cents"] == 1571
     assert by_id[CAMPAIGN_A]["true_roas"] == Decimal("3.0000")
     assert by_id[CAMPAIGN_A]["cost_complete"] is True
     assert set(by_id[CAMPAIGN_A]["cost_sources"]) == {"snapshot", "quickbooks"}
     assert by_id[CAMPAIGN_CATALOG]["cost_sources"] == ["catalog"]
     assert by_id[CAMPAIGN_MISSING_COGS]["cost_complete"] is False
+    assert "missing:cogs" in by_id[CAMPAIGN_MISSING_COGS]["cost_sources"]
     assert by_id[CAMPAIGN_MISSING_COGS]["profit_cents"] == 841
     assert by_id[CAMPAIGN_MISSING_COGS]["true_roas"] is None
     assert by_id[CAMPAIGN_MISSING_CARRIER]["cost_complete"] is False
+    assert "missing:carrier" in by_id[CAMPAIGN_MISSING_CARRIER]["cost_sources"]
     assert by_id[CAMPAIGN_MISSING_CARRIER]["profit_cents"] == 766
     assert window_spend == {7: 6, 30: 42, 90: 161}
     assert CAMPAIGN_A in {str(row["id"]) for row in explicit_rows}
     assert CAMPAIGN_B not in {str(row["id"]) for row in explicit_rows}
+    assert timezone_row["orders"] == 3
+
+
+@pytest.mark.asyncio
+async def test_campaign_performance_has_targeted_shop_join_indexes(pg_pool):
+    async with pg_pool.acquire() as conn:
+        definitions = await conn.fetchval(
+            """
+            select array_agg(indexdef order by indexdef)
+              from pg_indexes
+             where schemaname = 'public'
+               and tablename in ('ad_spend_fact', 'order_line_fact', 'refund_fact')
+               and (indexdef like '%(shop_id, day%'
+                 or indexdef like '%(shop_id, order_id)%')
+            """
+        )
+
+    assert len(definitions) == 3
 
 
 @pytest.mark.asyncio

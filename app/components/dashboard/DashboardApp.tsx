@@ -731,15 +731,13 @@ export default function DashboardApp({
     });
   }, [load, toast]);
 
-  const setCampaignWindow = useCallback((next: CampaignWindow) => {
+  const setCampaignWindow = useCallback(async (next: CampaignWindow) => {
     if (campaignWindowRef.current === next) return;
+    const nextCampaigns = await client.fetchCampaigns(next);
+    setCampaigns(nextCampaigns);
     campaignWindowRef.current = next;
     rerenderCampaignWindow((version) => version + 1);
-    load().catch((err) => {
-      const msg = err instanceof DashboardApiError ? err.message : "Could not update campaign metrics.";
-      toast(msg, "warn", "critical");
-    });
-  }, [load, toast]);
+  }, []);
 
   // Lighter than refresh(): only re-pulls /dashboard/api/live-engine. Used by the
   // Live Engine's gentle poll and to reconcile a single autonomy toggle.

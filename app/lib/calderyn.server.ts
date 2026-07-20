@@ -235,15 +235,14 @@ function rowToCampaign(r: Record<string, unknown>): Campaign {
   };
 }
 
-function rowToCampaignPerformance(r: Record<string, unknown>): CampaignPerformance {
+function rowToCampaignPerformance(
+  r: Record<string, unknown>,
+  legacy?: Record<string, unknown>,
+): CampaignPerformance {
   const trueRoas = r.true_roas == null ? null : Number(r.true_roas);
   const spendCents = Number(r.spend_cents ?? 0);
   return {
-    ...rowToCampaign({
-      ...r,
-      roas_7d: trueRoas ?? 0,
-      spend_7d_cents: spendCents,
-    }),
+    ...rowToCampaign({ ...r, ...legacy }),
     campaign_kind: r.campaign_kind === "sales" ? "sales" : "regular",
     sale_type: (r.sale_type as string | null) ?? null,
     classification_source: r.classification_source === "merchant" ? "merchant" : "detected",
@@ -938,12 +937,21 @@ export function calderynClient(shop: string) {
       async performance(window: CampaignWindow, _signal?: AbortSignal): Promise<CampaignPerformance[]> {
         try {
           const shopId = await shopIdP;
-          const { data, error } = await supabase.rpc("campaign_performance", {
-            p_window_days: window,
-            p_shop_id: shopId,
-          });
-          if (error) throw error;
-          return (data ?? []).map(rowToCampaignPerformance);
+          const [performance, legacy] = await Promise.all([
+            supabase.rpc("campaign_performance", {
+              p_window_days: window,
+              p_shop_id: shopId,
+            }),
+            supabase.from("v_campaigns_flat").select("*").eq("shop_id", shopId),
+          ]);
+          if (performance.error) throw performance.error;
+          if (legacy.error) throw legacy.error;
+          const legacyById = new Map(
+            (legacy.data ?? []).map((row: Record<string, unknown>) => [String(row.id), row]),
+          );
+          return (performance.data ?? []).map((row: Record<string, unknown>) =>
+            rowToCampaignPerformance(row, legacyById.get(String(row.id))),
+          );
         } catch (err) {
           rethrow("campaigns.performance", err);
         }

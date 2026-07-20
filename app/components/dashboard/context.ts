@@ -198,8 +198,8 @@ export interface DashboardCtx {
 
   // --- data lifecycle ---
   refresh: () => void;
-  /** Select the campaign reporting window and refresh through the shared load. */
-  setCampaignWindow?: (window: CampaignWindow) => void;
+  /** Fetch and commit Campaigns for a reporting window. */
+  setCampaignWindow?: (window: CampaignWindow) => Promise<void>;
   /** Re-pull only the Live Engine bundle (autopilot/trace/predictions) — much
    *  lighter than refresh(), used for the Live Engine's gentle live poll and to
    *  reconcile a single feature-autonomy toggle without refetching everything. */

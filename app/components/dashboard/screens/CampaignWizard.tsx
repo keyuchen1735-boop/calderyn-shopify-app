@@ -66,7 +66,7 @@ type WizardStep = (typeof STEP_ORDER)[number];
 
 const STEP_LABELS: Record<WizardStep, { label: string; detail: string }> = {
   platform: { label: "Platform", detail: "Choose where it runs" },
-  campaignType: { label: "Campaign type", detail: "Set the promotion" },
+  campaignType: { label: "Campaign type", detail: "Choose how it is grouped" },
   product: { label: "Product", detail: "Choose what to promote" },
   creative: { label: "Creative", detail: "Pick a winning direction" },
   review: { label: "Review", detail: "Preview and finish" },
@@ -874,15 +874,19 @@ function CampaignTypeStep({
       <div>
         <h2 className="cd-h2">What kind of campaign is this?</h2>
         <span className="cd-caption">
-          Sales campaigns are measured against their promotion period.
+          Metrics use the 7, 30, or 90-day reporting window you select.
         </span>
       </div>
       <div
         className="cd-cw-platform-grid"
         style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
+        role="radiogroup"
+        aria-label="Campaign type"
       >
-        <Card
-          hover
+        <div
+          role="radio"
+          aria-checked={state.campaignKind === "regular"}
+          tabIndex={0}
           onClick={() =>
             dispatch({
               type: "campaignType",
@@ -890,15 +894,23 @@ function CampaignTypeStep({
               saleType: null,
             })
           }
-          className={`cd-cw-choice ${state.campaignKind === "regular" ? "cd-tile-selected" : ""}`}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              dispatch({ type: "campaignType", campaignKind: "regular", saleType: null });
+            }
+          }}
+          className={`cd-card cd-pad cd-card-hover cd-cw-choice ${state.campaignKind === "regular" ? "cd-tile-selected" : ""}`}
         >
           <div className="cd-h3">Regular</div>
           <small className="cd-cw-choice-detail">
-            Evergreen promotion without a sale window
+            Always-on advertising outside a named sale
           </small>
-        </Card>
-        <Card
-          hover
+        </div>
+        <div
+          role="radio"
+          aria-checked={state.campaignKind === "sales"}
+          tabIndex={0}
           onClick={() =>
             dispatch({
               type: "campaignType",
@@ -906,13 +918,23 @@ function CampaignTypeStep({
               saleType: state.campaignKind === "sales" ? state.saleType : null,
             })
           }
-          className={`cd-cw-choice ${state.campaignKind === "sales" ? "cd-tile-selected" : ""}`}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              dispatch({
+                type: "campaignType",
+                campaignKind: "sales",
+                saleType: state.campaignKind === "sales" ? state.saleType : null,
+              });
+            }
+          }}
+          className={`cd-card cd-pad cd-card-hover cd-cw-choice ${state.campaignKind === "sales" ? "cd-tile-selected" : ""}`}
         >
           <div className="cd-h3">Sales</div>
           <small className="cd-cw-choice-detail">
             A named sale or seasonal promotion
           </small>
-        </Card>
+        </div>
       </div>
       {state.campaignKind === "sales" && (
         <div className="flex flex-col" style={{ gap: 10 }}>

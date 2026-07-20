@@ -72,7 +72,7 @@ function setNarrowViewport(narrow: boolean) {
   });
 }
 
-function dashboardApp(param: string | null): DashboardCtx {
+function dashboardApp(param: string | null, overrides: Partial<DashboardCtx> = {}): DashboardCtx {
   return {
     campaigns: [campaign],
     nav: { screen: "campaigns", param, sub: null },
@@ -81,16 +81,17 @@ function dashboardApp(param: string | null): DashboardCtx {
     navigate: vi.fn(),
     toast: vi.fn(),
     refresh: vi.fn(),
+    ...overrides,
   } as unknown as DashboardCtx;
 }
 
-function renderCampaigns(param: string | null = null) {
+function renderCampaigns(param: string | null = null, overrides: Partial<DashboardCtx> = {}) {
   const host = document.createElement("div");
   host.className = "cd-root";
   document.body.append(host);
   const root = createRoot(host);
   roots.push(root);
-  act(() => root.render(<Campaigns app={dashboardApp(param)} />));
+  act(() => root.render(<Campaigns app={dashboardApp(param, overrides)} />));
   return host;
 }
 
@@ -121,6 +122,49 @@ describe("campaign list controls", () => {
     expect(editor).not.toBeNull();
     expect(editor?.closest(".cd-pan")).toBeNull();
     expect(editor?.closest(".cd-root")).toBe(host);
+  });
+
+  it("keeps the committed window until matching data succeeds and retains a retryable error", async () => {
+    setNarrowViewport(false);
+    let reject!: (error: Error) => void;
+    let resolve!: () => void;
+    const first = new Promise<void>((_resolve, fail) => { reject = fail; });
+    const second = new Promise<void>((done) => { resolve = done; });
+    const setCampaignWindow = vi.fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second);
+    const host = renderCampaigns(null, { setCampaignWindow });
+    const group = () => host.querySelector('[role="group"][aria-label="Reporting window"]')!;
+    const ninety = () => [...group().querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "90")!;
+
+    act(() => ninety().click());
+    expect(group().querySelector('[aria-pressed="true"]')?.textContent).toBe("30");
+    expect(host.querySelector('[aria-live="polite"]')?.textContent).toContain("Loading 90-day metrics");
+
+    await act(async () => reject(new Error("metrics unavailable")));
+    expect(group().querySelector('[aria-pressed="true"]')?.textContent).toBe("30");
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Retry");
+
+    act(() => ninety().click());
+    await act(async () => resolve());
+    expect(group().querySelector('[aria-pressed="true"]')?.textContent).toBe("90");
+    expect(window.localStorage.setItem).toHaveBeenCalledWith("calderyn:campaign-window", "90");
+  });
+
+  it("gives the mobile editor modal semantics, Escape dismissal, and focus restoration", () => {
+    setNarrowViewport(true);
+    const host = renderCampaigns();
+    const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="Edit campaign type"]')!;
+
+    act(() => trigger.click());
+    const editor = host.querySelector<HTMLElement>('[role="dialog"][aria-label="Edit campaign type"]')!;
+    expect(editor.getAttribute("aria-modal")).toBe("true");
+    expect(document.activeElement).toBe(editor.querySelector('select[aria-label="Campaign type"]'));
+
+    act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    expect(host.querySelector('[role="dialog"][aria-label="Edit campaign type"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 });
 
