@@ -314,6 +314,24 @@ export function placeQuickViewCommerceInCards(
       if (wrapper?.childElementCount === 0) wrapper.remove();
     });
   }
+
+  const repeatedCardContainers = [...new Set(slotHosts.flatMap((host) => {
+    const card = host.closest<HTMLElement>("article");
+    const owner = card?.closest<HTMLElement>('[data-cd-repeat-owner="true"]');
+    return owner && owner !== card && owner.dataset.cdCompilerId && owner.parentElement ? [owner] : [];
+  }))];
+  for (const owner of repeatedCardContainers) {
+    if (!root.contains(owner)) continue;
+    const siblings = repeatedCardContainers.filter((candidate) =>
+      candidate.parentElement === owner.parentElement &&
+      candidate.dataset.cdCompilerId === owner.dataset.cdCompilerId
+    );
+    if (siblings[0] !== owner) continue;
+    for (const sibling of siblings.slice(1)) {
+      owner.append(...sibling.childNodes);
+      sibling.remove();
+    }
+  }
 }
 
 export function StorefrontHydrator(props: {
