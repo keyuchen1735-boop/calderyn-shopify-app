@@ -3,6 +3,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { STOREFRONT_RECIPES } from "~/lib/storefront-recipes";
+import { FIZZ_RECIPE_CONFIG } from "~/lib/storefront-recipes/fizz/bundle";
+import { compileRecipeConfig } from "~/lib/storefront-recipes/factory";
+import { LARDER_RECIPE_CONFIG } from "~/lib/storefront-recipes/larder/bundle";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 import { hydrateStorefront, teardownStorefront } from "./hydrate";
@@ -118,6 +121,34 @@ describe("runtime-1 route adapters", () => {
     expect(JSON.parse(String(body.get("lines")))).toHaveLength(slotCount);
     teardownStorefront();
   });
+
+  it.each([
+    ["larder", 6, LARDER_RECIPE_CONFIG],
+    ["fizz", 4, FIZZ_RECIPE_CONFIG],
+  ] as const)("hydrates the real %s recipe builder and submits all %i slots in preview", async (templateId, slotCount, config) => {
+    const artifact = compileRecipeConfig(config).bundle.routes.home;
+    expect(artifact.trustedSlots).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "bundleBuilder", slotCount }),
+    ]));
+    document.body.innerHTML = renderToStaticMarkup(renderStorefrontRoute({
+      routeId: "home", artifact, data: quickViewData, nonce: "test",
+    }).element);
+    const fetcher = vi.fn<RuntimeFetcher>(async () => new Response("{}", { status: 200 }));
+    const adapters = createRuntimeAdapters({ mode: "preview", previewTemplateId: templateId, data: quickViewData, fetcher, refresh: vi.fn() });
+    const runtime = hydrateStorefront({ root: document.body, artifact, adapters });
+    expect(runtime.error).toBeUndefined();
+    const shadowRoot = trustedCommerceRoot(document.querySelector<HTMLElement>('[data-cd-trusted-slot="bundleBuilder"]')!)!;
+    const selects = shadowRoot.querySelectorAll<HTMLSelectElement>("select");
+    for (let index = 0; index < slotCount; index += 1) {
+      selects[index * 2]!.value = "p1"; selects[index * 2]!.dispatchEvent(new Event("change"));
+      selects[index * 2 + 1]!.value = "v1"; selects[index * 2 + 1]!.dispatchEvent(new Event("change"));
+    }
+    shadowRoot.querySelector<HTMLButtonElement>("button")!.click();
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    expect(JSON.parse(String((fetcher.mock.calls[0]![1]!.body as FormData).get("lines")))).toHaveLength(slotCount);
+    teardownStorefront();
+  });
+
   it("moves detached quick-buy controls into their matching product cards", () => {
     const route = document.createElement("div");
     route.innerHTML = `
