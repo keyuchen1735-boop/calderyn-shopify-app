@@ -1,7 +1,7 @@
 {
   "status": "blocked",
   "approved": false,
-  "reason": "unsora_credit_balance_zero",
+  "reason": "generation_credits_unavailable",
   "requiredRoles": ["hero", "hero-alt", "pdp-detail"],
   "assets": []
 }

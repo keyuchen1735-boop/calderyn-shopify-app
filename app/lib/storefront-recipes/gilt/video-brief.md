@@ -1,13 +1,23 @@
-# Gilt motion briefs
+[VIDEO BRIEF — gilt / hero]
+Duration: 8–12s seamless loop, no cuts on loop point
+Aspect: 16:9 master + 9:16 crop guidance
+Style: Dark cream studio, matte black velvet, restrained warm rim light, macro jewelry photography, intimate and ceremonial
+Subject: One unbranded gold pendant floating above velvet with stable chain, clasp, finish, and blank engraving face
+Motion: Slow half-orbit suitable for scroll-scrubbing, returning precisely to the opening pose
+Constraints: no text, no logos, no faces or hands, no morphing, flicker, exposure pumping, or changing chain links; loopable; low visual noise behind headline zone with top-left third kept calm
 
-## [VIDEO BRIEF — gilt-hero / hero]
+[VIDEO BRIEF — gilt / hero-alt]
+Duration: 8–12s seamless loop, no cuts on loop point
+Aspect: 16:9 master + 9:16 crop guidance
+Style: Dark cream tabletop, black presentation case, quiet morning light, premium gifting editorial, warm and restrained
+Subject: The identical unbranded pendant resting in an open presentation case with stable chain, clasp, finish, and blank engraving face
+Motion: Slow lateral dolly with subtle light movement suitable for scroll-scrubbing, returning precisely to the opening frame
+Constraints: no text, no logos, no faces or hands, no morphing, flicker, exposure pumping, or changing chain links; loopable; low visual noise behind headline zone with top-left third kept calm
 
-8–10 second seamless loop. A topology-stable minimal gold pendant floats above matte black velvet in a dark cream room, slow half-orbit camera, restrained warm rim light, physically consistent reflections, untouched engraving face, calm low-noise top-left headline zone. No hands, faces, text, logos, morphing, flicker, exposure pumping, or changing chain links.
-
-## [VIDEO BRIEF — gilt-hero-alt / hero-alt]
-
-8–10 second seamless loop. The identical pendant rests inside a black presentation case on a dark cream table as morning light moves subtly across the gold, guided recipient-handoff mood without people entering frame, stable clasp and chain geometry, same finish and engraving surface as hero. Calm top-left headline zone; no text, logos, hands, faces, morphing, flicker, or exposure pumping.
-
-## [VIDEO BRIEF — gilt-pdp-detail / pdp-detail]
-
-8–10 second seamless macro loop. Extreme close study of the identical pendant's brushed gold edge, polished face, bail, and blank engraving plane, minute camera slide with coherent reflections and constant object proportions. Reserve quiet negative space; no engraving text, logos, hands, faces, topology changes, melting metal, flicker, or exposure pumping.
+[VIDEO BRIEF — gilt / pdp-detail]
+Duration: 8–12s seamless loop, no cuts on loop point
+Aspect: 16:9 master + 9:16 crop guidance
+Style: Extreme macro gold study, black velvet background, controlled warm highlights, tactile and precise
+Subject: The identical pendant's brushed edge, polished face, bail, and blank engraving plane with constant proportions and coherent reflections
+Motion: Minute macro camera slide and focus pull suitable for scroll-scrubbing, returning precisely to the opening focus and position
+Constraints: no text, no logos, no faces or hands, no engraved marks, morphing, melting metal, flicker, or exposure pumping; loopable; low visual noise behind headline zone with top-left third kept calm
