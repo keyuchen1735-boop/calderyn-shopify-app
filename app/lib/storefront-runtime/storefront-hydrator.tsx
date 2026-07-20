@@ -138,7 +138,7 @@ export function createRuntimeAdapters(input: {
     if (intent.type === "variant.select") return;
     if (input.mode === "preview") {
       const body = previewCommerceBody(intent);
-      if (body) void fetcher(`/dashboard/store/preview${input.previewTemplateId ? `?template=${encodeURIComponent(input.previewTemplateId)}` : ""}`, { method: "POST", body, credentials: "same-origin" }).then(refresh);
+      if (body) void fetcher(`/dashboard/store/preview${input.previewTemplateId ? `?template=${encodeURIComponent(input.previewTemplateId)}` : ""}`, { method: "POST", body, credentials: "same-origin" }).then(refresh).catch(() => {});
       return;
     }
     if (intent.type === "checkout.start") {
@@ -151,7 +151,7 @@ export function createRuntimeAdapters(input: {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request[1]),
       credentials: "same-origin",
-    }).then(refresh);
+    }).then(refresh).catch(() => {});
   };
   return {
     navigate(target) {
