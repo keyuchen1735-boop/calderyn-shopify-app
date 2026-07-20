@@ -39,18 +39,25 @@ describe("roast storefront recipe", () => {
     ]));
     expect(dataPaths(bundle.routes.product)).toEqual(expect.arrayContaining([
       "product.title", "product.description", "product.price", "product.availability", "variant.title", "variant.availability",
+      "fact.label", "fact.value", "fact.url",
     ]));
-    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).toContain("Origin facts come from the merchant record");
+    expect(repeatsIn(bundle.routes.product.tree)).toEqual(expect.arrayContaining(["product.variants", "product.facts"]));
+    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).toContain("Merchant product record");
+    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).toContain('data-cd-href="fact.url"');
 
-    expect(bundle.routes.home.interactions.transitions).not.toContainEqual(expect.objectContaining({
-      action: expect.objectContaining({ type: "collection.filter" }),
-    }));
+    expect(bundle.routes.home.interactions.transitions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: expect.objectContaining({ type: "tabs.select" }) }),
+    ]));
     expect(ROAST_RECIPE_CONFIG.surfaces.home.source.html).toContain("Brew-method field guide");
+    expect(ROAST_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-target="brew-guide"');
+    expect(ROAST_RECIPE_CONFIG.surfaces.home.source.html).toContain("This guide does not claim a catalog match");
     expect(ROAST_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-route="collection"');
 
-    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).toContain("Review the available product options");
+    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).toContain("If grind is an available merchant option");
+    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).toContain("Recurring delivery appears only when the merchant offers it");
     expect(bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
-    expect(repeatsIn(bundle.routes.product.tree)).toContain("product.variants");
+    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).not.toContain('name="grind"');
+    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).not.toContain('data-cd-action="sellingPlan.select"');
     expect(bundle.routes.product.html).not.toMatch(/always available|guaranteed freshness|roasted today|ships today/i);
 
     expect(repeatsIn(bundle.routes.cart.tree)).toContain("cart.lines");
@@ -61,8 +68,7 @@ describe("roast storefront recipe", () => {
     const customerCopy = Object.values(ROAST_RECIPE_CONFIG.surfaces)
       .map(({ source }) => source.html)
       .join(" ");
-    expect(customerCopy).not.toMatch(/\b(subscription|cadence|selling plan)\b/i);
-    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).not.toMatch(/choose grind|grind option/i);
+    expect(customerCopy).not.toMatch(/matched for you|recommended coffee|best coffee for|guaranteed match/i);
 
     expect(report.ok).toBe(false);
     expect(ROAST_VIDEO_ROLES).toEqual(["hero", "brew-context", "bean-grind"]);
@@ -72,6 +78,11 @@ describe("roast storefront recipe", () => {
       "bean-grind-poster", "bean-grind-webm", "bean-grind-mp4",
     ]);
     expect(ROAST_ASSETS.entries).toEqual([]);
+    expect(report.diagnostics).toHaveLength(18);
+    expect([...new Set(report.diagnostics.map(({ code }) => code))].sort()).toEqual([
+      "asset.media_mismatch", "asset.reference_missing",
+    ]);
+    expect(report.diagnostics.filter(({ code }) => code === "asset.media_mismatch")).toHaveLength(9);
     expect(report.diagnostics.filter(({ code }) => code === "asset.reference_missing")).toHaveLength(9);
     for (const key of ROAST_VIDEO_ASSET_KEYS) {
       expect(report.diagnostics).toContainEqual(expect.objectContaining({
@@ -100,6 +111,9 @@ describe("roast storefront recipe", () => {
       "docs/superpowers/prototypes/storefront-recipes/roast.html",
     ), "utf8");
     expect(prototype).toContain("Brew-method field guide");
-    expect(prototype).not.toMatch(/\b(subscription|cadence|selling plan)\b|choose grind|grind option/i);
+    expect(prototype.match(/data-method=/g)).toHaveLength(3);
+    expect(prototype).toContain("This guide does not claim a catalog match");
+    expect(prototype).toContain("Recurring delivery appears only when the merchant offers it");
+    expect(prototype).not.toMatch(/matched for you|recommended coffee|best coffee for|guaranteed match/i);
   });
 });

@@ -19,16 +19,28 @@
       <div class="roaster" aria-label="Abstract roaster composition placeholder"></div>
       <aside class="plot"><div class="plot-head"><b>Roast plot</b><span class="label">Merchant field</span></div><div class="bars"><i style="--h:22%"></i><i style="--h:28%"></i><i style="--h:34%"></i><i style="--h:44%"></i><i style="--h:58%"></i><i style="--h:72%"></i><i style="--h:83%"></i><i style="--h:92%"></i><i style="--h:84%"></i><i style="--h:66%"></i><i style="--h:48%"></i><i style="--h:34%"></i><i style="--h:25%"></i><i style="--h:19%"></i><i style="--h:14%"></i></div></aside>
     </section>
-    <section class="quiz" id="quiz"><div><span class="label">Brew-method field guide</span><h2 class="display">Start with your setup.</h2><p>Compare preparation styles, then review the merchant's live descriptions and available product options before choosing.</p></div><div class="answers"><button>Filter <span>Paper or metal filter</span></button><button>Espresso <span>Pressurized extraction</span></button><button>Immersion <span>Full-contact brewing</span></button></div></section>
+    <section class="quiz" id="quiz"><div><span class="label">Brew-method field guide</span><h2 class="display">Start with your setup.</h2><p>Choose a method for preparation guidance. This guide does not claim a catalog match; confirm fit from the merchant's live record.</p></div><div class="answers"><button data-method="filter">Filter <span>Paper or metal filter</span></button><button data-method="espresso">Espresso <span>Pressurized extraction</span></button><button data-method="immersion">Immersion <span>Full-contact brewing</span></button><p id="method-note" aria-live="polite">Filter: review the grind options supplied by the merchant for your brewer.</p></div></section>
     <section class="ledger" id="coffee"><div class="ledger-head"><div><span class="label">Live coffee ledger</span><h2 class="display">Current bags</h2></div><span>Catalog records / availability bound</span></div><div class="grid">
       <article class="card"><div class="image"><div class="bag"></div></div><div class="card-body"><span class="label">Merchant origin field</span><h3>Live product title</h3><p>Live merchant description appears here.</p><div class="facts"><span class="fact-label">Price</span><b>Live value</b><span class="fact-label">Availability</span><b>Live status</b></div></div></article>
       <article class="card"><div class="image"><div class="bag"></div></div><div class="card-body"><span class="label">Merchant origin field</span><h3>Live product title</h3><p>Live merchant description appears here.</p><div class="facts"><span class="fact-label">Price</span><b>Live value</b><span class="fact-label">Availability</span><b>Live status</b></div></div></article>
       <article class="card"><div class="image"><div class="bag"></div></div><div class="card-body"><span class="label">Merchant origin field</span><h3>Live product title</h3><p>Live merchant description appears here.</p><div class="facts"><span class="fact-label">Price</span><b>Live value</b><span class="fact-label">Availability</span><b>Live status</b></div></div></article>
     </div>
-    <section class="prep" id="prep"><aside aria-label="Abstract coffee texture composition placeholder"></aside><article><span class="label">Preparation sheet / live product</span><h2 class="display">Start with preparation.</h2><div class="steps"><div>Choose the brew method that matches your equipment.</div><div>Review the available product options.</div><div>Confirm the selected option, price, and availability.</div></div><div class="controls"><button>Product option <b>Protected selection</b></button><button class="add">Add through protected commerce</button></div></article></section>
+    <section class="prep" id="prep"><aside aria-label="Abstract coffee texture composition placeholder"></aside><article><span class="label">Preparation sheet / live product</span><h2 class="display">Start with preparation.</h2><div class="steps"><div>Choose the brew method that matches your equipment.</div><div>Review only the options and product facts supplied by the merchant.</div><div>Confirm the selected option, price, and availability.</div></div><div class="controls"><button>Merchant option <b>Protected selection</b></button><button class="add">Add through protected commerce</button></div><p>Recurring delivery appears only when the merchant offers it for the selected option.</p></article></section>
     </section>
     <aside class="note">Prototype proof: fixed labels demonstrate hierarchy only. The compiled recipe binds all product facts and commerce behavior to live merchant data. Media remains unresolved until exact masters pass technical and full-loop review.</aside>
   </main>
   <footer class="footer"><b>Roast / brew notebook</b><span>Espresso · cream · orange</span></footer>
+  <script>
+    const methodNotes = {
+      filter: "Filter: review the grind options supplied by the merchant for your brewer.",
+      espresso: "Espresso: compare machine requirements with the merchant's product record.",
+      immersion: "Immersion: compare brewer capacity with the merchant's product record.",
+    };
+    document.querySelectorAll("[data-method]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelector("#method-note").textContent = methodNotes[button.dataset.method];
+      });
+    });
+  </script>
 </body>
 </html>
