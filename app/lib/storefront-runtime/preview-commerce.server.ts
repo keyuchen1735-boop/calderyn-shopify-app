@@ -119,7 +119,7 @@ export function createPreviewCommerceAdapter(initial: PreviewCommerceSnapshot) {
         if (!valid || valid.quantity !== 1) throw new Error("Invalid preview bundle line");
         const existing = next.find((entry) => entry.variantId === valid.variantId);
         if (existing) {
-          if (existing.unitPrice.currency !== valid.unitPrice.currency || existing.unitPrice.cents !== valid.unitPrice.cents || existing.quantity >= MAX_QUANTITY) {
+          if (existing.unitPrice.currency !== valid.unitPrice.currency || existing.quantity >= MAX_QUANTITY) {
             throw new Error("Invalid preview bundle line");
           }
           existing.quantity += 1;

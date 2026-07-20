@@ -385,6 +385,30 @@ describe("declarative storefront hydration", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it.each([101, 999])("dispatches a browser cart quantity of %i through the trusted bridge", (quantity) => {
+    document.body.innerHTML = `<main id="root"><div data-cd-instance="i-cart-line-1"><div id="cd-cart-slot-1-i-cart-line-1" data-cd-instance="i-cart-line-1" data-cd-trusted-slot="cartLineControls" data-cd-slot-scope="cd-cart-scope-1" data-cd-authority-key="cartLine:line-1"></div></div></main>`;
+    const dispatch = vi.fn();
+    const mount = vi.fn(({ bridge }) => {
+      bridge({ type: "cart.quantity", lineId: "line-1", quantity });
+    });
+
+    const runtime = hydrateStorefront({
+      root: document.getElementById("root") as HTMLElement,
+      artifact: artifact({
+        requiredCapabilities: ["commerce"], interactions: { version: 1, state: [], bindings: [], transitions: [] },
+        trustedSlots: [{ id: "cd-cart-slot-1", kind: "cartLineControls", scopeId: "cd-cart-scope-1", hostSize: "block", themeTokenIds: [] }],
+      }),
+      adapters: { commerce: { mount, dispatch } },
+    });
+
+    expect(runtime.hydrated).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith({
+      authorityKey: "cartLine:line-1",
+      slotKind: "cartLineControls",
+      intent: { type: "cart.quantity", lineId: "line-1", quantity },
+    });
+  });
+
   it("fails runtime validation for root-scoped cart-line controls", () => {
     document.body.innerHTML = `<main id="root"><div id="cd-cart-slot-1" data-cd-trusted-slot="cartLineControls" data-cd-slot-scope="root" data-cd-authority-key="cartLine:line-1"></div></main>`;
     const mount = vi.fn();

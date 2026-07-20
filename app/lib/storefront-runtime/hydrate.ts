@@ -291,7 +291,7 @@ function validCommerceIntent(intent: CommerceIntent): boolean {
       isValidStorefrontLinePersonalization(intent.personalization);
   }
   if (typeof intent.lineId !== "string" || intent.lineId.length === 0 || intent.lineId.length > 160) return false;
-  return intent.type === "cart.remove" || (Number.isSafeInteger(intent.quantity) && intent.quantity >= 0 && intent.quantity <= 100);
+  return intent.type === "cart.remove" || (Number.isSafeInteger(intent.quantity) && intent.quantity >= 0 && intent.quantity <= 999);
 }
 
 function commerceIntentMatchesAuthority(authorityKey: string, intent: CommerceIntent): boolean {

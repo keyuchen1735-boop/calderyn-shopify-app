@@ -55,6 +55,30 @@ describe("preview commerce adapter", () => {
     });
   });
 
+  it("preserves the stored price when a bundle repeats an existing variant", () => {
+    const adapter = createPreviewCommerceAdapter({
+      shopId: "shop-1",
+      lines: [{
+        lineId: "preview:v1", variantId: "v1", title: "Stored lemon", quantity: 1,
+        unitPrice: { cents: 100, currency: "USD" },
+      }],
+    });
+
+    adapter.addBundle([
+      { lineId: "preview:v1", variantId: "v1", title: "Current lemon", quantity: 1, unitPrice: { cents: 200, currency: "USD" } },
+      { lineId: "preview:v2", variantId: "v2", title: "Ginger", quantity: 1, unitPrice: { cents: 200, currency: "USD" } },
+    ]);
+
+    expect(adapter.cart()).toMatchObject({
+      count: 3,
+      subtotal: { cents: 400, currency: "USD" },
+      lines: [
+        { id: "preview:v1", title: "Stored lemon", quantity: 2, unitPrice: { cents: 100, currency: "USD" } },
+        { id: "preview:v2", quantity: 1, unitPrice: { cents: 200, currency: "USD" } },
+      ],
+    });
+  });
+
   it("leaves the preview cart unchanged when any bundle line is invalid", () => {
     const adapter = createPreviewCommerceAdapter({ shopId: "shop-1", lines: [] });
     expect(() => adapter.addBundle([
