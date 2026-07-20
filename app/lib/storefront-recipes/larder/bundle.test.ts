@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
 import { compileRecipeConfig } from "../factory";
@@ -84,5 +87,24 @@ describe("larder storefront recipe", () => {
     expect(bundle.routes.story?.html).toContain('data-cd-poster-asset-key="hero-alt-poster"');
     expect(bundle.routes.product.html).toContain('data-cd-poster-asset-key="pdp-detail-poster"');
     expect(bundle.routes.home.html).not.toContain('data-cd-src="hero-poster"');
+  });
+
+  it("ships every approved video derivative at its hash-owned preview path", () => {
+    const extensionByType = {
+      "image/webp": "webp",
+      "video/webm": "webm",
+      "video/mp4": "mp4",
+    } as const;
+
+    for (const asset of LARDER_RECIPE_CONFIG.assets.entries) {
+      const path = resolve(
+        "public/storefront-recipes/larder",
+        `${asset.contentHash}.${extensionByType[asset.mediaType as keyof typeof extensionByType]}`,
+      );
+      expect(existsSync(path), asset.key).toBe(true);
+      const bytes = readFileSync(path);
+      expect(bytes.byteLength, asset.key).toBe(asset.byteSize);
+      expect(createHash("sha256").update(bytes).digest("hex"), asset.key).toBe(asset.contentHash);
+    }
   });
 });
