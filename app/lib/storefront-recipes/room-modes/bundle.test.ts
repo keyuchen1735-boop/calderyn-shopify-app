@@ -14,6 +14,14 @@ function actionsIn(route: RouteArtifact): string[] {
 }
 
 describe("room-modes storefront recipe", () => {
+  it("lays out collection products in the three-column scene matrix", () => {
+    const collection = ROOM_MODES_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('class="object-matrix" data-cd-repeat="collection.products"');
+    expect(collection.css).toMatch(/\.object-matrix\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*repeat\(3,minmax\(0,1fr\)\)/);
+    expect(collection.css).toMatch(/@media\(max-width:700px\)\{[^}]*\.object-matrix\s*\{[^}]*grid-template-columns:\s*1fr/);
+  });
+
   it("keeps the original viewport room-scene geometry", () => {
     expect(ROOM_MODES_RECIPE.bundle.routes.home.css).toContain("min-height:100dvh");
   });
@@ -26,7 +34,7 @@ describe("room-modes storefront recipe", () => {
     const { bundle, config, report } = ROOM_MODES_RECIPE;
 
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 5 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 6 });
     expect(config.archetype).toEqual({
       composition: "spatial-scenes",
       hero: "room-mode-scene",

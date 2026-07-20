@@ -9,6 +9,13 @@ const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((nod
 const actions = (route: RouteArtifact) => route.interactions.transitions.map((item) => item.action.type);
 
 describe("diagnostic-deck storefront recipe", () => {
+  it("lays out collection products as rows on the repeated diagnostic matrix", () => {
+    const collection = DIAGNOSTIC_DECK_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('class="matrix" data-cd-repeat="collection.products"');
+    expect(collection.css).toMatch(/\.matrix\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*1fr/);
+  });
+
   it("keeps the original scan line and target reticle over the hero evidence image", () => {
     expect(DIAGNOSTIC_DECK_RECIPE.bundle.routes.home.html).toContain('class="scan"');
     expect(DIAGNOSTIC_DECK_RECIPE.bundle.routes.home.html).toContain('class="target"');
@@ -41,7 +48,7 @@ describe("diagnostic-deck storefront recipe", () => {
   it("compiles a diagnostic terminal deck with exact-unit evidence and complete transactions", () => {
     const { bundle, config, report } = DIAGNOSTIC_DECK_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "diagnostic-deck", templateVersion: 5 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "diagnostic-deck", templateVersion: 6 });
     expect(config.archetype).toEqual({ composition: "diagnostic-terminal", hero: "grade-diagnostic-hero", scroll: "deck-snap", cards: "diagnostic-cards", iconography: ["terminal condition marks", "warranty status glyphs"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "archivo-black", bodyFontId: "dm-mono", iconStyle: "terminal condition marks and warranty-status glyphs", motionStyle: "deck snap with evidence-panel expansion" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

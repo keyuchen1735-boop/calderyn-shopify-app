@@ -3,7 +3,7 @@ import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, wrapRecipeCompo
 import { RITUAL_ALMANAC_ASSETS } from "./assets";
 
 const config = {
-  templateId: "ritual-almanac", templateVersion: 5,
+  templateId: "ritual-almanac", templateVersion: 6,
   concept: { name: "Ritual Almanac", rationale: "An editorial pantry organized by hour, flavor chapter, and recurring ritual instead of benefit-card claims.", noveltySignature: ["ritual-time-wheel", "almanac-chapters", "cadence-led-pantry"] },
   designSystem: {
     displayFontId: "young-serif", bodyFontId: "manrope",
@@ -61,10 +61,12 @@ config.surfaces.collection.source.html = config.surfaces.collection.source.html.
   '<select data-cd-on="change" data-cd-action="collection.sort">',
   '<select aria-label="Sort pantry products" value="relevance" data-cd-on="change" data-cd-action="collection.sort">',
 );
-config.surfaces.collection.source.html = config.surfaces.collection.source.html.replace(
-  "</a></article>",
-  '</a><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div></article>',
-);
+config.surfaces.collection.source.html += `<section data-cd-repeat="collection.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>`;
+config.surfaces.collection.source.css = sourceTemplateCss(
+  sourceTemplate,
+  config.surfaces.collection.source.html,
+  { display: "Young Serif", body: "Manrope" },
+) + ".collection{display:block}";
 config.surfaces.home.source.html = config.surfaces.home.source.html
   .replace("<h1>Good things", '<h1 id="heroTitle">Good things')
   .replace('<div class="kicker">Chapter 07', '<div id="heroEyebrow" class="kicker">Chapter 07')

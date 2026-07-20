@@ -100,21 +100,30 @@ describe("runtime-1 route adapters", () => {
         placeQuickViewCommerceInCards(route, artifact);
 
         const controls = [...route.querySelectorAll('[data-cd-trusted-slot="quickViewCommerce"]')];
-        if (!artifact.trustedSlots.some((slot) => slot.kind === "quickViewCommerce")) continue;
-        expect(controls, `${recipe.config.templateId}/${routeId}`).not.toHaveLength(0);
-        expect(controls.every((control) => control.closest("article")),
-          `${recipe.config.templateId}/${routeId}`).toBe(true);
-        const layoutOwners = [...new Set(controls.flatMap((control) => {
-          const card = control.closest("article");
-          const owner = card?.closest<HTMLElement>('[data-cd-repeat-owner="true"]');
-          return owner && owner !== card ? [owner] : [];
-        }))];
+        if (artifact.trustedSlots.some((slot) => slot.kind === "quickViewCommerce")) {
+          expect(controls, `${recipe.config.templateId}/${routeId}`).not.toHaveLength(0);
+          expect(controls.every((control) => control.closest("article")),
+            `${recipe.config.templateId}/${routeId}`).toBe(true);
+        }
+        const layoutOwners = [...route.querySelectorAll<HTMLElement>('[data-cd-repeat-owner="true"]')]
+          .filter((owner) => owner.tagName !== "ARTICLE" && owner.querySelector("article"));
         for (const owner of layoutOwners) {
           const siblings = [...(owner.parentElement?.children ?? [])].filter((candidate) =>
             candidate.getAttribute("data-cd-compiler-id") === owner.dataset.cdCompilerId
           );
           expect(siblings, `${recipe.config.templateId}/${routeId} product layout`).toHaveLength(1);
         }
+      }
+    }
+  });
+
+  it("provides purchase controls on every recipe home and collection listing", () => {
+    for (const recipe of STOREFRONT_RECIPES) {
+      for (const routeId of ["home", "collection"] as const) {
+        expect(
+          recipe.bundle.routes[routeId].trustedSlots.some((slot) => slot.kind === "quickViewCommerce"),
+          `${recipe.config.templateId}/${routeId}`,
+        ).toBe(true);
       }
     }
   });

@@ -7,7 +7,7 @@ describe("Soft Chemistry storefront recipe", () => {
   it("compiles a clinical editorial routine across the full commerce contract", () => {
     const { bundle, config, report } = SOFT_CHEMISTRY_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 9 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 10 });
     expect(config.archetype).toMatchObject({ composition: "clinical-editorial", hero: "ingredient-routine-hero", scroll: "soft-reveal", cards: "ingredient-dossiers" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "cormorant-garamond", bodyFontId: "manrope" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
@@ -22,6 +22,7 @@ describe("Soft Chemistry storefront recipe", () => {
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
     expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
     expect(bundle.routes.home.html).toContain("Skin, in its softer state.");
+    expect(bundle.routes.home.trustedSlots.map((slot) => slot.kind)).toContain("quickViewCommerce");
     expect(bundle.routes.home.interactions.transitions).toEqual([]);
     expect(bundle.routes.collection.html).toContain("No formulas found.");
     expect(bundle.routes.collection.bindings.map((binding) => binding.ref)).toEqual(expect.arrayContaining([
@@ -52,6 +53,7 @@ describe("Soft Chemistry storefront recipe", () => {
     expect(config.surfaces.home.source.html).toEqual(expect.stringContaining('class="concerns"'));
     expect(config.surfaces.home.source.html).toEqual(expect.stringContaining('class="products"'));
     expect(config.surfaces.home.source.html).toEqual(expect.stringContaining('class="rail"'));
+    expect(config.surfaces.home.source.html).toContain('data-cd-slot="quickViewCommerce"');
     expect(config.surfaces.home.source.html).toContain('data-cd-src="product.primaryImage"');
     expect(config.surfaces.home.source.html).not.toContain('<small data-cd-text="product.description"');
     expect(config.surfaces.home.source.html).not.toContain("Return to ritual");
@@ -64,6 +66,8 @@ describe("Soft Chemistry storefront recipe", () => {
     expect(config.surfaces.collection.source.html).toContain('data-cd-asset="collection"');
     expect(config.surfaces.collection.source.html).toEqual(expect.stringContaining('class="filters"'));
     expect(config.surfaces.collection.source.html).toEqual(expect.stringContaining('class="grid"'));
+    expect(config.surfaces.collection.source.css).toContain(".grid{display:grid;grid-template-columns:repeat(3,1fr)}");
+    expect(config.surfaces.collection.source.css).toContain(".grid{grid-template-columns:1fr 1fr}");
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="pdp"'));
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="gallery"'));
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="detail"'));

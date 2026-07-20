@@ -76,6 +76,13 @@ describe("Atelier Grid recipe contract", () => {
     expect(ATELIER_GRID_BUNDLE.routes.checkout.bindings.map((binding) => binding.ref.kind === "data" ? binding.ref.path : null)).toContain("store.name");
   });
 
+  it("keeps the collection on its approved asymmetric twelve-column grid", () => {
+    const css = ATELIER_GRID_RECIPE.config.surfaces.collection.source.css;
+    expect(css).toContain(".atelier-collection-grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)) }");
+    expect(css).toContain(".atelier-collection-card { grid-column:span 4");
+    expect(css).toContain("grid-column:span 6");
+  });
+
   it("uses protected commerce islands and declared interactions instead of inert controls", () => {
     expect(ATELIER_GRID_BUNDLE.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
     expect(ATELIER_GRID_BUNDLE.routes.home.trustedSlots.map((slot) => slot.kind)).toContain("quickViewCommerce");

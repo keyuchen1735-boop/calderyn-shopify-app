@@ -59,8 +59,9 @@ const collection = {
         <button value="price_asc" data-cd-on="click" data-cd-action="collection.sort">Sort by price</button>
       </aside>
       <section class="catalog-grid" data-cd-repeat="collection.products">
-        <article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy"><h2 data-cd-text="product.title"></h2><p class="recipe-copy" data-cd-text="product.description"></p><p data-cd-money="product.price"></p><small data-cd-text="product.availability"></small><a data-cd-route="product" data-cd-param-handle="product.handle">Open work order</a><div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline" data-cd-theme-tokens="ink cobalt paper"></div></article>
+        <article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy"><h2 data-cd-text="product.title"></h2><p class="recipe-copy" data-cd-text="product.description"></p><p data-cd-money="product.price"></p><small data-cd-text="product.availability"></small><a data-cd-route="product" data-cd-param-handle="product.handle">Open work order</a></article>
       </section>
+      <section data-cd-repeat="collection.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline" data-cd-theme-tokens="ink cobalt paper"></aside></section>
       <p class="empty-state" data-cd-empty-state>No objects match these workshop filters. Clear a material filter to reopen the bench.</p>
     </main>
   `,
@@ -70,10 +71,11 @@ const collection = {
     .catalog-intro img { height: 20rem; object-fit: cover; width: 100% }
     .filters { display: flex; gap: .5rem; overflow-x: auto; padding: 1rem }
     .filters button { background: transparent; border: 1px solid var(--rule); padding: .75rem 1rem }
+    .catalog-grid { display: grid; grid-template-columns: repeat(3, 1fr) }
     .catalog-grid img { aspect-ratio: 4 / 5; object-fit: cover; width: 100% }
     .catalog-grid h2 { font-family: var(--font-display); text-transform: uppercase }
     .empty-state { border: 1px dashed var(--rule); padding: 2rem; text-align: center }
-    @media (max-width: 760px) { .catalog-intro { grid-template-columns: 1fr } .catalog-intro img { height: 14rem } }
+    @media (max-width: 760px) { .catalog-intro { grid-template-columns: 1fr } .catalog-intro img { height: 14rem } .catalog-grid { grid-template-columns: 1fr } }
   `,
   requiredData: [],
   requiredCapabilities: [],
@@ -160,7 +162,7 @@ const checkout = {
 
 export const CUSTOM_BENCH_RECIPE = defineRecipe({
   templateId: "custom-bench",
-  templateVersion: 7,
+  templateVersion: 8,
   concept: {
     name: "Custom Bench",
     rationale: "A workshop interface turns personalization into a legible proofing sequence.",
