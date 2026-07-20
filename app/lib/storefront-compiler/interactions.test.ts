@@ -81,6 +81,27 @@ describe("typed interactions", () => {
     expect(result.html).not.toContain("id=\"cd-product-buy\"");
   });
 
+  it("allows only bounded personalization fields on the trusted add-to-cart slot", () => {
+    const result = compileHtml(
+      `<div data-cd-slot="addToCart" data-cd-personalization="engraving giftNote recipient"></div>`,
+      { namespace: "product", rootScopeKind: "product" },
+    );
+    expect(result.trustedSlots[0]).toEqual(expect.objectContaining({
+      kind: "addToCart",
+      personalizationFields: ["engraving", "giftNote", "recipient"],
+    }));
+    expect(result.html).not.toContain("personalization");
+
+    expect(() => compileHtml(
+      `<div data-cd-slot="addToCart" data-cd-personalization="engraving price"></div>`,
+      { namespace: "product", rootScopeKind: "product" },
+    )).toThrow(/personalization/i);
+    expect(() => compileHtml(
+      `<div data-cd-slot="quickViewCommerce" data-cd-personalization="engraving"></div>`,
+      { namespace: "home" },
+    )).toThrow(/personalization/i);
+  });
+
   it("requires cart-line controls to be inside the exact cart-line repeat scope", () => {
     expect(() => compileHtml(
       `<div data-cd-slot="cartLineControls"></div>`,

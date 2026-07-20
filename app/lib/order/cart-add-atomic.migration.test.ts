@@ -15,12 +15,21 @@ describe("cart_add_line_atomic migration", () => {
 
   it("backfills canonical personalization identity and snapshots it onto orders", () => {
     const sql = readFileSync(path, "utf8").toLowerCase();
-    expect(sql).toContain("add column personalization jsonb not null default '{}'::jsonb");
+    expect(sql).toMatch(/alter table public\.order_line\s+add column personalization jsonb not null default '\{\}'::jsonb/);
     expect(sql).toContain("add column personalization_hash text");
     expect(sql).toContain("update public.cart_line");
     expect(sql).toContain("add column personalization jsonb not null default '{}'::jsonb");
     expect(sql).toContain("unique (shop_id, cart_id, variant_id, personalization_hash)");
     expect(sql).toContain("'personalization', personalization");
+  });
+
+  it("keeps the legacy seven-argument RPC callable during rolling deployment", () => {
+    const sql = readFileSync(path, "utf8").toLowerCase();
+    const legacySignature = "public.cart_add_line_atomic(uuid, uuid, text, integer, integer, text, text)";
+    expect(sql).not.toContain(`drop function if exists ${legacySignature}`);
+    expect(sql).toContain(`revoke all on function ${legacySignature}`);
+    expect(sql).toContain(`grant execute on function ${legacySignature}`);
+    expect(sql).toMatch(/create or replace function public\.cart_add_line_atomic\([\s\S]*?p_title_snapshot text\s*\) returns jsonb[\s\S]*?p_personalization\s*=>\s*'\{\}'::jsonb/);
   });
 
   it("preserves the first snapshot and exposes the function only to service_role", () => {

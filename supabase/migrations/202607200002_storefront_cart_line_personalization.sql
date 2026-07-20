@@ -23,8 +23,6 @@ alter table public.cart_line
 alter table public.order_line
   add column personalization jsonb not null default '{}'::jsonb;
 
-drop function if exists public.cart_add_line_atomic(uuid, uuid, text, integer, integer, text, text);
-
 create or replace function public.cart_add_line_atomic(
   p_shop_id uuid,
   p_cart_id uuid,
@@ -121,7 +119,35 @@ begin
 end;
 $$;
 
+create or replace function public.cart_add_line_atomic(
+  p_shop_id uuid,
+  p_cart_id uuid,
+  p_variant_id text,
+  p_quantity integer,
+  p_unit_price_cents integer,
+  p_currency text,
+  p_title_snapshot text
+) returns jsonb
+language sql
+security definer set search_path = ''
+as $$
+  select public.cart_add_line_atomic(
+    p_shop_id => p_shop_id,
+    p_cart_id => p_cart_id,
+    p_variant_id => p_variant_id,
+    p_quantity => p_quantity,
+    p_unit_price_cents => p_unit_price_cents,
+    p_currency => p_currency,
+    p_title_snapshot => p_title_snapshot,
+    p_personalization => '{}'::jsonb
+  );
+$$;
+
 revoke all on function public.cart_add_line_atomic(uuid, uuid, text, integer, integer, text, text, jsonb)
   from public, anon, authenticated;
 grant execute on function public.cart_add_line_atomic(uuid, uuid, text, integer, integer, text, text, jsonb)
+  to service_role;
+revoke all on function public.cart_add_line_atomic(uuid, uuid, text, integer, integer, text, text)
+  from public, anon, authenticated;
+grant execute on function public.cart_add_line_atomic(uuid, uuid, text, integer, integer, text, text)
   to service_role;

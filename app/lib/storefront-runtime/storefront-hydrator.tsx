@@ -4,6 +4,7 @@ import type { PublicPresentationData } from "./public-data.server";
 import { hydrateStorefront } from "./hydrate";
 import type { StorefrontRuntimeHandle } from "./hydrate";
 import type { CommerceIntent, CommerceMountContext, ResolvedRouteTarget, RuntimeAdapters } from "./actions";
+import { canonicalizeStorefrontLinePersonalization, type StorefrontLinePersonalization } from "./trusted-slots";
 
 type RuntimeMode = "public" | "preview";
 export type RuntimeFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -35,7 +36,13 @@ function hrefFor(target: ResolvedRouteTarget, mode: RuntimeMode, previewTemplate
 }
 
 function publicCommerceRequest(intent: CommerceIntent): [string, Record<string, unknown>] | null {
-  if (intent.type === "cart.add") return ["/storefront/api/cart/add", { variantId: intent.variantId, quantity: intent.quantity }];
+  if (intent.type === "cart.add") return ["/storefront/api/cart/add", {
+    variantId: intent.variantId,
+    quantity: intent.quantity,
+    ...(intent.personalization === undefined ? {} : {
+      personalization: canonicalizeStorefrontLinePersonalization(intent.personalization),
+    }),
+  }];
   if (intent.type === "cart.quantity") return ["/storefront/api/cart/quantity", { lineId: intent.lineId, quantity: intent.quantity }];
   if (intent.type === "cart.remove") return ["/storefront/api/cart/remove", { lineId: intent.lineId }];
   if (intent.type === "cart.clear") return ["/storefront/api/cart/clear", {}];
@@ -136,7 +143,7 @@ function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext, 
     : "";
   const style = ownerDocument.createElement("style");
   style.nonce = ownerDocument.querySelector<HTMLStyleElement>("style[nonce]")?.nonce ?? "";
-  style.textContent = `:host{display:block;min-width:44px;min-height:44px;font:inherit;color:${foreground}}:host([hidden]){display:none!important}div{display:flex;align-items:center;gap:.5rem}button,select,input{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:${squareAccentCommerce ? "0" : ".2rem"};background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700;${buttonTheme}}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
+  style.textContent = `:host{display:block;min-width:44px;min-height:44px;font:inherit;color:${foreground}}:host([hidden]){display:none!important}div{display:flex;align-items:center;gap:.5rem}label{display:grid;gap:.25rem}button,select,input,textarea{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:${squareAccentCommerce ? "0" : ".2rem"};background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700;${buttonTheme}}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}textarea{min-width:min(20rem,100%);resize:vertical}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
   return style;
 }
 
@@ -296,11 +303,28 @@ export function createRuntimeAdapters(input: {
         const button = document.createElement("button");
         button.type = "button";
         if (slot.kind === "addToCart") {
+          const personalizationInputs = new Map<keyof StorefrontLinePersonalization, HTMLInputElement | HTMLTextAreaElement>();
+          for (const field of slot.personalizationFields ?? []) {
+            const label = document.createElement("label");
+            label.textContent = field === "giftNote" ? "Gift note" : field === "giftWrap" ? "Gift wrap" : field === "recipient" ? "Recipient" : "Engraving";
+            const control = field === "giftNote" ? document.createElement("textarea") : document.createElement("input");
+            control.name = field;
+            control.maxLength = 240;
+            label.append(control);
+            personalizationInputs.set(field, control);
+            shadowRoot.append(label);
+          }
           button.textContent = selectedVariant ? "Add to cart" : "Sold out";
           button.disabled = !selectedVariant;
-          if (selectedVariant && input.data?.product) button.onclick = () => bridge({
-            type: "cart.add", productId: input.data!.product!.id, variantId: selectedVariant!.id, quantity: 1,
-          });
+          if (selectedVariant && input.data?.product) button.onclick = () => {
+            const personalization = canonicalizeStorefrontLinePersonalization(Object.fromEntries(
+              [...personalizationInputs].flatMap(([field, control]) => control.value ? [[field, control.value]] : []),
+            ));
+            bridge({
+              type: "cart.add", productId: input.data!.product!.id, variantId: selectedVariant!.id, quantity: 1,
+              ...(Object.keys(personalization).length === 0 ? {} : { personalization }),
+            });
+          };
         } else if (slot.kind === "cartSummary" || slot.kind === "cartDrawer") {
           button.textContent = "Checkout";
           const cartId = authorityKey.startsWith("cart:") ? authorityKey.slice("cart:".length) : input.data?.cart?.id ?? "preview";

@@ -160,6 +160,21 @@ describe("validation profile v1", () => {
     ]));
   });
 
+  it("rejects persisted personalization fields outside the closed slot vocabulary", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.product.html = `<main><h1 data-cd-text="product.title"></h1><div data-cd-slot="addToCart" data-cd-personalization="engraving giftNote"></div></main>`;
+    source.routes.product.css = "";
+    const compiled = compileBundle(source);
+    expect(compiled.report.ok).toBe(true);
+
+    const slot = compiled.bundle.routes.product.trustedSlots[0];
+    if (!slot) throw new Error("fixture personalization slot is missing");
+    slot.personalizationFields = ["price"] as never;
+    expect(validateCompiledBundle(compiled.bundle).diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "slot.personalization" }),
+    ]));
+  });
+
   it("allows repeated quick commerce but rejects repeated product-page controls on browse routes", () => {
     const quickView = structuredClone(VALID_BUNDLE_SOURCE);
     quickView.routes.home.html = `<main data-cd-repeat="featured.products"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id"></div></main>`;

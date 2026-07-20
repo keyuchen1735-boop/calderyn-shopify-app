@@ -281,6 +281,45 @@ describe("declarative storefront hydration", () => {
     expect(host.shadowRoot).toBeNull();
   });
 
+  it("rejects unbounded personalization before trusted commerce dispatch", () => {
+    document.body.innerHTML = `<main id="root"><div id="cd-product-slot-1" data-cd-trusted-slot="addToCart" data-cd-authority-key="product:p1"></div></main>`;
+    const root = document.getElementById("root") as HTMLElement;
+    let bridge: ((intent: unknown) => void) | undefined;
+    const dispatch = vi.fn();
+    hydrateStorefront({
+      root,
+      artifact: artifact({
+        requiredCapabilities: ["commerce"],
+        interactions: { version: 1, state: [], bindings: [], transitions: [] },
+        trustedSlots: [{
+          id: "cd-product-slot-1", kind: "addToCart", hostSize: "block", themeTokenIds: [],
+          personalizationFields: ["engraving"],
+        }],
+      }),
+      adapters: { commerce: {
+        mount: ({ bridge: trustedBridge }) => { bridge = trustedBridge as (intent: unknown) => void; },
+        dispatch,
+      } },
+    });
+
+    bridge?.({
+      type: "cart.add", productId: "p1", variantId: "v1", quantity: 1,
+      personalization: { engraving: "Always" },
+    });
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      intent: expect.objectContaining({ personalization: { engraving: "Always" } }),
+    }));
+    expect(() => bridge?.({
+      type: "cart.add", productId: "p1", variantId: "v1", quantity: 1,
+      personalization: { engraving: "x".repeat(241) },
+    })).toThrow(/authority/i);
+    expect(() => bridge?.({
+      type: "cart.add", productId: "p1", variantId: "v1", quantity: 1,
+      personalization: { giftWrap: "gold" },
+    })).toThrow(/authority/i);
+    expect(dispatch).toHaveBeenCalledOnce();
+  });
+
   it("mounts on the retained live host and root so async updates and cleanup stay live", async () => {
     document.body.innerHTML = `<main id="root"><div id="cd-product-slot-1" data-cd-trusted-slot="addToCart" data-cd-authority-key="product:p1"></div></main>`;
     const root = document.getElementById("root") as HTMLElement;

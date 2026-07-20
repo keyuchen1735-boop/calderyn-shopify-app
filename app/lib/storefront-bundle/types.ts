@@ -448,12 +448,15 @@ export interface RouteTarget {
   params: Partial<Record<"handle" | "query" | "policyId", PublicDataRef>>;
 }
 
+export type TrustedPersonalizationField = "engraving" | "giftNote" | "giftWrap" | "recipient";
+
 export interface TrustedSlotManifest {
   id: string;
   kind: "variantPicker" | "addToCart" | "cartLineControls" | "cartSummary" | "cartDrawer" | "quickViewCommerce";
   scopeId?: string;
   hostSize: "inline" | "block" | "panel" | "page";
   themeTokenIds: string[];
+  personalizationFields?: TrustedPersonalizationField[];
 }
 
 export interface CheckoutLayoutManifest {

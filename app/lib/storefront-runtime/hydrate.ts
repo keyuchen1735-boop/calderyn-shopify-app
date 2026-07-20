@@ -4,6 +4,7 @@ import type {
   RouteArtifact,
   RuntimeActionSpec,
   RuntimeCapability,
+  TrustedPersonalizationField,
   TrustedSlotManifest,
   VisualLayerSpec,
 } from "~/lib/storefront-bundle/types";
@@ -23,6 +24,7 @@ import {
   type RuntimeState,
 } from "./state";
 import { retainTrustedCommerceRoot, trustedCommerceRoot } from "./trusted-roots";
+import { isValidStorefrontLinePersonalization } from "./trusted-slots";
 
 const SUPPORTED_CAPABILITIES: ReadonlySet<RuntimeCapability> = new Set([
   "navigation", "localState", "overlay", "catalogFiltering", "catalogSearch", "commerce",
@@ -255,7 +257,12 @@ function applyBindings(
 
 function commerceIntentAllowed(slot: TrustedSlotManifest, intent: CommerceIntent): boolean {
   if (intent.type === "variant.select") return slot.kind === "variantPicker" || slot.kind === "quickViewCommerce";
-  if (intent.type === "cart.add") return slot.kind === "addToCart" || slot.kind === "quickViewCommerce";
+  if (intent.type === "cart.add") {
+    if (slot.kind !== "addToCart" && slot.kind !== "quickViewCommerce") return false;
+    const allowedFields = new Set(slot.personalizationFields ?? []);
+    return Object.keys(intent.personalization ?? {}).every((field) =>
+      allowedFields.has(field as TrustedPersonalizationField));
+  }
   if (intent.type === "cart.quantity" || intent.type === "cart.remove") return slot.kind === "cartLineControls" || slot.kind === "cartDrawer";
   return slot.kind === "cartSummary" || slot.kind === "cartDrawer";
 }
@@ -271,7 +278,8 @@ function validCommerceIntent(intent: CommerceIntent): boolean {
   if (intent.type === "cart.add") {
     return typeof intent.productId === "string" && intent.productId.length > 0 && intent.productId.length <= 160 &&
       typeof intent.variantId === "string" && intent.variantId.length > 0 && intent.variantId.length <= 160 &&
-      Number.isSafeInteger(intent.quantity) && intent.quantity >= 1 && intent.quantity <= 100;
+      Number.isSafeInteger(intent.quantity) && intent.quantity >= 1 && intent.quantity <= 100 &&
+      isValidStorefrontLinePersonalization(intent.personalization);
   }
   if (typeof intent.lineId !== "string" || intent.lineId.length === 0 || intent.lineId.length > 160) return false;
   return intent.type === "cart.remove" || (Number.isSafeInteger(intent.quantity) && intent.quantity >= 0 && intent.quantity <= 100);

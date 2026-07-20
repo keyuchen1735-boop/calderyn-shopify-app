@@ -6,6 +6,7 @@ import type {
   CompiledRepeat,
   InteractionManifestV1,
   RouteTarget,
+  TrustedPersonalizationField,
   TrustedSlotManifest,
 } from "../storefront-bundle/types";
 import {
@@ -51,7 +52,7 @@ const SOURCE_ATTRIBUTES = new Set([
   "data-cd-repeat", "data-cd-key", "data-cd-route", "data-cd-param-handle", "data-cd-param-query",
   "data-cd-param-policy-id", "data-cd-on", "data-cd-action", "data-cd-target", "data-cd-state",
   "data-cd-value-field", "data-cd-facet", "data-cd-slot", "data-cd-product", "data-cd-host-size",
-  "data-cd-theme-tokens", "data-cd-policy-links", "data-cd-asset", "data-cd-state-id", "data-cd-state-type",
+  "data-cd-theme-tokens", "data-cd-personalization", "data-cd-policy-links", "data-cd-asset", "data-cd-state-id", "data-cd-state-type",
   "data-cd-state-initial", "data-cd-state-values", "data-cd-state-min", "data-cd-state-max",
   "data-cd-bind-state", "data-cd-bind-property",
   "data-cd-video", "data-cd-poster-asset",
@@ -62,6 +63,9 @@ const TRUSTED_SLOT_KINDS = new Set<TrustedSlotManifest["kind"]>([
   "variantPicker", "addToCart", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce",
 ]);
 const HOST_SIZES = new Set<TrustedSlotManifest["hostSize"]>(["inline", "block", "panel", "page"]);
+const PERSONALIZATION_FIELDS = new Set<TrustedPersonalizationField>([
+  "engraving", "giftNote", "giftWrap", "recipient",
+]);
 
 function isSafeIdentifier(value: string): boolean {
   if (value.length === 0 || value.length > 80) return false;
@@ -469,6 +473,18 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
         if (themeTokenIds.some((token) => !isSafeIdentifier(token))) {
           throw new CompilerError("slot.theme", "Trusted slot theme tokens must be local identifiers");
         }
+        const personalizationValue = sourceAttributes.get("data-cd-personalization");
+        const personalizationFields = personalizationValue === undefined
+          ? undefined
+          : splitAsciiWhitespace(personalizationValue) as TrustedPersonalizationField[];
+        if (personalizationFields && (
+          slotKind !== "addToCart" || personalizationFields.length === 0 ||
+          personalizationFields.length > PERSONALIZATION_FIELDS.size ||
+          new Set(personalizationFields).size !== personalizationFields.length ||
+          personalizationFields.some((field) => !PERSONALIZATION_FIELDS.has(field))
+        )) {
+          throw new CompilerError("slot.personalization", "Trusted personalization fields are invalid for this slot");
+        }
         trustedSlotId = id;
         for (const name of Object.keys(attributes)) delete attributes[name];
         trustedSlots.push({
@@ -477,6 +493,7 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
           scopeId: childScope.id === "root" ? undefined : childScope.id,
           hostSize: hostSize as TrustedSlotManifest["hostSize"],
           themeTokenIds,
+          ...(personalizationFields ? { personalizationFields } : {}),
         });
         attributes["data-cd-trusted-slot-id"] = id;
       }

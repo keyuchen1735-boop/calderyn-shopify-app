@@ -1,4 +1,4 @@
-import type { TrustedSlotManifest } from "~/lib/storefront-bundle/types";
+import type { TrustedPersonalizationField, TrustedSlotManifest } from "~/lib/storefront-bundle/types";
 
 export const STOREFRONT_LINE_PERSONALIZATION_KEYS = [
   "engraving",
@@ -8,8 +8,23 @@ export const STOREFRONT_LINE_PERSONALIZATION_KEYS = [
 ] as const;
 
 export type StorefrontLinePersonalization = Partial<
-  Record<(typeof STOREFRONT_LINE_PERSONALIZATION_KEYS)[number], string>
+  Record<TrustedPersonalizationField, string>
 >;
+
+export function isValidStorefrontLinePersonalization(
+  value: unknown,
+): value is StorefrontLinePersonalization {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  return keys.length <= STOREFRONT_LINE_PERSONALIZATION_KEYS.length && keys.every((key) =>
+    [...key].length <= 40 &&
+    STOREFRONT_LINE_PERSONALIZATION_KEYS.includes(key as TrustedPersonalizationField) &&
+    typeof record[key] === "string" &&
+    [...record[key]].length <= 240
+  );
+}
 
 export function canonicalizeStorefrontLinePersonalization(
   value: StorefrontLinePersonalization,

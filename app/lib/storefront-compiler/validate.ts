@@ -12,6 +12,7 @@ import {
   type RouteTarget,
   type RuntimeActionSpec,
   type RuntimeCapability,
+  type TrustedPersonalizationField,
   type TrustedSlotManifest,
 } from "../storefront-bundle/types";
 import { compileState, assertInteractionCompatibility } from "./interactions";
@@ -616,6 +617,17 @@ function parseSlots(value: unknown, path: string, tree: TreeContext, add: AddDia
       (typeof input.scopeId !== "string" || tree.scopes.get(input.scopeId)?.kind !== "cartLine")) {
       add("slot.scope", currentPath, "cartLineControls requires an exact cartLine repeat scope");
     }
+    const personalizationFields = input.personalizationFields;
+    const validPersonalizationFields = personalizationFields === undefined || (
+      input.kind === "addToCart" && Array.isArray(personalizationFields) &&
+      personalizationFields.length > 0 && personalizationFields.length <= 4 &&
+      new Set(personalizationFields).size === personalizationFields.length &&
+      personalizationFields.every((field): field is TrustedPersonalizationField =>
+        field === "engraving" || field === "giftNote" || field === "giftWrap" || field === "recipient")
+    );
+    if (!validPersonalizationFields) {
+      add("slot.personalization", currentPath, "Trusted personalization fields are malformed or unsupported");
+    }
     const host = tree.elements.get(input.id);
     if (!host || host.trustedSlotId !== input.id) add("slot.unresolved_host", currentPath, "Trusted slot host is unresolved");
     else {
@@ -633,6 +645,9 @@ function parseSlots(value: unknown, path: string, tree: TreeContext, add: AddDia
       scopeId: typeof input.scopeId === "string" ? input.scopeId : undefined,
       hostSize: input.hostSize as TrustedSlotManifest["hostSize"],
       themeTokenIds: input.themeTokenIds as string[],
+      ...(validPersonalizationFields && Array.isArray(personalizationFields)
+        ? { personalizationFields: personalizationFields as TrustedPersonalizationField[] }
+        : {}),
     });
   });
   return slots;

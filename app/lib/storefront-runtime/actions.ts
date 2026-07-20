@@ -6,6 +6,7 @@ import type {
   TrustedSlotManifest,
 } from "~/lib/storefront-bundle/types";
 import type { OverlayManager } from "./overlays";
+import type { StorefrontLinePersonalization } from "./trusted-slots";
 import {
   isCompilerIssuedId,
   reduceRuntimeState,
@@ -51,7 +52,7 @@ export interface RuntimeActionContext {
 
 export type CommerceIntent =
   | { type: "variant.select"; productId: string; variantId: string }
-  | { type: "cart.add"; productId: string; variantId: string; quantity: number }
+  | { type: "cart.add"; productId: string; variantId: string; quantity: number; personalization?: StorefrontLinePersonalization }
   | { type: "cart.quantity"; lineId: string; quantity: number }
   | { type: "cart.remove"; lineId: string }
   | { type: "cart.clear"; cartId: string }

@@ -176,6 +176,47 @@ describe("runtime-1 route adapters", () => {
     })));
   });
 
+  it("sends trusted personalization inputs through the commerce bridge without pricing fields", async () => {
+    const fetcher = vi.fn<RuntimeFetcher>(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const adapters = createRuntimeAdapters({
+      mode: "public",
+      data: { ...quickViewData, product: quickViewData.featuredProducts[0]! },
+      fetcher,
+      refresh: vi.fn(),
+    });
+    const host = document.createElement("div");
+    const shadowRoot = host.attachShadow({ mode: "open" });
+    const slot = {
+      id: "slot", kind: "addToCart", hostSize: "block", themeTokenIds: [],
+      personalizationFields: ["engraving", "giftNote"],
+    } as const;
+    adapters.commerce?.mount({
+      host,
+      shadowRoot,
+      authorityKey: "product:p1",
+      slot: slot as never,
+      bridge: (intent) => adapters.commerce?.dispatch({ authorityKey: "product:p1", slotKind: "addToCart", intent }),
+    });
+
+    const engraving = shadowRoot.querySelector<HTMLInputElement>('input[name="engraving"]');
+    const giftNote = shadowRoot.querySelector<HTMLTextAreaElement>('textarea[name="giftNote"]');
+    expect(engraving?.maxLength).toBe(240);
+    expect(giftNote?.maxLength).toBe(240);
+    engraving!.value = "Always";
+    giftNote!.value = "For you";
+    shadowRoot.querySelector<HTMLButtonElement>("button")!.click();
+
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledWith("/storefront/api/cart/add", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        variantId: "v1",
+        quantity: 1,
+        personalization: { engraving: "Always", giftNote: "For you" },
+      }),
+    })));
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).not.toHaveProperty("price");
+  });
+
   it("dispatches preview commerce only to the authenticated preview simulation action", async () => {
     const fetcher = vi.fn<RuntimeFetcher>(async () => new Response(JSON.stringify({ cart: null }), { status: 200 }));
     const adapters = createRuntimeAdapters({ mode: "preview", previewTemplateId: "atelier-nine", fetcher, refresh: vi.fn() });
