@@ -24,6 +24,8 @@ const relinkOrdersToBuyers = vi.fn();
 vi.mock("../relink.server", () => ({ relinkOrdersToBuyers }));
 const syncShopifyProductFacts = vi.fn();
 vi.mock("~/lib/ingest/product-facts.server", () => ({ syncShopifyProductFacts }));
+const syncShopifySellingPlans = vi.fn();
+vi.mock("~/lib/ingest/shopify-selling-plans.server", () => ({ syncShopifySellingPlans }));
 
 // Supabase query-builder mock: every builder method is chainable AND the builder is
 // awaitable (thenable), matching supabase-js where `.eq()` etc. both chain and resolve.
@@ -76,6 +78,8 @@ beforeEach(() => {
   relinkOrdersToBuyers.mockResolvedValue({ linked: 0, unmatched: 0 });
   syncShopifyProductFacts.mockReset();
   syncShopifyProductFacts.mockResolvedValue({ products: 0, facts: 0 });
+  syncShopifySellingPlans.mockReset();
+  syncShopifySellingPlans.mockResolvedValue({ groups: 0, plans: 0, eligibility: 0 });
   selectRows = [];
   singleReturn = { data: null, error: null };
   updates.length = 0;
@@ -95,9 +99,22 @@ describe("drainImports", () => {
     expect(promoteShopFromMirror).toHaveBeenCalledWith("shop1");
     expect(syncShopifyProductFacts).toHaveBeenCalledWith({ shopId: "shop1", shopDomain: "d.myshopify.com" });
     expect(promoteShopFromMirror.mock.invocationCallOrder[0]).toBeLessThan(syncShopifyProductFacts.mock.invocationCallOrder[0]);
+    expect(syncShopifySellingPlans).toHaveBeenCalledWith("d.myshopify.com", "shop1");
+    expect(syncShopifyProductFacts.mock.invocationCallOrder[0]).toBeLessThan(syncShopifySellingPlans.mock.invocationCallOrder[0]);
     expect(r.processed).toBe(1);
     expect(updates.some((u) => u.state === "promoting")).toBe(true);
     expect(updates.some((u) => u.state === "done")).toBe(true);
+  });
+
+  it("marks the import error when selling-plan snapshot replacement fails", async () => {
+    selectRows = [{ id: "r1", shop_id: "shop1", since_days: 365, shops: { shop_domain: "d.myshopify.com" } }];
+    backfillShop.mockResolvedValue({ orders: 0 });
+    promoteShopFromMirror.mockResolvedValue({ products: 1, variants: 1, collections: 0, balances: 1, orders: 0, refunds: 0 });
+    syncShopifySellingPlans.mockRejectedValue(new Error("selling-plan page failed"));
+    const { drainImports } = await import("../run.server");
+    expect(await drainImports()).toEqual({ processed: 0 });
+    expect(updates.some((update) => update.state === "done")).toBe(false);
+    expect(updates.some((update) => update.state === "error")).toBe(true);
   });
 
   it("runs the customer stage and feeds its counts into the report", async () => {

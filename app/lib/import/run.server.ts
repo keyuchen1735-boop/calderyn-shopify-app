@@ -4,6 +4,7 @@
 // promote_shop_from_mirror.
 import { getSupabase } from "../supabase.server";
 import { backfillShop } from "../ingest/backfill.server";
+import { syncShopifySellingPlans } from "../ingest/shopify-selling-plans.server";
 import { promoteShopFromMirror, buildImportReport, type PromoteCounts } from "./promote.server";
 import { importCustomers } from "./customers.server";
 import { relinkOrdersToBuyers } from "./relink.server";
@@ -96,6 +97,7 @@ export async function drainImports(): Promise<{ processed: number }> {
       // its counts (what actually landed), so `backfill.orders` (the raw pull) is unused.
       const counts = await promoteShopFromMirror(shopId);
       await syncShopifyProductFacts({ shopId, shopDomain: domain });
+      await syncShopifySellingPlans(domain, shopId);
 
       // Order<->customer relink (#13.customers): tie the just-promoted imported_order rows to the
       // buyers the customer stage re-pulled. Skipped when that stage was blocked (protected-

@@ -87,6 +87,59 @@ export type CustomersQuery = { customers: { pageInfo: Pick<AdminTypes.PageInfo, 
       & { defaultAddress?: AdminTypes.Maybe<Pick<AdminTypes.MailingAddress, 'name' | 'address1' | 'address2' | 'city' | 'province' | 'zip' | 'country' | 'phone'>>, emailMarketingConsent?: AdminTypes.Maybe<Pick<AdminTypes.CustomerEmailMarketingConsentState, 'marketingState' | 'consentUpdatedAt'>> }
     )> } };
 
+export type SellingPlanVariantPageQueryVariables = AdminTypes.Exact<{
+  cursor?: AdminTypes.InputMaybe<AdminTypes.Scalars['String']['input']>;
+}>;
+
+
+export type SellingPlanVariantPageQuery = { shop: Pick<AdminTypes.Shop, 'currencyCode'>, productVariants: { pageInfo: Pick<AdminTypes.PageInfo, 'hasNextPage' | 'endCursor'>, nodes: Array<(
+      Pick<AdminTypes.ProductVariant, 'id' | 'price'>
+      & { sellingPlanGroups: { pageInfo: Pick<AdminTypes.PageInfo, 'hasNextPage' | 'endCursor'>, nodes: Array<(
+          Pick<AdminTypes.SellingPlanGroup, 'id' | 'name'>
+          & { sellingPlans: { pageInfo: Pick<AdminTypes.PageInfo, 'hasNextPage' | 'endCursor'>, nodes: Array<(
+              Pick<AdminTypes.SellingPlan, 'id' | 'name' | 'options'>
+              & { pricingPolicies: Array<(
+                { __typename: 'SellingPlanFixedPricingPolicy' }
+                & Pick<AdminTypes.SellingPlanFixedPricingPolicy, 'adjustmentType'>
+                & { adjustmentValue: Pick<AdminTypes.MoneyV2, 'amount' | 'currencyCode'> | Pick<AdminTypes.SellingPlanPricingPolicyPercentageValue, 'percentage'> }
+              ) | { __typename: 'SellingPlanRecurringPricingPolicy' }> }
+            )> } }
+        )> } }
+    )> } };
+
+export type VariantSellingPlanGroupPageQueryVariables = AdminTypes.Exact<{
+  variantId: AdminTypes.Scalars['ID']['input'];
+  cursor?: AdminTypes.InputMaybe<AdminTypes.Scalars['String']['input']>;
+}>;
+
+
+export type VariantSellingPlanGroupPageQuery = { productVariant?: AdminTypes.Maybe<{ sellingPlanGroups: { pageInfo: Pick<AdminTypes.PageInfo, 'hasNextPage' | 'endCursor'>, nodes: Array<(
+        Pick<AdminTypes.SellingPlanGroup, 'id' | 'name'>
+        & { sellingPlans: { pageInfo: Pick<AdminTypes.PageInfo, 'hasNextPage' | 'endCursor'>, nodes: Array<(
+            Pick<AdminTypes.SellingPlan, 'id' | 'name' | 'options'>
+            & { pricingPolicies: Array<(
+              { __typename: 'SellingPlanFixedPricingPolicy' }
+              & Pick<AdminTypes.SellingPlanFixedPricingPolicy, 'adjustmentType'>
+              & { adjustmentValue: Pick<AdminTypes.MoneyV2, 'amount' | 'currencyCode'> | Pick<AdminTypes.SellingPlanPricingPolicyPercentageValue, 'percentage'> }
+            ) | { __typename: 'SellingPlanRecurringPricingPolicy' }> }
+          )> } }
+      )> } }> };
+
+export type SellingPlanPageQueryVariables = AdminTypes.Exact<{
+  groupId: AdminTypes.Scalars['ID']['input'];
+  cursor?: AdminTypes.InputMaybe<AdminTypes.Scalars['String']['input']>;
+}>;
+
+
+export type SellingPlanPageQuery = { sellingPlanGroup?: AdminTypes.Maybe<{ sellingPlans: { pageInfo: Pick<AdminTypes.PageInfo, 'hasNextPage' | 'endCursor'>, nodes: Array<(
+        Pick<AdminTypes.SellingPlan, 'id' | 'name' | 'options'>
+        & { pricingPolicies: Array<(
+          { __typename: 'SellingPlanFixedPricingPolicy' }
+          & Pick<AdminTypes.SellingPlanFixedPricingPolicy, 'adjustmentType'>
+          & { adjustmentValue: Pick<AdminTypes.MoneyV2, 'amount' | 'currencyCode'> | Pick<AdminTypes.SellingPlanPricingPolicyPercentageValue, 'percentage'> }
+        ) | { __typename: 'SellingPlanRecurringPricingPolicy' }> }
+      )> } }> };
+
 export type CalderynCarrierServiceCreateMutationVariables = AdminTypes.Exact<{
   input: AdminTypes.DeliveryCarrierServiceCreateInput;
 }>;
@@ -140,6 +193,9 @@ interface GeneratedQueryTypes {
   "#graphql\n      query Orders($cursor: String, $q: String!) {\n        orders(first: 50, after: $cursor, query: $q, sortKey: CREATED_AT) {\n          pageInfo { hasNextPage endCursor }\n          nodes {\n            id name createdAt updatedAt displayFinancialStatus\n            currentTotalPriceSet { shopMoney { amount currencyCode } }\n            currentSubtotalPriceSet { shopMoney { amount } }\n            totalShippingPriceSet { shopMoney { amount } }\n            currentTotalTaxSet { shopMoney { amount } }\n            currentTotalDiscountsSet { shopMoney { amount } }\n            # Retain only coarse destination geography for the shipping route\n            # read model. Street, postal, recipient, and contact fields are\n            # intentionally not requested from Shopify.\n            shippingAddress { city province provinceCode country countryCodeV2 }\n            # Slice-1 cap: single-page (orders with >100 line items truncate).\n            # Weight is NOT a field on LineItem — it lives on the variant's\n            # inventoryItem.measurement.weight. We select unit alongside value\n            # because the API returns the variant's stored unit (GRAMS,\n            # KILOGRAMS, POUNDS, or OUNCES); the mapper converts to grams.\n            lineItems(first: 100) {\n              nodes {\n                id quantity\n                variant {\n                  id\n                  inventoryItem {\n                    measurement { weight { value unit } }\n                  }\n                }\n                originalUnitPriceSet { shopMoney { amount } }\n              }\n            }\n          }\n        }\n      }": {return: OrdersQuery, variables: OrdersQueryVariables},
   "#graphql\n      query OrderCustomerEmails($cursor: String, $q: String!) {\n        orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {\n          pageInfo { hasNextPage endCursor }\n          nodes { id customer { email } }\n        }\n      }": {return: OrderCustomerEmailsQuery, variables: OrderCustomerEmailsQueryVariables},
   "#graphql\n      query Customers($cursor: String) {\n        customers(first: 100, after: $cursor) {\n          pageInfo { hasNextPage endCursor }\n          nodes {\n            id email phone\n            defaultAddress { name address1 address2 city province zip country phone }\n            emailMarketingConsent { marketingState consentUpdatedAt }\n          }\n        }\n      }": {return: CustomersQuery, variables: CustomersQueryVariables},
+  "#graphql\nquery SellingPlanVariantPage($cursor: String) {\n  shop { currencyCode }\n  productVariants(first: 50, after: $cursor) {\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id price\n      sellingPlanGroups(first: 100) {\n        pageInfo { hasNextPage endCursor }\n        nodes {\n          id name\n          sellingPlans(first: 100) {\n            pageInfo { hasNextPage endCursor }\n            nodes {\n              id name options\n              pricingPolicies {\n                __typename\n                ... on SellingPlanFixedPricingPolicy {\n                  adjustmentType\n                  adjustmentValue {\n                    ... on MoneyV2 { amount currencyCode }\n                    ... on SellingPlanPricingPolicyPercentageValue { percentage }\n                  }\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}": {return: SellingPlanVariantPageQuery, variables: SellingPlanVariantPageQueryVariables},
+  "#graphql\nquery VariantSellingPlanGroupPage($variantId: ID!, $cursor: String) {\n  productVariant(id: $variantId) {\n    sellingPlanGroups(first: 100, after: $cursor) {\n      pageInfo { hasNextPage endCursor }\n      nodes {\n        id name\n        sellingPlans(first: 100) {\n          pageInfo { hasNextPage endCursor }\n          nodes {\n            id name options\n            pricingPolicies {\n              __typename\n              ... on SellingPlanFixedPricingPolicy {\n                adjustmentType\n                adjustmentValue {\n                  ... on MoneyV2 { amount currencyCode }\n                  ... on SellingPlanPricingPolicyPercentageValue { percentage }\n                }\n              }\n            }\n          }\n        }\n      }\n    }\n  }\n}": {return: VariantSellingPlanGroupPageQuery, variables: VariantSellingPlanGroupPageQueryVariables},
+  "#graphql\nquery SellingPlanPage($groupId: ID!, $cursor: String) {\n  sellingPlanGroup(id: $groupId) {\n    sellingPlans(first: 100, after: $cursor) {\n      pageInfo { hasNextPage endCursor }\n      nodes {\n        id name options\n        pricingPolicies {\n          __typename\n          ... on SellingPlanFixedPricingPolicy {\n            adjustmentType\n            adjustmentValue {\n              ... on MoneyV2 { amount currencyCode }\n              ... on SellingPlanPricingPolicyPercentageValue { percentage }\n            }\n          }\n        }\n      }\n    }\n  }\n}": {return: SellingPlanPageQuery, variables: SellingPlanPageQueryVariables},
   "\n  query calderynVariantPrice($id: ID!) {\n    productVariant(id: $id) {\n      id\n      price\n      product {\n        id\n      }\n    }\n  }\n": {return: CalderynVariantPriceQuery, variables: CalderynVariantPriceQueryVariables},
   "#graphql\n          query OnboardingShopCheck { shop { name myshopifyDomain } }": {return: OnboardingShopCheckQuery, variables: OnboardingShopCheckQueryVariables},
 }
