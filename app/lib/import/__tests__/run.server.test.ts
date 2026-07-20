@@ -22,6 +22,8 @@ const importCustomers = vi.fn();
 vi.mock("../customers.server", () => ({ importCustomers }));
 const relinkOrdersToBuyers = vi.fn();
 vi.mock("../relink.server", () => ({ relinkOrdersToBuyers }));
+const syncShopifyProductFacts = vi.fn();
+vi.mock("~/lib/ingest/product-facts.server", () => ({ syncShopifyProductFacts }));
 
 // Supabase query-builder mock: every builder method is chainable AND the builder is
 // awaitable (thenable), matching supabase-js where `.eq()` etc. both chain and resolve.
@@ -72,6 +74,8 @@ beforeEach(() => {
   importCustomers.mockResolvedValue({ imported: 0, skipped: 0, blocked: false });
   relinkOrdersToBuyers.mockReset();
   relinkOrdersToBuyers.mockResolvedValue({ linked: 0, unmatched: 0 });
+  syncShopifyProductFacts.mockReset();
+  syncShopifyProductFacts.mockResolvedValue({ products: 0, facts: 0 });
   selectRows = [];
   singleReturn = { data: null, error: null };
   updates.length = 0;
@@ -89,6 +93,8 @@ describe("drainImports", () => {
 
     expect(backfillShop).toHaveBeenCalledWith("d.myshopify.com", { sinceDays: 365 });
     expect(promoteShopFromMirror).toHaveBeenCalledWith("shop1");
+    expect(syncShopifyProductFacts).toHaveBeenCalledWith({ shopId: "shop1", shopDomain: "d.myshopify.com" });
+    expect(promoteShopFromMirror.mock.invocationCallOrder[0]).toBeLessThan(syncShopifyProductFacts.mock.invocationCallOrder[0]);
     expect(r.processed).toBe(1);
     expect(updates.some((u) => u.state === "promoting")).toBe(true);
     expect(updates.some((u) => u.state === "done")).toBe(true);

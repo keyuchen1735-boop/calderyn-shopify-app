@@ -10,6 +10,7 @@ const {
   transformPendingWebhooks,
   backfillShop,
   syncProductInventorySettings,
+  syncShopifyProductFacts,
   repairOrderDestinationsForIntegration,
   runShipCostResolution,
 } = vi.hoisted(() => ({
@@ -23,6 +24,9 @@ const {
   })),
   backfillShop: vi.fn(async () => {}),
   syncProductInventorySettings: vi.fn(async () => 0),
+  syncShopifyProductFacts: vi.fn<
+    (input: { shopId: string; shopDomain: string }) => Promise<{ products: number; facts: number }>
+  >(async () => ({ products: 0, facts: 0 })),
   repairOrderDestinationsForIntegration: vi.fn(
     async (_integration: { shopId: string }) => ({
       scanned: 1,
@@ -44,6 +48,7 @@ vi.mock("~/lib/ingest/backfill.server", () => ({
   backfillShop,
   syncProductInventorySettings,
 }));
+vi.mock("~/lib/ingest/product-facts.server", () => ({ syncShopifyProductFacts }));
 vi.mock("~/lib/ingest/destination-repair.server", () => ({
   repairOrderDestinationsForIntegration,
 }));
@@ -75,12 +80,25 @@ const REPAIR_CLAIMS = ACTIVE_SHOPS.map((shop, index) => ({
   claimed_at: `2026-07-13T12:0${index}:00.000Z`,
 }));
 let repairClaimQueue: (typeof REPAIR_CLAIMS)[] = [];
+const FACT_CLAIMS = Array.from({ length: 7 }, (_, index) => ({
+  shop_id: `fact-${index + 1}`,
+  shop_domain: `fact-${index + 1}.myshopify.com`,
+}));
+let factClaimQueue: Array<Array<(typeof FACT_CLAIMS)[number]>> = [];
 const repairRpcCalls: Array<{ fn: string; args: unknown }> = [];
 
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
     rpc: (fn: string, args: unknown) => {
       repairRpcCalls.push({ fn, args });
+      if (fn === "claim_product_fact_syncs") {
+        return Promise.resolve({
+          data: factClaimQueue.length
+            ? factClaimQueue.shift()
+            : ACTIVE_SHOPS.map((shop) => ({ shop_id: shop.shop_id, shop_domain: shop.shops.shop_domain })),
+          error: null,
+        });
+      }
       return Promise.resolve({
         data: repairClaimQueue.length
           ? repairClaimQueue.shift()
@@ -145,6 +163,7 @@ describe("cron.ingest loader", () => {
       completed: true,
     });
     repairClaimQueue = [];
+    factClaimQueue = [];
     repairRpcCalls.length = 0;
     process.env.CRON_SECRET = "s3cret";
   });
@@ -160,6 +179,12 @@ describe("cron.ingest loader", () => {
 
     // transform ran
     expect(transformPendingWebhooks).toHaveBeenCalledOnce();
+
+    // Fact backfill is independent of the inventory-policy repair gate. This
+    // fixture has no missing policies, but every active shop is still synced.
+    expect(syncProductInventorySettings).not.toHaveBeenCalled();
+    expect(syncShopifyProductFacts).toHaveBeenCalledTimes(2);
+    expect(body.productFactsSynced).toEqual(["one.myshopify.com", "two.myshopify.com"]);
 
     // reconciler called once per live shop
     expect(reconcileAttributedRevenue).toHaveBeenCalledTimes(2);
@@ -228,7 +253,7 @@ describe("cron.ingest loader", () => {
       },
       expect.anything(),
     );
-    expect(repairRpcCalls).toEqual([
+    expect(repairRpcCalls.filter(({ fn }) => fn === "claim_order_destination_repairs")).toEqual([
       { fn: "claim_order_destination_repairs", args: { p_limit: 5 } },
     ]);
     expect(repairOrderDestinationsForIntegration).toHaveBeenNthCalledWith(
@@ -249,6 +274,21 @@ describe("cron.ingest loader", () => {
     expect(body.destinationRepairErrors).toEqual([]);
   });
 
+  it("rotates the bounded product-fact claim so shops after the first five are reached", async () => {
+    factClaimQueue = [FACT_CLAIMS.slice(0, 5), FACT_CLAIMS.slice(5)];
+
+    await loader({ request: req("Bearer s3cret") } as never);
+    await loader({ request: req("Bearer s3cret") } as never);
+
+    expect(syncShopifyProductFacts.mock.calls.map(([input]) => input.shopDomain)).toEqual(
+      FACT_CLAIMS.map(({ shop_domain }) => shop_domain),
+    );
+    expect(repairRpcCalls.filter(({ fn }) => fn === "claim_product_fact_syncs")).toEqual([
+      { fn: "claim_product_fact_syncs", args: { p_limit: 5 } },
+      { fn: "claim_product_fact_syncs", args: { p_limit: 5 } },
+    ]);
+  });
+
   it("gives overlapping workers disjoint claimed integrations", async () => {
     repairClaimQueue = [[REPAIR_CLAIMS[0]], [REPAIR_CLAIMS[1]]];
 
@@ -257,7 +297,7 @@ describe("cron.ingest loader", () => {
       loader({ request: req("Bearer s3cret") } as never),
     ]);
 
-    expect(repairRpcCalls).toHaveLength(2);
+    expect(repairRpcCalls.filter(({ fn }) => fn === "claim_order_destination_repairs")).toHaveLength(2);
     expect(repairOrderDestinationsForIntegration).toHaveBeenCalledTimes(2);
     expect(
       repairOrderDestinationsForIntegration.mock.calls
