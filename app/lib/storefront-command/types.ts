@@ -22,9 +22,9 @@ const ROUTE_IDS: ReadonlySet<StorefrontRouteId> = new Set([
   "checkout",
 ]);
 
-export interface PreviewSlotContext {
+export interface PreviewContext {
   routeId: StorefrontRouteId;
-  slot: string;
+  slot?: string;
 }
 
 export type StoreAttachment =
@@ -36,15 +36,21 @@ export type StoreIntent =
   | { kind: "update_text"; slot: string; value: string }
   | { kind: "update_merchandising"; productIds: string[] }
   | { kind: "update_visual_layer"; visualLayer: VisualLayerSpec }
+  | { kind: "structural_edit"; scope: StoreRedesignScope }
+  | { kind: "full_redesign" }
   | { kind: "start_over"; prompt: string }
   | { kind: "unsupported"; message: string };
+
+export interface StoreRedesignScope {
+  routeId: StorefrontRouteId;
+}
 
 export type StoreCommand =
   | {
       kind: "prompt";
       prompt: string;
       expectedDraftVersionId: string | null;
-      context?: PreviewSlotContext;
+      context?: PreviewContext;
       attachments?: StoreAttachment[];
     }
   | { kind: "undo"; targetVersionId: string; expectedDraftVersionId: string }
@@ -89,13 +95,13 @@ function boundedString(value: unknown, cap: number): value is string {
   return nonEmptyString(value) && Array.from(value).length <= cap;
 }
 
-export function isPreviewSlotContext(value: unknown): value is PreviewSlotContext {
+export function isPreviewContext(value: unknown): value is PreviewContext {
   const input = record(value);
   return input !== null
     && hasNoUnknownKeys(input, ["routeId", "slot"])
     && typeof input.routeId === "string"
     && ROUTE_IDS.has(input.routeId as StorefrontRouteId)
-    && boundedString(input.slot, STORE_COMMAND_LIMITS.contextSlotCodePoints);
+    && (input.slot === undefined || boundedString(input.slot, STORE_COMMAND_LIMITS.contextSlotCodePoints));
 }
 
 function isStoreAttachment(value: unknown): value is StoreAttachment {
@@ -134,7 +140,7 @@ export function parseStoreCommand(value: unknown): ParseStoreCommandResult {
       || Array.from(input.prompt).length > STORE_COMMAND_LIMITS.promptCodePoints
       || (input.expectedDraftVersionId !== null
         && (typeof input.expectedDraftVersionId !== "string" || !isUuid(input.expectedDraftVersionId)))
-      || (input.context !== undefined && !isPreviewSlotContext(input.context))
+      || (input.context !== undefined && !isPreviewContext(input.context))
       || (input.attachments !== undefined && !isStoreAttachmentList(input.attachments))) {
       return invalidStoreCommand();
     }

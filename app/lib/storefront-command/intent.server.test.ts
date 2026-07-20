@@ -327,6 +327,74 @@ describe("classifyStoreIntent", () => {
     }, { provider })).resolves.toEqual({ kind: "unsupported", message: "Not sure" });
   });
 
+  it("classifies one-route structure work without replacing the hidden recipe", async () => {
+    const provider: StoreIntentProvider = async () => classified(
+      '{"kind":"structural_edit","scope":{"routeId":"product"}}',
+    );
+
+    await expect(classifyStoreIntent({ ...input, currentRouteId: "product" }, { provider })).resolves.toEqual({
+      kind: "structural_edit",
+      scope: { routeId: "product" },
+    });
+  });
+
+  it("rejects structural output when no trusted route context exists", async () => {
+    const provider: StoreIntentProvider = async () => classified(
+      '{"kind":"structural_edit","scope":{"routeId":"product"}}',
+    );
+
+    await expect(classifyStoreIntent(input, { provider })).rejects.toMatchObject({
+      code: "invalid_store_intent",
+    });
+  });
+
+  it("rejects conflicting current and preview routes before classification", async () => {
+    const provider = vi.fn(async () => classified(
+      '{"kind":"structural_edit","scope":{"routeId":"product"}}',
+    ));
+
+    await expect(classifyStoreIntent({
+      ...input,
+      currentRouteId: "product",
+      context: { routeId: "collection" },
+    }, { provider })).rejects.toMatchObject({ code: "invalid_store_intent" });
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it("allows full redesign only when a draft exists", async () => {
+    const provider: StoreIntentProvider = async () => classified('{"kind":"full_redesign"}');
+
+    await expect(classifyStoreIntent(input, { provider })).resolves.toEqual({ kind: "full_redesign" });
+    await expect(classifyStoreIntent({
+      prompt: "Redesign everything",
+      productCandidates: [],
+    }, { provider })).rejects.toMatchObject({ code: "invalid_store_intent" });
+  });
+
+  it("allows custom copy classification only with an owning preview route", async () => {
+    const customBundle = structuredClone(CUSTOM_BENCH_BUNDLE);
+    customBundle.source = { kind: "custom", generationId: "generation-1", promptHash: "sha256:test" };
+    const provider: StoreIntentProvider = async () => classified(
+      '{"kind":"update_text","slot":"heroTitle","value":"Summer objects"}',
+    );
+
+    await expect(classifyStoreIntent({
+      ...input,
+      currentTemplateId: undefined,
+      context: { routeId: "home" },
+      bundle: customBundle,
+    }, { provider })).resolves.toEqual({
+      kind: "update_text",
+      slot: "heroTitle",
+      value: "Summer objects",
+    });
+    await expect(classifyStoreIntent({
+      ...input,
+      currentTemplateId: undefined,
+      bundle: customBundle,
+    }, { provider })).resolves.toMatchObject({ kind: "unsupported" });
+  });
+
   it("rejects markup returned as slot copy", async () => {
     const provider = vi.fn(async () => classified(
       '{"kind":"update_text","slot":"heroTitle","value":"<style>bad</style>"}'));
