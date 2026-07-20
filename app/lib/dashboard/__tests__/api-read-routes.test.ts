@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { CalderynError } from "../../calderyn.server";
 import { loader as campaignsLoader } from "../../../routes/dashboard.api.campaigns._index";
 import { loader as campaignLoader } from "../../../routes/dashboard.api.campaigns.$id";
 
 const requireDashboardSession = vi.fn();
 const campaignsPerformance = vi.fn();
-const campaignsGet = vi.fn();
 const campaignGrades = vi.fn();
 
 vi.mock("../session.server", async (importOriginal) => ({
@@ -20,7 +18,6 @@ vi.mock("../../calderyn.server", async (importOriginal) => {
     calderynClient: () => ({
       campaigns: {
         performance: (...a: unknown[]) => campaignsPerformance(...a),
-        get: (...a: unknown[]) => campaignsGet(...a),
       },
       analytics: {
         campaignGrades: (...a: unknown[]) => campaignGrades(...a),
@@ -109,16 +106,18 @@ describe("GET /dashboard/api/campaigns", () => {
 });
 
 describe("GET /dashboard/api/campaigns/:id", () => {
-  it("maps CalderynError to its status and code", async () => {
-    campaignsGet.mockRejectedValueOnce(
-      new CalderynError({ code: "CAMPAIGN_NOT_FOUND", status: 404, message: "nope" }),
-    );
+  it("returns 404 when the selected-window result does not contain the campaign", async () => {
+    campaignsPerformance.mockResolvedValueOnce([]);
     const res = (await campaignLoader({
       request: new Request("https://calderyncompany.com/dashboard/api/campaigns/c9"),
       params: { id: "c9" },
       context: {},
     })) as Response;
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: "CAMPAIGN_NOT_FOUND", message: "nope" });
+    expect(await res.json()).toEqual({
+      error: "CAMPAIGN_NOT_FOUND",
+      message: "Campaign c9 not found",
+    });
+    expect(campaignsPerformance).toHaveBeenCalledWith(30);
   });
 });

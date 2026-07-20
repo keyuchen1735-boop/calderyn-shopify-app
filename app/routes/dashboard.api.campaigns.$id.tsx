@@ -70,8 +70,15 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   const id = String(params.id);
   return dashboardJson(async () => {
     const client = calderynClient(session.shopId);
-    const [campaign, grades, creativeData] = await Promise.all([
-      client.campaigns.get(id),
+    const campaign = (await client.campaigns.performance(30)).find((row) => row.id === id);
+    if (!campaign) {
+      throw new CalderynError({
+        code: "CAMPAIGN_NOT_FOUND",
+        status: 404,
+        message: `Campaign ${id} not found`,
+      });
+    }
+    const [grades, creativeData] = await Promise.all([
       client.analytics.campaignGrades(),
       // Cache-ONLY read of the campaign's creatives + per-ad scorecards — NO
       // Claude/scoring on load. Uncached ads are scored on demand via the score
