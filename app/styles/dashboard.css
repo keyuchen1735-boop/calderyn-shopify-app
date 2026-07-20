@@ -100,6 +100,7 @@
   }
   .cd-side-brand { display: flex; align-items: center; gap: 9px; padding: 1px 8px; cursor: pointer; }
   .cd-logo { width: 32px; height: 32px; display: block; flex-shrink: 0; }
+  .cd-dark img.cd-logo-mark { background: #fff; border-radius: 8px; }
   .cd-brand-name { font-size: calc(15px * var(--type-scale)); font-weight: 650; letter-spacing: -0.015em; }
   .cd-brand-sub { font-size: 11px; color: var(--text-3); margin-top: 1px; letter-spacing: -0.002em; }
   .cd-side-nav { display: flex; flex-direction: column; gap: 1px; flex: 1; }

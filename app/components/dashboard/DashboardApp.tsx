@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { getDesignerSession, subscribeDesignerSession } from "~/lib/designer/session";
 import { useLocation, useNavigate, useNavigationType } from "@remix-run/react";
-import { CalderynHexMark, CALDERYN_MARK_PATH } from "~/components/CalderynHexMark";
+import { CALDERYN_MARK_PATH } from "~/components/CalderynHexMark";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 
@@ -1692,7 +1692,7 @@ export default function DashboardApp({
         }}
       >
         <div className="cd-side-brand" onClick={() => navigate("dashboard")}>
-          <CalderynHexMark className="cd-logo cd-logo-mark" size={32} />
+          <img className="cd-logo cd-logo-mark" src="/assets/calderyn-logo.png" alt="Calderyn" />
           <div className="cd-sidebar-copy">
             <div className="cd-brand-name">Calderyn</div>
             <div className="cd-brand-sub">{storeLabel}</div>
