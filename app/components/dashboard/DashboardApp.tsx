@@ -10,6 +10,7 @@ import { DashboardApiError } from "~/lib/dashboard/client";
 import { applyWeatherSuggestion, type CustomersPage } from "~/lib/dashboard/customers-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
 import { bootDashboardData } from "~/lib/dashboard/boot";
+import { readCampaignWindow } from "./screens/campaign-list-state";
 import { warmScreenCaches } from "~/lib/dashboard/prefetch";
 import { presentActionOutcome } from "~/lib/action-outcome";
 import { useRefreshOnFocus } from "~/lib/use-refresh-on-focus";
@@ -42,6 +43,7 @@ import type {
   QueueProposalVM,
   Toast,
 } from "./view-models";
+import type { CampaignWindow } from "~/lib/types";
 
 import AssistantPanel from "./AssistantPanel";
 import BugReportButton from "./BugReportButton";
@@ -517,6 +519,10 @@ export default function DashboardApp({
   // ----- data state (fetched on mount; client.ts hits /dashboard/api/*) -----
   const [alerts, setAlerts] = useState<AlertVM[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignVM[]>([]);
+  const campaignWindowRef = useRef<CampaignWindow>(
+    readCampaignWindow(typeof window === "undefined" ? undefined : window.localStorage),
+  );
+  const [, rerenderCampaignWindow] = useState(0);
   const [audit, setAudit] = useState<AuditVM[]>([]);
   const [guardrails, setGuardrails] = useState<GuardrailVM | null>(null);
   const [integrations, setIntegrations] = useState<IntegrationVM[]>([]);
@@ -685,7 +691,7 @@ export default function DashboardApp({
       calibration: fresh(setCalibration),
       actionQueue: fresh(setActionQueue),
       liveEngine: fresh(setLiveEngine),
-    });
+    }, client, campaignWindowRef.current);
     if (loadGen.current === gen) setBooted(true);
   }, []);
 
@@ -721,6 +727,16 @@ export default function DashboardApp({
   const refresh = useCallback(() => {
     load().catch((err) => {
       const msg = err instanceof DashboardApiError ? err.message : "Refresh failed.";
+      toast(msg, "warn", "critical");
+    });
+  }, [load, toast]);
+
+  const setCampaignWindow = useCallback((next: CampaignWindow) => {
+    if (campaignWindowRef.current === next) return;
+    campaignWindowRef.current = next;
+    rerenderCampaignWindow((version) => version + 1);
+    load().catch((err) => {
+      const msg = err instanceof DashboardApiError ? err.message : "Could not update campaign metrics.";
       toast(msg, "warn", "critical");
     });
   }, [load, toast]);
@@ -815,6 +831,7 @@ export default function DashboardApp({
   // ----- live engine: poll real endpoints, stream genuine changes -----
   useLiveFeed({
     liveOn,
+    campaignWindow: campaignWindowRef.current,
     onOverview: useCallback((ov: OverviewVM) => {
       setOverview(ov);
     }, []),
@@ -1376,6 +1393,7 @@ export default function DashboardApp({
     relTime,
     openAssistant,
     refresh,
+    setCampaignWindow,
     refreshLiveEngine,
     loading,
     booted,

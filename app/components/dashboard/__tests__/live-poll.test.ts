@@ -225,6 +225,21 @@ describe("pollLiveTick — extension actions reflect on the dashboard", () => {
     expect(alertCalls[0].map((c) => c.id)).toEqual(["c1"]);
   });
 
+  it("polls campaign metrics for the selected reporting window", async () => {
+    const state: LivePollState = { seenAudit: null, seenAlerts: null };
+    const { fetchers } = makeFetchers({ audit: [], alerts: [] });
+    const windows: unknown[] = [];
+    fetchers.fetchCampaigns = async (window?: unknown) => {
+      windows.push(window);
+      return [CAMPAIGN];
+    };
+    const { callbacks } = collect();
+
+    await pollLiveTick(state, fetchers, callbacks, 90);
+
+    expect(windows).toEqual([90]);
+  });
+
   it("swallows a transient fetch failure and leaves the state untouched", async () => {
     const state: LivePollState = { seenAudit: null, seenAlerts: null };
     const { seen, callbacks } = collect();

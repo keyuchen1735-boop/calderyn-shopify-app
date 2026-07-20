@@ -10,6 +10,7 @@ import type {
   OverviewVM,
   QueueProposalVM,
 } from "./view-models";
+import type { CampaignWindow } from "../../lib/types";
 
 export type Screen =
   | "dashboard"
@@ -197,6 +198,8 @@ export interface DashboardCtx {
 
   // --- data lifecycle ---
   refresh: () => void;
+  /** Select the campaign reporting window and refresh through the shared load. */
+  setCampaignWindow?: (window: CampaignWindow) => void;
   /** Re-pull only the Live Engine bundle (autopilot/trace/predictions) — much
    *  lighter than refresh(), used for the Live Engine's gentle live poll and to
    *  reconcile a single feature-autonomy toggle without refetching everything. */

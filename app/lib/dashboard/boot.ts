@@ -27,6 +27,7 @@ import type {
   OverviewVM,
   QueueProposalVM,
 } from "~/components/dashboard/view-models";
+import type { CampaignWindow } from "~/lib/types";
 
 export interface DashboardBootSlices {
   campaigns: CampaignVM[];
@@ -65,10 +66,11 @@ export type DashboardBootFetchers = Pick<
 export async function bootDashboardData(
   sinks: DashboardBootSinks,
   fetchers: DashboardBootFetchers = client,
+  campaignWindow: CampaignWindow = 30,
 ): Promise<void> {
   // Only fetchAlerts needs campaigns (to derive campaign_id), so it chains off
   // the in-flight campaigns promise instead of a full extra round-trip.
-  const campsP = fetchers.fetchCampaigns();
+  const campsP = fetchers.fetchCampaigns(campaignWindow);
   const alertsP = campsP.then((c) => fetchers.fetchAlerts(undefined, c));
   // Promise.all subscribes to every branch up front, so a second failure after
   // the fail-fast rejection is still handled (no unhandled-rejection noise).

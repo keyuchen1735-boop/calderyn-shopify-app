@@ -127,6 +127,21 @@ describe("bootDashboardData — progressive fill", () => {
     expect(alertsSawCampaigns).toEqual([CAMPAIGNS]);
   });
 
+  it("fetches campaigns for the selected reporting window", async () => {
+    const { d, fetchers, sinks } = harness();
+    const windows: unknown[] = [];
+    fetchers.fetchCampaigns = (window) => {
+      windows.push(window);
+      return d.campaigns.promise;
+    };
+
+    const boot = bootDashboardData(sinks, fetchers, 90);
+    resolveAll(d);
+    await boot;
+
+    expect(windows).toEqual([90]);
+  });
+
   it("holds the action queue until alerts land — the deck must never act without alert context", async () => {
     const { d, fetchers, sinks, applied } = harness();
     const boot = bootDashboardData(sinks, fetchers);
