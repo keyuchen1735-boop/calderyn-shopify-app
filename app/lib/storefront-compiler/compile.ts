@@ -107,7 +107,8 @@ function deriveRouteContract(
   if (rootScope === "search") requireData({ kind: "searchResults", limit: 24 });
   if (rootScope === "cart") requireData({ kind: "cart" });
   for (const slot of html.trustedSlots) {
-    if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") requireData({ kind: "cart" });
+    if (slot.kind === "bundleBuilder") requireData({ kind: "featuredProducts", limit: 12 });
+    else if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") requireData({ kind: "cart" });
     else if (namespace === "product" && !slot.scopeId) requireData({ kind: "currentProduct" });
   }
 

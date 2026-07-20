@@ -93,6 +93,15 @@ const store = vi.hoisted(() => {
   }
 
   const rpc = vi.fn(async (name: string, args: Row) => {
+    if (name === "cart_add_lines_atomic") {
+      const rows = (args.p_lines as Row[]).map((line) => ({
+        id: `cart_line-${db.cart_line.length + 1}`, cart_id: args.p_cart_id,
+        variant_id: line.variant_id, quantity: line.quantity, unit_price_cents: line.unit_price_cents,
+        currency: line.currency, title_snapshot: line.title_snapshot, personalization: {}, selling_plan_id: null,
+      }));
+      db.cart_line.push(...rows.map((row) => ({ ...row, shop_id: args.p_shop_id })));
+      return { data: rows, error: null };
+    }
     if (name !== "cart_add_line_atomic") return { data: null, error: { message: `unknown rpc ${name}` } };
     const parent = db.cart.find(
       (row) => row.shop_id === args.p_shop_id && row.id === args.p_cart_id && row.state === "cart",
@@ -186,6 +195,7 @@ vi.mock("~/lib/storefront/catalog.server", () => ({
 import {
   buildCart,
   addCartLine,
+  addCartLines,
   priceCart,
   priceLines,
   getCartOrigin,
@@ -328,6 +338,40 @@ describe("addCartLine", () => {
     expect(planned.unitPriceCents).toBe(1799);
     await expect(addCartLine("shop-1", cart.id, "v-tee-s", 1, {}, "plan-other"))
       .rejects.toThrow(/not eligible/);
+  });
+});
+
+describe("addCartLines", () => {
+  it("canonicalizes repeated selections into one quantity before one atomic mutation", async () => {
+    const cart = await buildCart("shop-1");
+    const result = await addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 }, { variantId: "v-tee-s", quantity: 1 },
+    ]);
+    expect(store.client.rpc).toHaveBeenCalledOnce();
+    expect(store.client.rpc).toHaveBeenCalledWith("cart_add_lines_atomic", expect.objectContaining({
+      p_lines: [expect.objectContaining({ variant_id: "v-tee-s", quantity: 2 })],
+    }));
+    expect(result).toHaveLength(1);
+    expect(result[0]?.quantity).toBe(2);
+  });
+
+  it("validates every live line before the single atomic mutation", async () => {
+    const cart = await buildCart("shop-1");
+    await expect(addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 },
+      { variantId: "v-hoodie-l", quantity: 1 },
+    ])).rejects.toThrow(/not available/);
+    expect(store.client.rpc).not.toHaveBeenCalled();
+    expect(store.db.cart_line).toHaveLength(0);
+  });
+
+  it("rejects a foreign variant without partial mutation", async () => {
+    const cart = await buildCart("shop-1");
+    await expect(addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 }, { variantId: "foreign", quantity: 1 },
+    ])).rejects.toThrow(/not found/);
+    expect(store.client.rpc).not.toHaveBeenCalled();
+    expect(store.db.cart_line).toHaveLength(0);
   });
 });
 

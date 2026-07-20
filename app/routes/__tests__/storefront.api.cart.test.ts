@@ -7,6 +7,7 @@ const rateLimit = vi.hoisted(() => vi.fn(async () => true));
 const cart = vi.hoisted(() => ({
   buildCart: vi.fn(async () => ({ id: "22222222-2222-4222-8222-222222222222" })),
   addCartLine: vi.fn(async () => { calls.push("add"); return {}; }),
+  addCartLines: vi.fn(async () => { calls.push("add-bundle"); return []; }),
   priceCart: vi.fn(async (_shopId: string, cartId: string) => { calls.push("price"); return { cartId, lines: [], subtotalCents: 0, currency: "usd" }; }),
   setCartLineQuantity: vi.fn(async () => ({ id: "line-1", quantity: 3 })),
   removeCartLine: vi.fn(async () => undefined),
@@ -43,6 +44,8 @@ import { commitCartId, readCartIdentity } from "~/lib/storefront/cart-cookie.ser
 import { loader as cartLoader } from "../storefront.api.cart";
 // eslint-disable-next-line import/first
 import { action as addAction } from "../storefront.api.cart.add";
+// eslint-disable-next-line import/first
+import { action as addBundleAction } from "../storefront.api.cart.add-bundle";
 // eslint-disable-next-line import/first
 import { action as quantityAction } from "../storefront.api.cart.quantity";
 // eslint-disable-next-line import/first
@@ -90,6 +93,7 @@ beforeEach(() => {
   rateLimit.mockResolvedValue(true);
   cart.buildCart.mockResolvedValue({ id: NEW_CART_ID });
   cart.addCartLine.mockImplementation(async () => { calls.push("add"); return {}; });
+  cart.addCartLines.mockImplementation(async () => { calls.push("add-bundle"); return []; });
   cart.priceCart.mockImplementation(async (_shopId: string, cartId: string) => { calls.push("price"); return { cartId, lines: [], subtotalCents: 0, currency: "usd" }; });
   cart.setCartLineQuantity.mockResolvedValue({ id: "line-1", quantity: 3 });
   cart.getCartState.mockReset();
@@ -158,6 +162,25 @@ describe("storefront cart JSON bridge", () => {
     expect(cart.addCartLine).toHaveBeenCalledWith("shop-a", NEW_CART_ID, "v-1", 2);
     expect(response.headers.get("Set-Cookie")).toContain("cd_cart=");
     expect(await response.json()).toEqual({ ok: true, data: { cart: expect.objectContaining({ cartId: NEW_CART_ID }) } });
+  });
+
+  it("adds a complete bounded bundle through one server-authoritative call", async () => {
+    const lines = [{ variantId: "v-1", quantity: 1 }, { variantId: "v-1", quantity: 1 }];
+    const response = await addBundleAction(actionArgs(await jsonRequest("/storefront/api/cart/add-bundle", { lines })));
+    expect(response.status).toBe(200);
+    expect(cart.addCartLines).toHaveBeenCalledWith("shop-a", NEW_CART_ID, lines);
+    expect(cart.addCartLine).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["incomplete", [{ variantId: "v-1", quantity: 1 }]],
+    ["recipe price", [{ variantId: "v-1", quantity: 1 }, { variantId: "v-2", quantity: 1, price: 1 }]],
+    ["authored quantity", [{ variantId: "v-1", quantity: 2 }, { variantId: "v-2", quantity: 1 }]],
+  ])("rejects %s bundle input before cart mutation", async (_label, lines) => {
+    const response = await addBundleAction(actionArgs(await jsonRequest("/storefront/api/cart/add-bundle", { lines })));
+    expect(response.status).toBe(422);
+    expect(cart.buildCart).not.toHaveBeenCalled();
+    expect(cart.addCartLines).not.toHaveBeenCalled();
   });
 
   it("accepts only bounded string personalization and passes no pricing authority", async () => {

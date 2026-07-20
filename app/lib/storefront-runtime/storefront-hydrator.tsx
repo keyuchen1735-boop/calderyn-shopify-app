@@ -36,6 +36,9 @@ function hrefFor(target: ResolvedRouteTarget, mode: RuntimeMode, previewTemplate
 }
 
 function publicCommerceRequest(intent: CommerceIntent): [string, Record<string, unknown>] | null {
+  if (intent.type === "cart.addBundle") return ["/storefront/api/cart/add-bundle", {
+    lines: intent.lines.map(({ variantId, quantity }) => ({ variantId, quantity })),
+  }];
   if (intent.type === "cart.add") return ["/storefront/api/cart/add", {
     variantId: intent.variantId,
     quantity: intent.quantity,
@@ -229,6 +232,45 @@ export function createRuntimeAdapters(input: {
       mount(context) {
         const { shadowRoot, slot, authorityKey, bridge } = context;
         shadowRoot.append(trustedCommerceStyle(context, input.squareAccentCommerce === true));
+        if (slot.kind === "bundleBuilder") {
+          const products = (input.data?.featuredProducts ?? []).filter((product) => product.variants.some((variant) => variant.available));
+          const selections = Array.from({ length: slot.slotCount ?? 0 }, () => ({ productId: "", variantId: "" }));
+          const ownerDocument = shadowRoot.ownerDocument;
+          const form = ownerDocument.createElement("div");
+          form.setAttribute("role", "group");
+          form.setAttribute("aria-label", "Build a bundle");
+          const add = ownerDocument.createElement("button");
+          add.type = "button";
+          add.textContent = "Add bundle to cart";
+          const refresh = () => { add.disabled = selections.some((selection) => !selection.variantId); };
+          selections.forEach((selection, index) => {
+            const productSelect = ownerDocument.createElement("select");
+            productSelect.setAttribute("aria-label", `Choose product ${index + 1}`);
+            productSelect.append(new Option(`Choose product ${index + 1}`, ""));
+            products.forEach((product) => productSelect.append(new Option(product.title, product.id)));
+            const variantSelect = ownerDocument.createElement("select");
+            variantSelect.setAttribute("aria-label", `Choose option ${index + 1}`);
+            variantSelect.disabled = true;
+            productSelect.onchange = () => {
+              selection.productId = productSelect.value;
+              selection.variantId = "";
+              variantSelect.replaceChildren(new Option(`Choose option ${index + 1}`, ""));
+              const product = products.find((candidate) => candidate.id === productSelect.value);
+              for (const variant of product?.variants.filter((candidate) => candidate.available) ?? []) {
+                variantSelect.append(new Option(variant.title, variant.id));
+              }
+              variantSelect.disabled = !product;
+              refresh();
+            };
+            variantSelect.onchange = () => { selection.variantId = variantSelect.value; refresh(); };
+            form.append(productSelect, variantSelect);
+          });
+          add.onclick = () => bridge({ type: "cart.addBundle", lines: selections.map((line) => ({ ...line, quantity: 1 })) });
+          refresh();
+          form.append(add);
+          shadowRoot.append(form);
+          return;
+        }
         if (slot.kind === "quickViewCommerce") {
           const productId = authorityKey.startsWith("product:") ? authorityKey.slice("product:".length) : "";
           const product = productById(productId);

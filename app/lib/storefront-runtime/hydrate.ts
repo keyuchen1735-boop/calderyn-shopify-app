@@ -159,6 +159,10 @@ function validateArtifact(
   const slotIds = new Set<string>();
   for (const slot of artifact.trustedSlots) {
     if (!isCompilerIssuedId(slot.id) || slotIds.has(slot.id)) throw new RuntimeManifestError("Trusted slot ID is invalid");
+    if ((slot.kind === "bundleBuilder") !== (slot.slotCount !== undefined) ||
+      (slot.slotCount !== undefined && (!Number.isSafeInteger(slot.slotCount) || slot.slotCount < 2 || slot.slotCount > 12))) {
+      throw new RuntimeManifestError("bundleBuilder slot count is invalid");
+    }
     if (slot.kind === "cartLineControls" && (!slot.scopeId || slot.scopeId === "root" || !isCompilerIssuedId(slot.scopeId))) {
       throw new RuntimeManifestError("cartLineControls requires an exact compiler-issued cartLine repeat scope");
     }
@@ -256,6 +260,7 @@ function applyBindings(
 }
 
 function commerceIntentAllowed(slot: TrustedSlotManifest, intent: CommerceIntent): boolean {
+  if (intent.type === "cart.addBundle") return slot.kind === "bundleBuilder" && intent.lines.length === slot.slotCount;
   if (intent.type === "variant.select") return slot.kind === "variantPicker" || slot.kind === "quickViewCommerce";
   if (intent.type === "cart.add") {
     if (slot.kind !== "addToCart" && slot.kind !== "quickViewCommerce") return false;
@@ -268,6 +273,9 @@ function commerceIntentAllowed(slot: TrustedSlotManifest, intent: CommerceIntent
 }
 
 function validCommerceIntent(intent: CommerceIntent): boolean {
+  if (intent.type === "cart.addBundle") return intent.lines.length >= 2 && intent.lines.length <= 12 && intent.lines.every((line) =>
+      typeof line.productId === "string" && line.productId.length > 0 && line.productId.length <= 160 &&
+      typeof line.variantId === "string" && line.variantId.length > 0 && line.variantId.length <= 160 && line.quantity === 1);
   if (intent.type === "cart.clear" || intent.type === "checkout.start") {
     return typeof intent.cartId === "string" && intent.cartId.length > 0 && intent.cartId.length <= 160;
   }
@@ -296,6 +304,7 @@ function commerceIntentMatchesAuthority(authorityKey: string, intent: CommerceIn
   if (kind === "variant") return (intent.type === "variant.select" || intent.type === "cart.add") && intent.variantId === id;
   if (kind === "cartLine") return (intent.type === "cart.quantity" || intent.type === "cart.remove") && intent.lineId === id;
   if (kind === "cart") return (intent.type === "cart.clear" || intent.type === "checkout.start") && intent.cartId === id;
+  if (kind === "bundle") return id === "catalog" && intent.type === "cart.addBundle";
   return false;
 }
 

@@ -192,6 +192,7 @@ export type RecipeCardTopology = `${RecipeCardIdentity}.${RouteCardPattern}.${St
 export type ProtectedStorefrontSlot =
   | "variantPicker"
   | "addToCart"
+  | "bundleBuilder"
   | "productDescription"
   | "cartLineControls"
   | "cartSummary"
@@ -452,11 +453,12 @@ export type TrustedPersonalizationField = "engraving" | "giftNote" | "giftWrap" 
 
 export interface TrustedSlotManifest {
   id: string;
-  kind: "variantPicker" | "addToCart" | "cartLineControls" | "cartSummary" | "cartDrawer" | "quickViewCommerce";
+  kind: "variantPicker" | "addToCart" | "bundleBuilder" | "cartLineControls" | "cartSummary" | "cartDrawer" | "quickViewCommerce";
   scopeId?: string;
   hostSize: "inline" | "block" | "panel" | "page";
   themeTokenIds: string[];
   personalizationFields?: TrustedPersonalizationField[];
+  slotCount?: number;
 }
 
 export interface CheckoutLayoutManifest {

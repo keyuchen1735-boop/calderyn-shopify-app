@@ -61,7 +61,7 @@ const ROUTE_IDS = new Set(["home", "collection", "product", "search", "cart", "c
 const EVENTS = new Set(["click", "change", "input", "keydown", "inview", "scrollProgress"]);
 const BINDING_KINDS = new Set<CompiledBindingKind>(["text", "money", "src", "alt"]);
 const SLOT_KINDS = new Set<TrustedSlotManifest["kind"]>([
-  "variantPicker", "addToCart", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce",
+  "variantPicker", "addToCart", "bundleBuilder", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce",
 ]);
 const HOST_SIZES = new Set<TrustedSlotManifest["hostSize"]>(["inline", "block", "panel", "page"]);
 const COMPILED_ATTRIBUTES = new Set([
@@ -618,6 +618,11 @@ function parseSlots(value: unknown, path: string, tree: TreeContext, add: AddDia
       add("slot.scope", currentPath, "cartLineControls requires an exact cartLine repeat scope");
     }
     const personalizationFields = input.personalizationFields;
+    const slotCount = input.slotCount;
+    const validSlotCount = input.kind === "bundleBuilder"
+      ? Number.isSafeInteger(slotCount) && Number(slotCount) >= 2 && Number(slotCount) <= 12
+      : slotCount === undefined;
+    if (!validSlotCount) add("slot.bundle", currentPath, "bundleBuilder slot count is malformed or unsupported");
     const validPersonalizationFields = personalizationFields === undefined || (
       input.kind === "addToCart" && Array.isArray(personalizationFields) &&
       personalizationFields.length > 0 && personalizationFields.length <= 4 &&
@@ -648,6 +653,7 @@ function parseSlots(value: unknown, path: string, tree: TreeContext, add: AddDia
       ...(validPersonalizationFields && Array.isArray(personalizationFields)
         ? { personalizationFields: personalizationFields as TrustedPersonalizationField[] }
         : {}),
+      ...(validSlotCount && typeof slotCount === "number" ? { slotCount } : {}),
     });
   });
   return slots;
@@ -684,7 +690,8 @@ function deriveContract(
   if (namespace === "cart") addData({ kind: "cart" });
   if ([...tree.elements.values()].some((node) => node.attributes["data-cd-platform-content"] === "policyLinks")) addData({ kind: "policyLinks" });
   for (const slot of slots) {
-    if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") addData({ kind: "cart" });
+    if (slot.kind === "bundleBuilder") addData({ kind: "featuredProducts", limit: 12 });
+    else if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") addData({ kind: "cart" });
     else if (namespace === "product" && !slot.scopeId) addData({ kind: "currentProduct" });
   }
   const dataOrder: readonly DataRequirement["kind"][] = ["storeIdentity", "policyLinks", "currentProduct", "currentCollection", "cart", "featuredProducts", "relatedProducts", "searchResults"];

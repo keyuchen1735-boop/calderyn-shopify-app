@@ -241,6 +241,7 @@ function instanceSuffix(path: readonly string[]): string {
 }
 
 function authorityKeyForSlot(slot: TrustedSlotManifest, context: RenderContext): string {
+  if (slot.kind === "bundleBuilder") return "bundle:catalog";
   const scope = slot.scopeId && slot.scopeId !== "root" ? context.scopes.get(slot.scopeId) : undefined;
   if (slot.kind === "cartLineControls") {
     if (slot.scopeId === context.currentScopeId && scope && "quantity" in scope && typeof scope.id === "string") {

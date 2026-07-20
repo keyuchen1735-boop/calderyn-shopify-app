@@ -195,6 +195,49 @@ export async function addCartLine(
   return { ...mapLine(data as Record<string, unknown>), productId: resolved.product.id };
 }
 
+export async function addCartLines(
+  shopId: string,
+  cartId: string,
+  lines: readonly { variantId: string; quantity: number }[],
+): Promise<Array<CartLine & { productId: string }>> {
+  if (!shopId) throw new Error("shopId is required");
+  assertPersistableShop(shopId);
+  if (!cartId) throw new Error("cartId is required");
+  if (lines.length < 2 || lines.length > 12) throw new Error("bundle must contain 2 to 12 lines");
+  const selected = await Promise.all(lines.map(async ({ variantId, quantity }) => {
+    if (!variantId || variantId.length > 128 || !Number.isInteger(quantity) || quantity !== 1) {
+      throw new Error("bundle lines require a bounded variant ID and quantity 1");
+    }
+    const resolved = await resolveVariant(shopId, variantId);
+    if (!resolved) throw new VariantUnavailableError(variantId, "not_found");
+    if (!resolved.variant.available) throw new VariantUnavailableError(variantId, "unavailable");
+    return {
+      productId: resolved.product.id,
+      variant_id: variantId,
+      quantity,
+      unit_price_cents: resolved.variant.priceCents,
+      currency: resolved.variant.currency.toLowerCase(),
+      title_snapshot: snapshotTitle(resolved.product, resolved.variant),
+      personalization: {},
+      selling_plan_id: null,
+    };
+  }));
+  const snapshots = [...selected.reduce((byVariant, line) => {
+    const existing = byVariant.get(line.variant_id);
+    if (existing) existing.quantity += line.quantity;
+    else byVariant.set(line.variant_id, { ...line });
+    return byVariant;
+  }, new Map<string, (typeof selected)[number]>()).values()];
+  const { data, error } = await getSupabase().rpc("cart_add_lines_atomic", {
+    p_shop_id: shopId,
+    p_cart_id: cartId,
+    p_lines: snapshots.map(({ productId: _productId, ...snapshot }) => snapshot),
+  });
+  if (error) throw error;
+  if (!Array.isArray(data) || data.length !== snapshots.length) throw new Error("cart_add_lines_atomic returned invalid rows");
+  return data.map((row, index) => ({ ...mapLine(row as Record<string, unknown>), productId: snapshots[index]!.productId }));
+}
+
 /**
  * Price a cart purely from the cart_line SNAPSHOTS — no live catalog read. Subtotal sums
  * unit_price_cents * quantity in integer cents; currency is the single snapshotted currency

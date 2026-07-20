@@ -175,6 +175,18 @@ describe("validation profile v1", () => {
     ]));
   });
 
+  it("rejects a forged persisted bundle slot count and derives live catalog data", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><section data-cd-slot="bundleBuilder" data-cd-bundle-slots="4"></section></main>`;
+    source.routes.home.css = "";
+    const compiled = compileBundle(source);
+    expect(compiled.bundle.routes.home.requiredData).toEqual([{ kind: "featuredProducts", limit: 12 }]);
+    compiled.bundle.routes.home.trustedSlots[0]!.slotCount = 99;
+    expect(validateCompiledBundle(compiled.bundle).diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "slot.bundle" }),
+    ]));
+  });
+
   it("allows repeated quick commerce but rejects repeated product-page controls on browse routes", () => {
     const quickView = structuredClone(VALID_BUNDLE_SOURCE);
     quickView.routes.home.html = `<main data-cd-repeat="featured.products"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id"></div></main>`;

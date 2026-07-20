@@ -29,6 +29,33 @@ const quickViewData: PublicPresentationData = {
 };
 
 describe("runtime-1 route adapters", () => {
+  it("hydrates an incomplete bundle disabled and submits only live completed variants", async () => {
+    const fetcher = vi.fn<RuntimeFetcher>(async () => new Response("{}", { status: 200 }));
+    const second = { ...quickViewData.featuredProducts[0]!, id: "p2", title: "Refill", variants: [
+      { ...quickViewData.featuredProducts[0]!.variants[0]!, id: "sold", available: false, availability: "Sold out" as const },
+      { ...quickViewData.featuredProducts[0]!.variants[1]!, id: "v3" },
+    ] };
+    const adapters = createRuntimeAdapters({ mode: "public", data: { ...quickViewData, featuredProducts: [...quickViewData.featuredProducts, second] }, fetcher, refresh: vi.fn() });
+    const host = document.createElement("div");
+    const shadowRoot = host.attachShadow({ mode: "open" });
+    adapters.commerce?.mount({ host, shadowRoot, authorityKey: "bundle:catalog",
+      slot: { id: "bundle", kind: "bundleBuilder", slotCount: 2, hostSize: "block", themeTokenIds: [] },
+      bridge: (intent) => adapters.commerce?.dispatch({ authorityKey: "bundle:catalog", slotKind: "bundleBuilder", intent }),
+    });
+    const selects = shadowRoot.querySelectorAll<HTMLSelectElement>("select");
+    const button = shadowRoot.querySelector<HTMLButtonElement>("button")!;
+    expect(button.disabled).toBe(true);
+    selects[0]!.value = "p1"; selects[0]!.dispatchEvent(new Event("change"));
+    selects[1]!.value = "v2"; selects[1]!.dispatchEvent(new Event("change"));
+    selects[2]!.value = "p2"; selects[2]!.dispatchEvent(new Event("change"));
+    expect([...selects[3]!.options].map((option) => option.value)).not.toContain("sold");
+    selects[3]!.value = "v3"; selects[3]!.dispatchEvent(new Event("change"));
+    expect(button.disabled).toBe(false);
+    button.click();
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledWith("/storefront/api/cart/add-bundle", expect.objectContaining({
+      body: JSON.stringify({ lines: [{ variantId: "v2", quantity: 1 }, { variantId: "v3", quantity: 1 }] }),
+    })));
+  });
   it("moves detached quick-buy controls into their matching product cards", () => {
     const route = document.createElement("div");
     route.innerHTML = `
