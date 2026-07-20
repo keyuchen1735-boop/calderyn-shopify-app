@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { StorefrontBundleV1, StorefrontRouteId, StoreTemplateId } from "~/lib/storefront-bundle/types";
+import type { RouteArtifact, StorefrontBundleV1, StorefrontRouteId, StoreTemplateId } from "~/lib/storefront-bundle/types";
 import type { PublicPresentationData } from "./public-data.server";
 import { hydrateStorefront } from "./hydrate";
 import type { StorefrontRuntimeHandle } from "./hydrate";
@@ -285,6 +285,37 @@ export function createRuntimeAdapters(input: {
   };
 }
 
+export function placeQuickViewCommerceInCards(
+  root: HTMLElement,
+  artifact: Pick<RouteArtifact, "bindings" | "trustedSlots">,
+): void {
+  const boundTitles = [...root.querySelectorAll<HTMLElement>("[data-cd-bind-text]")];
+  const slotHosts = [...root.querySelectorAll<HTMLElement>('[data-cd-trusted-slot="quickViewCommerce"]')];
+  for (const slot of artifact.trustedSlots.filter((candidate) => candidate.kind === "quickViewCommerce")) {
+    const hosts = slotHosts.filter((host) =>
+      host.dataset.cdCompilerId === slot.id && !host.closest("article")
+    );
+    if (hosts.length === 0) continue;
+    const cards = artifact.bindings.flatMap((binding) => {
+      if (
+        binding.kind !== "text" || binding.ref.kind !== "data" ||
+        binding.ref.path !== "product.title" || binding.ref.scopeId === slot.scopeId
+      ) return [];
+      const matches = boundTitles.filter((element) => element.dataset.cdBindText === binding.id);
+      const candidateCards = matches.map((element) => element.closest<HTMLElement>("article"));
+      return candidateCards.length === hosts.length && candidateCards.every(Boolean)
+        ? [candidateCards as HTMLElement[]]
+        : [];
+    })[0];
+    if (!cards) continue;
+    hosts.forEach((host, index) => {
+      const wrapper = host.closest<HTMLElement>('[data-cd-repeat-owner="true"]');
+      cards[index]!.append(host);
+      if (wrapper?.childElementCount === 0) wrapper.remove();
+    });
+  }
+}
+
 export function StorefrontHydrator(props: {
   bundle: StorefrontBundleV1;
   routeId: StorefrontRouteId;
@@ -308,12 +339,11 @@ export function StorefrontHydrator(props: {
     if (shell) handles.push(hydrateStorefront({ root: shell, artifact: props.bundle.shell, adapters, visualLayer }));
     if (props.routeId !== "checkout") {
       const route = root.querySelector<HTMLElement>(`[data-cd-bundle-route='${props.routeId}']`);
-      if (route) handles.push(hydrateStorefront({
-        root: route,
-        artifact: props.bundle.routes[props.routeId],
-        adapters,
-        visualLayer,
-      }));
+      if (route) {
+        const artifact = props.bundle.routes[props.routeId];
+        placeQuickViewCommerceInCards(route, artifact);
+        handles.push(hydrateStorefront({ root: route, artifact, adapters, visualLayer }));
+      }
     }
     return () => handles.forEach((handle) => handle.teardown());
   }, [props.bundle, props.data, props.mode, props.routeId]);
