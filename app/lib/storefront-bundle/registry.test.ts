@@ -40,7 +40,7 @@ describe("versioned storefront recipe registry", () => {
     const activeVersions = {
       "custom-bench": 11,
       "commons-index": 10,
-      "soft-chemistry": 12,
+      "soft-chemistry": 13,
       "companion-field-guide": 9,
       "daily-protocol": 8,
       "room-modes": 9,

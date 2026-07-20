@@ -18,6 +18,7 @@ const home = {
   requiredCapabilities: [],
 };
 
+home.css = home.css.replace(".hero{min-height:780px}", "");
 home.html = home.html
   .replace('<span class="kicker">Formulation note', '<span id="heroEyebrow" class="kicker">Formulation note')
   .replace(
@@ -86,7 +87,7 @@ const checkout = {
 
 export const SOFT_CHEMISTRY_RECIPE = defineRecipe({
   templateId: "soft-chemistry",
-  templateVersion: 12,
+  templateVersion: 13,
   concept: {
     name: "Soft Chemistry",
     rationale:

@@ -67,7 +67,7 @@ const softChemistryLegacyFull = {
 const VERSIONED_ASSET_MANIFESTS_BY_TEMPLATE_ID = {
   "custom-bench": [...repeatManifest(heroManifest("f6f25c15de46bf6dd431ae685202f90fbbc3ba00e8051f6a6f4afaa8b89cdde9", 132568), 5), CUSTOM_BENCH_ASSETS, CUSTOM_BENCH_ASSETS, CUSTOM_BENCH_ASSETS, CUSTOM_BENCH_ASSETS, CUSTOM_BENCH_ASSETS, CUSTOM_BENCH_ASSETS],
   "commons-index": [...repeatManifest(heroManifest("9201028ef1da24dd4318d0dafd8b4e18f32d16e12ba921c5ded28765b0cbaca1", 130446), 4), COMMONS_INDEX_ASSETS, COMMONS_INDEX_ASSETS, COMMONS_INDEX_ASSETS, COMMONS_INDEX_ASSETS, COMMONS_INDEX_ASSETS, COMMONS_INDEX_ASSETS],
-  "soft-chemistry": [...repeatManifest(softChemistryLegacyHero, 3), ...repeatManifest(softChemistryLegacyFull, 4), SOFT_CHEMISTRY_ASSETS, SOFT_CHEMISTRY_ASSETS, SOFT_CHEMISTRY_ASSETS, SOFT_CHEMISTRY_ASSETS, SOFT_CHEMISTRY_ASSETS],
+  "soft-chemistry": [...repeatManifest(softChemistryLegacyHero, 3), ...repeatManifest(softChemistryLegacyFull, 4), SOFT_CHEMISTRY_ASSETS, SOFT_CHEMISTRY_ASSETS, SOFT_CHEMISTRY_ASSETS, SOFT_CHEMISTRY_ASSETS, SOFT_CHEMISTRY_ASSETS, SOFT_CHEMISTRY_ASSETS],
   "companion-field-guide": [...repeatManifest(heroManifest("305b7c4a9f43578032dba1e95a63869d9e17b370585c24438b7b963aa0a9a2d6", 158522), 3), COMPANION_FIELD_GUIDE_ASSETS, COMPANION_FIELD_GUIDE_ASSETS, COMPANION_FIELD_GUIDE_ASSETS, COMPANION_FIELD_GUIDE_ASSETS, COMPANION_FIELD_GUIDE_ASSETS, COMPANION_FIELD_GUIDE_ASSETS],
   "daily-protocol": [...repeatManifest(heroManifest("798fb222ba0b6975c3f83d7d95f6640227f781b2e4582f758cc712a0f45a8054", 81984), 3), DAILY_PROTOCOL_ASSETS, DAILY_PROTOCOL_ASSETS, DAILY_PROTOCOL_ASSETS, DAILY_PROTOCOL_ASSETS, DAILY_PROTOCOL_ASSETS],
   "room-modes": [...repeatManifest(heroManifest("ed779ae096effacc6af8a58f5ab55b79faad5ae2b3b5fba892b796e310586d30", 80050), 3), ROOM_MODES_ASSETS, ROOM_MODES_ASSETS, ROOM_MODES_ASSETS, ROOM_MODES_ASSETS, ROOM_MODES_ASSETS, ROOM_MODES_ASSETS],
@@ -444,7 +444,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     catalogTerms: ["skincare", "skin care", "serum", "clean beauty", "sensitive skin", "moisturizer"],
     legacyVibe: "minimal",
     generationInstructions: "Use clinical softness, ingredient transparency, routine building, and skin-concern filters.",
-  }, 12),
+  }, 13),
   recipe({
     id: "companion-field-guide",
     name: "Companion Field Guide",

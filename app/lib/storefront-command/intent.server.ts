@@ -308,7 +308,9 @@ function exactCommand(input: ClassifyStoreIntentInput): StoreIntent | null {
     case "Try another": return input.bundle
       ? { kind: "select_design", prompt: input.prompt, excludedTemplateIds: exclusions(input) }
       : { kind: "unsupported", message: "There is no current storefront design to replace." };
-    case "make store": return {
+    case "make store":
+    case "build store":
+    case "build my store": return {
       kind: "select_design",
       prompt: input.prompt,
       excludedTemplateIds: exclusions(input),
