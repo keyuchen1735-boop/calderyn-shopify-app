@@ -87,6 +87,13 @@ describe("validation profile v1", () => {
     expect(compileBundle(source).report.diagnostics.map(({ code }) => code)).toContain("asset.media_mismatch");
   });
 
+  it("rejects persisted declarative motion outside the source compiler allowlist", () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const root = flattenElements(bundle.routes.home.tree)[0]!;
+    root.attributes["data-cd-motion"] = "spin";
+    expect(validateCompiledBundle(bundle).diagnostics.map(({ code }) => code)).toContain("tree.control_attribute");
+  });
+
   it("validates optional route artifacts when present", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE) as typeof VALID_BUNDLE_SOURCE & { routes: typeof VALID_BUNDLE_SOURCE.routes & { story?: typeof VALID_BUNDLE_SOURCE.routes.home } };
     source.routes.story = { ...source.routes.home, html: `<main>Story</main>` };

@@ -107,7 +107,12 @@ async function verifyRecord(manifest, record, proofRecords, manifestPath, downlo
   if (new Set(dimensions).size !== 1 || dimensions[0] !== `${proof.width}x${proof.height}`) {
     throw new Error(`Derivative dimension mismatch with video-proof.json for ${record.role}`);
   }
-  if (durations.some((duration) => Math.abs(duration - Number(proof.duration)) > 0.25)) {
+  const proofDuration = proof.duration;
+  if (typeof proofDuration !== "number" || !Number.isFinite(proofDuration)) {
+    throw new Error(`video-proof.json requires a finite proof duration for ${record.role}`);
+  }
+  if (durations.length !== 2 || Math.abs(durations[0] - durations[1]) > 0.25 ||
+    durations.some((duration) => Math.abs(duration - proofDuration) > 0.25)) {
     throw new Error(`Derivative duration mismatch with video-proof.json for ${record.role}`);
   }
   process.stdout.write(`Verified ${manifest.templateId}/${record.role} ${record.masterHash}\n`);

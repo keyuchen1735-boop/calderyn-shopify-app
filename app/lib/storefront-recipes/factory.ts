@@ -302,12 +302,28 @@ function assertApprovedVideoRole(config: RecipeConfig, role: string): void {
 
 function assertApprovedReferencedVideos(config: RecipeConfig): void {
   const roles = new Set<string>();
+  const approvedRoles = new Set(["hero", "hero-alt", "pdp-detail"]);
   for (const [surfaceId, surface] of Object.entries(config.surfaces)) {
     if (!surface) continue;
     const visit = (nodes: readonly CompiledNode[]): void => nodes.forEach((node) => {
       if (node.kind !== "element") return;
-      const poster = node.tag === "video" ? node.attributes["data-cd-poster-asset-key"] : undefined;
-      if (poster?.endsWith("-poster")) roles.add(poster.slice(0, -7));
+      if (node.tag === "video") {
+        const poster = node.attributes["data-cd-poster-asset-key"];
+        const sourceKeys = node.children.flatMap((child) => child.kind === "element" && child.tag === "source"
+          ? [child.attributes["data-cd-asset-key"]]
+          : []).filter((key): key is string => Boolean(key));
+        const referencedRoles = [poster, ...sourceKeys].flatMap((key) => {
+          const match = key?.match(/^(hero|hero-alt|pdp-detail)-(?:poster|webm|mp4)$/);
+          return match ? [match[1]!] : [];
+        });
+        const role = referencedRoles[0];
+        if (node.attributes["data-cd-video"] !== "" || !role || !approvedRoles.has(role) ||
+          referencedRoles.some((candidate) => candidate !== role) || poster !== `${role}-poster` ||
+          !sourceKeys.includes(`${role}-webm`) || !sourceKeys.includes(`${role}-mp4`)) {
+          throw new Error(`Recipe ${config.templateId} video on ${surfaceId} requires one trusted poster-first approved media role`);
+        }
+        roles.add(role);
+      }
       visit(node.children);
     });
     const rootScopeKind = ("rootScopeKind" in surface.source ? surface.source.rootScopeKind : undefined) ??

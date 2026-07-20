@@ -70,6 +70,7 @@ const COMPILED_ATTRIBUTES = new Set([
   "data-cd-route-target", "data-cd-trusted-slot-id", "data-cd-platform-content", "data-cd-asset-key",
   "data-cd-empty-state", "data-cd-native-control", "data-cd-poster-asset-key", "data-cd-motion",
 ]);
+const DECLARATIVE_MOTIONS = new Set(["reveal", "parallax", "count-up", "pinned", "scroll-progress"]);
 
 function record(value: unknown): UnknownRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as UnknownRecord : null;
@@ -118,6 +119,7 @@ function validControlAttribute(tag: unknown, name: string, value: string): boole
   if (["muted", "autoplay", "playsinline", "loop", "data-cd-video"].includes(name)) return tag === "video" && value === "";
   if (name === "preload") return tag === "video" && ["none", "metadata", "auto"].includes(value);
   if (name === "data-cd-poster-asset-key") return tag === "video" && isCompilerIdentifier(value);
+  if (name === "data-cd-motion") return DECLARATIVE_MOTIONS.has(value);
   return true;
 }
 

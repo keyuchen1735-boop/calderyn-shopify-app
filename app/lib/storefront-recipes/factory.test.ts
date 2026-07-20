@@ -235,4 +235,14 @@ describe("storefront recipe factory", () => {
     ];
     expect(() => defineRecipe(config)).toThrow(/hero-alt.*manifest|approval|proof/i);
   });
+
+  it("rejects posterless recipe video on any surface despite a legacy home image", () => {
+    const config = testConfig();
+    config.surfaces.product.source.html = `<main><video data-cd-video><source data-cd-asset="hero-alt-webm" type="video/webm"><source data-cd-asset="hero-alt-mp4" type="video/mp4"></video></main>`;
+    config.assets.entries = [...config.assets.entries,
+      { key: "hero-alt-webm", contentHash: "c".repeat(64), mediaType: "video/webm", byteSize: 1 },
+      { key: "hero-alt-mp4", contentHash: "d".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+    ];
+    expect(() => defineRecipe(config)).toThrow(/video.*poster|approval|proof/i);
+  });
 });

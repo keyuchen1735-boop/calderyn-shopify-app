@@ -180,6 +180,21 @@ test("rejects derivative dimensions and duration that differ from proof", async 
   assert.match(verified.stderr, /dimension|duration/i);
 });
 
+test("rejects missing or non-finite proof duration", async (context) => {
+  for (const [label, duration] of [["missing", undefined], ["non-finite", null]]) {
+    await context.test(label, async () => {
+      const invalidProof = structuredClone(JSON.parse(await readFile(proofPath, "utf8")));
+      if (duration === undefined) delete invalidProof.records[0].duration;
+      else invalidProof.records[0].duration = duration;
+      const path = join(directory, `${label}-duration-proof.json`);
+      await writeFile(path, JSON.stringify(invalidProof));
+      const verified = run(process.execPath, [verifier, manifestPath, path]);
+      assert.notEqual(verified.status, 0);
+      assert.match(verified.stderr, /proof.*duration|duration.*proof/i);
+    });
+  }
+});
+
 test("rejects missing, duplicate, and unexpected roles", async (context) => {
   const cases = {
     missing: manifest.records.slice(0, 2),
