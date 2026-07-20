@@ -7,7 +7,7 @@ describe("Soft Chemistry storefront recipe", () => {
   it("compiles a clinical editorial routine across the full commerce contract", () => {
     const { bundle, config, report } = SOFT_CHEMISTRY_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 12 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 13 });
     expect(config.archetype).toMatchObject({ composition: "clinical-editorial", hero: "ingredient-routine-hero", scroll: "soft-reveal", cards: "ingredient-dossiers" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "cormorant-garamond", bodyFontId: "manrope" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
@@ -62,6 +62,8 @@ describe("Soft Chemistry storefront recipe", () => {
     expect(config.surfaces.home.source.css).toContain("@keyframes spin");
     expect(config.surfaces.home.source.css).toContain("animation:counter-spin 30s linear infinite");
     expect(config.surfaces.home.source.css).toContain("@keyframes counter-spin");
+    expect(config.surfaces.home.source.css).toContain(".hero{position:relative;min-height:100svh");
+    expect(config.surfaces.home.source.css).not.toContain("@media(max-width:780px){.hero{min-height:780px}");
     expect(config.surfaces.collection.source.html).toEqual(expect.stringContaining('class="col-head"'));
     expect(config.surfaces.collection.source.html).toContain('data-cd-asset="collection"');
     expect(config.surfaces.collection.source.html).toEqual(expect.stringContaining('class="filters"'));
