@@ -39,7 +39,7 @@ describe("ritual-almanac storefront recipe", () => {
   it("compiles editorial ritual chapters, cadence selection, and every commerce surface", () => {
     const { bundle, config, report } = RITUAL_ALMANAC_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ritual-almanac", templateVersion: 8 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ritual-almanac", templateVersion: 9 });
     expect(config.archetype).toEqual({ composition: "editorial-almanac", hero: "ritual-time-hero", scroll: "almanac-chapters", cards: "ritual-entries", iconography: ["time ritual marks", "flavor note symbols"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "young-serif", bodyFontId: "manrope", iconStyle: "time-of-day marks and restrained flavor-note symbols", motionStyle: "chapter reveals with ritual-time tab transitions" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

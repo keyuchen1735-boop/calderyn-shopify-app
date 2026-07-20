@@ -3,7 +3,7 @@ import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, wrapRecipeCompo
 import { RITUAL_ALMANAC_ASSETS } from "./assets";
 
 const config = {
-  templateId: "ritual-almanac", templateVersion: 8,
+  templateId: "ritual-almanac", templateVersion: 9,
   concept: { name: "Ritual Almanac", rationale: "An editorial pantry organized by hour, flavor chapter, and recurring ritual instead of benefit-card claims.", noveltySignature: ["ritual-time-wheel", "almanac-chapters", "cadence-led-pantry"] },
   designSystem: {
     displayFontId: "young-serif", bodyFontId: "manrope",

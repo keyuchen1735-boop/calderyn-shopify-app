@@ -252,7 +252,8 @@ export function createRuntimeAdapters(input: {
               type: "cart.add", productId: product.id, variantId: quickVariant.id, quantity: 1,
             });
           };
-          group.append(select, button);
+          if (availableVariants.length > 1) group.append(select);
+          group.append(button);
           shadowRoot.append(group);
           return;
         }

@@ -3,7 +3,7 @@ import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, type RecipeConf
 import { REP_REST_ASSETS } from "./assets";
 
 const config = {
-  templateId: "rep-rest", templateVersion: 8,
+  templateId: "rep-rest", templateVersion: 9,
   concept: { name: "Rep / Rest", rationale: "A high-contrast split journey that treats training and recovery as equal halves of one system.", noveltySignature: ["training-recovery-split", "sticky-workout-chapters", "comparison-rails"] },
   designSystem: {
     displayFontId: "oswald", bodyFontId: "manrope",

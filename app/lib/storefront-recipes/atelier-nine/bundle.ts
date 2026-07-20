@@ -357,7 +357,7 @@ const checkoutCss = `
 
 const config = {
   templateId: "atelier-nine",
-  templateVersion: 5,
+  templateVersion: 6,
   concept: {
     name: "Atelier Grid",
     rationale: "A complete commerce journal that treats products as an edited fashion issue without obscuring purchase paths.",

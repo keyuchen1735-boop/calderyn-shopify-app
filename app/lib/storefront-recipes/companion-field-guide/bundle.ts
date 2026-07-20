@@ -83,7 +83,7 @@ const checkout = {
 } satisfies RecipeConfig<"companion-field-guide">["surfaces"]["checkout"]["source"];
 
 const config = {
-  templateId: "companion-field-guide", templateVersion: 9,
+  templateId: "companion-field-guide", templateVersion: 10,
   concept: { name: "Companion Field Guide", rationale: "A chaptered guide lets people shop from the care context they recognize.", noveltySignature: ["species chapter rail", "companion profile", "care field records"] },
   designSystem: { displayFontId: "newsreader", bodyFontId: "manrope", tokens: { paper: "#f3f1e8", ink: "#1d2b22", forest: "#234e3b", mint: "#c8dfcc", orange: "#9f3f22", line: "rgba(29,43,34,.22)", "space-guide": "24px" }, breakpoints: { mobile: 760, wide: 1180 }, iconStyle: "species field marks and dosage fact symbols", motionStyle: "chapter changes and profile feedback with restrained portrait reveals", globalCss: `.guide-copy { overflow-wrap: anywhere }` },
   archetype: { composition: "field-guide", hero: "pet-profile-hero", scroll: "chaptered-guide", cards: "field-notes", iconography: ["species field marks", "dosage fact symbols"] },

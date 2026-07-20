@@ -51,7 +51,7 @@ describe("Commons Index storefront recipe", () => {
   it("compiles a cooperative provenance ledger across every commerce surface", () => {
     const { bundle, config, report } = COMMONS_INDEX_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 10 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "commons-index", templateVersion: 11 });
     expect(config.archetype).toMatchObject({ composition: "cooperative-directory", hero: "impact-ledger-intro", scroll: "indexed-ledger", cards: "provenance-records" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "source-fraunces", bodyFontId: "dm-mono" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
