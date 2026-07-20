@@ -225,6 +225,29 @@ describe("runtime-1 route adapters", () => {
     })));
   });
 
+  it("omits the redundant variant selector for a single purchasable option", () => {
+    const product = {
+      ...quickViewData.featuredProducts[0]!,
+      variants: [quickViewData.featuredProducts[0]!.variants[0]!],
+    };
+    const adapters = createRuntimeAdapters({
+      mode: "public", data: { ...quickViewData, featuredProducts: [product] },
+    });
+    const host = document.createElement("div");
+    const shadowRoot = host.attachShadow({ mode: "open" });
+
+    adapters.commerce?.mount({
+      host,
+      shadowRoot,
+      authorityKey: "product:p1",
+      slot: { id: "slot", kind: "quickViewCommerce", hostSize: "inline", themeTokenIds: [] },
+      bridge: vi.fn(),
+    });
+
+    expect(shadowRoot.querySelector("select")).toBeNull();
+    expect(shadowRoot.querySelector("button")?.textContent).toBe("Add to cart");
+  });
+
   it("applies square yellow commerce controls only to an explicitly opted-in bundle", () => {
     const mountStyle = (squareAccentCommerce: boolean) => {
       const adapters = createRuntimeAdapters({ mode: "public", data: quickViewData, squareAccentCommerce });

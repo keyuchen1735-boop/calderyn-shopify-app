@@ -465,6 +465,8 @@ describe("compiled-node server renderer", () => {
       expect(cardDescription).toContain("&lt;strong&gt;Merchant &amp; field notes&lt;/strong&gt;");
       expect(cardDescription).toContain("…");
       expect(cardDescription).not.toContain("complete ending");
+      expect(cardDescription?.replaceAll(/&(?:lt|gt|amp);/g, "x").length).toBeLessThanOrEqual(88);
+      expect(cardDescription).not.toMatch(/det…$/);
       expect(html).not.toContain("<strong>Merchant & field notes</strong>");
     }
 

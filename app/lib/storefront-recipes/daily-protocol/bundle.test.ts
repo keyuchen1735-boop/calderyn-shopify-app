@@ -49,7 +49,7 @@ describe("Daily Protocol storefront recipe", () => {
   it("compiles a timed protocol ledger across the complete commerce contract", () => {
     const { bundle, config, report } = DAILY_PROTOCOL_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "daily-protocol", templateVersion: 8 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "daily-protocol", templateVersion: 9 });
     expect(config.archetype).toMatchObject({ composition: "protocol-ledger", hero: "time-of-day-protocol", scroll: "routine-timeline", cards: "protocol-stacks" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "manrope", bodyFontId: "dm-mono" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

@@ -52,7 +52,7 @@ describe("Companion Field Guide storefront recipe", () => {
   it("compiles a chaptered pet care guide across the complete commerce contract", () => {
     const { bundle, config, report } = COMPANION_FIELD_GUIDE_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 9 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 10 });
     expect(config.archetype).toMatchObject({ composition: "field-guide", hero: "pet-profile-hero", scroll: "chaptered-guide", cards: "field-notes" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "newsreader", bodyFontId: "manrope" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

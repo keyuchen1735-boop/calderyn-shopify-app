@@ -3,7 +3,7 @@ import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, type RecipeConf
 import { DIAGNOSTIC_DECK_ASSETS } from "./assets";
 
 const config = {
-  templateId: "diagnostic-deck", templateVersion: 9,
+  templateId: "diagnostic-deck", templateVersion: 10,
   concept: { name: "Diagnostic Deck", rationale: "A dense exact-unit exchange where grade, inspection, and warranty evidence precede price.", noveltySignature: ["diagnostic-terminal", "exact-unit-passports", "deck-snap-comparison"] },
   designSystem: {
     displayFontId: "archivo-black", bodyFontId: "dm-mono",

@@ -150,7 +150,10 @@ function formatBinding(binding: CompiledBinding, value: unknown): string | null 
   if (binding.kind === "text" && binding.ref.kind === "data" && binding.ref.scopeId !== "root" &&
       binding.ref.path === "product.description" && typeof value === "string") {
     const description = value.trim();
-    return description.length > 160 ? `${description.slice(0, 159).trimEnd()}…` : description;
+    if (description.length <= 88) return description;
+    const candidate = description.slice(0, 87).trimEnd();
+    const wordBoundary = candidate.replace(/\s+\S*$/, "");
+    return `${wordBoundary || candidate}…`;
   }
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
     ? String(value)

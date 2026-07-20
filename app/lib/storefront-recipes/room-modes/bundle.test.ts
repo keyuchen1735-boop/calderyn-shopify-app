@@ -61,7 +61,7 @@ describe("room-modes storefront recipe", () => {
     const { bundle, config, report } = ROOM_MODES_RECIPE;
 
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 9 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 10 });
     expect(config.archetype).toEqual({
       composition: "spatial-scenes",
       hero: "room-mode-scene",

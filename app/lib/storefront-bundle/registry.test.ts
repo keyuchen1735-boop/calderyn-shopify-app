@@ -38,17 +38,17 @@ describe("versioned storefront recipe registry", () => {
     expect(STORE_TEMPLATE_REGISTRY.registryVersion).toBe(2);
     expect(STORE_TEMPLATE_REGISTRY.routingVersion).toBe(1);
     const activeVersions = {
-      "custom-bench": 11,
-      "commons-index": 10,
-      "soft-chemistry": 13,
-      "companion-field-guide": 9,
-      "daily-protocol": 8,
-      "room-modes": 9,
-      "rep-rest": 8,
-      "diagnostic-deck": 9,
-      "ritual-almanac": 8,
-      "broadcast-patch-bay": 10,
-      "atelier-nine": 5,
+      "custom-bench": 12,
+      "commons-index": 11,
+      "soft-chemistry": 14,
+      "companion-field-guide": 10,
+      "daily-protocol": 9,
+      "room-modes": 10,
+      "rep-rest": 9,
+      "diagnostic-deck": 10,
+      "ritual-almanac": 9,
+      "broadcast-patch-bay": 11,
+      "atelier-nine": 6,
     } as const;
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
       expect(recipe.activeVersion).toBe(activeVersions[recipe.id]);

@@ -7,7 +7,7 @@ describe("Soft Chemistry storefront recipe", () => {
   it("compiles a clinical editorial routine across the full commerce contract", () => {
     const { bundle, config, report } = SOFT_CHEMISTRY_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 13 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 14 });
     expect(config.archetype).toMatchObject({ composition: "clinical-editorial", hero: "ingredient-routine-hero", scroll: "soft-reveal", cards: "ingredient-dossiers" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "cormorant-garamond", bodyFontId: "manrope" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

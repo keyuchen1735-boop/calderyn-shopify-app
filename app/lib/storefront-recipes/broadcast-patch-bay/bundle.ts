@@ -3,7 +3,7 @@ import { defineRecipe, prependRecipeLandmark, sourceTemplateCss, wrapRecipeCompo
 import { BROADCAST_PATCH_BAY_ASSETS } from "./assets";
 
 const config = {
-  templateId: "broadcast-patch-bay", templateVersion: 10,
+  templateId: "broadcast-patch-bay", templateVersion: 11,
   concept: { name: "Broadcast Patch Bay", rationale: "A modular creator storefront that routes the catalog as an input-to-output signal chain.", noveltySignature: ["signal-patch-bay", "rig-mode-routing", "compatibility-modules"] },
   designSystem: {
     displayFontId: "chakra-petch", bodyFontId: "dm-mono",
