@@ -36,9 +36,11 @@ function runAsync(command, args, options = {}) {
   });
 }
 
-function exactApproval(masterHash) {
+function exactApproval(templateId, role, masterHash) {
   return {
     records: [{
+      templateId,
+      role,
       masterHash,
       technicalApproval: { approved: true, masterHash },
       visualApproval: { approved: true, scope: "full-loop" },
@@ -46,11 +48,20 @@ function exactApproval(masterHash) {
   };
 }
 
+function masterHashFor(templateId, role) {
+  return createHash("sha256").update(`approved-master:${templateId}:${role}`).digest("hex");
+}
+
+function approvalsFor(records) {
+  return { records: records.flatMap((record) => exactApproval(record.templateId, record.role, record.masterHash).records) };
+}
+
 function recordFor(baseRecord, templateId, role, includeLocalPath) {
   return {
     ...baseRecord,
     templateId,
     role,
+    masterHash: masterHashFor(templateId, role),
     entries: baseRecord.entries.map((entry) => ({
       ...entry,
       ...(includeLocalPath ? {} : { localPath: undefined }),
@@ -71,7 +82,7 @@ before(async () => {
   assert.equal(generated.status, 0, generated.stderr);
   const masterHash = createHash("sha256").update(await readFile(masterPath)).digest("hex");
   proofPath = join(directory, "video-proof.json");
-  await writeFile(proofPath, JSON.stringify(exactApproval(masterHash)));
+  await writeFile(proofPath, JSON.stringify(exactApproval("volt", "hero", masterHash)));
 
   const imported = run(process.execPath, [importer, "volt", "hero", masterPath, proofPath, join(directory, "derived"), "--no-upload"]);
   assert.equal(imported.status, 0, imported.stderr);
@@ -88,6 +99,7 @@ before(async () => {
   manifest = { templateId: "volt", records: roles.map((role) => recordFor(baseRecord, "volt", role, true)) };
   manifestPath = join(directory, "media-manifest.json");
   await writeFile(manifestPath, JSON.stringify(manifest));
+  await writeFile(proofPath, JSON.stringify(approvalsFor(manifest.records)));
 
   const bytesByExtension = new Map();
   for (const entry of baseRecord.entries) bytesByExtension.set(extname(entry.objectPath), await readFile(join(directory, entry.localPath)));
@@ -109,7 +121,7 @@ before(async () => {
     const recipeManifest = { templateId, records: roles.map((role) => recordFor(baseRecord, templateId, role, false)) };
     await mkdir(recipePath, { recursive: true });
     await writeFile(join(recipePath, "media-manifest.json"), JSON.stringify(recipeManifest));
-    await writeFile(join(recipePath, "video-proof.json"), JSON.stringify(exactApproval(masterHash)));
+    await writeFile(join(recipePath, "video-proof.json"), JSON.stringify(approvalsFor(recipeManifest.records)));
   }
 });
 
@@ -125,6 +137,17 @@ test("importer emits one portable record without an absolute proof path", () => 
   assert.equal(importedManifest.records[0].role, "hero");
   assert.equal(importedManifest.records[0].entries.every((entry) => !isAbsolute(entry.localPath)), true);
   assert.equal("proofPath" in importedManifest, false);
+});
+
+test("importer rejects approval bound to another role", async () => {
+  const masterPath = join(directory, "master.mp4");
+  const bytes = await readFile(masterPath);
+  const masterHash = createHash("sha256").update(bytes).digest("hex");
+  const wrongProof = join(directory, "wrong-import-proof.json");
+  await writeFile(wrongProof, JSON.stringify(exactApproval("volt", "hero-alt", masterHash)));
+  const imported = run(process.execPath, [importer, "volt", "hero", masterPath, wrongProof, join(directory, "wrong-derived"), "--no-upload"]);
+  assert.notEqual(imported.status, 0);
+  assert.match(imported.stderr, /template.*role.*master|approval identity/i);
 });
 
 test("verifies exactly one local derivative record for every required role", () => {
@@ -146,6 +169,39 @@ test("rejects missing, duplicate, and unexpected roles", async (context) => {
       const verified = run(process.execPath, [verifier, path, proofPath]);
       assert.notEqual(verified.status, 0);
       assert.match(verified.stderr, /exactly one.*hero.*hero-alt.*pdp-detail|role/i);
+    });
+  }
+});
+
+test("rejects duplicate master hashes across required roles", async () => {
+  const invalid = structuredClone(manifest);
+  invalid.records[1].masterHash = invalid.records[0].masterHash;
+  const path = join(directory, "duplicate-master-manifest.json");
+  await writeFile(path, JSON.stringify(invalid));
+  const proof = join(directory, "duplicate-master-proof.json");
+  await writeFile(proof, JSON.stringify(approvalsFor(invalid.records)));
+  const verified = run(process.execPath, [verifier, path, proof]);
+  assert.notEqual(verified.status, 0);
+  assert.match(verified.stderr, /distinct masterHash|duplicate master/i);
+});
+
+test("rejects swapped or cross-template proof identities", async (context) => {
+  const [hero, heroAlt, pdp] = manifest.records;
+  const cases = {
+    swapped: [
+      exactApproval("volt", "hero-alt", hero.masterHash).records[0],
+      exactApproval("volt", "hero", heroAlt.masterHash).records[0],
+      exactApproval("volt", "pdp-detail", pdp.masterHash).records[0],
+    ],
+    reused: manifest.records.map((record) => exactApproval("atelier", record.role, record.masterHash).records[0]),
+  };
+  for (const [label, records] of Object.entries(cases)) {
+    await context.test(label, async () => {
+      const proof = join(directory, `${label}-identity-proof.json`);
+      await writeFile(proof, JSON.stringify({ records }));
+      const verified = run(process.execPath, [verifier, manifestPath, proof]);
+      assert.notEqual(verified.status, 0);
+      assert.match(verified.stderr, /template.*role.*master|approval identity/i);
     });
   }
 });
@@ -176,6 +232,17 @@ test("fails loudly when media is neither local nor publicly fetchable", async ()
 });
 
 test("discovers all thirty required recipe records", async () => {
+  const masterHashes = new Set();
+  const approvalIdentities = new Set();
+  for (const templateId of templateIds) {
+    const recipePath = join(repositoryPath, "app", "lib", "storefront-recipes", templateId);
+    const checkedManifest = JSON.parse(await readFile(join(recipePath, "media-manifest.json"), "utf8"));
+    const checkedProof = JSON.parse(await readFile(join(recipePath, "video-proof.json"), "utf8"));
+    for (const record of checkedManifest.records) masterHashes.add(record.masterHash);
+    for (const approval of checkedProof.records) approvalIdentities.add(`${approval.templateId}:${approval.role}:${approval.masterHash}`);
+  }
+  assert.equal(masterHashes.size, 30);
+  assert.equal(approvalIdentities.size, 30);
   const verified = await runAsync(process.execPath, [verifier], {
     cwd: repositoryPath,
     env: { ...process.env, STOREFRONT_RECIPE_ASSET_BASE_URL: publicAssetBaseUrl, TMPDIR: verificationTmp },
@@ -210,7 +277,12 @@ test("template discovery rejects manifest and role ownership mismatches", async 
 
 test("all-template discovery fails loudly on incomplete proof", async () => {
   const proof = join(repositoryPath, "app", "lib", "storefront-recipes", "glow", "video-proof.json");
-  await writeFile(proof, JSON.stringify({ masterHash: manifest.records[0].masterHash, technicalApproval: { approved: true, masterHash: manifest.records[0].masterHash } }));
+  await writeFile(proof, JSON.stringify({ records: [{
+    templateId: "glow",
+    role: "hero",
+    masterHash: masterHashFor("glow", "hero"),
+    technicalApproval: { approved: true, masterHash: masterHashFor("glow", "hero") },
+  }] }));
   const verified = await runAsync(process.execPath, [verifier], {
     cwd: repositoryPath,
     env: { ...process.env, STOREFRONT_RECIPE_ASSET_BASE_URL: publicAssetBaseUrl },

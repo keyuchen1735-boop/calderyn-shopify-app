@@ -49,18 +49,21 @@ function assertRoleContract(manifest, expectedTemplateId) {
     throw new Error("Media manifest requires exactly one role record for hero, hero-alt, and pdp-detail");
   }
   const remaining = new Set(requiredRoles);
+  const masterHashes = new Set();
   for (const record of manifest.records) {
     if (record?.templateId !== manifest.templateId) throw new Error(`Role ownership mismatch for ${record?.role ?? "unknown"}: expected ${manifest.templateId}`);
     if (!remaining.delete(record.role)) throw new Error(`Unexpected or duplicate media role: ${record.role}`);
+    if (!record.masterHash || masterHashes.has(record.masterHash)) throw new Error("Each required role must have a distinct masterHash");
+    masterHashes.add(record.masterHash);
   }
   if (remaining.size > 0) throw new Error("Media manifest requires exactly one role record for hero, hero-alt, and pdp-detail");
 }
 
 function assertProof(proofRecords, record) {
-  if (!proofRecords.some((proof) => proof?.masterHash === record.masterHash &&
+  if (!proofRecords.some((proof) => proof?.templateId === record.templateId && proof?.role === record.role && proof?.masterHash === record.masterHash &&
     proof?.technicalApproval?.approved === true && proof.technicalApproval.masterHash === record.masterHash &&
     proof?.visualApproval?.approved === true && proof.visualApproval.scope === "full-loop")) {
-    throw new Error(`video-proof.json requires exact-master technical approval and full-loop visual approval for ${record.role}`);
+    throw new Error(`video-proof.json requires a matching template, role, and master approval identity with technical and full-loop visual approval for ${record.role}`);
   }
 }
 

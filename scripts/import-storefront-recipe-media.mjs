@@ -37,10 +37,10 @@ const proof = JSON.parse(await readFile(proofPath, "utf8"));
 const masterBytes = await readFile(masterPath);
 const masterHash = createHash("sha256").update(masterBytes).digest("hex");
 const proofRecords = Array.isArray(proof) ? proof : Array.isArray(proof.records) ? proof.records : [proof];
-if (!proofRecords.some((record) => record?.masterHash === masterHash &&
+if (!proofRecords.some((record) => record?.templateId === templateId && record?.role === role && record?.masterHash === masterHash &&
   record?.technicalApproval?.approved === true && record.technicalApproval.masterHash === masterHash &&
   record?.visualApproval?.approved === true && record.visualApproval.scope === "full-loop")) {
-  throw new Error("video-proof.json requires exact-master technical approval and full-loop visual approval");
+  throw new Error("video-proof.json requires a matching template, role, and master approval identity with technical and full-loop visual approval");
 }
 const masterProbe = probe(masterPath);
 const duration = Number(masterProbe.format?.duration);
