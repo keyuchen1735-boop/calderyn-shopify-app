@@ -9,11 +9,34 @@ const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((nod
 const actions = (route: RouteArtifact) => route.interactions.transitions.map((item) => item.action.type);
 
 describe("diagnostic-deck storefront recipe", () => {
+  it("styles dynamic product cards as the source exact-unit rows", () => {
+    for (const surface of ["home", "collection"] as const) {
+      const source = DIAGNOSTIC_DECK_RECIPE.config.surfaces[surface].source;
+      expect(source.html).toContain('class="unit"');
+      expect(source.html).toContain('class="thumb"');
+      expect(source.html).toContain('class="unitName"');
+      expect(source.html).toContain('class="unit-link" data-cd-route="product"');
+      expect(source.html).toContain('class="grade"');
+      expect(source.html).toContain('class="passport passport-evidence"');
+      expect(source.html).toContain('class="unit-action commerce-target"');
+      expect(source.html).toContain('class="commerce-fallback"');
+      expect(source.css).toContain(".unit>div");
+      expect(source.css).toContain(".unitName b");
+      expect(source.css).toContain("minmax(160px,auto)");
+      expect(source.css).toContain("--commerce-surface:var(--paper)");
+      expect(source.css).toContain("--commerce-accent:var(--green)");
+    }
+    expect(DIAGNOSTIC_DECK_RECIPE.config.surfaces.home.source.css).toContain(".unitName small{color:#555a53}");
+    expect(DIAGNOSTIC_DECK_RECIPE.config.surfaces.home.source.css).toContain(".unit>div:first-child{display:none}");
+  });
+
   it("lays out collection products as rows on the repeated diagnostic matrix", () => {
     const collection = DIAGNOSTIC_DECK_RECIPE.config.surfaces.collection.source;
 
     expect(collection.html).toContain('class="matrix" data-cd-repeat="collection.products"');
     expect(collection.css).toMatch(/\.matrix\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*1fr/);
+    expect(collection.css).toContain(".collectionTop{padding:46px 24px 22px");
+    expect(collection.css).toContain(".filters{display:flex;gap:7px;padding:10px 24px");
   });
 
   it("keeps the original scan line and target reticle over the hero evidence image", () => {
@@ -48,7 +71,7 @@ describe("diagnostic-deck storefront recipe", () => {
   it("compiles a diagnostic terminal deck with exact-unit evidence and complete transactions", () => {
     const { bundle, config, report } = DIAGNOSTIC_DECK_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "diagnostic-deck", templateVersion: 6 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "diagnostic-deck", templateVersion: 9 });
     expect(config.archetype).toEqual({ composition: "diagnostic-terminal", hero: "grade-diagnostic-hero", scroll: "deck-snap", cards: "diagnostic-cards", iconography: ["terminal condition marks", "warranty status glyphs"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "archivo-black", bodyFontId: "dm-mono", iconStyle: "terminal condition marks and warranty-status glyphs", motionStyle: "deck snap with evidence-panel expansion" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

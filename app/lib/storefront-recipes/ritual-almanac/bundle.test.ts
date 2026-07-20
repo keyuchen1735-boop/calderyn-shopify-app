@@ -17,17 +17,29 @@ describe("ritual-almanac storefront recipe", () => {
     expect(paths).toEqual(expect.arrayContaining(["product.primaryImage", "product.title", "product.description", "product.price", "product.availability"]));
   });
 
-  it("keeps the live pantry in the approved responsive product grid", () => {
-    const css = RITUAL_ALMANAC_RECIPE.config.surfaces.collection.source.css;
-    expect(css).toContain(".productGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}");
+  it("keeps the live pantry in a static responsive product grid", () => {
+    const { html, css } = RITUAL_ALMANAC_RECIPE.config.surfaces.collection.source;
+    expect(html).toContain('class="productCatalog"><div class="productGrid" data-cd-repeat="collection.products"');
+    expect(css).toContain(".productCatalog{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:40px 4vw 90px}");
+    expect(css).toContain(".productGrid{display:contents}");
     expect(css).toContain(".collection{display:block}");
-    expect(css).toContain(".productGrid{grid-template-columns:1fr 1fr}");
+    expect(css).toContain(".productCatalog{grid-template-columns:1fr 1fr}");
+  });
+
+  it("keeps pantry cards faithful and themes their purchase controls", () => {
+    const { home, collection } = RITUAL_ALMANAC_RECIPE.config.surfaces;
+    for (const surface of [home, collection]) {
+      expect(surface.source.html).toMatch(/<article class="card"[^>]*><a[^>]*><div class="cardMedia"><img[^>]*><span class="pill"/);
+      expect(surface.source.html).toContain('<div class="cardLine"><b data-cd-money="product.price"></b><span class="stock" data-cd-text="product.availability"></span></div>');
+      expect(surface.source.css).toContain("--commerce-surface:var(--milk);--commerce-foreground:var(--ink);--commerce-accent:var(--plum);--commerce-accent-foreground:#fff");
+      expect(surface.source.css).toContain(".card>a>small{color:#4f5e54}");
+    }
   });
 
   it("compiles editorial ritual chapters, cadence selection, and every commerce surface", () => {
     const { bundle, config, report } = RITUAL_ALMANAC_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ritual-almanac", templateVersion: 6 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ritual-almanac", templateVersion: 8 });
     expect(config.archetype).toEqual({ composition: "editorial-almanac", hero: "ritual-time-hero", scroll: "almanac-chapters", cards: "ritual-entries", iconography: ["time ritual marks", "flavor note symbols"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "young-serif", bodyFontId: "manrope", iconStyle: "time-of-day marks and restrained flavor-note symbols", motionStyle: "chapter reveals with ritual-time tab transitions" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

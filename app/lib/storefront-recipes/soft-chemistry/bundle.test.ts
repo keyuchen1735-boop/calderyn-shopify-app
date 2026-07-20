@@ -7,7 +7,7 @@ describe("Soft Chemistry storefront recipe", () => {
   it("compiles a clinical editorial routine across the full commerce contract", () => {
     const { bundle, config, report } = SOFT_CHEMISTRY_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 10 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "soft-chemistry", templateVersion: 12 });
     expect(config.archetype).toMatchObject({ composition: "clinical-editorial", hero: "ingredient-routine-hero", scroll: "soft-reveal", cards: "ingredient-dossiers" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "cormorant-garamond", bodyFontId: "manrope" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
@@ -66,8 +66,9 @@ describe("Soft Chemistry storefront recipe", () => {
     expect(config.surfaces.collection.source.html).toContain('data-cd-asset="collection"');
     expect(config.surfaces.collection.source.html).toEqual(expect.stringContaining('class="filters"'));
     expect(config.surfaces.collection.source.html).toEqual(expect.stringContaining('class="grid"'));
-    expect(config.surfaces.collection.source.css).toContain(".grid{display:grid;grid-template-columns:repeat(3,1fr)}");
-    expect(config.surfaces.collection.source.css).toContain(".grid{grid-template-columns:1fr 1fr}");
+    expect(config.surfaces.collection.source.html).toContain('class="catalog-grid"><div class="grid" data-cd-repeat="collection.products"');
+    expect(config.surfaces.collection.source.css).toContain(".catalog-grid{display:grid;grid-template-columns:repeat(3,1fr)}.grid{display:contents}");
+    expect(config.surfaces.collection.source.css).toContain(".catalog-grid{grid-template-columns:1fr 1fr}");
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="pdp"'));
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="gallery"'));
     expect(config.surfaces.product.source.html).toEqual(expect.stringContaining('class="detail"'));
@@ -87,5 +88,14 @@ describe("Soft Chemistry storefront recipe", () => {
     expect(config.surfaces.checkout.source.html).toContain('class="checkout-frame"');
     expect(config.surfaces.shell.source.html).toContain('data-cd-route="account"');
     expect(config.surfaces.shell.source.html).toContain('class="visually-hidden" data-cd-policy-links');
+  });
+
+  it("keeps formula cards faithful and themes their purchase controls", () => {
+    const { home, collection } = SOFT_CHEMISTRY_RECIPE.config.surfaces;
+    for (const surface of [home, collection]) {
+      expect(surface.source.html).toMatch(/<article class="card"[^>]*><a[^>]*><img[^>]*><div class="card-info"><h3/);
+      expect(surface.source.html).toContain('<small><span data-cd-text="product.description"></span> · <span data-cd-text="product.availability"></span></small>');
+      expect(surface.source.css).toContain("--commerce-surface:var(--milk);--commerce-foreground:var(--ink);--commerce-accent:var(--yellow);--commerce-accent-foreground:var(--ink)");
+    }
   });
 });

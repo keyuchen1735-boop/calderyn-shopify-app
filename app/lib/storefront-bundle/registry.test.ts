@@ -37,14 +37,21 @@ describe("versioned storefront recipe registry", () => {
     ]);
     expect(STORE_TEMPLATE_REGISTRY.registryVersion).toBe(2);
     expect(STORE_TEMPLATE_REGISTRY.routingVersion).toBe(1);
+    const activeVersions = {
+      "custom-bench": 11,
+      "commons-index": 10,
+      "soft-chemistry": 12,
+      "companion-field-guide": 9,
+      "daily-protocol": 8,
+      "room-modes": 9,
+      "rep-rest": 8,
+      "diagnostic-deck": 9,
+      "ritual-almanac": 8,
+      "broadcast-patch-bay": 10,
+      "atelier-nine": 5,
+    } as const;
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
-      expect(recipe.activeVersion).toBe(
-        recipe.id === "soft-chemistry" ? 9
-          : recipe.id === "custom-bench" || recipe.id === "broadcast-patch-bay" ? 7
-          : recipe.id === "commons-index" || recipe.id === "companion-field-guide" ? 6
-          : recipe.id === "atelier-nine" ? 4
-          : 5,
-      );
+      expect(recipe.activeVersion).toBe(activeVersions[recipe.id]);
       expect(recipe.routeCapabilities).toEqual(["home", "collection", "product", "search", "cart", "checkout"]);
       expect(recipe.overrideSurface.designTokens.length).toBeGreaterThan(0);
       expect(recipe.overrideSurface.textSlots.length).toBeGreaterThan(0);

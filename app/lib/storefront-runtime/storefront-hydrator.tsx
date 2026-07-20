@@ -56,13 +56,20 @@ function previewCommerceBody(intent: CommerceIntent): FormData | null {
 }
 
 function rgb(value: string): [number, number, number] | null {
-  const hex = value.trim().match(/^#([\da-f]{3}|[\da-f]{6})$/i)?.[1];
+  const normalized = value.trim();
+  const hex = normalized.match(/^#([\da-f]{3}|[\da-f]{6})$/i)?.[1];
   if (hex) {
     const expanded = hex.length === 3 ? [...hex].map((part) => `${part}${part}`).join("") : hex;
     return [Number.parseInt(expanded.slice(0, 2), 16), Number.parseInt(expanded.slice(2, 4), 16), Number.parseInt(expanded.slice(4, 6), 16)];
   }
-  const match = value.match(/^rgba?\(\s*(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)/i);
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+  const functional = normalized.match(/^(rgb|rgba)\(([^)]+)\)$/i);
+  if (!functional) return null;
+  const channels = functional[2].match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+  if (channels.length !== (functional[1].toLowerCase() === "rgba" ? 4 : 3)) return null;
+  if (channels.length === 4 && channels[3] < 1) return null;
+  return channels.slice(0, 3).every((channel) => channel >= 0 && channel <= 255)
+    ? channels.slice(0, 3) as [number, number, number]
+    : null;
 }
 
 function relativeLuminance([red, green, blue]: [number, number, number]): number {
@@ -73,9 +80,21 @@ function relativeLuminance([red, green, blue]: [number, number, number]): number
   return 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue);
 }
 
+function contrastRatio(left: [number, number, number], right: [number, number, number]): number {
+  const leftLuminance = relativeLuminance(left);
+  const rightLuminance = relativeLuminance(right);
+  return (Math.max(leftLuminance, rightLuminance) + 0.05) / (Math.min(leftLuminance, rightLuminance) + 0.05);
+}
+
 function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext, squareAccentCommerce: boolean): HTMLStyleElement {
   const ownerDocument = host.ownerDocument;
   const computedHost = ownerDocument.defaultView?.getComputedStyle(host);
+  const commerceColor = (name: string) => {
+    let value = computedHost?.getPropertyValue(name).trim() ?? "";
+    const tokenReference = value.match(/^var\(\s*(--[\w-]+)\s*\)$/)?.[1];
+    if (tokenReference) value = computedHost?.getPropertyValue(tokenReference).trim() ?? "";
+    return rgb(value) ? value : "";
+  };
   const colors = slot.themeTokenIds.flatMap((tokenId) => {
     const color = computedHost?.getPropertyValue(`--${tokenId}`).trim() ?? "";
     return rgb(color) ? [color] : [];
@@ -90,18 +109,28 @@ function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext, 
       if (!leftRgb || !rightRgb) continue;
       const leftLuminance = relativeLuminance(leftRgb);
       const rightLuminance = relativeLuminance(rightRgb);
-      const contrast = (Math.max(leftLuminance, rightLuminance) + 0.05) / (Math.min(leftLuminance, rightLuminance) + 0.05);
+      const contrast = contrastRatio(leftRgb, rightRgb);
       if (contrast > bestContrast) {
         bestContrast = contrast;
         [surface, foreground] = leftLuminance < rightLuminance ? [left, right] : [right, left];
       }
     }
   }
-  const accent = squareAccentCommerce && slot.themeTokenIds.includes("yellow")
+  const recipeSurface = commerceColor("--commerce-surface");
+  const recipeForeground = commerceColor("--commerce-foreground");
+  const recipeSurfaceRgb = rgb(recipeSurface);
+  const recipeForegroundRgb = rgb(recipeForeground);
+  if (recipeSurfaceRgb && recipeForegroundRgb && contrastRatio(recipeSurfaceRgb, recipeForegroundRgb) >= 4.5) {
+    [surface, foreground] = [recipeSurface, recipeForeground];
+  }
+  const accent = commerceColor("--commerce-accent") || (squareAccentCommerce && slot.themeTokenIds.includes("yellow")
     ? computedHost?.getPropertyValue("--yellow").trim() ?? ""
-    : "";
-  const accentForeground = computedHost?.getPropertyValue("--ink").trim() ?? "";
-  const buttonTheme = rgb(accent) && rgb(accentForeground)
+    : "");
+  const accentForeground = commerceColor("--commerce-accent-foreground")
+    || (computedHost?.getPropertyValue("--ink").trim() ?? "");
+  const accentRgb = rgb(accent);
+  const accentForegroundRgb = rgb(accentForeground);
+  const buttonTheme = accentRgb && accentForegroundRgb && contrastRatio(accentRgb, accentForegroundRgb) >= 4.5
     ? `background:${accent};color:${accentForeground};border-color:${accentForeground};text-transform:uppercase`
     : "";
   const style = ownerDocument.createElement("style");
@@ -310,7 +339,10 @@ export function placeQuickViewCommerceInCards(
     if (!cards) continue;
     hosts.forEach((host, index) => {
       const wrapper = host.closest<HTMLElement>('[data-cd-repeat-owner="true"]');
-      cards[index]!.append(host);
+      const card = cards[index]!;
+      const target = card.querySelector<HTMLElement>(".commerce-target") ?? card;
+      target.querySelectorAll(".commerce-fallback").forEach((fallback) => fallback.remove());
+      target.append(host);
       if (wrapper?.childElementCount === 0) wrapper.remove();
     });
   }

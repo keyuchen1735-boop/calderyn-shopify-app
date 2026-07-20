@@ -7,12 +7,31 @@ const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((nod
 const actions = (route: RouteArtifact): string[] => route.interactions.transitions.map((item) => item.action.type);
 
 describe("rep-rest storefront recipe", () => {
-  it("lays out collection products in the canonical responsive work-set grid", () => {
+  it("styles dynamic product cards as the source work-set cards", () => {
+    for (const surface of ["home", "collection"] as const) {
+      const source = REP_REST_RECIPE.config.surfaces[surface].source;
+      expect(source.html).toContain('class="card"');
+      expect(source.html).toContain('class="cardMedia"');
+      expect(source.html).toContain('class="cardMeta"');
+      expect(source.html).toContain('class="price"');
+      expect(source.html).toContain('class="stock"');
+      expect(source.css).toContain(".cardMedia");
+      expect(source.css).toContain(".cardMeta");
+      expect(source.css).toContain("--commerce-surface:var(--cream)");
+      expect(source.css).toContain("--commerce-accent:var(--acid)");
+    }
+  });
+
+  it("lays out collection products through the canonical static work-set grid", () => {
     const collection = REP_REST_RECIPE.config.surfaces.collection.source;
 
     expect(collection.html).toContain('class="productGrid" data-cd-repeat="collection.products"');
-    expect(collection.css).toMatch(/\.productGrid\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*repeat\(4,1fr\)/);
-    expect(collection.css).toMatch(/@media\(max-width:800px\)\{[^}]*\.productGrid\s*\{[^}]*grid-template-columns:\s*1fr 1fr/);
+    expect(collection.html).toContain('class="productCatalog"><div class="productGrid" data-cd-repeat="collection.products"');
+    expect(collection.css).toContain(".productCatalog{display:grid;grid-template-columns:repeat(4,1fr);gap:1px");
+    expect(collection.css).toContain(".productGrid{display:contents}");
+    expect(collection.css).toContain(".collectionHero h1{font:700 clamp(65px,10vw,130px)/.83 var(--font-display)");
+    expect(collection.css).toContain(".filters{display:flex;gap:7px;padding:10px 5vw;border-bottom:1px solid var(--ink);position:sticky");
+    expect(collection.css).toContain("margin:36px 5vw 90px");
   });
 
   it("keeps the original movement ticker between the split hero and work set", () => {
@@ -27,7 +46,7 @@ describe("rep-rest storefront recipe", () => {
   it("compiles a split training and recovery journey with complete commerce contracts", () => {
     const { bundle, config, report } = REP_REST_RECIPE;
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "rep-rest", templateVersion: 6 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "rep-rest", templateVersion: 8 });
     expect(config.archetype).toEqual({ composition: "split-performance", hero: "training-recovery-split", scroll: "sticky-workout", cards: "comparison-rails", iconography: ["training interval marks", "recovery status glyphs"] });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "oswald", bodyFontId: "manrope", iconStyle: "interval arrows and recovery-state glyphs", motionStyle: "sticky workout chapters with kinetic split transitions" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
