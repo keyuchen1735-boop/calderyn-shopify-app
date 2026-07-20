@@ -106,6 +106,27 @@ export function createPreviewCommerceAdapter(initial: PreviewCommerceSnapshot) {
       if (existing) existing.quantity = Math.min(MAX_QUANTITY, existing.quantity + valid.quantity);
       else if (snapshot.lines.length < MAX_LINES) snapshot.lines.push(valid);
     },
+    addBundle(lines: readonly PreviewCommerceLine[]) {
+      if (lines.length < 2 || lines.length > MAX_LINES) throw new Error("Invalid preview bundle");
+      const next = snapshot.lines.map((line) => ({ ...line, unitPrice: { ...line.unitPrice } }));
+      for (const line of lines) {
+        const valid = sanitizeLines([line])[0];
+        if (!valid || valid.quantity !== 1) throw new Error("Invalid preview bundle line");
+        const existing = next.find((entry) => entry.variantId === valid.variantId);
+        if (existing) {
+          if (existing.unitPrice.currency !== valid.unitPrice.currency || existing.unitPrice.cents !== valid.unitPrice.cents || existing.quantity >= MAX_QUANTITY) {
+            throw new Error("Invalid preview bundle line");
+          }
+          existing.quantity += 1;
+        } else {
+          if (next.length >= MAX_LINES || (next[0] && next[0].unitPrice.currency !== valid.unitPrice.currency)) {
+            throw new Error("Invalid preview bundle line");
+          }
+          next.push(valid);
+        }
+      }
+      snapshot.lines.splice(0, snapshot.lines.length, ...next);
+    },
     setQuantity(lineId: string, quantity: number) {
       if (!Number.isInteger(quantity) || quantity < 0 || quantity > MAX_QUANTITY) throw new Error("Invalid preview quantity");
       const index = snapshot.lines.findIndex((line) => line.lineId === lineId);

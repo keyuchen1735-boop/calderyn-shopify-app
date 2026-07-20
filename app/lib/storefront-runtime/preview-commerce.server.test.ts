@@ -39,4 +39,28 @@ describe("preview commerce adapter", () => {
     expect(adapter).not.toHaveProperty("reserveInventory");
     expect(adapter).not.toHaveProperty("createPaymentIntent");
   });
+
+  it("adds a validated bundle atomically and canonicalizes repeated variants", () => {
+    const adapter = createPreviewCommerceAdapter({ shopId: "shop-1", lines: [] });
+    adapter.addBundle([
+      { lineId: "preview:v1", variantId: "v1", title: "Lemon", quantity: 1, unitPrice: { cents: 300, currency: "USD" } },
+      { lineId: "preview:v1", variantId: "v1", title: "Lemon", quantity: 1, unitPrice: { cents: 300, currency: "USD" } },
+      { lineId: "preview:v2", variantId: "v2", title: "Ginger", quantity: 1, unitPrice: { cents: 400, currency: "USD" } },
+    ]);
+
+    expect(adapter.cart()).toMatchObject({
+      count: 3,
+      subtotal: { cents: 1000, currency: "USD" },
+      lines: [{ id: "preview:v1", quantity: 2 }, { id: "preview:v2", quantity: 1 }],
+    });
+  });
+
+  it("leaves the preview cart unchanged when any bundle line is invalid", () => {
+    const adapter = createPreviewCommerceAdapter({ shopId: "shop-1", lines: [] });
+    expect(() => adapter.addBundle([
+      { lineId: "preview:v1", variantId: "v1", title: "Lemon", quantity: 1, unitPrice: { cents: 300, currency: "USD" } },
+      { lineId: "preview:v2", variantId: "v2", title: "Ginger", quantity: 2, unitPrice: { cents: 400, currency: "USD" } },
+    ])).toThrow("Invalid preview bundle line");
+    expect(adapter.cart()).toMatchObject({ count: 0, lines: [] });
+  });
 });

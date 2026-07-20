@@ -55,7 +55,10 @@ function publicCommerceRequest(intent: CommerceIntent): [string, Record<string, 
 
 function previewCommerceBody(intent: CommerceIntent): FormData | null {
   const body = new FormData();
-  if (intent.type === "cart.add") {
+  if (intent.type === "cart.addBundle") {
+    body.set("intent", "addBundle");
+    body.set("lines", JSON.stringify(intent.lines.map(({ variantId, quantity }) => ({ variantId, quantity }))));
+  } else if (intent.type === "cart.add") {
     body.set("intent", "add"); body.set("variantId", intent.variantId); body.set("quantity", String(intent.quantity));
   } else if (intent.type === "cart.quantity") {
     body.set("intent", "quantity"); body.set("lineId", intent.lineId); body.set("quantity", String(intent.quantity));

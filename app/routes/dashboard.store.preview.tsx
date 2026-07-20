@@ -147,7 +147,36 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent === "checkout") {
     return json(adapter.checkout(), { headers: storefrontCacheHeaders({ routeId: "preview", personalized: true }) });
   }
-  if (intent === "add") {
+  if (intent === "addBundle") {
+    const encoded = form.get("lines");
+    let lines: unknown;
+    try { lines = typeof encoded === "string" && encoded.length <= 4096 ? JSON.parse(encoded) : null; } catch { lines = null; }
+    if (!Array.isArray(lines) || lines.length < 2 || lines.length > 12 || lines.some((line) => {
+      if (!line || typeof line !== "object" || Array.isArray(line)) return true;
+      const candidate = line as Record<string, unknown>;
+      return Object.keys(candidate).some((key) => key !== "variantId" && key !== "quantity") ||
+        typeof candidate.variantId !== "string" || !candidate.variantId || candidate.variantId.length > 128 || candidate.quantity !== 1;
+    })) throw new Response("Invalid preview bundle", { status: 400 });
+    const catalog = getCatalog();
+    const products = catalog.getVariantById ? null : await catalog.listProducts(shopId);
+    const resolvedLines = await Promise.all((lines as Array<{ variantId: string; quantity: 1 }>).map(async (line) => {
+      const resolved = catalog.getVariantById
+        ? await catalog.getVariantById(shopId, line.variantId)
+        : products!.flatMap((product) => product.variants.map((variant) => ({ product, variant })))
+          .find((entry) => entry.variant.id === line.variantId) ?? null;
+      if (!resolved || !resolved.variant.available) throw new Response("Variant unavailable", { status: 422 });
+      return {
+        lineId: `preview:${line.variantId}`,
+        variantId: line.variantId,
+        title: resolved.variant.title && resolved.variant.title !== resolved.product.title
+          ? `${resolved.product.title} - ${resolved.variant.title}`
+          : resolved.product.title,
+        quantity: line.quantity,
+        unitPrice: { cents: resolved.variant.priceCents, currency: resolved.variant.currency.toUpperCase() },
+      };
+    }));
+    try { adapter.addBundle(resolvedLines); } catch { throw new Response("Invalid preview bundle", { status: 422 }); }
+  } else if (intent === "add") {
     const variantId = form.get("variantId");
     const quantity = Number(form.get("quantity") ?? 1);
     if (typeof variantId !== "string" || !Number.isInteger(quantity) || quantity < 1 || quantity > 99) {

@@ -3,6 +3,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { STOREFRONT_RECIPES } from "~/lib/storefront-recipes";
+import { compileRecipeConfig, type RecipeConfig } from "~/lib/storefront-recipes/factory";
+import { FIZZ_RECIPE_CONFIG } from "~/lib/storefront-recipes/fizz/bundle";
+import { LARDER_RECIPE_CONFIG } from "~/lib/storefront-recipes/larder/bundle";
+import { hydrateStorefront, teardownStorefront } from "./hydrate";
+import { trustedCommerceRoot } from "./trusted-roots";
 import { renderStorefrontRoute } from "./render";
 import {
   createRuntimeAdapters,
@@ -55,6 +60,65 @@ describe("runtime-1 route adapters", () => {
     await vi.waitFor(() => expect(fetcher).toHaveBeenCalledWith("/storefront/api/cart/add-bundle", expect.objectContaining({
       body: JSON.stringify({ lines: [{ variantId: "v2", quantity: 1 }, { variantId: "v3", quantity: 1 }] }),
     })));
+  });
+
+  it("submits a completed bundle to the authenticated preview action", async () => {
+    const fetcher = vi.fn<RuntimeFetcher>(async () => new Response("{}", { status: 200 }));
+    const adapters = createRuntimeAdapters({
+      mode: "preview", previewTemplateId: "fizz", data: quickViewData, fetcher, refresh: vi.fn(),
+    });
+    const host = document.createElement("div");
+    const shadowRoot = host.attachShadow({ mode: "open" });
+    adapters.commerce?.mount({
+      host, shadowRoot, authorityKey: "bundle:catalog",
+      slot: { id: "bundle", kind: "bundleBuilder", slotCount: 2, hostSize: "block", themeTokenIds: [] },
+      bridge: (intent) => adapters.commerce?.dispatch({ authorityKey: "bundle:catalog", slotKind: "bundleBuilder", intent }),
+    });
+    const selects = shadowRoot.querySelectorAll<HTMLSelectElement>("select");
+    for (const [product, variant] of [[selects[0], selects[1]], [selects[2], selects[3]]] as const) {
+      product!.value = "p1"; product!.dispatchEvent(new Event("change"));
+      variant!.value = "v1"; variant!.dispatchEvent(new Event("change"));
+    }
+    shadowRoot.querySelector<HTMLButtonElement>("button")!.click();
+
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    const [url, init] = fetcher.mock.calls[0]!;
+    expect(url).toBe("/dashboard/store/preview?template=fizz");
+    expect((init?.body as FormData).get("intent")).toBe("addBundle");
+    expect(JSON.parse(String((init?.body as FormData).get("lines")))).toEqual([
+      { variantId: "v1", quantity: 1 }, { variantId: "v1", quantity: 1 },
+    ]);
+  });
+
+  it.each([
+    ["larder", 6],
+    ["fizz", 4],
+  ] as const)("hydrates the %s builder artifact and submits every selected slot in preview", async (templateId, slotCount) => {
+    const config = structuredClone(templateId === "larder" ? LARDER_RECIPE_CONFIG : FIZZ_RECIPE_CONFIG) as RecipeConfig;
+    if (!config.surfaces.home.source.html.includes('data-cd-slot="bundleBuilder"')) {
+      config.surfaces.home.source.html += `<section data-cd-slot="bundleBuilder" data-cd-bundle-slots="${slotCount}"></section>`;
+    }
+    const artifact = compileRecipeConfig(config).bundle.routes.home;
+    document.body.innerHTML = renderToStaticMarkup(renderStorefrontRoute({
+      routeId: "home", artifact, data: quickViewData, nonce: "test",
+    }).element);
+    const fetcher = vi.fn<RuntimeFetcher>(async () => new Response("{}", { status: 200 }));
+    const adapters = createRuntimeAdapters({ mode: "preview", previewTemplateId: templateId, data: quickViewData, fetcher, refresh: vi.fn() });
+    const runtime = hydrateStorefront({ root: document.body, artifact, adapters });
+    expect(runtime.error).toBeUndefined();
+    expect(runtime.hydrated).toBe(true);
+    const shadowRoot = trustedCommerceRoot(document.querySelector<HTMLElement>('[data-cd-trusted-slot="bundleBuilder"]')!)!;
+    const selects = shadowRoot.querySelectorAll<HTMLSelectElement>("select");
+    for (let index = 0; index < slotCount; index += 1) {
+      selects[index * 2]!.value = "p1"; selects[index * 2]!.dispatchEvent(new Event("change"));
+      selects[index * 2 + 1]!.value = "v1"; selects[index * 2 + 1]!.dispatchEvent(new Event("change"));
+    }
+    shadowRoot.querySelector<HTMLButtonElement>("button")!.click();
+
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    const body = fetcher.mock.calls[0]![1]!.body as FormData;
+    expect(JSON.parse(String(body.get("lines")))).toHaveLength(slotCount);
+    teardownStorefront();
   });
   it("moves detached quick-buy controls into their matching product cards", () => {
     const route = document.createElement("div");
