@@ -3,9 +3,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { STOREFRONT_RECIPES } from "~/lib/storefront-recipes";
-import { compileRecipeConfig, type RecipeConfig } from "~/lib/storefront-recipes/factory";
-import { FIZZ_RECIPE_CONFIG } from "~/lib/storefront-recipes/fizz/bundle";
-import { LARDER_RECIPE_CONFIG } from "~/lib/storefront-recipes/larder/bundle";
+import { compileBundle } from "~/lib/storefront-compiler/compile";
+import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 import { hydrateStorefront, teardownStorefront } from "./hydrate";
 import { trustedCommerceRoot } from "./trusted-roots";
 import { renderStorefrontRoute } from "./render";
@@ -91,14 +90,13 @@ describe("runtime-1 route adapters", () => {
   });
 
   it.each([
-    ["larder", 6],
-    ["fizz", 4],
-  ] as const)("hydrates the %s builder artifact and submits every selected slot in preview", async (templateId, slotCount) => {
-    const config = structuredClone(templateId === "larder" ? LARDER_RECIPE_CONFIG : FIZZ_RECIPE_CONFIG) as RecipeConfig;
-    if (!config.surfaces.home.source.html.includes('data-cd-slot="bundleBuilder"')) {
-      config.surfaces.home.source.html += `<section data-cd-slot="bundleBuilder" data-cd-bundle-slots="${slotCount}"></section>`;
-    }
-    const artifact = compileRecipeConfig(config).bundle.routes.home;
+    [6, "commons-index"],
+    [4, "atelier-nine"],
+  ] as const)("hydrates a generic compiled %i-slot builder and submits every selection in %s preview", async (slotCount, templateId) => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><section data-cd-slot="bundleBuilder" data-cd-bundle-slots="${slotCount}"></section></main>`;
+    source.routes.home.css = "";
+    const artifact = compileBundle(source).bundle.routes.home;
     document.body.innerHTML = renderToStaticMarkup(renderStorefrontRoute({
       routeId: "home", artifact, data: quickViewData, nonce: "test",
     }).element);

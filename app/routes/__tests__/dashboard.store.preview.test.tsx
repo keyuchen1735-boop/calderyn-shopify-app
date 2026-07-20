@@ -220,6 +220,52 @@ describe("dashboard.store.preview loader", () => {
     }
   });
 
+  it("rejects a bundle atomically when the signed preview cookie would exceed capacity", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    const addBundle = vi.fn();
+    createPreviewCommerceAdapterMock.mockReturnValue({ addBundle, snapshot: () => ({ shopId: SHOP, lines: [] }), cart: vi.fn() });
+    commitPreviewCommerceSessionMock.mockRejectedValue(new Error("Preview cart exceeds cookie capacity"));
+    getCatalogMock.mockReturnValue({
+      ...catalog,
+      getVariantById: vi.fn(async (_shopId: string, variantId: string) => ({
+        product: { title: "Long product" },
+        variant: { id: variantId, title: "Single", available: true, priceCents: 300, currency: "usd" },
+      })),
+    });
+    try {
+      const form = new FormData();
+      form.set("intent", "addBundle");
+      form.set("lines", JSON.stringify([{ variantId: "v1", quantity: 1 }, { variantId: "v2", quantity: 1 }]));
+      await expect(action({
+        request: new Request("https://app.example.com/dashboard/store/preview?template=commons-index", { method: "POST", body: form }),
+      } as ActionFunctionArgs)).rejects.toMatchObject({ status: 422 });
+      expect(addBundle).toHaveBeenCalledOnce();
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
+  it.each(["duplicate", "unknown"] as const)("rejects %s bundle form fields before catalog access", async (kind) => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    try {
+      const form = new FormData();
+      form.set("intent", "addBundle");
+      form.set("lines", JSON.stringify([{ variantId: "v1", quantity: 1 }, { variantId: "v2", quantity: 1 }]));
+      if (kind === "duplicate") form.append("lines", "[]");
+      else form.set("price", "1");
+      await expect(action({
+        request: new Request("https://app.example.com/dashboard/store/preview?template=commons-index", { method: "POST", body: form }),
+      } as ActionFunctionArgs)).rejects.toMatchObject({ status: 400 });
+      expect(getCatalogMock).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
   it("loads every runtime-1 preview route from the authenticated shop's immutable draft bundle", async () => {
     const previous = process.env.STOREFRONT_BUNDLE_READ;
     process.env.STOREFRONT_BUNDLE_READ = "1";

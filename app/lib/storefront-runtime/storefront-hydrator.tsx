@@ -342,7 +342,7 @@ export function createRuntimeAdapters(input: {
           const quantity = document.createElement("input");
           quantity.type = "number";
           quantity.min = "1";
-          quantity.max = "99";
+          quantity.max = "999";
           quantity.value = String(line?.quantity ?? 1);
           quantity.setAttribute("aria-label", `Quantity for ${line?.title ?? "item"}`);
           quantity.onchange = () => bridge({ type: "cart.quantity", lineId, quantity: Number(quantity.value) });
