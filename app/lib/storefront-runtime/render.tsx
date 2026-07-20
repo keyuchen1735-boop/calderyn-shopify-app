@@ -14,7 +14,7 @@ import type {
   TrustedSlotManifest,
 } from "~/lib/storefront-bundle/types";
 import { isAllowedCompiledTag } from "~/lib/storefront-compiler/html";
-import { getStoreTemplate } from "~/lib/storefront-bundle/registry";
+import { getStoreTemplate, isStoreTemplateId } from "~/lib/storefront-bundle/registry";
 import { CheckoutIslands } from "./checkout-islands";
 import { storefrontDesignSystemCss } from "./curated-fonts";
 import type {
@@ -545,7 +545,7 @@ export function isRuntime1RenderData(value: unknown): value is {
 export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, checkoutContent, customAssetUrls, visualLayerPlacement }: RenderStorefrontSurfaceInput): ReactElement {
   const assetUrls = assetUrlsForBundle(bundle, customAssetUrls ?? data.storefrontAssetUrls);
   const recipeSource = bundle.source.kind === "recipe" ? bundle.source : null;
-  const productPlaceholderUrl = recipeSource
+  const productPlaceholderUrl = recipeSource && isStoreTemplateId(recipeSource.templateId)
     ? assetUrls.get(getStoreTemplate(recipeSource.templateId).versions
       .find(({ templateVersion }) => templateVersion === recipeSource.templateVersion)
       ?.productPlaceholderAssetKey ?? "")

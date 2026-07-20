@@ -4,10 +4,11 @@ import {
   type RecipeCardIdentity,
   type RecipeCompositionIdentity,
   type RecipeHeroIdentity,
+  type NewStoreTemplateId,
   type RecipeScrollIdentity,
   type StoreTemplateId,
 } from "../storefront-bundle/types";
-import { getStoreTemplate } from "../storefront-bundle/registry";
+import { getStoreTemplate, isStoreTemplateId } from "../storefront-bundle/registry";
 import {
   compileBundle,
   type CheckoutRouteSource,
@@ -32,7 +33,7 @@ export interface RecipeSurface<TSource> {
 
 export interface RecipeConfig<TTemplateId extends StoreTemplateId = StoreTemplateId> {
   templateId: TTemplateId;
-  templateVersion: number;
+  templateVersion: TTemplateId extends NewStoreTemplateId ? 1 : number;
   concept: StorefrontBundleSourceV1["concept"];
   designSystem: StorefrontBundleSourceV1["designSystem"];
   archetype: RecipeArchetype;
@@ -237,6 +238,9 @@ export function defineRecipe<const TTemplateId extends StoreTemplateId>(
 export function compileRecipeConfig<const TTemplateId extends StoreTemplateId>(
   config: RecipeConfig<TTemplateId>,
 ): DefinedRecipe<TTemplateId> {
+  if (!isStoreTemplateId(config.templateId) && config.templateVersion !== 1) {
+    throw new Error(`Unregistered recipe ${config.templateId} must use template version 1`);
+  }
   const boundConfig = withRequiredShellBindings(config);
   assertDistinctSurfaceSignatures(boundConfig);
   const result = compileBundle({

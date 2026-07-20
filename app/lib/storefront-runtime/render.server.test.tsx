@@ -76,6 +76,20 @@ function artifact(overrides: Partial<RouteArtifact> = {}): RouteArtifact {
 }
 
 describe("compiled-node server renderer", () => {
+  it("renders an isolated unregistered volt v1 recipe", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "volt", templateVersion: 1 };
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle: compileBundle(source).bundle,
+      routeId: "home",
+      data,
+      nonce: "volt-nonce",
+      mode: "public",
+    }));
+
+    expect(html).toContain('data-cd-bundle="home"');
+  });
+
   it("renders poster-first video with manifest-resolved sources only", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.assets.entries = [

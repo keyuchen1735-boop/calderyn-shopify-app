@@ -8,8 +8,10 @@ if (!manifestInput || !proofInput) throw new Error("Usage: node scripts/verify-s
 const manifest = JSON.parse(await readFile(resolve(manifestInput), "utf8"));
 const proof = JSON.parse(await readFile(resolve(proofInput), "utf8"));
 const proofRecords = Array.isArray(proof) ? proof : Array.isArray(proof.records) ? proof.records : [proof];
-if (!proofRecords.some((record) => record?.masterHash === manifest.masterHash && record?.approved === true)) {
-  throw new Error("video-proof.json has no approved record for the exact master hash");
+if (!proofRecords.some((record) => record?.masterHash === manifest.masterHash &&
+  record?.technicalApproval?.approved === true && record.technicalApproval.masterHash === manifest.masterHash &&
+  record?.visualApproval?.approved === true && record.visualApproval.scope === "full-loop")) {
+  throw new Error("video-proof.json requires exact-master technical approval and full-loop visual approval");
 }
 const expectedTypes = new Set(["video/mp4", "video/webm", "image/webp"]);
 if (!Array.isArray(manifest.entries) || manifest.entries.length !== 3) throw new Error("Manifest must contain MP4, WebM, and poster entries");
@@ -29,7 +31,9 @@ for (const entry of manifest.entries) {
     const expectedCodec = entry.mediaType === "video/mp4" ? "h264" : "vp9";
     if (stream.codec_name !== expectedCodec) throw new Error(`Unexpected codec for ${entry.localPath}`);
   }
-  if (!entry.objectPath?.startsWith(`storefront-recipe-assets/${manifest.templateId}/${entry.contentHash}.`)) throw new Error(`Object path is not content-addressed for ${entry.localPath}`);
+  if (entry.mediaType === "image/webp" && stream.codec_name !== "webp") throw new Error(`Unexpected WebP poster codec for ${entry.localPath}`);
+  const extension = entry.mediaType === "video/mp4" ? "mp4" : entry.mediaType === "video/webm" ? "webm" : "webp";
+  if (entry.objectPath !== `storefront-recipe-assets/${manifest.templateId}/${entry.contentHash}.${extension}`) throw new Error(`Object path is not content-addressed for ${entry.localPath}`);
 }
 if (expectedTypes.size > 0) throw new Error("Manifest is missing a required media derivative");
 process.stdout.write(`Verified ${manifest.templateId}/${manifest.role} ${manifest.masterHash}\n`);

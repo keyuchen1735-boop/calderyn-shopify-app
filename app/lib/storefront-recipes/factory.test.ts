@@ -43,6 +43,7 @@ describe("storefront recipe factory", () => {
     const config: RecipeConfig<"volt"> = {
       ...existing,
       templateId: "volt",
+      templateVersion: 1,
       archetype: { composition: "system-architecture", hero: "cinematic-rim-hero", scroll: "system-sequence", cards: "spec-modules", iconography: ["technical line icons"] },
       surfaces: {
         ...existing.surfaces,
@@ -54,6 +55,15 @@ describe("storefront recipe factory", () => {
 
     expect(compileRecipeConfig(config).bundle.routes.story).toBeDefined();
     expect(() => defineRecipe(config)).toThrow(/unknown|registered/i);
+  });
+
+  it("rejects unregistered new recipe versions other than v1", () => {
+    const existing = testConfig();
+    const invalidConfig = { ...existing, templateId: "volt" as const, templateVersion: 2 };
+    // @ts-expect-error New recipe configs are fixed to version 1.
+    const typedInvalidConfig: RecipeConfig<"volt"> = invalidConfig;
+
+    expect(() => compileRecipeConfig(typedInvalidConfig)).toThrow(/volt.*version 1/i);
   });
 
   it("compiles complete route-owned compositions without imposing a shared layout", () => {

@@ -1,20 +1,22 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 
-const [templateId, role, masterInput, proofInput, outputInput] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const noUpload = args.includes("--no-upload");
+const [templateId, role, masterInput, proofInput, outputInput] = args.filter((arg) => arg !== "--no-upload");
 const templateIds = new Set(["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"]);
 const roles = new Set(["hero", "hero-alt", "pdp-detail"]);
 if (!templateIds.has(templateId) || !roles.has(role) || !masterInput || !proofInput) {
-  throw new Error("Usage: node scripts/import-storefront-recipe-media.mjs <templateId> <hero|hero-alt|pdp-detail> <master> <video-proof.json> [output-dir]");
+  throw new Error("Usage: node scripts/import-storefront-recipe-media.mjs <templateId> <hero|hero-alt|pdp-detail> <master> <video-proof.json> [output-dir] [--no-upload]");
 }
 const masterPath = resolve(masterInput);
 const proofPath = resolve(proofInput);
 const outputDir = resolve(outputInput ?? join(dirname(masterPath), "derivatives", role));
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
+if (!noUpload && (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY)) throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required unless --no-upload is used");
 
 function command(name, args) {
   const result = spawnSync(name, args, { encoding: "utf8" });
@@ -35,8 +37,10 @@ const proof = JSON.parse(await readFile(proofPath, "utf8"));
 const masterBytes = await readFile(masterPath);
 const masterHash = createHash("sha256").update(masterBytes).digest("hex");
 const proofRecords = Array.isArray(proof) ? proof : Array.isArray(proof.records) ? proof.records : [proof];
-if (!proofRecords.some((record) => record?.masterHash === masterHash && record?.approved === true)) {
-  throw new Error("video-proof.json has no approved record for the exact master hash");
+if (!proofRecords.some((record) => record?.masterHash === masterHash &&
+  record?.technicalApproval?.approved === true && record.technicalApproval.masterHash === masterHash &&
+  record?.visualApproval?.approved === true && record.visualApproval.scope === "full-loop")) {
+  throw new Error("video-proof.json requires exact-master technical approval and full-loop visual approval");
 }
 const masterProbe = probe(masterPath);
 const duration = Number(masterProbe.format?.duration);
@@ -45,21 +49,26 @@ await mkdir(outputDir, { recursive: true });
 const mp4Path = join(outputDir, `${role}.mp4`);
 const webmPath = join(outputDir, `${role}.webm`);
 const posterPath = join(outputDir, `${role}-poster.webp`);
+const posterFramePath = join(outputDir, `${role}-poster.png`);
 command("ffmpeg", ["-y", "-i", masterPath, "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", mp4Path]);
 command("ffmpeg", ["-y", "-i", masterPath, "-an", "-c:v", "libvpx-vp9", "-pix_fmt", "yuv420p", webmPath]);
-command("ffmpeg", ["-y", "-i", masterPath, "-frames:v", "1", posterPath]);
+command("ffmpeg", ["-y", "-i", masterPath, "-frames:v", "1", posterFramePath]);
+command("cwebp", ["-quiet", posterFramePath, "-o", posterPath]);
+await unlink(posterFramePath);
 
 const derived = await Promise.all([
   asset(mp4Path, "video/mp4"),
   asset(webmPath, "video/webm"),
   asset(posterPath, "image/webp"),
 ]);
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+const supabase = noUpload ? null : createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 for (const item of derived) {
   const extension = item.mediaType === "video/mp4" ? "mp4" : item.mediaType === "video/webm" ? "webm" : "webp";
   const objectKey = `${templateId}/${item.contentHash}.${extension}`;
-  const result = await supabase.storage.from("storefront-recipe-assets").upload(objectKey, item.bytes, { contentType: item.mediaType, upsert: false });
-  if (result.error) throw new Error(`Upload failed for ${objectKey}: ${result.error.message}`);
+  if (supabase) {
+    const result = await supabase.storage.from("storefront-recipe-assets").upload(objectKey, item.bytes, { contentType: item.mediaType, upsert: false });
+    if (result.error) throw new Error(`Upload failed for ${objectKey}: ${result.error.message}`);
+  }
   item.objectPath = `storefront-recipe-assets/${objectKey}`;
 }
 const videoStream = masterProbe.streams?.find((stream) => stream.width && stream.height);
