@@ -247,7 +247,7 @@ function parseTree(
       if (context.ids.has(elementId)) add("tree.duplicate_id", `${currentPath}.id`, `Duplicate compiled ID ${elementId}`);
       context.ids.add(elementId);
       if (!isAllowedCompiledTag(input.tag)) add("tree.tag", `${currentPath}.tag`, "Compiled tag is not allowlisted");
-      if (checkout && (input.tag === "button" || input.tag === "details" || input.tag === "summary" || input.tag === "input")) {
+      if (checkout && (input.tag === "button" || input.tag === "details" || input.tag === "summary" || input.tag === "input" || input.tag === "select")) {
         add("checkout.control", `${currentPath}.tag`, "Checkout decoration contains an interactive control");
       }
       const attrsInput = record(input.attributes);
