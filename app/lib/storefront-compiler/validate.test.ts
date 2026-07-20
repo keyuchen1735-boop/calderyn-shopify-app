@@ -31,6 +31,43 @@ function flattenElements(nodes: readonly CompiledNode[]): CompiledElementNode[] 
 }
 
 describe("validation profile v1", () => {
+  it("accepts compiler-generated video source types through persisted validation", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster" muted autoplay playsinline loop preload="metadata"><source data-cd-asset="hero-webm" type="video/webm"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
+    source.assets.entries = [
+      { key: "hero-poster", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 1 },
+      { key: "hero-webm", contentHash: "b".repeat(64), mediaType: "video/webm", byteSize: 1 },
+      { key: "hero-mp4", contentHash: "c".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+    ];
+
+    expect(compileBundle(source).report).toMatchObject({ ok: true, diagnostics: [] });
+  });
+
+  it("rejects persisted video media types outside the exact source allowlist context", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    const bundle = compileBundle(source).bundle;
+    const root = flattenElements(bundle.routes.home.tree)[0];
+    if (!root) throw new Error("home root fixture is missing");
+    root.attributes.type = "video/mp4";
+    bundle.routes.home.html = serializeCompiledTree(bundle.routes.home.tree);
+
+    expect(validateCompiledBundle(bundle).diagnostics.map(({ code }) => code)).toContain("tree.control_attribute");
+
+    const videoSource = structuredClone(VALID_BUNDLE_SOURCE);
+    videoSource.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster"><source data-cd-asset="hero-webm" type="video/webm"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
+    videoSource.assets.entries = [
+      { key: "hero-poster", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 1 },
+      { key: "hero-webm", contentHash: "b".repeat(64), mediaType: "video/webm", byteSize: 1 },
+      { key: "hero-mp4", contentHash: "c".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+    ];
+    const forgedVideo = compileBundle(videoSource).bundle;
+    const sourceElement = flattenElements(forgedVideo.routes.home.tree).find((node) => node.tag === "source");
+    if (!sourceElement) throw new Error("video source fixture is missing");
+    sourceElement.attributes.type = "video/ogg";
+    forgedVideo.routes.home.html = serializeCompiledTree(forgedVideo.routes.home.tree);
+    expect(validateCompiledBundle(forgedVideo).diagnostics.map(({ code }) => code)).toContain("tree.control_attribute");
+  });
+
   it("validates optional route artifacts when present", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE) as typeof VALID_BUNDLE_SOURCE & { routes: typeof VALID_BUNDLE_SOURCE.routes & { story?: typeof VALID_BUNDLE_SOURCE.routes.home } };
     source.routes.story = { ...source.routes.home, html: `<main>Story</main>` };

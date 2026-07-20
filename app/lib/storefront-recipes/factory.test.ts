@@ -37,6 +37,17 @@ function testConfig(): RecipeConfig<"atelier-nine"> {
   };
 }
 
+function videoHeroConfig(): RecipeConfig<"atelier-nine"> {
+  const config = testConfig();
+  config.surfaces.home.source.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster" muted autoplay playsinline loop preload="metadata"><source data-cd-asset="hero-webm" type="video/webm"><source data-cd-asset="hero-mp4" type="video/mp4"></video><h1 data-cd-text="store.name"></h1></main>`;
+  config.assets.entries = [
+    { key: "hero-poster", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 1 },
+    { key: "hero-webm", contentHash: "b".repeat(64), mediaType: "video/webm", byteSize: 1 },
+    { key: "hero-mp4", contentHash: "c".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+  ];
+  return config;
+}
+
 describe("storefront recipe factory", () => {
   it("compiles an unregistered new recipe config without making it registry-valid", () => {
     const existing = testConfig();
@@ -90,5 +101,27 @@ describe("storefront recipe factory", () => {
     config.assets.entries = [];
 
     expect(() => defineRecipe(config)).toThrow(/declared home hero image/i);
+  });
+
+  it("accepts a complete poster-first home hero video contract", () => {
+    const result = defineRecipe(videoHeroConfig());
+
+    expect(result.report).toMatchObject({ ok: true, diagnostics: [] });
+    expect(result.bundle.assets.entries.map(({ key }) => key)).toEqual(
+      expect.arrayContaining(["hero-poster", "hero-webm", "hero-mp4"]),
+    );
+    expect(result.bundle.assets.entries).toHaveLength(3);
+  });
+
+  it("rejects incomplete or mistyped poster-first home hero video assets", () => {
+    const incomplete = videoHeroConfig();
+    incomplete.assets.entries = incomplete.assets.entries.filter(({ key }) => key !== "hero-mp4");
+    expect(() => defineRecipe(incomplete)).toThrow(/complete.*home hero|declared home hero/i);
+
+    const mistyped = videoHeroConfig();
+    mistyped.assets.entries = mistyped.assets.entries.map((entry) => entry.key === "hero-mp4"
+      ? { ...entry, mediaType: "image/webp" }
+      : entry);
+    expect(() => defineRecipe(mistyped)).toThrow(/complete.*home hero|declared home hero/i);
   });
 });

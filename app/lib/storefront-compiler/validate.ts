@@ -108,7 +108,10 @@ function hasControlCharacter(value: string): boolean {
 }
 
 function validControlAttribute(tag: unknown, name: string, value: string): boolean {
-  if (name === "type") return tag === "input" && ["search", "text", "radio", "checkbox"].includes(value);
+  if (name === "type") {
+    if (tag === "input") return ["search", "text", "radio", "checkbox"].includes(value);
+    return tag === "source" && ["video/webm", "video/mp4"].includes(value);
+  }
   if (name === "name") return tag === "input" && isIdentifier(value) && value.length <= 80;
   if (name === "placeholder") return tag === "input" && value.length <= 160 && !hasControlCharacter(value);
   if (name === "value") return (tag === "input" || tag === "button" || tag === "option" || tag === "select") && value.length <= 120 && !hasControlCharacter(value);

@@ -6,6 +6,7 @@ import {
   type RecipeHeroIdentity,
   type NewStoreTemplateId,
   type RecipeScrollIdentity,
+  type CompiledNode,
   type StoreTemplateId,
 } from "../storefront-bundle/types";
 import { getStoreTemplate, isStoreTemplateId } from "../storefront-bundle/registry";
@@ -16,6 +17,7 @@ import {
   type RouteSource,
   type StorefrontBundleSourceV1,
 } from "../storefront-compiler/compile";
+import { compileHtml } from "../storefront-compiler/html";
 
 export interface RecipeArchetype {
   composition: RecipeCompositionIdentity;
@@ -184,10 +186,29 @@ function assertDistinctSurfaceSignatures(config: RecipeConfig): void {
 }
 
 function assertDeclaredHomeHero(config: RecipeConfig): void {
+  const homeHtml = config.surfaces.home.source.html;
   const hero = config.assets.entries.find(({ key }) => key === "hero");
-  if (hero?.mediaType !== "image/webp" || !config.surfaces.home.source.html.includes('data-cd-asset="hero"')) {
-    throw new Error(`Recipe ${config.templateId} must include a declared home hero image`);
+  const legacyHero = hero?.mediaType === "image/webp" && homeHtml.includes('data-cd-asset="hero"');
+  if (legacyHero) return;
+
+  const mediaTypes = new Map(config.assets.entries.map(({ key, mediaType }) => [key, mediaType]));
+  const completeManifest = mediaTypes.get("hero-poster") === "image/webp" &&
+    mediaTypes.get("hero-webm") === "video/webm" && mediaTypes.get("hero-mp4") === "video/mp4";
+  let completeMarkup = false;
+  if (completeManifest) {
+    const containsHeroVideo = (nodes: readonly CompiledNode[]): boolean => nodes.some((node) => {
+      if (node.kind !== "element") return false;
+      if (node.tag === "video" && node.attributes["data-cd-video"] === "" &&
+        node.attributes["data-cd-poster-asset-key"] === "hero-poster") {
+        const sources = node.children.filter((child) => child.kind === "element" && child.tag === "source");
+        return sources.some((source) => source.kind === "element" && source.attributes["data-cd-asset-key"] === "hero-webm" && source.attributes.type === "video/webm") &&
+          sources.some((source) => source.kind === "element" && source.attributes["data-cd-asset-key"] === "hero-mp4" && source.attributes.type === "video/mp4");
+      }
+      return containsHeroVideo(node.children);
+    });
+    completeMarkup = containsHeroVideo(compileHtml(homeHtml, { namespace: "home" }).tree);
   }
+  if (!completeMarkup) throw new Error(`Recipe ${config.templateId} must include a declared home hero image or complete poster-first home hero video`);
 }
 
 function withRequiredShellBindings<const TTemplateId extends StoreTemplateId>(
