@@ -41,6 +41,7 @@ export interface StorefrontCatalogSearchPage {
     categories: Array<{ value: string; count: number }>;
     tags: Array<{ value: string; count: number }>;
     collections: Array<{ value: string; count: number }>;
+    facts?: Record<string, string[]>;
   };
   total: number;
   hasNextPage: boolean;
@@ -81,6 +82,8 @@ export interface StorefrontCatalog {
   ): Promise<{ product: StoreProduct; variant: StoreVariant } | null>;
   getCollection?(shopId: string, handle: string): Promise<StoreCollection | null>;
   listCollections(shopId: string): Promise<StoreCollection[]>;
+  listProductFacts?(shopId: string, productIds: readonly string[]): Promise<Record<string, ProductFact[]>>;
+  listProductFactFacets?(shopId: string): Promise<Record<string, string[]>>;
 }
 
 export interface StoreProduct {

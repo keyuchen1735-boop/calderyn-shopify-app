@@ -7,6 +7,7 @@ describe("product facts migration", () => {
   it("enforces tenant ownership, a bounded closed catalog, types, units, and safe URLs", () => {
     expect(sql).toContain("foreign key (shop_id, product_id) references public.product_dim(shop_id, id)");
     expect(sql).toContain("unique (shop_id, product_id, position)");
+    expect(sql.match(/unique .*product_fact.*dimension\.(?:width|depth|height)/g)).toHaveLength(3);
     expect(sql).toContain("position between 0 and 31");
     expect(sql).toContain("unit in ('mm', 'cm', 'm', 'in')");
     expect(sql).toContain("number_value between 0 and 5");

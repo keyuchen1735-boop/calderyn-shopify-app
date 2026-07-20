@@ -367,6 +367,7 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
   const nodeBindings = context.bindings.get(node.id) ?? [];
   let missingBoundImage = false;
   let missingBoundProductImage = false;
+  let missingBoundHref = false;
   let children: ReactNode[];
   if (node.attributes["data-cd-platform-content"] === "policyLinks") {
     const policyIds = new Set(["privacy", "terms", "refund", "shipping"]);
@@ -389,7 +390,9 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
     }
     else if (binding.kind === "alt") props.alt = formatted ?? "";
     else if (binding.kind === "href" && formatted !== null) props.href = formatted;
+    else if (binding.kind === "href") missingBoundHref = true;
   }
+  if (missingBoundHref) return null;
   if (node.tag === "img" && missingBoundImage && props.src === undefined) {
     props.src = missingBoundProductImage
       ? context.productPlaceholderUrl ?? EMPTY_MEDIA_DATA_URL

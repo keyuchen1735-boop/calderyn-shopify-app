@@ -214,8 +214,13 @@ export function createRuntimeAdapters(input: {
     collection(intent) {
       const url = new URL(globalThis.window?.location.href ?? "https://runtime.invalid/");
       if (intent.type === "filter") {
-        if (!["category", "tag", "available"].includes(intent.facetId)) return;
-        const key = `filter.${intent.facetId}`;
+        if (!["category", "tag", "available", "fact-material", "fact-compatibility", "fact-ingredient", "fact-concern", "fact-heat-level"].includes(intent.facetId)) return;
+        const factKind = intent.facetId.startsWith("fact-")
+          ? intent.facetId.slice(5).replaceAll("-", "_")
+          : null;
+        const key = factKind && url.pathname === "/storefront/search"
+          ? `fact.${factKind}`
+          : `filter.${intent.facetId}`;
         const value = String(intent.value ?? "");
         if (value) url.searchParams.set(key, value);
         else url.searchParams.delete(key);

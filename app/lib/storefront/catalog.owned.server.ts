@@ -23,7 +23,7 @@ import {
   MISSING_PRICE_ASC_SORT_VALUE,
   MISSING_PRICE_DESC_SORT_VALUE,
 } from "./catalog";
-import { normalizeProductFacts, type ProductFact } from "./product-facts";
+import { deriveFactFacets, normalizeProductFacts, type ProductFact } from "./product-facts";
 
 type Supa = ReturnType<typeof getSupabase>;
 type Row = Record<string, unknown>;
@@ -81,6 +81,25 @@ function toVariant(v: Row, ledgerSellable?: number): StoreVariant {
     available: priced && (tracked ? stock > 0 : true),
     hasPrice: priced,
   };
+}
+
+function factsFromRows(rows: readonly Row[]): Record<string, ProductFact[]> {
+  const inputsByProduct = new Map<string, Array<{ id: string; kind: string; value: unknown; unit: string | null }>>();
+  for (const row of rows) {
+    const value = row.url_value ?? row.text_value ?? (row.number_value == null ? null : Number(row.number_value));
+    pushInto(inputsByProduct, String(row.product_id), {
+      id: String(row.id), kind: String(row.kind), value, unit: row.unit as string | null,
+    });
+  }
+  const factsByProduct: Record<string, ProductFact[]> = {};
+  for (const [productId, inputs] of inputsByProduct) {
+    try {
+      factsByProduct[productId] = normalizeProductFacts(inputs);
+    } catch {
+      factsByProduct[productId] = [];
+    }
+  }
+  return factsByProduct;
 }
 
 async function sellingPlansByVariant(
@@ -260,16 +279,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     pushInto(optionsByProduct, String(option.product_id), { name: String(option.name), values });
   }
 
-  const factsByProduct = new Map<string, ProductFact[]>();
-  for (const row of factRows) {
-    const value = row.url_value ?? row.text_value ?? (row.number_value == null ? null : Number(row.number_value));
-    try {
-      const [fact] = normalizeProductFacts([{ id: String(row.id), kind: String(row.kind), value, unit: row.unit as string | null }]);
-      if (fact) pushInto(factsByProduct, String(row.product_id), fact);
-    } catch {
-      // Invalid legacy rows fail closed at the public boundary.
-    }
-  }
+  const factsByProduct = factsFromRows(factRows);
 
   return products.map((p): StoreProduct => {
     const id = String(p.id);
@@ -284,7 +294,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
       collections: handlesByProduct.get(id) ?? [],
       category: (p.category as string | null) ?? null,
       tags: (p.tags as string[] | null) ?? [],
-      facts: factsByProduct.get(id) ?? [],
+      facts: factsByProduct[id] ?? [],
     };
   });
 }
@@ -651,6 +661,25 @@ export const ownedCatalog: StorefrontCatalog = {
       description: (collection.description as string | null) ?? "",
       productCount: countResult.count ?? 0,
     };
+  },
+
+  async listProductFacts(shopId, productIds) {
+    const ids = [...new Set(productIds)].slice(0, MAX_PUBLIC_PRODUCT_PAGE_SIZE);
+    if (!ids.length) return {};
+    const rows = await pagedRows((from, to) => getSupabase().from("product_fact")
+      .select("id, product_id, kind, text_value, number_value, unit, url_value, position")
+      .eq("shop_id", shopId).in("product_id", ids).order("position").order("product_id").order("id").range(from, to));
+    return factsFromRows(rows);
+  },
+
+  async listProductFactFacets(shopId) {
+    const rows = await pagedRows((from, to) => getSupabase().from("product_fact")
+      .select("id, product_id, kind, text_value, number_value, unit, url_value, position, product_dim!inner(status)")
+      .eq("shop_id", shopId).eq("product_dim.status", "active")
+      .in("kind", ["material", "compatibility", "ingredient", "concern", "heat_level"])
+      .order("position").order("product_id").order("id").range(from, to));
+    const facts = factsFromRows(rows);
+    return deriveFactFacets(Object.entries(facts).map(([id, productFacts]) => ({ id, facts: productFacts })));
   },
 
   async listCollections(shopId) {

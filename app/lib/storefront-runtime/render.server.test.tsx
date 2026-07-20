@@ -498,6 +498,13 @@ describe("compiled-node server renderer", () => {
     }));
     expect(withFact).toContain('href="https://cdn.example/spec.pdf"');
     expect(withFact).toContain("Document");
+    const mixed = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "product", data: { ...data, product: { ...publicProduct, facts: [
+        { id: "f1", kind: "material", label: "Material", value: "Walnut", unit: null, url: null },
+        { id: "f2", kind: "document_url", label: "Document", value: "https://cdn.example/spec.pdf", unit: null, url: "https://cdn.example/spec.pdf" },
+      ] } }, nonce: "mixed-facts", mode: "public",
+    }));
+    expect(mixed.match(/>Open fact<\/a>/g)).toHaveLength(1);
   });
 
   it("excerpts repeated product descriptions while preserving the complete PDP description", () => {

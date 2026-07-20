@@ -189,6 +189,17 @@ describe("runtime-1 route adapters", () => {
     expect(assign).toHaveBeenCalledWith("/storefront/collections/featured?sort=price_desc");
   });
 
+  it("navigates closed merchant fact filters and clears the stale cursor", () => {
+    window.history.replaceState({}, "", "/storefront/collections/furniture?cursor=stale");
+    const assign = vi.fn();
+    const adapters = createRuntimeAdapters({ mode: "public", locationAssign: assign });
+    adapters.collection?.({ type: "filter", facetId: "fact-material", value: "Walnut" });
+    expect(assign).toHaveBeenCalledWith("/storefront/collections/furniture?filter.fact-material=Walnut");
+    window.history.replaceState({}, "", "/storefront/search?q=chair&cursor=stale");
+    adapters.collection?.({ type: "filter", facetId: "fact-compatibility", value: "Model X" });
+    expect(assign).toHaveBeenLastCalledWith("/storefront/search?q=chair&fact.compatibility=Model+X");
+  });
+
   it("dispatches public commerce only through the trusted Task 6 JSON bridges", async () => {
     const fetcher = vi.fn<RuntimeFetcher>(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     const adapters = createRuntimeAdapters({ mode: "public", fetcher, refresh: vi.fn() });

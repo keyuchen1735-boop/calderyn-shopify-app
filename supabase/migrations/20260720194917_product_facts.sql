@@ -35,6 +35,9 @@ create table public.product_fact (
 );
 
 create index product_fact_shop_product_idx on public.product_fact(shop_id, product_id, position, id);
+create unique index product_fact_dimension_width_unique on public.product_fact(shop_id, product_id) where kind = 'dimension.width';
+create unique index product_fact_dimension_depth_unique on public.product_fact(shop_id, product_id) where kind = 'dimension.depth';
+create unique index product_fact_dimension_height_unique on public.product_fact(shop_id, product_id) where kind = 'dimension.height';
 alter table public.product_fact enable row level security;
 create policy product_fact_tenant_isolation on public.product_fact
   using (shop_id = public.current_shop_id())

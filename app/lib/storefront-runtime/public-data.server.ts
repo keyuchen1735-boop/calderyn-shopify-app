@@ -92,6 +92,7 @@ export interface PublicPresentationData {
       categories: Array<{ value: string; count: number }>;
       tags: Array<{ value: string; count: number }>;
       collections: Array<{ value: string; count: number }>;
+      facts?: Record<string, string[]>;
     };
     total: number;
     nextCursor: string | null;

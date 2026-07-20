@@ -21,6 +21,10 @@ describe("trusted product facts", () => {
     expect(() => normalizeProductFacts([{ kind: "dimension.width", value: 2, unit: "kg" }])).toThrow(/unit/i);
     expect(() => normalizeProductFacts([{ kind: "material", value: 7 }])).toThrow(/text/i);
     expect(() => normalizeProductFacts([{ kind: "medical_claim", value: "cures" }])).toThrow(/kind/i);
+    expect(() => normalizeProductFacts([
+      { kind: "dimension.width", value: 80, unit: "cm" },
+      { kind: "dimension.width", value: 32, unit: "in" },
+    ])).toThrow(/duplicate/i);
   });
 
   it("rejects unsafe document and model URLs", () => {

@@ -39,6 +39,13 @@ function safeUrl(raw: unknown, model: boolean): string {
 
 export function normalizeProductFacts(inputs: readonly ProductFactInput[]): ProductFact[] {
   if (inputs.length > 32) throw new Error("product facts exceed the public limit");
+  const singletonDimensions = new Set<string>();
+  for (const input of inputs) {
+    if (DIMENSIONS.has(input.kind as ProductFactKind) && singletonDimensions.has(input.kind)) {
+      throw new Error(`duplicate singleton product fact ${input.kind}`);
+    }
+    if (DIMENSIONS.has(input.kind as ProductFactKind)) singletonDimensions.add(input.kind);
+  }
   return inputs.map((input, index) => {
     if (!PRODUCT_FACT_KINDS.includes(input.kind as ProductFactKind)) throw new Error("unsupported product fact kind");
     const kind = input.kind as ProductFactKind;
@@ -91,14 +98,14 @@ type FactProduct = { id: string; facts: readonly ProductFact[] };
 export function deriveFactFacets(products: readonly FactProduct[]): Record<string, string[]> {
   const facets = new Map<string, Set<string>>();
   for (const { facts } of products) for (const fact of facts) {
-    if (!TEXT_KINDS.has(fact.kind) || !fact.textValue) continue;
+    if ((!TEXT_KINDS.has(fact.kind) && fact.kind !== "heat_level") || !fact.value) continue;
     const values = facets.get(fact.kind) ?? new Set<string>();
-    values.add(fact.textValue); facets.set(fact.kind, values);
+    values.add(fact.value); facets.set(fact.kind, values);
   }
   return Object.fromEntries([...facets].sort(([a], [b]) => a.localeCompare(b)).map(([kind, values]) => [kind, [...values].sort()]));
 }
 
 export function filterProductsByFacts<T extends FactProduct>(products: readonly T[], filters: Readonly<Record<string, string>>): T[] {
   return products.filter(({ facts }) => Object.entries(filters).every(([kind, value]) =>
-    facts.some((fact) => fact.kind === kind && fact.textValue != null && normalized(fact.textValue) === normalized(value))));
+    facts.some((fact) => fact.kind === kind && normalized(fact.value) === normalized(value))));
 }
