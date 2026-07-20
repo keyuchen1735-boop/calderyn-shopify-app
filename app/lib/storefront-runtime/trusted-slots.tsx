@@ -1,5 +1,26 @@
 import type { TrustedSlotManifest } from "~/lib/storefront-bundle/types";
 
+export const STOREFRONT_LINE_PERSONALIZATION_KEYS = [
+  "engraving",
+  "giftNote",
+  "giftWrap",
+  "recipient",
+] as const;
+
+export type StorefrontLinePersonalization = Partial<
+  Record<(typeof STOREFRONT_LINE_PERSONALIZATION_KEYS)[number], string>
+>;
+
+export function canonicalizeStorefrontLinePersonalization(
+  value: StorefrontLinePersonalization,
+): StorefrontLinePersonalization {
+  return Object.fromEntries(
+    STOREFRONT_LINE_PERSONALIZATION_KEYS.flatMap((key) =>
+      Object.hasOwn(value, key) ? [[key, value[key]!]] : [],
+    ),
+  );
+}
+
 export interface TrustedSlotHostProps {
   slot: TrustedSlotManifest;
   instanceId: string;

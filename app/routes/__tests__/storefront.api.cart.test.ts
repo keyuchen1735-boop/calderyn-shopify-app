@@ -158,6 +158,48 @@ describe("storefront cart JSON bridge", () => {
     expect(await response.json()).toEqual({ ok: true, data: { cart: expect.objectContaining({ cartId: NEW_CART_ID }) } });
   });
 
+  it("accepts only bounded string personalization and passes no pricing authority", async () => {
+    const personalization = { recipient: "Mina", engraving: "Always", giftWrap: "gold" };
+    const response = await addAction(actionArgs(await jsonRequest(
+      "/storefront/api/cart/add",
+      { variantId: "v-1", quantity: 2, personalization },
+    )));
+
+    expect(response.status).toBe(200);
+    expect(cart.addCartLine).toHaveBeenCalledWith("shop-a", NEW_CART_ID, "v-1", 2, {
+      engraving: "Always",
+      giftWrap: "gold",
+      recipient: "Mina",
+    });
+  });
+
+  it.each([
+    ["unknown key", { personalization: { engraving: "A", finish: "gold" } }],
+    ["more than four keys", { personalization: { engraving: "A", giftNote: "B", giftWrap: "C", recipient: "D", extra: "E" } }],
+    ["key over 40 code points", { personalization: { ["x".repeat(41)]: "A" } }],
+    ["value over 240 code points", { personalization: { engraving: "💍".repeat(241) } }],
+    ["non-string value", { personalization: { giftWrap: true } }],
+  ])("rejects personalization with %s", async (_label, addition) => {
+    const response = await addAction(actionArgs(await jsonRequest(
+      "/storefront/api/cart/add",
+      { variantId: "v-1", quantity: 1, ...addition },
+    )));
+
+    expect(response.status).toBe(422);
+    expect(cart.addCartLine).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-origin personalized cart writes", async () => {
+    const response = await addAction(actionArgs(await jsonRequest(
+      "/storefront/api/cart/add",
+      { variantId: "v-1", quantity: 1, personalization: { engraving: "Always" } },
+      { origin: "https://evil.example" },
+    )));
+
+    expect(response.status).toBe(403);
+    expect(cart.addCartLine).not.toHaveBeenCalled();
+  });
+
   it("preserves an active legacy cart on add and upgrades its cookie", async () => {
     const response = await addAction(actionArgs(await jsonRequest(
       "/storefront/api/cart/add",

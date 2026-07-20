@@ -13,6 +13,10 @@ import { getCatalog } from "~/lib/storefront/catalog.server";
 import { DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import type { StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 import type { QuoteLine, PricedLine } from "~/lib/commerce/types";
+import {
+  canonicalizeStorefrontLinePersonalization,
+  type StorefrontLinePersonalization,
+} from "~/lib/storefront-runtime/trusted-slots";
 
 /**
  * Thrown by addCartLine when a variant can't be added because it no longer resolves in the catalog
@@ -56,9 +60,10 @@ export interface CartLine {
   unitPriceCents: number;
   currency: string;
   titleSnapshot: string;
+  personalization: StorefrontLinePersonalization;
 }
 
-const LINE_COLS = "id, cart_id, variant_id, quantity, unit_price_cents, currency, title_snapshot";
+const LINE_COLS = "id, cart_id, variant_id, quantity, unit_price_cents, currency, title_snapshot, personalization";
 
 export interface PricedCart {
   cartId: string;
@@ -137,6 +142,7 @@ export async function addCartLine(
   cartId: string,
   variantId: string,
   quantity: number,
+  personalization: StorefrontLinePersonalization = {},
 ): Promise<CartLine & { productId: string }> {
   if (!shopId) throw new Error("shopId is required");
   assertPersistableShop(shopId);
@@ -156,6 +162,7 @@ export async function addCartLine(
   if (!resolved.variant.available) {
     throw new VariantUnavailableError(variantId, "unavailable");
   }
+  const canonicalPersonalization = canonicalizeStorefrontLinePersonalization(personalization);
 
   const { data, error } = await getSupabase().rpc("cart_add_line_atomic", {
     p_shop_id: shopId,
@@ -165,6 +172,7 @@ export async function addCartLine(
     p_unit_price_cents: resolved.variant.priceCents,
     p_currency: resolved.variant.currency.toLowerCase(),
     p_title_snapshot: snapshotTitle(resolved.product, resolved.variant),
+    p_personalization: canonicalPersonalization,
   });
   if (error) throw error;
   if (!data || typeof data !== "object" || Array.isArray(data)) {
@@ -363,6 +371,7 @@ function mapCart(row: Record<string, unknown>): Cart {
 }
 
 function mapLine(row: Record<string, unknown>): CartLine {
+  const personalization = row.personalization;
   return {
     id: String(row.id),
     cartId: String(row.cart_id),
@@ -371,5 +380,8 @@ function mapLine(row: Record<string, unknown>): CartLine {
     unitPriceCents: Number(row.unit_price_cents),
     currency: String(row.currency),
     titleSnapshot: String(row.title_snapshot),
+    personalization: personalization && typeof personalization === "object" && !Array.isArray(personalization)
+      ? canonicalizeStorefrontLinePersonalization(personalization as StorefrontLinePersonalization)
+      : {},
   };
 }

@@ -209,7 +209,11 @@ beforeEach(() => {
 
 describe("sendDraftOrderInvoice", () => {
   it("sends the invoice: order channel invoice, lines snapshotted, cart consumed, email fired, no reservation/PI", async () => {
-    seedDraftCart("shop-1", "cart-1", { quantity: 2, unit_price_cents: 1999 }); // 3998
+    seedDraftCart("shop-1", "cart-1", {
+      quantity: 2,
+      unit_price_cents: 1999,
+      personalization: { giftNote: "For Mina" },
+    }); // 3998
 
     const out = await sendDraftOrderInvoice("shop-1", "cart-1", { email: "Buyer@Example.com" });
 
@@ -238,6 +242,7 @@ describe("sendDraftOrderInvoice", () => {
       variant_id: "v-tee-s",
       quantity: 2,
       unit_price_cents: 1999,
+      personalization: { giftNote: "For Mina" },
     });
 
     // Draft cart consumed.

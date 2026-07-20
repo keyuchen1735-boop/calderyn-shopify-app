@@ -5,8 +5,8 @@ import type { StoreProduct } from "~/lib/storefront/catalog";
 // helpers depend on, so behavior is tested against REAL rules, not bare mocks:
 //   - cart_line COMPOSITE FK (shop_id, cart_id) -> cart(shop_id, id): a line whose
 //     (shop_id, cart_id) pair has no parent cart is rejected (also the cross-tenant guard).
-//   - cart_line UNIQUE (shop_id, cart_id, variant_id): a second INSERT for the same variant
-//     is rejected (proving addCartLine must increment the existing line, not duplicate it).
+//   - cart_line UNIQUE (shop_id, cart_id, variant_id, personalization_hash): only the same
+//     variant + canonical personalization increments an existing line.
 const store = vi.hoisted(() => {
   type Row = Record<string, any>;
   const db: Record<string, Row[]> = { cart: [], cart_line: [] };
@@ -98,10 +98,13 @@ const store = vi.hoisted(() => {
       (row) => row.shop_id === args.p_shop_id && row.id === args.p_cart_id && row.state === "cart",
     );
     if (!parent) return { data: null, error: { message: "active cart not found for shop (composite FK)" } };
+    const personalization = args.p_personalization ?? {};
+    const personalizationHash = JSON.stringify(personalization);
     const existing = db.cart_line.find(
       (row) => row.shop_id === args.p_shop_id
         && row.cart_id === args.p_cart_id
-        && row.variant_id === args.p_variant_id,
+        && row.variant_id === args.p_variant_id
+        && row.personalization_hash === personalizationHash,
     );
     if (existing) {
       existing.quantity = Math.min(999, existing.quantity + Number(args.p_quantity));
@@ -116,6 +119,8 @@ const store = vi.hoisted(() => {
       unit_price_cents: args.p_unit_price_cents,
       currency: args.p_currency,
       title_snapshot: args.p_title_snapshot,
+      personalization,
+      personalization_hash: personalizationHash,
     };
     db.cart_line.push(row);
     return { data: { ...row }, error: null };
@@ -232,6 +237,36 @@ describe("addCartLine", () => {
     expect(second.id).toBe(first.id); // same line
     expect(second.quantity).toBe(5); // 2 + 3
     expect(store.db.cart_line).toHaveLength(1); // no duplicate row
+  });
+
+  it("uses canonical personalization identity regardless of object key order", async () => {
+    const cart = await buildCart("shop-1");
+    const first = await addCartLine("shop-1", cart.id, "v-tee-s", 1, {
+      recipient: "Mina",
+      engraving: "Always",
+    });
+    const second = await addCartLine("shop-1", cart.id, "v-tee-s", 2, {
+      engraving: "Always",
+      recipient: "Mina",
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.quantity).toBe(3);
+    expect(second.personalization).toEqual({ engraving: "Always", recipient: "Mina" });
+    expect(store.db.cart_line).toHaveLength(1);
+  });
+
+  it("keeps distinct engraved variants as distinct cart lines", async () => {
+    const cart = await buildCart("shop-1");
+    const first = await addCartLine("shop-1", cart.id, "v-tee-s", 1, { engraving: "Mina" });
+    const second = await addCartLine("shop-1", cart.id, "v-tee-s", 1, { engraving: "Noor" });
+
+    expect(second.id).not.toBe(first.id);
+    expect(store.db.cart_line).toHaveLength(2);
+    expect((await priceCart("shop-1", cart.id)).lines.map((line) => line.personalization)).toEqual([
+      { engraving: "Mina" },
+      { engraving: "Noor" },
+    ]);
   });
 
   it("atomically preserves every concurrent increment and the original snapshot", async () => {
