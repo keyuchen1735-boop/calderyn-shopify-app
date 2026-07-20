@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import { createRuntimeAdapters, type RuntimeFetcher } from "./storefront-hydrator";
+import { renderToStaticMarkup } from "react-dom/server";
+import { STOREFRONT_RECIPES } from "~/lib/storefront-recipes";
+import { renderStorefrontRoute } from "./render";
+import {
+  createRuntimeAdapters,
+  placeQuickViewCommerceInCards,
+  type RuntimeFetcher,
+} from "./storefront-hydrator";
 import type { PublicPresentationData } from "./public-data.server";
 
 const quickViewData: PublicPresentationData = {
@@ -22,6 +29,68 @@ const quickViewData: PublicPresentationData = {
 };
 
 describe("runtime-1 route adapters", () => {
+  it("moves detached quick-buy controls into their matching product cards", () => {
+    const route = document.createElement("div");
+    route.innerHTML = `
+      <article><h2 data-cd-bind-text="title-binding">Field kit</h2></article>
+      <section data-cd-repeat-owner="true">
+        <div data-cd-compiler-id="quick-slot" data-cd-trusted-slot="quickViewCommerce"></div>
+      </section>`;
+    placeQuickViewCommerceInCards(route, {
+      bindings: [{
+        id: "title-binding", targetId: "title-node", kind: "text",
+        ref: { kind: "data", path: "product.title", scopeId: "product-scope" },
+      }],
+      trustedSlots: [{
+        id: "quick-slot", kind: "quickViewCommerce", scopeId: "detached-scope",
+        hostSize: "inline", themeTokenIds: [],
+      }],
+    });
+
+    expect(route.querySelector("article [data-cd-trusted-slot='quickViewCommerce']")).not.toBeNull();
+    expect(route.querySelector("[data-cd-repeat-owner]")).toBeNull();
+  });
+
+  it("places purchase controls inside product cards for every recipe listing", () => {
+    const product = quickViewData.featuredProducts[0]!;
+    const routeData = {
+      home: quickViewData,
+      collection: {
+        ...quickViewData,
+        collection: {
+          id: "collection-1", handle: "all", title: "All", description: "",
+          image: null, productCount: 1, products: [product], nextCursor: null,
+        },
+      },
+      search: {
+        ...quickViewData,
+        search: {
+          query: "field", results: [product],
+          facets: { categories: [], tags: [], collections: [] }, total: 1, nextCursor: null,
+        },
+      },
+    };
+
+    for (const recipe of STOREFRONT_RECIPES) {
+      for (const routeId of ["home", "collection", "search"] as const) {
+        const artifact = recipe.bundle.routes[routeId];
+        const root = document.createElement("div");
+        root.innerHTML = renderToStaticMarkup(renderStorefrontRoute({
+          routeId, artifact, data: routeData[routeId], nonce: "test",
+        }).element);
+        const route = root.firstElementChild as HTMLElement;
+
+        placeQuickViewCommerceInCards(route, artifact);
+
+        const controls = [...route.querySelectorAll('[data-cd-trusted-slot="quickViewCommerce"]')];
+        if (!artifact.trustedSlots.some((slot) => slot.kind === "quickViewCommerce")) continue;
+        expect(controls, `${recipe.config.templateId}/${routeId}`).not.toHaveLength(0);
+        expect(controls.every((control) => control.closest("article")),
+          `${recipe.config.templateId}/${routeId}`).toBe(true);
+      }
+    }
+  });
+
   it("retains a bounded input query for a separate search submit control", () => {
     const assign = vi.fn();
     const adapters = createRuntimeAdapters({ mode: "public", locationAssign: assign });
