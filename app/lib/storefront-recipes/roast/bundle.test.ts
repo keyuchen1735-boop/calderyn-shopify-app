@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
@@ -17,7 +17,7 @@ function dataPaths(route: RouteArtifact): string[] {
 }
 
 describe("roast storefront recipe", () => {
-  it("compiles nine preparation-first routes from live coffee and selling-plan options", () => {
+  it("compiles nine preparation-first routes from live coffee and protected product options", () => {
     const { bundle, report } = compileRecipeConfig(ROAST_RECIPE_CONFIG);
 
     expect(bundle.source).toEqual({ kind: "recipe", templateId: "roast", templateVersion: 1 });
@@ -42,23 +42,27 @@ describe("roast storefront recipe", () => {
     ]));
     expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).toContain("Origin facts come from the merchant record");
 
-    const quizFilters = bundle.routes.home.interactions.transitions
-      .filter(({ action }) => action.type === "collection.filter")
-      .map(({ action }) => action.type === "collection.filter" ? action.facetId : "");
-    expect(quizFilters).toEqual(["tag", "tag", "tag"]);
-    expect(ROAST_RECIPE_CONFIG.surfaces.home.source.html).toContain("Brew quiz");
-    expect(ROAST_RECIPE_CONFIG.surfaces.home.source.html).toContain("merchant-authored brew tags");
+    expect(bundle.routes.home.interactions.transitions).not.toContainEqual(expect.objectContaining({
+      action: expect.objectContaining({ type: "collection.filter" }),
+    }));
+    expect(ROAST_RECIPE_CONFIG.surfaces.home.source.html).toContain("Brew-method field guide");
+    expect(ROAST_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-route="collection"');
 
-    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).toContain("Choose grind from available options");
-    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).toContain("Choose an available cadence");
+    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).toContain("Review the available product options");
     expect(bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
     expect(repeatsIn(bundle.routes.product.tree)).toContain("product.variants");
     expect(bundle.routes.product.html).not.toMatch(/always available|guaranteed freshness|roasted today|ships today/i);
 
     expect(repeatsIn(bundle.routes.cart.tree)).toContain("cart.lines");
     expect(bundle.routes.cart.trustedSlots.map(({ kind }) => kind)).toEqual(expect.arrayContaining(["cartLineControls", "cartSummary"]));
-    expect(bundle.routes.cart.html).toContain("Selected subscription cadence");
-    expect(bundle.routes.checkout.decorativeHtml).toContain("Subscription details remain attached to the selected line");
+    expect(bundle.routes.cart.html).toContain("Selected product options remain on their cart lines");
+    expect(bundle.routes.checkout.decorativeHtml).toContain("Selected product options remain attached to each line");
+
+    const customerCopy = Object.values(ROAST_RECIPE_CONFIG.surfaces)
+      .map(({ source }) => source.html)
+      .join(" ");
+    expect(customerCopy).not.toMatch(/\b(subscription|cadence|selling plan)\b/i);
+    expect(ROAST_RECIPE_CONFIG.surfaces.product.source.html).not.toMatch(/choose grind|grind option/i);
 
     expect(report.ok).toBe(false);
     expect(ROAST_VIDEO_ROLES).toEqual(["hero", "brew-context", "bean-grind"]);
@@ -90,5 +94,12 @@ describe("roast storefront recipe", () => {
     ]) {
       expect(existsSync(resolve(process.cwd(), path)), path).toBe(true);
     }
+
+    const prototype = readFileSync(resolve(
+      process.cwd(),
+      "docs/superpowers/prototypes/storefront-recipes/roast.html",
+    ), "utf8");
+    expect(prototype).toContain("Brew-method field guide");
+    expect(prototype).not.toMatch(/\b(subscription|cadence|selling plan)\b|choose grind|grind option/i);
   });
 });
