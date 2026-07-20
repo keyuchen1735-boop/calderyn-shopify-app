@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import { Flip } from "gsap/Flip";
@@ -330,6 +331,7 @@ function ClassificationEditor({
   const [kind, setKind] = useState<CampaignKind>(c.campaign_kind);
   const [saleType, setSaleType] = useState(c.sale_type ?? "General Sale");
   const [busy, setBusy] = useState(false);
+  const narrow = useNarrowViewport(760);
 
   useEffect(() => {
     setKind(c.campaign_kind);
@@ -364,6 +366,59 @@ function ClassificationEditor({
     }
   };
 
+  const editor = (
+    <div
+      className="cd-campaign-classification-editor"
+      role={narrow ? "dialog" : undefined}
+      aria-label={narrow ? "Edit campaign type" : undefined}
+      data-mobile={narrow ? "1" : "0"}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <select
+        className="cd-input"
+        aria-label="Campaign type"
+        autoFocus={narrow}
+        value={kind}
+        disabled={busy}
+        onChange={(event) => setKind(event.target.value as CampaignKind)}
+      >
+        <option value="regular">Regular</option>
+        <option value="sales">Sales</option>
+      </select>
+      {kind === "sales" && (
+        <input
+          className="cd-input"
+          aria-label="Sale type"
+          maxLength={MAX_CAMPAIGN_SALE_TYPE_LENGTH}
+          value={saleType}
+          disabled={busy}
+          onChange={(event) => setSaleType(event.target.value)}
+        />
+      )}
+      <Btn
+        small
+        kind="primary"
+        disabled={busy || (kind === "sales" && !saleType.trim())}
+        onClick={() => void save()}
+      >
+        Save
+      </Btn>
+      {narrow && (
+        <Btn
+          small
+          icon="x"
+          className="cd-btn-icon"
+          ariaLabel="Close campaign type editor"
+          disabled={busy}
+          onClick={() => setEditing(false)}
+        >
+          {""}
+        </Btn>
+      )}
+    </div>
+  );
+
   return (
     <div
       className="cd-campaign-classification"
@@ -384,38 +439,10 @@ function ClassificationEditor({
           {""}
         </Btn>
       </Tooltip>
-      {editing && (
-        <div className="cd-campaign-classification-editor">
-          <select
-            className="cd-input"
-            aria-label="Campaign type"
-            value={kind}
-            disabled={busy}
-            onChange={(event) => setKind(event.target.value as CampaignKind)}
-          >
-            <option value="regular">Regular</option>
-            <option value="sales">Sales</option>
-          </select>
-          {kind === "sales" && (
-            <input
-              className="cd-input"
-              aria-label="Sale type"
-              maxLength={MAX_CAMPAIGN_SALE_TYPE_LENGTH}
-              value={saleType}
-              disabled={busy}
-              onChange={(event) => setSaleType(event.target.value)}
-            />
-          )}
-          <Btn
-            small
-            kind="primary"
-            disabled={busy || (kind === "sales" && !saleType.trim())}
-            onClick={() => void save()}
-          >
-            Save
-          </Btn>
-        </div>
-      )}
+      {editing &&
+        (narrow && typeof document !== "undefined"
+          ? createPortal(editor, document.body)
+          : editor)}
     </div>
   );
 }
@@ -611,11 +638,16 @@ function CampaignDetail({
   // The live status can drift from app.campaigns until the next refresh lands,
   // so hold the optimistic status locally and prefer it for rendering.
   const [status, setStatus] = useState(c.status);
+  const [classification, setClassification] = useState<Partial<CampaignVM>>({});
   const [busy, setBusy] = useState(false);
   const [pushing, setPushing] = useState(false);
   useEffect(() => {
     setStatus(c.status);
   }, [c.status]);
+  useEffect(() => {
+    setClassification({});
+  }, [c.id, c.campaign_kind, c.sale_type, c.classification_source]);
+  const classifiedCampaign = { ...c, ...classification };
 
   const [creativeData, setCreativeData] = useState<CampaignCreativesDTO | null>(
     null,
@@ -1132,6 +1164,11 @@ function CampaignDetail({
           <span className="cd-badge" style={BADGE_NEUTRAL}>
             {c.platform}
           </span>
+          <ClassificationEditor
+            app={app}
+            c={classifiedCampaign}
+            onChanged={setClassification}
+          />
           <span
             className="cd-badge"
             style={paused ? BADGE_NEUTRAL : BADGE_ACTIVE}
@@ -1592,6 +1629,7 @@ function CampaignList({
           <div className="cd-campaign-filters">
             <Segmented
               small
+              ariaLabel="Campaign filters"
               value={filter}
               options={[
                 { value: "all", label: "All" },
@@ -1604,6 +1642,7 @@ function CampaignList({
               <span>Window</span>
               <Segmented
                 small
+                ariaLabel="Reporting window"
                 value={String(campaignWindow)}
                 options={["7", "30", "90"]}
                 onChange={(next) => onCampaignWindowChange(Number(next) as CampaignWindow)}

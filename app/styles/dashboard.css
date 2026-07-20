@@ -4554,6 +4554,14 @@
   flex: 1;
 }
 @media (max-width: 760px) {
+  .cd-campaign-classification-editor[data-mobile="1"] {
+    position: fixed;
+    z-index: 100;
+    inset: auto 12px max(12px, env(safe-area-inset-bottom));
+    min-width: 0;
+    padding: 10px;
+    box-shadow: var(--shadow-pop);
+  }
   .cd-campaign-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cd-campaign-filters { align-items: flex-start; flex-direction: column; }
 }
