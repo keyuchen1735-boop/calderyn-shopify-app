@@ -60,16 +60,25 @@ function assertRoleContract(manifest, expectedTemplateId) {
 }
 
 function assertProof(proofRecords, record) {
-  if (!proofRecords.some((proof) => proof?.templateId === record.templateId && proof?.role === record.role && proof?.masterHash === record.masterHash &&
+  const proof = proofRecords.find((proof) => proof?.templateId === record.templateId && proof?.role === record.role && proof?.masterHash === record.masterHash &&
     proof?.technicalApproval?.approved === true && proof.technicalApproval.masterHash === record.masterHash &&
-    proof?.visualApproval?.approved === true && proof.visualApproval.scope === "full-loop")) {
+    proof?.visualApproval?.approved === true && proof.visualApproval.scope === "full-loop");
+  if (!proof) {
     throw new Error(`video-proof.json requires a matching template, role, and master approval identity with technical and full-loop visual approval for ${record.role}`);
   }
+  const approvedHashes = proof.technicalApproval.derivativeHashes;
+  const derivativeHashes = record.entries?.map(({ contentHash }) => contentHash).sort();
+  if (!Array.isArray(approvedHashes) || JSON.stringify([...approvedHashes].sort()) !== JSON.stringify(derivativeHashes)) {
+    throw new Error(`video-proof.json derivative hash approval mismatch for ${record.role}`);
+  }
+  return proof;
 }
 
 async function verifyRecord(manifest, record, proofRecords, manifestPath, downloadDir) {
-  assertProof(proofRecords, record);
+  const proof = assertProof(proofRecords, record);
   const expectedTypes = new Set(["video/mp4", "video/webm", "image/webp"]);
+  const dimensions = [];
+  const durations = [];
   if (!Array.isArray(record.entries) || record.entries.length !== 3) throw new Error(`${record.role} must contain MP4, WebM, and poster entries`);
   for (const entry of record.entries) {
     if (!expectedTypes.delete(entry.mediaType)) throw new Error(`Unexpected or duplicate media type ${entry.mediaType} for ${record.role}`);
@@ -84,15 +93,23 @@ async function verifyRecord(manifest, record, proofRecords, manifestPath, downlo
     const metadata = JSON.parse(result.stdout);
     const stream = metadata.streams?.[0];
     if (!stream?.width || !stream?.height) throw new Error(`Missing dimensions for ${localPath}`);
+    dimensions.push(`${stream.width}x${stream.height}`);
     if (entry.mediaType.startsWith("video/")) {
       const duration = Number(metadata.format?.duration);
       if (!Number.isFinite(duration) || duration < 8 || duration > 12) throw new Error(`Video duration outside 8-12 seconds for ${localPath}`);
+      durations.push(duration);
       const expectedCodec = entry.mediaType === "video/mp4" ? "h264" : "vp9";
       if (stream.codec_name !== expectedCodec) throw new Error(`Unexpected codec for ${localPath}`);
     }
     if (entry.mediaType === "image/webp" && stream.codec_name !== "webp") throw new Error(`Unexpected WebP poster codec for ${localPath}`);
   }
   if (expectedTypes.size > 0) throw new Error(`${record.role} is missing a required media derivative`);
+  if (new Set(dimensions).size !== 1 || dimensions[0] !== `${proof.width}x${proof.height}`) {
+    throw new Error(`Derivative dimension mismatch with video-proof.json for ${record.role}`);
+  }
+  if (durations.some((duration) => Math.abs(duration - Number(proof.duration)) > 0.25)) {
+    throw new Error(`Derivative duration mismatch with video-proof.json for ${record.role}`);
+  }
   process.stdout.write(`Verified ${manifest.templateId}/${record.role} ${record.masterHash}\n`);
 }
 

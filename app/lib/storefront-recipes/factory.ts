@@ -60,7 +60,10 @@ export interface RecipeMediaProofRecord {
   templateId: string;
   role: string;
   masterHash: string;
-  technicalApproval?: { approved: boolean; masterHash: string };
+  duration?: number;
+  width?: number;
+  height?: number;
+  technicalApproval?: { approved: boolean; masterHash: string; derivativeHashes?: readonly string[] };
   visualApproval?: { approved: boolean; scope: string };
 }
 
@@ -250,25 +253,24 @@ function assertDeclaredHomeHero(config: RecipeConfig): void {
     completeMarkup = containsHeroVideo(compileHtml(homeHtml, { namespace: "home" }).tree);
   }
   if (!completeMarkup) throw new Error(`Recipe ${config.templateId} must include a declared home hero image or complete poster-first home hero video`);
-  assertApprovedVideoHero(config);
 }
 
-function assertApprovedVideoHero(config: RecipeConfig): void {
+function assertApprovedVideoRole(config: RecipeConfig, role: string): void {
   const artifacts = config.mediaArtifacts;
   if (!artifacts) throw new Error(`Recipe ${config.templateId} video hero requires checked-in media manifest and approval proof`);
   if (artifacts.manifest.templateId !== config.templateId) {
     throw new Error(`Recipe ${config.templateId} video hero media manifest has a template identity mismatch`);
   }
 
-  const heroRecords = artifacts.manifest.records.filter(({ role }) => role === "hero");
-  if (heroRecords.length !== 1) throw new Error(`Recipe ${config.templateId} video hero requires exactly one hero media role`);
+  const heroRecords = artifacts.manifest.records.filter((record) => record.role === role);
+  if (heroRecords.length !== 1) throw new Error(`Recipe ${config.templateId} video ${role} requires exactly one ${role} media role`);
   const hero = heroRecords[0]!;
   if (hero.templateId !== config.templateId || !/^[a-f0-9]{64}$/.test(hero.masterHash)) {
     throw new Error(`Recipe ${config.templateId} video hero media ownership or master identity is invalid`);
   }
 
   const approvals = artifacts.proof.records.filter((proof) =>
-    proof.templateId === config.templateId && proof.role === "hero" && proof.masterHash === hero.masterHash,
+    proof.templateId === config.templateId && proof.role === role && proof.masterHash === hero.masterHash,
   );
   if (approvals.length !== 1) throw new Error(`Recipe ${config.templateId} video hero requires an exact approval proof identity`);
   const approval = approvals[0]!;
@@ -278,9 +280,9 @@ function assertApprovedVideoHero(config: RecipeConfig): void {
   }
 
   const expectedAssets = [
-    ["hero-poster", "image/webp"],
-    ["hero-webm", "video/webm"],
-    ["hero-mp4", "video/mp4"],
+    [`${role}-poster`, "image/webp"],
+    [`${role}-webm`, "video/webm"],
+    [`${role}-mp4`, "video/mp4"],
   ] as const;
   if (hero.entries.length !== expectedAssets.length) {
     throw new Error(`Recipe ${config.templateId} video hero requires a complete derivative asset mapping`);
@@ -292,6 +294,31 @@ function assertApprovedVideoHero(config: RecipeConfig): void {
       throw new Error(`Recipe ${config.templateId} video hero derivative asset hash or media type mismatch for ${assetKey}`);
     }
   }
+  const approvedHashes = [...(approval.technicalApproval?.derivativeHashes ?? [])].sort();
+  if (JSON.stringify(approvedHashes) !== JSON.stringify(hero.entries.map(({ contentHash }) => contentHash).sort())) {
+    throw new Error(`Recipe ${config.templateId} video ${role} derivative hashes are not exactly approved`);
+  }
+}
+
+function assertApprovedReferencedVideos(config: RecipeConfig): void {
+  const roles = new Set<string>();
+  for (const [surfaceId, surface] of Object.entries(config.surfaces)) {
+    if (!surface) continue;
+    const visit = (nodes: readonly CompiledNode[]): void => nodes.forEach((node) => {
+      if (node.kind !== "element") return;
+      const poster = node.tag === "video" ? node.attributes["data-cd-poster-asset-key"] : undefined;
+      if (poster?.endsWith("-poster")) roles.add(poster.slice(0, -7));
+      visit(node.children);
+    });
+    const rootScopeKind = ("rootScopeKind" in surface.source ? surface.source.rootScopeKind : undefined) ??
+      (["collection", "product", "search", "cart"].includes(surfaceId) ? surfaceId as "collection" | "product" | "search" | "cart" : "store");
+    visit(compileHtml(surface.source.html, {
+      namespace: surfaceId,
+      rootScopeKind,
+      checkoutDecorative: surfaceId === "checkout",
+    }).tree);
+  }
+  for (const role of roles) assertApprovedVideoRole(config, role);
 }
 
 function withRequiredShellBindings<const TTemplateId extends StoreTemplateId>(
@@ -335,6 +362,7 @@ export function defineRecipe<const TTemplateId extends StoreTemplateId>(
   assertArchetypeMatchesRegistry(boundConfig);
   assertDistinctSurfaceSignatures(boundConfig);
   assertDeclaredHomeHero(boundConfig);
+  assertApprovedReferencedVideos(boundConfig);
   return compileRecipeConfig(boundConfig);
 }
 

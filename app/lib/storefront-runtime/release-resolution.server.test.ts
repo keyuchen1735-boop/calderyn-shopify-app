@@ -80,8 +80,11 @@ describe("storefront release resolution", () => {
   it("resolves registered recipe video bytes from immutable public media paths", async () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.source = { kind: "recipe", templateId: "volt", templateVersion: 1 };
-    source.assets.entries = [{ key: "hero-mp4", contentHash: "a".repeat(64), mediaType: "video/mp4", byteSize: 42 }];
-    source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-mp4"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
+    source.assets.entries = [
+      { key: "hero-poster", contentHash: "b".repeat(64), mediaType: "image/webp", byteSize: 42 },
+      { key: "hero-mp4", contentHash: "a".repeat(64), mediaType: "video/mp4", byteSize: 42 },
+    ];
+    source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
     const bundle = compileBundle(source).bundle;
     const live = { ...version("video-recipe", 1, "2026-07-02T00:00:00Z"), sourceKind: "recipe" as const, artifact: { sourceKind: "recipe" as const, bundle } };
     const result = await resolveRuntime1Route({

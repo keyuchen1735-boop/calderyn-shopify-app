@@ -115,6 +115,9 @@ function validControlAttribute(tag: unknown, name: string, value: string): boole
   if (name === "name") return tag === "input" && isIdentifier(value) && value.length <= 80;
   if (name === "placeholder") return tag === "input" && value.length <= 160 && !hasControlCharacter(value);
   if (name === "value") return (tag === "input" || tag === "button" || tag === "option" || tag === "select") && value.length <= 120 && !hasControlCharacter(value);
+  if (["muted", "autoplay", "playsinline", "loop", "data-cd-video"].includes(name)) return tag === "video" && value === "";
+  if (name === "preload") return tag === "video" && ["none", "metadata", "auto"].includes(value);
+  if (name === "data-cd-poster-asset-key") return tag === "video" && isCompilerIdentifier(value);
   return true;
 }
 
@@ -789,13 +792,22 @@ function validateCheckout(value: unknown, add: AddDiagnostic): TreeContext {
 function validateAssetReferenceSet(bundle: UnknownRecord, trees: readonly TreeContext[], add: AddDiagnostic): void {
   const assets = record(bundle.assets);
   if (!assets || !Array.isArray(assets.entries)) return;
-  const manifestKeys = new Set(assets.entries.flatMap((entry) => {
+  const manifestTypes = new Map(assets.entries.flatMap((entry) => {
     const item = record(entry);
-    return typeof item?.key === "string" ? [item.key] : [];
+    return typeof item?.key === "string" && typeof item.mediaType === "string" ? [[item.key, item.mediaType] as const] : [];
   }));
+  const manifestKeys = new Set(manifestTypes.keys());
   const referencedKeys = new Set<string>();
   for (const tree of trees) {
     for (const element of tree.elements.values()) {
+      const assetKey = element.attributes["data-cd-asset-key"];
+      const posterKey = element.attributes["data-cd-poster-asset-key"];
+      if (posterKey && manifestTypes.get(posterKey) !== "image/webp") {
+        add("asset.media_mismatch", `assets.references.${posterKey}`, "Video poster asset must be image/webp");
+      }
+      if (element.tag === "source" && assetKey && manifestTypes.get(assetKey) !== element.attributes.type) {
+        add("asset.media_mismatch", `assets.references.${assetKey}`, "Video source type must match its manifest media type");
+      }
       for (const key of [element.attributes["data-cd-asset-key"], element.attributes["data-cd-poster-asset-key"]]) {
         if (key) referencedKeys.add(key);
       }

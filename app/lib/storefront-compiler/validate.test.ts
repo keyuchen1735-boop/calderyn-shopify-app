@@ -68,6 +68,25 @@ describe("validation profile v1", () => {
     expect(validateCompiledBundle(forgedVideo).diagnostics.map(({ code }) => code)).toContain("tree.control_attribute");
   });
 
+  it("rejects forged video-only attributes and boolean values", () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const root = flattenElements(bundle.routes.home.tree)[0]!;
+    root.attributes.autoplay = "false";
+    root.attributes.preload = "eager";
+    root.attributes["data-cd-video"] = "yes";
+    expect(validateCompiledBundle(bundle).diagnostics.map(({ code }) => code)).toContain("tree.control_attribute");
+  });
+
+  it("rejects poster and source manifest media type mismatches", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster"><source data-cd-asset="hero-webm" type="video/webm"></video></main>`;
+    source.assets.entries = [
+      { key: "hero-poster", contentHash: "a".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+      { key: "hero-webm", contentHash: "b".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+    ];
+    expect(compileBundle(source).report.diagnostics.map(({ code }) => code)).toContain("asset.media_mismatch");
+  });
+
   it("validates optional route artifacts when present", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE) as typeof VALID_BUNDLE_SOURCE & { routes: typeof VALID_BUNDLE_SOURCE.routes & { story?: typeof VALID_BUNDLE_SOURCE.routes.home } };
     source.routes.story = { ...source.routes.home, html: `<main>Story</main>` };

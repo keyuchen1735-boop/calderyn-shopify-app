@@ -67,7 +67,14 @@ function videoHeroConfig(): RecipeConfig<"atelier-nine"> {
         templateId: "atelier-nine",
         role: "hero",
         masterHash: "d".repeat(64),
-        technicalApproval: { approved: true, masterHash: "d".repeat(64) },
+        duration: 10,
+        width: 1600,
+        height: 900,
+        technicalApproval: {
+          approved: true,
+          masterHash: "d".repeat(64),
+          derivativeHashes: ["a".repeat(64), "b".repeat(64), "c".repeat(64)],
+        },
         visualApproval: { approved: true, scope: "full-loop" },
       }],
     },
@@ -216,5 +223,16 @@ describe("storefront recipe factory", () => {
     hero.entries = hero.entries.slice(0, -1);
 
     expect(() => defineRecipe(config)).toThrow(/derivative|media|asset/i);
+  });
+
+  it("validates referenced video roles on non-home surfaces despite a legacy home image", () => {
+    const config = testConfig();
+    config.surfaces.product.source.html = `<main><video data-cd-video data-cd-poster-asset="hero-alt-poster"><source data-cd-asset="hero-alt-webm" type="video/webm"><source data-cd-asset="hero-alt-mp4" type="video/mp4"></video></main>`;
+    config.assets.entries = [...config.assets.entries,
+      { key: "hero-alt-poster", contentHash: "b".repeat(64), mediaType: "image/webp", byteSize: 1 },
+      { key: "hero-alt-webm", contentHash: "c".repeat(64), mediaType: "video/webm", byteSize: 1 },
+      { key: "hero-alt-mp4", contentHash: "d".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+    ];
+    expect(() => defineRecipe(config)).toThrow(/hero-alt.*manifest|approval|proof/i);
   });
 });

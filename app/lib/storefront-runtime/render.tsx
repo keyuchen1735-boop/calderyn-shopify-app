@@ -324,7 +324,7 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
   for (const [name, value] of Object.entries(node.attributes)) {
     const reactName = reactAttributeName(name);
     if (node.tag === "video" && ["muted", "autoplay", "playsinline", "loop"].includes(name)) {
-      props[reactName] = true;
+      props[reactName] = value === "";
     } else if (reactName === "value" && (node.tag === "input" || node.tag === "select" || node.tag === "textarea")) {
       props.defaultValue = value;
     } else {

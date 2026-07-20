@@ -110,6 +110,16 @@ describe("compiled-node server renderer", () => {
     expect(html).toContain("autoplay");
     expect(html).toContain("playsinline");
   });
+
+  it("does not treat persisted autoplay false as enabled", () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const root = bundle.routes.home.tree[0];
+    if (root.kind !== "element") throw new Error("Expected home root");
+    root.tag = "video";
+    root.attributes.autoplay = "false";
+    const html = renderToStaticMarkup(renderStorefrontSurface({ bundle, routeId: "home", data, nonce: "video-false", mode: "public" }));
+    expect(html).not.toContain("autoplay");
+  });
   it("emits validated design tokens and every curated self-hosted font beneath the bundle root", () => {
     for (const fontId of CURATED_FONT_IDS) {
       const source = structuredClone(VALID_BUNDLE_SOURCE);

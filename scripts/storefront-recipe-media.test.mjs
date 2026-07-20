@@ -36,13 +36,16 @@ function runAsync(command, args, options = {}) {
   });
 }
 
-function exactApproval(templateId, role, masterHash) {
+function exactApproval(templateId, role, masterHash, record) {
   return {
     records: [{
       templateId,
       role,
       masterHash,
-      technicalApproval: { approved: true, masterHash },
+      duration: record?.duration,
+      width: record?.width,
+      height: record?.height,
+      technicalApproval: { approved: true, masterHash, derivativeHashes: record?.entries.map(({ contentHash }) => contentHash) },
       visualApproval: { approved: true, scope: "full-loop" },
     }],
   };
@@ -53,7 +56,7 @@ function masterHashFor(templateId, role) {
 }
 
 function approvalsFor(records) {
-  return { records: records.flatMap((record) => exactApproval(record.templateId, record.role, record.masterHash).records) };
+  return { records: records.flatMap((record) => exactApproval(record.templateId, record.role, record.masterHash, record).records) };
 }
 
 function recordFor(baseRecord, templateId, role, includeLocalPath) {
@@ -154,6 +157,27 @@ test("verifies exactly one local derivative record for every required role", () 
   const verified = run(process.execPath, [verifier, manifestPath, proofPath]);
   assert.equal(verified.status, 0, verified.stderr);
   for (const role of roles) assert.match(verified.stdout, new RegExp(`Verified volt/${role}`));
+});
+
+test("rejects approval that does not bind every derivative hash", async () => {
+  const invalidProof = structuredClone(JSON.parse(await readFile(proofPath, "utf8")));
+  invalidProof.records[0].technicalApproval.derivativeHashes[0] = "f".repeat(64);
+  const path = join(directory, "wrong-derivative-proof.json");
+  await writeFile(path, JSON.stringify(invalidProof));
+  const verified = run(process.execPath, [verifier, manifestPath, path]);
+  assert.notEqual(verified.status, 0);
+  assert.match(verified.stderr, /derivative.*hash|approval/i);
+});
+
+test("rejects derivative dimensions and duration that differ from proof", async () => {
+  const invalidProof = structuredClone(JSON.parse(await readFile(proofPath, "utf8")));
+  invalidProof.records[0].width += 1;
+  invalidProof.records[0].duration += 1;
+  const path = join(directory, "wrong-technical-metadata-proof.json");
+  await writeFile(path, JSON.stringify(invalidProof));
+  const verified = run(process.execPath, [verifier, manifestPath, path]);
+  assert.notEqual(verified.status, 0);
+  assert.match(verified.stderr, /dimension|duration/i);
 });
 
 test("rejects missing, duplicate, and unexpected roles", async (context) => {
@@ -305,7 +329,9 @@ test("rejects a poster whose bytes are not WebP", async () => {
     : entry);
   const invalidManifest = join(directory, "invalid-poster-manifest.json");
   await writeFile(invalidManifest, JSON.stringify(invalid));
-  const verified = run(process.execPath, [verifier, invalidManifest, proofPath]);
+  const invalidProof = join(directory, "invalid-poster-proof.json");
+  await writeFile(invalidProof, JSON.stringify(approvalsFor(invalid.records)));
+  const verified = run(process.execPath, [verifier, invalidManifest, invalidProof]);
   assert.notEqual(verified.status, 0);
   assert.match(verified.stderr, /codec|webp/i);
 });
