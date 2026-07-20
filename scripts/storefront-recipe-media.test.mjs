@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { after, before, test } from "node:test";
 
@@ -12,9 +12,12 @@ let directory;
 let manifest;
 let manifestPath;
 let proofPath;
+let repositoryPath;
 
-function run(command, args) {
-  return spawnSync(command, args, { encoding: "utf8" });
+const templateIds = ["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"];
+
+function run(command, args, options = {}) {
+  return spawnSync(command, args, { encoding: "utf8", ...options });
 }
 
 function exactApproval(masterHash) {
@@ -42,8 +45,28 @@ before(async () => {
   const imported = run(process.execPath, [importer, "volt", "hero", masterPath, proofPath, join(directory, "derived"), "--no-upload"]);
   assert.equal(imported.status, 0, imported.stderr);
   manifest = JSON.parse(imported.stdout);
+  assert.equal(manifest.entries.every((entry) => !isAbsolute(entry.localPath)), true, "checked-in manifest paths must be portable");
   manifestPath = join(directory, "manifest.json");
   await writeFile(manifestPath, JSON.stringify(manifest));
+
+  repositoryPath = join(directory, "repository");
+  for (const templateId of templateIds) {
+    const recipePath = join(repositoryPath, "app", "lib", "storefront-recipes", templateId);
+    const recipeManifest = structuredClone(manifest);
+    recipeManifest.templateId = templateId;
+    recipeManifest.entries = recipeManifest.entries.map((entry) => ({
+      ...entry,
+      objectPath: entry.objectPath.replace("storefront-recipe-assets/volt/", `storefront-recipe-assets/${templateId}/`),
+    }));
+    await mkdir(recipePath, { recursive: true });
+    for (const entry of recipeManifest.entries) {
+      const target = join(recipePath, entry.localPath);
+      await mkdir(dirname(target), { recursive: true });
+      await copyFile(join(directory, entry.localPath), target);
+    }
+    await writeFile(join(recipePath, "media-manifest.json"), JSON.stringify(recipeManifest));
+    await writeFile(join(recipePath, "video-proof.json"), JSON.stringify(exactApproval(manifest.masterHash)));
+  }
 });
 
 after(async () => {
@@ -54,6 +77,30 @@ test("normalizes and verifies synthetic media without uploading", () => {
   const verified = run(process.execPath, [verifier, manifestPath, proofPath]);
   assert.equal(verified.status, 0, verified.stderr);
   assert.match(verified.stdout, /Verified volt\/hero/);
+});
+
+test("discovers one template from its exact checked-in recipe paths", () => {
+  const verified = run(process.execPath, [verifier, "--template", "volt"], { cwd: repositoryPath });
+  assert.equal(verified.status, 0, verified.stderr);
+  assert.match(verified.stdout, /Verified volt\/hero/);
+});
+
+test("discovers and verifies every new recipe when called without arguments", () => {
+  const verified = run(process.execPath, [verifier], { cwd: repositoryPath });
+  assert.equal(verified.status, 0, verified.stderr);
+  for (const templateId of templateIds) assert.match(verified.stdout, new RegExp(`Verified ${templateId}/hero`));
+});
+
+test("all-template discovery fails loudly on an incomplete exact-path proof", async () => {
+  await writeFile(join(repositoryPath, "video-proof.json"), JSON.stringify(exactApproval(manifest.masterHash)));
+  const proof = join(repositoryPath, "app", "lib", "storefront-recipes", "glow", "video-proof.json");
+  await writeFile(proof, JSON.stringify({ masterHash: manifest.masterHash, technicalApproval: { approved: true, masterHash: manifest.masterHash } }));
+
+  const verified = run(process.execPath, [verifier], { cwd: repositoryPath });
+  assert.notEqual(verified.status, 0);
+  assert.match(verified.stderr, /glow/);
+  assert.match(verified.stderr, /app[/\\]lib[/\\]storefront-recipes[/\\]glow[/\\]video-proof\.json/);
+  assert.match(verified.stderr, /full-loop visual approval/i);
 });
 
 test("rejects legacy approval without separate technical and full-loop visual approvals", async () => {
