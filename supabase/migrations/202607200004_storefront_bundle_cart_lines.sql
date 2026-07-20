@@ -28,6 +28,11 @@ begin
       raise exception 'invalid trusted bundle line snapshot';
     end if;
   end loop;
+  -- Lock existing cart lines against direct concurrent updates before authoritative preflights.
+  perform 1
+  from public.cart_line cl
+  where cl.shop_id = p_shop_id and cl.cart_id = p_cart_id
+  for update;
   select count(distinct lower(currency)) into v_currency_count
   from (
     select cl.currency
