@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Fizz flavor playground</title>
+  <style>
+    :root{--cobalt:#1739b7;--coral:#ff6f61;--citrus:#d8ff38;--cream:#fff8e8;--ink:#101b52}*{box-sizing:border-box}body{margin:0;background:var(--cream);color:var(--ink);font-family:Arial,sans-serif}header{display:flex;justify-content:space-between;padding:18px 28px;background:var(--cobalt);color:var(--cream)}nav{display:flex;gap:22px}a{color:inherit;text-decoration:none}.hero{position:relative;display:grid;align-items:end;min-height:78vh;overflow:hidden;padding:8vw 6vw;background:linear-gradient(135deg,var(--coral),var(--cobalt));color:var(--cream)}.can{position:absolute;right:14vw;top:10vh;width:150px;height:380px;border:4px solid var(--cream);border-radius:75px;background:var(--citrus);box-shadow:-150px 120px 0 -2px var(--coral),90px 190px 0 -2px var(--cobalt);transform:rotate(8deg)}h1,h2{margin:.1em 0;font-size:clamp(58px,10vw,148px);line-height:.82;letter-spacing:-.07em}.hero-copy{position:relative;z-index:1;max-width:720px}.button,button{display:inline-flex;min-height:44px;align-items:center;padding:12px 18px;border:2px solid var(--cobalt);border-radius:999px;background:var(--citrus);color:var(--cobalt);font-weight:800}.ticker{padding:12px 20px;overflow:hidden;background:var(--citrus);font-weight:900;word-spacing:32px}.section{padding:7vw 4vw}.quiz{background:var(--coral)}.quiz-buttons{display:flex;flex-wrap:wrap;gap:12px}.rail{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{min-height:360px;padding:22px;border:2px solid var(--cobalt);border-radius:28px;background:var(--cream)}.card-art{height:220px;border-radius:20px;background:radial-gradient(circle at 52% 35%,var(--citrus) 0 16%,transparent 17%),linear-gradient(145deg,var(--cobalt),var(--coral))}.pack{background:var(--cobalt);color:var(--cream)}.slots{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.slot{min-height:160px;padding:20px;border:2px dashed var(--cream);border-radius:24px}@media(max-width:760px){header{display:grid;gap:14px}nav{overflow:auto}.can{right:-35px;transform:scale(.7) rotate(8deg)}.rail,.slots{grid-template-columns:1fr 1fr}.hero{min-height:700px}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto;animation:none!important;transition:none!important}}
+  </style>
+</head>
+<body>
+  <header><b data-cd-text="store.name">Store name</b><nav><a>Flavors</a><a>Our story</a><a>Search</a><a>Cart</a></nav></header>
+  <main>
+    <section class="hero"><div class="can" aria-hidden="true"></div><div class="hero-copy"><span>Crack something bright.</span><h1>Find your fizz.</h1><p>Explore live products, prices, options, and availability.</p><span class="button">Shop live flavors</span></div></section>
+    <div class="ticker">LIVE CATALOG • REAL OPTIONS • CURRENT PRICES •</div>
+    <section class="section quiz"><h2>Find your fizz</h2><div class="quiz-buttons"><button>Bright</button><button>Juicy</button><button>Crisp</button></div></section>
+    <section class="section"><h2>Pop into the lineup.</h2><div class="rail"><article class="card"><div class="card-art"></div><h3>Live product</h3><p>Merchant description, price, and availability.</p></article><article class="card"><div class="card-art"></div><h3>Live product</h3><p>Merchant description, price, and availability.</p></article><article class="card"><div class="card-art"></div><h3>Live product</h3><p>Merchant description, price, and availability.</p></article></div></section>
+    <section class="section pack"><h2>Build a variety pack</h2><p>Four bounded positions, each resolved through live products and protected variant controls.</p><div class="slots"><div class="slot">Position 1</div><div class="slot">Position 2</div><div class="slot">Position 3</div><div class="slot">Position 4</div></div><p>Eligible first-order offers appear at checkout.</p></section>
+  </main>
+</body>
+</html>
