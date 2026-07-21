@@ -72,6 +72,38 @@ describe("detectRankingSlips", () => {
     expect(RANK_SLIP_POSITIONS).toBe(3);
     expect(RANK_SLIP_SUSTAIN_DAYS).toBe(3);
   });
+
+  it("flags a slip of exactly RANK_SLIP_POSITIONS, not one less", () => {
+    const flags = series([
+      ["2026-07-10", 4, 100, 9, 0.09], ["2026-07-11", 4, 100, 9, 0.09],
+      ["2026-07-15", 7, 90, 2, 0.02], ["2026-07-16", 7, 90, 2, 0.02], ["2026-07-17", 7, 90, 1, 0.01],
+    ]);
+    expect(detectRankingSlips([flags])).toHaveLength(1);
+
+    const doesNotFlag = series([
+      ["2026-07-10", 4, 100, 9, 0.09], ["2026-07-11", 4, 100, 9, 0.09],
+      ["2026-07-15", 6, 90, 2, 0.02], ["2026-07-16", 6, 90, 2, 0.02], ["2026-07-17", 6, 90, 1, 0.01],
+    ]);
+    expect(detectRankingSlips([doesNotFlag])).toHaveLength(0);
+  });
+
+  it("does not flag a single fluke great day poisoning an otherwise flat history (average baseline, not all-time best)", () => {
+    const s = series([
+      ["2026-07-05", 1, 100, 20, 0.2], // fluke #1 day
+      ["2026-07-06", 8, 90, 3, 0.03], ["2026-07-07", 8, 90, 3, 0.03],
+      ["2026-07-08", 8, 90, 3, 0.03], ["2026-07-09", 8, 90, 3, 0.03],
+      ["2026-07-15", 8, 90, 3, 0.03], ["2026-07-16", 8, 90, 3, 0.03], ["2026-07-17", 8, 90, 3, 0.03],
+    ]);
+    expect(detectRankingSlips([s])).toHaveLength(0);
+  });
+
+  it("does not flag when the 3 'recent' points have a gap spanning more than 4 calendar days", () => {
+    const s = series([
+      ["2026-06-20", 4, 100, 9, 0.09], ["2026-06-21", 4, 100, 9, 0.09],
+      ["2026-07-01", 8, 90, 2, 0.02], ["2026-07-06", 8, 90, 2, 0.02], ["2026-07-11", 8, 90, 1, 0.01],
+    ]);
+    expect(detectRankingSlips([s])).toHaveLength(0);
+  });
 });
 
 describe("detectCtrLow", () => {
@@ -89,6 +121,26 @@ describe("detectCtrLow", () => {
     const thin = series([["2026-07-18", 5, 40, 0, 0]]);
     const deep = series([["2026-07-16", 14, 200, 1, 0.005], ["2026-07-17", 14, 200, 1, 0.005]]);
     expect(detectCtrLow([thin, deep])).toHaveLength(0);
+  });
+
+  it("ignores points older than the last 7 days present in the series", () => {
+    // pos 5 expects 7% (EXPECTED_CTR_BY_POSITION[4]); low-CTR threshold is 3.5%.
+    // Older week (days 1-7, outside the 7-day window): healthy 7% CTR.
+    // Recent week (days 8-14, inside the window): a real current problem at 1% CTR.
+    // Full-series aggregation would blend these to ~4% and MISS the live problem;
+    // the 7-day window must catch it.
+    const points: Array<[string, number, number, number, number]> = [];
+    for (let i = 0; i < 7; i++) {
+      points.push([`2026-07-${String(1 + i).padStart(2, "0")}`, 5, 100, 7, 0.07]);
+    }
+    for (let i = 0; i < 7; i++) {
+      points.push([`2026-07-${String(8 + i).padStart(2, "0")}`, 5, 100, 1, 0.01]);
+    }
+    const s = series(points);
+    const out = detectCtrLow([s]);
+    expect(out).toHaveLength(1);
+    expect(out[0].evidence.facts.impressions).toBe(700);
+    expect(out[0].evidence.facts.ctr).toBeCloseTo(0.01, 5);
   });
 });
 
@@ -118,5 +170,17 @@ describe("detectRisingQueries", () => {
         [`2026-07-${String(5 + i).padStart(2, "0")}`, 12, 40, 1, 0.02]),
     );
     expect(detectRisingQueries([good, flat])).toHaveLength(0);
+  });
+
+  it("flags the rising position band inclusively at exactly 8 and 20, not just outside it", () => {
+    const at = (position: number) =>
+      series(
+        Array.from({ length: 7 }, (_, i): [string, number, number, number, number] =>
+          [`2026-07-${String(12 + i).padStart(2, "0")}`, position, 10, 1, 0.1]),
+      );
+    expect(detectRisingQueries([at(8)])).toHaveLength(1);
+    expect(detectRisingQueries([at(20)])).toHaveLength(1);
+    expect(detectRisingQueries([at(7.9)])).toHaveLength(0);
+    expect(detectRisingQueries([at(20.1)])).toHaveLength(0);
   });
 });

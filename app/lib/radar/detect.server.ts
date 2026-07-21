@@ -1,6 +1,12 @@
 // Deterministic Radar detectors: pure functions over collected rows. No DB, no
 // Claude, no clock reads except via parameters - every threshold is a named
 // exported constant so tests and tuning share one source of truth.
+//
+// Input contract: `series` arrives already bounded to the LAST 14 CALENDAR
+// DAYS by the read_radar_ranking_series RPC (per page,query). Detectors below
+// additionally enforce their own, narrower windows within that 14-day input
+// (e.g. a 3-day sustain check, a 7-day CTR window) - never assume the RPC's
+// 14-day bound alone is tight enough for a given detector's claim.
 import type { RadarCandidate, RankingSeries } from "./types";
 
 // ── Rankings thresholds (spec defaults) ──────────────────────────────────────
@@ -51,6 +57,19 @@ function sortedDays<T extends { day: string }>(days: T[]): T[] {
   return [...days].sort((a, b) => a.day.localeCompare(b.day));
 }
 
+/** Whole calendar days between two YYYY-MM-DD strings (b - a). */
+function daySpan(a: string, b: string): number {
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.round((Date.parse(b) - Date.parse(a)) / msPerDay);
+}
+
+/** Shift a YYYY-MM-DD string by `delta` calendar days (negative = earlier). */
+function addDays(day: string, delta: number): string {
+  const d = new Date(Date.parse(day));
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
 /** SEO publishes only work for product pages today (the storefront serve path
  *  reads product overrides only) - everything else becomes a review move. */
 function seoPayload(
@@ -68,23 +87,34 @@ export function detectRankingSlips(series: RankingSeries[]): RadarCandidate[] {
   const out: RadarCandidate[] = [];
   for (const s of series) {
     const days = sortedDays(s.days);
-    if (days.length < RANK_SLIP_SUSTAIN_DAYS + 1) continue;
+    // Need the 3 sustained "recent" points plus at least 2 "earlier" points
+    // to form a meaningful baseline average (a baseline of 1 point is just
+    // another single-day reading, not a trend).
+    if (days.length < RANK_SLIP_SUSTAIN_DAYS + 2) continue;
     const recent = days.slice(-RANK_SLIP_SUSTAIN_DAYS);
     const earlier = days.slice(0, -RANK_SLIP_SUSTAIN_DAYS);
-    const bestEarlier = Math.min(...earlier.map((d) => d.position));
-    if (!recent.every((d) => d.position >= bestEarlier + RANK_SLIP_POSITIONS)) continue;
+    // The 3 "recent" points must actually be recent and contiguous-ish - a
+    // gap inside them (a data hole spanning more than 4 calendar days) must
+    // not be allowed to fake a sustained slip.
+    if (daySpan(recent[0].day, recent[recent.length - 1].day) > 4) continue;
+    // Average, not all-time-best: a single fluke great day in `earlier`
+    // must not poison the baseline every later comparison gets measured
+    // against.
+    const baseline = earlier.reduce((n, d) => n + d.position, 0) / earlier.length;
+    if (!recent.every((d) => d.position >= baseline + RANK_SLIP_POSITIONS)) continue;
     const nowPos = recent[recent.length - 1].position;
     const ref = parseStorefrontPath(s.pageUrl);
+    const baselineDisplay = Math.round(baseline * 10) / 10;
     out.push({
       kind: "seo_regression_patch",
       dedupKey: `rank-slip:${s.pageUrl}:${s.query}`,
       headline: `Win back "${s.query}" on Google`,
       rationale:
-        `${pageLabel(ref)} was around #${Math.round(bestEarlier)} on Google for "${s.query}" ` +
+        `${pageLabel(ref)} was around #${baselineDisplay} on Google for "${s.query}" ` +
         `and has sat at #${Math.round(nowPos)} or lower for ${RANK_SLIP_SUSTAIN_DAYS} days.`,
       evidence: {
-        chips: [`was #${Math.round(bestEarlier)}`, `now #${Math.round(nowPos)}`, `${RANK_SLIP_SUSTAIN_DAYS} days running`],
-        facts: { pageUrl: s.pageUrl, query: s.query, bestEarlier, nowPos },
+        chips: [`was #${baselineDisplay}`, `now #${Math.round(nowPos)}`, `${RANK_SLIP_SUSTAIN_DAYS} days running`],
+        facts: { pageUrl: s.pageUrl, query: s.query, baseline, nowPos },
       },
       payload: seoPayload(ref, s.pageUrl, s.query),
     });
@@ -95,10 +125,17 @@ export function detectRankingSlips(series: RankingSeries[]): RadarCandidate[] {
 export function detectCtrLow(series: RankingSeries[]): RadarCandidate[] {
   const out: RadarCandidate[] = [];
   for (const s of series) {
-    const impressions = s.days.reduce((n, d) => n + d.impressions, 0);
+    const sorted = sortedDays(s.days);
+    if (sorted.length === 0) continue;
+    // Restrict to the last 7 calendar days present in the series so the
+    // "spot #N" evidence reflects current standing, not a stale average
+    // blended with data up to a week older.
+    const cutoff = addDays(sorted[sorted.length - 1].day, -6);
+    const window = sorted.filter((d) => d.day >= cutoff);
+    const impressions = window.reduce((n, d) => n + d.impressions, 0);
     if (impressions < CTR_MIN_IMPRESSIONS) continue;
-    const clicks = s.days.reduce((n, d) => n + d.clicks, 0);
-    const avgPos = s.days.reduce((n, d) => n + d.position * d.impressions, 0) / impressions;
+    const clicks = window.reduce((n, d) => n + d.clicks, 0);
+    const avgPos = window.reduce((n, d) => n + d.position * d.impressions, 0) / impressions;
     if (avgPos > 10) continue;
     const slot = Math.min(Math.max(Math.round(avgPos), 1), 10);
     const expected = EXPECTED_CTR_BY_POSITION[slot - 1];
@@ -138,6 +175,8 @@ export function detectRisingQueries(series: RankingSeries[]): RadarCandidate[] {
     const ref = parseStorefrontPath(s.pageUrl);
     out.push({
       kind: "seo_content_boost",
+      // Dedup is query-level (not page+query) on purpose: a rising query is
+      // one move to make even if it ranks on two different pages.
       dedupKey: `rising:${s.query}`,
       headline: `"${s.query}" is picking up - lean in`,
       rationale:
