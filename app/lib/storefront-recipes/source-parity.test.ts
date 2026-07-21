@@ -24,7 +24,7 @@ function elements(root: Node): Element[] {
 
 function classes(element: Element): string[] {
   return element.attrs.find(({ name }) => name === "class")?.value.split(/\s+/)
-    .filter((name) => name && !["active", "open", "selected"].includes(name)) ?? [];
+    .filter((name) => name && !["active", "open", "selected"].includes(name) && !name.endsWith("-cta-label")) ?? [];
 }
 
 function structuralSignatures(root: Node): string[] {

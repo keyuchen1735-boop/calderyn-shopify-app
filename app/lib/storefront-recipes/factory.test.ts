@@ -124,6 +124,7 @@ describe("storefront recipe factory", () => {
     expect(result.config.archetype.composition).toBe("asymmetric-magazine");
     expect(result.config.surfaces.home.signature).not.toBe(result.config.surfaces.collection.signature);
     expect(result.bundle.routes.home.html).toContain("cd-home-");
+    expect(result.bundle.routes.home.trustedSlots.map(({ kind }) => kind)).toContain("quickViewCommerce");
     expect(result.bundle.routes.checkout.layout.columnMode).toBe("summaryAside");
   });
 

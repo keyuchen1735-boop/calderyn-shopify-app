@@ -67,6 +67,26 @@ describe("fizz storefront recipe", () => {
     expect(bundle.routes.home.css).toContain("scroll-snap-type:x mandatory");
   });
 
+  it("covers Baymard-depth fizz discovery without leaving merchant truth", () => {
+    const { bundle } = FIZZ_RECIPE;
+
+    expect(bundle.routes.home.html).toContain("Flavor doors");
+    expect(FIZZ_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-route="collections"');
+    expect(bundle.routes.collections!.html).toContain("Flavor map");
+    expect(bundle.routes.collections!.html).toContain("Collection lanes use this merchant catalog");
+    expect(bundle.routes.collection.html).toContain("Flavor map");
+    expect(bundle.routes.collection.html).toContain("Sibling flavor lanes");
+    expect(bundle.routes.collection.html).toContain("Applied filter");
+    expect(bundle.routes.collection.interactions.transitions.map((transition) => transition.action.type)).toEqual(expect.arrayContaining(["collection.filter", "collection.sort"]));
+    expect(bundle.routes.collection.trustedSlots.map(({ kind }) => kind)).toContain("quickViewCommerce");
+    expect(repeatsIn(bundle.routes.product.tree)).toEqual(expect.arrayContaining(["product.images", "product.facts", "related.products"]));
+    expect(bundle.routes.product.html).toContain("Policy links and checkout terms are provided by the merchant");
+    expect(bundle.routes.search.html).toContain("Result count");
+    expect(bundle.routes.search.html).toContain("Recover by browsing flavor lanes");
+    expect(bundle.routes.cart.html).toContain("Review line quantities, current totals, and merchant policies before checkout");
+    expect(bundle.routes.checkout.decorativeHtml).toContain("Protected checkout continues below");
+  });
+
   it("hydrates truthful flavor guidance while commerce stays in the protected pack builder", () => {
     const route = FIZZ_RECIPE.bundle.routes.home;
     document.body.innerHTML = route.html;

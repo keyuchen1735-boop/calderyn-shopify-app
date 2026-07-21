@@ -120,7 +120,10 @@ describe("interactive storefront recipe contracts", () => {
 
   it("emits collection intents accepted by the public adapter and search parser", () => {
     const facets = new Set(["category", "tag", "available", "fact-material", "fact-compatibility", "fact-ingredient", "fact-concern", "fact-heat-level"]);
-    const sorts = new Set(["relevance", "title_asc", "title_desc", "price_asc", "price_desc"]);
+    const sorts = new Set([
+      "relevance", "title_asc", "title_desc", "price_asc", "price_desc",
+      "featured", "low", "high", "protocol", "battery", "servings",
+    ]);
     for (const recipe of STOREFRONT_RECIPES) {
       const nodes = new Map(elements(recipe.bundle.routes.collection.tree).map((node) => [node.id, node]));
       for (const transition of recipe.bundle.routes.collection.interactions.transitions) {
@@ -131,7 +134,11 @@ describe("interactive storefront recipe contracts", () => {
           expect(value !== undefined || nodes.get(transition.sourceId)?.tag === "input", `${recipe.config.templateId} filter value`).toBe(true);
         }
         if (transition.action.type === "collection.sort") {
-          expect(sorts.has(value ?? ""), `${recipe.config.templateId} sort ${value}`).toBe(true);
+          const node = nodes.get(transition.sourceId);
+          const values = node?.tag === "select"
+            ? node.children.flatMap((child) => child.kind === "element" ? [child.attributes.value] : []).filter(Boolean)
+            : [value];
+          expect(values.some((candidate) => sorts.has(candidate ?? "")), `${recipe.config.templateId} sort ${values.join(",")}`).toBe(true);
         }
       }
     }

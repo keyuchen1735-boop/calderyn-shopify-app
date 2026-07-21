@@ -85,6 +85,51 @@ describe("roast storefront recipe", () => {
     expect(bundle.routes.home.css).toContain("prefers-reduced-motion:reduce");
   });
 
+
+  it("covers the Baymard-depth merchant-bound catalog contract", () => {
+    const { bundle } = compileRecipeConfig(ROAST_RECIPE_CONFIG);
+    const home = ROAST_RECIPE_CONFIG.surfaces.home.source.html;
+    const collections = ROAST_RECIPE_CONFIG.surfaces.collections.source.html;
+    const collection = ROAST_RECIPE_CONFIG.surfaces.collection.source.html;
+    const product = ROAST_RECIPE_CONFIG.surfaces.product.source.html;
+    const search = ROAST_RECIPE_CONFIG.surfaces.search.source.html;
+    const cart = ROAST_RECIPE_CONFIG.surfaces.cart.source.html;
+
+    expect(home.match(/data-cd-route="collection"/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+    expect(collections).toContain("Method notebooks");
+    expect(collections.match(/data-cd-route="collection"/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
+    expect(collections).toContain('data-cd-repeat="featured.products"');
+
+    expect(collection).toContain("Origin index / merchant record");
+    expect(collection).toContain("Sibling notebooks");
+    expect(collection).toContain('data-cd-text="collection.productCount"');
+    expect(collection).toContain('data-cd-action="collection.filter"');
+    expect(collection).toContain('data-cd-action="collection.sort"');
+    expect(collection).toContain("Applied filter");
+    expect(collection).toContain('data-cd-slot="quickViewCommerce"');
+    expect(dataPaths(bundle.routes.collection)).toEqual(expect.arrayContaining([
+      "collection.title", "collection.description", "collection.productCount", "product.primaryImage", "product.title",
+      "product.description", "product.price", "product.availability",
+    ]));
+
+    expect(product).toContain('data-cd-repeat="product.images"');
+    expect(product).toContain('data-cd-repeat="product.facts"');
+    expect(product).toContain("Policy and checkout notes");
+    expect(product).toContain('data-cd-repeat="related.products"');
+    expect(repeatsIn(bundle.routes.product.tree)).toContain("related.products");
+    expect(bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
+
+    expect(search).toContain('data-cd-repeat="search.results"');
+    expect(search).toContain("Result count");
+    expect(search).toContain("Browse method notebooks");
+    expect(search).toContain("No coffee matches that search");
+
+    expect(cart).toContain('data-cd-slot="cartLineControls"');
+    expect(cart).toContain('data-cd-slot="cartSummary"');
+    expect(cart).toContain("Checkout stays protected");
+    expect(ROAST_RECIPE_CONFIG.surfaces.checkout.source.html).toContain("platform controlled");
+  });
+
   it("ships the recipe-owned static asset contract and visual prototype", () => {
     for (const path of [
       "app/lib/storefront-recipes/roast/assets.ts",

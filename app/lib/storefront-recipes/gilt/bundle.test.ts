@@ -55,6 +55,37 @@ describe("Gilt storefront recipe", () => {
     );
   });
 
+  it("deepens merchant-bound catalog discovery across Gilt routes", () => {
+    const { bundle } = compileRecipeConfig(GILT_RECIPE_CONFIG);
+    expect(GILT_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-route="collections"');
+    expect(GILT_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-action="collection.filter"');
+    expect(GILT_RECIPE_CONFIG.surfaces.collections.source.html.match(/data-cd-route="collection"/g)).toHaveLength(4);
+    expect(bundle.routes.collection.bindings.map(({ ref }) => ref)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "collection.productCount" }),
+      expect.objectContaining({ path: "collection.image" }),
+    ]));
+    expect(bundle.routes.collection.interactions.transitions.map(({ action }) => action.type)).toEqual(
+      expect.arrayContaining(["collection.filter", "collection.sort"]),
+    );
+    expect(GILT_RECIPE_CONFIG.surfaces.collection.source.html).toContain("Applied now");
+    expect(bundle.routes.collection.trustedSlots.map(({ kind }) => kind)).toContain("quickViewCommerce");
+    expect(bundle.routes.product.bindings.map(({ ref }) => ref)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "fact.label" }),
+      expect.objectContaining({ path: "fact.value" }),
+      expect.objectContaining({ path: "fact.url" }),
+    ]));
+    expect(GILT_RECIPE_CONFIG.surfaces.product.source.html).toContain("Related objects");
+    expect(bundle.routes.search.html).toContain("results returned");
+    expect(GILT_RECIPE_CONFIG.surfaces.search.source.html).toContain('data-cd-route="collections"');
+    expect(bundle.routes.cart.bindings.map(({ ref }) => ref)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "cart.subtotal" }),
+      expect.objectContaining({ path: "cartLine.unitPrice" }),
+    ]));
+    expect(bundle.routes.cart.trustedSlots.map(({ kind }) => kind)).toEqual(
+      expect.arrayContaining(["cartLineControls", "cartSummary"]),
+    );
+  });
+
   it("uses one honest all-products path until live collection data is available", () => {
     const collections = GILT_RECIPE_CONFIG.surfaces.collections.source.html;
     expect(collections).toContain("All products");

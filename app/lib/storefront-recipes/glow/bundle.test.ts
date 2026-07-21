@@ -123,6 +123,36 @@ describe("glow storefront recipe", () => {
     expect(evidenceHtml).toContain('href="https://merchant.example/formula"');
   });
 
+  it("deepens catalog discovery with bounded commerce controls across collection, product, search, cart, and checkout", () => {
+    const { bundle } = GLOW_RECIPE;
+
+    expect(GLOW_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-route="collections"');
+    expect(GLOW_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-route="search"');
+    expect(bundle.routes.collections?.html).toContain('glow-directory-card');
+    expect(GLOW_RECIPE_CONFIG.surfaces.collections.source.html).toContain('data-cd-repeat="featured.products"');
+
+    expect(bundle.routes.collection.html).toContain('aria-label="Formula breadcrumbs"');
+    expect(bundle.routes.collection.html).toContain('aria-label="Sibling formula shelves"');
+    expect(bundle.routes.collection.html).toContain('glow-applied');
+    expect(GLOW_RECIPE_CONFIG.surfaces.collection.source.html).toContain('data-cd-action="collection.filter"');
+    expect(GLOW_RECIPE_CONFIG.surfaces.collection.source.html).toContain('data-cd-action="collection.sort"');
+    expect(GLOW_RECIPE_CONFIG.surfaces.collection.source.html).toContain('data-cd-slot="quickViewCommerce"');
+    expect(dataPaths(bundle.routes.collection)).toEqual(expect.arrayContaining([
+      "collection.title", "collection.description", "collection.productCount",
+      "product.title", "product.description", "product.price", "product.availability",
+    ]));
+
+    expect(bundle.routes.product.html).toContain('glow-gallery');
+    expect(bundle.routes.product.html).toContain('glow-reassurance');
+    expect(GLOW_RECIPE_CONFIG.surfaces.product.source.html).toContain('data-cd-repeat="related.products"');
+    expect(bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
+
+    expect(bundle.routes.search.html).toContain('Result count updates');
+    expect(GLOW_RECIPE_CONFIG.surfaces.search.source.html).toContain('data-cd-route="collections"');
+    expect(bundle.routes.cart.html).toContain('glow-cart-reassurance');
+    expect(bundle.routes.checkout.decorativeHtml).toContain('glow-checkout-path');
+  });
+
   it("requires one generated hero image, ships no runtime video, and keeps thumb-safe navigation", () => {
     expect(GLOW_ASSET_KEYS).toEqual(["hero"]);
     expect(GLOW_ASSETS.entries).toEqual([

@@ -9,6 +9,7 @@ const RECIPE_IDS = [
   "custom-bench", "commons-index", "soft-chemistry", "companion-field-guide", "daily-protocol",
   "room-modes", "rep-rest", "diagnostic-deck", "ritual-almanac", "broadcast-patch-bay", "atelier-nine",
 ];
+const BAYMARD_RECIPE_IDS = ["volt", "atelier", "gilt", "ember", "roast", "fizz", "forge", "haven", "glow"];
 const ROUTE_IDS = ["home", "collection", "product", "search", "cart", "checkout"] as const;
 const EMPTY_ROUTE_IDS = ["home", "collection", "search", "cart", "checkout"] as const;
 const VIEWPORTS = ["mobile", "tablet", "desktop"] as const;
@@ -44,6 +45,7 @@ describe("committed storefront screenshot manifest", () => {
       "full-story-missing-images",
       "full-story",
       "full-story-invalid-shader",
+      ...BAYMARD_RECIPE_IDS,
     ]);
     expect(manifest.recipes.every((entry) => entry.sourceKind === "recipe")).toBe(true);
     for (const entry of manifest.recipes) {
@@ -53,7 +55,7 @@ describe("committed storefront screenshot manifest", () => {
         ? expectedScreenshots(ROUTE_IDS, [0, 24, 48]).map(screenshotKey)
         : entry.id.startsWith("empty-")
           ? expectedScreenshots(EMPTY_ROUTE_IDS).map(screenshotKey)
-          : RECIPE_IDS.includes(entry.id)
+          : RECIPE_IDS.includes(entry.id) || BAYMARD_RECIPE_IDS.includes(entry.id)
             ? expectedScreenshots(ROUTE_IDS, [0, 24]).map(screenshotKey)
             : expectedScreenshots(["home"]).map(screenshotKey);
       const actualKeys = entry.screenshots.map(screenshotKey);

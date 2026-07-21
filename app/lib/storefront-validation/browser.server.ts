@@ -49,7 +49,7 @@ const ROUTE_BYTES_LIMIT = 250 * 1024;
 const INTERACTION_BYTES_LIMIT = 40 * 1024;
 const FULL_BUNDLE_BYTES_LIMIT = 1.5 * 1024 * 1024;
 const CATALOG_PAGE_SIZE = 24;
-const STOREFRONT_PROOF_ROUTE_RE = /^\/storefront(?:\/(?:collections|products|search|cart|checkout|account)(?:[/?#].*)?|\/policies\/(?:privacy|terms|refund|shipping)\/?(?:[?#].*)?)?$/;
+const STOREFRONT_PROOF_ROUTE_RE = /^\/storefront(?:\/(?:collections|products|search|story|cart|checkout|account)(?:[/?#].*)?|\/policies\/(?:privacy|terms|refund|shipping)\/?(?:[?#].*)?)?$/;
 let proofRuntimeSource: Promise<string> | undefined;
 
 export function isSupportedStorefrontProofLink(href: string): boolean {
@@ -864,8 +864,9 @@ async function auditPage(
       if (host.dataset.cdTrustedSlot === "cartDrawer" && host.hidden && !visible(host)) return [];
       const controls = [...(host.shadowRoot?.querySelectorAll<HTMLElement>("button,input,select") ?? [])];
       if (!host.shadowRoot) return [`${host.id || host.dataset.cdTrustedSlot}:closed-or-missing-root`];
-      if (controls.length === 0) return [`${host.id || host.dataset.cdTrustedSlot}:missing-control`];
-      return controls.flatMap((control) => {
+      const visibleControls = controls.filter(visible);
+      if (visibleControls.length === 0) return [`${host.id || host.dataset.cdTrustedSlot}:missing-control`];
+      return visibleControls.flatMap((control) => {
         const style = getComputedStyle(control);
         const rect = control.getBoundingClientRect();
         return visible(control) && rect.width >= 44 && rect.height >= 44 && style.backgroundColor !== "rgba(0, 0, 0, 0)"

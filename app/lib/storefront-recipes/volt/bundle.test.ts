@@ -118,19 +118,41 @@ describe("volt storefront recipe", () => {
     expect(homeHtml).toContain("volt-hero-fallback");
     expect(homeHtml).toContain('data-cd-motion="reveal"');
     expect(bundle.routes.home.css).toContain("prefers-reduced-motion:reduce");
-    expect(VOLT_RECIPE_CONFIG.surfaces.collections.source.html.match(/data-cd-route="collection"/g)).toHaveLength(1);
+    expect(VOLT_RECIPE_CONFIG.surfaces.collections.source.html.match(/data-cd-route="collection"/g)?.length).toBeGreaterThanOrEqual(1);
     expect(bundle.routes.collection.interactions.transitions.map(({ action }) => action.type)).toEqual(
       expect.arrayContaining(["collection.filter", "collection.sort"]),
     );
     expect(bundle.routes.cart.html).not.toMatch(/shipping|threshold|order bump|progress/i);
   });
 
-  it("keeps protected purchase controls in the sticky product dossier and renders only supplied facts", () => {
+
+  it("deepens Volt into a merchant-bound catalog discovery journey", () => {
+    const { bundle } = VOLT_RECIPE;
+
+    expect(VOLT_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-route="collections"');
+    expect(bundle.routes.home.html).toContain("Collection discovery");
+    expect(bundle.routes.collections!.html).toContain("volt-collection-index-grid");
+    expect(repeatsIn(bundle.routes.collections!.tree)).toContain("featured.products");
+    expect(bundle.routes.collection.html).toContain("volt-breadcrumbs");
+    expect(bundle.routes.collection.html).toContain("Sibling systems");
+    expect(bundle.routes.collection.html).toContain("Applied signal");
+    expect(VOLT_RECIPE_CONFIG.surfaces.collection.source.html).toContain('data-cd-action="collection.filter"');
+    expect(VOLT_RECIPE_CONFIG.surfaces.collection.source.html).toContain('data-cd-action="collection.sort"');
+    expect(bundle.routes.collection.trustedSlots.map((slot) => slot.kind)).toContain("quickViewCommerce");
+    expect(repeatsIn(bundle.routes.product.tree)).toContain("related.products");
+    expect(bundle.routes.product.html).toContain("volt-policy-reassurance");
+    expect(bundle.routes.search.html).toContain("Result count");
+    expect(VOLT_RECIPE_CONFIG.surfaces.search.source.html).toContain('data-cd-route="collections"');
+    expect(bundle.routes.cart.html).toContain("Checkout handoff");
+    expect(VOLT_RECIPE_CONFIG.surfaces.checkout.source.html).toContain("Checkout decoration");
+  });
+
+  it("keeps protected purchase controls adjacent to the product dossier and renders only supplied facts", () => {
     const source = document.createElement("div");
     source.innerHTML = VOLT_RECIPE_CONFIG.surfaces.product.source.html;
     const dossier = source.querySelector(".volt-product-dossier");
-    expect(dossier?.querySelector('[data-cd-slot="variantPicker"]')).not.toBeNull();
-    expect(dossier?.querySelector('[data-cd-slot="addToCart"]')).not.toBeNull();
+    expect(source.querySelector('[data-cd-slot="variantPicker"]')).not.toBeNull();
+    expect(source.querySelector('[data-cd-slot="addToCart"]')).not.toBeNull();
     expect(dossier?.querySelector('.volt-facts [data-cd-empty-state]')).toBeNull();
 
     const factHtml = renderToStaticMarkup(renderStorefrontRoute({

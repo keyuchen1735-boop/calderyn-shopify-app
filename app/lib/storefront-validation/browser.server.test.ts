@@ -440,6 +440,7 @@ describe("storefront browser proof matrix", () => {
   });
 
   it("treats exact storefront policy URLs as supported internal routes", () => {
+    expect(isSupportedStorefrontProofLink("/storefront/story")).toBe(true);
     expect(isSupportedStorefrontProofLink("/storefront/policies/shipping")).toBe(true);
     expect(isSupportedStorefrontProofLink("/storefront/policies/refund?from=checkout")).toBe(true);
     expect(isSupportedStorefrontProofLink("/storefront/policies/invented")).toBe(false);

@@ -442,11 +442,45 @@ function withRequiredCollectionCommerce<const TTemplateId extends StoreTemplateI
   };
 }
 
+function withRequiredHomeCommerce<const TTemplateId extends StoreTemplateId>(
+  config: RecipeConfig<TTemplateId>,
+): RecipeConfig<TTemplateId> {
+  const source = config.surfaces.home.source;
+  let html = source.html;
+  if ((["volt", "atelier", "gilt", "ember", "roast", "fizz", "forge", "haven", "glow"] as StoreTemplateId[]).includes(config.templateId)
+    && !html.includes("cta-label")) {
+    html = html.replace(/<a([^>]*data-cd-route="collection"[^>]*)>/, (tag, attributes: string) => {
+      const className = `${config.templateId}-cta-label`;
+      return attributes.includes('class="')
+        ? tag.replace('class="', `class="${className} `)
+        : `<a class="${className}"${attributes}>`;
+    });
+  }
+  const hostTag = config.templateId === "ember" ? "section" : "aside";
+  if (!html.includes('data-cd-slot="quickViewCommerce"')) {
+    html += `<section data-cd-repeat="featured.products"><${hostTag} data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></${hostTag}></section>`;
+  }
+  if (html === source.html) return config;
+  return {
+    ...config,
+    surfaces: {
+      ...config.surfaces,
+      home: {
+        ...config.surfaces.home,
+        source: {
+          ...source,
+          html,
+        },
+      },
+    },
+  };
+}
+
 /** Compile a full recipe whose route markup and CSS remain owned by that recipe. */
 export function defineRecipe<const TTemplateId extends StoreTemplateId>(
   config: RecipeConfig<TTemplateId>,
 ): DefinedRecipe<TTemplateId> {
-  const boundConfig = withRequiredCollectionCommerce(withRequiredShellBindings(config));
+  const boundConfig = withRequiredHomeCommerce(withRequiredCollectionCommerce(withRequiredShellBindings(config)));
   assertArchetypeMatchesRegistry(boundConfig);
   assertDistinctSurfaceSignatures(boundConfig);
   assertDeclaredHomeHero(boundConfig);
@@ -461,7 +495,7 @@ export function compileRecipeConfig<const TTemplateId extends StoreTemplateId>(
   if (config.templateVersion !== 1 && (["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"] as StoreTemplateId[]).includes(config.templateId)) {
     throw new Error(`New recipe ${config.templateId} must use template version 1`);
   }
-  const boundConfig = withRequiredCollectionCommerce(withRequiredShellBindings(config));
+  const boundConfig = withRequiredHomeCommerce(withRequiredCollectionCommerce(withRequiredShellBindings(config)));
   assertDistinctSurfaceSignatures(boundConfig);
   const result = compileBundle(compilerSource(boundConfig));
   return { ...result, config: boundConfig };

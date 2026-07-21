@@ -40,13 +40,14 @@ describe("Forge storefront recipe", () => {
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(10);
 
     expect(bundle.designSystem).toMatchObject({ displayFontId: "oswald", bodyFontId: "dm-mono" });
-    expect(bundle.designSystem.tokens).toMatchObject({ steel: "#24313a", orange: "#c94f18", parchment: "#efe4ce" });
+    expect(bundle.designSystem.tokens).toMatchObject({ steel: "#24313a", orange: "#96390f", parchment: "#efe4ce" });
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
     for (const route of ["home", "collections", "collection", "story", "search", "cart"] as const) {
       expect(config.surfaces.shell.source.html).toContain(`data-cd-route="${route}"`);
     }
 
     expect(repeats(bundle.routes.home.tree)).toContain("featured.products");
+    expect(bundle.routes.home.html).toContain("Collection doorways / live projects");
     expect(dataPaths(bundle.routes.home)).toEqual(expect.arrayContaining([
       "product.primaryImage", "product.title", "product.description", "product.price", "product.availability",
     ]));
@@ -57,6 +58,9 @@ describe("Forge storefront recipe", () => {
     ]));
 
     expect(repeats(bundle.routes.collection.tree)).toContain("collection.products");
+    expect(bundle.routes.collection.html).toContain("Collection hierarchy");
+    expect(bundle.routes.collection.html).toContain("Sibling project records");
+    expect(bundle.routes.collection.html).toContain("Applied drawing marks");
     expect(actions(bundle.routes.collection)).toEqual(expect.arrayContaining(["collection.filter", "collection.sort"]));
     expect(bundle.routes.collection.interactions.transitions.filter((item) => item.action.type === "collection.filter"))
       .toSatisfy((items: RouteArtifact["interactions"]["transitions"]) => items.length >= 5);
@@ -67,6 +71,8 @@ describe("Forge storefront recipe", () => {
       "product.price", "product.availability",
     ]));
     expect(bundle.routes.collection.trustedSlots.map((slot) => slot.kind)).toContain("quickViewCommerce");
+    expect(bundle.routes.collections!.html).toContain("Project doorway 01");
+    expect(repeats(bundle.routes.collections!.tree)).toContain("featured.products");
 
     expect(repeats(bundle.routes.product.tree)).toEqual(expect.arrayContaining(["product.images", "product.facts", "product.variants"]));
     expect(dataPaths(bundle.routes.product)).toEqual(expect.arrayContaining([
@@ -74,6 +80,9 @@ describe("Forge storefront recipe", () => {
       "fact.label", "fact.value", "fact.url", "variant.title", "variant.price", "variant.availability",
     ]));
     expect(bundle.routes.product.html).toContain("Merchant compatibility record");
+    expect(bundle.routes.product.html).toContain("Policy check before loadout");
+    expect(bundle.routes.product.html).toContain("Related project records");
+    expect(repeats(bundle.routes.product.tree)).toContain("related.products");
     expect(bundle.routes.product.trustedSlots.map((slot) => slot.kind)).toEqual(
       expect.arrayContaining(["variantPicker", "addToCart"]),
     );
@@ -86,8 +95,12 @@ describe("Forge storefront recipe", () => {
     expect(routeMarkup).not.toMatch(/\b(?:ansi|osha|ip\d\d|\d+\s*(?:nm|rpm|psi))\b/i);
 
     expect(repeats(bundle.routes.search.tree)).toContain("search.results");
+    expect(bundle.routes.search.html).toContain("Matching live records");
+    expect(bundle.routes.search.html).toContain("Open project doorways");
     expect(actions(bundle.routes.search)).toEqual(expect.arrayContaining(["search.update", "search.submit", "search.clear"]));
     expect(repeats(bundle.routes.cart.tree)).toContain("cart.lines");
+    expect(bundle.routes.cart.html).toContain("Review lines");
+    expect(bundle.routes.cart.html).toContain("Merchant policy links remain available before checkout");
     expect(bundle.routes.cart.trustedSlots.map((slot) => slot.kind)).toEqual(
       expect.arrayContaining(["cartLineControls", "cartSummary"]),
     );

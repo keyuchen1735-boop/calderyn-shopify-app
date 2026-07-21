@@ -9,6 +9,11 @@ import { canonicalizeStorefrontLinePersonalization, type StorefrontLinePersonali
 type RuntimeMode = "public" | "preview";
 export type RuntimeFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+const STOREFRONT_SORT_ALIASES: Readonly<Record<string, string>> = {
+  featured: "relevance", low: "price_asc", high: "price_desc",
+  protocol: "relevance", battery: "relevance", servings: "relevance",
+};
+
 function hrefFor(target: ResolvedRouteTarget, mode: RuntimeMode, previewTemplateId?: StoreTemplateId): string {
   if (mode === "preview") {
     if (target.routeId === "account" || target.routeId === "policy") return "#";
@@ -150,7 +155,7 @@ function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext, 
     : "";
   const style = ownerDocument.createElement("style");
   style.nonce = ownerDocument.querySelector<HTMLStyleElement>("style[nonce]")?.nonce ?? "";
-  style.textContent = `:host{display:block;min-width:44px;min-height:44px;font:inherit;color:${foreground}}:host([hidden]){display:none!important}div{display:flex;align-items:center;gap:.5rem}label{display:grid;gap:.25rem}button,select,input,textarea{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:${squareAccentCommerce ? "0" : ".2rem"};background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700;${buttonTheme}}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}textarea{min-width:min(20rem,100%);resize:vertical}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
+  style.textContent = `:host{display:block;min-width:44px;min-height:44px;background:${surface};font:inherit;color:${foreground}}:host([hidden]){display:none!important}div{display:flex;align-items:center;gap:.5rem}label{display:grid;gap:.25rem}button,select,input,textarea{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:${squareAccentCommerce ? "0" : ".2rem"};background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700;${buttonTheme}}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}textarea{min-width:min(20rem,100%);resize:vertical}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
   return style;
 }
 
@@ -230,7 +235,8 @@ export function createRuntimeAdapters(input: {
         url.searchParams.delete("cursor");
       }
       else if (intent.type === "sort") {
-        url.searchParams.set("sort", String(intent.value ?? ""));
+        const value = String(intent.value ?? "");
+        url.searchParams.set("sort", STOREFRONT_SORT_ALIASES[value] ?? value);
         url.searchParams.delete("cursor");
       }
       else if (intent.type === "page") url.searchParams.set("cursor", String(intent.cursor ?? ""));

@@ -77,9 +77,9 @@ describe("ember storefront recipe", () => {
     const homeHtml = bundle.routes.home.html;
     expect(homeHtml).toContain("Build a tasting flight");
     expect(homeHtml).toContain("ember-flight");
-    expect(bundle.routes.home.trustedSlots).toEqual([
+    expect(bundle.routes.home.trustedSlots).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "bundleBuilder", slotCount: 3, hostSize: "block" }),
-    ]);
+    ]));
     const homeNodes = elements(bundle.routes.home.tree);
     const builderId = bundle.routes.home.trustedSlots[0]!.id;
     expect(homeNodes.findIndex(({ attributes }) => attributes.class === "ember-flight-intro")).toBeLessThan(
@@ -120,6 +120,29 @@ describe("ember storefront recipe", () => {
     expect(bundle.routes.home.css).toContain("@media(max-width:720px)");
     expect(bundle.routes.home.css).toContain("min-height:44px");
     expect(bundle.routes.home.css).toContain("prefers-reduced-motion:reduce");
+  });
+
+  it("deepens Ember catalog discovery without crossing commerce truth boundaries", () => {
+    const { bundle } = compileRecipeConfig(EMBER_RECIPE_CONFIG);
+
+    expect(bundle.routes.home.html).toContain("ember-collection-hooks");
+    expect(bundle.routes.collections?.html).toContain("ember-shelf-index");
+    expect(bundle.routes.collections?.html).toContain("data-cd-bind-text");
+    expect(bundle.routes.collection.html).toContain("ember-breadcrumbs");
+    expect(bundle.routes.collection.html).toContain("ember-sibling-nav");
+    expect(bundle.routes.collection.html).toContain("ember-applied-filters");
+    expect(bundle.routes.collection.html).toContain("data-cd-bind-text");
+    expect(bundle.routes.collection.interactions.transitions.map(({ action }) => action.type)).toContain("collection.sort");
+    expect(bundle.routes.collection.trustedSlots.map(({ kind }) => kind)).toContain("quickViewCommerce");
+    expect(repeatsIn(bundle.routes.product.tree)).toContain("related.products");
+    expect(bundle.routes.product.html).toContain("ember-policy-reassurance");
+    expect(bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
+    expect(bundle.routes.search.html).toContain("ember-search-count");
+    expect(bundle.routes.search.html).toContain("Browse sauce shelves");
+    expect(bundle.routes.cart.html).toContain("ember-cart-progress");
+    expect(bundle.routes.cart.html).toContain("Policy links below reflect the merchant's current store terms.");
+    expect(bundle.routes.checkout.decorativeHtml).toContain("Products, delivery, payment, and final totals remain controlled by the platform.");
+    expect(Object.values(bundle.routes).map((route) => "html" in route ? route.html : route.decorativeHtml).join(" ")).not.toMatch(/verified buyer|★★★★★|scarcity|discount|ships today|ships tomorrow|clinical|performance/i);
   });
 
   it("ships the recipe-owned static asset contract and visual prototype", () => {

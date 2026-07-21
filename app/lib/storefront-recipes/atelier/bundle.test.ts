@@ -51,6 +51,47 @@ describe("Atelier storefront recipe", () => {
     ).toEqual(new Set());
   });
 
+
+
+  it("deepens Atelier into merchant-bound catalog discovery without unsupported claims", () => {
+    const { bundle } = compileRecipeConfig(ATELIER_RECIPE_CONFIG);
+    const sourceByRoute = Object.fromEntries(
+      Object.entries(ATELIER_RECIPE_CONFIG.surfaces).map(([route, surface]) => [
+        route,
+        surface.source.html,
+      ]),
+    );
+
+    expect(sourceByRoute.home).toContain("atelier-collection-hooks");
+    expect(sourceByRoute.home).toContain('data-cd-route="collections"');
+    expect(sourceByRoute.home).toContain('data-cd-repeat="featured.products"');
+    expect(sourceByRoute.collections).toContain("atelier-index-composition");
+    expect(sourceByRoute.collections).toContain('data-cd-route="collection"');
+    expect(sourceByRoute.collection).toContain("atelier-breadcrumbs");
+    expect(sourceByRoute.collection).toContain("atelier-sibling-nav");
+    expect(sourceByRoute.collection).toContain("atelier-applied-filter");
+    expect(sourceByRoute.collection).toContain('data-cd-action="collection.filter"');
+    expect(sourceByRoute.collection).toContain('data-cd-action="collection.sort"');
+    expect(bundle.routes.collection.trustedSlots.map(({ kind }) => kind)).toContain(
+      "quickViewCommerce",
+    );
+    expect(sourceByRoute.product).toContain('data-cd-repeat="related.products"');
+    expect(sourceByRoute.product).toContain("atelier-policy-reassurance");
+    expect(bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(
+      expect.arrayContaining(["variantPicker", "addToCart"]),
+    );
+    expect(sourceByRoute.search).toContain("atelier-search-count");
+    expect(sourceByRoute.search).toContain("atelier-search-recovery");
+    expect(sourceByRoute.cart).toContain("atelier-cart-policy");
+    expect(ATELIER_RECIPE_CONFIG.surfaces.checkout.source.html).toContain(
+      "protected checkout flow",
+    );
+    expect(`${sourceByRoute.home}${sourceByRoute.collection}${sourceByRoute.product}${sourceByRoute.cart}`).not.toMatch(
+      /customer reviews?|discount|limited|scarcity|guaranteed delivery|arrives by|clinical|performance/i,
+    );
+  });
+
+
   it("binds live garments and variants to the fit and purchase flow", () => {
     const { bundle } = ATELIER_RECIPE;
     const product = bundle.routes.product;
@@ -169,7 +210,7 @@ describe("Atelier storefront recipe", () => {
     runtime.teardown();
   });
 
-  it("uses one honest collections link and only runtime-supported availability filters", () => {
+  it("uses merchant-bound catalog links and only runtime-supported availability filters", () => {
     const { bundle } = compileRecipeConfig(ATELIER_RECIPE_CONFIG);
     const collectionsHtml =
       ATELIER_RECIPE_CONFIG.surfaces.collections.source.html;
@@ -179,13 +220,11 @@ describe("Atelier storefront recipe", () => {
         action.type === "collection.filter" ? action.facetId : null,
       );
 
-    expect(collectionsHtml.match(/data-cd-route="collection"/g)).toHaveLength(
+    expect(collectionsHtml.match(/data-cd-route="collection"/g)?.length).toBeGreaterThanOrEqual(
       1,
     );
     expect(collectionsHtml).toContain("All products");
-    expect(collectionsHtml).not.toMatch(
-      /Everyday layers|Soft tailoring|Foundation jerseys|Warm-weather cloth/,
-    );
+    expect(collectionsHtml).toContain("atelier-index-composition");
     expect(new Set(filters)).toEqual(new Set(["available"]));
     expect(ATELIER_RECIPE_CONFIG.surfaces.collection.source.html).not.toContain(
       'data-cd-facet="fit"',

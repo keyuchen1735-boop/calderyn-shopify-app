@@ -72,8 +72,17 @@ describe("haven storefront recipe", () => {
     document.body.innerHTML = route.html;
     vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
-    const runtime = hydrateStorefront({ root: document.body, artifact: route, adapters: { navigate: vi.fn() } });
-    expect(runtime.hydrated).toBe(true);
+    const stateOnlyRoute = {
+      ...route,
+      requiredCapabilities: route.requiredCapabilities.filter((capability) => capability !== "commerce"),
+      trustedSlots: [],
+    };
+    const runtime = hydrateStorefront({
+      root: document.body,
+      artifact: stateOnlyRoute,
+      adapters: { navigate: vi.fn() },
+    });
+    expect(runtime.hydrated, runtime.error?.message).toBe(true);
 
     const result = document.querySelector<HTMLElement>("[data-cd-active-index]")!;
     const next = [...document.querySelectorAll<HTMLButtonElement>("button")].find(({ textContent }) => textContent === "Next room check")!;
@@ -84,6 +93,40 @@ describe("haven storefront recipe", () => {
     expect([...result.children].filter((child) => !(child as HTMLElement).hidden)[0]?.textContent).toContain("checkout");
     for (let index = 0; index < 5; index += 1) previous.click();
     expect(result.dataset.cdActiveIndex).toBe("0");
+  });
+
+  it("covers the Baymard-depth Haven commerce contract with merchant-bound discovery and protected commerce", () => {
+    const { bundle } = HAVEN_RECIPE;
+    const surfaces = HAVEN_RECIPE_CONFIG.surfaces;
+
+    expect(surfaces.home.source.html).toContain('data-cd-route="collections"');
+    expect(repeatsIn(bundle.routes.home.tree)).toContain("featured.products");
+    expect(surfaces.collections.source.html).toContain('haven-collection-index');
+    expect(repeatsIn(bundle.routes.collections!.tree)).toContain("featured.products");
+
+    expect(surfaces.collection.source.html).toContain('aria-label="Collection breadcrumb"');
+    expect(surfaces.collection.source.html).toContain('aria-label="Sibling room collections"');
+    expect(surfaces.collection.source.html).toContain('class="haven-applied-filter"');
+    expect(surfaces.collection.source.html).toContain('data-cd-action="collection.filter"');
+    expect(surfaces.collection.source.html).toContain('data-cd-action="collection.sort"');
+    expect(bundle.routes.collection.trustedSlots.map(({ kind }) => kind)).toContain("quickViewCommerce");
+
+    expect(repeatsIn(bundle.routes.product.tree)).toContain("related.products");
+    expect(surfaces.product.source.html).toContain('class="haven-policy-panel"');
+    expect(surfaces.product.source.html).toContain('class="haven-related"');
+    const productSource = document.createElement("div");
+    productSource.innerHTML = surfaces.product.source.html;
+    const purchaseColumn = productSource.querySelector(".haven-purchase-column");
+    expect(purchaseColumn?.querySelector('[data-cd-slot="variantPicker"]')).not.toBeNull();
+    expect(purchaseColumn?.querySelector('[data-cd-slot="addToCart"]')).not.toBeNull();
+
+    expect(surfaces.search.source.html).toContain('class="haven-search-count"');
+    expect(repeatsIn(bundle.routes.search.tree)).toContain("search.results");
+    expect(surfaces.search.source.html).toContain('data-cd-route="collections"');
+
+    expect(surfaces.cart.source.html).toContain('data-cd-route="checkout"');
+    expect(surfaces.cart.source.html).toContain('data-cd-policy-links');
+    expect(surfaces.checkout.source.html).toContain("Final variants, totals, delivery, and payment remain platform controlled");
   });
 
 });
