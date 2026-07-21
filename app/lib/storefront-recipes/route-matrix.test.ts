@@ -29,6 +29,18 @@ function emptyStateCount(nodes: RouteArtifact["tree"]): number {
     : count + Number(node.attributes["data-cd-empty-state"] !== undefined) + emptyStateCount(node.children), 0);
 }
 
+function repeatSources(nodes: RouteArtifact["tree"]): string[] {
+  return nodes.flatMap((node) => node.kind === "text"
+    ? []
+    : [...(node.repeat ? [node.repeat.source] : []), ...repeatSources(node.children)]);
+}
+
+function routeTargets(nodes: RouteArtifact["tree"]): string[] {
+  return nodes.flatMap((node) => node.kind === "text"
+    ? []
+    : [...(node.routeTarget ? [node.routeTarget.routeId] : []), ...routeTargets(node.children)]);
+}
+
 describe("storefront recipe route matrix", () => {
   it("implements exactly one validated active recipe for every registered template", () => {
     const registeredIds = STORE_TEMPLATE_REGISTRY.templates.map((template) => template.id);
@@ -149,6 +161,21 @@ describe("storefront recipe route matrix", () => {
       for (const routeId of ["home", "collection", "search", "cart"] as const) {
         expect(emptyStateCount(bundle.routes[routeId].tree), `${config.templateId}/${routeId}`).toBe(1);
       }
+    }
+  });
+
+  it("Taste-hardens the nine niche recipes without weakening commerce", () => {
+    const ids = new Set(["volt", "atelier", "gilt", "ember", "roast", "fizz", "forge", "haven", "glow"]);
+    for (const { bundle, config } of STOREFRONT_RECIPES.filter(({ config }) => ids.has(config.templateId))) {
+      expect(bundle.routes.collections, config.templateId).toBeDefined();
+      expect(repeatSources(bundle.routes.collections!.tree), config.templateId).toContain("featured.collections");
+      expect(bundle.routes.collections!.requiredData, config.templateId).toContainEqual({ kind: "featuredCollections", limit: 12 });
+      expect(bundle.routes.story, config.templateId).toBeDefined();
+      expect(bundle.shell.requiredData, config.templateId).toContainEqual({ kind: "policyLinks" });
+      expect(slotKinds(bundle.routes.product), config.templateId).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
+      expect(routeTargets(bundle.routes.cart.tree).some((routeId) => routeId === "collection" || routeId === "collections"), config.templateId).toBe(true);
+      expect(`${visibleText(bundle.routes.home.tree)} ${visibleText(bundle.routes.story!.tree)}`, config.templateId)
+        .not.toMatch(/[–—]|(?:^|\s)0[1-9]\s*(?:\/|·)/u);
     }
   });
 
