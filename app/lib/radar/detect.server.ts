@@ -204,6 +204,10 @@ export const TRAFFIC_TOP_PAGES = 10;
 /** A page whose 7-day average is below this many daily views is too thin to
  *  call a "drop" without drafting noise. */
 export const TRAFFIC_MIN_BASELINE_VIEWS = 30;
+/** The daily rollup (radar_core.sql) keeps only the 20 highest-view paths per
+ *  day. A baseline top page absent from a full 20-row day was outranked, not
+ *  necessarily zeroed, so its last-day count is unknown. */
+export const TRAFFIC_ROLLUP_TOP_PATHS = 20;
 export const CONV_GAP_MIN_VIEWS = 50;
 export const CONV_GAP_MAX_CART_RATE = 0.01;
 export const STALE_SECTION_WEEKS = 6;
@@ -254,7 +258,9 @@ export function detectTrafficDrops(days: TrafficDay[]): RadarCandidate[] {
   for (const [path, total] of top) {
     const avg = total / baseline.length;
     if (avg < TRAFFIC_MIN_BASELINE_VIEWS) continue;
-    const lastViews = last.topPaths.find((p) => p.path === path)?.views ?? 0;
+    const lastEntry = last.topPaths.find((p) => p.path === path);
+    if (!lastEntry && last.topPaths.length >= TRAFFIC_ROLLUP_TOP_PATHS) continue;
+    const lastViews = lastEntry?.views ?? 0;
     if (lastViews > avg * (1 - TRAFFIC_DROP_PCT)) continue;
     const ref = parseStorefrontPath(path);
     if (ref.entityType !== "home" && ref.entityType !== "product") continue; // cart/search pages are not refreshable sections

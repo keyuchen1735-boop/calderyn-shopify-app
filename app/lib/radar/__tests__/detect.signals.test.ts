@@ -50,6 +50,22 @@ describe("detectTrafficDrops", () => {
     expect(detectTrafficDrops(dropSeries("/storefront", 100, 80))).toHaveLength(0); // 20% drop
     expect(detectTrafficDrops(dropSeries("/storefront", 10, 2))).toHaveLength(0); // avg under floor
   });
+  it("does not fabricate a 100% drop when a top page is merely outranked off a full last day", () => {
+    const target = "/storefront/products/trail-boots";
+    const baseline: TrafficDay[] = [];
+    for (let i = 0; i < 7; i++) baseline.push(day(`2026-07-${11 + i}`, [[target, 100, 1, "p1"]]));
+    // Last day is a full 20-row rollup and the baseline top page is absent from it:
+    // it was outranked, not zeroed, so its true count is unknown — no drop should fire.
+    const saturated = Array.from({ length: 20 }, (_, i): [string, number, number, string | null] => [
+      `/storefront/products/other-${i}`, 50, 1, `q${i}`,
+    ]);
+    expect(detectTrafficDrops([...baseline, day("2026-07-18", saturated)])).toHaveLength(0);
+    // A genuine zero on a non-saturated (< 20 entries) last day still fires.
+    const outZero = detectTrafficDrops([...baseline, day("2026-07-18", [["/storefront/products/other-0", 50, 1, "q0"]])]);
+    expect(outZero).toHaveLength(1);
+    expect(outZero[0].dedupKey).toBe(`traffic-drop:${target}`);
+    expect(outZero[0].evidence.facts).toMatchObject({ lastViews: 0, dropPct: 100 });
+  });
 });
 
 describe("detectConversionGaps", () => {
