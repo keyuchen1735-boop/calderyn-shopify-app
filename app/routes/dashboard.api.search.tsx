@@ -9,6 +9,7 @@ import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 import { buildStoreDescription } from "~/lib/seo/writer.server";
 import { getSupabase } from "~/lib/supabase.server";
 import { disconnectGsc } from "~/lib/seo/gsc.server";
+import { isUuid } from "~/lib/ids";
 
 // Browser-safe mirror lives in app/lib/dashboard/search-client.ts (SearchGoogleVM) —
 // keep the two in sync by hand, same convention as SeoSettings above.
@@ -48,17 +49,26 @@ const EMPTY_GOOGLE_STATS = {
 // caught and logged, leaving the card to show zeros with a "delayed" note
 // rather than an error state.
 async function getGoogleBlock(shopId: string): Promise<GoogleBlock> {
-  const { data: row, error: rowError } = await getSupabase()
-    .from("seo_settings")
-    .select("gsc_connected, gsc_site_url")
-    .eq("shop_id", shopId)
-    .maybeSingle();
-  if (rowError) {
-    console.error("[search] gsc connection state read failed", rowError);
+  // Demo shops (non-uuid shopId, e.g. "demo-shop") have no seo_settings row and no
+  // real Supabase state to read — short-circuit before touching the DB, same gate
+  // seo-store.server.ts's siblings use.
+  if (!isUuid(shopId)) return { connected: false, siteUrl: null, ...EMPTY_GOOGLE_STATS };
+
+  let row: { gsc_connected?: boolean; gsc_site_url?: string | null } | null;
+  try {
+    const { data, error: rowError } = await getSupabase()
+      .from("seo_settings")
+      .select("gsc_connected, gsc_site_url")
+      .eq("shop_id", shopId)
+      .maybeSingle();
+    if (rowError) throw new Error(rowError.message);
+    row = data as { gsc_connected?: boolean; gsc_site_url?: string | null } | null;
+  } catch (err) {
+    console.error("[search] gsc connection state read failed", err);
     return { connected: false, siteUrl: null, ...EMPTY_GOOGLE_STATS };
   }
-  const connected = Boolean((row as { gsc_connected?: boolean } | null)?.gsc_connected);
-  const siteUrl = ((row as { gsc_site_url?: string | null } | null)?.gsc_site_url) ?? null;
+  const connected = Boolean(row?.gsc_connected);
+  const siteUrl = row?.gsc_site_url ?? null;
   if (!connected) return { connected: false, siteUrl, ...EMPTY_GOOGLE_STATS };
 
   try {

@@ -54,7 +54,9 @@ describe("GET /dashboard/auth/gsc/callback", () => {
       params: {}, context: {},
     } as never);
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toContain("google-error");
+    const location = res.headers.get("location") ?? "";
+    expect(location.startsWith("/dashboard/store/preferences?")).toBe(true);
+    expect(location).toContain("google-error");
     expect(mocks.exchangeGscCode).not.toHaveBeenCalled();
   });
   it("exchanges, saves, picks the site, marks connected", async () => {
@@ -66,7 +68,9 @@ describe("GET /dashboard/auth/gsc/callback", () => {
     } as never);
     expect(mocks.exchangeGscCode).toHaveBeenCalled();
     expect(mocks.saveGscCredential).toHaveBeenCalledWith("shop-1", "rt");
-    expect(res.headers.get("location")).toContain("google-connected");
+    const location = res.headers.get("location") ?? "";
+    expect(location.startsWith("/dashboard/store/preferences?")).toBe(true);
+    expect(location).toContain("google-connected");
     expect(res.headers.get("set-cookie")).toContain("Max-Age=0"); // state cookie cleared
   });
 });

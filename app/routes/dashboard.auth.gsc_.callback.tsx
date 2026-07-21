@@ -14,7 +14,7 @@ const CLEAR_STATE = `${GSC_STATE_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=La
 function back(result: "google-connected" | "google-error", reason?: string): Response {
   const q = new URLSearchParams({ search: result });
   if (reason) q.set("reason", reason);
-  return redirect(`/dashboard?${q.toString()}`, { headers: { "set-cookie": CLEAR_STATE } });
+  return redirect(`/dashboard/store/preferences?${q.toString()}`, { headers: { "set-cookie": CLEAR_STATE } });
 }
 
 function cookieValue(request: Request, name: string): string | null {
