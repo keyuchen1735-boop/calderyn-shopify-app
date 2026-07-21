@@ -78,6 +78,23 @@ describe("firstBuildInstruction hero branch", () => {
     expect(out).toContain("no gray placeholder art");
   });
 
+  it("requires genuinely image-free product cards when catalog photography is incomplete", () => {
+    const out = firstBuildInstruction({
+      brief: "A store for hand-poured maple candles",
+      route: "collection",
+      mode: "scratch",
+      templateId: "scratch",
+      direction: ART_DIRECTIONS[0],
+      donePages: [],
+      heroAssetUrl: null,
+      productImagesAvailable: false,
+    });
+
+    expect(out).toContain("remove the media region entirely");
+    expect(out).toContain("no reserved aspect-ratio box");
+    expect(out).toContain("no gradient, initials, icon, or illustration stand-in");
+  });
+
   it("always emits a hero instruction — the empty-string branch is gone", () => {
     for (const variant of [
       { heroAssetUrl: "https://cdn.example/hero.jpg" },

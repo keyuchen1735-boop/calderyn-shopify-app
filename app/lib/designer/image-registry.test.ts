@@ -45,6 +45,257 @@ describe("findImageRegistryViolations — walkthrough failure shapes", () => {
     ]);
   });
 
+  it("flags the live no-image product-card media box even though it has no image reference", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "home.html": [
+          "{{#products}}",
+          '<article class="card"><div class="cardMedia cardMedia--noimg"><span class="pill">{{product.availability}}</span></div><h3>{{product.title}}</h3></article>',
+          "{{/products}}",
+        ].join(""),
+        "home.css": ".cardMedia{aspect-ratio:4/5;background:var(--paper);position:relative}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out).toEqual([
+      {
+        file: "home.html",
+        path: ".cardMedia",
+        reason: "synthetic-product-media-stand-in",
+      },
+    ]);
+  });
+
+  it("catches generic collection media and initials stand-ins but leaves a typographic hero alone", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "collection.html": [
+          '<section class="heroMedia"><h1>Pour a quieter evening</h1></section>',
+          "{{#products}}",
+          '<article class="product-card"><div class="product-visual"><span class="initials">MW</span></div><h2>{{product.title}}</h2></article>',
+          "{{/products}}",
+        ].join(""),
+        "collection.css": [
+          ".heroMedia{background:var(--signal);min-height:50vh}",
+          ".product-visual{aspect-ratio:1;background:linear-gradient(#ddd,#eee)}",
+        ].join(""),
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out.map((violation) => violation.path)).toEqual([".product-visual"]);
+    expect(out.every((violation) => violation.reason === "synthetic-product-media-stand-in")).toBe(true);
+    expect(out.some((violation) => violation.path === ".heroMedia")).toBe(false);
+  });
+
+  it("catches a generically named blank card region from its media-like CSS without rejecting the card itself", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "home.html": '{{#products}}<div class="tile"><div class="top"><span>{{product.availability}}</span></div><div class="details"><h3>{{product.title}}</h3><b>{{product.price}}</b></div></div>{{/products}}',
+        "home.css": ".tile{min-height:24rem;background:var(--paper)}.top{aspect-ratio:4/5;background:#ddd}.details{padding:1rem}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out.map((violation) => violation.path)).toEqual([".top"]);
+  });
+
+  it("allows a title-led typographic product card even when its classes use mark and initial vocabulary", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "search.html": '{{#products}}<a class="search-card-mark" href="{{product.url}}"><span class="search-card-initial">{{product.title}}</span><b>{{product.price}}</b></a>{{/products}}',
+        "search.css": ".search-card-mark{min-height:14rem;background:var(--paper)}.search-card-initial{font-size:5rem}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it("does not mistake a normally styled add-to-cart control for blank product media", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "product.html": '{{#products}}<article><h2>{{product.title}}</h2><button class="cta designer-add-to-cart">Add to cart</button></article>{{/products}}',
+        "product.css": ".cta{min-height:48px;background:var(--signal);color:white}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it("allows a meaningful quick-add button even when its class contains media vocabulary", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "home.html": '{{#products}}<article><h2>{{product.title}}</h2><button class="card-media__quick-add designer-add-to-cart">Add to cart</button></article>{{/products}}',
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it("allows a control-sized actions wrapper when it visibly contains a real control", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "home.html": '{{#products}}<article><h2>{{product.title}}</h2><div class="card-media__actions"><button class="designer-add-to-cart">Add to cart</button></div></article>{{/products}}',
+        "home.css": ".card-media__actions{min-height:48px;background:var(--paper)}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it("allows a control-sized status wrapper when availability is its actual content", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "home.html": '{{#products}}<article><h2>{{product.title}}</h2><div class="media-status"><strong>{{product.availability}}</strong></div></article>{{/products}}',
+        "home.css": ".media-status{min-height:48px;background:var(--paper)}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it("allows a control-sized image-count wrapper with meaningful literal text", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "product.html": '{{#products}}<article><h2>{{product.title}}</h2><div class="image-count">3 product images</div></article>{{/products}}',
+        "product.css": ".image-count{min-height:48px;background:var(--paper)}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it("blocks strong painted product media even when a quick-add control overlays it", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "home.html": '{{#products}}<article><div class="cardMedia"><button class="designer-add-to-cart">Add to cart</button></div><h2>{{product.title}}</h2></article>{{/products}}',
+        "home.css": ".cardMedia{aspect-ratio:4/5;background:var(--paper)}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out.map((violation) => violation.path)).toEqual([".cardMedia"]);
+  });
+
+  it("blocks strong painted product media when literal view-details copy is only an overlay", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "collection.html": '{{#products}}<article><div class="cardMedia">View details</div><h2>{{product.title}}</h2></article>{{/products}}',
+        "collection.css": ".cardMedia{aspect-ratio:4/5;background:var(--paper)}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out.map((violation) => violation.path)).toEqual([".cardMedia"]);
+  });
+
+  it("does not block an unstyled empty wrapper based on semantic naming alone", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "home.html": '{{#products}}<article><div class="cardMedia"></div><h2>{{product.title}}</h2></article>{{/products}}',
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: true,
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it("allows a styled availability badge instead of inferring generic media from control-sized geometry", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "collection.html": '{{#products}}<article><h2>{{product.title}}</h2><span class="availability">{{product.availability}}</span></article>{{/products}}',
+        "collection.css": ".availability{min-height:48px;background:var(--paper);display:inline-flex}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it("pairs each route HTML only with base CSS and that route's CSS", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "home.html": '{{#products}}<article><div class="top"><span>{{product.availability}}</span></div><h2>{{product.title}}</h2></article>{{/products}}',
+        "home.css": ".top{display:flex}",
+        "search.css": ".top{aspect-ratio:4/5;background:#ddd}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out).toEqual([]);
+  });
+
+  it("flags a blank product media box styled inline", () => {
+    const out = findImageRegistryViolations({
+      files: {
+        "collection.html": '{{#products}}<article><div style="aspect-ratio:4/5;background:#ddd"><span>{{product.availability}}</span></div><h2>{{product.title}}</h2></article>{{/products}}',
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: false,
+    });
+
+    expect(out.map((violation) => violation.path)).toEqual(["<div style>"]);
+  });
+
+  it("rejects blank product media in all-photo mode unless the region binds the real product image", () => {
+    const blank = findImageRegistryViolations({
+      files: {
+        "home.html": '{{#products}}<article><div class="cardMedia"></div><h2>{{product.title}}</h2></article>{{/products}}',
+        "home.css": ".cardMedia{aspect-ratio:4/5;background:var(--paper)}",
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: true,
+    });
+    const bound = findImageRegistryViolations({
+      files: {
+        "home.html": '{{#products}}<article><div class="cardMedia"><img src="{{product.image}}" alt="{{product.title}}"></div><h2>{{product.title}}</h2></article>{{/products}}',
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      productImagesAvailable: true,
+    });
+
+    expect(blank.map((violation) => violation.path)).toEqual([".cardMedia"]);
+    expect(bound).toEqual([]);
+  });
+
   it("treats {{asset.hero}} as legal even when no asset exists (renderer falls back)", () => {
     const out = check({ "home.html": '<img src="{{asset.hero}}" alt="Hero">' });
     expect(out).toEqual([]);

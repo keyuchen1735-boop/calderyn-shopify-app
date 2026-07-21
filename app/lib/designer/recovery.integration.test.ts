@@ -15,6 +15,7 @@ const {
   requirePublishableTenantDomain,
   expireOverdueExperiment,
   hasRunningExperiment,
+  designerProductImagesAvailable,
 } = vi.hoisted(() => ({
   getAnthropic: vi.fn(),
   getSupabase: vi.fn(),
@@ -25,6 +26,7 @@ const {
   requirePublishableTenantDomain: vi.fn(),
   expireOverdueExperiment: vi.fn(),
   hasRunningExperiment: vi.fn(),
+  designerProductImagesAvailable: vi.fn(),
 }));
 
 vi.mock("~/lib/assistant/anthropic.server", () => ({ getAnthropic }));
@@ -46,6 +48,7 @@ vi.mock("~/lib/experiments/store-experiment.server", () => ({
   expireOverdueExperiment,
   hasRunningExperiment,
 }));
+vi.mock("./product-imagery.server", () => ({ designerProductImagesAvailable }));
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 const invented = (route: "home" | "search") =>
@@ -151,9 +154,39 @@ beforeEach(() => {
   requirePublishableTenantDomain.mockResolvedValue("https://maple.example/storefront");
   expireOverdueExperiment.mockResolvedValue(undefined);
   hasRunningExperiment.mockResolvedValue(false);
+  designerProductImagesAvailable.mockResolvedValue(false);
 });
 
 describe("existing designer store imagery recovery", () => {
+  it("repairs a saved synthetic product-media stand-in through an ordinary turn, then publishes", async () => {
+    const { documents, publications } = installMemoryDatabase();
+    documents.set("home", {
+      shop_id: SHOP,
+      route: "home",
+      html: '{{#products}}<article><div class="cardMedia"><span>{{product.availability}}</span></div><h2>{{product.title}}</h2></article>{{/products}}',
+      css: ".cardMedia{aspect-ratio:4/5;background:var(--paper)}",
+      template_id: "scratch",
+      built: true,
+    });
+    documents.delete("search");
+    const create = vi
+      .fn()
+      .mockResolvedValueOnce(completion("I checked the product cards."))
+      .mockResolvedValueOnce(completion(replacement("home")));
+    getAnthropic.mockReturnValue({ messages: { create } });
+
+    await expect(designerTurn({
+      shopId: SHOP,
+      route: "home",
+      message: "Repair the empty product cards",
+    })).resolves.toMatchObject({ changed: true });
+    expect(create.mock.calls[1][0].messages.at(-1)?.content).toContain("IMAGE AUDIT");
+    expect(String(documents.get("home")?.html)).toBe(repaired("home"));
+
+    await expect(publishDesignerSite(SHOP)).resolves.toBe("https://maple.example/storefront");
+    expect(publications).toHaveLength(1);
+  });
+
   it("repairs each affected page through ordinary turns, then publishes without a rebuild", async () => {
     const { documents, publications } = installMemoryDatabase();
     const create = vi

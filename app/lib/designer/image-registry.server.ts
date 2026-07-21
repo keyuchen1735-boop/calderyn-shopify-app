@@ -19,7 +19,8 @@ export type ImageViolationReason =
   | "invented-path"
   | "donor-art-on-first-build"
   | "foreign-template-path"
-  | "missing-required-asset-binding";
+  | "missing-required-asset-binding"
+  | "synthetic-product-media-stand-in";
 
 export interface ImageRegistryViolation {
   /** Document file name, e.g. "home.html" or "base.css". */
@@ -153,6 +154,126 @@ function* references(file: string, body: string): Generator<ImageReference> {
   }
 }
 
+const PRODUCTS_LOOP_RE = /\{\{#products\}\}([\s\S]*?)\{\{\/products\}\}/gi;
+const OPENING_TAG_RE = /<(?![\s/!])([a-z][\w-]*)\b([^>]*)>/gi;
+const CLASS_ATTR_RE = /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i;
+const STYLE_ATTR_RE = /\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i;
+
+function classWords(className: string): string[] {
+  return className
+    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function classWithWord(classNames: string[], vocabulary: readonly string[]): string | null {
+  for (const className of classNames) {
+    if (classWords(className).some((word) => vocabulary.includes(word))) {
+      return className;
+    }
+  }
+  return null;
+}
+
+function mediaSemanticClass(classNames: string[]): string | null {
+  return classWithWord(classNames, [
+    "media", "image", "img", "photo", "picture", "visual", "thumbnail",
+    "thumb", "artwork", "placeholder", "initial", "initials",
+  ]);
+}
+
+function cssEscape(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function classDeclarations(styles: string, className: string): string {
+  const token = new RegExp(`(?:^|[^a-z0-9_-])\\.${cssEscape(className)}(?![a-z0-9_-])`, "i");
+  const declarations: string[] = [];
+  for (const rule of styles.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (token.test(rule[1])) declarations.push(rule[2]);
+  }
+  return declarations.join(";");
+}
+
+function reservesPaintedMediaArea(declarations: string): boolean {
+  const painted = /\bbackground(?:-image|-color)?\s*:/i.test(declarations);
+  const aspectRatio = /\baspect-ratio\s*:\s*(?!auto\b|initial\b|unset\b|none\b)[^;]+/i.test(declarations);
+  const largeHeight = [...declarations.matchAll(/\b(?:min-)?height\s*:\s*(\d*\.?\d+)\s*(px|r?em|vh|vw)\b/gi)]
+    .some((match) => {
+      const amount = Number(match[1]);
+      const unit = match[2].toLowerCase();
+      if (unit === "px") return amount >= 120;
+      if (unit === "rem" || unit === "em") return amount >= 7.5;
+      return amount >= 20;
+    });
+  const ratioPadding = [...declarations.matchAll(/\bpadding-(?:top|bottom)\s*:\s*(\d*\.?\d+)\s*%/gi)]
+    .some((match) => Number(match[1]) >= 50);
+  return painted && (aspectRatio || largeHeight || ratioPadding);
+}
+
+function elementContent(body: string, tagName: string, contentStart: number): string {
+  const remainder = body.slice(contentStart);
+  const tag = new RegExp(`<\\/?${cssEscape(tagName)}\\b[^>]*>`, "gi");
+  let depth = 1;
+  for (const match of remainder.matchAll(tag)) {
+    if (/^<\//.test(match[0])) depth -= 1;
+    else if (!/\/\s*>$/.test(match[0])) depth += 1;
+    if (depth === 0) return remainder.slice(0, match.index);
+  }
+  return "";
+}
+
+/** Product-card media must either bind real photography or disappear. A
+ *  media-shaped wrapper otherwise renders as fake photography when it contains
+ *  only a badge, gradient, initials, or an empty neutral block. This check is
+ *  scoped to product loops, so typographic/color heroes and content-led cards
+ *  remain valid. */
+function syntheticProductMediaViolations(
+  file: string,
+  body: string,
+  styles: string,
+  productImagesAvailable: boolean,
+): ImageRegistryViolation[] {
+  const violations: ImageRegistryViolation[] = [];
+  const seen = new Set<string>();
+  for (const loop of body.matchAll(PRODUCTS_LOOP_RE)) {
+    for (const tag of loop[1].matchAll(OPENING_TAG_RE)) {
+      const classMatch = tag[2].match(CLASS_ATTR_RE);
+      const classNames = (classMatch?.[1] ?? classMatch?.[2] ?? classMatch?.[3] ?? "")
+        .split(/\s+/)
+        .filter(Boolean);
+      const contentStart = (tag.index ?? 0) + tag[0].length;
+      const content = elementContent(loop[1], tag[1], contentStart);
+      const semanticClass = mediaSemanticClass(classNames);
+      const paintedClass = classNames.find((candidate) => reservesPaintedMediaArea(classDeclarations(styles, candidate))) ?? null;
+      const styleMatch = tag[2].match(STYLE_ATTR_RE);
+      const inlineStyle = styleMatch?.[1] ?? styleMatch?.[2] ?? styleMatch?.[3] ?? "";
+      const paintedInline = reservesPaintedMediaArea(inlineStyle);
+      const imageElement = /^(?:img|picture)$/i.test(tag[1]);
+      if (!imageElement && !paintedClass && !paintedInline) continue;
+
+      const carriesSubstantiveProductContent = /\{\{\s*product\.(?:title|price|description)\s*\}\}/i.test(content);
+      if (carriesSubstantiveProductContent) continue;
+
+      const bindsProductImage = /\{\{\s*product\.image\s*\}\}/i.test(`${tag[0]}${content}`);
+      if (imageElement && bindsProductImage) continue;
+      if (productImagesAvailable && bindsProductImage) continue;
+
+      const className = semanticClass ?? paintedClass;
+      const path = className
+        ? `.${className}`
+        : paintedInline
+          ? `<${tag[1].toLowerCase()} style>`
+          : `<${tag[1].toLowerCase()}>`;
+      if (seen.has(path)) continue;
+      seen.add(path);
+      violations.push({ file, path, reason: "synthetic-product-media-stand-in" });
+    }
+  }
+  return violations;
+}
+
 /** Validates every image reference in a designer file set. Pure — safe to run
  *  on every save; callers decide what a violation means (repair-loop feedback
  *  during builds, a hard refusal at publish time). */
@@ -178,9 +299,9 @@ export function findImageRegistryViolations(input: {
           reason = "missing-required-asset-binding";
         }
       }
-      if (!reason && input.firstBuild) {
+      if (!reason && (input.firstBuild || input.productImagesAvailable === false)) {
         const placeholder = ref.canonical.trim().replace(/\s/g, "").toLowerCase();
-        if (placeholder === "{{store.logo}}" && input.storeLogoAvailable === false) {
+        if (input.firstBuild && placeholder === "{{store.logo}}" && input.storeLogoAvailable === false) {
           reason = "missing-required-asset-binding";
         }
         if (placeholder === "{{product.image}}" && input.productImagesAvailable === false) {
@@ -194,19 +315,28 @@ export function findImageRegistryViolations(input: {
       seen.add(key);
       violations.push({ file, path, reason });
     }
+    if (input.productImagesAvailable !== undefined && file.endsWith(".html")) {
+      const routeCss = input.files[file.replace(/\.html$/i, ".css")] ?? "";
+      const styles = `${input.files["base.css"] ?? ""}\n${routeCss}`;
+      violations.push(...syntheticProductMediaViolations(file, body, styles, input.productImagesAvailable));
+    }
   }
   return violations;
 }
 
 /** Violations that make a document set unpublishable: references to files
- *  that do not exist (404 on every page view) or to another template's art.
+ *  that do not exist, another template's art, or fake product-media regions.
  *  Donor art of the document's own template is a build-time repair concern,
  *  never a publish blocker — stores that shipped it must stay publishable. */
 export function unpublishableImageViolations(
   violations: ImageRegistryViolation[],
 ): ImageRegistryViolation[] {
   return violations.filter(
-    (violation) => violation.reason === "invented-path" || violation.reason === "foreign-template-path",
+    (violation) =>
+      violation.reason === "invented-path"
+      || violation.reason === "foreign-template-path"
+      || violation.reason === "synthetic-product-media-stand-in"
+      || (violation.reason === "missing-required-asset-binding" && /\{\{\s*product\.image\s*\}\}/i.test(violation.path)),
   );
 }
 
@@ -228,6 +358,8 @@ export function imageRepairInstruction(violations: ImageRegistryViolation[]): st
           return `${violation.file}: "${violation.path}" is not safe because the catalog is empty or at least one product has no real photo, so a card renders neutral placeholder art. Remove the image or use an intentional image-free card treatment instead.`;
         }
         return `${violation.file}: "${violation.path}" has no successfully adopted or generated asset behind it, so it renders neutral placeholder art. Remove that image and use a deliberate typographic/color treatment instead.`;
+      case "synthetic-product-media-stand-in":
+        return `${violation.file}: "${violation.path}" reserves a fake media area without actually rendering real product photography. Bind {{product.image}} when every product has real photography, or remove the media region entirely and compose an intentional image-free card from the real title, price, availability, and action. Do not substitute a blank or neutral box, gradient, initials, icon, or illustration.`;
       default:
         return `${violation.file}: "${violation.path}" does not exist — the storefront has no such file, so it renders as a broken image. Replace it with a real binding ({{asset.hero}}, {{product.image}}, {{store.logo}}) or remove the element. Never invent image paths.`;
     }
