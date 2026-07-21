@@ -10,18 +10,67 @@ export const MAX_RESPONSE_BYTES = 1_000_000;
 
 export type PoliteFetchResult =
   | { ok: true; status: number; text: string }
-  | { ok: false; status?: number; error: string };
+  | { ok: false; status?: number; error: string; reason?: string };
 
-export async function politeFetch(url: string, fetchImpl: typeof fetch = fetch): Promise<PoliteFetchResult> {
+function getOrigin(urlStr: string): string {
+  try {
+    return new URL(urlStr).origin;
+  } catch {
+    return "";
+  }
+}
+
+export async function politeFetch(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+  hops: number = 0
+): Promise<PoliteFetchResult> {
   try {
     const res = await fetchImpl(url, {
       headers: {
         "user-agent": RADAR_USER_AGENT,
         accept: "text/html,text/plain;q=0.9,*/*;q=0.5",
       },
-      redirect: "follow",
+      redirect: "manual",
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
+
+    // Handle redirects manually
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) {
+        return { ok: false, status: res.status, error: `redirect without Location header`, reason: "invalid_redirect" };
+      }
+
+      // Check if we've already followed too many hops
+      if (hops >= 3) {
+        return { ok: false, status: res.status, error: `too many redirects`, reason: "too_many_redirects" };
+      }
+
+      // Resolve Location relative to current URL
+      let nextUrl: string;
+      try {
+        nextUrl = new URL(location, url).href;
+      } catch {
+        return { ok: false, status: res.status, error: `invalid Location header`, reason: "invalid_redirect" };
+      }
+
+      // Check if redirect is same-origin
+      const currentOrigin = getOrigin(url);
+      const nextOrigin = getOrigin(nextUrl);
+      if (currentOrigin !== nextOrigin) {
+        return {
+          ok: false,
+          status: res.status,
+          error: `cross-host redirect to ${nextOrigin}`,
+          reason: "cross_host_redirect",
+        };
+      }
+
+      // Follow the same-origin redirect recursively
+      return politeFetch(nextUrl, fetchImpl, hops + 1);
+    }
+
     if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` };
     const declared = Number(res.headers.get("content-length") ?? 0);
     if (declared > MAX_RESPONSE_BYTES) {
@@ -91,7 +140,7 @@ export function parseRobots(text: string): RobotsRules {
       if (current && field === "disallow" && value) current.disallow.push(value);
     }
   }
-  const specific = groups.filter((g) => g.agents.some((a) => a.includes("calderynradar")));
+  const specific = groups.filter((g) => g.agents.some((a) => a === "calderynradar"));
   const wildcard = groups.filter((g) => g.agents.includes("*"));
   const chosen = specific.length > 0 ? specific : wildcard;
   return { disallow: chosen.flatMap((g) => g.disallow), unreachable: false };

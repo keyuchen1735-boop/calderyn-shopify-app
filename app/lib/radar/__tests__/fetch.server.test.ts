@@ -49,6 +49,63 @@ describe("politeFetch", () => {
   });
 });
 
+describe("politeFetch redirect handling", () => {
+  it("follows same-origin redirects (2 hops)", async () => {
+    const impl = vi.fn(async (url: string) => {
+      if (url === "https://rival.example/initial") {
+        return new Response("redirecting", {
+          status: 302,
+          headers: { location: "https://rival.example/final" },
+        });
+      }
+      if (url === "https://rival.example/final") {
+        return htmlResponse("final body");
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    });
+    const res = await politeFetch("https://rival.example/initial", impl as unknown as typeof fetch);
+    expect(res).toMatchObject({ ok: true, status: 200, text: "final body" });
+    expect(impl).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects cross-origin redirects without fetching the foreign URL", async () => {
+    const impl = vi.fn(async (url: string) => {
+      if (url === "https://rival.example/") {
+        return new Response("go away", {
+          status: 301,
+          headers: { location: "https://evil.example/hijack" },
+        });
+      }
+      if (url === "https://evil.example/hijack") {
+        throw new Error("should not fetch evil.example");
+      }
+      return htmlResponse("fallback");
+    });
+    const res = await politeFetch("https://rival.example/", impl as unknown as typeof fetch);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("cross_host_redirect");
+    expect(impl).toHaveBeenCalledTimes(1); // never fetches evil.example
+  });
+
+  it("fails on 4+ same-origin hops", async () => {
+    const impl = vi.fn(async (url: string) => {
+      const match = url.match(/\d+/);
+      const n = match ? parseInt(match[0]) : 0;
+      const next = n + 1;
+      if (next <= 5) {
+        return new Response("", {
+          status: 302,
+          headers: { location: `https://rival.example/r${next}` },
+        });
+      }
+      return htmlResponse("final");
+    });
+    const res = await politeFetch("https://rival.example/r1", impl as unknown as typeof fetch);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("too_many_redirects");
+  });
+});
+
 describe("parseRobots / isPathAllowed", () => {
   it("applies wildcard disallow rules by prefix", () => {
     const rules = parseRobots("User-agent: *\nDisallow: /cart\nDisallow: /admin/\n");
@@ -65,6 +122,23 @@ describe("parseRobots / isPathAllowed", () => {
   it("treats an empty Disallow as allow-all and ignores comments", () => {
     const rules = parseRobots("# hi\nUser-agent: *\nDisallow:\n");
     expect(isPathAllowed(rules, "/anything")).toBe(true);
+  });
+  it("uses exact token match for CalderynRadar (not substring)", () => {
+    const rules = parseRobots(
+      "User-agent: *\nDisallow: /\n\nUser-agent: NotCalderynRadarBot\nDisallow: /allow-bot\n");
+    // NotCalderynRadarBot should NOT match because it's not exactly "calderynradar"
+    expect(isPathAllowed(rules, "/anything")).toBe(false); // uses * group instead
+    expect(isPathAllowed(rules, "/allow-bot")).toBe(false); // NotCalderynRadarBot group is NOT chosen
+  });
+  it("handles mixed-case directives", () => {
+    const rules = parseRobots("User-agent: *\nDISALLOW: /cart\nUser-Agent: Googlebot\n");
+    expect(isPathAllowed(rules, "/cart")).toBe(false);
+  });
+  it("handles multiple user-agents in a single group", () => {
+    const rules = parseRobots(
+      "User-agent: Googlebot\nUser-agent: CalderynRadar\nDisallow: /private\nUser-agent: *\nDisallow: /\n");
+    expect(isPathAllowed(rules, "/private")).toBe(false);
+    expect(isPathAllowed(rules, "/public")).toBe(true); // CalderynRadar group is chosen
   });
 });
 
@@ -90,5 +164,19 @@ describe("loadRobots", () => {
     const down = vi.fn(async () => { throw new Error("ECONNREFUSED"); });
     const rules2 = await loadRobots("https://rival.example", down as unknown as typeof fetch);
     expect(isPathAllowed(rules2, "/")).toBe(false);
+  });
+  it("treats cross-host-redirected robots.txt as unreachable (blocked)", async () => {
+    const impl = vi.fn(async (url: string) => {
+      if (url === "https://rival.example/robots.txt") {
+        return new Response("", {
+          status: 301,
+          headers: { location: "https://cdn.example/robots.txt" },
+        });
+      }
+      throw new Error(`should not fetch ${url}`);
+    });
+    const rules = await loadRobots("https://rival.example", impl as unknown as typeof fetch);
+    // cross-host redirect → fail closed (unreachable)
+    expect(isPathAllowed(rules, "/anything")).toBe(false);
   });
 });
