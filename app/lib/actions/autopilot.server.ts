@@ -39,6 +39,8 @@ import { preconditionFresh, stockoutPauseAllowed, stockoutClearedResumeAllowed }
 import { loadAndApplyRules } from "./rule-enforce.server";
 import { notifyAutonomousAction } from "../calibration/notify-autonomous.server";
 import { acquireAutopilotLock, releaseAutopilotLock } from "./autopilot-lock.server";
+import { getOrgMode, shopHasShopifyConnection, writesToOwned } from "../cutover/org-mode.server";
+import { getOwnedVariantPricing } from "./owned-writes.server";
 
 const PAUSE_DETECTORS = new Set([
   "campaign_below_breakeven",
@@ -53,6 +55,16 @@ const SCALE_DETECTORS = new Set(["campaign_scaling_opportunity"]);
 const RESUME_DETECTORS = new Set(["sku_stockout_cleared"]);
 const DEFAULT_MAX_CUT_PCT = 50; // mirrors the config default; the guardrail check enforces the live value
 const DEFAULT_MAX_INCREASE_PCT = 20;
+
+/** Resolve Shopify only when it remains the authoritative store writer. */
+async function storeAdminForAutopilot(shopId: string) {
+  const [orgMode, hasShopify] = await Promise.all([
+    getOrgMode(shopId),
+    shopHasShopifyConnection(shopId),
+  ]);
+  if (!hasShopify || writesToOwned(orgMode)) return null;
+  return (await (await import("~/shopify.server")).unauthenticated.admin(shopId)).admin;
+}
 
 const PRODUCT_ECON_DETECTORS = new Set<DetectorId>([
   "negative_unit_economics",
@@ -316,8 +328,9 @@ async function tryRemediation(
 
   // SKU-scoped move (discontinue_sku): SKU guard, no campaign needed. The Phase-2
   // gateway takes a single opts object with a `client` (slice of calderynClient)
-  // and a Shopify `admin` client; it re-derives the product GID from the alert's
-  // own SKU record (never request input). Autopilot passes the alert id + reason.
+  // and routes the archive to the authoritative catalog. It re-derives the product
+  // from the alert's own SKU record (never request input). Autopilot passes the
+  // alert id + reason.
   if (move.executor === "discontinue_sku") {
     if (!c.sku_id) {
       console.info(`[autopilot] remediation block on alert ${c.alert_id}: discontinue_sku has no sku_id`);
@@ -329,7 +342,7 @@ async function tryRemediation(
       return { outcome: "blocked", reason: verdict.reason ?? "remediation: blocked by SKU guardrails" };
     }
     const client = calderynClient(shopId);
-    const { admin } = await (await import("~/shopify.server")).unauthenticated.admin(shopId);
+    const admin = await storeAdminForAutopilot(shopId);
     const discontinueRes = await executeDiscontinueAlertAction({
       client,
       admin,
@@ -380,13 +393,21 @@ async function tryRemediation(
       return { outcome: "blocked", reason: "adjust_price: alert has no SKU" };
     }
     const client = calderynClient(shopId);
-    const { admin } = await (await import("~/shopify.server")).unauthenticated.admin(shopId);
-
-    const target = await resolveSkuVariant(sb, shopId, c.sku);
-    if (!target) {
-      return { outcome: "blocked", reason: "adjust_price: SKU has no linked variant" };
+    const admin = await storeAdminForAutopilot(shopId);
+    let priorPriceCents: number;
+    if (admin) {
+      const target = await resolveSkuVariant(sb, shopId, c.sku);
+      if (!target) {
+        return { outcome: "blocked", reason: "adjust_price: SKU has no linked variant" };
+      }
+      ({ priceCents: priorPriceCents } = await readVariantPrice(admin, target.variantGid));
+    } else {
+      const owned = await getOwnedVariantPricing(shopId, c.sku);
+      if (!owned) {
+        return { outcome: "blocked", reason: "adjust_price: SKU has no owned variant" };
+      }
+      priorPriceCents = owned.currentPriceCents;
     }
-    const { priceCents: priorPriceCents } = await readVariantPrice(admin, target.variantGid);
     const currentCogsCents = await getCurrentUnitCostCents(sb, shopId, c.sku);
 
     // Mirror the executor's suggestion inputs EXACTLY: capPct is the merchant
@@ -721,7 +742,7 @@ async function tryInventoryRelocation(
   }
 
   const client = calderynClient(shopId);
-  const { admin } = await (await import("~/shopify.server")).unauthenticated.admin(shopId);
+  const admin = await storeAdminForAutopilot(shopId);
   const triggerReason = autopilotReason("Auto move inventory", c.detector_id, c.dollar_impact);
   // The executor re-derives the transfer plan + sku_id from the alert. It
   // throws on pre-audit faults, but a platform failure it recorded RESOLVES

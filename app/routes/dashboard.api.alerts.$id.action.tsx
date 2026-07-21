@@ -27,6 +27,7 @@ import type { ActionKind } from "~/lib/types";
 import { recordApproval } from "~/lib/calibration/approval.server";
 import { recordActionFailure } from "~/lib/calibration/failure.server";
 import { ZERO_APPROVE_RECEIPT, type ApproveReceipt } from "~/lib/calibration/delta";
+import { getOrgMode, shopHasShopifyConnection, writesToOwned } from "~/lib/cutover/org-mode.server";
 
 const INVENTORY_KINDS: InventoryAlertActionKind[] = ["reallocate_inventory", "snooze_alert"];
 const KINDS = [...INVENTORY_KINDS, "reallocate_spend_sku", "discontinue_sku", "adjust_price", "create_po_draft"] as const satisfies readonly ActionKind[];
@@ -108,14 +109,13 @@ export async function action({ request, params }: ActionFunctionArgs) {
       const calibration = await recordCalibration(kind, outcome, auditId);
       return { audit_id: auditId, outcome, acknowledged, calibration };
     }
-    // reallocate_inventory and adjust_price route by the shop's cutover mode: at
-    // `live` the write lands in Calderyn's own engine and needs no Shopify admin,
-    // so an owned-native shop (no connected Shopify store) can still run them. We
-    // therefore resolve the Shopify Admin client only when the shop has one and let
-    // each executor demand it on its Shopify-bound branch (they surface a clear
-    // shopify_required error if it's genuinely missing). discontinue_sku always
-    // archives on live Shopify, so it still requires a connected store here.
-    const admin = session.shopDomain
+    // Store actions route by cutover mode. Shopify is resolved only while it is
+    // authoritative; a live Calderyn store never depends on Shopify auth.
+    const [orgMode, hasShopify] = await Promise.all([
+      getOrgMode(session.shopId),
+      shopHasShopifyConnection(session.shopId),
+    ]);
+    const admin = hasShopify && !writesToOwned(orgMode) && session.shopDomain
       ? (await unauthenticated.admin(session.shopDomain)).admin
       : null;
     if (kind === "adjust_price") {
@@ -139,11 +139,6 @@ export async function action({ request, params }: ActionFunctionArgs) {
       return { audit_id: auditId, outcome, acknowledged, calibration };
     }
     if (kind === "discontinue_sku") {
-      if (!admin) {
-        // Discontinue archives the product on live Shopify — there is no owned
-        // equivalent yet, so this action requires a connected store (rule 12).
-        throw jsonError(422, "shopify_required", "Connect a Shopify store to use this action.");
-      }
       const { auditId, outcome, acknowledged } = await executeDiscontinueAlertAction({
         client,
         admin,

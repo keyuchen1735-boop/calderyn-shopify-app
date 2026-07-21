@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { executeDiscontinueAlertAction } from "../alert-action.server";
 import type { Alert, AuditEntry, GuardrailConfig } from "../../types";
+import type * as CutoverOrgMode from "../../cutover/org-mode.server";
 
 // Mock acknowledgeAlert so it doesn't hit real DB — matches alert-action.test.ts pattern
 const acknowledgeAlert = vi.hoisted(() => vi.fn());
@@ -21,6 +22,19 @@ const setDoNotReorder = vi.hoisted(() => vi.fn());
 vi.mock("../discontinue.server", () => ({
   resolveSkuForDiscontinue: (...a: never[]) => resolveSkuForDiscontinue(...a),
   setDoNotReorder: (...a: never[]) => setDoNotReorder(...a),
+}));
+
+const getOrgMode = vi.hoisted(() => vi.fn());
+const shopHasShopifyConnection = vi.hoisted(() => vi.fn());
+vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof CutoverOrgMode>()),
+  getOrgMode: (...a: never[]) => getOrgMode(...a),
+  shopHasShopifyConnection: (...a: never[]) => shopHasShopifyConnection(...a),
+}));
+
+const archiveOwnedProductForSku = vi.hoisted(() => vi.fn());
+vi.mock("../owned-writes.server", () => ({
+  archiveOwnedProductForSku: (...a: never[]) => archiveOwnedProductForSku(...a),
 }));
 
 const ADMIN_OK = {
@@ -88,6 +102,9 @@ describe("executeDiscontinueAlertAction", () => {
     });
     setDoNotReorder.mockResolvedValue(undefined);
     acknowledgeAlert.mockResolvedValue(true);
+    getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(true);
+    archiveOwnedProductForSku.mockResolvedValue("product-owned-1");
     discontinueProduct.mockResolvedValue({
       productId: "gid://shopify/Product/9",
       status: "ARCHIVED",
@@ -105,6 +122,40 @@ describe("executeDiscontinueAlertAction", () => {
       expect.objectContaining({ alertId: "a1", kind: "discontinue_sku", idempotencyKey: "idem-1" }),
     );
     expect(res.outcome).toBe("succeeded");
+  });
+
+  it("native stores archive the owned catalog without Shopify", async () => {
+    getOrgMode.mockResolvedValue("live");
+    const a = alert({});
+    const c = client(a);
+
+    const res = await executeDiscontinueAlertAction({ ...base, client: c as never, admin: null, sb: SB_STUB });
+
+    expect(archiveOwnedProductForSku).toHaveBeenCalledWith("shop-1", "sku-1");
+    expect(discontinueProduct).not.toHaveBeenCalled();
+    expect(c.actions.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        writeTarget: "owned_sot",
+        params: expect.objectContaining({ owned: true, product_id: "product-owned-1" }),
+      }),
+    );
+    expect(res.outcome).toBe("succeeded");
+  });
+
+  it("rolls back the reorder flag when the owned product is missing", async () => {
+    getOrgMode.mockResolvedValue("live");
+    archiveOwnedProductForSku.mockResolvedValue(null);
+    const a = alert({});
+    const c = client(a);
+
+    await expect(
+      executeDiscontinueAlertAction({ ...base, client: c as never, admin: null, sb: SB_STUB }),
+    ).rejects.toMatchObject({ code: "discontinue_no_product", status: 422 });
+
+    expect(setDoNotReorder).toHaveBeenNthCalledWith(1, SB_STUB, "shop-1", "sku-1", true);
+    expect(setDoNotReorder).toHaveBeenNthCalledWith(2, SB_STUB, "shop-1", "sku-1", false);
+    expect(c.actions.execute).not.toHaveBeenCalled();
+    expect(acknowledgeAlert).not.toHaveBeenCalled();
   });
 
   it("rejects a non-open alert with 409", async () => {

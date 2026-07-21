@@ -5,6 +5,7 @@ import { getActionPolicy } from "../action-policy.server";
 import type { ReallocationCandidate, ReallocationSuggestion } from "../reallocation-suggest.server";
 import type { Platform } from "../../ads/adapter";
 import type { GuardrailResult } from "../guardrails";
+import type * as CutoverOrgMode from "../../cutover/org-mode.server";
 
 // vi.mock is hoisted above imports by Vitest, so the mocks below still apply to
 // the runAutopilotForShop import above.
@@ -28,6 +29,9 @@ const {
   enrichRemediation,
   calderynClient,
   unauthenticatedAdmin,
+  getOrgMode,
+  shopHasShopifyConnection,
+  getOwnedVariantPricing,
   isGraduated,
   preconditionFresh,
   stockoutPauseAllowed,
@@ -85,6 +89,12 @@ const {
   // adjust_price branch uses to predict the executor's price. Default 15%.
   calderynClient: vi.fn(() => ({ guardrails: { get: vi.fn(async () => ({ max_price_change_pct: 15 })) } })),
   unauthenticatedAdmin: vi.fn(async () => ({ admin: {} })),
+  getOrgMode: vi.fn(async (_shopId: string) => "mirror"),
+  shopHasShopifyConnection: vi.fn(async (_shopId: string) => true),
+  getOwnedVariantPricing: vi.fn(async (_shopId: string, _skuCode: string) => ({
+    variantId: "sku-int-1",
+    currentPriceCents: 1000,
+  })),
   // Default: true — existing tests that expect executeAction to be reached keep
   // passing. New graduation-gate tests override this per-test. NOTE: this default
   // also lets the merged remediation graduation gate pass, so the remediation
@@ -122,6 +132,14 @@ vi.mock("../../po/draft.server", () => ({ getCurrentUnitCostCents }));
 vi.mock("../../shopify/inventory.server", () => ({ transferPlanFromEvidence }));
 vi.mock("../../calderyn.server", () => ({ calderynClient }));
 vi.mock("~/shopify.server", () => ({ unauthenticated: { admin: unauthenticatedAdmin } }));
+vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
+  ...(await importOriginal<typeof CutoverOrgMode>()),
+  getOrgMode: (shopId: string) => getOrgMode(shopId),
+  shopHasShopifyConnection: (shopId: string) => shopHasShopifyConnection(shopId),
+}));
+vi.mock("../owned-writes.server", () => ({
+  getOwnedVariantPricing: (shopId: string, skuCode: string) => getOwnedVariantPricing(shopId, skuCode),
+}));
 // Default: null → mu falls back to 1 → full-cap behavior (today's exact numbers).
 // Per-test override via vi.mocked(getActionPolicy).mockResolvedValueOnce(mu).
 vi.mock("../action-policy.server", () => ({ getActionPolicy: vi.fn().mockResolvedValue(null) }));
@@ -257,6 +275,9 @@ describe("runAutopilotForShop", () => {
       return { inventoryItemId, fromLocationId, toLocationId, delta };
     });
     calderynClient.mockReset().mockReturnValue({ guardrails: { get: vi.fn(async () => ({ max_price_change_pct: 15 })) } });
+    getOrgMode.mockReset().mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockReset().mockResolvedValue(true);
+    getOwnedVariantPricing.mockReset().mockResolvedValue({ variantId: "sku-int-1", currentPriceCents: 1000 });
   });
 
   it("skips entirely when auto-pilot is disabled", async () => {
@@ -563,6 +584,20 @@ describe("runAutopilotForShop", () => {
     expect(opts.triggerReason).toContain("$4,000");
     expect(executeAction).not.toHaveBeenCalled();
     expect(r.acted).toBe(1);
+  });
+
+  it("archives a native product without initializing Shopify", async () => {
+    getOrgMode.mockResolvedValue("live");
+    shopHasShopifyConnection.mockResolvedValue(false);
+    checkSkuGuardrails.mockResolvedValue({ allowed: true });
+    const sb = fakeSb({ enabled: true, alerts: [deadSku] });
+
+    await runAutopilotForShop(SHOP, sb);
+
+    expect(unauthenticatedAdmin).not.toHaveBeenCalled();
+    expect(executeDiscontinueAlertAction).toHaveBeenCalledWith(
+      expect.objectContaining({ admin: null, shopId: SHOP, alertId: "al-dead" }),
+    );
   });
 
   it("respects the daily action cap on a remediation move (blocked, no execution)", async () => {
@@ -1584,6 +1619,21 @@ describe("runAutopilotForShop", () => {
       );
     });
 
+    it("native stores predict from owned price and never initialize Shopify", async () => {
+      withAdjustPriceMove();
+      getOrgMode.mockResolvedValue("live");
+      shopHasShopifyConnection.mockResolvedValue(false);
+      const sb = fakeSb({ enabled: true, alerts: [priceAlert] });
+
+      await runAutopilotForShop(SHOP, sb);
+
+      expect(getOwnedVariantPricing).toHaveBeenCalledWith(SHOP, "Slim Margin Tee");
+      expect(unauthenticatedAdmin).not.toHaveBeenCalled();
+      expect(executeAdjustPriceAlertAction).toHaveBeenCalledWith(
+        expect.objectContaining({ admin: null }),
+      );
+    });
+
     it("graduated + OVER cap → blocked 'price change exceeds max', executor NOT called, alert stays open", async () => {
       withAdjustPriceMove();
       // Predicted 1000c → 1200c = +20% (> 10% autopilot cap).
@@ -1684,6 +1734,19 @@ describe("runAutopilotForShop", () => {
         sb,
       );
       expect(r.acted).toBe(1);
+    });
+
+    it("native stores relocate without initializing Shopify", async () => {
+      getOrgMode.mockResolvedValue("live");
+      shopHasShopifyConnection.mockResolvedValue(false);
+      const sb = fakeSb({ enabled: true, alerts: [invAlert] });
+
+      await runAutopilotForShop(SHOP, sb);
+
+      expect(unauthenticatedAdmin).not.toHaveBeenCalled();
+      expect(executeInventoryAlertAction).toHaveBeenCalledWith(
+        expect.objectContaining({ admin: null }),
+      );
     });
 
     it("delta > cap → blocked 'inventory move exceeds max units', executor NOT called", async () => {

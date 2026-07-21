@@ -1,10 +1,8 @@
 // app/routes/__tests__/dashboard-reallocate-inventory-route.test.ts
 // Regression: an owned-native shop (org_mode=live, no connected Shopify store, so
-// session.shopDomain is null) must still be able to run reallocate_inventory — the
-// executor routes the move to Calderyn's own inventory engine and needs no Shopify
-// admin. The route must NOT reject with shopify_required before it gets there. It
-// passes admin: null in that case. discontinue_sku, which has no owned path, still
-// requires a connected store.
+// session.shopDomain is null) must still be able to run store actions — the
+// executors route them to Calderyn's own engine and need no Shopify admin. The route
+// must NOT resolve Shopify before it gets there and passes admin: null instead.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { action as alertAction } from "../dashboard.api.alerts.$id.action";
 import type * as HttpServer from "~/lib/dashboard/http.server";
@@ -16,6 +14,8 @@ const executeDiscontinueAlertAction = vi.fn();
 const adminSpy = vi.fn();
 const alertsGetSpy = vi.fn();
 const recordApprovalSpy = vi.fn();
+const getOrgMode = vi.fn();
+const shopHasShopifyConnection = vi.fn();
 
 vi.mock("~/lib/dashboard/session.server", () => ({
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
@@ -38,6 +38,11 @@ vi.mock("~/lib/calderyn.server", async (importOriginal) => ({
 vi.mock("~/lib/calibration/approval.server", () => ({
   recordApproval: (...a: unknown[]) => recordApprovalSpy(...a),
 }));
+vi.mock("~/lib/cutover/org-mode.server", () => ({
+  getOrgMode: (...a: unknown[]) => getOrgMode(...a),
+  shopHasShopifyConnection: (...a: unknown[]) => shopHasShopifyConnection(...a),
+  writesToOwned: (mode: string) => mode === "live",
+}));
 vi.mock("~/shopify.server", () => ({
   unauthenticated: { admin: (...a: unknown[]) => adminSpy(...a) },
 }));
@@ -58,6 +63,8 @@ describe("POST /dashboard/api/alerts/:id/action — owned-native shop (no Shopif
     vi.clearAllMocks();
     // Owned-native: a first-party account whose shop never connected Shopify.
     requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: null });
+    getOrgMode.mockResolvedValue("live");
+    shopHasShopifyConnection.mockResolvedValue(false);
     alertsGetSpy.mockResolvedValue({ id: "a1", detector_id: "regional_spend_starved_stock" });
     recordApprovalSpy.mockResolvedValue({ delta: 1, before: 22, after: 23 });
     adminSpy.mockResolvedValue({ admin: { graphql: vi.fn() } });
@@ -84,19 +91,20 @@ describe("POST /dashboard/api/alerts/:id/action — owned-native shop (no Shopif
     );
   });
 
-  it("still requires a connected store for discontinue_sku (no owned equivalent)", async () => {
-    // The guard throws a 422 Response (Remix surfaces a thrown Response as the response).
-    const res = (await call({ type: "discontinue_sku", idempotency_key: "k2" }).catch(
-      (e) => e,
-    )) as Response;
-    expect(res).toBeInstanceOf(Response);
-    expect(res.status).toBe(422);
-    expect(await res.json()).toMatchObject({ error: "shopify_required" });
-    expect(executeDiscontinueAlertAction).not.toHaveBeenCalled();
+  it("runs discontinue_sku in the owned catalog without Shopify auth", async () => {
+    const res = await call({ type: "discontinue_sku", idempotency_key: "k2" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ audit_id: "audit-dc-1", outcome: "succeeded" });
+    expect(adminSpy).not.toHaveBeenCalled();
+    expect(executeDiscontinueAlertAction).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "discontinue_sku", admin: null, shopId: "shop-1" }),
+    );
   });
 
   it("resolves the Shopify admin when the shop HAS a connected store", async () => {
     requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: "x.myshopify.com" });
+    getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(true);
     const res = await call({ type: "reallocate_inventory", idempotency_key: "k3" });
     expect(res.status).toBe(200);
     expect(adminSpy).toHaveBeenCalledWith("x.myshopify.com");

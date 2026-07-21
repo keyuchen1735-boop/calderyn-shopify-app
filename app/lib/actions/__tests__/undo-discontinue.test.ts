@@ -1,6 +1,11 @@
 // app/lib/actions/__tests__/undo-discontinue.test.ts
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { undoAction } from "../undo.server";
+
+const setProductStatus = vi.hoisted(() => vi.fn());
+vi.mock("../../catalog/catalog.server", () => ({
+  setProductStatus: (...a: never[]) => setProductStatus(...a),
+}));
 
 // Admin client whose productUpdate(ACTIVE) succeeds.
 const ADMIN_OK = {
@@ -13,13 +18,13 @@ const ADMIN_OK = {
 
 // Supabase mock: the original discontinue_sku audit row, no existing undo, in-window;
 // captures the flag-clear update + the inserted undo row + the alert re-open.
-function makeSb() {
+function makeSb(params: Record<string, unknown> = { sku_id: "sku-1", product_id: "gid://shopify/Product/9" }) {
   const origRow = {
     id: "au1",
     shop_id: "shop-1",
     alert_id: "a1",
     action_kind: "discontinue_sku",
-    params: { sku_id: "sku-1", product_id: "gid://shopify/Product/9" },
+    params,
     pre_state: {},
     post_state: {},
     dollar_impact_at_exec: 500,
@@ -57,6 +62,10 @@ function makeSb() {
 }
 
 describe("undoAction — discontinue_sku", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("re-activates the product, clears the flag, and writes an undo row", async () => {
     const sb = makeSb();
     const res = await undoAction("shop-1", "au1", sb, { admin: ADMIN_OK });
@@ -68,5 +77,19 @@ describe("undoAction — discontinue_sku", () => {
   it("refuses without an admin client (rule 12 — no fake undo)", async () => {
     const sb = makeSb();
     await expect(undoAction("shop-1", "au1", sb, {})).rejects.toThrow(/admin/i);
+  });
+
+  it("restores a native discontinued product without Shopify", async () => {
+    setProductStatus.mockResolvedValue(undefined);
+    const res = await undoAction(
+      "shop-1",
+      "au1",
+      makeSb({ owned: true, sku_id: "sku-1", product_id: "product-owned-1" }),
+      {},
+    );
+
+    expect(setProductStatus).toHaveBeenCalledWith("shop-1", "product-owned-1", "active");
+    expect(ADMIN_OK.graphql).not.toHaveBeenCalled();
+    expect(res.id).toBe("undo1");
   });
 });
