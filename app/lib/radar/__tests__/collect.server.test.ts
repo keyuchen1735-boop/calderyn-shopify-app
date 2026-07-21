@@ -68,6 +68,20 @@ describe("collectShop", () => {
 });
 
 describe("loadRadarInputs", () => {
+  it("skips demo (non-uuid) shops and returns empty shape without calling supabase", async () => {
+    const inputs = await loadRadarInputs("demo-shop");
+    expect(inputs).toEqual({
+      traffic: [],
+      rankings: [],
+      aiCrawl: [],
+      allowAiCrawlers: false,
+      hasOrgDescription: false,
+      lastPublishedAt: null,
+      jsonLdIssues: [],
+    });
+    expect(mocks.fromMock).not.toHaveBeenCalled();
+    expect(mocks.rpcMock).not.toHaveBeenCalled();
+  });
   it("assembles traffic, rankings, crawl, flags and JSON-LD checks", async () => {
     const traffic = tableStub({
       data: [{

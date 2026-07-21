@@ -101,20 +101,33 @@ async function checkTopProductJsonLd(shopId: string, traffic: TrafficDay[]): Pro
     .map(([handle]) => handle);
   if (handles.length === 0) return [];
   const store = await getStoreSettings(shopId);
-  const out: JsonLdCheckedPage[] = [];
-  for (const handle of handles) {
-    const product = await getCatalog().getProduct(shopId, handle);
-    if (!product) continue;
-    const draft = buildProductDraft(product, store, origin);
-    const issues = validateDraft(draft)
-      .filter((i) => i.field === "jsonLd")
-      .map((i) => i.message);
-    out.push({ productId: product.id, handle, title: product.title || handle, issues });
-  }
-  return out;
+  const productPromises = handles.map(handle =>
+    getCatalog().getProduct(shopId, handle).then(product => ({ product, handle }))
+  );
+  const results = await Promise.all(productPromises);
+  return results
+    .filter(({ product }) => product !== null)
+    .map(({ product, handle }) => {
+      const draft = buildProductDraft(product!, store, origin);
+      const issues = validateDraft(draft)
+        .filter((i) => i.field === "jsonLd")
+        .map((i) => i.message);
+      return { productId: product!.id, handle, title: product!.title || handle, issues };
+    });
 }
 
 export async function loadRadarInputs(shopId: string): Promise<RadarCollectInputs> {
+  if (!isUuid(shopId)) {
+    return {
+      traffic: [],
+      rankings: [],
+      aiCrawl: [],
+      allowAiCrawlers: false,
+      hasOrgDescription: false,
+      lastPublishedAt: null,
+      jsonLdIssues: [],
+    };
+  }
   const sb = getSupabase();
   const [trafficRes, seriesRes, crawlRes, seo] = await Promise.all([
     sb.from("radar_traffic_daily")
