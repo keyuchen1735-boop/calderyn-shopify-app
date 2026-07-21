@@ -35,14 +35,14 @@ describe("ember storefront recipe", () => {
   it("compiles nine heat-led routes from merchant facts without fabricating proof or urgency", () => {
     const { bundle, report } = compileRecipeConfig(EMBER_RECIPE_CONFIG);
 
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ember", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ember", templateVersion: 3 });
     expect(Object.keys(bundle.routes)).toEqual([
       "home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound",
     ]);
     expect(EMBER_RECIPE_CONFIG.archetype).toEqual({
       composition: "tasting-counter",
       hero: "heat-spectrum-hero",
-      scroll: "heat-tasting",
+      scroll: "heat-shear",
       cards: "tasting-flights",
       iconography: ["pepper-scale marks", "raw tasting stamps"],
     });

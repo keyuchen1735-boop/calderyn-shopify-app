@@ -78,7 +78,7 @@ export interface RecipeMediaArtifacts {
 
 export interface RecipeConfig<TTemplateId extends StoreTemplateId = StoreTemplateId> {
   templateId: TTemplateId;
-  templateVersion: TTemplateId extends NewStoreTemplateId ? 1 | 2 : number;
+  templateVersion: TTemplateId extends NewStoreTemplateId ? 1 | 2 | 3 : number;
   concept: StorefrontBundleSourceV1["concept"];
   designSystem: StorefrontBundleSourceV1["designSystem"];
   archetype: RecipeArchetype;

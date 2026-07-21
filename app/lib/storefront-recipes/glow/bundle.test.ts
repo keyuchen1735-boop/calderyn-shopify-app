@@ -61,11 +61,11 @@ describe("glow storefront recipe", () => {
     expect(Object.keys(bundle.routes)).toEqual([
       "home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound",
     ]);
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "glow", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "glow", templateVersion: 3 });
     expect(GLOW_RECIPE_CONFIG.archetype).toEqual({
       composition: "clinical-evidence",
       hero: "clinical-liquid-hero",
-      scroll: "clinical-proof",
+      scroll: "formula-morph",
       cards: "evidence-cards",
       iconography: ["formula index marks", "quiet laboratory rules"],
     });

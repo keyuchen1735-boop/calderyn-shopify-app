@@ -27,7 +27,7 @@ describe("haven storefront recipe", () => {
     expect(Object.keys(bundle.routes)).toEqual([
       "home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound",
     ]);
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "haven", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "haven", templateVersion: 3 });
     expect(HAVEN_RECIPE_CONFIG.archetype).toMatchObject({ composition: "spatial-studies", hero: "material-room-hero" });
     expect(repeatsIn(bundle.routes.home.tree)).toContain("featured.products");
     expect(repeatsIn(bundle.routes.collection.tree)).toContain("collection.products");

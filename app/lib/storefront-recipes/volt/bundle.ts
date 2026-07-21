@@ -32,33 +32,33 @@ const sharedRouteCss = `
 
 export const VOLT_RECIPE_CONFIG = {
   templateId: "volt",
-  templateVersion: 2,
+  templateVersion: 3,
   concept: {
     name: "Volt",
     rationale: "A premium product catalog organized as an honest system-planning surface, led by a cinematic product silhouette.",
     noveltySignature: ["rim-lit-silhouette", "system-planner", "live-product-comparison"],
   },
   designSystem: {
-    displayFontId: "space-grotesk",
+    displayFontId: "chakra-petch",
     bodyFontId: "ibm-plex-mono",
     tokens: {
-      ink: "#0a0b0d",
-      panel: "#15181d",
-      paper: "#f2f3ef",
-      signal: "#b7ff3c",
-      muted: "#9ba2aa",
-      line: "#333941",
+      ink: "#102b35",
+      panel: "#102b35",
+      paper: "#e9f3f2",
+      signal: "#a5dd1f",
+      muted: "#102b35",
+      line: "#102b35",
       "space-system": "24px",
     },
     breakpoints: { compact: 720, wide: 1240 },
     iconStyle: "precision line diagrams with channel and battery marks",
     motionStyle: "measured system reveals with static reduced-motion fallback",
-    globalCss: ".volt-product-copy{box-sizing:border-box;width:40%;max-width:40%;min-width:0;overflow-wrap:anywhere}@media(max-width:720px){.volt-product-copy{width:auto;max-width:none}}",
+    globalCss: ".volt-product-copy{box-sizing:border-box;width:40%;max-width:40%;min-width:0;overflow-wrap:anywhere}.volt-hero-orbit{animation:volt-scan 9s linear infinite}.volt-compare{animation:volt-signal linear both;animation-timeline:view();animation-range:entry 10% cover 45%}@keyframes volt-scan{50%{transform:rotate(180deg) scale(.82)}to{transform:rotate(360deg)}}@keyframes volt-signal{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0)}}@media(max-width:720px){.volt-product-copy{width:auto;max-width:none}}@media(prefers-reduced-motion:reduce){.volt-hero-orbit,.volt-compare{animation:none}}",
   },
   archetype: {
     composition: "system-architecture",
     hero: "cinematic-rim-hero",
-    scroll: "system-sequence",
+    scroll: "signal-scan",
     cards: "spec-modules",
     iconography: ["precision line diagrams", "channel and battery marks"],
   },
@@ -115,7 +115,7 @@ export const VOLT_RECIPE_CONFIG = {
         </main>
         <section data-cd-slot="bundleBuilder" data-cd-bundle-slots="3" data-cd-host-size="block" data-cd-theme-tokens="ink paper signal"></section>
       `, `${sharedRouteCss}
-        .volt-hero-fallback{position:relative;display:grid;min-height:min(820px,88dvh);align-items:end;overflow:hidden;padding:clamp(1.5rem,6vw,6rem);background:radial-gradient(circle at 72% 44%,rgba(183,255,60,.18),transparent 8%),radial-gradient(ellipse at 72% 48%,#4b515b 0,#20242a 18%,#0a0b0d 52%);color:var(--paper)}
+        .volt-hero-fallback{position:relative;display:grid;min-height:min(820px,88dvh);align-items:end;overflow:hidden;padding:clamp(1.5rem,6vw,6rem);background:radial-gradient(circle at 72% 44%,rgba(183,255,60,.18),transparent 8%),radial-gradient(ellipse at 72% 48%,#102b35 0,#102b35 18%,#102b35 52%);color:var(--paper)}
         .volt-hero-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.volt-hero-fallback:after{content:"";position:absolute;inset:9% 8% 9% 57%;border:1px solid rgba(242,243,239,.22);border-radius:48% 48% 42% 42%;box-shadow:0 0 70px rgba(183,255,60,.12)}.volt-hero-orbit{position:absolute;width:52vw;height:52vw;right:-9vw;top:4%;border:1px solid rgba(242,243,239,.12);border-radius:50%}.volt-hero-copy{position:relative;z-index:1;max-width:44rem}.volt-hero-copy h1{font-size:clamp(4rem,10vw,6rem);margin:.5rem 0}.volt-hero-line{display:block}.volt-hero-copy p{max-width:38rem;font-size:1.05rem;line-height:1.6}
         .volt-collection-hooks,.volt-catalog,.volt-compare,.volt-planner-intro{padding:clamp(3rem,7vw,7rem) clamp(1rem,4vw,4rem)}.volt-collection-hooks header,.volt-catalog header,.volt-compare header,.volt-planner-intro header{max-width:64rem;margin-bottom:2rem}.volt-collection-hooks h2,.volt-catalog h2,.volt-compare h2,.volt-planner-intro h2{font-size:clamp(3rem,7vw,7rem);margin:.5rem 0}.volt-product-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line)}.volt-product-module{display:grid;gap:1rem;padding:1rem;background:var(--paper)}.volt-product-module img{width:100%;aspect-ratio:1;object-fit:cover;background:var(--panel)}.volt-product-module a{color:inherit;text-decoration:none}.volt-product-module h3{font-size:1.4rem}.volt-product-meta{display:flex;justify-content:space-between;gap:1rem;font-family:var(--font-body);font-size:.78rem}.volt-collection-hook-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line)}.volt-collection-hook-grid a{display:grid;gap:.75rem;min-height:180px;padding:1rem;background:var(--paper);color:inherit;text-decoration:none}
         .volt-compare{background:var(--ink);color:var(--paper)}.volt-compare-rail{display:grid;border-top:1px solid var(--line)}.volt-compare-row{display:grid;grid-template-columns:1.5fr 2fr 1fr 1fr auto;gap:1rem;align-items:center;min-height:70px;border-bottom:1px solid var(--line);font-family:var(--font-body)}.volt-compare-rail a{color:var(--signal)}
@@ -142,7 +142,7 @@ export const VOLT_RECIPE_CONFIG = {
           <section class="volt-product-gallery"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="1000" height="1000"><div data-cd-repeat="product.images"><img data-cd-key="product.primaryImage" data-cd-src="product.primaryImage" data-cd-alt="product.title" width="720" height="720"></div><div class="volt-detail-fallback" role="img" aria-label="Abstract close view of product materials"></div></section>
           <article class="volt-product-dossier"><div class="volt-product-copy"><span class="volt-kicker">Product / live specification</span><h1 class="volt-display" data-cd-text="product.title"></h1><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><p data-cd-text="product.description"></p>${catalogProof.html}<section class="volt-facts"><h2>Merchant-supplied facts</h2><dl data-cd-repeat="product.facts"><div class="volt-fact" data-cd-key="fact.id"><dt data-cd-text="fact.label"></dt><dd data-cd-text="fact.value"></dd><a data-cd-href="fact.url">Open merchant reference</a></div></dl></section><h2>Available configurations</h2><div class="volt-variants" data-cd-repeat="product.variants"><div class="volt-variant" data-cd-key="variant.id"><b data-cd-text="variant.title"></b><span data-cd-text="variant.availability"></span><strong data-cd-money="variant.price"></strong></div></div><aside class="volt-policy-reassurance"><b>Store policies</b><p>Review the merchant policy links before checkout; final totals and fulfillment details stay in protected commerce.</p><nav data-cd-policy-links></nav></aside><section class="volt-related"><h2>Related discovery</h2><div class="volt-related-rail" data-cd-repeat="related.products"><article class="volt-related-card" data-cd-key="product.id"><h3 data-cd-text="product.title"></h3><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><a data-cd-route="product" data-cd-param-handle="product.handle">Open related product</a></article></div></section></div></article><section><div data-cd-slot="variantPicker" data-cd-product="product.id" data-cd-host-size="block" data-cd-theme-tokens="ink paper signal"></div><div data-cd-slot="addToCart" data-cd-product="product.id" data-cd-host-size="block" data-cd-theme-tokens="ink paper signal"></div></section>
         </main>
-      `, `${sharedRouteCss}.volt-product-gallery{position:sticky;top:0;float:left;display:grid;width:60%;gap:1px;background:var(--line)}.volt-product-gallery>img,.volt-product-gallery>div img{width:100%;aspect-ratio:1;object-fit:cover}.volt-detail-fallback{min-height:280px;background:radial-gradient(circle at 54% 46%,rgba(183,255,60,.18),transparent 10%),linear-gradient(135deg,#282e35,#0a0b0d)}.volt-product-copy{display:grid;gap:1.25rem;min-height:100dvh;margin-left:60%;padding:clamp(1.5rem,4vw,4rem);background:var(--paper)}.volt-product-copy h1{font-size:clamp(3.2rem,6vw,6rem);margin:.4rem 0}.volt-facts dl,.volt-facts dd{margin:0}.volt-fact,.volt-variant{display:grid;grid-template-columns:1fr auto;gap:.35rem 1rem;padding:.7rem 0;border-top:1px solid var(--line)}.volt-facts a{grid-column:1/-1;color:inherit}.volt-variants{display:grid;border-top:1px solid var(--line)}.volt-policy-reassurance,.volt-related{padding:1rem;border:1px solid var(--line)}.volt-related-rail{display:grid;gap:.75rem}.volt-related-card{padding:.75rem;border-top:1px solid var(--line)}@media(max-width:720px){.volt-product-gallery{position:static;float:none;width:auto}.volt-product-copy{min-height:auto;margin-left:0}}@media(prefers-reduced-motion:reduce){.volt-product-gallery{scroll-behavior:auto}}`, "product"),
+      `, `${sharedRouteCss}.volt-product-gallery{position:sticky;top:0;float:left;display:grid;width:60%;gap:1px;background:var(--line)}.volt-product-gallery>img,.volt-product-gallery>div img{width:100%;aspect-ratio:1;object-fit:cover}.volt-detail-fallback{min-height:280px;background:radial-gradient(circle at 54% 46%,rgba(183,255,60,.18),transparent 10%),linear-gradient(135deg,#102b35,#102b35)}.volt-product-copy{display:grid;gap:1.25rem;min-height:100dvh;margin-left:60%;padding:clamp(1.5rem,4vw,4rem);background:var(--paper)}.volt-product-copy h1{font-size:clamp(3.2rem,6vw,6rem);margin:.4rem 0}.volt-facts dl,.volt-facts dd{margin:0}.volt-fact,.volt-variant{display:grid;grid-template-columns:1fr auto;gap:.35rem 1rem;padding:.7rem 0;border-top:1px solid var(--line)}.volt-facts a{grid-column:1/-1;color:inherit}.volt-variants{display:grid;border-top:1px solid var(--line)}.volt-policy-reassurance,.volt-related{padding:1rem;border:1px solid var(--line)}.volt-related-rail{display:grid;gap:.75rem}.volt-related-card{padding:.75rem;border-top:1px solid var(--line)}@media(max-width:720px){.volt-product-gallery{position:static;float:none;width:auto}.volt-product-copy{min-height:auto;margin-left:0}}@media(prefers-reduced-motion:reduce){.volt-product-gallery{scroll-behavior:auto}}`, "product"),
     },
     search: {
       signature: "dark command search with live ranked product modules and explicit empty-state recovery",
@@ -154,7 +154,7 @@ export const VOLT_RECIPE_CONFIG = {
       signature: "engineering manifesto with quiet signal diagrams and merchant-owned policy evidence",
       source: route(`
         <main class="volt-page volt-story"><header><span class="volt-kicker">Engineering / product before promise</span><h1 class="volt-display">Plan with the facts available.</h1><p><span data-cd-text="store.name"></span> presents each live product as part of a clear planning path.</p></header><section><article><b>Inspect</b><h2>Begin with the live record.</h2><p>Choose from current products without inventing performance or availability claims.</p></article><article><b>Plan</b><h2>Compare what is known.</h2><p>Live catalog facts stay close to every path into purchase.</p></article><article><b>Support</b><h2>Keep the handoff clear.</h2><p>Review this store's policies before purchase.</p></article></section><a class="volt-button" data-cd-route="collection">Explore current products</a></main><nav data-cd-policy-links></nav>
-      `, `${sharedRouteCss}.volt-story{padding:clamp(3rem,8vw,8rem)}.volt-story>header{max-width:72rem;padding:clamp(2rem,6vw,6rem);background:radial-gradient(circle at 70% 45%,#39413d,var(--ink) 50%);color:var(--paper)}.volt-story h1{font-size:clamp(4rem,10vw,9rem);margin:.5rem 0}.volt-story>section{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin:5rem 0;background:var(--line)}.volt-story article{min-height:280px;padding:1.5rem;background:var(--paper)}@media(max-width:720px){.volt-story>section{grid-template-columns:1fr}}`),
+      `, `${sharedRouteCss}.volt-story{padding:clamp(3rem,8vw,8rem)}.volt-story>header{max-width:72rem;padding:clamp(2rem,6vw,6rem);background:radial-gradient(circle at 70% 45%,#102b35,var(--ink) 50%);color:var(--paper)}.volt-story h1{font-size:clamp(4rem,10vw,9rem);margin:.5rem 0}.volt-story>section{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin:5rem 0;background:var(--line)}.volt-story article{min-height:280px;padding:1.5rem;background:var(--paper)}@media(max-width:720px){.volt-story>section{grid-template-columns:1fr}}`),
     },
     cart: {
       signature: "system rack cart ledger with trusted line controls, live totals, and checkout handoff",
@@ -179,7 +179,7 @@ export const VOLT_RECIPE_CONFIG = {
       signature: "lost-signal recovery panel routing shoppers back to live systems, search, and support policies",
       source: route(`
         <main class="volt-page volt-lost"><span class="volt-kicker">Signal unavailable</span><h1 class="volt-display">This channel is quiet.</h1><p>The requested page is not in the current storefront. Reconnect through the live catalog or search.</p><nav><a class="volt-button" data-cd-route="collection">Browse all products</a><a data-cd-route="search">Search the catalog</a></nav></main>
-      `, `${sharedRouteCss}.volt-lost{display:grid;align-content:center;min-height:72dvh;padding:clamp(2rem,8vw,8rem);background:radial-gradient(circle at 80% 50%,#343b43,var(--ink) 38%);color:var(--paper)}.volt-lost h1{max-width:9ch;font-size:clamp(4rem,10vw,9rem);margin:.5rem 0}.volt-lost nav{display:flex;align-items:center;gap:1.25rem}.volt-lost nav a{color:inherit}`),
+      `, `${sharedRouteCss}.volt-lost{display:grid;align-content:center;min-height:72dvh;padding:clamp(2rem,8vw,8rem);background:radial-gradient(circle at 80% 50%,#102b35,var(--ink) 38%);color:var(--paper)}.volt-lost h1{max-width:9ch;font-size:clamp(4rem,10vw,9rem);margin:.5rem 0}.volt-lost nav{display:flex;align-items:center;gap:1.25rem}.volt-lost nav a{color:inherit}`),
     },
   },
   assets: VOLT_ASSETS,

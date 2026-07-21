@@ -75,10 +75,10 @@ const notFound = {
 };
 
 export const GILT_RECIPE_CONFIG = {
-  templateId: "gilt", templateVersion: 2,
+  templateId: "gilt", templateVersion: 3,
   concept: { name: "Gilt", rationale: "An intimate object ceremony carries live jewelry and buyer-entered gifting details from cabinet to protected checkout.", noveltySignature: ["floating jewelry cabinet", "guided gifting handoff", "policy-adjacent purchase"] },
-  designSystem: { displayFontId: "cormorant-garamond", bodyFontId: "manrope", tokens: { cream: "#f3ead8", black: "#0b0a08", gold: "#9a6b22", "space-gilt": "20px" }, breakpoints: { mobile: 760, wide: 1180 }, iconStyle: "fine gold hallmarks and circular object indices", motionStyle: "slow floating object reveals and restrained ceremony handoffs", globalCss: `.gilt-title{overflow-wrap:anywhere}.gilt-shell a{color:inherit;text-decoration:none}` },
-  archetype: { composition: "object-ceremony", hero: "jewelry-ceremony-hero", scroll: "intimate-ceremony", cards: "object-vignettes", iconography: ["fine gold hallmarks", "circular object indices"] },
+  designSystem: { displayFontId: "cormorant-garamond", bodyFontId: "manrope", tokens: { cream: "#f8f0df", black: "#38271d", gold: "#c79421", "space-gilt": "20px" }, breakpoints: { mobile: 760, wide: 1180 }, iconStyle: "fine gold hallmarks and circular object indices", motionStyle: "slow floating object reveals and restrained ceremony handoffs", globalCss: `.gilt-title{overflow-wrap:anywhere}.gilt-shell a{color:inherit;text-decoration:none}.gilt-hero-visual:before{content:"";position:absolute;inset:8% 12% 18%;z-index:1;border:1px solid var(--gold);border-radius:50% 50% 0 0;animation:gilt-arch 12s ease-in-out infinite;pointer-events:none}@keyframes gilt-arch{50%{transform:rotate(4deg) scale(.94)}}@media(prefers-reduced-motion:reduce){.gilt-hero-visual:before{animation:none}}` },
+  archetype: { composition: "object-ceremony", hero: "jewelry-ceremony-hero", scroll: "jewelry-orbit", cards: "object-vignettes", iconography: ["fine gold hallmarks", "circular object indices"] },
   surfaces: {
     shell: { signature: "quiet hallmark masthead with a protected velvet bag drawer", source: shell },
     home: { signature: "floating live jewelry object followed by a restrained cabinet", source: home },

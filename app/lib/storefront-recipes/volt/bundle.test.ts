@@ -76,19 +76,19 @@ describe("volt storefront recipe", () => {
 
     expect(report.profileVersion).toBe(1);
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "volt", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "volt", templateVersion: 3 });
     expect(Object.keys(bundle.routes)).toEqual([
       "home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound",
     ]);
     expect(VOLT_RECIPE_CONFIG.archetype).toEqual({
       composition: "system-architecture",
       hero: "cinematic-rim-hero",
-      scroll: "system-sequence",
+      scroll: "signal-scan",
       cards: "spec-modules",
       iconography: ["precision line diagrams", "channel and battery marks"],
     });
     expect(bundle.designSystem).toMatchObject({
-      displayFontId: "space-grotesk",
+      displayFontId: "chakra-petch",
       bodyFontId: "ibm-plex-mono",
     });
 

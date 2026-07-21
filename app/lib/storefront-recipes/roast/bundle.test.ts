@@ -20,14 +20,14 @@ describe("roast storefront recipe", () => {
   it("compiles nine preparation-first routes from live coffee and protected product options", () => {
     const { bundle, report } = compileRecipeConfig(ROAST_RECIPE_CONFIG);
 
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "roast", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "roast", templateVersion: 3 });
     expect(Object.keys(bundle.routes)).toEqual([
       "home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound",
     ]);
     expect(ROAST_RECIPE_CONFIG.archetype).toEqual({
       composition: "origin-notebook",
       hero: "origin-brew-hero",
-      scroll: "brew-notebook",
+      scroll: "origin-stack",
       cards: "origin-cards",
       iconography: ["brew ratio marks", "origin plot symbols"],
     });

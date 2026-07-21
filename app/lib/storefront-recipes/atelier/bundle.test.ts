@@ -52,12 +52,12 @@ describe("Atelier storefront recipe", () => {
     expect(ATELIER_RECIPE_CONFIG.archetype).toMatchObject({
       composition: "fit-laboratory",
       hero: "fabric-study-hero",
-      scroll: "fit-study",
+      scroll: "fabric-curtain",
       cards: "garment-studies",
     });
     expect(ATELIER_RECIPE_CONFIG.designSystem.tokens).toMatchObject({
-      stone: "#ebe6dd",
-      oxblood: "#681f2b",
+      stone: "#f3e9dc",
+      oxblood: "#b72b34",
     });
     expect(JSON.stringify(ATELIER_RECIPE_CONFIG)).not.toMatch(
       /asymmetric-magazine|editorial-grid-hero|magazine-grid/,

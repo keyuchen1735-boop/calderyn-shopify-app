@@ -36,9 +36,9 @@ describe("Gilt storefront recipe", () => {
     ]));
     expect(Object.keys(bundle.routes)).toHaveLength(9);
     expect(GILT_RECIPE_CONFIG.archetype).toMatchObject({
-      composition: "object-ceremony", hero: "jewelry-ceremony-hero", scroll: "intimate-ceremony", cards: "object-vignettes",
+      composition: "object-ceremony", hero: "jewelry-ceremony-hero", scroll: "jewelry-orbit", cards: "object-vignettes",
     });
-    expect(bundle.designSystem.tokens).toMatchObject({ cream: "#f3ead8", black: "#0b0a08", gold: "#9a6b22" });
+    expect(bundle.designSystem.tokens).toMatchObject({ cream: "#f8f0df", black: "#38271d", gold: "#c79421" });
   });
 
   it("keeps live variants, trusted gifting fields, and merchant policies beside purchase controls", () => {

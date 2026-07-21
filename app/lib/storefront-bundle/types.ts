@@ -147,6 +147,8 @@ export const RECIPE_SCROLL_MODELS = [
   "restrained-editorial",
   "system-sequence", "fit-study", "intimate-ceremony", "pantry-rhythm", "heat-tasting",
   "brew-notebook", "flavor-modules", "blueprint-flow", "spatial-quiet", "clinical-proof",
+  "signal-scan", "fabric-curtain", "jewelry-orbit", "heat-shear", "origin-stack",
+  "flavor-buoyancy", "tool-conveyor", "room-wipe", "formula-morph",
 ] as const;
 export type RecipeScrollIdentity = (typeof RECIPE_SCROLL_MODELS)[number];
 export const ROUTE_SCROLL_PATTERNS = {

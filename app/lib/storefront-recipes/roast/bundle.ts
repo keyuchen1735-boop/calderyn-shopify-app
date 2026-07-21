@@ -15,40 +15,40 @@ const sharedCss = `
   .roast-page{min-height:70dvh;background:var(--cream);color:var(--espresso)}
   .roast-title{font-family:var(--font-display);font-weight:800;letter-spacing:-.055em;line-height:.88}
   .roast-label{font-family:var(--font-body);font-size:.7rem;letter-spacing:.16em;text-transform:uppercase}
-  .roast-button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;padding:.75rem 1rem;border:1px solid var(--espresso);background:var(--orange);color:var(--espresso);font-weight:800;text-decoration:none;text-transform:uppercase}
+  .roast-button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;padding:.75rem 1rem;border:1px solid var(--espresso);background:var(--orange);color:var(--cream);font-weight:800;text-decoration:none;text-transform:uppercase}
   .roast-empty{padding:2rem;border-top:1px solid var(--line);overflow-wrap:anywhere}
   @media(max-width:720px){.roast-button,.roast-controls button,.roast-controls input,.roast-controls select{min-height:44px}.roast-title{letter-spacing:-.035em}}
 `;
 
 export const ROAST_RECIPE_CONFIG = {
   templateId: "roast",
-  templateVersion: 2,
+  templateVersion: 3,
   concept: {
     name: "Roast",
     rationale: "An origin and brew notebook that starts with preparation, then connects merchant-authored coffee facts to live product and purchase options.",
     noveltySignature: ["brew-notebook-grid", "roast-data-plots", "preparation-first-product"],
   },
   designSystem: {
-    displayFontId: "archivo-black",
+    displayFontId: "fraunces",
     bodyFontId: "dm-mono",
     tokens: {
-      espresso: "#24140f",
-      cream: "#f4ead8",
-      paper: "#fffaf0",
-      orange: "#ff6a1a",
-      rust: "#934021",
-      line: "#8f7768",
+      espresso: "#382116",
+      cream: "#f2e7d3",
+      paper: "#f2e7d3",
+      orange: "#b53b28",
+      rust: "#b53b28",
+      line: "#382116",
       "space-note": "24px",
     },
     breakpoints: { compact: 720, wide: 1240 },
     iconStyle: "brew ratio marks and origin plot symbols",
     motionStyle: "measured notebook reveals with reduced-motion poster fallback",
-    globalCss: `.roast-product>article{box-sizing:border-box;min-width:0;overflow-wrap:anywhere}.roast-cart>header a{color:var(--cream)!important}`,
+    globalCss: `.roast-product>article{box-sizing:border-box;min-width:0;overflow-wrap:anywhere}.roast-cart>header a{color:var(--cream)!important}.roast-directory>header,.roast-search>header{color:var(--cream)}.roast-ledger article{animation:roast-stack linear both;animation-timeline:view();animation-range:entry 0 cover 42%}@keyframes roast-stack{from{opacity:.25;transform:translateY(7rem) rotate(2deg)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.roast-ledger article{animation:none}}`,
   },
   archetype: {
     composition: "origin-notebook",
     hero: "origin-brew-hero",
-    scroll: "brew-notebook",
+    scroll: "origin-stack",
     cards: "origin-cards",
     iconography: ["brew ratio marks", "origin plot symbols"],
   },

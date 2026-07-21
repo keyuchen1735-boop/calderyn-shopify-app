@@ -27,11 +27,11 @@ describe("Forge storefront recipe", () => {
       templateVersion: FORGE_RECIPE_CONFIG.templateVersion,
       concept: FORGE_RECIPE_CONFIG.concept,
     });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "forge", templateVersion: 2 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "forge", templateVersion: 3 });
     expect(config.archetype).toMatchObject({
       composition: "jobsite-blueprint",
       hero: "exploded-tool-hero",
-      scroll: "blueprint-flow",
+      scroll: "tool-conveyor",
       cards: "tool-diagrams",
     });
     expect(Object.keys(bundle.routes)).toEqual([
@@ -39,8 +39,8 @@ describe("Forge storefront recipe", () => {
     ]);
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(10);
 
-    expect(bundle.designSystem).toMatchObject({ displayFontId: "oswald", bodyFontId: "dm-mono" });
-    expect(bundle.designSystem.tokens).toMatchObject({ steel: "#24313a", orange: "#96390f", parchment: "#efe4ce" });
+    expect(bundle.designSystem).toMatchObject({ displayFontId: "barlow-condensed", bodyFontId: "dm-mono" });
+    expect(bundle.designSystem.tokens).toMatchObject({ steel: "#202426", orange: "#a63a1e", parchment: "#eceae3" });
     expect(bundle.shell.trustedSlots.map((slot) => slot.kind)).toContain("cartDrawer");
     for (const route of ["home", "collections", "collection", "story", "search", "cart"] as const) {
       expect(config.surfaces.shell.source.html).toContain(`data-cd-route="${route}"`);
