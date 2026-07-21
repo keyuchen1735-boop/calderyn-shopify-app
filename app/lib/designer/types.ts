@@ -24,6 +24,12 @@ export interface DesignerStoreData {
    *  renders for a code in this list — and no discounts feature exists yet, so
    *  nothing populates it and fresh builds emit no coupon markup (spec D5). */
   redeemableCodes?: string[];
+  /** Free-shipping thresholds (whole dollars) backed by real merchant
+   *  shipping settings. A declared cart meter or "free shipping over $N"
+   *  line only renders for a number in this list — nothing populates it yet,
+   *  so every fabricated threshold degrades to generic copy at serve time
+   *  (spec D5, same honesty contract as redeemableCodes). */
+  backedFreeShippingThresholds?: number[];
 }
 
 export type DesignerRoute = "home" | "collection" | "product" | "search" | "cart" | "checkout";

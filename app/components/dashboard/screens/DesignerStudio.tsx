@@ -146,10 +146,13 @@ export default function DesignerStudio({ app }: { app: DashboardCtx }) {
       void (async () => {
         const startedAt = Date.now();
         let delay = 3_000;
-        while (!settled && Date.now() - startedAt < 180_000) {
+        // aliveRef doubles as the cancel signal: leaving the screen stops the
+        // poll at its next tick instead of hitting the API for up to 3 more
+        // minutes after the merchant navigated away.
+        while (!settled && aliveRef.current && Date.now() - startedAt < 180_000) {
           await sleep(delay);
           delay = Math.min(delay + 1_000, 8_000);
-          if (settled) return;
+          if (settled || !aliveRef.current) return;
           try {
             const status = await fetchPublishStatus();
             if (publishAckReached(pollBase, status)) {

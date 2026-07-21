@@ -2,6 +2,7 @@
 import { getSupabase } from "~/lib/supabase.server";
 import { createProduct } from "~/lib/catalog/catalog.server";
 import { rateLimit } from "~/lib/dashboard/http.server";
+import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { readStorefrontReleasePointers } from "~/lib/storefront-bundle/build.server";
 import { runStoreCommand } from "~/lib/storefront-command/command.server";
 import type { ProductInput } from "~/lib/catalog/types";
@@ -145,6 +146,20 @@ export async function pickProduct(
     supplier_id: src.supplier_id,
   });
   if (lErr) throw lErr;
+
+  // Routing guard (designer-flagship spec D1's sanctioned exception): this is
+  // a server-side runStoreCommand call that bypasses the store-command route,
+  // so it applies the same composer_enabled check — a designer-enabled shop
+  // must never get a silent classic draft from a product pick. Fail-open on a
+  // lookup hiccup, exactly like the route guard, so a settings read blip
+  // can't break picking for classic shops.
+  try {
+    if ((await getStoreSettings(shopId)).composerEnabled) {
+      return { productId, storeRunId: null, storeBuildSkipped: "designer_enabled" };
+    }
+  } catch (err) {
+    console.error("[sourcing/discover] designer flag lookup failed", err);
+  }
 
   // 4. Build a runtime-1 draft only for a store that has never been built.
   // A product pick never overwrites a merchant's existing draft.
