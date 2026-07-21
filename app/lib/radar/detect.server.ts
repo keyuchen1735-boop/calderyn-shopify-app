@@ -161,7 +161,11 @@ export function detectCtrLow(series: RankingSeries[]): RadarCandidate[] {
 }
 
 export function detectRisingQueries(series: RankingSeries[]): RadarCandidate[] {
-  const out: RadarCandidate[] = [];
+  // dedupKey is query-level ("rising:<query>") on purpose, but a query can rank
+  // on several pages. Keep at most one candidate per query (the page with the
+  // most recent-week impressions wins) so a single drain batch never emits two
+  // drafts colliding on the radar_ploy (shop, kind, dedup_key) unique index.
+  const best = new Map<string, { lastImp: number; candidate: RadarCandidate }>();
   for (const s of series) {
     const days = sortedDays(s.days);
     const last = days.slice(-7);
@@ -173,7 +177,7 @@ export function detectRisingQueries(series: RankingSeries[]): RadarCandidate[] {
     const avgPos = last.reduce((n, d) => n + d.position * d.impressions, 0) / lastImp;
     if (avgPos < RISING_POS_MIN || avgPos > RISING_POS_MAX) continue;
     const ref = parseStorefrontPath(s.pageUrl);
-    out.push({
+    const candidate: RadarCandidate = {
       kind: "seo_content_boost",
       // Dedup is query-level (not page+query) on purpose: a rising query is
       // one move to make even if it ranks on two different pages.
@@ -187,9 +191,11 @@ export function detectRisingQueries(series: RankingSeries[]): RadarCandidate[] {
         facts: { pageUrl: s.pageUrl, query: s.query, avgPos, lastImp, priorImp },
       },
       payload: seoPayload(ref, s.pageUrl, s.query),
-    });
+    };
+    const prev = best.get(s.query);
+    if (!prev || lastImp > prev.lastImp) best.set(s.query, { lastImp, candidate });
   }
-  return out;
+  return [...best.values()].map((b) => b.candidate);
 }
 
 // ── Traffic + AEO thresholds (spec defaults) ─────────────────────────────────
@@ -232,7 +238,18 @@ export function detectTrafficDrops(days: TrafficDay[]): RadarCandidate[] {
   for (const d of baseline) {
     for (const p of d.topPaths) totals.set(p.path, (totals.get(p.path) ?? 0) + p.views);
   }
-  const top = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, TRAFFIC_TOP_PAGES);
+  // Filter to refreshable (home/product) paths above the baseline floor BEFORE
+  // taking the top slice: ranking first would let high-traffic cart/search/
+  // collection pages consume every slot and starve a real home/PDP drop sitting
+  // just past rank 10.
+  const top = [...totals.entries()]
+    .filter(([path, total]) => {
+      const entityType = parseStorefrontPath(path).entityType;
+      return (entityType === "home" || entityType === "product")
+        && total / baseline.length >= TRAFFIC_MIN_BASELINE_VIEWS;
+    })
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, TRAFFIC_TOP_PAGES);
   const out: RadarCandidate[] = [];
   for (const [path, total] of top) {
     const avg = total / baseline.length;
@@ -364,7 +381,11 @@ export function detectAeoQuiet(
   now: Date = new Date(),
 ): RadarCandidate[] {
   if (!opts.allowAiCrawlers) return []; // the merchant turned AI access off - respect it
-  const quietFrom = isoDay(new Date(now.getTime() - AEO_QUIET_DAYS * DAY_MS));
+  // Inclusive `>= quietFrom`, so subtract AEO_QUIET_DAYS-1 to make the "recent"
+  // window exactly the last AEO_QUIET_DAYS calendar dates. Subtracting the full
+  // AEO_QUIET_DAYS would span one extra day and let a hit exactly a week old
+  // read as "still active".
+  const quietFrom = isoDay(new Date(now.getTime() - (AEO_QUIET_DAYS - 1) * DAY_MS));
   const recentHits = crawl.filter((c) => c.day >= quietFrom).reduce((n, c) => n + c.hits, 0);
   const priorHits = crawl.filter((c) => c.day < quietFrom).reduce((n, c) => n + c.hits, 0);
   if (recentHits > 0 || priorHits < AEO_MIN_PRIOR_HITS) return [];
