@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { IMPACT_SUFFIX } from "~/lib/impact-window";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import { Card, Pill, Segmented, Placeholder, TableSkeleton } from "../ui";
 import { money, alertDetectorLabel, ACTION_LABELS, timeAgo } from "../format";
 import { CDIcon, CD_ACTION_ICON } from "../icons";
 import { actionDeepLink } from "~/lib/action-deeplinks";
 import type { ActionKind, DashboardCtx } from "../context";
 import type { AlertVM } from "../view-models";
+
+gsap.registerPlugin(useGSAP);
 
 /* ---------- Header ---------- */
 function ScreenHeader({
@@ -18,7 +21,7 @@ function ScreenHeader({
   children?: ReactNode;
 }) {
   return (
-    <header className="cd-screen-head" data-screen-label={title}>
+    <header className="cd-screen-head cd-alerts-head" data-screen-label={title}>
       <div>
         <h1 className="cd-h1">{title}</h1>
         {sub && <p className="cd-sub">{sub}</p>}
@@ -51,18 +54,21 @@ function isUpside(a: AlertVM): boolean {
 }
 
 /* ---------- List row ---------- */
-function AlertRow({ a, open, onToggle }: { a: AlertVM; open: boolean; onToggle: () => void }) {
+function AlertRow({ a, open, detailId, onToggle }: { a: AlertVM; open: boolean; detailId: string; onToggle: () => void }) {
   const resolved = a.status !== "open";
   const upside = isUpside(a);
+  const detector = alertDetectorLabel(a.detector_id, a.evidence);
   return (
     <button
-      className="cd-row"
+      className="cd-row cd-alert-row"
       onClick={onToggle}
       data-dim={resolved ? "1" : "0"}
       aria-expanded={open}
+      aria-controls={detailId}
+      aria-label={`${headline(a)}. ${detector}. ${timeAgo(a.created_at)}. ${(upside ? "Upside " : "At risk ") + money(a.dollar_impact)} over 30 days.`}
     >
-      <span className={"cd-sev-bar sev-" + a.severity}></span>
-      <div className="min-w-0 flex-1">
+      <span className={"cd-sev-bar sev-" + a.severity} aria-hidden="true"></span>
+      <div className="cd-alert-main min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="cd-row-title truncate">{headline(a)}</span>
           {resolved && (
@@ -71,48 +77,30 @@ function AlertRow({ a, open, onToggle }: { a: AlertVM; open: boolean; onToggle: 
             </Pill>
           )}
         </div>
-        <div className="cd-caption truncate" style={{ marginTop: 2 }}>
-          {alertDetectorLabel(a.detector_id, a.evidence) +
-            " · " +
-            (a.sku || a.campaign || "—") +
-            " · " +
-            timeAgo(a.created_at)}
+        <div className="cd-alert-meta cd-caption truncate">
+          <span className="truncate">{detector}</span>
+          <span className="cd-alert-meta-dot" aria-hidden="true">·</span>
+          <span className="cd-alert-age">{timeAgo(a.created_at)}</span>
         </div>
       </div>
-      <div className="text-right whitespace-nowrap">
-        <div
-          className="cd-row-num tabular-nums"
-          style={{
-            color: resolved ? "var(--text-3)" : upside ? "var(--green)" : "var(--red)",
-          }}
-        >
+      <div
+        className="cd-alert-impact text-right whitespace-nowrap"
+        data-upside={upside ? "1" : "0"}
+        data-resolved={resolved ? "1" : "0"}
+        title={`${upside ? "Upside" : "At risk"} over 30 days`}
+      >
+        <div className="cd-row-num tabular-nums">
           {(upside ? "+" : "") + money(a.dollar_impact)}
-          <span className="cd-caption">{IMPACT_SUFFIX}</span>
         </div>
-        <div className="cd-caption">{upside ? "upside" : "at risk"}</div>
       </div>
-      <CDIcon
-        name="chevronRight"
-        size={16}
-        style={{
-          color: "var(--text-3)",
-          flexShrink: 0,
-          transition: "transform 0.18s ease",
-          transform: open ? "rotate(90deg)" : "none",
-        }}
-      />
+      <span className="cd-alert-chevron" aria-hidden="true">
+        <CDIcon name="chevronRight" size={16} />
+      </span>
     </button>
   );
 }
 
 /* ---------- Expanded detail (inline, below the row) ---------- */
-const EYEBROW_STYLE = {
-  fontWeight: 650,
-  textTransform: "uppercase",
-  letterSpacing: "0.05em",
-  fontSize: 10.5,
-} as const;
-
 function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
   // Track the kind we attempted, so a freshly-resolved alert can read "Resolved — <label>".
   // (AlertVM has no `resolved_with` field; the shell only flips status to "resolved".)
@@ -138,6 +126,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
     "action taken";
 
   const soldOut = isSoldOut(alert);
+  const context = [alert.sku, alert.campaign].filter(Boolean).join(" · ");
 
   // Weather predictions mirror into the feed as weather_reallocation alerts
   // (pending ones only — armed/auto moves live on the Weather tab); their
@@ -157,15 +146,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
 
   const deepLinkDomain = app.shopDomain; // string | null; narrowed to string by the guard below
 
-  // The one-line "Fix" is the primary recommended action's label: the
-  // remediation plan's recommended move when a plan exists, else the legacy
-  // recommended kind mapped through ACTION_LABELS.
   const plan = alert.remediation;
-  const fixLabel = plan
-    ? plan.moves.find((m) => m.kind === plan.recommended)?.label ?? null
-    : alert.recommended
-      ? ACTION_LABELS[alert.recommended] || alert.recommended
-      : null;
 
   // adjust_price: parse the optional override (dollars → cents; blank → engine
   // suggestion) and execute. The executor bounds the price to the guardrail cap
@@ -234,46 +215,37 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
   return (
     <div className="cd-alert-detail">
       {soldOut && (
-        <p
-          className="cd-body"
-          style={{ color: "var(--red)", margin: "8px 0 0", maxWidth: "62ch" }}
-        >
-          On-hand stock is 0 — this isn&apos;t a &ldquo;may sell out&rdquo; risk, it&apos;s a
-          stockout. Restock now and pause or exclude the spend until inventory is back.
+        <p className="cd-alert-urgent cd-body">
+          Out of stock now. Restock and pause related spend until inventory returns.
         </p>
       )}
-      <div
-        style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-2)", maxWidth: "68ch", marginTop: 8 }}
-      >
-        {alert.narrative}
-      </div>
+      <p className="cd-alert-narrative">{alert.narrative}</p>
+      {context && <p className="cd-alert-context cd-caption">{context}</p>}
       {resolved ? (
         isWeather ? (
           // Schedule/reject write no audit row, and a scheduled move's control
           // (Cancel) lives on the Weather tab — don't point at Audit.
-          <p className="cd-caption" style={{ marginTop: 10 }}>
-            Handled. Scheduled moves stay visible — and can be cancelled — on the Weather tab.
+          <p className="cd-alert-resolution cd-caption">
+            Handled. Manage scheduled moves in Weather.
           </p>
         ) : (
-          <p className="cd-caption" style={{ marginTop: 10 }}>
-            This alert was resolved with{" "}
-            <b style={{ color: "var(--text-1)" }}>{resolvedLabel}</b>. The action is logged in
-            your audit history and can be reverted there.
+          <p className="cd-alert-resolution cd-caption">
+            Resolved with <b>{resolvedLabel}</b>. View or undo it in Action history.
           </p>
         )
       ) : isWeather ? (
-        <div className="flex flex-col gap-2" style={{ marginTop: 12 }}>
+        <div className="cd-alert-actions">
           {weatherSuggestionId ? (
             <>
               <button
                 disabled={busy}
                 aria-busy={busy}
+                aria-label="Schedule when confirmed, recommended"
                 className="cd-action-btn rec"
                 onClick={() => runWeather("arm")}
               >
                 <CDIcon name="bolt" size={16} strokeWidth={1.9} />
-                <span className="flex-1 text-left">Schedule — runs when the forecast confirms</span>
-                <span className="cd-rec-tag">Recommended</span>
+                <span className="flex-1 text-left">Schedule when confirmed</span>
               </button>
               <button
                 disabled={busy}
@@ -282,9 +254,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                 onClick={() => runWeather("apply")}
               >
                 <CDIcon name="swap" size={16} strokeWidth={1.9} />
-                <span className="flex-1 text-left">
-                  Approve — shift {money(alert.dollar_impact)}/day now
-                </span>
+                <span className="flex-1 text-left">Shift {money(alert.dollar_impact)}/day now</span>
               </button>
               <button
                 disabled={busy}
@@ -307,24 +277,9 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
         </div>
       ) : (
         <>
-          {fixLabel && (
-            <div
-              style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 10, flexWrap: "wrap" }}
-            >
-              <span className="cd-caption" style={{ ...EYEBROW_STYLE, color: "var(--live)" }}>
-                Fix
-              </span>
-              <span style={{ fontSize: 13, fontWeight: 560 }}>{fixLabel}</span>
-            </div>
-          )}
           {plan ? (
             <>
-              {alert.rec_detail && (
-                <p className="cd-body" style={{ maxWidth: "52ch", marginTop: 8 }}>
-                  {alert.rec_detail}
-                </p>
-              )}
-              <div className="flex flex-col gap-2" style={{ marginTop: 12 }}>
+              <div className="cd-alert-actions">
                 {plan.moves.map((m) => {
                   const rec = m.kind === plan.recommended;
                   const executable = m.executor !== null;
@@ -338,6 +293,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                         key={m.kind}
                         disabled={resolved || busy}
                         aria-busy={busy && attempted === m.executor}
+                        aria-label={rec ? `${m.label}, recommended` : m.label}
                         className={"cd-action-btn" + (rec ? " rec" : "") + (isDiscontinue ? " danger" : "")}
                         onClick={() =>
                           m.executor === "adjust_price"
@@ -355,7 +311,6 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                       >
                         <CDIcon name={CD_ACTION_ICON[m.executor as string] || "bolt"} size={16} strokeWidth={1.9} />
                         <span className="flex-1 text-left">{m.label}</span>
-                        {rec && <span className="cd-rec-tag">Recommended</span>}
                       </button>
                     );
                   }
@@ -377,7 +332,6 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                     >
                       <CDIcon name={CD_ACTION_ICON[m.kind] || "bolt"} size={16} strokeWidth={1.9} />
                       <span className="flex-1 text-left">{m.label}</span>
-                      {rec && <span className="cd-rec-tag">Recommended</span>}
                       {m.ineligibleReason && (
                         <span className="cd-caption" style={{ color: "var(--text-3)", flexShrink: 0, maxWidth: "32ch", textAlign: "right" }}>
                           {m.ineligibleReason}
@@ -414,9 +368,8 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                   }}
                 >
                   <span className="cd-caption">
-                    This changes the live selling price on {app.shopDomain ? "Shopify" : "your store"} to restore this product&apos;s
-                    margin. Leave the field blank to use the suggested price, or set your own
-                    (within your price-change guardrail). Reversible from your action history.
+                    Use the suggested price or enter your own within the price-change guardrail.
+                    You can undo this from Action history.
                   </span>
                   <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                     <span className="cd-caption">New price</span>
@@ -460,12 +413,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
             </>
           ) : (
             <>
-              {alert.rec_detail && (
-                <p className="cd-caption" style={{ marginTop: 8 }}>
-                  {alert.rec_detail}
-                </p>
-              )}
-              <div className="flex flex-col gap-2" style={{ marginTop: 12 }}>
+              <div className="cd-alert-actions">
                 {alert.actions.map((kind) => {
                   const rec = kind === alert.recommended;
                   return (
@@ -473,6 +421,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                       key={kind}
                       disabled={resolved || busy}
                       aria-busy={busy && attempted === kind}
+                      aria-label={rec ? `${ACTION_LABELS[kind] || kind}, recommended` : ACTION_LABELS[kind] || kind}
                       className={"cd-action-btn" + (rec ? " rec" : "")}
                       onClick={() =>
                         kind === "create_po_draft"
@@ -482,13 +431,12 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                     >
                       <CDIcon name={CD_ACTION_ICON[kind] || "bolt"} size={16} strokeWidth={1.9} />
                       <span className="flex-1 text-left">{ACTION_LABELS[kind] || kind}</span>
-                      {rec && <span className="cd-rec-tag">Recommended</span>}
                     </button>
                   );
                 })}
               </div>
               {deepLinkDomain && (alert.deepLinkKinds ?? []).length > 0 && (
-                <div className="flex flex-col gap-2" style={{ marginTop: 8 }}>
+                <div className="cd-alert-actions cd-alert-actions-secondary">
                   {alert.deepLinkKinds!.map((kind) => {
                     const dl = actionDeepLink(kind, deepLinkDomain);
                     if (!dl) return null;
@@ -523,9 +471,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                   }}
                 >
                   <span className="cd-caption">
-                    Drafts a purchase order for this product and records it in your action
-                    history, where the PDF can be downloaded. Review and send to your supplier
-                    manually — nothing is ordered automatically.
+                    Creates a downloadable draft only. Review and send it to your supplier yourself.
                   </span>
                   <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
                     <label className="cd-field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
@@ -584,6 +530,94 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
   );
 }
 
+function AlertItem({ a, app, open }: { a: AlertVM; app: DashboardCtx; open: boolean }) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const detailRef = useRef<HTMLDivElement | null>(null);
+  const closingRef = useRef(false);
+  const detailId = `alert-detail-${a.id}`;
+
+  useEffect(() => {
+    if (open) rootRef.current?.scrollIntoView({ block: "nearest" });
+  }, [open]);
+
+  const { contextSafe } = useGSAP(
+    () => {
+      const chevron = rootRef.current?.querySelector<HTMLElement>(".cd-alert-chevron");
+      const detail = detailRef.current;
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      closingRef.current = false;
+      if (rootRef.current) rootRef.current.dataset.closing = "0";
+      if (chevron) {
+        if (reduceMotion) gsap.set(chevron, { rotation: open ? 90 : 0 });
+        else gsap.to(chevron, { rotation: open ? 90 : 0, duration: 0.24, ease: "power2.out", overwrite: "auto" });
+      }
+      if (!open || !detail) return;
+
+      const inner = detail.firstElementChild;
+      if (reduceMotion) {
+        gsap.set(detail, { height: "auto" });
+        return;
+      }
+
+      const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
+      tl.fromTo(detail, { height: 0 }, { height: detail.scrollHeight, duration: 0.3, clearProps: "height" });
+      if (inner) {
+        tl.fromTo(
+          inner,
+          { autoAlpha: 0, y: -6 },
+          { autoAlpha: 1, y: 0, duration: 0.24, clearProps: "opacity,visibility,transform" },
+          "<0.05",
+        );
+      }
+    },
+    { scope: rootRef, dependencies: [open], revertOnUpdate: true },
+  );
+
+  const toggle = contextSafe(() => {
+    if (closingRef.current) return;
+    if (!open) {
+      app.navigate("alerts", a.id, null, { preserveScroll: true });
+      return;
+    }
+
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      app.navigate("alerts", null, null, { preserveScroll: true });
+    };
+    const detail = detailRef.current;
+    const inner = detail?.firstElementChild;
+    if (!detail || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      close();
+      return;
+    }
+
+    closingRef.current = true;
+    if (rootRef.current) rootRef.current.dataset.closing = "1";
+    gsap.killTweensOf([detail, inner]);
+    const tl = gsap.timeline({
+      defaults: { ease: "power2.inOut" },
+      onComplete: close,
+      onInterrupt: close,
+    });
+    if (inner) tl.to(inner, { autoAlpha: 0, y: -4, duration: 0.15 });
+    tl.to(detail, { height: 0, duration: 0.22 }, inner ? "<0.02" : 0);
+  });
+
+  return (
+    <div ref={rootRef} className="cd-alert-item" data-open={open ? "1" : "0"} data-resolved={a.status === "open" ? "0" : "1"}>
+      <AlertRow a={a} open={open} detailId={detailId} onToggle={toggle} />
+      {open && (
+        <div ref={detailRef} id={detailId} className="cd-alert-detail-motion">
+          <AlertDetail app={app} alert={a} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- Screen ---------- */
 type Filter = "open" | "resolved" | "all";
 
@@ -594,16 +628,6 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
   // rides the URL so /dashboard/alerts/:id links keep working, and the shell's
   // enriched-alert fetch (keyed on nav.param) still fires when a row opens.
   const expandedId = app.nav.param;
-
-  // Keep the expanded row on screen: a click below the fold stays put (row
-  // already visible → "nearest" is a no-op) and a deep link scrolls down to
-  // the opened detail instead of stranding it below the fold.
-  const expandedRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (expandedId) {
-      expandedRef.current?.scrollIntoView({ block: "nearest" });
-    }
-  }, [expandedId]);
 
   const open = app.alerts.filter((a) => a.status === "open");
   const shown = (
@@ -625,13 +649,13 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
   const loading = app.loading && app.alerts.length === 0;
 
   return (
-    <div className="cd-screen">
+    <div className="cd-screen cd-alerts">
       <ScreenHeader
         title="Alerts"
         sub={
           loading
             ? "Scanning for issues across your accounts…"
-            : `${open.length} open · ${money(atRisk)}${IMPACT_SUFFIX} at risk if left alone`
+            : `${open.length} open · ${money(atRisk)} at risk over 30 days`
         }
       >
         <Segmented
@@ -645,7 +669,7 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
           ]}
         />
       </ScreenHeader>
-      <Card pad={false}>
+      <Card pad={false} className="cd-alerts-card">
         {loading ? (
           <TableSkeleton />
         ) : rows.length === 0 ? (
@@ -659,29 +683,15 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
             <Placeholder icon="check" title="Nothing here" sub="No alerts match this filter." />
           )
         ) : (
-          <div className="cd-rows">
+          <div className="cd-rows cd-alert-list">
             {rows.map((a) => (
-              <div key={a.id} ref={a.id === expandedId ? expandedRef : undefined}>
-                <AlertRow
-                  a={a}
-                  open={a.id === expandedId}
-                  onToggle={() =>
-                    // In-place expansion: keep the pane where the user is
-                    // instead of navigate()'s default jump to top.
-                    app.navigate("alerts", a.id === expandedId ? null : a.id, null, {
-                      preserveScroll: true,
-                    })
-                  }
-                />
-                {a.id === expandedId && <AlertDetail app={app} alert={a} />}
-              </div>
+              <AlertItem key={a.id} a={a} app={app} open={a.id === expandedId} />
             ))}
           </div>
         )}
       </Card>
-      <p className="cd-caption" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <CDIcon name="scan" size={13} /> 12 detectors sweep every 15 minutes across{" "}
-        {app.shopDomain ? "Shopify" : "your store"}, Meta, Google, TikTok and QuickBooks.
+      <p className="cd-alerts-foot cd-caption">
+        <CDIcon name="scan" size={13} /> 12 detectors · refreshed every 15 min
       </p>
     </div>
   );
