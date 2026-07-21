@@ -5,9 +5,10 @@
 // two surfaces cannot drift.
 import type Anthropic from "@anthropic-ai/sdk";
 import { calderynClient } from "../calderyn.server";
+import { shopHasShopifyConnection } from "../cutover/org-mode.server";
 import { getAnthropic, assistantModel } from "./anthropic.server";
 import { buildSnapshot } from "./snapshot.server";
-import { buildSystemPrompt } from "./prompt.server";
+import { buildSystemPrompt, type ShopPlatform } from "./prompt.server";
 import { ASSISTANT_TOOLS, READ_TOOLS, makeToolDispatcher, type ToolDispatcherDeps } from "./tools.server";
 import { runAssistantTurn } from "./loop.server";
 import { appendMessage, createConversation, getMessages } from "./conversations.server";
@@ -50,6 +51,33 @@ export interface ConversationTurnResult {
   assistantMessage: ChatMessage;
 }
 
+/**
+ * Which platform this shop actually runs on, for the system prompt's grounding
+ * block. Only the dashboard surface (allowActions=true) passes a session-derived
+ * shop ID that the shops table can be keyed on; the legacy embedded surface hands
+ * us a Shopify shop DOMAIN, and a shop reached through the Shopify admin is by
+ * definition Shopify-connected — no lookup needed (or possible: the shops lookup
+ * is by id, not domain).
+ *
+ * Best-effort, same stance as buildSnapshot: this is prompt context, not the
+ * answer, so a lookup failure must not fail the whole turn. It degrades to
+ * "native" because the failure modes are asymmetric — Calderyn-screen guidance is
+ * correct for every merchant (the dashboard is the only product surface), while
+ * Shopify-admin guidance handed to a native merchant is flatly wrong.
+ */
+async function resolveShopPlatform(shopId: string, allowActions: boolean): Promise<ShopPlatform> {
+  if (!allowActions) return "shopify_connected";
+  try {
+    return (await shopHasShopifyConnection(shopId)) ? "shopify_connected" : "native";
+  } catch (err) {
+    console.error("[assistant] platform lookup failed; defaulting to native grounding", {
+      shop: shopId,
+      message: (err as { message?: string }).message,
+    });
+    return "native";
+  }
+}
+
 export async function runConversationTurn(
   input: ConversationTurnInput,
 ): Promise<ConversationTurnResult> {
@@ -68,10 +96,13 @@ export async function runConversationTurn(
     .slice(-HISTORY_WINDOW)
     .map((m) => ({ role: m.role, content: m.content }));
 
-  const client = calderynClient(shopDomain);
-  const snapshot = await buildSnapshot(client);
-
   const allowActions = input.allowActions === true;
+
+  const client = calderynClient(shopDomain);
+  const [snapshot, platform] = await Promise.all([
+    buildSnapshot(client),
+    resolveShopPlatform(shopDomain, allowActions),
+  ]);
 
   let result;
   try {
@@ -79,7 +110,7 @@ export async function runConversationTurn(
     result = await runAssistantTurn({
       createMessage: (params) => anthropic.messages.create(params),
       model: assistantModel(),
-      system: buildSystemPrompt(snapshot),
+      system: buildSystemPrompt(snapshot, platform),
       tools: allowActions ? ASSISTANT_TOOLS : READ_TOOLS,
       dispatchTool: makeToolDispatcher(client, {
         ...input.deps,
