@@ -7,7 +7,7 @@
 // additionally enforce their own, narrower windows within that 14-day input
 // (e.g. a 3-day sustain check, a 7-day CTR window) - never assume the RPC's
 // 14-day bound alone is tight enough for a given detector's claim.
-import type { RadarCandidate, RankingSeries } from "./types";
+import type { AiCrawlDay, JsonLdCheckedPage, RadarCandidate, RadarCollectInputs, RankingSeries, TrafficDay } from "./types";
 
 // ── Rankings thresholds (spec defaults) ──────────────────────────────────────
 export const RANK_SLIP_POSITIONS = 3;
@@ -190,4 +190,236 @@ export function detectRisingQueries(series: RankingSeries[]): RadarCandidate[] {
     });
   }
   return out;
+}
+
+// ── Traffic + AEO thresholds (spec defaults) ─────────────────────────────────
+export const TRAFFIC_DROP_PCT = 0.3;
+export const TRAFFIC_TOP_PAGES = 10;
+/** A page whose 7-day average is below this many daily views is too thin to
+ *  call a "drop" without drafting noise. */
+export const TRAFFIC_MIN_BASELINE_VIEWS = 30;
+export const CONV_GAP_MIN_VIEWS = 50;
+export const CONV_GAP_MAX_CART_RATE = 0.01;
+export const STALE_SECTION_WEEKS = 6;
+/** "Declining" = the last 7 days at or below 85% of the prior 7 days. */
+export const STALE_DECLINE_RATIO = 0.85;
+export const AEO_QUIET_DAYS = 7;
+export const AEO_MIN_PRIOR_HITS = 5;
+
+const DAY_MS = 86_400_000;
+
+function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Apply-time generation brief: this exact text is the prompt the storefront
+ *  edit pipeline receives when the merchant clicks Apply. Keep it product-
+ *  neutral and structure-preserving. */
+function sectionBrief(target: "home" | "pdp", context: string): string {
+  const where = target === "home" ? "the home page's hero section" : "this product page's top section";
+  return (
+    `Refresh ${where}: rewrite the headline and supporting copy so the page feels current and persuasive. ` +
+    `${context} Keep the products, prices, layout structure and navigation unchanged.`
+  );
+}
+
+export function detectTrafficDrops(days: TrafficDay[]): RadarCandidate[] {
+  const sorted = sortedDays(days);
+  if (sorted.length < 8) return [];
+  const last = sorted[sorted.length - 1];
+  const baseline = sorted.slice(-8, -1);
+  const totals = new Map<string, number>();
+  for (const d of baseline) {
+    for (const p of d.topPaths) totals.set(p.path, (totals.get(p.path) ?? 0) + p.views);
+  }
+  const top = [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, TRAFFIC_TOP_PAGES);
+  const out: RadarCandidate[] = [];
+  for (const [path, total] of top) {
+    const avg = total / baseline.length;
+    if (avg < TRAFFIC_MIN_BASELINE_VIEWS) continue;
+    const lastViews = last.topPaths.find((p) => p.path === path)?.views ?? 0;
+    if (lastViews > avg * (1 - TRAFFIC_DROP_PCT)) continue;
+    const ref = parseStorefrontPath(path);
+    if (ref.entityType !== "home" && ref.entityType !== "product") continue; // cart/search pages are not refreshable sections
+    const dropPct = Math.round((1 - lastViews / avg) * 100);
+    const target = ref.entityType === "home" ? ("home" as const) : ("pdp" as const);
+    const label = pageLabel(ref);
+    const productId = last.topPaths.find((p) => p.path === path)?.productId
+      ?? baseline.flatMap((d) => d.topPaths).find((p) => p.path === path)?.productId
+      ?? null;
+    out.push({
+      kind: "section_refresh",
+      dedupKey: `traffic-drop:${path}`,
+      headline: `${label} lost ${dropPct}% of its visits`,
+      rationale:
+        `${label} averaged ${Math.round(avg)} views a day over the last week but got ${lastViews} yesterday. ` +
+        `A refreshed section can re-engage shoppers; nothing changes until you apply it.`,
+      evidence: {
+        chips: [`${Math.round(avg)}/day average`, `${lastViews} yesterday`, `down ${dropPct}%`],
+        facts: { path, avg, lastViews, dropPct },
+      },
+      payload: {
+        applyMode: "refresh_section",
+        target,
+        path,
+        ...(ref.handle ? { handle: ref.handle } : {}),
+        ...(productId ? { productId } : {}),
+        brief: sectionBrief(
+          target,
+          `Context: the page at ${path} (about "${(ref.handle ?? "the store").replace(/-/g, " ")}") lost ${dropPct}% of its daily visits this week.`,
+        ),
+      },
+    });
+  }
+  return out;
+}
+
+export function detectConversionGaps(days: TrafficDay[]): RadarCandidate[] {
+  const last7 = sortedDays(days).slice(-7);
+  const acc = new Map<string, { views: number; cartAdds: number; handle: string | null; path: string }>();
+  for (const d of last7) {
+    for (const p of d.topPaths) {
+      if (!p.productId) continue;
+      const cur = acc.get(p.productId) ?? {
+        views: 0, cartAdds: 0, handle: parseStorefrontPath(p.path).handle, path: p.path,
+      };
+      cur.views += p.views;
+      cur.cartAdds += p.cartAdds;
+      acc.set(p.productId, cur);
+    }
+  }
+  const out: RadarCandidate[] = [];
+  for (const [productId, s] of acc) {
+    if (s.views < CONV_GAP_MIN_VIEWS) continue;
+    if (s.cartAdds / s.views >= CONV_GAP_MAX_CART_RATE) continue;
+    const label = s.handle ? `"${s.handle.replace(/-/g, " ")}"` : "This product";
+    out.push({
+      kind: "section_refresh",
+      dedupKey: `conv-gap:${productId}`,
+      headline: `${label} gets looks, not carts`,
+      rationale:
+        `${s.views} people viewed ${label} this week but only ${s.cartAdds} added it to a cart ` +
+        `(under 1%). A stronger product-page section can help close the gap.`,
+      evidence: {
+        chips: [`${s.views} views`, `${s.cartAdds} cart adds`, "under 1%"],
+        facts: { productId, views: s.views, cartAdds: s.cartAdds, path: s.path },
+      },
+      payload: {
+        applyMode: "refresh_section",
+        target: "pdp",
+        productId,
+        ...(s.handle ? { handle: s.handle } : {}),
+        path: s.path,
+        brief: sectionBrief(
+          "pdp",
+          `Context: ${s.views} shoppers viewed this product this week but under 1% added it to a cart; make the value clearer.`,
+        ),
+      },
+    });
+  }
+  return out;
+}
+
+export function detectStaleHome(
+  days: TrafficDay[],
+  lastPublishedAt: string | null,
+  now: Date = new Date(),
+): RadarCandidate[] {
+  if (!lastPublishedAt) return [];
+  const publishedAt = Date.parse(lastPublishedAt);
+  if (!Number.isFinite(publishedAt)) return [];
+  const ageWeeks = (now.getTime() - publishedAt) / (7 * DAY_MS);
+  if (ageWeeks < STALE_SECTION_WEEKS) return [];
+  const sorted = sortedDays(days);
+  if (sorted.length < 14) return [];
+  const homeViews = (d: TrafficDay): number =>
+    d.topPaths.filter((p) => parseStorefrontPath(p.path).entityType === "home").reduce((n, p) => n + p.views, 0);
+  const last7 = sorted.slice(-7).reduce((n, d) => n + homeViews(d), 0);
+  const prior7 = sorted.slice(-14, -7).reduce((n, d) => n + homeViews(d), 0);
+  if (prior7 === 0 || last7 > prior7 * STALE_DECLINE_RATIO) return [];
+  const weeks = Math.floor(ageWeeks);
+  return [{
+    kind: "section_refresh",
+    dedupKey: "stale:home",
+    headline: "Your home page hasn't changed in a while",
+    rationale:
+      `Your home page was last updated ${weeks} weeks ago and its views slipped from ${prior7} to ${last7} ` +
+      `week over week. A fresh hero section keeps returning shoppers looking.`,
+    evidence: {
+      chips: [`${weeks} weeks unchanged`, `${prior7} -> ${last7} weekly views`],
+      facts: { lastPublishedAt, weeks, prior7, last7 },
+    },
+    payload: {
+      applyMode: "refresh_section",
+      target: "home",
+      path: "/storefront",
+      brief: sectionBrief("home", `Context: the home page has not changed in ${weeks} weeks and weekly views are declining.`),
+    },
+  }];
+}
+
+export function detectAeoQuiet(
+  crawl: AiCrawlDay[],
+  opts: { allowAiCrawlers: boolean; hasOrgDescription: boolean },
+  now: Date = new Date(),
+): RadarCandidate[] {
+  if (!opts.allowAiCrawlers) return []; // the merchant turned AI access off - respect it
+  const quietFrom = isoDay(new Date(now.getTime() - AEO_QUIET_DAYS * DAY_MS));
+  const recentHits = crawl.filter((c) => c.day >= quietFrom).reduce((n, c) => n + c.hits, 0);
+  const priorHits = crawl.filter((c) => c.day < quietFrom).reduce((n, c) => n + c.hits, 0);
+  if (recentHits > 0 || priorHits < AEO_MIN_PRIOR_HITS) return [];
+  const applyMode = opts.hasOrgDescription ? ("review" as const) : ("refresh_org" as const);
+  return [{
+    kind: "aeo_refresh",
+    dedupKey: "aeo-quiet",
+    headline: "AI assistants stopped reading your store",
+    rationale: opts.hasOrgDescription
+      ? `AI assistants (like ChatGPT and Claude) read your store ${priorHits} times recently but haven't visited in a week. ` +
+        `Your store description is set - review your Preferences to make sure everything is current.`
+      : `AI assistants (like ChatGPT and Claude) read your store ${priorHits} times recently but haven't visited in a week. ` +
+        `Adding a store description gives them something concrete to quote when shoppers ask.`,
+    evidence: {
+      chips: [`${priorHits} earlier visits`, `0 this week`],
+      facts: { priorHits, recentHits, quietFrom },
+    },
+    payload: applyMode === "review"
+      ? { applyMode, deepLink: "/dashboard/store/preferences" }
+      : { applyMode },
+  }];
+}
+
+export function detectJsonLdIssues(pages: JsonLdCheckedPage[]): RadarCandidate[] {
+  const out: RadarCandidate[] = [];
+  for (const p of pages) {
+    if (p.issues.length === 0) continue;
+    out.push({
+      kind: "aeo_jsonld_fix",
+      dedupKey: `jsonld:product:${p.productId}`,
+      headline: `"${p.title}" is missing details search tools need`,
+      rationale:
+        `Google and AI assistants read structured product details behind the scenes, and "${p.title}" ` +
+        `is missing some (${p.issues.join("; ")}). Filling in the product's real data fixes this - ` +
+        `Radar won't invent prices or availability for you.`,
+      evidence: { chips: p.issues.slice(0, 3), facts: { productId: p.productId, issues: p.issues } },
+      payload: { applyMode: "review", productId: p.productId, handle: p.handle, deepLink: `/dashboard/products/${p.productId}` },
+    });
+  }
+  return out;
+}
+
+/** Everything, in a stable order (SEO first - they are the cheapest wins). */
+export function detectAll(inputs: RadarCollectInputs, now: Date = new Date()): RadarCandidate[] {
+  return [
+    ...detectRankingSlips(inputs.rankings),
+    ...detectCtrLow(inputs.rankings),
+    ...detectRisingQueries(inputs.rankings),
+    ...detectAeoQuiet(inputs.aiCrawl, {
+      allowAiCrawlers: inputs.allowAiCrawlers,
+      hasOrgDescription: inputs.hasOrgDescription,
+    }, now),
+    ...detectJsonLdIssues(inputs.jsonLdIssues),
+    ...detectTrafficDrops(inputs.traffic),
+    ...detectConversionGaps(inputs.traffic),
+    ...detectStaleHome(inputs.traffic, inputs.lastPublishedAt, now),
+  ];
 }
