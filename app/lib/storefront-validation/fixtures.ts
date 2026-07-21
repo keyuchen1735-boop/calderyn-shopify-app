@@ -76,6 +76,14 @@ export function createStorefrontProofData(routeId: StorefrontRouteId): PublicPre
       products,
       nextCursor: null,
     } : null,
+    featuredCollections: [{
+      id: "proof-collection",
+      handle: "proof-collection",
+      title: "Objects for Everyday Rituals",
+      description: "A merchant collection.",
+      image: active.primaryImage,
+      productCount: products.length,
+    }],
     featuredProducts: products.slice(0, 4),
     relatedProducts: products.slice(1),
     search: routeId === "search" ? {

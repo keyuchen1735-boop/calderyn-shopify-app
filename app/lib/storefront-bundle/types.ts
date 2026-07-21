@@ -367,6 +367,7 @@ export type RuntimeCapability =
 export type DataRequirement =
   | { kind: "storeIdentity" | "policyLinks" | "currentProduct" | "currentCollection" | "cart" }
   | { kind: "featuredProducts"; limit: number; collectionHandle?: string }
+  | { kind: "featuredCollections"; limit: number }
   | { kind: "relatedProducts" | "searchResults"; limit: number };
 
 export interface AssetManifestEntry {
@@ -392,6 +393,7 @@ export interface CompiledBinding {
 export type CompiledRepeatSource =
   | "collection.products"
   | "featured.products"
+  | "featured.collections"
   | "related.products"
   | "search.results"
   | "cart.lines"
@@ -402,7 +404,7 @@ export type CompiledRepeatSource =
 export interface CompiledRepeat {
   scopeId: string;
   source: CompiledRepeatSource;
-  itemKind: "product" | "cartLine" | "image" | "variant" | "fact";
+  itemKind: "collection" | "product" | "cartLine" | "image" | "variant" | "fact";
   keyPath: PublicBindingPath;
 }
 

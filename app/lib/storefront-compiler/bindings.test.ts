@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { compileHtml } from "./html";
 
 describe("binding and repeat scopes", () => {
+  it("compiles merchant collection discovery into collection scopes", () => {
+    const result = compileHtml(
+      `<section data-cd-repeat="featured.collections"><a data-cd-key="collection.id" data-cd-route="collection" data-cd-param-handle="collection.handle"><span data-cd-text="collection.title"></span></a></section>`,
+      { namespace: "collections", rootScopeKind: "store" },
+    );
+
+    expect(result.repeats[0]).toMatchObject({
+      source: "featured.collections",
+      itemKind: "collection",
+      keyPath: "collection.id",
+    });
+  });
+
   it("compiles an allowlisted repeater into a local scope", () => {
     const result = compileHtml(
       `<ul data-cd-repeat="collection.products"><li data-cd-key="product.id"><span data-cd-text="product.title"></span></li></ul>`,

@@ -35,6 +35,7 @@ export interface BindingScope {
 const REPEAT_SOURCES: Readonly<Record<CompiledRepeatSource, CompiledRepeat["itemKind"]>> = {
   "collection.products": "product",
   "featured.products": "product",
+  "featured.collections": "collection",
   "related.products": "product",
   "search.results": "product",
   "cart.lines": "cartLine",
@@ -46,6 +47,7 @@ const REPEAT_SOURCES: Readonly<Record<CompiledRepeatSource, CompiledRepeat["item
 const REPEAT_KEYS: Readonly<Record<CompiledRepeatSource, PublicBindingPath>> = {
   "collection.products": "product.id",
   "featured.products": "product.id",
+  "featured.collections": "collection.id",
   "related.products": "product.id",
   "search.results": "product.id",
   "cart.lines": "cartLine.id",
@@ -117,6 +119,7 @@ export function isBindingKindPathAllowed(kind: CompiledBindingKind, path: Public
 export const REPEAT_PARENT_KIND: Readonly<Record<CompiledRepeatSource, BindingScopeKind>> = {
   "collection.products": "collection",
   "featured.products": "store",
+  "featured.collections": "store",
   "related.products": "product",
   "search.results": "search",
   "cart.lines": "cart",

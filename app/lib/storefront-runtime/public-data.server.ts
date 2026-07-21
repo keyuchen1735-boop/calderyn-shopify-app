@@ -61,6 +61,8 @@ export interface PublicCollection {
   nextCursor: string | null;
 }
 
+export type PublicCollectionSummary = Omit<PublicCollection, "products" | "nextCursor">;
+
 export interface PublicCart {
   id: string;
   count: number;
@@ -83,6 +85,7 @@ export interface PublicPresentationData {
   policyLinks: Array<{ id: string; title: string; href: string }>;
   product: PublicProduct | null;
   collection: PublicCollection | null;
+  featuredCollections: PublicCollectionSummary[];
   featuredProducts: PublicProduct[];
   relatedProducts: PublicProduct[];
   search: {
@@ -124,13 +127,14 @@ export interface PublicDataDependencies {
 
 const LIMITS = {
   featuredProducts: 12,
+  featuredCollections: 12,
   relatedProducts: 8,
   searchResults: 24,
 } as const;
 
 const CLOSED_KINDS = new Set<DataRequirement["kind"]>([
   "storeIdentity", "policyLinks", "currentProduct", "currentCollection", "cart",
-  "featuredProducts", "relatedProducts", "searchResults",
+  "featuredProducts", "featuredCollections", "relatedProducts", "searchResults",
 ]);
 
 export class PublicDataPlanError extends Error {
@@ -201,6 +205,7 @@ function baseData(settings: StoreSettings): PublicPresentationData {
     policyLinks: [],
     product: null,
     collection: null,
+    featuredCollections: [],
     featuredProducts: [],
     relatedProducts: [],
     search: null,
@@ -285,7 +290,17 @@ export async function resolvePublicData(
   }
 
   for (const requirement of input.requiredData) {
-    if (requirement.kind === "featuredProducts") {
+    if (requirement.kind === "featuredCollections") {
+      const collections = await catalog.listCollections(input.shopId);
+      data.featuredCollections = collections.slice(0, requirement.limit).map((collection) => ({
+        id: collection.id ?? collection.handle,
+        handle: collection.handle,
+        title: collection.title,
+        description: collection.description ?? "",
+        image: null,
+        productCount: collection.productCount ?? 0,
+      }));
+    } else if (requirement.kind === "featuredProducts") {
       const featuredIds = input.route.kind === "home"
         ? input.featuredProductIds?.slice(0, requirement.limit)
         : undefined;

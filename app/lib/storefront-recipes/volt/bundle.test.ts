@@ -43,6 +43,7 @@ function productData(facts: NonNullable<NonNullable<PublicPresentationData["prod
       facts,
     },
     collection: null,
+    featuredCollections: [],
     featuredProducts: [],
     relatedProducts: [],
     search: null,

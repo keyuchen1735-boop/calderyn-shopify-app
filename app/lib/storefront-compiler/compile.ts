@@ -66,7 +66,7 @@ function compareCodeUnits(a: string, b: string): number {
 }
 
 const DATA_ORDER: readonly DataRequirement["kind"][] = [
-  "storeIdentity", "policyLinks", "currentProduct", "currentCollection", "cart", "featuredProducts",
+  "storeIdentity", "policyLinks", "currentProduct", "currentCollection", "cart", "featuredProducts", "featuredCollections",
   "relatedProducts", "searchResults",
 ];
 const CAPABILITY_ORDER: readonly RuntimeCapability[] = [
@@ -96,6 +96,7 @@ function deriveRouteContract(
   for (const repeat of html.repeats) {
     if (repeat.source === "collection.products") requireData({ kind: "currentCollection" });
     else if (repeat.source === "featured.products") requireData({ kind: "featuredProducts", limit: 12 });
+    else if (repeat.source === "featured.collections") requireData({ kind: "featuredCollections", limit: 12 });
     else if (repeat.source === "related.products") requireData({ kind: "relatedProducts", limit: 8 });
     else if (repeat.source === "search.results") requireData({ kind: "searchResults", limit: 24 });
     else if (repeat.source === "cart.lines") requireData({ kind: "cart" });

@@ -50,6 +50,7 @@ describe("platform-owned commerce hosts", () => {
   it("issues unique repeated host IDs bound to each public record", () => {
     const data: PublicPresentationData = {
       store: { name: "Store", logo: null }, policyLinks: [], product: null, collection: null,
+      featuredCollections: [],
       featuredProducts: ["one", "two"].map((id) => ({
         id: `product-${id}`, handle: id, title: id, description: "", primaryImage: null, images: [], options: [],
         variants: [], price: null, compareAtPrice: null, availability: "Sold out" as const,

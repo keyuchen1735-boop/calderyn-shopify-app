@@ -43,6 +43,7 @@ const data: PublicPresentationData = {
   policyLinks: [],
   product: null,
   collection: null,
+  featuredCollections: [],
   featuredProducts: [],
   relatedProducts: [],
   search: null,
@@ -445,6 +446,33 @@ describe("compiled-node server renderer", () => {
     expect(collectionHtml).toContain('href="/storefront/collections/featured"');
     expect(fallbackHtml).toContain('href="/storefront/collections/all"');
     expect(`${collectionHtml}${fallbackHtml}`).not.toContain('href="/storefront/collections"');
+  });
+
+  it("renders each merchant collection discovery route with its own handle", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.collections = {
+      html: `<main><section data-cd-repeat="featured.collections"><a data-cd-key="collection.id" data-cd-route="collection" data-cd-param-handle="collection.handle"><span data-cd-text="collection.title"></span></a></section></main>`,
+      css: `main { display:block }`,
+      requiredData: [],
+      requiredCapabilities: [],
+    };
+    const bundle = compileBundle(source).bundle;
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle,
+      routeId: "collections",
+      data: {
+        ...data,
+        featuredCollections: [
+          { id: "audio", handle: "audio", title: "Audio", description: "", image: null, productCount: 3 },
+          { id: "portable", handle: "portable", title: "Portable", description: "", image: null, productCount: 2 },
+        ],
+      },
+      nonce: "collection-discovery-nonce",
+      mode: "public",
+    }));
+
+    expect(html).toContain('href="/storefront/collections/audio"');
+    expect(html).toContain('href="/storefront/collections/portable"');
   });
 
   it("renders the global shell footer after the active route", () => {

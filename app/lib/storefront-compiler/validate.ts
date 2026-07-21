@@ -679,6 +679,7 @@ function deriveContract(
   for (const repeat of tree.repeats) {
     if (repeat.source === "collection.products") addData({ kind: "currentCollection" });
     else if (repeat.source === "featured.products") addData({ kind: "featuredProducts", limit: 12 });
+    else if (repeat.source === "featured.collections") addData({ kind: "featuredCollections", limit: 12 });
     else if (repeat.source === "related.products") addData({ kind: "relatedProducts", limit: 8 });
     else if (repeat.source === "search.results") addData({ kind: "searchResults", limit: 24 });
     else if (repeat.source === "cart.lines") addData({ kind: "cart" });
@@ -694,7 +695,7 @@ function deriveContract(
     else if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") addData({ kind: "cart" });
     else if (namespace === "product" && !slot.scopeId) addData({ kind: "currentProduct" });
   }
-  const dataOrder: readonly DataRequirement["kind"][] = ["storeIdentity", "policyLinks", "currentProduct", "currentCollection", "cart", "featuredProducts", "relatedProducts", "searchResults"];
+  const dataOrder: readonly DataRequirement["kind"][] = ["storeIdentity", "policyLinks", "currentProduct", "currentCollection", "cart", "featuredProducts", "featuredCollections", "relatedProducts", "searchResults"];
   const capabilities = new Set<RuntimeCapability>();
   if ([...tree.elements.values()].some((node) => node.routeTarget) || interactions.transitions.some((transition) => transition.action.type === "navigate")) capabilities.add("navigation");
   if (interactions.state.length || interactions.bindings.length || interactions.transitions.length) capabilities.add("localState");

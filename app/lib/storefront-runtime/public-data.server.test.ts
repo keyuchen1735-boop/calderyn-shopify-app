@@ -138,6 +138,25 @@ describe("runtime-1 public data plans", () => {
     expect(data.search?.results).toHaveLength(24);
   });
 
+  it("loads bounded merchant collection discovery data", async () => {
+    const fake = catalog();
+    const result = await resolvePublicData({
+      shopId: SHOP,
+      requiredData: [{ kind: "featuredCollections", limit: 12 }],
+      route: { kind: "collections" },
+    }, { catalog: fake, settingsLoader });
+
+    expect(fake.listCollections).toHaveBeenCalledWith(SHOP);
+    expect(result.featuredCollections).toEqual([{
+      id: "featured",
+      handle: "featured",
+      title: "Featured",
+      description: "",
+      image: null,
+      productCount: 0,
+    }]);
+  });
+
   it("turns missing route records into an explicit platform 404 and removes missing references", async () => {
     const fake = catalog([product("one")]);
     const data = await resolvePublicData({

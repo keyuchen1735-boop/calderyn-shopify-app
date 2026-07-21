@@ -19,6 +19,7 @@ import { CheckoutIslands } from "./checkout-islands";
 import { storefrontDesignSystemCss } from "./curated-fonts";
 import type {
   PublicCart,
+  PublicCollectionSummary,
   PublicMedia,
   PublicMoney,
   PublicPresentationData,
@@ -31,6 +32,7 @@ export type { PublicPresentationData } from "./public-data.server";
 
 type ScopeValue =
   | PublicPresentationData
+  | PublicCollectionSummary
   | PublicProduct
   | PublicVariant
   | PublicMedia
@@ -220,6 +222,7 @@ function repeatValues(node: CompiledElementNode, data: PublicPresentationData): 
   switch (node.repeat?.source) {
     case "collection.products": return data.collection?.products ?? [];
     case "featured.products": return data.featuredProducts;
+    case "featured.collections": return data.featuredCollections;
     case "related.products": return data.relatedProducts;
     case "search.results": return data.search?.results ?? [];
     case "cart.lines": return data.cart?.lines ?? [];

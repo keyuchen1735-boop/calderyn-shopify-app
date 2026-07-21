@@ -23,6 +23,7 @@ const quickViewData: PublicPresentationData = {
   policyLinks: [],
   product: null,
   collection: null,
+  featuredCollections: [],
   featuredProducts: [{
     id: "p1", handle: "field-kit", title: "Field kit", description: "A complete kit.",
     primaryImage: null, images: [], options: [{ name: "Size", values: ["Small", "Large"] }],
