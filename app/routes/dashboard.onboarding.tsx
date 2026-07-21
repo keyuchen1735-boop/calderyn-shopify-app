@@ -142,7 +142,7 @@ function ContactStep({ error, returnTo }: { error: string | null; returnTo: stri
   return (
     <>
       <h1 className="cd-auth-title">Almost there</h1>
-      <p className="cd-auth-sub">Two quick things, then bring your store over.</p>
+      <p className="cd-auth-sub">Two quick things, then you&apos;re in.</p>
       <AuthError code={error} />
       <AuthForm action="/dashboard/onboarding">
         <input type="hidden" name="intent" value="contact" />

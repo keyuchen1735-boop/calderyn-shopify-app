@@ -414,7 +414,7 @@ function AlertDetail({ app, alert }: { app: DashboardCtx; alert: AlertVM }) {
                   }}
                 >
                   <span className="cd-caption">
-                    This changes the live selling price on Shopify to restore this product&apos;s
+                    This changes the live selling price on {app.shopDomain ? "Shopify" : "your store"} to restore this product&apos;s
                     margin. Leave the field blank to use the suggested price, or set your own
                     (within your price-change guardrail). Reversible from your action history.
                   </span>
@@ -680,8 +680,8 @@ export default function Alerts({ app }: { app: DashboardCtx }) {
         )}
       </Card>
       <p className="cd-caption" style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <CDIcon name="scan" size={13} /> 12 detectors sweep every 15 minutes across Shopify, Meta,
-        Google, TikTok and QuickBooks.
+        <CDIcon name="scan" size={13} /> 12 detectors sweep every 15 minutes across{" "}
+        {app.shopDomain ? "Shopify" : "your store"}, Meta, Google, TikTok and QuickBooks.
       </p>
     </div>
   );
