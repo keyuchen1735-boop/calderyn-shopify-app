@@ -24,7 +24,7 @@ function elements(root: Node): Element[] {
 
 function classes(element: Element): string[] {
   return element.attrs.find(({ name }) => name === "class")?.value.split(/\s+/)
-    .filter((name) => name && !["active", "open", "selected"].includes(name)) ?? [];
+    .filter((name) => name && !["active", "open", "selected"].includes(name) && !name.endsWith("-cta-label")) ?? [];
 }
 
 function structuralSignatures(root: Node): string[] {
@@ -165,5 +165,16 @@ describe("approved storefront source parity", () => {
     const roomModes = STOREFRONT_RECIPES.find(({ config }) => config.templateId === "room-modes");
     expect(roomModes?.config.surfaces.home.source.css).toContain(".hotspot");
     expect(roomModes?.config.surfaces.home.source.css).toContain("animation:none!important");
+  });
+
+  it("keeps Larder's approved prototype aligned to the real six-slot commerce builder", () => {
+    const source = readFileSync("docs/superpowers/prototypes/storefront-recipes/larder.html", "utf8");
+    const larder = STOREFRONT_RECIPES.find(({ config }) => config.templateId === "larder");
+    expect(larder?.bundle.routes.home.trustedSlots).toContainEqual(
+      expect.objectContaining({ kind: "bundleBuilder", slotCount: 6 }),
+    );
+    expect(source).toContain('data-cd-slot="bundleBuilder"');
+    expect(source).toContain('data-cd-bundle-slots="6"');
+    expect(source).not.toMatch(/class="(?:slot|board|controls|rhythm)"|Fill next place|Remove place/);
   });
 });

@@ -1,6 +1,7 @@
 import { clientIpKey, rateLimit } from "~/lib/rate-limit.server";
 import {
   CartLineNotFoundError,
+  SellingPlanUnavailableError,
   VariantUnavailableError,
   getCartState,
 } from "~/lib/order/cart.server";
@@ -12,6 +13,11 @@ import {
   type CartIdentity,
 } from "~/lib/storefront/cart-cookie.server";
 import { isUuid } from "~/lib/ids";
+import {
+  canonicalizeStorefrontLinePersonalization,
+  STOREFRONT_LINE_PERSONALIZATION_KEYS,
+  type StorefrontLinePersonalization,
+} from "~/lib/storefront-runtime/trusted-slots";
 
 const PRIVATE_JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
@@ -64,6 +70,25 @@ export async function parseStrictObject(
   return record;
 }
 
+export function parseStorefrontLinePersonalization(
+  value: unknown,
+): StorefrontLinePersonalization | null {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length > STOREFRONT_LINE_PERSONALIZATION_KEYS.length) return null;
+  if (keys.some((key) =>
+    [...key].length > 40 ||
+    !STOREFRONT_LINE_PERSONALIZATION_KEYS.includes(
+      key as (typeof STOREFRONT_LINE_PERSONALIZATION_KEYS)[number],
+    ) ||
+    typeof record[key] !== "string" ||
+    [...(record[key] as string)].length > 240
+  )) return null;
+  return canonicalizeStorefrontLinePersonalization(record as StorefrontLinePersonalization);
+}
+
 export async function allowStorefrontRequest(
   request: Request,
   shopId: string,
@@ -104,6 +129,7 @@ export function cartContextError(context: Exclude<CartContext, { kind: "active" 
 
 export function mapCartError(error: unknown): Response | null {
   if (error instanceof VariantUnavailableError) return storefrontError(409, "variant_unavailable");
+  if (error instanceof SellingPlanUnavailableError) return storefrontError(422, "selling_plan_unavailable");
   if (error instanceof CartLineNotFoundError) return storefrontError(404, "cart_line_not_found");
   return null;
 }

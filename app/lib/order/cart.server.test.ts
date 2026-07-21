@@ -5,8 +5,8 @@ import type { StoreProduct } from "~/lib/storefront/catalog";
 // helpers depend on, so behavior is tested against REAL rules, not bare mocks:
 //   - cart_line COMPOSITE FK (shop_id, cart_id) -> cart(shop_id, id): a line whose
 //     (shop_id, cart_id) pair has no parent cart is rejected (also the cross-tenant guard).
-//   - cart_line UNIQUE (shop_id, cart_id, variant_id): a second INSERT for the same variant
-//     is rejected (proving addCartLine must increment the existing line, not duplicate it).
+//   - cart_line UNIQUE (shop_id, cart_id, variant_id, personalization_hash): only the same
+//     variant + canonical personalization increments an existing line.
 const store = vi.hoisted(() => {
   type Row = Record<string, any>;
   const db: Record<string, Row[]> = { cart: [], cart_line: [] };
@@ -93,15 +93,49 @@ const store = vi.hoisted(() => {
   }
 
   const rpc = vi.fn(async (name: string, args: Row) => {
+    if (name === "cart_add_lines_atomic") {
+      const lines = args.p_lines as Row[];
+      const cartLines = db.cart_line.filter((line) => line.shop_id === args.p_shop_id && line.cart_id === args.p_cart_id);
+      const currencies = new Set([...cartLines.map((line) => line.currency), ...lines.map((line) => line.currency)].map((currency) => String(currency).toLowerCase()));
+      if (currencies.size > 1) return { data: null, error: new Error("bundle currency conflicts with cart currency") };
+      for (const line of lines) {
+        const existing = cartLines.find((candidate) => candidate.variant_id === line.variant_id
+          && JSON.stringify(candidate.personalization ?? {}) === "{}" && (candidate.selling_plan_id ?? "") === "");
+        if (existing && existing.quantity + line.quantity > 999) {
+          return { data: null, error: new Error("resulting cart line quantity exceeds 999") };
+        }
+      }
+      const rows = lines.map((line) => {
+        const existing = cartLines.find((candidate) => candidate.variant_id === line.variant_id
+          && JSON.stringify(candidate.personalization ?? {}) === "{}" && (candidate.selling_plan_id ?? "") === "");
+        if (existing) {
+          existing.quantity += line.quantity;
+          return { ...existing };
+        }
+        const row = {
+          id: `cart_line-${db.cart_line.length + 1}`, shop_id: args.p_shop_id, cart_id: args.p_cart_id,
+          variant_id: line.variant_id, quantity: line.quantity, unit_price_cents: line.unit_price_cents,
+          currency: line.currency, title_snapshot: line.title_snapshot, personalization: {}, selling_plan_id: "",
+        };
+        db.cart_line.push(row);
+        return { ...row };
+      });
+      return { data: rows, error: null };
+    }
     if (name !== "cart_add_line_atomic") return { data: null, error: { message: `unknown rpc ${name}` } };
     const parent = db.cart.find(
       (row) => row.shop_id === args.p_shop_id && row.id === args.p_cart_id && row.state === "cart",
     );
     if (!parent) return { data: null, error: { message: "active cart not found for shop (composite FK)" } };
+    const personalization = args.p_personalization ?? {};
+    const personalizationHash = JSON.stringify(personalization);
+    const sellingPlanId = args.p_selling_plan_id ?? "";
     const existing = db.cart_line.find(
       (row) => row.shop_id === args.p_shop_id
         && row.cart_id === args.p_cart_id
-        && row.variant_id === args.p_variant_id,
+        && row.variant_id === args.p_variant_id
+        && row.personalization_hash === personalizationHash
+        && row.selling_plan_id === sellingPlanId,
     );
     if (existing) {
       existing.quantity = Math.min(999, existing.quantity + Number(args.p_quantity));
@@ -116,6 +150,11 @@ const store = vi.hoisted(() => {
       unit_price_cents: args.p_unit_price_cents,
       currency: args.p_currency,
       title_snapshot: args.p_title_snapshot,
+      personalization,
+      personalization_hash: personalizationHash,
+      selling_plan_id: sellingPlanId,
+      selling_plan_name: sellingPlanId ? "Monthly delivery" : null,
+      selling_plan_cadence: sellingPlanId ? "Every month" : null,
     };
     db.cart_line.push(row);
     return { data: { ...row }, error: null };
@@ -176,6 +215,7 @@ vi.mock("~/lib/storefront/catalog.server", () => ({
 import {
   buildCart,
   addCartLine,
+  addCartLines,
   priceCart,
   priceLines,
   getCartOrigin,
@@ -234,6 +274,36 @@ describe("addCartLine", () => {
     expect(store.db.cart_line).toHaveLength(1); // no duplicate row
   });
 
+  it("uses canonical personalization identity regardless of object key order", async () => {
+    const cart = await buildCart("shop-1");
+    const first = await addCartLine("shop-1", cart.id, "v-tee-s", 1, {
+      recipient: "Mina",
+      engraving: "Always",
+    });
+    const second = await addCartLine("shop-1", cart.id, "v-tee-s", 2, {
+      engraving: "Always",
+      recipient: "Mina",
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(second.quantity).toBe(3);
+    expect(second.personalization).toEqual({ engraving: "Always", recipient: "Mina" });
+    expect(store.db.cart_line).toHaveLength(1);
+  });
+
+  it("keeps distinct engraved variants as distinct cart lines", async () => {
+    const cart = await buildCart("shop-1");
+    const first = await addCartLine("shop-1", cart.id, "v-tee-s", 1, { engraving: "Mina" });
+    const second = await addCartLine("shop-1", cart.id, "v-tee-s", 1, { engraving: "Noor" });
+
+    expect(second.id).not.toBe(first.id);
+    expect(store.db.cart_line).toHaveLength(2);
+    expect((await priceCart("shop-1", cart.id)).lines.map((line) => line.personalization)).toEqual([
+      { engraving: "Mina" },
+      { engraving: "Noor" },
+    ]);
+  });
+
   it("atomically preserves every concurrent increment and the original snapshot", async () => {
     const cart = await buildCart("shop-1");
     const [first] = await Promise.all([
@@ -273,6 +343,83 @@ describe("addCartLine", () => {
     const cart = await buildCart("shop-A");
     // shop-B trying to attach a line to shop-A's cart id -> composite FK rejects it.
     await expect(addCartLine("shop-B", cart.id, "v-tee-s", 1)).rejects.toThrow(/composite FK/);
+  });
+
+  it("keeps one-time and eligible selling-plan lines distinct and rejects mismatches", async () => {
+    catalog.products[0]!.variants[0]!.sellingPlans = [{
+      id: "plan-monthly", name: "Monthly delivery", cadence: "Every month",
+      priceAdjustment: { type: "fixed_price", valueCents: 1799, currency: "USD" },
+    }];
+    const cart = await buildCart("shop-1");
+    await addCartLine("shop-1", cart.id, "v-tee-s", 1);
+    const planned = await addCartLine("shop-1", cart.id, "v-tee-s", 1, {}, "plan-monthly");
+    expect(store.db.cart_line).toHaveLength(2);
+    expect(planned.sellingPlan).toEqual({ id: "plan-monthly", name: "Monthly delivery", cadence: "Every month" });
+    expect(planned.unitPriceCents).toBe(1799);
+    await expect(addCartLine("shop-1", cart.id, "v-tee-s", 1, {}, "plan-other"))
+      .rejects.toThrow(/not eligible/);
+  });
+});
+
+describe("addCartLines", () => {
+  it("canonicalizes repeated selections into one quantity before one atomic mutation", async () => {
+    const cart = await buildCart("shop-1");
+    const result = await addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 }, { variantId: "v-tee-s", quantity: 1 },
+    ]);
+    expect(store.client.rpc).toHaveBeenCalledOnce();
+    expect(store.client.rpc).toHaveBeenCalledWith("cart_add_lines_atomic", expect.objectContaining({
+      p_lines: [expect.objectContaining({ variant_id: "v-tee-s", quantity: 2 })],
+    }));
+    expect(result).toHaveLength(1);
+    expect(result[0]?.quantity).toBe(2);
+  });
+
+  it("validates every live line before the single atomic mutation", async () => {
+    const cart = await buildCart("shop-1");
+    await expect(addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 },
+      { variantId: "v-hoodie-l", quantity: 1 },
+    ])).rejects.toThrow(/not available/);
+    expect(store.client.rpc).not.toHaveBeenCalled();
+    expect(store.db.cart_line).toHaveLength(0);
+  });
+
+  it("rejects a foreign variant without partial mutation", async () => {
+    const cart = await buildCart("shop-1");
+    await expect(addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 }, { variantId: "foreign", quantity: 1 },
+    ])).rejects.toThrow(/not found/);
+    expect(store.client.rpc).not.toHaveBeenCalled();
+    expect(store.db.cart_line).toHaveLength(0);
+  });
+
+  it("rejects internally mixed bundle currencies before any line is written", async () => {
+    const cart = await buildCart("shop-1");
+    await expect(addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 }, { variantId: "v-cap", quantity: 1 },
+    ])).rejects.toThrow(/currency/i);
+    expect(store.db.cart_line).toHaveLength(0);
+  });
+
+  it("rejects a bundle currency conflicting with the existing cart without writes", async () => {
+    const cart = await buildCart("shop-1");
+    await addCartLine("shop-1", cart.id, "v-cap", 1);
+    const before = structuredClone(store.db.cart_line);
+    await expect(addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 }, { variantId: "v-tee-s", quantity: 1 },
+    ])).rejects.toThrow(/currency/i);
+    expect(store.db.cart_line).toEqual(before);
+  });
+
+  it("rejects the whole bundle when canonical quantity would exceed 999", async () => {
+    const cart = await buildCart("shop-1");
+    await addCartLine("shop-1", cart.id, "v-tee-s", 998);
+    const before = structuredClone(store.db.cart_line);
+    await expect(addCartLines("shop-1", cart.id, [
+      { variantId: "v-tee-s", quantity: 1 }, { variantId: "v-tee-s", quantity: 1 },
+    ])).rejects.toThrow(/999/);
+    expect(store.db.cart_line).toEqual(before);
   });
 });
 

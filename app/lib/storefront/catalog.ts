@@ -1,3 +1,5 @@
+import type { ProductFact } from "./product-facts";
+
 // app/lib/storefront/catalog.ts
 // The shared catalog read contract. John implements this verbatim against the
 // owned catalog later (master spec §#5); the fixture stub implements it now.
@@ -39,6 +41,7 @@ export interface StorefrontCatalogSearchPage {
     categories: Array<{ value: string; count: number }>;
     tags: Array<{ value: string; count: number }>;
     collections: Array<{ value: string; count: number }>;
+    facts?: Record<string, string[]>;
   };
   total: number;
   hasNextPage: boolean;
@@ -79,6 +82,8 @@ export interface StorefrontCatalog {
   ): Promise<{ product: StoreProduct; variant: StoreVariant } | null>;
   getCollection?(shopId: string, handle: string): Promise<StoreCollection | null>;
   listCollections(shopId: string): Promise<StoreCollection[]>;
+  listProductFacts?(shopId: string, productIds: readonly string[]): Promise<Record<string, ProductFact[]>>;
+  listProductFactFacets?(shopId: string): Promise<Record<string, string[]>>;
 }
 
 export interface StoreProduct {
@@ -92,6 +97,7 @@ export interface StoreProduct {
   collections: string[]; // collection handles
   category?: string | null;
   tags?: string[];
+  facts?: ProductFact[];
 }
 
 export interface StoreVariant {
@@ -107,6 +113,14 @@ export interface StoreVariant {
   /** False only when the source variant has no price. Omitted means priced for
    *  compatibility with fixture and legacy variant literals. */
   hasPrice?: boolean;
+  sellingPlans?: StoreSellingPlan[];
+}
+
+export interface StoreSellingPlan {
+  id: string;
+  name: string;
+  cadence: string;
+  priceAdjustment: { type: "fixed_price"; valueCents: number; currency: string } | null;
 }
 
 export function selectStorefrontPriceVariant(product: StoreProduct): StoreVariant | null {
@@ -116,6 +130,15 @@ export function selectStorefrontPriceVariant(product: StoreProduct): StoreVarian
   return candidates.slice().sort(
     (a, b) => a.priceCents - b.priceCents || a.id.localeCompare(b.id),
   )[0] ?? null;
+}
+
+export function storefrontPriceSortValue(
+  product: StoreProduct,
+  sort: Extract<StorefrontCatalogSearchSort, "price_asc" | "price_desc">,
+): number {
+  const variant = selectStorefrontPriceVariant(product);
+  if (variant && variant.hasPrice !== false) return variant.priceCents;
+  return sort === "price_desc" ? MISSING_PRICE_DESC_SORT_VALUE : MISSING_PRICE_ASC_SORT_VALUE;
 }
 
 export interface StoreCollection {

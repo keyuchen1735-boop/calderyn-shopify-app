@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   STORE_TEMPLATE_REGISTRY,
@@ -18,10 +19,11 @@ const EXPECTED_TEXT_SLOTS = {
   "ritual-almanac": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "broadcast-patch-bay": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "atelier-nine": ["announcement", "heroTitle", "heroBody", "ctaLabel"],
+  larder: ["heroTitle", "heroBody", "ctaLabel"],
 } as const;
 
 describe("versioned storefront recipe registry", () => {
-  it("registers all eleven stable recipe IDs with complete route and override metadata", () => {
+  it("registers all twelve approved recipes with complete route and override metadata", () => {
     expect(STORE_TEMPLATE_REGISTRY.templates.map((recipe) => recipe.id)).toEqual([
       "custom-bench",
       "commons-index",
@@ -34,6 +36,7 @@ describe("versioned storefront recipe registry", () => {
       "ritual-almanac",
       "broadcast-patch-bay",
       "atelier-nine",
+      "larder",
     ]);
     expect(STORE_TEMPLATE_REGISTRY.registryVersion).toBe(2);
     expect(STORE_TEMPLATE_REGISTRY.routingVersion).toBe(1);
@@ -49,9 +52,10 @@ describe("versioned storefront recipe registry", () => {
       "ritual-almanac": 9,
       "broadcast-patch-bay": 11,
       "atelier-nine": 6,
+      larder: 1,
     } as const;
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
-      expect(recipe.activeVersion).toBe(activeVersions[recipe.id]);
+      expect(recipe.activeVersion).toBe(activeVersions[recipe.id as keyof typeof activeVersions]);
       expect(recipe.routeCapabilities).toEqual(["home", "collection", "product", "search", "cart", "checkout"]);
       expect(recipe.overrideSurface.designTokens.length).toBeGreaterThan(0);
       expect(recipe.overrideSurface.textSlots.length).toBeGreaterThan(0);
@@ -62,6 +66,11 @@ describe("versioned storefront recipe registry", () => {
       expect(recipe.versions.length).toBeGreaterThan(0);
       for (const version of recipe.versions) {
         expect(provenance.artifacts).toHaveProperty(version.baselineArtifact);
+        for (const [viewport, screenshot] of Object.entries(version.screenshots)) {
+          const bytes = readFileSync(screenshot);
+          expect(bytes.subarray(0, 4).toString("ascii"), `${recipe.id}@${version.templateVersion} ${viewport} baseline`).toBe("RIFF");
+          expect(bytes.subarray(8, 12).toString("ascii"), `${recipe.id}@${version.templateVersion} ${viewport} baseline`).toBe("WEBP");
+        }
       }
       const activeVersion = recipe.versions.find((version) => version.templateVersion === recipe.activeVersion);
       expect(activeVersion).toBeDefined();
@@ -119,6 +128,8 @@ describe("versioned storefront recipe registry", () => {
     });
     expect(new Set(semanticSignatures).size).toBe(STORE_TEMPLATE_REGISTRY.templates.length);
     expect(getStoreTemplate("atelier-nine").name).toBe("Atelier Grid");
+    expect(getStoreTemplate("larder").previewSrc).toBe("/template-previews/larder.webp");
+    expect(getStoreTemplate("larder").versions[0]?.visualLayer.fallbackAssetKey).toBe("hero-poster");
   });
 
   it("requires descriptions, placeholders, heroes, and one visual surface", () => {

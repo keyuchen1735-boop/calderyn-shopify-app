@@ -6,6 +6,7 @@ import type {
   CompiledRepeat,
   InteractionManifestV1,
   RouteTarget,
+  TrustedPersonalizationField,
   TrustedSlotManifest,
 } from "../storefront-bundle/types";
 import {
@@ -27,7 +28,7 @@ const ALLOWED_TAGS = new Set([
   "dd", "details", "dfn", "div", "dl", "dt", "em", "figcaption", "figure", "footer", "h1", "h2",
   "h3", "h4", "h5", "h6", "header", "hr", "i", "img", "kbd", "label", "li", "main", "mark", "nav", "ol",
   "option", "p", "picture", "pre", "q", "s", "section", "select", "small", "source", "span", "strong", "sub", "summary", "input",
-  "sup", "time", "u", "ul",
+  "sup", "time", "u", "ul", "video",
 ]);
 
 export function isAllowedCompiledTag(value: unknown): value is string {
@@ -45,20 +46,27 @@ const BINDING_ATTRIBUTES = new Map([
   ["data-cd-money", "money"],
   ["data-cd-src", "src"],
   ["data-cd-alt", "alt"],
+  ["data-cd-href", "href"],
 ] as const);
 const SOURCE_ATTRIBUTES = new Set([
   ...BINDING_ATTRIBUTES.keys(),
   "data-cd-repeat", "data-cd-key", "data-cd-route", "data-cd-param-handle", "data-cd-param-query",
   "data-cd-param-policy-id", "data-cd-on", "data-cd-action", "data-cd-target", "data-cd-state",
   "data-cd-value-field", "data-cd-facet", "data-cd-slot", "data-cd-product", "data-cd-host-size",
-  "data-cd-theme-tokens", "data-cd-policy-links", "data-cd-asset", "data-cd-state-id", "data-cd-state-type",
+  "data-cd-theme-tokens", "data-cd-personalization", "data-cd-bundle-slots", "data-cd-policy-links", "data-cd-asset", "data-cd-state-id", "data-cd-state-type",
   "data-cd-state-initial", "data-cd-state-values", "data-cd-state-min", "data-cd-state-max",
   "data-cd-bind-state", "data-cd-bind-property",
+  "data-cd-video", "data-cd-poster-asset",
+  "data-cd-motion",
 ]);
+const DECLARATIVE_MOTIONS = new Set(["reveal", "parallax", "count-up", "pinned", "scroll-progress"]);
 const TRUSTED_SLOT_KINDS = new Set<TrustedSlotManifest["kind"]>([
-  "variantPicker", "addToCart", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce",
+  "variantPicker", "addToCart", "bundleBuilder", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce",
 ]);
 const HOST_SIZES = new Set<TrustedSlotManifest["hostSize"]>(["inline", "block", "panel", "page"]);
+const PERSONALIZATION_FIELDS = new Set<TrustedPersonalizationField>([
+  "engraving", "giftNote", "giftWrap", "recipient",
+]);
 
 function isSafeIdentifier(value: string): boolean {
   if (value.length === 0 || value.length > 80) return false;
@@ -143,7 +151,24 @@ function assertAllowedAttribute(name: string, value: string, tagName: string): v
   }
   if (name === "type") {
     if (tagName === "input" && ["search", "text", "radio", "checkbox"].includes(value)) return;
+    if (tagName === "source" && ["video/webm", "video/mp4"].includes(value)) return;
     throw new CompilerError("html.control_type", `Unsupported ${tagName} type ${JSON.stringify(value)}`);
+  }
+  if (["muted", "autoplay", "playsinline", "loop", "data-cd-video"].includes(name)) {
+    if (tagName === "video" && value === "") return;
+    throw new CompilerError("html.video_attribute", `Invalid ${tagName} ${name}`);
+  }
+  if (name === "preload") {
+    if (tagName === "video" && ["none", "metadata", "auto"].includes(value)) return;
+    throw new CompilerError("html.video_attribute", `Invalid ${tagName} preload`);
+  }
+  if (name === "data-cd-poster-asset") {
+    if (tagName === "video" && isSafeIdentifier(value)) return;
+    throw new CompilerError("asset.key", "Video poster asset keys must be local identifiers");
+  }
+  if (name === "data-cd-motion") {
+    if (DECLARATIVE_MOTIONS.has(value)) return;
+    throw new CompilerError("html.motion", "Unsupported declarative motion");
   }
   if (name === "name") {
     if (tagName === "input" && isSafeIdentifier(value)) return;
@@ -449,6 +474,24 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
         if (themeTokenIds.some((token) => !isSafeIdentifier(token))) {
           throw new CompilerError("slot.theme", "Trusted slot theme tokens must be local identifiers");
         }
+        const personalizationValue = sourceAttributes.get("data-cd-personalization");
+        const personalizationFields = personalizationValue === undefined
+          ? undefined
+          : splitAsciiWhitespace(personalizationValue) as TrustedPersonalizationField[];
+        if (personalizationFields && (
+          slotKind !== "addToCart" || personalizationFields.length === 0 ||
+          personalizationFields.length > PERSONALIZATION_FIELDS.size ||
+          new Set(personalizationFields).size !== personalizationFields.length ||
+          personalizationFields.some((field) => !PERSONALIZATION_FIELDS.has(field))
+        )) {
+          throw new CompilerError("slot.personalization", "Trusted personalization fields are invalid for this slot");
+        }
+        const rawSlotCount = sourceAttributes.get("data-cd-bundle-slots");
+        const slotCount = rawSlotCount === undefined ? undefined : Number(rawSlotCount);
+        if ((slotKind === "bundleBuilder") !== (slotCount !== undefined) ||
+          (slotCount !== undefined && (!Number.isSafeInteger(slotCount) || slotCount < 2 || slotCount > 12))) {
+          throw new CompilerError("slot.bundle", "bundleBuilder requires an integer data-cd-bundle-slots from 2 to 12");
+        }
         trustedSlotId = id;
         for (const name of Object.keys(attributes)) delete attributes[name];
         trustedSlots.push({
@@ -457,6 +500,8 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
           scopeId: childScope.id === "root" ? undefined : childScope.id,
           hostSize: hostSize as TrustedSlotManifest["hostSize"],
           themeTokenIds,
+          ...(personalizationFields ? { personalizationFields } : {}),
+          ...(slotCount === undefined ? {} : { slotCount }),
         });
         attributes["data-cd-trusted-slot-id"] = id;
       }
@@ -470,6 +515,11 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
         if (!isSafeIdentifier(assetKey)) throw new CompilerError("asset.key", "Asset keys must be local identifiers");
         attributes["data-cd-asset-key"] = assetKey;
       }
+      const posterAssetKey = sourceAttributes.get("data-cd-poster-asset");
+      if (posterAssetKey !== undefined) attributes["data-cd-poster-asset-key"] = posterAssetKey;
+      if (sourceAttributes.has("data-cd-video")) attributes["data-cd-video"] = "";
+      const motion = sourceAttributes.get("data-cd-motion");
+      if (motion !== undefined) attributes["data-cd-motion"] = motion;
 
       const compiledNode: CompiledElementNode = {
         kind: "element",
@@ -481,7 +531,7 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
       if (repeat) compiledNode.repeat = repeat;
       if (routeTarget) compiledNode.routeTarget = routeTarget;
       if (trustedSlotId) compiledNode.trustedSlotId = trustedSlotId;
-      if (sourceNode.tagName === "a" && routeTarget === undefined && attributes.href === undefined) {
+      if (sourceNode.tagName === "a" && routeTarget === undefined && attributes.href === undefined && sourceAttributes.get("data-cd-href") === undefined) {
         throw new CompilerError("html.inert_control", "Visible anchors require a route target or resolved fragment");
       }
       if (sourceNode.tagName === "button" && actionName === undefined && routeTarget === undefined) {

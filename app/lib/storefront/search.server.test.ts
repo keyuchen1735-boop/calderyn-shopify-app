@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StoreProduct } from "./catalog";
 import { storefrontProofContext } from "../storefront-validation/fixtures";
 import { searchProductPageInMemory } from "./catalog.stub.server";
+import { normalizeProductFacts } from "./product-facts";
 
 const catalog = vi.hoisted(() => ({ searchProductPage: vi.fn(), listProductPage: vi.fn(), listProducts: vi.fn() }));
 
@@ -82,7 +83,16 @@ describe("parseStorefrontSearchParams", () => {
       sort: "price_asc",
       limit: 12,
       cursor: null,
+      factFilters: {},
     });
+  });
+
+  it("accepts only closed, bounded merchant fact filters", () => {
+    expect(parseStorefrontSearchParams(new URL("https://shop.example/?fact.material=Walnut&fact.compatibility=Model%20X").searchParams).factFilters).toEqual({
+      material: "Walnut", compatibility: "Model X",
+    });
+    expect(() => parseStorefrontSearchParams(new URL("https://shop.example/?fact.claim=cures").searchParams)).toThrow(InvalidSearchRequestError);
+    expect(() => parseStorefrontSearchParams(new URL("https://shop.example/?fact.material=a&fact.material=b").searchParams)).toThrow(InvalidSearchRequestError);
   });
 
   it.each([
@@ -207,6 +217,60 @@ describe("searchStorefront", () => {
     ]);
     expect(result.facets.tags.length).toBeLessThanOrEqual(20);
     expect(result.nextCursor).toEqual(expect.any(String));
+  });
+
+  it("derives fact choices and filtered results from live merchant facts", async () => {
+    const factual = [
+      { ...products[0], facts: normalizeProductFacts([{ kind: "material", value: "Walnut" }]) },
+      { ...products[1], facts: normalizeProductFacts([{ kind: "material", value: "Clay" }]) },
+      products[2],
+    ];
+    catalog.listProducts.mockResolvedValue(factual);
+    const input = parseStorefrontSearchParams(new URL("https://shop.example/?fact.material=Walnut").searchParams);
+    const result = await searchStorefront("shop-a", input);
+    expect(result.items.map(({ id }) => id)).toEqual(["p-1"]);
+    expect(result.facets.facts).toEqual({ material: ["Clay", "Walnut"] });
+    expect(catalog.listProducts).toHaveBeenCalledWith("shop-a", { limit: 250 });
+  });
+
+  it.each([
+    ["price_asc", ["cheap", "expensive", "missing-a", "missing-b"]],
+    ["price_desc", ["expensive", "cheap", "missing-a", "missing-b"]],
+  ] as const)("keeps fact-filtered missing prices last across every %s cursor page", async (sort, expected) => {
+    const material = normalizeProductFacts([{ kind: "material", value: "Walnut" }]);
+    const pricedAndMissing: StoreProduct[] = [
+      {
+        ...products[0], id: "p-cheap", handle: "cheap", title: "Cheap", facts: material,
+        variants: [{ ...products[0].variants[0], id: "v-cheap", priceCents: 100 }],
+      },
+      {
+        ...products[0], id: "p-expensive", handle: "expensive", title: "Expensive", facts: material,
+        variants: [{ ...products[0].variants[0], id: "v-expensive", priceCents: 900 }],
+      },
+      ...["b", "a"].map((suffix): StoreProduct => ({
+        ...products[0], id: `p-missing-${suffix}`, handle: `missing-${suffix}`,
+        title: `Missing ${suffix}`, facts: material,
+        variants: [{
+          ...products[0].variants[0], id: `v-missing-${suffix}`, priceCents: 0,
+          available: false, hasPrice: false,
+        }],
+      })),
+    ];
+    catalog.listProducts.mockResolvedValue(pricedAndMissing);
+    const input = parseStorefrontSearchParams(
+      new URL(`https://shop.example/?fact.material=Walnut&sort=${sort}&limit=1`).searchParams,
+    );
+    const seen: string[] = [];
+    let cursor: string | null = null;
+
+    do {
+      const page = await searchStorefront("shop-a", { ...input, cursor });
+      seen.push(...page.items.map((item) => item.handle));
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    expect(seen).toEqual(expected);
+    expect(new Set(seen).size).toBe(expected.length);
   });
 
   it("filters, sorts, and paginates through a shop/query-bound opaque cursor", async () => {

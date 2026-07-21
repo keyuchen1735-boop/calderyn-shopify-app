@@ -81,6 +81,42 @@ describe("typed interactions", () => {
     expect(result.html).not.toContain("id=\"cd-product-buy\"");
   });
 
+  it("compiles only a bounded bundle slot count and strips recipe-controlled contents", () => {
+    const result = compileHtml(
+      `<section data-cd-slot="bundleBuilder" data-cd-bundle-slots="3"><button>Cheap bundle</button></section>`,
+      { namespace: "home" },
+    );
+    expect(result.trustedSlots[0]).toEqual(expect.objectContaining({ kind: "bundleBuilder", slotCount: 3 }));
+    expect(result.html).not.toMatch(/Cheap bundle|bundle-slots/);
+    expect(() => compileHtml(`<div data-cd-slot="bundleBuilder" data-cd-bundle-slots="2" data-product-id="forged"></div>`, { namespace: "home" }))
+      .toThrow(/allowlisted/);
+    for (const count of ["0", "1", "13", "2.5"]) {
+      expect(() => compileHtml(`<div data-cd-slot="bundleBuilder" data-cd-bundle-slots="${count}"></div>`, { namespace: "home" }))
+        .toThrow(/2 to 12/);
+    }
+  });
+
+  it("allows only bounded personalization fields on the trusted add-to-cart slot", () => {
+    const result = compileHtml(
+      `<div data-cd-slot="addToCart" data-cd-personalization="engraving giftNote recipient"></div>`,
+      { namespace: "product", rootScopeKind: "product" },
+    );
+    expect(result.trustedSlots[0]).toEqual(expect.objectContaining({
+      kind: "addToCart",
+      personalizationFields: ["engraving", "giftNote", "recipient"],
+    }));
+    expect(result.html).not.toContain("personalization");
+
+    expect(() => compileHtml(
+      `<div data-cd-slot="addToCart" data-cd-personalization="engraving price"></div>`,
+      { namespace: "product", rootScopeKind: "product" },
+    )).toThrow(/personalization/i);
+    expect(() => compileHtml(
+      `<div data-cd-slot="quickViewCommerce" data-cd-personalization="engraving"></div>`,
+      { namespace: "home" },
+    )).toThrow(/personalization/i);
+  });
+
   it("requires cart-line controls to be inside the exact cart-line repeat scope", () => {
     expect(() => compileHtml(
       `<div data-cd-slot="cartLineControls"></div>`,

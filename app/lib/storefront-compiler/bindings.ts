@@ -25,7 +25,7 @@ function compareCodeUnits(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-export type BindingScopeKind = "store" | "collection" | "product" | "variant" | "cart" | "cartLine" | "search" | "image";
+export type BindingScopeKind = "store" | "collection" | "product" | "variant" | "cart" | "cartLine" | "search" | "image" | "fact";
 
 export interface BindingScope {
   id: string;
@@ -35,21 +35,25 @@ export interface BindingScope {
 const REPEAT_SOURCES: Readonly<Record<CompiledRepeatSource, CompiledRepeat["itemKind"]>> = {
   "collection.products": "product",
   "featured.products": "product",
+  "featured.collections": "collection",
   "related.products": "product",
   "search.results": "product",
   "cart.lines": "cartLine",
   "product.images": "image",
   "product.variants": "variant",
+  "product.facts": "fact",
 };
 
 const REPEAT_KEYS: Readonly<Record<CompiledRepeatSource, PublicBindingPath>> = {
   "collection.products": "product.id",
   "featured.products": "product.id",
+  "featured.collections": "collection.id",
   "related.products": "product.id",
   "search.results": "product.id",
   "cart.lines": "cartLine.id",
   "product.images": "product.primaryImage",
   "product.variants": "variant.id",
+  "product.facts": "fact.id",
 };
 
 function pathOwner(path: PublicBindingPath): BindingScopeKind {
@@ -97,6 +101,7 @@ const BINDING_PATHS: Readonly<Record<CompiledBindingKind, ReadonlySet<PublicBind
       "store.name", "collection.title", "collection.description", "collection.productCount", "product.title",
       "product.description", "product.availability", "variant.title", "variant.availability", "cart.count",
       "cartLine.title", "cartLine.quantity", "search.query",
+      "fact.kind", "fact.label", "fact.value", "fact.unit",
   ]),
   money: new Set([
       "product.price", "product.compareAtPrice", "variant.price", "variant.compareAtPrice", "cart.subtotal",
@@ -104,6 +109,7 @@ const BINDING_PATHS: Readonly<Record<CompiledBindingKind, ReadonlySet<PublicBind
   ]),
   src: new Set(["store.logo", "collection.image", "product.primaryImage"]),
   alt: new Set(["store.name", "collection.title", "product.title", "variant.title", "cartLine.title"]),
+  href: new Set(["fact.url"]),
 };
 
 export function isBindingKindPathAllowed(kind: CompiledBindingKind, path: PublicBindingPath): boolean {
@@ -113,11 +119,13 @@ export function isBindingKindPathAllowed(kind: CompiledBindingKind, path: Public
 export const REPEAT_PARENT_KIND: Readonly<Record<CompiledRepeatSource, BindingScopeKind>> = {
   "collection.products": "collection",
   "featured.products": "store",
+  "featured.collections": "store",
   "related.products": "product",
   "search.results": "search",
   "cart.lines": "cart",
   "product.images": "product",
   "product.variants": "product",
+  "product.facts": "product",
 };
 
 export function compileRepeat(
@@ -147,7 +155,7 @@ export function scopeForRepeat(repeat: CompiledRepeat): BindingScope {
   return { id: repeat.scopeId, kind: repeat.itemKind };
 }
 
-const ROUTE_IDS = new Set(["home", "collection", "product", "search", "cart", "checkout", "account", "policy"]);
+const ROUTE_IDS = new Set(["home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound", "account", "policy"]);
 const PARAMS_BY_ROUTE: Readonly<Record<string, ReadonlySet<string>>> = {
   home: new Set(),
   collection: new Set(["handle"]),
@@ -155,6 +163,9 @@ const PARAMS_BY_ROUTE: Readonly<Record<string, ReadonlySet<string>>> = {
   search: new Set(["query"]),
   cart: new Set(),
   checkout: new Set(),
+  collections: new Set(),
+  story: new Set(),
+  notFound: new Set(),
   account: new Set(),
   policy: new Set(["policyId"]),
 };

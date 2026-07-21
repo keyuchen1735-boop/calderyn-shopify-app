@@ -46,10 +46,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
           count: priced.lines.reduce((sum, line) => sum + line.quantity, 0),
           lines: priced.lines.map((line) => ({
             id: line.id,
-            title: line.titleSnapshot,
+            title: line.sellingPlan
+              ? `${line.titleSnapshot} — ${line.sellingPlan.name} (${line.sellingPlan.cadence})`
+              : line.titleSnapshot,
             quantity: line.quantity,
             unitPrice: { cents: line.unitPriceCents, currency: line.currency.toUpperCase() },
             total: { cents: line.unitPriceCents * line.quantity, currency: line.currency.toUpperCase() },
+            sellingPlan: line.sellingPlan ?? null,
           })),
           subtotal: { cents: priced.subtotalCents, currency: priced.currency.toUpperCase() },
           discounts: { cents: 0, currency: priced.currency.toUpperCase() },

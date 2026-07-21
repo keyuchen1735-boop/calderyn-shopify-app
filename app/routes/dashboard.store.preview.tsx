@@ -8,6 +8,7 @@ import storefrontCss from "~/styles/storefront.css?url";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getCatalog, getPreviewCatalog } from "~/lib/storefront/catalog.server";
+import type { StorefrontCatalog } from "~/lib/storefront/catalog";
 import { isStorefrontBundleReadEnabled } from "~/lib/storefront-runtime/csp.server";
 import {
   resolveRuntime1VersionRoute,
@@ -30,10 +31,9 @@ import { isStoreTemplateId, STORE_TEMPLATE_REGISTRY } from "~/lib/storefront-bun
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
-async function previewRouteContext(request: Request, shopId: string): Promise<PublicRouteContext> {
+async function previewRouteContext(request: Request, shopId: string, catalog: StorefrontCatalog): Promise<PublicRouteContext> {
   const url = new URL(request.url);
   const route = url.searchParams.get("route") ?? "home";
-  const catalog = getCatalog();
   if (route === "product") {
     const requested = url.searchParams.get("handle");
     const handle = requested ?? (await catalog.listProducts(shopId, { limit: 1 }))[0]?.handle ?? "";
@@ -46,6 +46,7 @@ async function previewRouteContext(request: Request, shopId: string): Promise<Pu
   }
   if (route === "search") return { kind: "search", query: url.searchParams.get("q")?.slice(0, 200) ?? "" };
   if (route === "cart" || route === "checkout") return { kind: route };
+  if (route === "collections" || route === "story" || route === "notFound") return { kind: route };
   return { kind: "home" };
 }
 
@@ -59,9 +60,10 @@ function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteDat
   }
   const urls: Record<string, string> = { ...runtime1.data.storefrontAssetUrls };
   if (runtime1.bundle.source.kind === "recipe") {
+    const extension = { "image/webp": "webp", "video/webm": "webm", "video/mp4": "mp4" } as const;
     for (const asset of runtime1.bundle.assets.entries) {
-      if (asset.mediaType === "image/webp") {
-        urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.contentHash}.webp`;
+      if (asset.mediaType in extension && !urls[asset.key]) {
+        urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.contentHash}.${extension[asset.mediaType as keyof typeof extension]}`;
       }
     }
   }
@@ -74,14 +76,15 @@ function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteDat
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const session = await requireDashboardSession(request);
-  const shopId = session.shopId;
+  const requestUrl = new URL(request.url);
+  const requestedTemplateId = requestUrl.searchParams.get("template");
+  const shopId = (await requireDashboardSession(request)).shopId;
   if (isStorefrontBundleReadEnabled()) {
-    const templateId = new URL(request.url).searchParams.get("template");
-    const registered = isStoreTemplateId(templateId) && STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === templateId)
-      ? templateId
+    const registered = isStoreTemplateId(requestedTemplateId) && STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === requestedTemplateId)
+      ? requestedTemplateId
       : null;
     if (registered) {
+      const catalog = getPreviewCatalog();
       const recipe = getStorefrontRecipe(registered);
       const version: StorefrontVersionRecord = {
         id: `preview:${registered}`,
@@ -95,13 +98,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
         artifact: { sourceKind: "recipe", bundle: recipe.bundle },
         createdAt: new Date(0).toISOString(),
       };
-      const route = await previewRouteContext(request, shopId);
+      const route = await previewRouteContext(request, shopId, catalog);
       const commerce = await readPreviewCommerceSession(request, shopId);
       const runtime1 = await resolveRuntime1VersionRoute({
         shopId,
         route,
         version,
-        dataDependencies: { catalog: getPreviewCatalog(), cartLoader: async () => commerce.cart },
+        dataDependencies: {
+          catalog,
+          cartLoader: async () => commerce.cart,
+        },
       });
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");
@@ -111,13 +117,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
     const version = await readPreviewBundleVersion(shopId);
     if (version) {
-      const route = await previewRouteContext(request, shopId);
+      const catalog = getPreviewCatalog();
+      const route = await previewRouteContext(request, shopId, catalog);
       const commerce = await readPreviewCommerceSession(request, shopId);
       const runtime1 = await resolveRuntime1VersionRoute({
         shopId,
         route,
         version,
-        dataDependencies: { catalog: getPreviewCatalog(), cartLoader: async () => commerce.cart },
+        dataDependencies: { catalog, cartLoader: async () => commerce.cart },
       });
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");
@@ -130,10 +137,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
+  const requestUrl = new URL(request.url);
+  const selectedTemplateId = requestUrl.searchParams.get("template");
   requireSameOrigin(request);
-  const session = await requireDashboardSession(request);
-  const shopId = session.shopId;
-  const selectedTemplateId = new URL(request.url).searchParams.get("template");
+  const shopId = (await requireDashboardSession(request)).shopId;
+  const commerceCatalog = (): StorefrontCatalog => getCatalog();
   const hasEphemeralRecipe = isStoreTemplateId(selectedTemplateId) &&
     STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === selectedTemplateId);
   if (!isStorefrontBundleReadEnabled() || (!hasEphemeralRecipe && !(await readPreviewBundleVersion(shopId)))) {
@@ -146,13 +154,47 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent === "checkout") {
     return json(adapter.checkout(), { headers: storefrontCacheHeaders({ routeId: "preview", personalized: true }) });
   }
-  if (intent === "add") {
+  if (intent === "addBundle") {
+    const entries = [...form.entries()];
+    if (entries.length !== 2 || form.getAll("intent").length !== 1 || form.getAll("lines").length !== 1 ||
+      entries.some(([key]) => key !== "intent" && key !== "lines")) {
+      throw new Response("Invalid preview bundle", { status: 400 });
+    }
+    const encoded = form.get("lines");
+    let lines: unknown;
+    try { lines = typeof encoded === "string" && encoded.length <= 4096 ? JSON.parse(encoded) : null; } catch { lines = null; }
+    if (!Array.isArray(lines) || lines.length < 2 || lines.length > 12 || lines.some((line) => {
+      if (!line || typeof line !== "object" || Array.isArray(line)) return true;
+      const candidate = line as Record<string, unknown>;
+      return Object.keys(candidate).some((key) => key !== "variantId" && key !== "quantity") ||
+        typeof candidate.variantId !== "string" || !candidate.variantId || candidate.variantId.length > 128 || candidate.quantity !== 1;
+    })) throw new Response("Invalid preview bundle", { status: 400 });
+    const catalog = commerceCatalog();
+    const products = catalog.getVariantById ? null : await catalog.listProducts(shopId);
+    const resolvedLines = await Promise.all((lines as Array<{ variantId: string; quantity: 1 }>).map(async (line) => {
+      const resolved = catalog.getVariantById
+        ? await catalog.getVariantById(shopId, line.variantId)
+        : products!.flatMap((product) => product.variants.map((variant) => ({ product, variant })))
+          .find((entry) => entry.variant.id === line.variantId) ?? null;
+      if (!resolved || !resolved.variant.available) throw new Response("Variant unavailable", { status: 422 });
+      return {
+        lineId: `preview:${line.variantId}`,
+        variantId: line.variantId,
+        title: resolved.variant.title && resolved.variant.title !== resolved.product.title
+          ? `${resolved.product.title} - ${resolved.variant.title}`
+          : resolved.product.title,
+        quantity: line.quantity,
+        unitPrice: { cents: resolved.variant.priceCents, currency: resolved.variant.currency.toUpperCase() },
+      };
+    }));
+    try { adapter.addBundle(resolvedLines); } catch { throw new Response("Invalid preview bundle", { status: 422 }); }
+  } else if (intent === "add") {
     const variantId = form.get("variantId");
     const quantity = Number(form.get("quantity") ?? 1);
-    if (typeof variantId !== "string" || !Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+    if (typeof variantId !== "string" || !Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
       throw new Response("Invalid preview cart line", { status: 400 });
     }
-    const catalog = getCatalog();
+    const catalog = commerceCatalog();
     const resolved = catalog.getVariantById
       ? await catalog.getVariantById(shopId, variantId)
       : (await catalog.listProducts(shopId)).flatMap((product) => product.variants.map((variant) => ({ product, variant })))
@@ -171,7 +213,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const lineId = form.get("lineId");
     const quantity = Number(form.get("quantity"));
     if (typeof lineId !== "string") throw new Response("lineId is required", { status: 400 });
-    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 99) {
+    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 999) {
       throw new Response("Invalid preview quantity", { status: 400 });
     }
     adapter.setQuantity(lineId, quantity);
@@ -183,7 +225,13 @@ export async function action({ request }: ActionFunctionArgs) {
   else throw new Response("Unknown preview action", { status: 400 });
 
   const headers = storefrontCacheHeaders({ routeId: "preview", personalized: true });
-  headers.append("Set-Cookie", await commitPreviewCommerceSession(adapter.snapshot()));
+  let cookie: string;
+  try { cookie = await commitPreviewCommerceSession(adapter.snapshot()); }
+  catch (error) {
+    if (!(error instanceof Error) || error.message !== "Preview cart exceeds cookie capacity") throw error;
+    throw new Response(error.message, { status: 422 });
+  }
+  headers.append("Set-Cookie", cookie);
   return json({ cart: adapter.cart() }, { headers });
 }
 

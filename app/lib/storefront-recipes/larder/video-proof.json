@@ -1,0 +1,43 @@
+{
+  "records": [
+    {
+      "templateId": "larder",
+      "role": "hero",
+      "masterHash": "99d7231ad6a3dac1e31fde02577e03ff15112820ae58dac7092bfe7c043aba54",
+      "technicalApproval": {
+        "approved": true,
+        "masterHash": "99d7231ad6a3dac1e31fde02577e03ff15112820ae58dac7092bfe7c043aba54"
+      },
+      "visualApproval": {
+        "approved": true,
+        "scope": "full-loop"
+      }
+    },
+    {
+      "templateId": "larder",
+      "role": "hero-alt",
+      "masterHash": "b7f6fd87590337bffb1e48c6cb1cdb64698e690214cc80b535d94c58727e3f79",
+      "technicalApproval": {
+        "approved": true,
+        "masterHash": "b7f6fd87590337bffb1e48c6cb1cdb64698e690214cc80b535d94c58727e3f79"
+      },
+      "visualApproval": {
+        "approved": true,
+        "scope": "full-loop"
+      }
+    },
+    {
+      "templateId": "larder",
+      "role": "pdp-detail",
+      "masterHash": "15f2daa75e2b8cd622bddec7a16473f1802f4f71b438716b4487052388d8ce64",
+      "technicalApproval": {
+        "approved": true,
+        "masterHash": "15f2daa75e2b8cd622bddec7a16473f1802f4f71b438716b4487052388d8ce64"
+      },
+      "visualApproval": {
+        "approved": true,
+        "scope": "full-loop"
+      }
+    }
+  ]
+}

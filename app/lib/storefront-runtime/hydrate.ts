@@ -4,6 +4,7 @@ import type {
   RouteArtifact,
   RuntimeActionSpec,
   RuntimeCapability,
+  TrustedPersonalizationField,
   TrustedSlotManifest,
   VisualLayerSpec,
 } from "~/lib/storefront-bundle/types";
@@ -23,6 +24,7 @@ import {
   type RuntimeState,
 } from "./state";
 import { retainTrustedCommerceRoot, trustedCommerceRoot } from "./trusted-roots";
+import { isValidStorefrontLinePersonalization } from "./trusted-slots";
 
 const SUPPORTED_CAPABILITIES: ReadonlySet<RuntimeCapability> = new Set([
   "navigation", "localState", "overlay", "catalogFiltering", "catalogSearch", "commerce",
@@ -101,7 +103,7 @@ function validAction(action: RuntimeActionSpec, state: RuntimeState): boolean {
   if (action.type === "collection.page") return validRef(action.cursor, state);
   if (action.type === "search.update" || action.type === "search.submit") return validRef(action.query, state);
   if (action.type === "navigate") {
-    if (!["home", "collection", "product", "search", "cart", "checkout", "account", "policy"].includes(action.target.routeId)) return false;
+    if (!["home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound", "account", "policy"].includes(action.target.routeId)) return false;
     return Object.entries(action.target.params).every(([key, ref]) =>
       ["handle", "query", "policyId"].includes(key) && validRef(ref, state),
     );
@@ -157,6 +159,10 @@ function validateArtifact(
   const slotIds = new Set<string>();
   for (const slot of artifact.trustedSlots) {
     if (!isCompilerIssuedId(slot.id) || slotIds.has(slot.id)) throw new RuntimeManifestError("Trusted slot ID is invalid");
+    if ((slot.kind === "bundleBuilder") !== (slot.slotCount !== undefined) ||
+      (slot.slotCount !== undefined && (!Number.isSafeInteger(slot.slotCount) || slot.slotCount < 2 || slot.slotCount > 12))) {
+      throw new RuntimeManifestError("bundleBuilder slot count is invalid");
+    }
     if (slot.kind === "cartLineControls" && (!slot.scopeId || slot.scopeId === "root" || !isCompilerIssuedId(slot.scopeId))) {
       throw new RuntimeManifestError("cartLineControls requires an exact compiler-issued cartLine repeat scope");
     }
@@ -254,13 +260,22 @@ function applyBindings(
 }
 
 function commerceIntentAllowed(slot: TrustedSlotManifest, intent: CommerceIntent): boolean {
+  if (intent.type === "cart.addBundle") return slot.kind === "bundleBuilder" && intent.lines.length === slot.slotCount;
   if (intent.type === "variant.select") return slot.kind === "variantPicker" || slot.kind === "quickViewCommerce";
-  if (intent.type === "cart.add") return slot.kind === "addToCart" || slot.kind === "quickViewCommerce";
+  if (intent.type === "cart.add") {
+    if (slot.kind !== "addToCart" && slot.kind !== "quickViewCommerce") return false;
+    const allowedFields = new Set(slot.personalizationFields ?? []);
+    return Object.keys(intent.personalization ?? {}).every((field) =>
+      allowedFields.has(field as TrustedPersonalizationField));
+  }
   if (intent.type === "cart.quantity" || intent.type === "cart.remove") return slot.kind === "cartLineControls" || slot.kind === "cartDrawer";
   return slot.kind === "cartSummary" || slot.kind === "cartDrawer";
 }
 
 function validCommerceIntent(intent: CommerceIntent): boolean {
+  if (intent.type === "cart.addBundle") return intent.lines.length >= 2 && intent.lines.length <= 12 && intent.lines.every((line) =>
+      typeof line.productId === "string" && line.productId.length > 0 && line.productId.length <= 160 &&
+      typeof line.variantId === "string" && line.variantId.length > 0 && line.variantId.length <= 160 && line.quantity === 1);
   if (intent.type === "cart.clear" || intent.type === "checkout.start") {
     return typeof intent.cartId === "string" && intent.cartId.length > 0 && intent.cartId.length <= 160;
   }
@@ -271,10 +286,12 @@ function validCommerceIntent(intent: CommerceIntent): boolean {
   if (intent.type === "cart.add") {
     return typeof intent.productId === "string" && intent.productId.length > 0 && intent.productId.length <= 160 &&
       typeof intent.variantId === "string" && intent.variantId.length > 0 && intent.variantId.length <= 160 &&
-      Number.isSafeInteger(intent.quantity) && intent.quantity >= 1 && intent.quantity <= 100;
+      Number.isSafeInteger(intent.quantity) && intent.quantity >= 1 && intent.quantity <= 100 &&
+      (intent.sellingPlanId === undefined || (typeof intent.sellingPlanId === "string" && intent.sellingPlanId.length > 0 && intent.sellingPlanId.length <= 128)) &&
+      isValidStorefrontLinePersonalization(intent.personalization);
   }
   if (typeof intent.lineId !== "string" || intent.lineId.length === 0 || intent.lineId.length > 160) return false;
-  return intent.type === "cart.remove" || (Number.isSafeInteger(intent.quantity) && intent.quantity >= 0 && intent.quantity <= 100);
+  return intent.type === "cart.remove" || (Number.isSafeInteger(intent.quantity) && intent.quantity >= 0 && intent.quantity <= 999);
 }
 
 function commerceIntentMatchesAuthority(authorityKey: string, intent: CommerceIntent): boolean {
@@ -287,6 +304,7 @@ function commerceIntentMatchesAuthority(authorityKey: string, intent: CommerceIn
   if (kind === "variant") return (intent.type === "variant.select" || intent.type === "cart.add") && intent.variantId === id;
   if (kind === "cartLine") return (intent.type === "cart.quantity" || intent.type === "cart.remove") && intent.lineId === id;
   if (kind === "cart") return (intent.type === "cart.clear" || intent.type === "checkout.start") && intent.cartId === id;
+  if (kind === "bundle") return id === "catalog" && intent.type === "cart.addBundle";
   return false;
 }
 
@@ -418,6 +436,34 @@ function mountServerIssuedVisualLayer(
   return fallbacks.length === 1 ? mountVisualLayer(hosts[0], visualLayer) : null;
 }
 
+function mountRecipeVideos(root: HTMLElement, reducedMotion: boolean, journal: DomMutationJournal): Array<() => void> {
+  const Observer = root.ownerDocument.defaultView?.IntersectionObserver;
+  return [...root.querySelectorAll<HTMLVideoElement>("video[data-cd-video]")].map((video) => {
+    if (reducedMotion) {
+      journal.capture(video);
+      video.autoplay = false;
+      video.pause();
+      return () => undefined;
+    }
+    if (!Observer) return () => undefined;
+    const observer = new Observer((entries) => {
+      for (const entry of entries) {
+        if (entry.target !== video) continue;
+        if (entry.isIntersecting) void video.play().catch(() => {
+          journal.capture(video);
+          video.dataset.cdVideoFallback = "poster";
+        });
+        else video.pause();
+      }
+    });
+    observer.observe(video);
+    return () => {
+      observer.disconnect();
+      video.pause();
+    };
+  });
+}
+
 export function hydrateStorefront(options: HydrateStorefrontOptions): StorefrontRuntimeHandle {
   const existing = mounted.get(options.root);
   if (existing) return existing;
@@ -468,6 +514,7 @@ export function hydrateStorefront(options: HydrateStorefrontOptions): Storefront
     applyBindings(options.root, options.artifact.interactions, stateFor, journal);
     const visualCleanup = mountServerIssuedVisualLayer(options.root, options.visualLayer);
     if (visualCleanup) removers.push(visualCleanup);
+    removers.push(...mountRecipeVideos(options.root, reducedMotion, journal));
     removers.push(...mountCommerce(options.root, options.artifact.trustedSlots, adapters));
     for (const transition of options.artifact.interactions.transitions) {
       for (const source of localElements(options.root, transition.sourceId)) {

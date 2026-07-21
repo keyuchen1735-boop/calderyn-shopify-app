@@ -1,4 +1,5 @@
 import { unauthenticated } from "../../shopify.server";
+import type { ShopifyFactProduct } from "./product-facts.server";
 
 type AdminClient = Awaited<ReturnType<typeof unauthenticated.admin>>["admin"];
 
@@ -57,6 +58,45 @@ export type AdminProduct = {
 };
 
 type ProductsPage = { products: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: AdminProduct[] } };
+
+export type AdminProductFactSource = ShopifyFactProduct;
+type ProductFactsPage = { products: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: AdminProductFactSource[] } };
+
+export async function* fetchProductFactPages(shopDomain: string): AsyncGenerator<AdminProductFactSource[]> {
+  const admin = await adminFor(shopDomain);
+  let cursor: string | null = null;
+  do {
+    const data: ProductFactsPage = await gql<ProductFactsPage>(admin, `#graphql
+      query ProductFacts($cursor: String) {
+        products(first: 50, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id title
+            calderynWidth: metafield(namespace: "custom", key: "calderyn_width") { id type jsonValue }
+            calderynDepth: metafield(namespace: "custom", key: "calderyn_depth") { id type jsonValue }
+            calderynHeight: metafield(namespace: "custom", key: "calderyn_height") { id type jsonValue }
+            calderynMaterials: metafield(namespace: "custom", key: "calderyn_materials") { id type jsonValue }
+            calderynCompatibility: metafield(namespace: "custom", key: "calderyn_compatibility") { id type jsonValue }
+            calderynIngredients: metafield(namespace: "custom", key: "calderyn_ingredients") { id type jsonValue }
+            calderynConcerns: metafield(namespace: "custom", key: "calderyn_concerns") { id type jsonValue }
+            calderynHeatLevel: metafield(namespace: "custom", key: "calderyn_heat_level") { id type jsonValue }
+            calderynDocumentUrl: metafield(namespace: "custom", key: "calderyn_document_url") { id type jsonValue }
+            calderynArModelUrl: metafield(namespace: "custom", key: "calderyn_ar_model_url") { id type jsonValue }
+          }
+        }
+      }`, { cursor });
+    yield data.products.nodes;
+    if (data.products.pageInfo.hasNextPage) {
+      const nextCursor = data.products.pageInfo.endCursor;
+      if (!nextCursor || nextCursor === cursor) {
+        throw new Error("Shopify product fact pagination returned an invalid next cursor");
+      }
+      cursor = nextCursor;
+    } else {
+      cursor = null;
+    }
+  } while (cursor);
+}
 
 export async function* fetchProducts(shopDomain: string): AsyncGenerator<AdminProduct> {
   const admin = await adminFor(shopDomain);

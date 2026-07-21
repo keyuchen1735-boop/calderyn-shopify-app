@@ -23,6 +23,7 @@ const BINDING_PATHS = {
   money: ["product.price", "product.compareAtPrice", "variant.price", "variant.compareAtPrice", "cart.subtotal", "cart.discounts", "cart.total", "cartLine.unitPrice", "cartLine.total"],
   src: ["store.logo", "collection.image", "product.primaryImage"],
   alt: ["store.name", "collection.title", "product.title", "variant.title", "cartLine.title"],
+  href: ["fact.url"],
 } satisfies Record<CompiledBindingKind, readonly PublicBindingPath[]>;
 
 const REPEATS = [
@@ -47,12 +48,13 @@ const ACTIONS = [
 ] satisfies Array<{ types: Array<RuntimeActionSpec["type"]>; fields: string[]; optional: string[] }>;
 
 const ROUTE_TARGETS = {
-  home: [], collection: ["handle"], product: ["handle"], search: ["query"], cart: [], checkout: [], account: [], policy: ["policyId"],
+  home: [], collections: [], collection: ["handle"], product: ["handle"], search: ["query"], story: [], cart: [], checkout: [], notFound: [], account: [], policy: ["policyId"],
 } satisfies Record<RouteTarget["routeId"], string[]>;
 
 const TRUSTED_SLOTS = {
   variantPicker: "product route root only",
   addToCart: "product route root only",
+  bundleBuilder: "product route root only",
   cartLineControls: "inside an exact cart.lines repeat",
   cartSummary: "route root only",
   cartDrawer: "route root only",
@@ -60,7 +62,7 @@ const TRUSTED_SLOTS = {
 } satisfies Record<TrustedSlotManifest["kind"], string>;
 
 export const STOREFRONT_COMPILER_SOURCE_CONTRACT = {
-  bindingAttributes: { "data-cd-text": BINDING_PATHS.text, "data-cd-money": BINDING_PATHS.money, "data-cd-src": BINDING_PATHS.src, "data-cd-alt": BINDING_PATHS.alt },
+  bindingAttributes: { "data-cd-text": BINDING_PATHS.text, "data-cd-money": BINDING_PATHS.money, "data-cd-src": BINDING_PATHS.src, "data-cd-alt": BINDING_PATHS.alt, "data-cd-href": BINDING_PATHS.href },
   publicBindingPaths: PUBLIC_BINDING_PATHS,
   referenceKinds: ["data", "state", "event", "literal"],
   repeats: REPEATS,

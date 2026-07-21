@@ -10,6 +10,7 @@ import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 import { ATELIER_GRID_BUNDLE } from "~/lib/storefront-recipes/atelier-nine/bundle";
 import { CUSTOM_BENCH_BUNDLE } from "~/lib/storefront-recipes/custom-bench/bundle";
+import { LARDER_BUNDLE } from "~/lib/storefront-recipes/larder/bundle";
 
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const originalBundleRead = process.env.STOREFRONT_BUNDLE_READ;
@@ -60,6 +61,41 @@ afterEach(() => {
 });
 
 describe("storefront release resolution", () => {
+  it("falls back to the platform home surface when an old bundle has no story route", async () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const live = { ...version("old-six-route", 1, "2026-07-02T00:00:00Z"), artifact: { sourceKind: "custom" as const, bundle } };
+    const result = await resolveRuntime1Route({
+      shopId: SHOP,
+      route: { kind: "story" },
+      reader: reader(live, []),
+      bundleReadEnabled: true,
+      dataDependencies: {
+        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
+      },
+    });
+    expect(result?.routeId).toBe("home");
+  });
+
+  it("serves approved Larder video derivatives from shipped local public paths", async () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "larder", templateVersion: 1 };
+    source.assets.entries = [{ key: "hero-mp4", contentHash: "a".repeat(64), mediaType: "video/mp4", byteSize: 42 }];
+    source.routes.home.html = `<main><video data-cd-video><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
+    const bundle = compileBundle(source).bundle;
+    const live = { ...version("larder-recipe", 1, "2026-07-02T00:00:00Z"), sourceKind: "recipe" as const, artifact: { sourceKind: "recipe" as const, bundle } };
+    const result = await resolveRuntime1Route({
+      shopId: SHOP, route: { kind: "home" }, reader: reader(live, []), bundleReadEnabled: true,
+      dataDependencies: {
+        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
+      },
+    });
+    expect(result?.data.storefrontAssetUrls?.["hero-mp4"]).toBe(`/storefront-recipes/larder/${"a".repeat(64)}.mp4`);
+  });
+
   it("resolves one immutable bundle for shell, route artifact, and live data", async () => {
     const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
     const live = {
@@ -226,6 +262,30 @@ describe("storefront release resolution", () => {
     expect(result?.data.storefrontAssetUrls).toEqual({
       hero: "/storefront-recipes/custom-bench/f6f25c15de46bf6dd431ae685202f90fbbc3ba00e8051f6a6f4afaa8b89cdde9.webp",
     });
+  });
+
+  it("keeps Larder video derivatives local after a Store Builder edit", async () => {
+    const bundle = structuredClone(LARDER_BUNDLE);
+    bundle.source = {
+      kind: "custom",
+      generationId: "larder-edit",
+      promptHash: `sha256:${"d".repeat(64)}`,
+      derivedFromTemplateId: "larder",
+      derivedFromTemplateVersion: 1,
+    };
+    const live = { ...version("larder-derived", 1, "2026-07-02T00:00:00Z"), artifact: { sourceKind: "custom" as const, bundle } };
+    const assetUrlLoader = vi.fn(async () => ({}));
+    const result = await resolveRuntime1Route({
+      shopId: SHOP, route: { kind: "home" }, reader: reader(live, []), bundleReadEnabled: true, assetUrlLoader,
+      dataDependencies: {
+        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
+        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
+        policyLoader: async () => [],
+      },
+    });
+    const mp4 = LARDER_BUNDLE.assets.entries.find(({ key }) => key === "hero-mp4")!;
+    expect(assetUrlLoader).not.toHaveBeenCalled();
+    expect(result?.data.storefrontAssetUrls?.["hero-mp4"]).toBe(`/storefront-recipes/larder/${mp4.contentHash}.mp4`);
   });
 
   it("never treats a tampered derived asset manifest as a deploy-owned recipe asset", async () => {

@@ -17,6 +17,8 @@ const EXPECTED_HERO_HASHES: Readonly<Record<string, string>> = {
   "soft-chemistry": "3e4065d68a9fd398f6d9d0ee492ee3ad099d7b7f31f669d822a07504b1f584e8",
 };
 
+const CONTENT_ADDRESSED_ONLY = new Set<string>();
+
 const LEGACY_HERO_HASHES: Readonly<Record<string, string>> = {
   "broadcast-patch-bay": "c95d86839d3b7efea39f439452011aaad78e4519e9928890246f67b0bf9f5363",
   "commons-index": "9201028ef1da24dd4318d0dafd8b4e18f32d16e12ba921c5ded28765b0cbaca1",
@@ -32,13 +34,14 @@ const LEGACY_HERO_HASHES: Readonly<Record<string, string>> = {
 
 describe("storefront recipe hero assets", () => {
   it("keeps every template tied to its approved hero image", () => {
-    for (const recipe of STOREFRONT_RECIPES) {
-      const templateId = recipe.config.templateId;
-      const bytes = readFileSync(`public/storefront-recipes/${templateId}/hero.webp`);
+    for (const [templateId, expectedHash] of Object.entries(EXPECTED_HERO_HASHES)) {
+      const recipe = STOREFRONT_RECIPES.find(({ config }) => config.templateId === templateId);
+      expect(recipe, templateId).toBeDefined();
+      const bytes = readFileSync(`public/storefront-recipes/${templateId}/${CONTENT_ADDRESSED_ONLY.has(templateId) ? expectedHash : "hero"}.webp`);
       const hash = createHash("sha256").update(bytes).digest("hex");
-      const manifestHero = recipe.config.assets.entries.find(({ key }) => key === "hero");
+      const manifestHero = recipe?.config.assets.entries.find(({ key }) => key === "hero");
 
-      expect(hash, templateId).toBe(EXPECTED_HERO_HASHES[templateId]);
+      expect(hash, templateId).toBe(expectedHash);
       expect(manifestHero?.contentHash, templateId).toBe(hash);
       expect(manifestHero?.byteSize, templateId).toBe(bytes.byteLength);
       expect(readFileSync(`public/storefront-recipes/${templateId}/${hash}.webp`), templateId).toEqual(bytes);

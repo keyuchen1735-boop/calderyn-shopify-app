@@ -218,7 +218,14 @@ beforeEach(() => {
 
 describe("createCheckout", () => {
   it("creates a checkout_pending order with totals, snapshots lines, and opens a PI keyed to the order", async () => {
-    seedCartLine("shop-1", "cart-1", { quantity: 2, unit_price_cents: 1999 }); // 3998
+    seedCartLine("shop-1", "cart-1", {
+      quantity: 2,
+      unit_price_cents: 1999,
+      personalization: { engraving: "Always", recipient: "Mina" },
+      selling_plan_id: "plan-monthly",
+      selling_plan_name: "Monthly delivery",
+      selling_plan_cadence: "Every month",
+    }); // 3998
 
     const out = await createCheckout("shop-1", "cart-1", { email: "Buyer@Example.com" });
 
@@ -247,6 +254,10 @@ describe("createCheckout", () => {
       variant_id: "v-tee-s",
       quantity: 2,
       unit_price_cents: 1999,
+      personalization: { engraving: "Always", recipient: "Mina" },
+      selling_plan_id: "plan-monthly",
+      selling_plan_name: "Monthly delivery",
+      selling_plan_cadence: "Every month",
     });
 
     // PaymentIntent created for the total, with orderRef = the new order id.

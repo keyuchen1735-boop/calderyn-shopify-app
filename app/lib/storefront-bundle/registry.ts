@@ -11,6 +11,7 @@ import type {
   RouteHeroPattern,
   RouteScrollPattern,
   StoreTemplateId,
+  RegisteredStoreTemplateId,
   StoreTemplateRouteBlueprint,
   StoreTemplateVersionRecord,
   StorefrontRecipeBlueprintId,
@@ -25,6 +26,7 @@ import { COMPANION_FIELD_GUIDE_ASSETS } from "../storefront-recipes/companion-fi
 import { CUSTOM_BENCH_ASSETS } from "../storefront-recipes/custom-bench/assets";
 import { DAILY_PROTOCOL_ASSETS } from "../storefront-recipes/daily-protocol/assets";
 import { DIAGNOSTIC_DECK_ASSETS } from "../storefront-recipes/diagnostic-deck/assets";
+import { LARDER_ASSETS } from "../storefront-recipes/larder/assets";
 import { REP_REST_ASSETS } from "../storefront-recipes/rep-rest/assets";
 import { RITUAL_ALMANAC_ASSETS } from "../storefront-recipes/ritual-almanac/assets";
 import { ROOM_MODES_ASSETS } from "../storefront-recipes/room-modes/assets";
@@ -49,9 +51,12 @@ const HERO_TREATMENTS: ReadonlySet<string> = new Set(RECIPE_HERO_TREATMENTS);
 const SCROLL_MODELS: ReadonlySet<string> = new Set(RECIPE_SCROLL_MODELS);
 const CARD_TOPOLOGIES: ReadonlySet<string> = new Set(RECIPE_CARD_TOPOLOGIES);
 const PROTECTED_SLOTS = new Set([
-  "variantPicker", "addToCart", "productDescription", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce", "checkoutRoot",
+  "variantPicker", "addToCart", "productDescription", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce", "checkoutRoot", "bundleBuilder",
 ]);
 const PROTECTED_HERO_ASSET_KEY = "hero";
+function protectedHeroAssetKey(templateId: StoreTemplateId): string {
+  return templateId === "larder" ? "hero-poster" : PROTECTED_HERO_ASSET_KEY;
+}
 function heroManifest(contentHash: string, byteSize: number): AssetManifest {
   return { entries: [{ key: "hero", contentHash, mediaType: "image/webp", byteSize }] };
 }
@@ -76,7 +81,8 @@ const VERSIONED_ASSET_MANIFESTS_BY_TEMPLATE_ID = {
   "ritual-almanac": [...repeatManifest(heroManifest("747c24090ce37d341af9d22a7057f5830c26dc74181da0d82bb5aa07ffafe8f8", 242494), 3), RITUAL_ALMANAC_ASSETS, RITUAL_ALMANAC_ASSETS, RITUAL_ALMANAC_ASSETS, RITUAL_ALMANAC_ASSETS, RITUAL_ALMANAC_ASSETS, RITUAL_ALMANAC_ASSETS],
   "broadcast-patch-bay": [...repeatManifest(heroManifest("c95d86839d3b7efea39f439452011aaad78e4519e9928890246f67b0bf9f5363", 78150), 4), BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS],
   "atelier-nine": repeatManifest(ATELIER_GRID_ASSETS, 6),
-} satisfies Readonly<Record<StoreTemplateId, readonly AssetManifest[]>>;
+  larder: [LARDER_ASSETS],
+} satisfies Readonly<Record<RegisteredStoreTemplateId, readonly AssetManifest[]>>;
 
 const TEXT_SLOTS_BY_TEMPLATE_ID = {
   "custom-bench": ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
@@ -90,7 +96,8 @@ const TEXT_SLOTS_BY_TEMPLATE_ID = {
   "ritual-almanac": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "broadcast-patch-bay": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "atelier-nine": ["announcement", "heroTitle", "heroBody", "ctaLabel"],
-} as const satisfies Readonly<Record<StoreTemplateId, readonly string[]>>;
+  larder: ["heroTitle", "heroBody", "ctaLabel"],
+} as const satisfies Readonly<Record<RegisteredStoreTemplateId, readonly string[]>>;
 
 const DEFAULT_OVERRIDE_SURFACE = {
   designTokens: ["color", "typography", "spacing", "radius", "motion"],
@@ -186,7 +193,7 @@ const ROUTE_SEMANTIC_LAYERS: Readonly<Record<StorefrontRecipeBlueprintId, RouteS
   },
 };
 
-const RECIPE_SEMANTIC_SIGNATURES: Readonly<Record<StoreTemplateId, RecipeSemanticSignature>> = {
+const RECIPE_SEMANTIC_SIGNATURES: Readonly<Record<RegisteredStoreTemplateId, RecipeSemanticSignature>> = {
   "custom-bench": {
     compositionFamily: "workshop-configurator",
     heroTreatment: "configurator-workbench",
@@ -308,12 +315,25 @@ const RECIPE_SEMANTIC_SIGNATURES: Readonly<Record<StoreTemplateId, RecipeSemanti
     signatureInteractions: ["asymmetric editorial reveal", "restrained image focus"],
     forbiddenGenericStructures: ["centered luxury hero", "rounded product card grid"],
   },
+  larder: {
+    compositionFamily: "working-pantry",
+    heroTreatment: "pantry-table-hero",
+    scrollModel: "pantry-rhythm",
+    displayFontId: "fraunces",
+    bodyFontId: "manrope",
+    iconRules: ["hand-cut shelf marks", "tomato olive pantry symbols"],
+    cardTopology: "pantry-shelves",
+    signatureInteractions: ["six-place pantry building", "shelf replenishment browsing"],
+    forbiddenGenericStructures: ["generic grocery card wall", "fabricated subscription selector"],
+  },
 };
 
-function protectedSlotsFor(blueprint: StorefrontRecipeBlueprintId): RecipeProtectedSlotPlacement[] {
+function protectedSlotsFor(blueprint: StorefrontRecipeBlueprintId, templateId: RegisteredStoreTemplateId): RecipeProtectedSlotPlacement[] {
   switch (blueprint) {
     case "shell": return [{ slot: "cartDrawer", region: "shell.utility" }];
-    case "home": return [{ slot: "quickViewCommerce", region: "home.featured" }];
+    case "home": return templateId === "larder"
+      ? [{ slot: "bundleBuilder", region: "home.pantry-box" }, { slot: "quickViewCommerce", region: "home.featured" }]
+      : [{ slot: "quickViewCommerce", region: "home.featured" }];
     case "collection": return [
       { slot: "quickViewCommerce", region: "collection.results" },
       { slot: "productDescription", region: "collection.results" },
@@ -341,7 +361,7 @@ function routeSemanticValue<Base extends string, Pattern extends string, Route e
 }
 
 function recipe(
-  value: Omit<VersionedStoreTemplate, "activeVersion" | "versions" | "routeCapabilities" | "overrideSurface" | "previewSrc">,
+  value: Omit<VersionedStoreTemplate, "id" | "activeVersion" | "versions" | "routeCapabilities" | "overrideSurface" | "previewSrc"> & { id: RegisteredStoreTemplateId },
   activeVersion = 1,
 ): VersionedStoreTemplate {
   const blueprintRoot = `app/lib/storefront-recipes/${value.id}/bundle.ts`;
@@ -357,7 +377,7 @@ function recipe(
       bodyFontId: signature.bodyFontId,
       iconRules: [...signature.iconRules, ...routeLayer.iconRules],
       cardTopology: routeSemanticValue(signature.cardTopology, routeLayer.cardPattern, blueprintId),
-      protectedSlotPlacement: protectedSlotsFor(blueprintId),
+      protectedSlotPlacement: protectedSlotsFor(blueprintId, value.id),
       signatureInteractions: [...signature.signatureInteractions, ...routeLayer.signatureInteractions],
       forbiddenGenericStructures: [
         ...signature.forbiddenGenericStructures,
@@ -390,11 +410,11 @@ function recipe(
       },
       visualLayer: {
         slotId: `visual:${value.id}:v${templateVersion}`,
-        fallbackAssetKey: PROTECTED_HERO_ASSET_KEY,
+        fallbackAssetKey: protectedHeroAssetKey(value.id),
         placement: "hero-background",
         pointerEvents: "none",
       },
-      productPlaceholderAssetKey: PROTECTED_HERO_ASSET_KEY,
+      productPlaceholderAssetKey: protectedHeroAssetKey(value.id),
       routeBlueprints,
     };
   };
@@ -534,13 +554,25 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     name: "Atelier Grid",
     niche: "Editorial fashion, beauty, jewelry, and quiet luxury",
     descriptor: "Editorial / restrained / fashion-led",
-    aliases: ["atelier nine", "atelier"],
+    aliases: ["atelier nine"],
     strongPhrases: ["quiet luxury", "editorial fashion", "jewelry label", "fashion studio", "luxury skincare"],
     promptTerms: ["editorial", "fashion", "jewelry", "luxury", "apparel", "studio"],
     catalogTerms: ["fashion", "jewelry", "apparel", "quiet luxury", "fine jewelry", "designer clothing"],
     legacyVibe: "minimal",
     generationInstructions: "Use a warm-white asymmetric magazine grid, condensed display type, thin rules, vermilion accents, and restrained motion.",
   }, 6),
+  recipe({
+    id: "larder",
+    name: "Larder",
+    niche: "Grocery and pantry staples",
+    descriptor: "Working pantry / replenishment-led / tactile",
+    aliases: ["working pantry"],
+    strongPhrases: ["pantry staples", "subscription pantry", "grocery pantry", "build a pantry box"],
+    promptTerms: ["pantry", "grocery", "staples", "provisions", "replenishment", "jarred"],
+    catalogTerms: ["pantry staples", "grocery", "provisions", "subscription box", "condiments", "snacks"],
+    legacyVibe: "warm",
+    generationInstructions: "Use a tactile working pantry, live shelf browsing, and a protected six-place box builder with warm paper, tomato, and olive tones.",
+  }),
 ] as const;
 
 function normalizedKey(value: string): string {
@@ -696,7 +728,7 @@ export function createStoreTemplateRegistry(
       }
       if (
         version.visualLayer.placement === "hero-background" &&
-        version.visualLayer.fallbackAssetKey !== PROTECTED_HERO_ASSET_KEY
+        version.visualLayer.fallbackAssetKey !== protectedHeroAssetKey(template.id)
       ) {
         throw new Error(`Hero visual fallback must use the protected owned visual fallback asset: ${template.id}`);
       }
@@ -787,7 +819,7 @@ export const STORE_TEMPLATE_REGISTRY = createStoreTemplateRegistry(RECIPES, {
 
 const TEMPLATE_BY_ID = new Map(STORE_TEMPLATE_REGISTRY.templates.map((template) => [template.id, template]));
 
-export function isStoreTemplateId(value: unknown): value is StoreTemplateId {
+export function isStoreTemplateId(value: unknown): value is RegisteredStoreTemplateId {
   return typeof value === "string" && TEMPLATE_BY_ID.has(value as StoreTemplateId);
 }
 

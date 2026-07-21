@@ -1,12 +1,18 @@
 import { useEffect } from "react";
-import type { RouteArtifact, StorefrontBundleV1, StorefrontRouteId, StoreTemplateId } from "~/lib/storefront-bundle/types";
+import type { CompiledStorefrontRouteId, RouteArtifact, StorefrontBundleV1, StoreTemplateId } from "~/lib/storefront-bundle/types";
 import type { PublicPresentationData } from "./public-data.server";
 import { hydrateStorefront } from "./hydrate";
 import type { StorefrontRuntimeHandle } from "./hydrate";
 import type { CommerceIntent, CommerceMountContext, ResolvedRouteTarget, RuntimeAdapters } from "./actions";
+import { canonicalizeStorefrontLinePersonalization, type StorefrontLinePersonalization } from "./trusted-slots";
 
 type RuntimeMode = "public" | "preview";
 export type RuntimeFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+const STOREFRONT_SORT_ALIASES: Readonly<Record<string, string>> = {
+  featured: "relevance", low: "price_asc", high: "price_desc",
+  protocol: "relevance", battery: "relevance", servings: "relevance",
+};
 
 function hrefFor(target: ResolvedRouteTarget, mode: RuntimeMode, previewTemplateId?: StoreTemplateId): string {
   if (mode === "preview") {
@@ -20,6 +26,7 @@ function hrefFor(target: ResolvedRouteTarget, mode: RuntimeMode, previewTemplate
   const base: Record<ResolvedRouteTarget["routeId"], string> = {
     home: "/storefront", collection: "/storefront/collections", product: "/storefront/products",
     search: "/storefront/search", cart: "/storefront/cart", checkout: "/storefront/checkout",
+    collections: "/storefront/collections", story: "/storefront/story", notFound: "/storefront",
     account: "/storefront/account", policy: "/storefront/policies",
   };
   let href = base[target.routeId];
@@ -34,7 +41,17 @@ function hrefFor(target: ResolvedRouteTarget, mode: RuntimeMode, previewTemplate
 }
 
 function publicCommerceRequest(intent: CommerceIntent): [string, Record<string, unknown>] | null {
-  if (intent.type === "cart.add") return ["/storefront/api/cart/add", { variantId: intent.variantId, quantity: intent.quantity }];
+  if (intent.type === "cart.addBundle") return ["/storefront/api/cart/add-bundle", {
+    lines: intent.lines.map(({ variantId, quantity }) => ({ variantId, quantity })),
+  }];
+  if (intent.type === "cart.add") return ["/storefront/api/cart/add", {
+    variantId: intent.variantId,
+    quantity: intent.quantity,
+    ...(intent.personalization === undefined ? {} : {
+      personalization: canonicalizeStorefrontLinePersonalization(intent.personalization),
+    }),
+    ...(intent.sellingPlanId === undefined ? {} : { sellingPlanId: intent.sellingPlanId }),
+  }];
   if (intent.type === "cart.quantity") return ["/storefront/api/cart/quantity", { lineId: intent.lineId, quantity: intent.quantity }];
   if (intent.type === "cart.remove") return ["/storefront/api/cart/remove", { lineId: intent.lineId }];
   if (intent.type === "cart.clear") return ["/storefront/api/cart/clear", {}];
@@ -43,7 +60,10 @@ function publicCommerceRequest(intent: CommerceIntent): [string, Record<string, 
 
 function previewCommerceBody(intent: CommerceIntent): FormData | null {
   const body = new FormData();
-  if (intent.type === "cart.add") {
+  if (intent.type === "cart.addBundle") {
+    body.set("intent", "addBundle");
+    body.set("lines", JSON.stringify(intent.lines.map(({ variantId, quantity }) => ({ variantId, quantity }))));
+  } else if (intent.type === "cart.add") {
     body.set("intent", "add"); body.set("variantId", intent.variantId); body.set("quantity", String(intent.quantity));
   } else if (intent.type === "cart.quantity") {
     body.set("intent", "quantity"); body.set("lineId", intent.lineId); body.set("quantity", String(intent.quantity));
@@ -135,7 +155,7 @@ function trustedCommerceStyle({ host, shadowRoot, slot }: CommerceMountContext, 
     : "";
   const style = ownerDocument.createElement("style");
   style.nonce = ownerDocument.querySelector<HTMLStyleElement>("style[nonce]")?.nonce ?? "";
-  style.textContent = `:host{display:block;min-width:44px;min-height:44px;font:inherit;color:${foreground}}:host([hidden]){display:none!important}div{display:flex;align-items:center;gap:.5rem}button,select,input{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:${squareAccentCommerce ? "0" : ".2rem"};background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700;${buttonTheme}}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
+  style.textContent = `:host{display:block;min-width:44px;min-height:44px;background:${surface};font:inherit;color:${foreground}}:host([hidden]){display:none!important}div{display:flex;align-items:center;gap:.5rem}label{display:grid;gap:.25rem}button,select,input,textarea{min-width:44px;min-height:44px;padding:.65rem .9rem;border:1px solid ${foreground};border-radius:${squareAccentCommerce ? "0" : ".2rem"};background:${surface};color:${foreground};font:inherit}button{cursor:pointer;font-weight:700;${buttonTheme}}button:disabled{cursor:not-allowed;opacity:.65}input{width:5.5rem}textarea{min-width:min(20rem,100%);resize:vertical}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid ${foreground};outline-offset:2px}`;
   return style;
 }
 
@@ -152,6 +172,7 @@ export function createRuntimeAdapters(input: {
   const refresh = input.refresh ?? (() => globalThis.window?.location.reload());
   const locationAssign = input.locationAssign ?? ((href: string) => globalThis.window?.location.assign(href));
   let selectedVariant = input.data?.product?.variants.find((entry) => entry.available) ?? null;
+  const sellingPlanRefreshers = new Set<() => void>();
   const productById = (productId: string) => {
     const products = [
       input.data?.product,
@@ -201,15 +222,21 @@ export function createRuntimeAdapters(input: {
     collection(intent) {
       const url = new URL(globalThis.window?.location.href ?? "https://runtime.invalid/");
       if (intent.type === "filter") {
-        if (!["category", "tag", "available"].includes(intent.facetId)) return;
-        const key = `filter.${intent.facetId}`;
+        if (!["category", "tag", "available", "fact-material", "fact-compatibility", "fact-ingredient", "fact-concern", "fact-heat-level"].includes(intent.facetId)) return;
+        const factKind = intent.facetId.startsWith("fact-")
+          ? intent.facetId.slice(5).replaceAll("-", "_")
+          : null;
+        const key = factKind && url.pathname === "/storefront/search"
+          ? `fact.${factKind}`
+          : `filter.${intent.facetId}`;
         const value = String(intent.value ?? "");
         if (value) url.searchParams.set(key, value);
         else url.searchParams.delete(key);
         url.searchParams.delete("cursor");
       }
       else if (intent.type === "sort") {
-        url.searchParams.set("sort", String(intent.value ?? ""));
+        const value = String(intent.value ?? "");
+        url.searchParams.set("sort", STOREFRONT_SORT_ALIASES[value] ?? value);
         url.searchParams.delete("cursor");
       }
       else if (intent.type === "page") url.searchParams.set("cursor", String(intent.cursor ?? ""));
@@ -219,6 +246,45 @@ export function createRuntimeAdapters(input: {
       mount(context) {
         const { shadowRoot, slot, authorityKey, bridge } = context;
         shadowRoot.append(trustedCommerceStyle(context, input.squareAccentCommerce === true));
+        if (slot.kind === "bundleBuilder") {
+          const products = (input.data?.featuredProducts ?? []).filter((product) => product.variants.some((variant) => variant.available));
+          const selections = Array.from({ length: slot.slotCount ?? 0 }, () => ({ productId: "", variantId: "" }));
+          const ownerDocument = shadowRoot.ownerDocument;
+          const form = ownerDocument.createElement("div");
+          form.setAttribute("role", "group");
+          form.setAttribute("aria-label", "Build a bundle");
+          const add = ownerDocument.createElement("button");
+          add.type = "button";
+          add.textContent = "Add bundle to cart";
+          const refresh = () => { add.disabled = selections.some((selection) => !selection.variantId); };
+          selections.forEach((selection, index) => {
+            const productSelect = ownerDocument.createElement("select");
+            productSelect.setAttribute("aria-label", `Choose product ${index + 1}`);
+            productSelect.append(new Option(`Choose product ${index + 1}`, ""));
+            products.forEach((product) => productSelect.append(new Option(product.title, product.id)));
+            const variantSelect = ownerDocument.createElement("select");
+            variantSelect.setAttribute("aria-label", `Choose option ${index + 1}`);
+            variantSelect.disabled = true;
+            productSelect.onchange = () => {
+              selection.productId = productSelect.value;
+              selection.variantId = "";
+              variantSelect.replaceChildren(new Option(`Choose option ${index + 1}`, ""));
+              const product = products.find((candidate) => candidate.id === productSelect.value);
+              for (const variant of product?.variants.filter((candidate) => candidate.available) ?? []) {
+                variantSelect.append(new Option(variant.title, variant.id));
+              }
+              variantSelect.disabled = !product;
+              refresh();
+            };
+            variantSelect.onchange = () => { selection.variantId = variantSelect.value; refresh(); };
+            form.append(productSelect, variantSelect);
+          });
+          add.onclick = () => bridge({ type: "cart.addBundle", lines: selections.map((line) => ({ ...line, quantity: 1 })) });
+          refresh();
+          form.append(add);
+          shadowRoot.append(form);
+          return;
+        }
         if (slot.kind === "quickViewCommerce") {
           const productId = authorityKey.startsWith("product:") ? authorityKey.slice("product:".length) : "";
           const product = productById(productId);
@@ -271,6 +337,7 @@ export function createRuntimeAdapters(input: {
             const variant = input.data?.product?.variants.find((entry) => entry.id === select.value) ?? null;
             if (!variant || !input.data?.product) return;
             selectedVariant = variant;
+            sellingPlanRefreshers.forEach((refreshPlans) => refreshPlans());
             bridge({ type: "variant.select", productId: input.data.product.id, variantId: variant.id });
           };
           shadowRoot.append(select);
@@ -282,7 +349,7 @@ export function createRuntimeAdapters(input: {
           const quantity = document.createElement("input");
           quantity.type = "number";
           quantity.min = "1";
-          quantity.max = "99";
+          quantity.max = "999";
           quantity.value = String(line?.quantity ?? 1);
           quantity.setAttribute("aria-label", `Quantity for ${line?.title ?? "item"}`);
           quantity.onchange = () => bridge({ type: "cart.quantity", lineId, quantity: Number(quantity.value) });
@@ -296,11 +363,49 @@ export function createRuntimeAdapters(input: {
         const button = document.createElement("button");
         button.type = "button";
         if (slot.kind === "addToCart") {
+          const planSelect = document.createElement("select");
+          planSelect.setAttribute("aria-label", "Purchase option");
+          const refreshPlans = () => {
+            planSelect.replaceChildren();
+            const plans = selectedVariant?.sellingPlans ?? [];
+            planSelect.hidden = plans.length === 0;
+            const oneTime = document.createElement("option");
+            oneTime.value = "";
+            oneTime.textContent = "One-time purchase";
+            planSelect.append(oneTime);
+            for (const plan of plans) {
+              const option = document.createElement("option");
+              option.value = plan.id;
+              option.textContent = `${plan.name} — ${plan.cadence}`;
+              planSelect.append(option);
+            }
+          };
+          sellingPlanRefreshers.add(refreshPlans);
+          refreshPlans();
+          shadowRoot.append(planSelect);
+          const personalizationInputs = new Map<keyof StorefrontLinePersonalization, HTMLInputElement | HTMLTextAreaElement>();
+          for (const field of slot.personalizationFields ?? []) {
+            const label = document.createElement("label");
+            label.textContent = field === "giftNote" ? "Gift note" : field === "giftWrap" ? "Gift wrap" : field === "recipient" ? "Recipient" : "Engraving";
+            const control = field === "giftNote" ? document.createElement("textarea") : document.createElement("input");
+            control.name = field;
+            control.maxLength = 240;
+            label.append(control);
+            personalizationInputs.set(field, control);
+            shadowRoot.append(label);
+          }
           button.textContent = selectedVariant ? "Add to cart" : "Sold out";
           button.disabled = !selectedVariant;
-          if (selectedVariant && input.data?.product) button.onclick = () => bridge({
-            type: "cart.add", productId: input.data!.product!.id, variantId: selectedVariant!.id, quantity: 1,
-          });
+          if (selectedVariant && input.data?.product) button.onclick = () => {
+            const personalization = canonicalizeStorefrontLinePersonalization(Object.fromEntries(
+              [...personalizationInputs].flatMap(([field, control]) => control.value ? [[field, control.value]] : []),
+            ));
+            bridge({
+              type: "cart.add", productId: input.data!.product!.id, variantId: selectedVariant!.id, quantity: 1,
+              ...(Object.keys(personalization).length === 0 ? {} : { personalization }),
+              ...(planSelect.value ? { sellingPlanId: planSelect.value } : {}),
+            });
+          };
         } else if (slot.kind === "cartSummary" || slot.kind === "cartDrawer") {
           button.textContent = "Checkout";
           const cartId = authorityKey.startsWith("cart:") ? authorityKey.slice("cart:".length) : input.data?.cart?.id ?? "preview";
@@ -369,7 +474,7 @@ export function placeQuickViewCommerceInCards(
 
 export function StorefrontHydrator(props: {
   bundle: StorefrontBundleV1;
-  routeId: StorefrontRouteId;
+  routeId: CompiledStorefrontRouteId;
   data: PublicPresentationData;
   mode: RuntimeMode;
 }) {
@@ -392,6 +497,7 @@ export function StorefrontHydrator(props: {
       const route = root.querySelector<HTMLElement>(`[data-cd-bundle-route='${props.routeId}']`);
       if (route) {
         const artifact = props.bundle.routes[props.routeId];
+        if (!artifact) return;
         placeQuickViewCommerceInCards(route, artifact);
         handles.push(hydrateStorefront({ root: route, artifact, adapters, visualLayer }));
       }

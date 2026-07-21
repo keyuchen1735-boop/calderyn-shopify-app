@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { compileHtml } from "./html";
 
 describe("binding and repeat scopes", () => {
+  it("compiles merchant collection discovery into collection scopes", () => {
+    const result = compileHtml(
+      `<section data-cd-repeat="featured.collections"><a data-cd-key="collection.id" data-cd-route="collection" data-cd-param-handle="collection.handle"><span data-cd-text="collection.title"></span></a></section>`,
+      { namespace: "collections", rootScopeKind: "store" },
+    );
+
+    expect(result.repeats[0]).toMatchObject({
+      source: "featured.collections",
+      itemKind: "collection",
+      keyPath: "collection.id",
+    });
+  });
+
   it("compiles an allowlisted repeater into a local scope", () => {
     const result = compileHtml(
       `<ul data-cd-repeat="collection.products"><li data-cd-key="product.id"><span data-cd-text="product.title"></span></li></ul>`,
@@ -49,6 +62,17 @@ describe("binding and repeat scopes", () => {
     expect(() =>
       compileHtml(`<section data-cd-text="product.shop_id"></section>`, { namespace: "product" }),
     ).toThrow(/binding/i);
+  });
+
+  it("allows only closed public facts inside the product facts scope", () => {
+    const result = compileHtml(
+      `<dl data-cd-repeat="product.facts"><div data-cd-key="fact.id"><dt data-cd-text="fact.label"></dt><dd data-cd-text="fact.value"></dd><a data-cd-href="fact.url">Document</a></div></dl>`,
+      { namespace: "product", rootScopeKind: "product" },
+    );
+    expect(result.repeats[0]).toMatchObject({ source: "product.facts", itemKind: "fact", keyPath: "fact.id" });
+    expect(result.bindings.map(({ ref }) => ref.kind === "data" ? ref.path : null)).toEqual(["fact.label", "fact.value", "fact.url"]);
+    expect(() => compileHtml(`<span data-cd-text="product.metafields"></span>`, { namespace: "product", rootScopeKind: "product" })).toThrow(/unsupported/i);
+    expect(() => compileHtml(`<span data-cd-text="fact.value"></span>`, { namespace: "product", rootScopeKind: "product" })).toThrow(/scope/i);
   });
 
   it("rejects type-confused bindings and repeat sources outside their parent scope", () => {

@@ -38,7 +38,7 @@ describe("deterministic store design resolver", () => {
 
   it("normalizes Unicode, canonical apostrophes, and hyphens without substring matches", () => {
     const unicode = resolveStoreDesign(
-      { prompt: "DON’T use Atelier — use Soft‑Chemistry" },
+      { prompt: "DON’T use Larder — use Soft‑Chemistry" },
       evidence(),
       STORE_TEMPLATE_REGISTRY,
     );
@@ -67,28 +67,28 @@ describe("deterministic store design resolver", () => {
   it("keeps governed recipe-name negation local to that occurrence", () => {
     expect(
       resolveStoreDesign(
-        { prompt: "Do not pick Atelier; use Soft Chemistry" },
+        { prompt: "Do not pick Larder; use Soft Chemistry" },
         evidence(),
         STORE_TEMPLATE_REGISTRY,
       ),
     ).toMatchObject({ kind: "recipe", templateId: "soft-chemistry", selectionKind: "explicit_name" });
     expect(
       resolveStoreDesign(
-        { prompt: "Do not choose Soft Chemistry; use Atelier" },
+        { prompt: "Do not choose Soft Chemistry; use Larder" },
         evidence(),
         STORE_TEMPLATE_REGISTRY,
       ),
-    ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
+    ).toMatchObject({ kind: "recipe", templateId: "larder", selectionKind: "explicit_name" });
     expect(
       resolveStoreDesign(
-        { prompt: "Do not feature Atelier; use Soft Chemistry" },
+        { prompt: "Do not feature Larder; use Soft Chemistry" },
         evidence(),
         STORE_TEMPLATE_REGISTRY,
       ),
     ).toMatchObject({ kind: "recipe", templateId: "soft-chemistry", selectionKind: "explicit_name" });
     expect(
       resolveStoreDesign(
-        { prompt: "Do not recommend Atelier; use Soft Chemistry" },
+        { prompt: "Do not recommend Larder; use Soft Chemistry" },
         evidence(),
         STORE_TEMPLATE_REGISTRY,
       ),
@@ -98,27 +98,37 @@ describe("deterministic store design resolver", () => {
   it("does not let distant or prior-clause negation govern a positive recipe name", () => {
     expect(
       resolveStoreDesign(
-        { prompt: "Do not revise the catalog notes. Feature Atelier" },
+        { prompt: "Do not revise the catalog notes. Feature Larder" },
         evidence(),
         STORE_TEMPLATE_REGISTRY,
       ),
-    ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
+    ).toMatchObject({ kind: "recipe", templateId: "larder", selectionKind: "explicit_name" });
     expect(
       resolveStoreDesign(
-        { prompt: "I do not like the launch notes that recommend Atelier" },
+        { prompt: "I do not like the launch notes that recommend Larder" },
         evidence(),
         STORE_TEMPLATE_REGISTRY,
       ),
-    ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
+    ).toMatchObject({ kind: "recipe", templateId: "larder", selectionKind: "explicit_name" });
+  });
+
+  it("keeps Atelier Grid aliases as one explicit identity", () => {
+    for (const prompt of ["Use Atelier Grid", "Use Atelier Nine"]) {
+      expect(resolveStoreDesign({ prompt }, evidence(), STORE_TEMPLATE_REGISTRY)).toMatchObject({
+        kind: "recipe",
+        templateId: "atelier-nine",
+        selectionKind: "explicit_name",
+      });
+    }
   });
 
   it("keeps focus constructions positive while choosing one first-build recipe", () => {
     for (const prompt of [
-      "Not only Atelier but Soft Chemistry",
-      "Not just Atelier or Soft Chemistry",
-      "Not merely Atelier; also Soft Chemistry",
-      "Not exclusively Atelier, maybe Soft Chemistry",
-      "Not simply Atelier but Soft Chemistry",
+      "Not only Larder but Soft Chemistry",
+      "Not just Larder or Soft Chemistry",
+      "Not merely Larder; also Soft Chemistry",
+      "Not exclusively Larder, maybe Soft Chemistry",
+      "Not simply Larder but Soft Chemistry",
     ]) {
       expect(resolveStoreDesign({ prompt }, evidence(), STORE_TEMPLATE_REGISTRY).kind).toBe("recipe");
     }

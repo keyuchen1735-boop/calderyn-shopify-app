@@ -54,6 +54,9 @@ export interface StorefrontBundleSourceV1 {
     search: RouteSource;
     cart: RouteSource;
     checkout: CheckoutRouteSource;
+    collections?: RouteSource;
+    story?: RouteSource;
+    notFound?: RouteSource;
   };
   assets: AssetManifest;
 }
@@ -63,7 +66,7 @@ function compareCodeUnits(a: string, b: string): number {
 }
 
 const DATA_ORDER: readonly DataRequirement["kind"][] = [
-  "storeIdentity", "policyLinks", "currentProduct", "currentCollection", "cart", "featuredProducts",
+  "storeIdentity", "policyLinks", "currentProduct", "currentCollection", "cart", "featuredProducts", "featuredCollections",
   "relatedProducts", "searchResults",
 ];
 const CAPABILITY_ORDER: readonly RuntimeCapability[] = [
@@ -83,7 +86,7 @@ function deriveRouteContract(
     if (binding.ref.kind !== "data") continue;
     const owner = binding.ref.path.slice(0, binding.ref.path.indexOf("."));
     if (owner === "store") requireData({ kind: "storeIdentity" });
-    else if (owner === "collection") requireData({ kind: "currentCollection" });
+    else if (owner === "collection" && binding.ref.scopeId === "root") requireData({ kind: "currentCollection" });
     else if (owner === "cart" || owner === "cartLine") requireData({ kind: "cart" });
     else if (owner === "search") requireData({ kind: "searchResults", limit: 24 });
     else if (binding.ref.scopeId === "root" && (owner === "product" || owner === "variant")) {
@@ -93,6 +96,7 @@ function deriveRouteContract(
   for (const repeat of html.repeats) {
     if (repeat.source === "collection.products") requireData({ kind: "currentCollection" });
     else if (repeat.source === "featured.products") requireData({ kind: "featuredProducts", limit: 12 });
+    else if (repeat.source === "featured.collections") requireData({ kind: "featuredCollections", limit: 12 });
     else if (repeat.source === "related.products") requireData({ kind: "relatedProducts", limit: 8 });
     else if (repeat.source === "search.results") requireData({ kind: "searchResults", limit: 24 });
     else if (repeat.source === "cart.lines") requireData({ kind: "cart" });
@@ -104,7 +108,8 @@ function deriveRouteContract(
   if (rootScope === "search") requireData({ kind: "searchResults", limit: 24 });
   if (rootScope === "cart") requireData({ kind: "cart" });
   for (const slot of html.trustedSlots) {
-    if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") requireData({ kind: "cart" });
+    if (slot.kind === "bundleBuilder") requireData({ kind: "featuredProducts", limit: 12 });
+    else if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") requireData({ kind: "cart" });
     else if (namespace === "product" && !slot.scopeId) requireData({ kind: "currentProduct" });
   }
 
@@ -249,7 +254,8 @@ function assertDesignTokenCoverage(bundle: StorefrontBundleV1): void {
       if (!tokenIds.has(tokenId)) throw new CompilerError("design.token_reference", `${path} references missing design token --${tokenId}`);
     }
   }
-  const themeTokenIds = [bundle.shell, bundle.routes.home, bundle.routes.collection, bundle.routes.product, bundle.routes.search, bundle.routes.cart]
+  const themeTokenIds = [bundle.shell, bundle.routes.home, bundle.routes.collection, bundle.routes.product, bundle.routes.search, bundle.routes.cart, bundle.routes.collections, bundle.routes.story, bundle.routes.notFound]
+    .filter((route): route is NonNullable<typeof route> => Boolean(route))
     .flatMap((route) => route.trustedSlots)
     .flatMap((slot) => slot.themeTokenIds);
   const layoutTokenIds = [bundle.routes.checkout.layout.spacingTokenId, ...bundle.routes.checkout.layout.surfaceTokenIds];
@@ -277,7 +283,10 @@ export function compileBundle(source: StorefrontBundleSourceV1): CompiledBundleR
   const product = compileRoute(source.routes.product, "product", "product");
   const search = compileRoute(source.routes.search, "search", "search");
   const cart = compileRoute(source.routes.cart, "cart", "cart");
-  const routes = [shell, home, collection, product, search, cart];
+  const collections = source.routes.collections ? compileRoute(source.routes.collections, "collections", "store") : undefined;
+  const story = source.routes.story ? compileRoute(source.routes.story, "story", "store") : undefined;
+  const notFound = source.routes.notFound ? compileRoute(source.routes.notFound, "notFound", "store") : undefined;
+  const routes = [shell, home, collection, product, search, cart, collections, story, notFound].filter((route): route is NonNullable<typeof route> => Boolean(route));
   const protectedNodes = routes.flatMap((route) => route.protectedNodes);
   const protectedSourceIds = routes.flatMap((route) => route.protectedSourceIds);
   const bundle: StorefrontBundleV1 = {
@@ -299,6 +308,9 @@ export function compileBundle(source: StorefrontBundleSourceV1): CompiledBundleR
       search: search.artifact,
       cart: cart.artifact,
       checkout: compileCheckout(source.routes.checkout),
+      ...(collections ? { collections: collections.artifact } : {}),
+      ...(story ? { story: story.artifact } : {}),
+      ...(notFound ? { notFound: notFound.artifact } : {}),
     },
     assets: compileAssets(source.assets),
   };

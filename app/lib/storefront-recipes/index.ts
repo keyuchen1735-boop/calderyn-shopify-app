@@ -7,6 +7,7 @@ import { CUSTOM_BENCH_RECIPE } from "./custom-bench/bundle";
 import { DAILY_PROTOCOL_RECIPE } from "./daily-protocol/bundle";
 import { DIAGNOSTIC_DECK_RECIPE } from "./diagnostic-deck/bundle";
 import type { DefinedRecipe } from "./factory";
+import { LARDER_RECIPE } from "./larder/bundle";
 import { REP_REST_RECIPE } from "./rep-rest/bundle";
 import { RITUAL_ALMANAC_RECIPE } from "./ritual-almanac/bundle";
 import { ROOM_MODES_RECIPE } from "./room-modes/bundle";
@@ -24,6 +25,7 @@ export const STOREFRONT_RECIPES = [
   RITUAL_ALMANAC_RECIPE,
   BROADCAST_PATCH_BAY_RECIPE,
   ATELIER_GRID_RECIPE,
+  LARDER_RECIPE,
 ] as const satisfies readonly DefinedRecipe[];
 
 export const STOREFRONT_RECIPE_BY_ID = Object.fromEntries(
@@ -33,4 +35,3 @@ export const STOREFRONT_RECIPE_BY_ID = Object.fromEntries(
 export function getStorefrontRecipe(templateId: StoreTemplateId): DefinedRecipe {
   return STOREFRONT_RECIPE_BY_ID[templateId];
 }
-

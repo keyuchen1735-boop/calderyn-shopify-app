@@ -299,6 +299,10 @@ export async function sendDraftOrderInvoice(
     quantity: l.quantity,
     unit_price_cents: l.unitPriceCents,
     title_snapshot: l.titleSnapshot,
+    personalization: l.personalization,
+    selling_plan_id: l.sellingPlan?.id ?? null,
+    selling_plan_name: l.sellingPlan?.name ?? null,
+    selling_plan_cadence: l.sellingPlan?.cadence ?? null,
     unit_cost_cents_snapshot: costByVariant.get(l.variantId) ?? null,
   }));
   const lineIns = await sb.from("order_line").insert(lineRows);
@@ -334,7 +338,10 @@ export async function sendDraftOrderInvoice(
 
   const delivery = await sendInvoiceEmail(shopId, orderId, {
     confirmationToken,
-    lines: priced.lines.map((l) => ({ title: l.titleSnapshot, quantity: l.quantity })),
+    lines: priced.lines.map((l) => ({
+      title: l.sellingPlan ? `${l.titleSnapshot} — ${l.sellingPlan.name} (${l.sellingPlan.cadence})` : l.titleSnapshot,
+      quantity: l.quantity,
+    })),
     totalCents,
     note: buyer.note ?? null,
   });
@@ -407,12 +414,14 @@ export async function resendInvoiceEmail(shopId: string, orderId: string): Promi
 
   const linesRes = await sb
     .from("order_line")
-    .select("title_snapshot, quantity")
+    .select("title_snapshot, quantity, selling_plan_name, selling_plan_cadence")
     .eq("shop_id", shopId)
     .eq("order_id", orderId);
   if (linesRes.error) throw linesRes.error;
   const lines = ((linesRes.data ?? []) as Array<Record<string, unknown>>).map((l) => ({
-    title: String(l.title_snapshot ?? ""),
+    title: l.selling_plan_name
+      ? `${String(l.title_snapshot ?? "")} — ${String(l.selling_plan_name)} (${String(l.selling_plan_cadence ?? "")})`
+      : String(l.title_snapshot ?? ""),
     quantity: Number(l.quantity ?? 0),
   }));
 

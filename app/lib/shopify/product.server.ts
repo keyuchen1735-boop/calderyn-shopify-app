@@ -20,8 +20,8 @@ export interface ProductUpdateResult {
 }
 
 const PRODUCT_UPDATE = /* GraphQL */ `
-  mutation calderynProductStatus($input: ProductInput!) {
-    productUpdate(input: $input) {
+  mutation calderynProductStatus($product: ProductUpdateInput!) {
+    productUpdate(product: $product) {
       product {
         id
         status
@@ -41,7 +41,7 @@ async function runProductUpdate(
 ): Promise<ProductUpdateResult> {
   if (!productId) throw new Error("productUpdate called with empty product id");
   const response = await admin.graphql(PRODUCT_UPDATE, {
-    variables: { input: { id: productId, status } },
+    variables: { product: { id: productId, status } },
   });
   const body = (await response.json()) as {
     data?: {

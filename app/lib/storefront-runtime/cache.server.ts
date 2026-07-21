@@ -1,4 +1,4 @@
-import type { StorefrontRouteId } from "~/lib/storefront-bundle/types";
+import type { CompiledStorefrontRouteId, StorefrontRouteId } from "~/lib/storefront-bundle/types";
 import { isUuid } from "~/lib/ids";
 
 export interface StorefrontCacheKeyInput {
@@ -34,7 +34,7 @@ export function buildStorefrontCacheKey(input: StorefrontCacheKeyInput): string 
   ].join(":");
 }
 
-export type StorefrontCacheSurface = StorefrontRouteId | "account" | "policy" | "preview" | "signedMedia";
+export type StorefrontCacheSurface = CompiledStorefrontRouteId | "account" | "policy" | "preview" | "signedMedia";
 
 export function storefrontTenantCacheTag(shopId: string): string {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(shopId)) {

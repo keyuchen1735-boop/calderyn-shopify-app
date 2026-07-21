@@ -9,7 +9,9 @@ import type {
 import {
   capStorefrontCardDescription,
   selectStorefrontPriceVariant,
+  storefrontPriceSortValue,
 } from "~/lib/storefront/catalog";
+import { deriveFactFacets, filterProductsByFacts } from "~/lib/storefront/product-facts";
 
 const MAX_RESULTS = 24;
 const SORTS = ["relevance", "title_asc", "title_desc", "price_asc", "price_desc"] as const;
@@ -25,6 +27,7 @@ export interface StorefrontSearchInput {
   sort: StorefrontSearchSort;
   limit: number;
   cursor: string | null;
+  factFilters?: Partial<Record<"material" | "compatibility" | "ingredient" | "concern" | "heat_level", string>>;
 }
 
 interface CursorPayload { v: 2; sortValue: string | number; productId: string; fingerprint: string }
@@ -91,7 +94,11 @@ function boundedText(value: string | null, max: number): string | null {
 }
 
 export function parseStorefrontSearchParams(params: URLSearchParams): StorefrontSearchInput {
-  const allowed = new Set(["q", "collection", "category", "tag", "available", "sort", "limit", "cursor"]);
+  const factParams = new Map([
+    ["fact.material", "material"], ["fact.compatibility", "compatibility"], ["fact.ingredient", "ingredient"],
+    ["fact.concern", "concern"], ["fact.heat_level", "heat_level"],
+  ] as const);
+  const allowed = new Set(["q", "collection", "category", "tag", "available", "sort", "limit", "cursor", ...factParams.keys()]);
   for (const key of params.keys()) {
     if (!allowed.has(key) || params.getAll(key).length !== 1) throw new InvalidSearchRequestError();
   }
@@ -111,10 +118,15 @@ export function parseStorefrontSearchParams(params: URLSearchParams): Storefront
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_RESULTS) throw new InvalidSearchRequestError();
   const cursor = params.get("cursor");
   if (cursor) decodeCursor(cursor);
-  return { query, collection, category, tag, available, sort: sortRaw as StorefrontSearchSort, limit, cursor };
+  const factFilters: NonNullable<StorefrontSearchInput["factFilters"]> = {};
+  for (const [param, kind] of factParams) {
+    const value = boundedText(params.get(param), 160);
+    if (value) factFilters[kind] = value;
+  }
+  return { query, collection, category, tag, available, sort: sortRaw as StorefrontSearchSort, limit, cursor, factFilters };
 }
 
-const COLLECTION_FACETS = new Set(["category", "tag", "available"]);
+const COLLECTION_FACETS = new Set(["category", "tag", "available", "fact-material", "fact-compatibility", "fact-ingredient", "fact-concern", "fact-heat-level"]);
 
 /** Translate runtime collection controls into the closed Task 6 search grammar. */
 export function parseStorefrontCollectionParams(
@@ -131,7 +143,8 @@ export function parseStorefrontCollectionParams(
     if (!key.startsWith("filter.")) throw new InvalidSearchRequestError();
     const facet = key.slice("filter.".length);
     if (!COLLECTION_FACETS.has(facet)) throw new InvalidSearchRequestError();
-    if (value) translated.set(facet, value);
+    const factKind = facet.startsWith("fact-") ? facet.slice(5).replaceAll("-", "_") : null;
+    if (value) translated.set(factKind ? `fact.${factKind}` : facet, value);
   }
   if (!translated.has("limit")) translated.set("limit", String(MAX_RESULTS));
   return parseStorefrontSearchParams(translated);
@@ -152,7 +165,61 @@ function fingerprint(shopId: string, input: StorefrontSearchInput): string {
     available: input.available,
     sort: input.sort,
     limit: input.limit,
+    factFilters: input.factFilters,
   })).digest("hex");
+}
+
+function countFacet(values: string[]): Array<{ value: string; count: number }> {
+  const counts = new Map<string, { value: string; count: number }>();
+  for (const value of values) {
+    const key = value.toLocaleLowerCase("en-US");
+    const current = counts.get(key);
+    if (current) current.count += 1;
+    else counts.set(key, { value, count: 1 });
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value)).slice(0, 20);
+}
+
+async function searchByFacts(shopId: string, input: StorefrontSearchInput, catalog: StorefrontCatalog) {
+  const all = await catalog.listProducts(shopId, { limit: 250 });
+  const query = input.query.toLocaleLowerCase("en-US");
+  const base = all.filter((product) =>
+    (!query || [product.title, product.description, product.category ?? "", ...(product.tags ?? [])].join(" ").toLocaleLowerCase("en-US").includes(query))
+    && (!input.collection || product.collections.some((value) => value.toLocaleLowerCase("en-US") === input.collection!.toLocaleLowerCase("en-US")))
+    && (!input.category || (product.category ?? "").toLocaleLowerCase("en-US") === input.category.toLocaleLowerCase("en-US"))
+    && (!input.tag || (product.tags ?? []).some((value) => value.toLocaleLowerCase("en-US") === input.tag!.toLocaleLowerCase("en-US")))
+    && (input.available == null || available(product) === input.available));
+  const filtered = filterProductsByFacts(base.map((product) => ({ ...product, facts: product.facts ?? [] })), input.factFilters ?? {});
+  filtered.sort((a, b) => {
+    if (input.sort === "title_desc") return b.title.localeCompare(a.title) || a.id.localeCompare(b.id);
+    if (input.sort === "price_asc" || input.sort === "price_desc") {
+      const av = storefrontPriceSortValue(a, input.sort);
+      const bv = storefrontPriceSortValue(b, input.sort);
+      return (input.sort === "price_asc" ? av - bv : bv - av) || a.id.localeCompare(b.id);
+    }
+    return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
+  });
+  const cursor = input.cursor ? decodeCursor(input.cursor) : null;
+  const start = cursor ? filtered.findIndex(({ id }) => id === cursor.productId) + 1 : 0;
+  if (cursor && start === 0) throw new InvalidSearchRequestError();
+  const items = filtered.slice(start, start + input.limit);
+  const last = items.at(-1);
+  const hasNextPage = start + items.length < filtered.length;
+  const boundary = hasNextPage && last ? {
+    sortValue: input.sort === "price_asc" || input.sort === "price_desc"
+      ? storefrontPriceSortValue(last, input.sort)
+      : last.title,
+    productId: last.id,
+  } : null;
+  return {
+    items, boundary, total: filtered.length, hasNextPage,
+    facets: {
+      categories: countFacet(base.flatMap(({ category }) => category ? [category] : [])),
+      tags: countFacet(base.flatMap(({ tags }) => tags ?? [])),
+      collections: countFacet(base.flatMap(({ collections }) => collections)),
+      facts: deriveFactFacets(base.map((product) => ({ id: product.id, facts: product.facts ?? [] }))),
+    },
+  };
 }
 
 export async function searchStorefront(
@@ -163,7 +230,7 @@ export async function searchStorefront(
   const expectedFingerprint = fingerprint(shopId, input);
   const cursor = input.cursor ? decodeCursor(input.cursor) : null;
   if (cursor && cursor.fingerprint !== expectedFingerprint) throw new InvalidSearchRequestError();
-  const result = await catalog.searchProductPage(shopId, {
+  const searchOptions = {
     query: input.query,
     collection: input.collection,
     category: input.category,
@@ -172,7 +239,23 @@ export async function searchStorefront(
     sort: input.sort,
     limit: input.limit,
     after: cursor ? { sortValue: cursor.sortValue, productId: cursor.productId } : null,
-  });
+  };
+  const result = Object.keys(input.factFilters ?? {}).length
+    ? await searchByFacts(shopId, input, catalog)
+    : await catalog.searchProductPage(shopId, searchOptions).then(async (page) => {
+        const [factFacets, factsByProduct] = await Promise.all([
+          catalog.listProductFactFacets?.(shopId) ?? Promise.resolve({} as Record<string, string[]>),
+          catalog.listProductFacts?.(shopId, page.items.map(({ id }) => id)) ?? Promise.resolve({} as Record<string, NonNullable<StoreProduct["facts"]>>),
+        ]);
+        return {
+          ...page,
+          items: page.items.map((product) => ({ ...product, facts: factsByProduct[product.id] ?? [] })),
+          facets: {
+            ...page.facets,
+            facts: factFacets,
+          },
+        };
+      });
   const last = result.items.at(-1);
   const boundary = result.boundary ?? null;
   const priceSort = input.sort === "price_asc" || input.sort === "price_desc";
@@ -195,6 +278,7 @@ export async function searchStorefront(
       collections: [],
       category: null,
       tags: [],
+      facts: product.facts ?? [],
     };
   });
   return {
