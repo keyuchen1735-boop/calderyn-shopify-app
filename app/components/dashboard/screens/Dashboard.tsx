@@ -590,7 +590,7 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
       )}
 
       {radarHome && !radarHome.dismissed && radarHome.readyCount > 0 && (
-        <Card className="cd-radar-home-card">
+        <Card>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <CDIcon name="scan" size={22} />
             <div style={{ flex: 1, minWidth: 0 }}>
