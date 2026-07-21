@@ -5,7 +5,7 @@ import type { OperatingPnlData } from "~/lib/analytics/operating-pnl";
 import { fetchOperatingPnl, type OperatingPnlDays } from "~/lib/dashboard/operating-pnl-client";
 import { cacheScreenData, cachedScreenData, operatingPnlCacheKey } from "~/lib/dashboard/screen-cache";
 import { reduced } from "../hero/hero-motion";
-import { money } from "../format";
+import { money, shortDate } from "../format";
 import { Card, Placeholder, Segmented } from "../ui";
 
 const explanations: Record<string, (data: OperatingPnlData) => string> = {
@@ -128,6 +128,9 @@ export default function OperatingPnl() {
   const grossProfit = (statement?.incomeCents ?? 0) - (statement?.cogsCents ?? 0);
   const chartMax = Math.max(...(statement?.daily.map((row) => Math.abs(row.netIncomeCents)) ?? [1]), 1);
   const productMax = Math.max(...(data?.products.map((row) => row.netRevenueCents) ?? [1]), 1);
+  const chartAxisDates = statement?.daily.filter((_, index, rows) =>
+    index === 0 || index === Math.floor((rows.length - 1) / 2) || index === rows.length - 1,
+  ) ?? [];
   const unit = periodUnit(days);
   const rangeCaption = useMemo(
     () => (data ? `Live from your QuickBooks company · ${data.startDate} to ${data.endDate}` : ""),
@@ -185,6 +188,9 @@ export default function OperatingPnl() {
                 </div>
               );
             })}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 7, color: "var(--text-3)", fontSize: 10, fontWeight: 650 }}>
+            {chartAxisDates.map((row) => <time key={row.date} dateTime={row.date}>{shortDate(row.date)}</time>)}
           </div>
         </Card>
 

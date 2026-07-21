@@ -34,6 +34,13 @@ export interface OperatingPnlProduct extends AllocatedProductContribution {
   netMarginPct: number | null;
 }
 
+export interface OperatingPnlProductInput extends ProductContributionInput {
+  title: string;
+  sku: string | null;
+  imageUrl: string | null;
+  cogsCents: number;
+}
+
 export interface OperatingPnlData {
   connected: boolean;
   currency: string;
@@ -176,4 +183,58 @@ export function allocateOperatingExpenses<T extends ProductContributionInput>(
       netOperatingProfitCents: product.contributionCents - amount,
     };
   });
+}
+
+export function buildOperatingPnlProducts(
+  products: OperatingPnlProductInput[],
+  statement: Pick<ParsedQuickBooksReport, "incomeCents" | "cogsCents" | "netIncomeCents">,
+): OperatingPnlProduct[] {
+  const belowGrossCostsCents = statement.incomeCents - statement.cogsCents - statement.netIncomeCents;
+  const inputs = [...products];
+  const productRevenue = inputs.reduce((sum, row) => sum + row.netRevenueCents, 0);
+  const productCogs = inputs.reduce((sum, row) => sum + row.cogsCents, 0);
+  const netRevenueCents = statement.incomeCents - productRevenue;
+  const cogsCents = statement.cogsCents - productCogs;
+
+  if (netRevenueCents !== 0 || cogsCents !== 0) {
+    inputs.push({
+      id: "quickbooks-unattributed",
+      title: "Unattributed QuickBooks activity",
+      sku: null,
+      imageUrl: null,
+      netRevenueCents,
+      cogsCents,
+      contributionCents: netRevenueCents - cogsCents,
+    });
+  }
+
+  const allocated = allocateOperatingExpenses(inputs, belowGrossCostsCents);
+  const profitGap = statement.netIncomeCents
+    - allocated.reduce((sum, row) => sum + row.netOperatingProfitCents, 0);
+  if (profitGap !== 0) {
+    const row = allocated.find((product) => product.id === "quickbooks-unattributed");
+    if (row) {
+      row.allocatedOperatingExpensesCents -= profitGap;
+      row.netOperatingProfitCents += profitGap;
+    } else {
+      allocated.push({
+        id: "quickbooks-unattributed",
+        title: "Unattributed QuickBooks activity",
+        sku: null,
+        imageUrl: null,
+        netRevenueCents: 0,
+        cogsCents: 0,
+        contributionCents: 0,
+        allocatedOperatingExpensesCents: -profitGap,
+        netOperatingProfitCents: profitGap,
+      });
+    }
+  }
+
+  return allocated.map((product) => ({
+    ...product,
+    netMarginPct: product.netRevenueCents === 0
+      ? null
+      : product.netOperatingProfitCents / product.netRevenueCents * 100,
+  })).sort((a, b) => b.netOperatingProfitCents - a.netOperatingProfitCents);
 }
