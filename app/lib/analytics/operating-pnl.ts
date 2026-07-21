@@ -76,9 +76,48 @@ function sum(xs: number[]): number {
   return xs.reduce((total, value) => total + value, 0);
 }
 
+const MONTH_INDEX: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+function isoDate(year: string, monthName: string, day: string | undefined): string {
+  const month = MONTH_INDEX[monthName.slice(0, 3).toLowerCase()];
+  if (!month) return "";
+  return `${year}-${String(month).padStart(2, "0")}-${String(day ?? "1").padStart(2, "0")}`;
+}
+
+type ReportColumn = { ColTitle?: unknown; MetaData?: Array<{ Name?: unknown; Value?: unknown }> };
+
+/**
+ * The date a summarized report column starts on. Prefer the structured
+ * MetaData StartDate when Intuit includes one; otherwise parse the title
+ * grammar QBO actually emits — "Jul 2025" (full month), "Jul 22-31, 2025"
+ * (partial edge period, take the first day), "Dec 2017" (year bucket),
+ * "Jul 24, 2016 - Jul 23, 2017" (range, take the start) — without going
+ * through Date.parse, which misreads day ranges ("Jul 22-31, 2025" became
+ * 2031-07-22) and is timezone-sensitive. Date.parse stays as a last resort
+ * for formats not covered; non-dates ("Total") come back "".
+ */
+export function columnStartDate(column: ReportColumn): string {
+  const meta = (column.MetaData ?? []).find((entry) => entry?.Name === "StartDate")?.Value;
+  if (typeof meta === "string" && /^\d{4}-\d{2}-\d{2}$/.test(meta.trim())) return meta.trim();
+  const title = typeof column.ColTitle === "string" ? column.ColTitle.trim() : "";
+  if (!title) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(title)) return title;
+  // A range title ("<start> - <end>") reduces to its start side.
+  const start = title.split(/\s+-\s+/)[0].trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(start)) return start;
+  // "Jul 22-31, 2025" / "Jul 1-21, 2026" / "Jul 22, 2025" / "Jul 2025" / "Dec 2017"
+  const m = start.match(/^([A-Za-z]{3,9})\.?(?:\s+(\d{1,2}))?(?:\s*-\s*\d{1,2})?,?\s+(\d{4})$/);
+  if (m) return isoDate(m[3], m[1], m[2]);
+  const parsed = Date.parse(start);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : "";
+}
+
 export function parseQuickBooksReport(raw: unknown): ParsedQuickBooksReport {
   const report = raw as {
-    Columns?: { Column?: Array<{ ColTitle?: unknown }> };
+    Columns?: { Column?: ReportColumn[] };
     Rows?: { Row?: ReportRow[] };
   };
   const columns = report.Columns?.Column ?? [];
@@ -123,11 +162,7 @@ export function parseQuickBooksReport(raw: unknown): ParsedQuickBooksReport {
   const cogs = total("Total Cost of Goods Sold", "Total COGS");
   const expenses = total("Total Expenses", "Total Operating Expenses");
   const net = total("Net Income", "Net Operating Income");
-  const dates = valueTitles.map((title) => {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(title)) return title;
-    const parsed = Date.parse(title);
-    return Number.isFinite(parsed) ? new Date(parsed).toISOString().slice(0, 10) : "";
-  });
+  const dates = columns.slice(1).map(columnStartDate);
 
   return {
     incomeCents: periodTotal(income),
