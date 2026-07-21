@@ -22,8 +22,20 @@ function getOrigin(urlStr: string): string {
 
 export async function politeFetch(
   url: string,
-  fetchImpl: typeof fetch = fetch,
-  hops: number = 0
+  fetchImpl: typeof fetch = fetch
+): Promise<PoliteFetchResult> {
+  return fetchWithRedirects(url, fetchImpl, 0);
+}
+
+// Hop counting stays module-private so the 3-hop cap is an enforced
+// invariant, not a caller-overridable parameter. Each hop re-applies the
+// full politeness set (UA, per-hop 5s timeout, size cap on the final
+// response), so a max-length chain is bounded by ~4x the per-hop timeout,
+// not 5s total.
+async function fetchWithRedirects(
+  url: string,
+  fetchImpl: typeof fetch,
+  hops: number
 ): Promise<PoliteFetchResult> {
   try {
     const res = await fetchImpl(url, {
@@ -68,7 +80,7 @@ export async function politeFetch(
       }
 
       // Follow the same-origin redirect recursively
-      return politeFetch(nextUrl, fetchImpl, hops + 1);
+      return fetchWithRedirects(nextUrl, fetchImpl, hops + 1);
     }
 
     if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` };
