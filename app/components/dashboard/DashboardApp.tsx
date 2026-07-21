@@ -155,7 +155,6 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
         label: "Customers",
         icon: "user",
         children: [
-          { key: "directory", label: "Directory", screen: "customers", sub: "directory" },
           { key: "segments", label: "Segments", screen: "customers", sub: "segments" },
           { key: "weather", label: "Weather", screen: "customers", sub: "weather" },
         ],

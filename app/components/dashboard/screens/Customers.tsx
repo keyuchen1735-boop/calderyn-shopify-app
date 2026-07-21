@@ -1,24 +1,70 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Card, Btn, Pan, Placeholder, Segmented, TableSkeleton } from "../ui";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
+import { Card, Btn, Pan, Placeholder, TableSkeleton } from "../ui";
 import { money, timeAgo } from "../format";
 import { CDIcon } from "../icons";
+import { reduced } from "../hero/hero-motion";
 import { DashboardApiError, putGuardrails } from "~/lib/dashboard/client";
 import {
   fetchCustomersPage,
   fetchCustomerDetail,
   type CustomersPage,
   type CustomerDetail,
+  type CustomerRow,
   type CustomerSegment,
   type WeatherSuggestionDTO,
 } from "~/lib/dashboard/customers-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
+import {
+  OrderListTable,
+  OrderListToolbar,
+  OrderPageReadout,
+  OrderSortHeader,
+  nextSortState,
+} from "./OrderListFamily";
 import { WeatherSegments } from "../WeatherSegments";
 import { sensitivityForMode, weatherMode, type WeatherMode } from "~/lib/weather/types";
 import type { DashboardCtx } from "../context";
 
-const DIR_COLS = "1.7fr 1.3fr 1fr 0.6fr 0.9fr";
+// Customer / Location / Segment / Orders / Spent / row chevron — same trailing
+// open-row affordance as the Orders and Products tables.
+const DIR_COLS = "1.7fr 1.3fr 1fr 0.6fr 0.9fr 36px";
 const SEG_COLS = "1fr 130px 104px";
 const ORDER_COLS = "0.9fr 0.8fr 1.8fr 0.8fr 1fr";
+
+// Section titles per rail sub-view, same anatomy as the Orders screen.
+const CUST_SECTION_META: Record<string, { title: string }> = {
+  directory: { title: "Customers" },
+  segments: { title: "Segments" },
+  weather: { title: "Weather" },
+};
+
+// The directory's default ordering: newest customers first. Header clicks cycle
+// through a column's two directions and back to this via nextSortState — the
+// same policy as the Orders and Products tables ("joined" has no column of its
+// own, like the labels list's date sort).
+const DEFAULT_CUST_SORT = { sort: "joined", dir: "desc" } as const;
+
+function compareCustomers(
+  a: CustomerRow,
+  b: CustomerRow,
+  sort: string,
+  dir: "asc" | "desc",
+): number {
+  const mul = dir === "asc" ? 1 : -1;
+  switch (sort) {
+    case "customer":
+      return mul * a.email.localeCompare(b.email);
+    case "orders":
+      return mul * (a.orders - b.orders);
+    case "spent":
+      return mul * (a.spentCents - b.spentCents);
+    default:
+      // ISO timestamps compare correctly as strings.
+      return mul * a.createdAt.localeCompare(b.createdAt);
+  }
+}
 
 // One deterministic color per segment; drives the avatar + badge tinting.
 const SEGMENT_COLOR: Record<CustomerSegment, string> = {
@@ -30,7 +76,7 @@ const SEGMENT_COLOR: Record<CustomerSegment, string> = {
   Prospect: "var(--text-3)",
 };
 
-// Filter-chip order mirrors segment priority.
+// Filter-view order mirrors segment priority.
 const SEGMENT_ORDER: CustomerSegment[] = [
   "VIP",
   "At risk",
@@ -375,9 +421,14 @@ export default function Customers({ app }: { app: DashboardCtx }) {
     cachedScreenData<CustomersPage>(SCREEN_CACHE_KEYS.customers),
   );
   const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState<string | null>(null);
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [segFilter, setSegFilter] = useState("All");
+  const [search, setSearch] = useState("");
+  const [custSort, setCustSort] = useState<{ sort: string; dir: "asc" | "desc" }>(
+    DEFAULT_CUST_SORT,
+  );
   const [segQuery, setSegQuery] = useState("");
   const [wx, setWx] = useState<WeatherSuggestionDTO[]>(page?.weatherSuggestions ?? []);
   const toast = app.toast;
@@ -462,6 +513,7 @@ export default function Customers({ app }: { app: DashboardCtx }) {
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setPageError(null);
     fetchCustomersPage()
       .then((p) => {
         cacheScreenData(SCREEN_CACHE_KEYS.customers, p);
@@ -470,6 +522,7 @@ export default function Customers({ app }: { app: DashboardCtx }) {
       .catch((err: unknown) => {
         if (!alive) return;
         const msg = err instanceof DashboardApiError ? err.message : "Could not load customers.";
+        setPageError(msg);
         toast(msg, "warn", "critical");
       })
       .finally(() => {
@@ -510,197 +563,282 @@ export default function Customers({ app }: { app: DashboardCtx }) {
     };
   }, [buyerId, toast]);
 
-  if (buyerId) {
-    return <DetailView app={app} detail={detail} loading={detailLoading} />;
-  }
-
   // Subtab navigation lives in the sidebar rail; this screen renders the view
   // for the active sub only.
   const sub = app.nav.sub ?? "directory";
+  const sectionMeta = CUST_SECTION_META[sub] ?? CUST_SECTION_META.directory;
 
-  const segmentsPresent = page
-    ? SEGMENT_ORDER.filter((s) => page.customers.some((c) => c.segment === s))
-    : [];
-  const filtered =
-    page === null
-      ? []
-      : segFilter === "All"
+  const segmentsPresent = useMemo(
+    () =>
+      page ? SEGMENT_ORDER.filter((s) => page.customers.some((c) => c.segment === s)) : [],
+    [page],
+  );
+
+  // Directory rows: segment view → search → sort, all client-side (the page
+  // read model already holds every customer).
+  const q = search.trim().toLowerCase();
+  const visibleRows = useMemo(() => {
+    if (!page) return [];
+    let rows =
+      segFilter === "All"
         ? page.customers
         : page.customers.filter((c) => c.segment === segFilter);
-  const q = segQuery.trim().toLowerCase();
+    if (q) {
+      rows = rows.filter(
+        (c) =>
+          c.email.toLowerCase().includes(q) ||
+          locationLabel(c.city, c.country).toLowerCase().includes(q) ||
+          c.segment.toLowerCase().includes(q),
+      );
+    }
+    return [...rows].sort((a, b) => compareCustomers(a, b, custSort.sort, custSort.dir));
+  }, [page, segFilter, q, custSort]);
+
+  const segQ = segQuery.trim().toLowerCase();
   const segMatches =
     page === null
       ? []
       : page.segments.filter(
-          (s) => !q || s.name.toLowerCase().includes(q) || s.basis.toLowerCase().includes(q),
+          (s) => !segQ || s.name.toLowerCase().includes(segQ) || s.basis.toLowerCase().includes(segQ),
         );
 
+  // Same header anatomy as Orders/Products: h1, then the stat readout strip.
+  // Empty until the first page lands — the readout renders its own same-height
+  // shimmer ghosts so the card below never shifts.
+  const readoutItems =
+    page === null
+      ? []
+      : [
+          {
+            label: page.stats.customers === 1 ? "customer" : "customers",
+            value: page.stats.customers.toLocaleString("en-US"),
+          },
+          {
+            label: "repeat rate",
+            value: page.stats.repeatRatePct == null ? "—" : `${page.stats.repeatRatePct}%`,
+          },
+          {
+            label: "marketing consent",
+            value:
+              page.stats.marketingConsentPct == null
+                ? "—"
+                : `${page.stats.marketingConsentPct}%`,
+          },
+          {
+            label: "blended LTV",
+            value: page.stats.blendedLtvCents == null ? "—" : money(page.stats.blendedLtvCents),
+          },
+        ];
+
+  // Subtle rise on the section panel whenever the rail sub-view changes — the
+  // same transition the Orders sections use.
+  const sectionPanelRef = useRef<HTMLDivElement>(null);
+  useGSAP(
+    () => {
+      if (reduced() || !sectionPanelRef.current) return;
+      gsap.from(sectionPanelRef.current, {
+        autoAlpha: 0,
+        y: 5,
+        duration: 0.2,
+        ease: "power2.out",
+        willChange: "transform,opacity",
+        clearProps: "opacity,visibility,transform,willChange",
+      });
+    },
+    { dependencies: [sub], scope: sectionPanelRef, revertOnUpdate: true },
+  );
+
+  // Staggered row rise on load, segment-view switches, re-sorts, and the return
+  // from a customer detail — scoped to this table so it can never pick up a
+  // `.cd-trow` from another screen. Search keystrokes are deliberately excluded:
+  // replaying the entrance on every character would make the list flicker while
+  // typing.
+  const listRef = useRef<HTMLDivElement>(null);
+  useGSAP(
+    () => {
+      if (reduced() || !listRef.current) return;
+      const rows = listRef.current.querySelectorAll<HTMLElement>(".cd-trow");
+      if (!rows.length) return;
+      gsap.from(rows, {
+        autoAlpha: 0,
+        y: 6,
+        duration: 0.25,
+        stagger: 0.02,
+        ease: "power2.out",
+        clearProps: "opacity,visibility,transform",
+      });
+    },
+    { dependencies: [page, segFilter, custSort, buyerId] },
+  );
+
+  if (buyerId) {
+    return <DetailView app={app} detail={detail} loading={detailLoading} />;
+  }
+
+  const sortHd = (label: string, col: string, align?: "right") => (
+    <OrderSortHeader
+      label={label}
+      col={col}
+      sort={custSort.sort}
+      dir={custSort.dir}
+      onSort={(c) => setCustSort((cur) => nextSortState(cur, c, DEFAULT_CUST_SORT))}
+      align={align}
+    />
+  );
+
   return (
-    <div className="cd-screen">
-      <header className="cd-screen-head" data-screen-label="Customers">
+    <div className="cd-screen cd-orders-screen" data-screen-label="Customers" data-sub={sub}>
+      <header className="cd-screen-head cd-order-page-head">
         <div>
-          <h1 className="cd-h1">Customers</h1>
+          <h1 className="cd-h1">{sectionMeta.title}</h1>
         </div>
       </header>
 
-      {!page ? (
-        <Card pad={false}>
-          {loading ? (
-            <TableSkeleton />
-          ) : (
-            <Placeholder
-              icon="user"
-              title="Customers unavailable"
-              sub="Could not load customers just now. Refresh to try again."
-            />
-          )}
-        </Card>
-      ) : sub === "segments" ? (
-        <Card pad={false}>
-          <div className="cd-seg-search">
-              <CDIcon name="search" size={15} style={{ color: "var(--text-3)" }} />
-              <input
-                className="cd-seg-search-in"
-                placeholder="Search segments"
-                aria-label="Search segments"
-                value={segQuery}
-                onChange={(e) => setSegQuery(e.target.value)}
-              />
-            </div>
-            <Pan min={440}>
-            <div className="cd-tablehd" style={{ gridTemplateColumns: SEG_COLS }}>
-              <span>Name</span>
-              <span style={{ textAlign: "right" }}>% of customers</span>
-              <span style={{ textAlign: "right" }}>Customers</span>
-            </div>
-            {segMatches.length === 0 ? (
-              <div className="cd-caption" style={{ padding: "16px 20px" }}>
-                No segments match your search.
-              </div>
-            ) : (
-              segMatches.map((s) => (
-                <div key={s.key} className="cd-trow" style={{ gridTemplateColumns: SEG_COLS }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div className="cd-row-title truncate">{s.name}</div>
-                    <div className="cd-caption truncate">{s.basis}</div>
-                  </div>
-                  <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                    {s.pct}
-                  </div>
-                  <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                    {s.count}
-                  </div>
-                </div>
-              ))
-            )}
-            </Pan>
-          </Card>
-      ) : sub === "weather" ? (
-        <WeatherSegments
-          suggestions={wx}
-          onIntent={onWeather}
-          toast={toast}
-          mode={wxMode}
-          onMode={onWeatherMode}
-          dark={app.t.dark ?? true}
-        />
-      ) : (
-        <>
-          <div className="cd-stat-grid" style={{ marginBottom: 14 }}>
-            <Stat label="Customers" value={String(page.stats.customers)} />
-            <Stat
-              label="Repeat rate"
-              value={page.stats.repeatRatePct == null ? "—" : `${page.stats.repeatRatePct}%`}
-              caption={page.stats.repeatRatePct == null ? "No purchases yet" : undefined}
-            />
-            <Stat
-              label="Marketing consent"
-              value={
-                page.stats.marketingConsentPct == null
-                  ? "—"
-                  : `${page.stats.marketingConsentPct}%`
-              }
-              caption={page.stats.marketingConsentPct == null ? "No customers yet" : undefined}
-            />
-            <Stat
-              label="LTV · blended"
-              value={
-                page.stats.blendedLtvCents == null ? "—" : money(page.stats.blendedLtvCents)
-              }
-              caption={page.stats.blendedLtvCents == null ? "No purchases yet" : undefined}
-            />
-          </div>
+      {sub === "directory" && (
+        <OrderPageReadout items={readoutItems} ariaLabel="Customers overview" />
+      )}
 
-          <Card pad={false}>
-            <CardHead>
-              <h2 className="cd-h2">Directory</h2>
-              {segmentsPresent.length > 0 && (
-                <Segmented
-                  small
-                  value={segFilter}
-                  onChange={setSegFilter}
-                  options={["All", ...segmentsPresent]}
+      <div ref={sectionPanelRef} className="cd-order-section-panel">
+        {sub === "segments" ? (
+          <Card pad={false} className="cd-order-workspace">
+            {!page ? (
+              loading ? (
+                <TableSkeleton />
+              ) : (
+                <Placeholder
+                  icon="user"
+                  title="Customers unavailable"
+                  sub="Could not load customers just now. Refresh to try again."
                 />
-              )}
-            </CardHead>
-            {page.customers.length === 0 ? (
-              <Placeholder
-                icon="user"
-                title="No customers yet"
-                sub="Shoppers who sign up or check out on your storefront land here."
-              />
+              )
             ) : (
-              <Pan min={640}>
-                <div className="cd-tablehd" style={{ gridTemplateColumns: DIR_COLS }}>
-                  <span>Customer</span>
-                  <span>Location</span>
-                  <span>Segment</span>
-                  <span>Orders</span>
-                  <span style={{ textAlign: "right" }}>Spent</span>
+              <>
+                <div className="cd-seg-search">
+                  <CDIcon name="search" size={15} style={{ color: "var(--text-3)" }} />
+                  <input
+                    className="cd-seg-search-in"
+                    placeholder="Search segments"
+                    aria-label="Search segments"
+                    value={segQuery}
+                    onChange={(e) => setSegQuery(e.target.value)}
+                  />
                 </div>
-                {filtered.length === 0 ? (
-                  <div className="cd-caption" style={{ padding: "16px 20px" }}>
-                    No customers in this segment yet.
+                <Pan min={440}>
+                  <div className="cd-tablehd" style={{ gridTemplateColumns: SEG_COLS }}>
+                    <span>Name</span>
+                    <span style={{ textAlign: "right" }}>% of customers</span>
+                    <span style={{ textAlign: "right" }}>Customers</span>
                   </div>
-                ) : (
-                  filtered.map((c) => (
-                    <div
-                      key={c.id}
-                      role="button"
-                      tabIndex={0}
-                      className="cd-trow cd-cust-row"
-                      style={{ gridTemplateColumns: DIR_COLS }}
-                      onClick={() => app.navigate("customers", c.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          app.navigate("customers", c.id);
-                        }
-                      }}
-                    >
-                      <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
-                        <Avatar email={c.email} segment={c.segment} />
+                  {segMatches.length === 0 ? (
+                    <div className="cd-caption" style={{ padding: "16px 20px" }}>
+                      No segments match your search.
+                    </div>
+                  ) : (
+                    segMatches.map((s) => (
+                      <div key={s.key} className="cd-trow" style={{ gridTemplateColumns: SEG_COLS }}>
                         <div style={{ minWidth: 0 }}>
-                          <div className="cd-row-title truncate">{c.email || "No email"}</div>
-                          <div className="cd-caption">Joined {timeAgo(c.createdAt)}</div>
+                          <div className="cd-row-title truncate">{s.name}</div>
+                          <div className="cd-caption truncate">{s.basis}</div>
+                        </div>
+                        <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
+                          {s.pct}
+                        </div>
+                        <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
+                          {s.count}
                         </div>
                       </div>
-                      <div className="truncate">{locationLabel(c.city, c.country)}</div>
-                      <div>
-                        <SegBadge segment={c.segment} />
-                      </div>
-                      <div className="tabular-nums">{c.orders}</div>
-                      <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                        {money(c.spentCents)}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </Pan>
+                    ))
+                  )}
+                </Pan>
+              </>
             )}
           </Card>
-        </>
-      )}
+        ) : sub === "weather" ? (
+          <WeatherSegments
+            suggestions={wx}
+            onIntent={onWeather}
+            toast={toast}
+            mode={wxMode}
+            onMode={onWeatherMode}
+            dark={app.t.dark ?? true}
+          />
+        ) : (
+          <Card pad={false} className="cd-order-workspace">
+            <OrderListToolbar
+              views={["All", ...segmentsPresent].map((s) => ({ id: s, label: s }))}
+              view={segFilter}
+              onViewChange={setSegFilter}
+              searchValue={search}
+              searchPlaceholder="Search customers"
+              searchAriaLabel="Search customers"
+              onSearchChange={setSearch}
+              filterLabel="Customer"
+            />
+
+            <div ref={listRef}>
+              <OrderListTable
+                loading={loading}
+                error={pageError}
+                empty={visibleRows.length === 0}
+                filtered={segFilter !== "All" || q !== ""}
+                minWidth={680}
+                columns={DIR_COLS}
+                emptyIcon="user"
+                emptyTitle="No customers yet"
+                emptySub="Shoppers who sign up or check out on your storefront land here."
+                filteredTitle="No matching customers"
+                filteredSub="Try a different search or segment view."
+                headers={
+                  <>
+                    {sortHd("Customer", "customer")}
+                    <span>Location</span>
+                    <span>Segment</span>
+                    {sortHd("Orders", "orders")}
+                    {sortHd("Spent", "spent", "right")}
+                    <span />
+                  </>
+                }
+              >
+                {visibleRows.map((c) => (
+                  <div
+                    key={c.id}
+                    role="button"
+                    tabIndex={0}
+                    className="cd-trow cd-order-row"
+                    style={{ gridTemplateColumns: DIR_COLS, cursor: "pointer" }}
+                    onClick={() => app.navigate("customers", c.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        app.navigate("customers", c.id);
+                      }
+                    }}
+                  >
+                    <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
+                      <Avatar email={c.email} segment={c.segment} />
+                      <div style={{ minWidth: 0 }}>
+                        <div className="cd-row-title truncate">{c.email || "No email"}</div>
+                        <div className="cd-caption">Joined {timeAgo(c.createdAt)}</div>
+                      </div>
+                    </div>
+                    <div className="truncate">{locationLabel(c.city, c.country)}</div>
+                    <div>
+                      <SegBadge segment={c.segment} />
+                    </div>
+                    <div className="tabular-nums">{c.orders}</div>
+                    <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
+                      {money(c.spentCents)}
+                    </div>
+                    <div className="cd-order-row-actions">
+                      <CDIcon name="chevronRight" size={15} className="cd-order-row-chevron" />
+                    </div>
+                  </div>
+                ))}
+              </OrderListTable>
+            </div>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }
