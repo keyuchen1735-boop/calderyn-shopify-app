@@ -30,7 +30,7 @@ export type QboClient = {
   queryHomeCurrency(): Promise<string | null>;
   queryReport(
     report: "ProfitAndLoss" | "CashFlow",
-    params: { startDate: string; endDate: string; accountingMethod: "Accrual" | "Cash"; summarizeBy?: "Days" | "Months" | "Years" },
+    params: { startDate: string; endDate: string; accountingMethod: "Accrual" | "Cash"; summarizeBy?: "Days" | "Month" | "Year" },
   ): Promise<unknown>;
 };
 export type QboConnection = { client: QboClient; realmId: string };
@@ -114,7 +114,7 @@ export async function quickbooksClientForShop(
 
   async function runReport(
     report: "ProfitAndLoss" | "CashFlow",
-    params: { startDate: string; endDate: string; accountingMethod: "Accrual" | "Cash"; summarizeBy?: "Days" | "Months" | "Years" },
+    params: { startDate: string; endDate: string; accountingMethod: "Accrual" | "Cash"; summarizeBy?: "Days" | "Month" | "Year" },
   ): Promise<unknown> {
     const query = new URLSearchParams({
       start_date: params.startDate,
