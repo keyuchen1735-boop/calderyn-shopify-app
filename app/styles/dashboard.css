@@ -5480,6 +5480,23 @@
 .cd-root.cd-dark .cd-sidebar { background: #0A0B0E; }
 .cd-card { background: var(--card); backdrop-filter: none; box-shadow: var(--shadow-card); }
 .cd-root.cd-dark .cd-engine { background: transparent; box-shadow: none; border-radius: 0; }
+.cd-pnl { gap: calc(20px * var(--density)); }
+.cd-pnl .cd-pnl-stat { min-height: 108px; justify-content: center; }
+.cd-pnl .cd-pnl-stat--net {
+  background: color-mix(in oklch, var(--card-solid) 90%, var(--gray-bg));
+  box-shadow: inset 3px 0 var(--pnl-tone), var(--shadow-card);
+}
+.cd-pnl .cd-pnl-stat--positive { --pnl-tone: var(--green); }
+.cd-pnl .cd-pnl-stat--negative { --pnl-tone: var(--red); }
+.cd-pnl-product-table {
+  overflow: hidden;
+  border: 0.5px solid var(--hairline-strong);
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--card-solid) 92%, var(--gray-bg));
+}
+.cd-pnl-product-table .cd-tablehd { background: var(--gray-bg); }
+.cd-pnl-product-table .cd-trow { transition: background 0.16s ease; }
+.cd-pnl-product-table .cd-trow:hover { background: var(--gray-bg); }
 /* :not(--wide) so the wide modifier (Go live / Import tables) keeps winning —
    this late rule would otherwise tie its specificity and cap it by source order. */
 .cd-screen:not(.cd-screen--wide) { max-width: 1200px; }

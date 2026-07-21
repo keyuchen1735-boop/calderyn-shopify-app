@@ -47,9 +47,28 @@ function Tooltip({ text, x, y }: { text: string; x: number; y: number }) {
   );
 }
 
-function Metric({ label, value, explain }: { label: string; value: string; explain: string }) {
+function Metric({
+  label,
+  value,
+  explain,
+  emphasis = false,
+  tone,
+}: {
+  label: string;
+  value: string;
+  explain: string;
+  emphasis?: boolean;
+  tone?: "positive" | "negative";
+}) {
+  const className = [
+    "cd-stat",
+    "cd-pnl-stat",
+    emphasis && "cd-pnl-stat--net",
+    tone && `cd-pnl-stat--${tone}`,
+  ].filter(Boolean).join(" ");
+
   return (
-    <Card className="cd-stat cd-pnl-stat" data-explain={explain}>
+    <Card className={className} data-explain={explain}>
       <span style={{ color: "var(--text-2)", fontSize: 12, fontWeight: 650 }}>{label}</span>
       <strong className="tabular-nums" style={{ color: "var(--text-1)", fontSize: 28, letterSpacing: "-.04em" }}>{value}</strong>
     </Card>
@@ -142,7 +161,7 @@ export default function OperatingPnl() {
   if (!data?.connected || !statement) return null;
 
   return (
-    <div ref={rootRef} className="cd-screen" onMouseMove={onMove} onMouseLeave={() => setTip(null)}>
+    <div ref={rootRef} className="cd-screen cd-pnl" onMouseMove={onMove} onMouseLeave={() => setTip(null)}>
       <style>{`@keyframes cdPnlTipIn{from{opacity:0;transform:translateY(5px) scale(.98)}to{opacity:1;transform:none}}@media(max-width:900px){.cd-pnl-main{grid-template-columns:1fr!important}.cd-pnl-products{overflow-x:auto}.cd-pnl-products>div{min-width:880px}}`}</style>
       <header className="cd-screen-head">
         <div>
@@ -163,7 +182,13 @@ export default function OperatingPnl() {
       <div className="cd-stat-grid">
         <Metric label="Accrual income" value={money(statement.incomeCents, data.currency)} explain="income" />
         <Metric label="Gross profit" value={money(grossProfit, data.currency)} explain="gross" />
-        <Metric label="Net profit / loss" value={money(statement.netIncomeCents, data.currency)} explain="net" />
+        <Metric
+          label="Net profit / loss"
+          value={money(statement.netIncomeCents, data.currency)}
+          explain="net"
+          emphasis
+          tone={statement.netIncomeCents >= 0 ? "positive" : "negative"}
+        />
         <Metric label="Net cash flow" value={money(data.netCashFlowCents ?? 0, data.currency)} explain="cash" />
       </div>
 
@@ -240,7 +265,7 @@ export default function OperatingPnl() {
               Calderyn orders + QuickBooks expenses by revenue share
             </span>
           </div>
-          <div className="cd-pnl-products"><div>
+          <div className="cd-pnl-products cd-pnl-product-table"><div>
             <div className="cd-tablehd" style={{ gridTemplateColumns: PRODUCT_GRID, padding: "8px 10px", borderBottom: "1px solid var(--hairline-strong)" }}>
               <span>Product</span>
               <span style={{ textAlign: "right" }}>Net revenue</span>
