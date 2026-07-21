@@ -161,7 +161,10 @@ export function renderDesignerBody(input: {
   // Expand any declared conversion widget (coupon popup). In the body path
   // this is the live-storefront render, so behavior is wired by the caller
   // via the returned script; preview uses renderDesignerDocument below.
-  const widget = expandCouponWidget(filled, { preview: input.preview === true });
+  const widget = expandCouponWidget(filled, {
+    preview: input.preview === true,
+    redeemableCodes: input.data.redeemableCodes,
+  });
   // Generated imagery may also be referenced from CSS (hero as a section
   // background). Substitute AFTER the scrub, like the HTML imagery injection,
   // so owned https URLs survive the external-url strip.

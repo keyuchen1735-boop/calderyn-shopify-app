@@ -4,8 +4,14 @@
 // take the secret surface with them again.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { DashboardApiError } from "~/lib/dashboard/client";
-import { cachedScreenData, cacheScreenData } from "~/lib/dashboard/screen-cache";
-import { fetchDesignerState, publishDesignerSite, type DesignerStateVM } from "~/lib/designer/client";
+import {
+  fetchDesignerState,
+  fetchPublishStatus,
+  publishAckReached,
+  publishDesignerSite,
+  type DesignerStateVM,
+} from "~/lib/designer/client";
+import { readDesignerState, reconcileDesignerState } from "~/lib/designer/state";
 import { DESIGNER_PAGE_LABELS } from "~/lib/designer/context";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import {
@@ -21,7 +27,7 @@ import DesignerDock from "../store/DesignerDock";
 import type { ChatMsg } from "../store/chat-types";
 import { Btn } from "../ui";
 
-export const DESIGNER_STATE_CACHE_KEY = "designer-studio";
+export { DESIGNER_STATE_CACHE_KEY } from "~/lib/designer/state";
 
 type DesignerPageKey = "home" | "collection" | "product" | "search" | "cart" | "checkout";
 // Shared with the edit-result card so the picker and the card name pages
@@ -32,9 +38,7 @@ const PAGES: { key: DesignerPageKey; label: string }[] = (
 
 export default function DesignerStudio({ app }: { app: DashboardCtx }) {
   const toast = app.toast;
-  const [state, setState] = useState<DesignerStateVM | null>(() =>
-    cachedScreenData<DesignerStateVM>(DESIGNER_STATE_CACHE_KEY),
-  );
+  const [state, setState] = useState<DesignerStateVM | null>(() => readDesignerState());
   const aliveRef = useRef(true);
   useEffect(() => {
     aliveRef.current = true;
@@ -62,9 +66,10 @@ export default function DesignerStudio({ app }: { app: DashboardCtx }) {
 
   const refresh = useCallback(async () => {
     try {
-      const next = await fetchDesignerState();
+      // Reconciled against any in-flight sparkle toggle so a stale read
+      // can't flip the cached engine choice back (see ~/lib/designer/state).
+      const next = reconcileDesignerState(await fetchDesignerState());
       if (!aliveRef.current) return;
-      cacheScreenData(DESIGNER_STATE_CACHE_KEY, next);
       setState(next);
       // Reload recovery: the session seeds from the saved chat exactly once,
       // and never over a thread with live messages.
@@ -97,26 +102,77 @@ export default function DesignerStudio({ app }: { app: DashboardCtx }) {
     });
   };
 
+  // Publish confirms from whichever lands first: the POST's own response, or
+  // a poll of the publication row. The server finishes publishing in seconds,
+  // but the POST's response has been observed arriving minutes later — the
+  // button must not sit in "Publishing…" while the site is already live.
   const onPublish = async () => {
     if (publishingRef.current) return;
     publishingRef.current = true;
     setPublishing(true);
-    try {
-      const { storefrontUrl } = await publishDesignerSite();
+    let settled = false;
+    const finish = () => {
+      settled = true;
+      publishingRef.current = false;
+      if (aliveRef.current) setPublishing(false);
+    };
+    const succeed = (storefrontUrl: string | null) => {
+      if (settled) return;
+      finish();
       if (!aliveRef.current) return;
       toast("Your site is live", "check");
       pushMsg({
         id: newId(),
         kind: "ai-text",
         text: "Published. Your latest design is live on your site.",
-        actions: [{ label: "Visit your site", kind: "primary", onClick: () => window.open(storefrontUrl, "_blank", "noopener") }],
+        actions: storefrontUrl
+          ? [{ label: "Visit your site", kind: "primary", onClick: () => window.open(storefrontUrl, "_blank", "noopener") }]
+          : undefined,
       });
+    };
+
+    // Baseline BEFORE the publish mutates the row; without it (status read
+    // down), the POST response remains the only confirmation path.
+    let baseline: string | null | undefined;
+    try {
+      baseline = (await fetchPublishStatus()).publishedAt;
+    } catch {
+      baseline = undefined;
+    }
+
+    if (baseline !== undefined) {
+      const pollBase = baseline;
+      const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+      void (async () => {
+        const startedAt = Date.now();
+        let delay = 3_000;
+        while (!settled && Date.now() - startedAt < 180_000) {
+          await sleep(delay);
+          delay = Math.min(delay + 1_000, 8_000);
+          if (settled) return;
+          try {
+            const status = await fetchPublishStatus();
+            if (publishAckReached(pollBase, status)) {
+              succeed(status.storefrontUrl);
+              return;
+            }
+          } catch {
+            // Transient poll miss — the next tick (or the POST) confirms.
+          }
+        }
+      })();
+    }
+
+    try {
+      const { storefrontUrl } = await publishDesignerSite();
+      succeed(storefrontUrl);
     } catch (err) {
+      // The poll may have already confirmed the publish; a late transport
+      // error on the POST is then noise, not a failure.
+      if (settled) return;
+      finish();
       if (!aliveRef.current) return;
       toast(err instanceof DashboardApiError ? err.message : "Could not publish.", "warn", "critical");
-    } finally {
-      publishingRef.current = false;
-      if (aliveRef.current) setPublishing(false);
     }
   };
 

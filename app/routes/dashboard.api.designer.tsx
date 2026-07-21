@@ -17,7 +17,7 @@ import {
   loadDesignerChat,
   type DesignerBuildMode,
 } from "~/lib/designer/engine.server";
-import { publishDesignerSite } from "~/lib/designer/publish.server";
+import { designerPublicationStatus, publishDesignerSite } from "~/lib/designer/publish.server";
 import type { DesignerRoute } from "~/lib/designer/types";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 
@@ -65,6 +65,11 @@ export async function action({ request }: ActionFunctionArgs) {
       return jsonError(409, "designer_disabled", "The designer engine is not enabled for this store.");
     }
     return dashboardJson(async () => ({ storefrontUrl: await publishDesignerSite(session.shopId) }));
+  }
+  // Publish acknowledgment poll: the publish POST's response can lag minutes
+  // behind the actual publish, so the studio confirms from the row instead.
+  if (body.action === "publish-status") {
+    return dashboardJson(() => designerPublicationStatus(session.shopId));
   }
 
   const message = typeof body.message === "string" ? body.message.trim() : "";

@@ -3,7 +3,7 @@ import { Btn, Card, Toggle, Segmented, Pill, Placeholder } from "../ui";
 import { CDIcon } from "../icons";
 import { CalderynHexMark } from "~/components/CalderynHexMark";
 import { fetchDesignerState, setDesignerEnabled } from "~/lib/designer/client";
-import { DESIGNER_STATE_CACHE_KEY } from "./DesignerStudio";
+import { recordDesignerToggle, revertDesignerToggle } from "~/lib/designer/state";
 import { money } from "../format";
 import {
   putConsent,
@@ -342,14 +342,17 @@ function DesignerSwitch() {
   const flip = async (next: boolean) => {
     if (busy) return;
     setBusy(true);
-    const previous = enabled;
+    const previous = enabled === true;
     setEnabled(next);
+    // Record the intent BEFORE the save round-trip: navigating to Store while
+    // the POST is in flight must already mount the chosen engine, and a stale
+    // designer-state read racing the save must not undo it.
+    recordDesignerToggle(next);
     try {
       await setDesignerEnabled(next);
-      const cached = cachedScreenData<{ enabled?: boolean }>(DESIGNER_STATE_CACHE_KEY);
-      cacheScreenData(DESIGNER_STATE_CACHE_KEY, { ...(cached ?? { ready: false, unbuiltRoutes: [], chat: [] }), enabled: next });
     } catch {
       setEnabled(previous);
+      revertDesignerToggle(previous);
     } finally {
       setBusy(false);
     }

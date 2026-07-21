@@ -51,6 +51,24 @@ export function publishDesignerSite(): Promise<{ storefrontUrl: string }> {
   return designerRequest({ action: "publish" });
 }
 
+export interface DesignerPublishStatus {
+  publishedAt: string | null;
+  storefrontUrl: string | null;
+}
+
+/** Read-only publication status, polled while a publish is in flight. */
+export function fetchPublishStatus(): Promise<DesignerPublishStatus> {
+  return designerRequest({ action: "publish-status" });
+}
+
+/** Whether a polled status proves the in-flight publish landed: the home
+ *  snapshot's timestamp exists and moved past the pre-publish baseline.
+ *  Comparing against the baseline (not the clock) keeps client/server clock
+ *  skew out of the decision. */
+export function publishAckReached(baseline: string | null, status: DesignerPublishStatus): boolean {
+  return status.publishedAt != null && status.publishedAt !== baseline;
+}
+
 export interface DesignerPageEvent {
   page: string;
   index: number;

@@ -130,9 +130,14 @@ function designSystemCss(recipe: DefinedRecipe): string {
   const fontFace = (id: string) =>
     `@font-face{font-family:"${id}";src:url(/storefront-fonts/${id}-latin.woff2);font-display:swap;font-weight:100 900}`;
   const variables = Object.entries(tokens).map(([id, value]) => `--${id}:${value}`).join(";");
+  // Runtime chrome (coupon CTA, cart drawer meter/checkout) colors itself
+  // from --signal. Templates that name their accent differently get an alias
+  // so a site-wide accent swap on the token sweeps the chrome too.
+  const signalAlias =
+    "signal" in tokens ? "" : `;--signal:${tokens.acid ?? tokens.accent ?? "#1a1a1a"}`;
   return [
     ...new Set([fontFace(displayFontId), fontFace(bodyFontId)]),
-    `:root{${variables};--font-display:"${displayFontId}",sans-serif;--font-body:"${bodyFontId}",sans-serif}`,
+    `:root{${variables}${signalAlias};--font-display:"${displayFontId}",sans-serif;--font-body:"${bodyFontId}",sans-serif}`,
     "*,*::before,*::after{box-sizing:border-box}body{margin:0;font-family:var(--font-body)}img{max-width:100%;display:block}",
     ".designer-add-to-cart{padding:10px 18px;border:1px solid currentColor;background:transparent;color:inherit;font:inherit;cursor:pointer}",
   ].join("\n");

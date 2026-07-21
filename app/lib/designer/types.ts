@@ -20,6 +20,10 @@ export interface DesignerStoreData {
   collectionTitle?: string;
   /** Live-serve context: the query echoed by {{search.query}}. */
   searchQuery?: string;
+  /** Discount codes the platform can actually redeem. The coupon widget only
+   *  renders for a code in this list — and no discounts feature exists yet, so
+   *  nothing populates it and fresh builds emit no coupon markup (spec D5). */
+  redeemableCodes?: string[];
 }
 
 export type DesignerRoute = "home" | "collection" | "product" | "search" | "cart" | "checkout";
