@@ -14,6 +14,7 @@ const {
   revertRadarMove,
   confirmRadarCompetitor,
   dismissRadarCompetitor,
+  refreshRadar,
 } = vi.hoisted(() => ({
   fetchRadar: vi.fn(),
   applyRadarMove: vi.fn(),
@@ -21,6 +22,7 @@ const {
   revertRadarMove: vi.fn(),
   confirmRadarCompetitor: vi.fn(),
   dismissRadarCompetitor: vi.fn(),
+  refreshRadar: vi.fn(),
 }));
 
 vi.mock("~/lib/dashboard/screen-cache", () => ({
@@ -40,6 +42,7 @@ vi.mock("~/lib/dashboard/radar-client", () => ({
   revertRadarMove,
   confirmRadarCompetitor,
   dismissRadarCompetitor,
+  refreshRadar,
   RADAR_KIND_LABELS: { section_refresh: "Store page" },
 }));
 
@@ -82,12 +85,14 @@ function overview(
       competitors: { watching: 0, suggested: 0, changesLast7: 0, lastChangeAt: null },
     },
     competitors: { suggested: [], watching: [], watchLimit: 5 },
+    lastCheckedAt: "2026-07-20T09:00:00Z",
+    stale: false,
     ...patch,
   };
 }
 
 function dashboardApp() {
-  return { toast: vi.fn() };
+  return { toast: vi.fn(), relTime: vi.fn((_ts: number) => "3h ago"), navigate: vi.fn() };
 }
 
 async function renderRadar(app = dashboardApp()) {
@@ -118,6 +123,7 @@ function stubLocation(): () => void {
 beforeEach(() => {
   vi.clearAllMocks();
   fetchRadar.mockResolvedValue(overview([]));
+  refreshRadar.mockResolvedValue({ refreshed: false, reason: "fresh" });
 });
 
 afterEach(() => {
@@ -357,6 +363,276 @@ describe("Radar competitors tab", () => {
     const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Competitors"));
     await act(async () => tabBtn!.click());
     expect(host.textContent).toContain("No changes spotted yet. Radar checks nightly.");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar instant check on open", () => {
+  it("auto-triggers exactly one refresh and shows a banner while stale data is loaded", async () => {
+    refreshRadar.mockImplementation(() => new Promise(() => {})); // never resolves within this test
+    fetchRadar.mockResolvedValue(overview([], { stale: true, lastCheckedAt: null }));
+    const { host, root } = await renderRadar();
+    expect(host.textContent).toContain(
+      "Radar is taking a fresh look at your store. New moves will show up here in a moment.",
+    );
+    expect(refreshRadar).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it("clears the banner and refetches once a stale refresh actually ran", async () => {
+    refreshRadar.mockResolvedValue({ refreshed: true, drafted: 1 });
+    fetchRadar
+      .mockResolvedValueOnce(overview([], { stale: true, lastCheckedAt: null }))
+      .mockResolvedValueOnce(overview([], { stale: false, lastCheckedAt: "2026-07-20T10:00:00Z" }));
+    const { host, root } = await renderRadar();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(host.textContent).not.toContain("Radar is taking a fresh look at your store");
+    expect(fetchRadar).toHaveBeenCalledTimes(2);
+    await act(async () => root.unmount());
+  });
+
+  it("clears the banner and refetches once too when the refresh reports fresh (FIX 3 - picks up another session's newer refresh)", async () => {
+    refreshRadar.mockResolvedValue({ refreshed: false, reason: "fresh" });
+    fetchRadar.mockResolvedValue(overview([], { stale: true, lastCheckedAt: "2026-07-20T09:50:00Z" }));
+    const { host, root } = await renderRadar();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(host.textContent).not.toContain("Radar is taking a fresh look at your store");
+    expect(fetchRadar).toHaveBeenCalledTimes(2);
+    await act(async () => root.unmount());
+  });
+
+  it("only ever auto-refreshes once even though the fresh branch now also refetches", async () => {
+    refreshRadar.mockResolvedValue({ refreshed: false, reason: "fresh" });
+    fetchRadar.mockResolvedValue(overview([], { stale: true, lastCheckedAt: "2026-07-20T09:50:00Z" }));
+    const { root } = await renderRadar();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(refreshRadar).toHaveBeenCalledTimes(1);
+    await act(async () => root.unmount());
+  });
+
+  it("does not auto-refresh (or show a banner) when the overview is not stale", async () => {
+    fetchRadar.mockResolvedValue(overview([], { stale: false, lastCheckedAt: "2026-07-20T09:50:00Z" }));
+    const { host, root } = await renderRadar();
+    expect(refreshRadar).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain("Radar is taking a fresh look at your store");
+    await act(async () => root.unmount());
+  });
+
+  it("renders a Check now button", async () => {
+    const { host, root } = await renderRadar();
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Check now")).toBe(true);
+    await act(async () => root.unmount());
+  });
+
+  it("Check now toasts when Radar just checked and mentions new moves", async () => {
+    refreshRadar.mockResolvedValue({ refreshed: true, drafted: 2 });
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    const btn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Check now")!;
+    await act(async () => {
+      btn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(refreshRadar).toHaveBeenCalledTimes(1);
+    expect(app.toast).toHaveBeenCalledWith(expect.stringContaining("Radar just checked your store"), "check");
+    expect(app.toast.mock.calls[0][0]).toContain("2");
+    await act(async () => root.unmount());
+  });
+
+  it("Check now toasts a plain message when Radar already checked recently, using a registered icon (FIX 2)", async () => {
+    refreshRadar.mockResolvedValue({ refreshed: false, reason: "fresh" });
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    const btn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Check now")!;
+    await act(async () => {
+      btn.click();
+      await Promise.resolve();
+    });
+    // "info" is not a registered CD_ICONS name - it must be one that exists.
+    expect(app.toast).toHaveBeenCalledWith("Radar already checked recently", "clock");
+    await act(async () => root.unmount());
+  });
+
+  it("disables Check now while the stale auto-refresh banner is in flight, so a click can't fire a concurrent refresh (FIX 1)", async () => {
+    refreshRadar.mockImplementation(() => new Promise(() => {})); // never resolves in this test
+    fetchRadar.mockResolvedValue(overview([], { stale: true, lastCheckedAt: null }));
+    const { host, root } = await renderRadar();
+    const btn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Check now") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar competitor confirm first look", () => {
+  it("tells the merchant Radar took its first look when the confirm response says so", async () => {
+    confirmRadarCompetitor.mockResolvedValue({
+      competitors: { suggested: [], watching: [], watchLimit: 5 },
+      firstLook: true,
+    });
+    fetchRadar.mockResolvedValue(
+      overview([], { competitors: { suggested: [competitor()], watching: [], watchLimit: 5 } }),
+    );
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Competitors"));
+    await act(async () => tabBtn!.click());
+
+    fetchRadar.mockResolvedValue(overview([]));
+    const watchBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Watch this store")!;
+    await act(async () => watchBtn.click());
+    expect(app.toast).toHaveBeenCalledWith("Watching. Radar took its first look at their site.", "check");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar all-clear receipt", () => {
+  it("shows an all-clear receipt with a relative check time and the watched-competitor count when the queue is empty and fresh", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], {
+        stale: false,
+        lastCheckedAt: "2026-07-20T09:00:00Z",
+        competitors: {
+          suggested: [],
+          watching: [
+            competitor({ id: "c1", status: "watching" }),
+            competitor({ id: "c2", status: "watching" }),
+            competitor({ id: "c3", status: "watching" }),
+          ],
+          watchLimit: 5,
+        },
+      }),
+    );
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    expect(host.textContent).toContain("All clear");
+    expect(host.textContent).toContain("Radar checked your store 3h ago and nothing needs your attention.");
+    expect(host.textContent).toContain("It's watching your traffic, Google results, AI assistants, and 3 competitors.");
+    expect(app.relTime).toHaveBeenCalledWith(Date.parse("2026-07-20T09:00:00Z"));
+    await act(async () => root.unmount());
+  });
+
+  it("falls back to the generic 'and competitors' phrasing when nothing is watched yet", async () => {
+    fetchRadar.mockResolvedValue(overview([], { stale: false, lastCheckedAt: "2026-07-20T09:00:00Z" }));
+    const { host, root } = await renderRadar();
+    expect(host.textContent).toContain("It's watching your traffic, Google results, AI assistants, and competitors.");
+    await act(async () => root.unmount());
+  });
+
+  it("does not show the all-clear receipt when there are moves to review", async () => {
+    fetchRadar.mockResolvedValue(overview([move()]));
+    const { host, root } = await renderRadar();
+    expect(host.textContent).not.toContain("All clear");
+    await act(async () => root.unmount());
+  });
+
+  it("does not show the all-clear receipt while stale (still shows the nightly-check copy instead)", async () => {
+    fetchRadar.mockResolvedValue(overview([], { stale: true, lastCheckedAt: null }));
+    refreshRadar.mockImplementation(() => new Promise(() => {})); // never resolves in this test
+    const { host, root } = await renderRadar();
+    expect(host.textContent).not.toContain("Radar checked your store");
+    expect(host.textContent).toContain("All clear this morning");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar header checked-ago caption", () => {
+  it("shows 'Checked <relative>' in the header when lastCheckedAt is present and the view isn't the all-clear card", async () => {
+    fetchRadar.mockResolvedValue(overview([move()], { lastCheckedAt: "2026-07-20T09:00:00Z" }));
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    expect(host.textContent).toContain("Checked 3h ago");
+    await act(async () => root.unmount());
+  });
+
+  it("omits the header caption on the all-clear view to avoid repeating the same relative time twice", async () => {
+    fetchRadar.mockResolvedValue(overview([], { stale: false, lastCheckedAt: "2026-07-20T09:00:00Z" }));
+    const { host, root } = await renderRadar();
+    // The all-clear card's own sentence states the check time; the header must not duplicate it.
+    const occurrences = host.textContent!.match(/3h ago/g) ?? [];
+    expect(occurrences.length).toBe(1);
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar history summary", () => {
+  it("shows an applied-count summary at the top of History when moves have been applied", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], {
+        history: [
+          move({ id: "h1", status: "applied" }),
+          move({ id: "h2", status: "applied" }),
+          move({ id: "h3", status: "dismissed" }),
+        ],
+      }),
+    );
+    const { host, root } = await renderRadar();
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "History")!;
+    await act(async () => tabBtn.click());
+    expect(host.textContent).toContain("2 applied recently");
+    await act(async () => root.unmount());
+  });
+
+  it("omits the applied-count summary when nothing in the loaded history was applied", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], { history: [move({ id: "h1", status: "dismissed" })] }),
+    );
+    const { host, root } = await renderRadar();
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "History")!;
+    await act(async () => tabBtn.click());
+    expect(host.textContent).not.toContain("applied recently");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar traffic tile cross-link (FIX 5)", () => {
+  it("links the Traffic tile to the Analytics Live subtab with a plain caption", async () => {
+    fetchRadar.mockResolvedValue(overview([]));
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    expect(host.textContent).toContain("See what's happening right now");
+    const trafficTile = [...host.querySelectorAll('[role="button"]')].find((el) =>
+      el.textContent?.includes("Traffic"),
+    ) as HTMLElement;
+    expect(trafficTile).toBeTruthy();
+    await act(async () => trafficTile.click());
+    expect(app.navigate).toHaveBeenCalledWith("analytics", null, "live");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar apply receipt", () => {
+  it("gives a concrete store-page receipt for a store-page-family kind", async () => {
+    applyRadarMove.mockResolvedValue({ move: move({ status: "applied" }) });
+    fetchRadar.mockResolvedValue(overview([move({ kind: "section_refresh" })]));
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    const applyBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Apply")!;
+    await act(async () => applyBtn.click());
+    expect(app.toast).toHaveBeenCalledWith("Applied — your store page was updated.", "check");
+    await act(async () => root.unmount());
+  });
+
+  it("keeps the generic apply message for a kind outside the store-page family", async () => {
+    applyRadarMove.mockResolvedValue({ move: move({ status: "applied" }) });
+    fetchRadar.mockResolvedValue(overview([move({ kind: "competitor_counter" })]));
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    const applyBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Apply")!;
+    await act(async () => applyBtn.click());
+    expect(app.toast).toHaveBeenCalledWith("Applied. You can revert it from History.", "check");
     await act(async () => root.unmount());
   });
 });
