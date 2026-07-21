@@ -42,6 +42,16 @@ describe("operating P&L", () => {
     expect(rows.map((row) => row.netOperatingProfitCents)).toEqual([1_000, -333]);
   });
 
+  it("allocates nothing when there is no revenue to weight against", () => {
+    const rows = allocateOperatingExpenses([
+      { id: "a", netRevenueCents: 0, contributionCents: 0 },
+      { id: "b", netRevenueCents: 0, contributionCents: 0 },
+    ], 5_000);
+
+    expect(rows.map((row) => row.allocatedOperatingExpensesCents)).toEqual([0, 0]);
+    expect(rows.map((row) => row.netOperatingProfitCents)).toEqual([0, 0]);
+  });
+
   it("reads the final cash change from the QuickBooks cash-flow report", () => {
     expect(parseQuickBooksCashFlow({ Rows: { Row: [
       { Summary: { ColData: [{ value: "Net cash provided by operating activities" }, { value: "125.20" }] } },

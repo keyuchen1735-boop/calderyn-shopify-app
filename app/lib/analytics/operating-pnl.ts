@@ -161,10 +161,13 @@ export function allocateOperatingExpenses<T extends ProductContributionInput>(
   const revenue = products.reduce((total, product) => total + Math.max(0, product.netRevenueCents), 0);
   let allocated = 0;
   return products.map((product, index) => {
-    const amount = index === products.length - 1
-      ? operatingExpensesCents - allocated
-      : revenue === 0
-        ? 0
+    // With no revenue to weight against, there is no basis to attribute the
+    // expense — leave every product at 0 rather than dumping the whole amount
+    // on whichever product happens to be last.
+    const amount = revenue === 0
+      ? 0
+      : index === products.length - 1
+        ? operatingExpensesCents - allocated
         : Math.round(operatingExpensesCents * Math.max(0, product.netRevenueCents) / revenue);
     allocated += amount;
     return {
