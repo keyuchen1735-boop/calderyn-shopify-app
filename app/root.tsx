@@ -11,7 +11,10 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { randomBytes } from "node:crypto";
 
-import { DashboardErrorFallback } from "~/components/dashboard/ErrorBoundary";
+import {
+  DashboardErrorFallback,
+  errorPageTitle,
+} from "~/components/dashboard/ErrorBoundary";
 
 export function loader({ request }: LoaderFunctionArgs) {
   const pathname = new URL(request.url).pathname;
@@ -73,7 +76,7 @@ export function ErrorBoundary() {
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-        <title>Something went wrong</title>
+        <title>{errorPageTitle(error)}</title>
         <Meta />
         <Links />
       </head>

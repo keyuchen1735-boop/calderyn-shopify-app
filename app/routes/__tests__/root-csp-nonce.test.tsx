@@ -16,6 +16,7 @@ vi.mock("@remix-run/react", () => ({
 
 vi.mock("~/components/dashboard/ErrorBoundary", () => ({
   DashboardErrorFallback: () => null,
+  errorPageTitle: () => "Something went wrong",
 }));
 
 describe("root hydration scripts", () => {
