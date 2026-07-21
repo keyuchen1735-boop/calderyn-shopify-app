@@ -20,6 +20,16 @@ function clientSecret(): string {
   return secret;
 }
 
+// CSRF state cookie for the connect/callback route pair (dashboard.auth.gsc,
+// dashboard.auth.gsc_.callback). Lives here rather than in the route modules
+// so both routes can import it without one route module importing another.
+export const GSC_STATE_COOKIE = "__Host-gsc_state";
+
+export function gscRedirectUri(request: Request): string {
+  const url = new URL(request.url);
+  return `${url.origin}/dashboard/auth/gsc/callback`;
+}
+
 export function buildGscAuthUrl(opts: { redirectUri: string; state: string }): string {
   const params = new URLSearchParams({
     client_id: clientId(),
