@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type
 import gsap from "gsap";
 import { CDIcon } from "../icons";
 import { canSendComposer } from "../screens/store-logic";
+import { decodeHtmlEntities } from "~/lib/designer/text";
 import type { ChatMsg } from "./chat-types";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import type { DesignerChange } from "~/lib/designer/types";
@@ -99,7 +100,9 @@ function Bubble({ msg }: { msg: ChatMsg }) {
   }
   return (
     <div className="cd-bub cd-bub-ai">
-      {msg.text}
+      {/* Replies are written amid HTML documents and pick up escaped
+          entities — decode to plain text for display. */}
+      {decodeHtmlEntities(msg.text)}
       {msg.actions && msg.actions.length > 0 && (
         <div className="cd-bub-btns">
           {msg.actions.map((a, i) => (
@@ -277,7 +280,7 @@ export default function DesignerDock({
     : lastTurnMs != null
       ? `Worked for ${formatDuration(lastTurnMs)}`
       : "Chat history";
-  const activity = busy && lastAiText ? lastAiText.text : null;
+  const activity = busy && lastAiText ? decodeHtmlEntities(lastAiText.text) : null;
 
   return (
     <div className="cd-dock" ref={dockRef}>

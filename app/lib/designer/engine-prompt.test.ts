@@ -35,4 +35,9 @@ describe("designer SYSTEM_PROMPT honesty rules", () => {
     expect(SYSTEM_PROMPT).toContain("Never fabricate facts");
     expect(SYSTEM_PROMPT).toContain("no invented review counts or star ratings");
   });
+
+  it("routes the store accent through --signal so widget chrome follows a swap (D6)", () => {
+    expect(SYSTEM_PROMPT).toContain("--signal");
+    expect(SYSTEM_PROMPT).toContain("update --signal in the same edit");
+  });
 });

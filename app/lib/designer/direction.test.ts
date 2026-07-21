@@ -58,4 +58,8 @@ describe("scratchSeedFiles", () => {
     const single = scratchSeedFiles(ART_DIRECTIONS.find((d) => d.displayFont === d.bodyFont)!, data);
     expect(single["base.css"].match(/@font-face/g)?.length).toBe(1);
   });
+
+  it("defines the --signal accent token runtime chrome reads (D6 accent sweep)", () => {
+    expect(files["base.css"]).toContain("--signal:");
+  });
 });

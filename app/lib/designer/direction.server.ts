@@ -112,7 +112,9 @@ export function scratchSeedFiles(direction: ArtDirection, data: DesignerStoreDat
   const baseCss = [
     FONT_FACE(direction.displayFont),
     ...(direction.bodyFont !== direction.displayFont ? [FONT_FACE(direction.bodyFont)] : []),
-    `:root{--font-display:"${direction.displayFont}",sans-serif;--font-body:"${direction.bodyFont}",sans-serif}`,
+    // --signal is the store's single accent; runtime chrome (coupon CTA, cart
+    // drawer) reads it, so it must exist from the first byte of base.css.
+    `:root{--font-display:"${direction.displayFont}",sans-serif;--font-body:"${direction.bodyFont}",sans-serif;--signal:#1a1a1a}`,
     "*,*::before,*::after{box-sizing:border-box}body{margin:0;font-family:var(--font-body)}img{max-width:100%;display:block}",
     ".designer-add-to-cart{padding:10px 18px;border:1px solid currentColor;background:transparent;color:inherit;font:inherit;cursor:pointer}",
   ].join("\n");
