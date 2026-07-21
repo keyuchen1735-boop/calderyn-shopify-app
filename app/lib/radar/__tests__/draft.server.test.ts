@@ -91,6 +91,23 @@ function labeledCompetitorPriceCandidate(): RadarCandidate {
   };
 }
 
+/** No pricingClaim marker at all - e.g. an older detector version, a bug, or a
+ *  future move kind that forgets to set it. Fail-closed: this must be treated
+ *  the same as "generic", never as "labeled". */
+function unlabeledCompetitorPriceCandidate(): RadarCandidate {
+  return {
+    kind: "competitor_price",
+    dedupKey: "comp-price:c3",
+    headline: "Pricing changed at Rival Gear",
+    rationale: "Rival Gear changed prices on 2 pages. Take a look and decide if your own pricing still stands up.",
+    evidence: {
+      chips: ["Rival Gear", "2 pages changed"],
+      facts: { competitorId: "c3", pages: [] },
+    },
+    payload: { applyMode: "review", deepLink: "/dashboard/products", competitorId: "c3", url: "https://rival.example/" },
+  };
+}
+
 function homeCandidate(): RadarCandidate {
   return {
     kind: "section_refresh",
@@ -199,6 +216,18 @@ describe("draftShopMoves", () => {
   describe("competitor_price polish gate (FIX 4 - never let Claude pair unlabeled prices)", () => {
     it("never sends a generic (unpaired) competitor_price candidate to Claude and keeps the deterministic copy", async () => {
       mocks.detectAll.mockReturnValue([genericCompetitorPriceCandidate()]);
+      const out = await draftShopMoves(SHOP);
+      expect(mocks.checkAiQuota).not.toHaveBeenCalled();
+      expect(mocks.createMock).not.toHaveBeenCalled();
+      expect(mocks.insertDraftMove).toHaveBeenCalledTimes(1);
+      expect(mocks.insertDraftMove.mock.calls[0][1]).toMatchObject({
+        headline: "Pricing changed at Rival Gear",
+        rationale: "Rival Gear changed prices on 2 pages. Take a look and decide if your own pricing still stands up.",
+      });
+      expect(out).toMatchObject({ drafted: 1, polished: 0 });
+    });
+    it("fails closed: a competitor_price candidate with NO pricingClaim marker is never sent to Claude", async () => {
+      mocks.detectAll.mockReturnValue([unlabeledCompetitorPriceCandidate()]);
       const out = await draftShopMoves(SHOP);
       expect(mocks.checkAiQuota).not.toHaveBeenCalled();
       expect(mocks.createMock).not.toHaveBeenCalled();

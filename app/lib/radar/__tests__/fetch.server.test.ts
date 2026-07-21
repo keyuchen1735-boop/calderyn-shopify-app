@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   FETCH_TIMEOUT_MS,
   isPathAllowed,
+  isPrivateOrReservedIp,
   isPubliclyRoutableHttps,
   loadRobots,
   MAX_RESPONSE_BYTES,
@@ -9,6 +10,12 @@ import {
   politeFetch,
   RADAR_USER_AGENT,
 } from "../fetch.server";
+
+/** Injectable resolver stub: returns the same fixed address list for every
+ *  hostname it's asked about, so tests never touch real DNS. */
+function fixedResolver(addresses: string[]) {
+  return vi.fn(async (_hostname: string) => addresses);
+}
 
 function htmlResponse(body: string, init: ResponseInit = {}): Response {
   return new Response(body, { status: 200, headers: { "content-type": "text/html" }, ...init });
@@ -66,6 +73,10 @@ describe("isPubliclyRoutableHttps", () => {
     expect(isPubliclyRoutableHttps("https://169.254.169.254/")).toBe(false);
     expect(isPubliclyRoutableHttps("https://0.0.0.0/")).toBe(false);
   });
+  it("rejects the full 0.0.0.0/8 range, not just 0.0.0.0", () => {
+    expect(isPubliclyRoutableHttps("https://0.0.0.1/")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://0.255.255.255/")).toBe(false);
+  });
   it("rejects bracketed IPv6 literals of any kind", () => {
     expect(isPubliclyRoutableHttps("https://[::1]/")).toBe(false);
     expect(isPubliclyRoutableHttps("https://[2001:db8::1]/")).toBe(false);
@@ -73,6 +84,11 @@ describe("isPubliclyRoutableHttps", () => {
   it("rejects .internal and .local suffixed hosts", () => {
     expect(isPubliclyRoutableHttps("https://svc.internal/")).toBe(false);
     expect(isPubliclyRoutableHttps("https://printer.local/")).toBe(false);
+  });
+  it("rejects trailing-dot hosts identically to their dotless form (DNS resolves them the same)", () => {
+    expect(isPubliclyRoutableHttps("https://localhost./")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://svc.internal./")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://printer.local./")).toBe(false);
   });
   it("rejects non-https protocols and invalid URLs", () => {
     expect(isPubliclyRoutableHttps("http://rival.example/")).toBe(false);
@@ -94,6 +110,105 @@ describe("politeFetch SSRF guard", () => {
     const res2 = await politeFetch("https://[::1]/", impl as unknown as typeof fetch);
     expect(res2).toMatchObject({ ok: false, reason: "blocked_host" });
     expect(impl).not.toHaveBeenCalled();
+  });
+  it("blocks trailing-dot hosts at entry, without calling fetchImpl", async () => {
+    const impl = vi.fn();
+    const res1 = await politeFetch("https://localhost./", impl as unknown as typeof fetch);
+    expect(res1).toMatchObject({ ok: false, reason: "blocked_host" });
+    const res2 = await politeFetch("https://svc.internal./", impl as unknown as typeof fetch);
+    expect(res2).toMatchObject({ ok: false, reason: "blocked_host" });
+    expect(impl).not.toHaveBeenCalled();
+  });
+});
+
+describe("politeFetch DNS-level SSRF guard (wildcard-DNS-to-private-IP + rebinding)", () => {
+  it("blocks a hostname whose resolver returns a private IPv4 address (e.g. a *.xip.io-style name)", async () => {
+    const impl = vi.fn();
+    const resolve = fixedResolver(["10.0.0.1"]);
+    const res = await politeFetch("https://looks-public.example/", impl as unknown as typeof fetch, resolve);
+    expect(res).toMatchObject({ ok: false, reason: "blocked_host" });
+    expect(impl).not.toHaveBeenCalled();
+    expect(resolve).toHaveBeenCalledWith("looks-public.example");
+  });
+  it("blocks a hostname that resolves to the cloud metadata link-local address", async () => {
+    const impl = vi.fn();
+    const resolve = fixedResolver(["169.254.169.254"]);
+    const res = await politeFetch("https://metadata.example/", impl as unknown as typeof fetch, resolve);
+    expect(res).toMatchObject({ ok: false, reason: "blocked_host" });
+    expect(impl).not.toHaveBeenCalled();
+  });
+  it("blocks a hostname that resolves to IPv6 loopback", async () => {
+    const impl = vi.fn();
+    const resolve = fixedResolver(["::1"]);
+    const res = await politeFetch("https://sneaky.example/", impl as unknown as typeof fetch, resolve);
+    expect(res).toMatchObject({ ok: false, reason: "blocked_host" });
+    expect(impl).not.toHaveBeenCalled();
+  });
+  it("blocks a hostname that resolves to an IPv4-mapped private IPv6 address", async () => {
+    const impl = vi.fn();
+    const resolve = fixedResolver(["::ffff:10.0.0.1"]);
+    const res = await politeFetch("https://mapped.example/", impl as unknown as typeof fetch, resolve);
+    expect(res).toMatchObject({ ok: false, reason: "blocked_host" });
+    expect(impl).not.toHaveBeenCalled();
+  });
+  it("proceeds to fetchImpl when the resolver returns only public addresses", async () => {
+    const impl = vi.fn(async () => new Response("<html>ok</html>", { status: 200 }));
+    const resolve = fixedResolver(["93.184.216.34"]);
+    const res = await politeFetch("https://rival.example/", impl as unknown as typeof fetch, resolve);
+    expect(res).toMatchObject({ ok: true, status: 200 });
+    expect(impl).toHaveBeenCalledTimes(1);
+  });
+  it("skips DNS validation (network-free) when a mock fetchImpl is injected with no resolver", async () => {
+    // Preserves every existing injected-fetch test across the repo: no resolver
+    // means no DNS is touched, so tests that only mock fetchImpl keep working.
+    const impl = vi.fn(async () => new Response("<html>ok</html>", { status: 200 }));
+    const res = await politeFetch("https://rival.example/", impl as unknown as typeof fetch);
+    expect(res).toMatchObject({ ok: true, status: 200 });
+    expect(impl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("isPrivateOrReservedIp", () => {
+  it.each([
+    ["0.0.0.0", true],
+    ["0.0.0.1", true],
+    ["0.255.255.255", true],
+    ["10.0.0.1", true],
+    ["100.64.0.1", true],
+    ["100.127.255.255", true],
+    ["100.63.255.255", false],
+    ["100.128.0.0", false],
+    ["127.0.0.1", true],
+    ["169.254.169.254", true],
+    ["172.16.0.1", true],
+    ["172.31.255.255", true],
+    ["172.32.0.1", false],
+    ["192.0.2.1", true],
+    ["192.168.1.1", true],
+    ["198.51.100.1", true],
+    ["203.0.113.1", true],
+    ["240.0.0.1", true],
+    ["255.255.255.255", true],
+    ["93.184.216.34", false],
+    ["8.8.8.8", false],
+  ])("isPrivateOrReservedIp(%s) === %s", (ip, expected) => {
+    expect(isPrivateOrReservedIp(ip)).toBe(expected);
+  });
+
+  it.each([
+    ["::1", true],
+    ["::", true],
+    ["fc00::1", true],
+    ["fd12:3456::1", true],
+    ["fe80::1", true],
+    ["fe80::abcd:1", true],
+    ["::ffff:10.0.0.1", true],
+    ["::ffff:169.254.169.254", true],
+    ["::ffff:93.184.216.34", false],
+    ["2001:db8::1", false],
+    ["2606:4700:4700::1111", false],
+  ])("isPrivateOrReservedIp(%s) === %s (IPv6)", (ip, expected) => {
+    expect(isPrivateOrReservedIp(ip)).toBe(expected);
   });
 });
 
