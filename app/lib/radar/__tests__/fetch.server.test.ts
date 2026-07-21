@@ -207,6 +207,16 @@ describe("isPrivateOrReservedIp", () => {
     ["::ffff:93.184.216.34", false],
     ["2001:db8::1", false],
     ["2606:4700:4700::1111", false],
+    // Encoding-agnostic embedded-IPv4 extraction: pure-hex mapped form and the
+    // deprecated IPv4-compatible form must resolve to the same private verdict
+    // as their dotted-decimal equivalents, so a hostile AAAA record can't smuggle
+    // a private target through a rendering the string patterns miss.
+    ["::ffff:a00:1", true], // == ::ffff:10.0.0.1 in hex hextets
+    ["::ffff:a9fe:a9fe", true], // == ::ffff:169.254.169.254
+    ["::10.0.0.1", true], // deprecated IPv4-compatible (dotted)
+    ["::a00:1", true], // deprecated IPv4-compatible (hex)
+    ["::ffff:5db8:d822", false], // == ::ffff:93.184.216.34 (public)
+    ["::1:2:3:4:5:6:7", false], // not an embedded-v4 prefix, ordinary global
   ])("isPrivateOrReservedIp(%s) === %s (IPv6)", (ip, expected) => {
     expect(isPrivateOrReservedIp(ip)).toBe(expected);
   });

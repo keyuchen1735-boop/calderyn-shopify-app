@@ -80,10 +80,56 @@ function isPrivateIPv4(hostname: string): boolean {
   return parsed !== null && isPrivateOrReservedIPv4Parts(parsed);
 }
 
-/** ::ffff:a.b.c.d (optionally zero-padded, e.g. "0:0:0:0:0:ffff:a.b.c.d") -
- *  extracts the embedded IPv4 address so it can be re-checked against the
- *  same IPv4 ranges. */
-const IPV4_MAPPED_RE = /(?:^|:)ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
+/** Expand an IPv6 literal to its 8 16-bit hextets, handling a single "::"
+ *  run and an optional trailing dotted-IPv4 group (e.g. "::ffff:10.0.0.1").
+ *  Returns null for anything that isn't a well-formed IPv6 address. This lets
+ *  the embedded-IPv4 check below work on ANY rendering (hex hextets or dotted,
+ *  mapped ::ffff:0:0/96 or the deprecated IPv4-compatible ::/96 form) rather
+ *  than pattern-matching one string shape a hostile AAAA record could dodge. */
+function expandIPv6(addr: string): number[] | null {
+  if (!addr.includes(":")) return null;
+  const halves = addr.split("::");
+  if (halves.length > 2) return null;
+  const toHextets = (part: string): number[] | null => {
+    if (part === "") return [];
+    const groups = part.split(":");
+    const out: number[] = [];
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      if (g.includes(".")) {
+        // Only valid as the final group: a dotted IPv4 becomes two hextets.
+        if (i !== groups.length - 1) return null;
+        const v4 = parseIPv4(g);
+        if (!v4) return null;
+        out.push((v4[0] << 8) | v4[1], (v4[2] << 8) | v4[3]);
+        continue;
+      }
+      if (!/^[0-9a-f]{1,4}$/.test(g)) return null;
+      out.push(parseInt(g, 16));
+    }
+    return out;
+  };
+  const head = toHextets(halves[0]);
+  const tail = halves.length === 2 ? toHextets(halves[1]) : [];
+  if (head === null || tail === null) return null;
+  if (halves.length === 2) {
+    const gap = 8 - head.length - tail.length;
+    if (gap < 1) return null; // "::" must stand for at least one zero hextet
+    return [...head, ...Array<number>(gap).fill(0), ...tail];
+  }
+  return head.length === 8 ? head : null;
+}
+
+/** The embedded IPv4 of an IPv4-mapped (::ffff:0:0/96) or deprecated
+ *  IPv4-compatible (::/96) IPv6 address, or null when it is neither. */
+function embeddedIPv4(addr: string): [number, number, number, number] | null {
+  const h = expandIPv6(addr);
+  if (!h) return null;
+  const highZero = h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0;
+  if (!highZero) return null;
+  if (h[5] !== 0 && h[5] !== 0xffff) return null;
+  return [(h[6] >> 8) & 0xff, h[6] & 0xff, (h[7] >> 8) & 0xff, h[7] & 0xff];
+}
 
 /** IPv6 literal checks: ::1 (loopback), :: (unspecified), fc00::/7 (unique
  *  local), fe80::/10 (link-local). All other IPv6 addresses (including the
@@ -107,11 +153,8 @@ export function isPrivateOrReservedIp(ip: string): boolean {
   const addr = ip.trim().toLowerCase();
   const v4 = parseIPv4(addr);
   if (v4) return isPrivateOrReservedIPv4Parts(v4);
-  const mapped = addr.match(IPV4_MAPPED_RE);
-  if (mapped) {
-    const embedded = parseIPv4(mapped[1]);
-    if (embedded) return isPrivateOrReservedIPv4Parts(embedded);
-  }
+  const embedded = embeddedIPv4(addr);
+  if (embedded) return isPrivateOrReservedIPv4Parts(embedded);
   return isPrivateOrReservedIPv6(addr);
 }
 
