@@ -23,6 +23,40 @@ export async function loadDesignerAssets(shopId: string): Promise<Record<string,
   return map;
 }
 
+/** Adopt an EXISTING image (a product photo, a ready store asset, the store
+ *  logo) as a named designer asset — zero generation quota (spec D4's
+ *  "reuse before generate"). Persists an owned copy and records the
+ *  designer_assets row. Fail-soft: null means the caller moves on to the
+ *  next fallback in its chain. */
+export async function adoptDesignerAsset(input: {
+  shopId: string;
+  key: string;
+  url: string;
+  signal?: AbortSignal;
+}): Promise<string | null> {
+  try {
+    const persisted = await persistExternalImage(input.shopId, input.url, "designer", "mirrored", { signal: input.signal });
+    if (!persisted.url || persisted.url.startsWith("data:")) return null;
+    const { error } = await getSupabase()
+      .from("designer_assets")
+      .upsert(
+        {
+          shop_id: input.shopId,
+          key: input.key,
+          url: persisted.url,
+          prompt: "adopted from the store's existing imagery",
+          created_at: new Date().toISOString(),
+        },
+        { onConflict: "shop_id,key" },
+      );
+    if (error) throw error;
+    return persisted.url;
+  } catch (err) {
+    console.error("[designer/imagery] asset adoption failed (continuing without)", err);
+    return null;
+  }
+}
+
 /** Generate one named asset (e.g. "hero") and persist it. Returns the owned
  *  https URL, or null when generation is disabled, over quota, or failed —
  *  with quotaBlocked flagged so callers can tell the merchant honestly why

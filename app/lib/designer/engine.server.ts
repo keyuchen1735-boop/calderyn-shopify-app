@@ -13,7 +13,7 @@ import type { StudioDesignModel } from "../storebuilder/studio-types";
 import { convertTemplateToDocuments, DESIGNER_ROUTES } from "./convert.server";
 import { CRAFT_RULES, EDIT_FEEDBACK_RULES, REVIEW_CRAFT_CHECKS } from "./doctrine";
 import { artDirectionFor, DESIGNER_FONT_IDS, scratchSeedFiles, type ArtDirection } from "./direction.server";
-import { generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
+import { adoptDesignerAsset, generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
 import { applyAssetOverrides, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
 import { claimsRepairInstruction, findUnhonorableClaims } from "./claims";
 import { findImageRegistryViolations, imageRepairInstruction } from "./image-registry.server";
@@ -483,7 +483,18 @@ export interface DesignerBuildEvent {
   reply: string;
 }
 
-function firstBuildInstruction(input: {
+/** Picks the best imagery the shop ALREADY has for a zero-quota hero: the
+ *  first product photo (merchant media, or a ready generated asset merged by
+ *  applyAssetOverrides — never failed rows, whose urls are empty), else the
+ *  store logo. Null means the shop genuinely has no usable imagery. */
+export function pickExistingHeroSource(data: DesignerStoreData): string | null {
+  const productImage = data.products.find((product) => product.imageUrl)?.imageUrl ?? null;
+  return productImage || data.logoUrl || null;
+}
+
+// Exported for prompt-rule tests: the hero branch is contract (spec D4's
+// mandatory hero) — it must never be empty, whatever imagery the shop has.
+export function firstBuildInstruction(input: {
   brief: string;
   route: DesignerRoute;
   mode: DesignerBuildMode;
@@ -491,6 +502,8 @@ function firstBuildInstruction(input: {
   direction: ArtDirection;
   donePages: DesignerRoute[];
   heroAssetUrl?: string | null;
+  /** Whether any catalog product carries a usable photo ({{product.image}}). */
+  hasProductImagery?: boolean;
 }): string {
   const base = input.mode === "template"
     ? `First build, page "${input.route}": this store was just attached to the "${input.templateId}" template. Rework this page so it belongs to THIS merchant: their copy, their accent, their category names. Keep template structure only where it genuinely serves the page — restructure anything that hurts scanning (stacked one-per-row product lists become grids, oversized imagery gets contained), and fully style anything the template left plain.`
@@ -499,9 +512,14 @@ function firstBuildInstruction(input: {
   const continuity = input.donePages.length > 0
     ? `Pages already designed this build: ${input.donePages.join(", ")}. base.css already carries the design system from those pages — reuse it, do not fork new token names for the same concepts.`
     : "This is the first page of the build; establish the design system tokens in base.css here.";
+  // Mandatory hero (spec D4): this branch must NEVER be empty — every first
+  // build commits to a real hero (asset, product photography, or a deliberate
+  // typographic treatment), never gray placeholder art.
   const hero = input.heroAssetUrl
-    ? `A custom photograph was generated for this store: use the placeholder {{asset.hero}} as an image src (hero media, a section background image, or a large brand moment). It is a real photo matching the brief and art direction — prefer it over template art for the hero.`
-    : "";
+    ? `A real photograph is ready for this store: use the placeholder {{asset.hero}} as an image src (hero media, a section background image, or a large brand moment). It matches this store's brief and art direction — prefer it over template art for the hero.`
+    : input.hasProductImagery
+      ? `This store has real product photography: build the hero around {{product.image}} as a committed full-bleed or composed brand moment — never a gray placeholder, never leftover template art.`
+      : `No imagery exists for this store yet: author a deliberate typographic/color hero — committed display type, the store's palette, strong composition. No image element, no gray placeholder art.`;
   return `${input.brief}\n\n(${base}\n${direction}\n${continuity}\n${hero}\nEvery section must end launch-ready: no default browser styling, no placeholder copy, price and availability visible wherever a product shows.)`;
 }
 
@@ -565,10 +583,21 @@ export async function designerFirstBuild(input: {
   // merchant's intent in history rather than an empty conversation.
   await appendHistory(input.shopId, "user", input.message);
 
-  // One generated hero photograph per build (cheap image tier, quota-metered,
-  // fail-soft). Generated before the pages so every page can reference it;
-  // a resume reuses the hero the interrupted build already paid for.
+  // Mandatory hero (spec D4): one hero per build, resolved through a fallback
+  // chain that always terminates in a usable instruction. (1) Reuse before
+  // generate: imagery the shop already has (first product photo, else logo)
+  // is adopted as the hero at ZERO generation quota. (2) Else one generated
+  // hero photograph (cheap image tier, quota-metered, fail-soft). (3) Else
+  // the build instruction demands a deliberate typographic hero — never gray
+  // placeholder art. A resume reuses the hero the interrupted build already
+  // has; the hero lands before the pages so every page can reference it.
   let heroAssetUrl = data.assets?.hero ?? null;
+  if (!heroAssetUrl) {
+    const existing = pickExistingHeroSource(data);
+    if (existing) {
+      heroAssetUrl = await adoptDesignerAsset({ shopId: input.shopId, key: "hero", url: existing, signal: input.signal });
+    }
+  }
   if (!heroAssetUrl) {
     const hero = await generateDesignerAsset({
       shopId: input.shopId,
@@ -580,6 +609,7 @@ export async function designerFirstBuild(input: {
     photosQuotaBlocked = photosQuotaBlocked || hero.quotaBlocked;
   }
   if (heroAssetUrl) data.assets = { ...(data.assets ?? {}), hero: heroAssetUrl };
+  const hasProductImagery = data.products.some((product) => product.imageUrl);
 
   const donePages: DesignerRoute[] = resuming
     ? DESIGNER_ROUTES.filter((route) => !existing.unbuilt.includes(route))
@@ -599,7 +629,7 @@ export async function designerFirstBuild(input: {
       files,
       templateId,
       route,
-      userMessage: firstBuildInstruction({ brief: input.message, route, mode, templateId, direction, donePages, heroAssetUrl }),
+      userMessage: firstBuildInstruction({ brief: input.message, route, mode, templateId, direction, donePages, heroAssetUrl, hasProductImagery }),
       history: [],
       data,
       model: input.model,
