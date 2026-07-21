@@ -25,6 +25,7 @@ import { fetchStore } from "./store-client";
 import { fetchDiscover } from "./discover-client";
 import { fetchSearchOverview } from "./search-client";
 import { fetchAllPendingTransfers } from "./transfers-client";
+import { fetchRadar, fetchRadarHome } from "./radar-client";
 import { cachedDraftAuditIds, fetchPoScreen } from "./po-client";
 import { fetchCommerceAnalytics } from "./commerce-analytics-client";
 import { fetchOperatingPnl } from "./operating-pnl-client";
@@ -43,6 +44,7 @@ import {
 const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   // Home renders the setup-journey card on first paint, so it warms first.
   [SCREEN_CACHE_KEYS.setupProgress, () => apiGet("/dashboard/api/setup-progress")],
+  [SCREEN_CACHE_KEYS.radarHome, fetchRadarHome],
   [SCREEN_CACHE_KEYS.orders, fetchOrdersPage],
   // Unified orders list (Phase 2 Task 6), default view only — the screen's own mount fetch reads
   // this exact key/params, so the seed always matches what it would have fetched itself.
@@ -56,6 +58,7 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.storeStudio, fetchStore],
   [SCREEN_CACHE_KEYS.discover, fetchDiscover],
   [SCREEN_CACHE_KEYS.search, fetchSearchOverview],
+  [SCREEN_CACHE_KEYS.radar, fetchRadar],
   [SCREEN_CACHE_KEYS.agentic, () => apiGet("/dashboard/api/agentic")],
   [SCREEN_CACHE_KEYS.inventoryList, () => fetchInventoryList({})],
   [SCREEN_CACHE_KEYS.collections, fetchCollections],

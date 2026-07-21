@@ -98,6 +98,7 @@ export const SCREEN_CACHE_KEYS = {
   learnedRules: "settings-learned-rules",
   setupProgress: "setup-progress",
   radarHome: "radar-home",
+  radar: "radar",
 } as const;
 
 export function catalogCacheKey(search: string, status: string | undefined): string {

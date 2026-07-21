@@ -18,6 +18,8 @@ function seg(nav: NavState): string {
       return "";
     case "autopilot":
       return "autopilot";
+    case "radar":
+      return "radar";
     case "campaigns":
       return param ? `campaigns/${encodeURIComponent(param)}` : "campaigns";
     case "analytics":
@@ -110,6 +112,8 @@ export function parsePath(pathname: string): NavState | null {
   switch (a) {
     case "autopilot":
       return b ? null : { screen: "autopilot", param: null, sub: null };
+    case "radar":
+      return b ? null : { screen: "radar", param: null, sub: null };
     case "campaigns":
       return { screen: "campaigns", param: b ?? null, sub: null };
     case "analytics":
