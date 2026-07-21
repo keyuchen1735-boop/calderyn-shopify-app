@@ -13,10 +13,11 @@ import { action, loader } from "../dashboard.store.preview";
 // The route imports the storefront stylesheet as a URL and several server-only
 // data sources. Stub the URL import and the DB/session reads so the loader's
 // real doc-selection + render wiring runs in isolation.
-const { sessionMock, getCatalogMock, getPreviewCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock, commitPreviewCommerceSessionMock } = vi.hoisted(() => ({
+const { sessionMock, getCatalogMock, getPreviewCatalogMock, getReviewCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock, commitPreviewCommerceSessionMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   getCatalogMock: vi.fn(),
   getPreviewCatalogMock: vi.fn(),
+  getReviewCatalogMock: vi.fn(),
   getSettingsMock: vi.fn(),
   loadDraftMock: vi.fn(),
   getSupabaseMock: vi.fn(),
@@ -29,6 +30,7 @@ const { sessionMock, getCatalogMock, getPreviewCatalogMock, getSettingsMock, loa
 vi.mock("~/styles/storefront.css?url", () => ({ default: "/assets/storefront.css" }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sessionMock }));
 vi.mock("~/lib/storefront/catalog.server", () => ({ getCatalog: getCatalogMock, getPreviewCatalog: getPreviewCatalogMock }));
+vi.mock("~/lib/storefront-recipes/review-catalog.server", () => ({ getStorefrontRecipeReviewCatalog: getReviewCatalogMock }));
 vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: getSettingsMock }));
 vi.mock("~/lib/storebuilder/page-document.server", () => ({ loadDraftDoc: loadDraftMock }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: getSupabaseMock }));
@@ -68,10 +70,11 @@ const catalog = {
 };
 
 beforeEach(() => {
-  for (const m of [sessionMock, getCatalogMock, getPreviewCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock, commitPreviewCommerceSessionMock]) m.mockReset();
+  for (const m of [sessionMock, getCatalogMock, getPreviewCatalogMock, getReviewCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock, commitPreviewCommerceSessionMock]) m.mockReset();
   sessionMock.mockResolvedValue({ shopId: SHOP });
   getCatalogMock.mockReturnValue(catalog);
   getPreviewCatalogMock.mockReturnValue(catalog);
+  getReviewCatalogMock.mockReturnValue(catalog);
   getSettingsMock.mockResolvedValue(settings);
   readPreviewBundleVersionMock.mockResolvedValue(null);
   readPreviewCommerceSessionMock.mockResolvedValue({
@@ -108,6 +111,7 @@ describe("dashboard.store.preview loader", () => {
       });
       expect(getRecipeMock).toHaveBeenCalledWith("commons-index");
       expect(getPreviewCatalogMock).toHaveBeenCalled();
+      expect(getReviewCatalogMock).not.toHaveBeenCalled();
       expect(readPreviewBundleVersionMock).not.toHaveBeenCalled();
       expect(loadDraftMock).not.toHaveBeenCalled();
     } finally {
@@ -124,7 +128,9 @@ describe("dashboard.store.preview loader", () => {
     delete process.env.STOREFRONT_BUNDLE_READ;
     process.env.VERCEL_ENV = "preview";
     sessionMock.mockRejectedValue(new Error("dashboard session should not be required"));
-    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const reviewSource = structuredClone(VALID_BUNDLE_SOURCE);
+    reviewSource.shell.html = `<header data-cd-text="store.name"></header><footer data-cd-policy-links></footer>`;
+    const bundle = compileBundle(reviewSource).bundle;
     bundle.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
     getRecipeMock.mockReturnValue({ bundle: { ...bundle, source: { kind: "recipe", templateId: "volt", templateVersion: 1 } } });
     try {
@@ -132,7 +138,14 @@ describe("dashboard.store.preview loader", () => {
       expect(result).toMatchObject({ runtime: 1, bundleId: "preview:volt", routeId: "home" });
       expect(sessionMock).not.toHaveBeenCalled();
       expect(readPreviewCommerceSessionMock).toHaveBeenCalledWith(expect.any(Request), "demo-shop");
-      expect(getPreviewCatalogMock).toHaveBeenCalled();
+      expect(getReviewCatalogMock).toHaveBeenCalledWith("volt");
+      expect(getPreviewCatalogMock).not.toHaveBeenCalled();
+      expect(result.data.policyLinks).toEqual([
+        { id: "privacy", title: "Privacy", href: "/storefront/policies/privacy" },
+        { id: "terms", title: "Terms", href: "/storefront/policies/terms" },
+        { id: "refund", title: "Returns", href: "/storefront/policies/refund" },
+        { id: "shipping", title: "Shipping", href: "/storefront/policies/shipping" },
+      ]);
       expect(result.data.storefrontAssetUrls.hero).toBe(
         `https://preview.example.com/storefront-recipes/volt/${"a".repeat(64)}.webp`,
       );
@@ -166,6 +179,44 @@ describe("dashboard.store.preview loader", () => {
     } finally {
       if (previousBundleRead === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
       else process.env.STOREFRONT_BUNDLE_READ = previousBundleRead;
+      if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
+      else process.env.VERCEL_ENV = previousVercelEnv;
+    }
+  });
+
+  it("resolves allowlisted review purchases against the same niche catalog used by the loader", async () => {
+    const previousVercelEnv = process.env.VERCEL_ENV;
+    process.env.VERCEL_ENV = "preview";
+    const add = vi.fn();
+    createPreviewCommerceAdapterMock.mockReturnValue({
+      add,
+      snapshot: () => ({ shopId: "demo-shop", lines: [] }),
+      cart: () => ({ id: "preview:demo-shop", count: 1, lines: [], subtotal: { cents: 2400, currency: "USD" }, discounts: { cents: 0, currency: "USD" }, total: { cents: 2400, currency: "USD" } }),
+    });
+    getReviewCatalogMock.mockReturnValue({
+      ...catalog,
+      getVariantById: vi.fn(async () => ({
+        product: { title: "Meridian Headphones" },
+        variant: { id: "review-variant-meridian-headphones", title: "Standard", available: true, priceCents: 2400, currency: "USD" },
+      })),
+    });
+    try {
+      const form = new FormData();
+      form.set("intent", "add");
+      form.set("variantId", "review-variant-meridian-headphones");
+      const response = await action({
+        request: new Request("https://preview.example.com/dashboard/store/preview?template=volt", {
+          method: "POST",
+          headers: { Origin: "https://preview.example.com" },
+          body: form,
+        }),
+      } as ActionFunctionArgs);
+
+      expect(response.status).toBe(200);
+      expect(getReviewCatalogMock).toHaveBeenCalledWith("volt");
+      expect(getCatalogMock).not.toHaveBeenCalled();
+      expect(add).toHaveBeenCalledWith(expect.objectContaining({ title: "Meridian Headphones - Standard" }));
+    } finally {
       if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
       else process.env.VERCEL_ENV = previousVercelEnv;
     }

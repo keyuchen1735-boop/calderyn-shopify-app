@@ -289,7 +289,10 @@ function targetHref(target: RouteTarget, context: RenderContext): string {
         return typeof value === "string" || typeof value === "number" ? [[key, String(value)]] : [];
       }),
     );
-    if (target.routeId === "account" || target.routeId === "policy") return "#";
+    if (target.routeId === "account") return PATHS.account;
+    if (target.routeId === "policy") {
+      return params.policyId ? `${PATHS.policy}/${encodeURIComponent(params.policyId)}` : PATHS.policy;
+    }
     const previewRoute = new URLSearchParams({ route: target.routeId });
     if (context.previewTemplateId) previewRoute.set("template", context.previewTemplateId);
     if (params.handle) previewRoute.set("handle", params.handle);
@@ -380,7 +383,7 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
     children = context.data.policyLinks.flatMap((policy, index) => {
       const title = policy.title.trim();
       if (!policyIds.has(policy.id) || title.length === 0 || title.length > 120) return [];
-      const href = context.mode === "preview" ? "#" : `${PATHS.policy}/${policy.id}`;
+      const href = `${PATHS.policy}/${policy.id}`;
       return [createElement("a", { key: `${key}-policy-${policy.id}-${index}`, href }, title)];
     });
   } else {

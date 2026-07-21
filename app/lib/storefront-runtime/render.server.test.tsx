@@ -623,7 +623,21 @@ describe("compiled-node server renderer", () => {
     expect(publicHtml).not.toContain("attacker.example");
     expect(publicHtml).not.toContain("Admin");
     expect(publicHtml).not.toContain("Generated content is replaced");
-    expect(previewHtml).toContain('<a href="#">Privacy policy</a>');
+    expect(previewHtml).toContain('<a href="/storefront/policies/privacy">Privacy policy</a>');
+  });
+
+  it("keeps account navigation useful in preview mode", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.shell.html = `<a data-cd-route="account">Account</a>`;
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle: compileBundle(source).bundle,
+      routeId: "home",
+      data,
+      nonce: "account-preview-nonce",
+      mode: "preview",
+    }));
+
+    expect(html).toContain('href="/storefront/account"');
   });
 
   it("composes deterministic collision-resistant instance IDs across nested repeats", () => {

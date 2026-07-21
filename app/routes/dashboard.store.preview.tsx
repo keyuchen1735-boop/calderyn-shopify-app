@@ -8,6 +8,7 @@ import storefrontCss from "~/styles/storefront.css?url";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getCatalog, getPreviewCatalog } from "~/lib/storefront/catalog.server";
+import type { StorefrontCatalog } from "~/lib/storefront/catalog";
 import { isStorefrontBundleReadEnabled } from "~/lib/storefront-runtime/csp.server";
 import {
   resolveRuntime1VersionRoute,
@@ -25,6 +26,7 @@ import {
 import type { PublicRouteContext } from "~/lib/storefront-runtime/public-data.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 import { getStorefrontRecipe } from "~/lib/storefront-recipes";
+import { getStorefrontRecipeReviewCatalog } from "~/lib/storefront-recipes/review-catalog.server";
 import {
   isStorefrontRecipeReviewEnabled,
   isStorefrontRecipeReviewTemplateId,
@@ -35,10 +37,16 @@ import { DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
 
-async function previewRouteContext(request: Request, shopId: string): Promise<PublicRouteContext> {
+const REVIEW_POLICY_LINKS = [
+  { id: "privacy", title: "Privacy", href: "/storefront/policies/privacy" },
+  { id: "terms", title: "Terms", href: "/storefront/policies/terms" },
+  { id: "refund", title: "Returns", href: "/storefront/policies/refund" },
+  { id: "shipping", title: "Shipping", href: "/storefront/policies/shipping" },
+] as const;
+
+async function previewRouteContext(request: Request, shopId: string, catalog: StorefrontCatalog): Promise<PublicRouteContext> {
   const url = new URL(request.url);
   const route = url.searchParams.get("route") ?? "home";
-  const catalog = getCatalog();
   if (route === "product") {
     const requested = url.searchParams.get("handle");
     const handle = requested ?? (await catalog.listProducts(shopId, { limit: 1 }))[0]?.handle ?? "";
@@ -92,6 +100,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? templateId
       : null;
     if (registered) {
+      const catalog = reviewTemplateId
+        ? getStorefrontRecipeReviewCatalog(reviewTemplateId)
+        : getPreviewCatalog();
       const recipe = getStorefrontRecipe(registered);
       const version: StorefrontVersionRecord = {
         id: `preview:${registered}`,
@@ -105,13 +116,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
         artifact: { sourceKind: "recipe", bundle: recipe.bundle },
         createdAt: new Date(0).toISOString(),
       };
-      const route = await previewRouteContext(request, shopId);
+      const route = await previewRouteContext(request, shopId, catalog);
       const commerce = await readPreviewCommerceSession(request, shopId);
       const runtime1 = await resolveRuntime1VersionRoute({
         shopId,
         route,
         version,
-        dataDependencies: { catalog: getPreviewCatalog(), cartLoader: async () => commerce.cart },
+        dataDependencies: {
+          catalog,
+          cartLoader: async () => commerce.cart,
+          ...(reviewTemplateId ? { policyLoader: async () => [...REVIEW_POLICY_LINKS] } : {}),
+        },
       });
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");
@@ -121,13 +136,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
     const version = await readPreviewBundleVersion(shopId);
     if (version) {
-      const route = await previewRouteContext(request, shopId);
+      const catalog = getPreviewCatalog();
+      const route = await previewRouteContext(request, shopId, catalog);
       const commerce = await readPreviewCommerceSession(request, shopId);
       const runtime1 = await resolveRuntime1VersionRoute({
         shopId,
         route,
         version,
-        dataDependencies: { catalog: getPreviewCatalog(), cartLoader: async () => commerce.cart },
+        dataDependencies: { catalog, cartLoader: async () => commerce.cart },
       });
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");
@@ -151,6 +167,9 @@ export async function action({ request }: ActionFunctionArgs) {
     requireSameOrigin(request);
   }
   const shopId = reviewTemplateId ? DEMO_SHOP_ID : (await requireDashboardSession(request)).shopId;
+  const commerceCatalog = (): StorefrontCatalog => reviewTemplateId
+    ? getStorefrontRecipeReviewCatalog(reviewTemplateId)
+    : getCatalog();
   const hasEphemeralRecipe = isStoreTemplateId(selectedTemplateId) &&
     STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === selectedTemplateId);
   if ((!reviewTemplateId && !isStorefrontBundleReadEnabled()) || (!hasEphemeralRecipe && !(await readPreviewBundleVersion(shopId)))) {
@@ -178,7 +197,7 @@ export async function action({ request }: ActionFunctionArgs) {
       return Object.keys(candidate).some((key) => key !== "variantId" && key !== "quantity") ||
         typeof candidate.variantId !== "string" || !candidate.variantId || candidate.variantId.length > 128 || candidate.quantity !== 1;
     })) throw new Response("Invalid preview bundle", { status: 400 });
-    const catalog = getCatalog();
+    const catalog = commerceCatalog();
     const products = catalog.getVariantById ? null : await catalog.listProducts(shopId);
     const resolvedLines = await Promise.all((lines as Array<{ variantId: string; quantity: 1 }>).map(async (line) => {
       const resolved = catalog.getVariantById
@@ -203,7 +222,7 @@ export async function action({ request }: ActionFunctionArgs) {
     if (typeof variantId !== "string" || !Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
       throw new Response("Invalid preview cart line", { status: 400 });
     }
-    const catalog = getCatalog();
+    const catalog = commerceCatalog();
     const resolved = catalog.getVariantById
       ? await catalog.getVariantById(shopId, variantId)
       : (await catalog.listProducts(shopId)).flatMap((product) => product.variants.map((variant) => ({ product, variant })))
