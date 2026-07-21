@@ -61,6 +61,24 @@ describe("auth.quickbooks loader", () => {
     await expect(loader(req("code=abc&state=bad&realmId=9"))).rejects.toMatchObject({ status: 400 });
   });
 
+  // A merchant who lingers on Intuit's screens past the nonce TTL should get a
+  // dashboard toast + retry, not a bare 400 page. The packed (non-secret)
+  // return context still parses even though the nonce is dead.
+  it("redirects an expired dashboard-started connect back with an error notice", async () => {
+    consumeOAuthState.mockResolvedValue(null);
+    process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
+    const { packOAuthState } = await vi.importActual<typeof OAuthStateModule>(
+      "~/lib/meta/oauth-state.server",
+    );
+    const state = packOAuthState("deadnonce", { dashboard: true, returnTo: "/dashboard/settings" });
+    const res = await loader(req(`code=abc&state=${state}&realmId=9`));
+    expect(res.status).toBe(302);
+    const location = res.headers.get("Location")!;
+    expect(location).toContain("https://calderyncompany.com/dashboard/settings");
+    expect(location).toContain("quickbooks=error");
+    delete process.env.DASHBOARD_PUBLIC_URL;
+  });
+
   it("stores the encrypted refresh token + realmId and returns to onboarding mid-setup", async () => {
     consumeOAuthState.mockResolvedValue("shop-1");
     exchangeCodeForToken.mockResolvedValue({

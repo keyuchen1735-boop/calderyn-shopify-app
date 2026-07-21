@@ -33,7 +33,35 @@ export type OAuthReturnContext = {
   popup?: boolean;
   dashboard?: boolean;
   returnTo?: string | null;
+  origin?: string | null;
 };
+
+/**
+ * Accept only an allowlisted dashboard origin (the public dashboard URL or the
+ * app host itself). Sessions are __Host- cookies locked to the exact host the
+ * merchant signed in on, so the post-OAuth redirect must return to THAT origin —
+ * landing on the other one bounces through login and drops the one-shot
+ * ?<provider>=connected notice. The value is browser-supplied, so it is only
+ * ever trusted after matching this env-derived allowlist.
+ */
+export function safeDashboardOAuthOrigin(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+  const allowed = [process.env.DASHBOARD_PUBLIC_URL, process.env.SHOPIFY_APP_URL]
+    .flatMap((base) => {
+      if (!base) return [];
+      try {
+        return [new URL(base).origin];
+      } catch {
+        return [];
+      }
+    });
+  try {
+    const origin = new URL(value).origin;
+    return allowed.includes(origin) ? origin : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Accept only a same-origin dashboard pathname supplied by the browser. */
 export function safeDashboardOAuthReturnTo(value: unknown): string | null {
@@ -59,7 +87,8 @@ export function safeDashboardOAuthReturnTo(value: unknown): string | null {
  */
 export function packOAuthState(nonce: string, ctx?: OAuthReturnContext): string {
   const returnTo = ctx?.dashboard ? safeDashboardOAuthReturnTo(ctx.returnTo) : null;
-  if (!ctx?.host && !ctx?.shop && !ctx?.popup && !ctx?.dashboard && !returnTo) return nonce;
+  const origin = ctx?.dashboard ? safeDashboardOAuthOrigin(ctx.origin) : null;
+  if (!ctx?.host && !ctx?.shop && !ctx?.popup && !ctx?.dashboard && !returnTo && !origin) return nonce;
   const payload = {
     n: nonce,
     h: ctx?.host ?? null,
@@ -67,6 +96,7 @@ export function packOAuthState(nonce: string, ctx?: OAuthReturnContext): string 
     p: ctx?.popup ? 1 : 0,
     d: ctx?.dashboard ? 1 : 0,
     r: returnTo,
+    o: origin,
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
@@ -84,6 +114,7 @@ export function parseOAuthState(state: string): {
   popup: boolean;
   dashboard: boolean;
   returnTo?: string | null;
+  origin?: string | null;
 } {
   try {
     const decoded = Buffer.from(state, "base64url").toString("utf8");
@@ -95,9 +126,13 @@ export function parseOAuthState(state: string): {
         p?: number;
         d?: number;
         r?: string | null;
+        o?: string | null;
       };
       if (o && typeof o.n === "string") {
         const returnTo = safeDashboardOAuthReturnTo(o.r);
+        // Re-validate on the way out too: the state travels through the
+        // provider and back, so the allowlist runs at use time, not just mint.
+        const origin = safeDashboardOAuthOrigin(o.o);
         return {
           nonce: o.n,
           host: o.h ?? null,
@@ -105,6 +140,7 @@ export function parseOAuthState(state: string): {
           popup: o.p === 1,
           dashboard: o.d === 1,
           ...(returnTo ? { returnTo } : {}),
+          ...(origin ? { origin } : {}),
         };
       }
     }
@@ -144,19 +180,31 @@ export function popupResultUrl(args: {
 export function embeddedReturnUrl(
   path: string,
   query: Record<string, string>,
-  ctx: { host: string | null; shop: string | null; dashboard?: boolean; returnTo?: string | null },
+  ctx: {
+    host: string | null;
+    shop: string | null;
+    dashboard?: boolean;
+    returnTo?: string | null;
+    origin?: string | null;
+  },
 ): string {
   const params = new URLSearchParams(query);
   // Dashboard-native connect: land back on the dashboard SPA with the same
   // one-shot ?<provider>=connected|error params the embedded Settings reads
   // (connectionNotice). `path` is an /app/* deep link with no meaning outside
   // the Shopify admin, so it is deliberately dropped here. The URL must be
-  // ABSOLUTE on the public dashboard origin: the __Host- session cookie is
-  // host-only, and this callback runs on SHOPIFY_APP_URL — a relative
-  // redirect would strand the merchant on a host with no session (same base
-  // convention as dashboard.login / dashboard.auth.google.callback).
+  // ABSOLUTE on the origin the merchant's session lives on: the __Host-
+  // session cookie is host-only, and this callback runs on SHOPIFY_APP_URL —
+  // a relative redirect (or the wrong host) would strand the merchant on a
+  // host with no session, bounce them through login, and drop the one-shot
+  // params. Prefer the connect-time origin carried through the state; fall
+  // back to the public dashboard URL for states minted before it existed.
   if (ctx.dashboard) {
-    const base = process.env.DASHBOARD_PUBLIC_URL || process.env.SHOPIFY_APP_URL || "";
+    const base =
+      safeDashboardOAuthOrigin(ctx.origin) ||
+      process.env.DASHBOARD_PUBLIC_URL ||
+      process.env.SHOPIFY_APP_URL ||
+      "";
     const returnTo = safeDashboardOAuthReturnTo(ctx.returnTo) ?? "/dashboard";
     return `${base.replace(/\/$/, "")}${returnTo}?${params.toString()}`;
   }

@@ -890,7 +890,11 @@ export async function startIntegrationConnect(
   return apiSend<{ url: string }>("POST", "/dashboard/api/integrations", {
     intent: "connect",
     provider,
-    returnTo,
+    // Default to the current screen so the callback lands the merchant back
+    // where they clicked Connect, and report the browser origin so the return
+    // stays on the host holding the session cookie (both server-validated).
+    returnTo: returnTo ?? window.location.pathname,
+    origin: window.location.origin,
   });
 }
 
