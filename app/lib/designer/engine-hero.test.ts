@@ -88,3 +88,39 @@ describe("firstBuildInstruction hero branch", () => {
     }
   });
 });
+
+describe("firstBuildInstruction donor-art replacement contract (D4)", () => {
+  const templateBuild = firstBuildInstruction({
+    brief: "A store for hand-poured maple candles",
+    route: "home",
+    mode: "template",
+    templateId: "ritual-almanac",
+    direction: ART_DIRECTIONS[0],
+    donePages: [],
+    heroAssetUrl: "https://cdn.example/hero.jpg",
+  });
+
+  it("names the donor template's real art paths explicitly", () => {
+    expect(templateBuild).toContain("/storefront-recipes/ritual-almanac/hero.webp");
+    expect(templateBuild).toContain("exactly these files");
+  });
+
+  it("requires replace-or-remove and forbids re-captioning donor art", () => {
+    expect(templateBuild).toContain("replace every reference");
+    expect(templateBuild).toContain("never re-caption it with this store's alt text");
+  });
+
+  it("carries no donor rule on scratch builds (no donor template exists)", () => {
+    const scratch = firstBuildInstruction({
+      brief: "A store for hand-poured maple candles",
+      route: "home",
+      mode: "scratch",
+      templateId: "scratch",
+      direction: ART_DIRECTIONS[0],
+      donePages: [],
+      heroAssetUrl: null,
+    });
+    expect(scratch).not.toContain("exactly these files");
+    expect(scratch).not.toContain("/storefront-recipes/");
+  });
+});

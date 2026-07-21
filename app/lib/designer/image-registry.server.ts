@@ -59,6 +59,13 @@ function donorPaths(): Map<string, Set<string>> {
   return donorPathsCache;
 }
 
+/** The donor template's real art paths, for prompts that must name them
+ *  explicitly (first-build replacement contract). Empty for scratch builds
+ *  and unknown template ids. */
+export function donorTemplateArtPaths(templateId: string): string[] {
+  return [...(donorPaths().get(templateId) ?? [])].sort();
+}
+
 function classify(
   raw: string,
   templateId: string,

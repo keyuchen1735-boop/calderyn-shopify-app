@@ -16,7 +16,7 @@ import { artDirectionFor, DESIGNER_FONT_IDS, scratchSeedFiles, type ArtDirection
 import { adoptDesignerAsset, generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
 import { applyAssetOverrides, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
 import { claimsRepairInstruction, findUnhonorableClaims } from "./claims";
-import { findImageRegistryViolations, imageRepairInstruction } from "./image-registry.server";
+import { donorTemplateArtPaths, findImageRegistryViolations, imageRepairInstruction } from "./image-registry.server";
 import { editContext, fileContext, summarizeChanges } from "./context";
 import { applyDesignerEdits, parseDesignerReply, type DesignerEdit } from "./edits";
 import { scrubDesignerCss, scrubDesignerHtml } from "./render.server";
@@ -54,7 +54,7 @@ Rules:
 - The SEARCH text must be copied character-for-character from the file so it can be found. Keep each block small and scoped; use several blocks for several spots. To replace an entire file, use a single block whose SEARCH is just *
 - Files you may edit: base.css (fonts, colors, shared layout) and, for the page being discussed, <route>.html and <route>.css.
 - Placeholders like {{store.name}}, {{product.title}}, {{product.price}}, {{product.image}}, {{product.url}} and the {{#products}}...{{/products}} loop bind live store data; {{asset.hero}} binds this store's generated hero photograph when one exists. Keep them working; never invent new placeholder names.
-- Never add scripts, iframes, forms, event handlers, or references to external URLs. Fonts come only from the @font-face files already in base.css. Images: template art under /storefront-recipes/ and the product placeholders.
+- Never add scripts, iframes, forms, event handlers, or references to external URLs. Fonts come only from the @font-face files already in base.css. Images: ONLY the placeholder bindings ({{product.image}}, {{store.logo}}, {{asset.<key>}} for assets named in this conversation) and template art paths already present in the current files. NEVER invent an image path or file name — nothing else exists on disk, so an invented path renders as a broken image on every view.
 - Conversion widgets are declared, not scripted. A coupon-capture popup is allowed ONLY when the merchant has given you a real discount code in this conversation or the build context — this platform has no discounts feature yet, so never invent a code or an offer (the runtime drops any popup whose code is not redeemable). With a real code, place exactly one marker on the home page (the runtime turns it into a real, dismissible popup and wires the behavior): <div data-designer-widget="coupon" data-code="THE-MERCHANT'S-CODE" data-headline="A welcome offer" data-sub="Join the list for early access and member pricing."></div>. Style it by editing base.css variables it inherits; never write its script. An announcement bar is ordinary styled markup you author at the very top of the shell (a thin full-width bar) — it needs no script. Give it a free-shipping-threshold line ONLY when the merchant supplied that exact threshold, and then also put data-designer-free-shipping="120" (the whole-dollar threshold) on the bar element so the store's cart drawer can show a progress meter toward it; otherwise the bar carries a true, number-free line (a brand promise or launch note).
 - Live behavior comes from data attributes the runtime wires (never write scripts): a header search field is an <input type="search" data-designer-search placeholder="Search"> (the runtime submits it to the search page on Enter); a header cart count is <span data-designer-cart-count>{{cart.count}}</span> (the runtime keeps it current). Add-to-cart buttons always carry the class designer-add-to-cart.
 - Design taste: one accent color per store, saturation under 80 percent, never pure black or pure white, no AI-purple gradients, no neon glows. The accent lives in base.css as --signal on :root — define it there, reference var(--signal) wherever the accent appears, and when the merchant changes the accent site-wide, update --signal in the same edit: the store's runtime chrome (coupon popup button, cart drawer meter and checkout button) colors itself from var(--signal) and must follow the swap. Text must stay readable against its background (4.5:1). Headlines short and confident. No dash characters in copy, no exclamation marks, no filler verbs (elevate, unleash, seamless).
@@ -505,8 +505,17 @@ export function firstBuildInstruction(input: {
   /** Whether any catalog product carries a usable photo ({{product.image}}). */
   hasProductImagery?: boolean;
 }): string {
+  // Donor-art replacement contract (spec D4): a first build names the donor
+  // template's REAL art paths and requires each to be replaced or removed —
+  // never kept, never re-captioned with this store's alt text. Strict here
+  // (first builds only); the shared system prompt stays permissive so edit
+  // turns don't break already-saved donor art.
+  const donorArt = input.mode === "template" ? donorTemplateArtPaths(input.templateId) : [];
+  const donorRule = donorArt.length > 0
+    ? ` The template's own artwork (exactly these files: ${donorArt.join(", ")}) photographs the donor template's product category, not this merchant's: replace every reference to it with this store's real imagery ({{asset.hero}}, {{product.image}}) or remove the element entirely — never keep donor art on this store, and never re-caption it with this store's alt text.`
+    : "";
   const base = input.mode === "template"
-    ? `First build, page "${input.route}": this store was just attached to the "${input.templateId}" template. Rework this page so it belongs to THIS merchant: their copy, their accent, their category names. Keep template structure only where it genuinely serves the page — restructure anything that hurts scanning (stacked one-per-row product lists become grids, oversized imagery gets contained), and fully style anything the template left plain.`
+    ? `First build, page "${input.route}": this store was just attached to the "${input.templateId}" template. Rework this page so it belongs to THIS merchant: their copy, their accent, their category names, their imagery.${donorRule} Keep template structure only where it genuinely serves the page — restructure anything that hurts scanning (stacked one-per-row product lists become grids, oversized imagery gets contained), and fully style anything the template left plain.`
     : `First build, page "${input.route}": you are designing this store from scratch. Author the complete page (whole-file rewrites with * are expected) with committed art direction, not a wireframe.`;
   const direction = `Art direction for this store (starting point, adapt to the merchant's brief if they conflict): display font "${input.direction.displayFont}", body font "${input.direction.bodyFont}"; palette: ${input.direction.palette}; layout: ${input.direction.layout}; mood: ${input.direction.mood}. Add @font-face rules to base.css only for these self-hosted fonts (/storefront-fonts/<id>-latin.woff2), where <id> must be one of: ${DESIGNER_FONT_IDS.join(", ")}. No other font files exist.`;
   const continuity = input.donePages.length > 0
