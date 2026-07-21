@@ -56,7 +56,12 @@ export async function applyMove(input: {
 export async function dismissMove(input: { shopId: string; moveId: string }): Promise<RadarMoveRow> {
   const move = await loadOpenMove(input.shopId, input.moveId, "draft");
   const resolvedAt = new Date().toISOString();
-  await updateMove(input.shopId, move.id, { status: "dismissed", resolvedAt });
+  // Conditional on still "draft": a concurrent apply/revert of the same move must not be
+  // silently overwritten by a dismiss that started before it landed.
+  const flipped = await updateMove(input.shopId, move.id, { status: "dismissed", resolvedAt }, "draft");
+  if (!flipped) {
+    throw new RadarApplyError("move_not_open", "This move was already handled.", 409);
+  }
   return { ...move, status: "dismissed", resolvedAt };
 }
 
@@ -75,6 +80,11 @@ export async function revertMove(input: {
   else throw new RadarApplyError("nothing_to_revert", "This move has nothing to undo.", 422);
   const resolvedAt = new Date().toISOString();
   const payload = { ...move.payload, reverted: true };
-  await updateMove(input.shopId, move.id, { status: "dismissed", resolvedAt, payload });
+  // Conditional on still "applied": a concurrent dismiss/revert of the same move must not be
+  // silently overwritten once the revert-side executor above has already mutated live state.
+  const flipped = await updateMove(input.shopId, move.id, { status: "dismissed", resolvedAt, payload }, "applied");
+  if (!flipped) {
+    throw new RadarApplyError("move_not_open", "This move was already handled.", 409);
+  }
   return { ...move, status: "dismissed", resolvedAt, payload };
 }

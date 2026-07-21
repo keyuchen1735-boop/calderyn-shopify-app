@@ -98,18 +98,24 @@ describe("applyMove", () => {
 });
 
 describe("dismissMove", () => {
-  it("marks a draft dismissed with a resolution time", async () => {
+  it("marks a draft dismissed with a resolution time, conditioned on still-draft", async () => {
     mocks.getMove.mockResolvedValue(row({}));
     const out = await dismissMove({ shopId: SHOP, moveId: MOVE_ID });
     expect(mocks.updateMove).toHaveBeenCalledWith(SHOP, MOVE_ID, {
       status: "dismissed", resolvedAt: expect.any(String),
-    });
+    }, "draft");
     expect(out.status).toBe("dismissed");
+  });
+  it("409s when a concurrent transition wins the race and the conditional update loses", async () => {
+    mocks.getMove.mockResolvedValue(row({}));
+    mocks.updateMove.mockResolvedValueOnce(false);
+    await expect(dismissMove({ shopId: SHOP, moveId: MOVE_ID }))
+      .rejects.toMatchObject({ code: "move_not_open", status: 409 });
   });
 });
 
 describe("revertMove", () => {
-  it("dispatches by prior-state kind and marks the move reverted", async () => {
+  it("dispatches by prior-state kind and marks the move reverted, conditioned on still-applied", async () => {
     mocks.getMove.mockResolvedValue(row({
       status: "applied",
       priorState: { kind: "section", runtime: 1, priorPublishedVersionId: "v0", appliedVersionId: "v1" },
@@ -122,7 +128,7 @@ describe("revertMove", () => {
     expect(mocks.updateMove).toHaveBeenCalledWith(SHOP, MOVE_ID, expect.objectContaining({
       status: "dismissed", resolvedAt: expect.any(String),
       payload: expect.objectContaining({ reverted: true }),
-    }));
+    }), "applied");
   });
   it("refuses to revert a review move or a non-applied move", async () => {
     mocks.getMove.mockResolvedValue(row({ status: "applied", priorState: null }));
@@ -131,5 +137,15 @@ describe("revertMove", () => {
     mocks.getMove.mockResolvedValue(row({ status: "draft" }));
     await expect(revertMove({ shopId: SHOP, moveId: MOVE_ID, actorId: null, confirm: false }))
       .rejects.toMatchObject({ code: "move_not_applied", status: 409 });
+  });
+  it("409s when a concurrent transition wins the race and the conditional update loses", async () => {
+    mocks.getMove.mockResolvedValue(row({
+      status: "applied",
+      priorState: { kind: "section", runtime: 1, priorPublishedVersionId: "v0", appliedVersionId: "v1" },
+      appliedStateHash: "v1",
+    }));
+    mocks.updateMove.mockResolvedValueOnce(false);
+    await expect(revertMove({ shopId: SHOP, moveId: MOVE_ID, actorId: null, confirm: false }))
+      .rejects.toMatchObject({ code: "move_not_open", status: 409 });
   });
 });

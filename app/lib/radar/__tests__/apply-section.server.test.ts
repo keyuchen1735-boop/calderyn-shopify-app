@@ -73,6 +73,19 @@ const RAWHTML_DOC = {
   }],
 };
 
+/** Simulates a Postgres jsonb round trip: canonicalizes object key order without touching
+ *  values, so a test can prove code hashes what a live re-read will actually produce rather than
+ *  the in-memory object as originally constructed (jsonb reorders keys on write; JS object
+ *  literals preserve insertion order, so the two can byte-differ under JSON.stringify). */
+function reorderKeys<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((v) => reorderKeys(v)) as unknown as T;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).reverse();
+    return Object.fromEntries(entries.map(([k, v]) => [k, reorderKeys(v)])) as T;
+  }
+  return value;
+}
+
 function move(payload: Record<string, unknown>, patch: Partial<RadarMoveRow> = {}): RadarMoveRow {
   return {
     id: "m1", shopId: SHOP, kind: "section_refresh", status: "draft",
@@ -251,11 +264,15 @@ describe("legacy runtime", () => {
     expect(html).not.toContain("$1");
     expect(html).not.toContain("$&");
   });
-  it("hashes the sanitize-normalized doc so an untouched revert never demands confirm (rawHtml path)", async () => {
-    mocks.loadPublishedDoc.mockResolvedValue(RAWHTML_DOC);
+  it("hashes what a live re-read returns post-publish, not the in-memory doc, so an untouched revert never demands confirm (rawHtml path)", async () => {
+    mocks.loadPublishedDoc.mockImplementation(async () => {
+      if (!mocks.saveDraft.mock.calls.length) return RAWHTML_DOC; // this apply's initial load
+      // Post-publish re-read: what's actually live is sanitizeDocHtml applied to the doc
+      // saveDraft received (single-quoted style attribute gets re-serialized double-quoted).
+      const saved = mocks.saveDraft.mock.calls[0][2] as BlockDocument;
+      return sanitizeDocHtml(saved);
+    });
     const out = await applySectionRefresh(SHOP, move({}), "u1");
-    // What actually lands in published_json: saveDraft's real sanitizeDocHtml applied to the doc
-    // it received (single-quoted style attribute gets re-serialized double-quoted).
     const savedDoc = mocks.saveDraft.mock.calls[0][2] as BlockDocument;
     const actualPublished = sanitizeDocHtml(savedDoc);
     expect(sha256(savedDoc)).not.toBe(sha256(actualPublished)); // sanity: the sanitizer DID normalize something
@@ -266,9 +283,29 @@ describe("legacy runtime", () => {
       priorState: { kind: "section", runtime: 0, pageKey: "home", doc: RAWHTML_DOC },
       appliedStateHash: out.appliedStateHash,
     });
-    mocks.loadPublishedDoc.mockResolvedValue(actualPublished); // what's actually live now
     await revertSectionRefresh(SHOP, applied, { confirm: false }, null); // must NOT throw revert_conflict
     expect(mocks.saveDraft).toHaveBeenCalledWith(SHOP, "home", RAWHTML_DOC);
+  });
+  it("does not false-conflict on revert when the live re-read comes back key-reordered (jsonb round-trip, hero path)", async () => {
+    mocks.loadPublishedDoc.mockImplementation(async () => {
+      if (!mocks.saveDraft.mock.calls.length) return HOME_DOC; // this apply's initial load
+      // A real Postgres jsonb column canonicalizes object key order on write, so a live re-read
+      // can come back key-reordered relative to whatever was constructed in memory before the
+      // write - same values, different JSON.stringify bytes. The apply-time hash must be taken
+      // from this same re-read path (not the pre-write in-memory doc) or every legitimate revert
+      // of an untouched page would false-conflict.
+      const saved = mocks.saveDraft.mock.calls[0][2] as BlockDocument;
+      return reorderKeys(sanitizeDocHtml(saved));
+    });
+    const out = await applySectionRefresh(SHOP, move({}), "u1");
+
+    const applied = move({}, {
+      status: "applied",
+      priorState: { kind: "section", runtime: 0, pageKey: "home", doc: HOME_DOC },
+      appliedStateHash: out.appliedStateHash,
+    });
+    await revertSectionRefresh(SHOP, applied, { confirm: false }, null); // must NOT throw revert_conflict
+    expect(mocks.saveDraft).toHaveBeenCalledWith(SHOP, "home", HOME_DOC);
   });
   it("reverts by republishing the stored doc after a clean hash check", async () => {
     const applied = move({}, {

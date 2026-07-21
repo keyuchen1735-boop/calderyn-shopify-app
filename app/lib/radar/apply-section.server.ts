@@ -10,7 +10,6 @@ import { readStorefrontReleaseState } from "~/lib/storefront-bundle/build.server
 import { rollbackStorefrontRelease } from "~/lib/storefront-bundle/release.server";
 import { runStoreCommand, StoreCommandError } from "~/lib/storefront-command/command.server";
 import { loadDraftDoc, loadPublishedDoc, publishDoc, saveDraft } from "~/lib/storebuilder/page-document.server";
-import { sanitizeDocHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { validateDocument } from "~/lib/storebuilder/validate";
 import type { BlockDocument, PageKey } from "~/lib/storebuilder/types";
 import { getCatalog } from "~/lib/storefront/catalog.server";
@@ -239,13 +238,15 @@ async function applyLegacy(shopId: string, move: RadarMoveRow, actorId: string |
   }
   await saveDraft(shopId, pageKey, result.doc);
   await publishDoc(shopId, pageKey);
+  // Re-read what actually landed instead of hashing the in-memory doc: Postgres jsonb
+  // canonicalizes object key order on write, so a hash taken before the round trip (even of the
+  // sanitized doc) can byte-differ from what loadPublishedDoc returns later - which is exactly
+  // what the revert-side staleness check (below) hashes. Hash identically-shaped reads on both
+  // sides or every legitimate one-click revert false-conflicts.
+  const publishedNow = await loadPublishedDoc(shopId, pageKey);
   return {
     priorState: { kind: "section", runtime: 0, pageKey, doc: published, actorId },
-    // publishDoc copies whatever saveDraft persisted, and saveDraft sanitizes (sanitizeDocHtml) on
-    // the way in - so the doc that actually lands in published_json is sanitizeDocHtml(result.doc),
-    // not result.doc itself. Hash the same thing the revert-side staleness check reads
-    // (loadPublishedDoc, i.e. the real sanitized row) so an untouched page never demands confirm.
-    appliedStateHash: sha256(sanitizeDocHtml(result.doc)),
+    appliedStateHash: sha256(publishedNow),
   };
 }
 
