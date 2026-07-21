@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildGscAuthUrl,
   exchangeGscCode,
+  gscRedirectUri,
   refreshGscAccessToken,
   saveGscCredential,
   loadGscRefreshToken,
@@ -23,6 +24,8 @@ const ENV_KEYS = [
   "GOOGLE_ADS_CLIENT_SECRET",
   "GOOGLE_SEARCH_CONSOLE_CLIENT_ID",
   "GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET",
+  "DASHBOARD_PUBLIC_URL",
+  "SHOPIFY_APP_URL",
 ] as const;
 const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
 
@@ -53,11 +56,26 @@ describe("buildGscAuthUrl", () => {
     expect(url.searchParams.get("access_type")).toBe("offline");
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("state")).toBe("st1");
+    // Never widen the credential beyond webmasters.readonly: granting
+    // include_granted_scopes would fold prior adwords consent into this token.
+    expect(url.searchParams.get("include_granted_scopes")).toBeNull();
   });
   it("prefers the dedicated GSC client id", () => {
     process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_ID = "gsc-client";
     const url = new URL(buildGscAuthUrl({ redirectUri: "https://app.example/cb", state: "s" }));
     expect(url.searchParams.get("client_id")).toBe("gsc-client");
+  });
+});
+
+describe("gscRedirectUri", () => {
+  it("pins the callback to the public base URL, not the request host", () => {
+    process.env.DASHBOARD_PUBLIC_URL = "https://app.calderyncompany.com";
+    expect(gscRedirectUri()).toBe("https://app.calderyncompany.com/dashboard/auth/gsc/callback");
+  });
+  it("falls back to SHOPIFY_APP_URL when DASHBOARD_PUBLIC_URL is unset", () => {
+    delete process.env.DASHBOARD_PUBLIC_URL;
+    process.env.SHOPIFY_APP_URL = "https://fallback.example";
+    expect(gscRedirectUri()).toBe("https://fallback.example/dashboard/auth/gsc/callback");
   });
 });
 

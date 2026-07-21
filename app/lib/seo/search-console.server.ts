@@ -5,7 +5,9 @@ import { getSupabase } from "~/lib/supabase.server";
 import { loadGscRefreshToken, refreshGscAccessToken } from "./gsc.server";
 
 const API = "https://www.googleapis.com/webmasters/v3";
-const ROW_LIMIT = 1000;
+// Per-day query+page totals are capped at this many rows; larger catalogs
+// lose the long tail beyond it (Search Analytics API hard max is 25k/request).
+const ROW_LIMIT = 25000;
 const LAG_DAYS = 2;
 const PULL_DAYS = 3;
 

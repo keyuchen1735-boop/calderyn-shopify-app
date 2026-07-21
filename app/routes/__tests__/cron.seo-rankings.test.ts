@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   rows: [{ shop_id: "s1" }, { shop_id: "s2" }],
   settingsResult: { data: null as any, error: null as any },
   orderArgs: [] as unknown[],
+  notArgs: [] as unknown[],
+  stampedShops: [] as unknown[],
 }));
 vi.mock("~/lib/seo/search-console.server", () => ({ pullShopRankings: mocks.pullShopRankings }));
 vi.mock("~/lib/supabase.server", () => ({
@@ -14,13 +16,24 @@ vi.mock("~/lib/supabase.server", () => ({
     from: () => ({
       select: () => ({
         eq: () => ({
-          // Plain closure (not vi.fn) so vi.restoreAllMocks() in afterEach
+          // Plain closures (not vi.fn) so vi.restoreAllMocks() in afterEach
           // can't wipe the recorded args or the settingsResult passthrough.
-          order: (...args: unknown[]) => {
-            mocks.orderArgs = args;
-            return Promise.resolve({ data: mocks.settingsResult.data, error: mocks.settingsResult.error });
+          not: (...notArgs: unknown[]) => {
+            mocks.notArgs = notArgs;
+            return {
+              order: (...args: unknown[]) => {
+                mocks.orderArgs = args;
+                return Promise.resolve({ data: mocks.settingsResult.data, error: mocks.settingsResult.error });
+              },
+            };
           },
         }),
+      }),
+      update: () => ({
+        eq: (_col: unknown, shopId: unknown) => {
+          mocks.stampedShops.push(shopId);
+          return Promise.resolve({ error: null });
+        },
       }),
     }),
   }),
@@ -36,6 +49,7 @@ function req(auth?: string): never {
 describe("cron.seo-rankings", () => {
   afterEach(() => {
     mocks.settingsResult = { data: mocks.rows, error: null };
+    mocks.stampedShops = [];
     vi.restoreAllMocks();
   });
 
@@ -56,6 +70,10 @@ describe("cron.seo-rankings", () => {
     expect(body).toMatchObject({ pulled: 1, failed: 1 });
     expect(mocks.pullShopRankings).toHaveBeenCalledTimes(2);
     expect(mocks.orderArgs).toEqual(["gsc_last_pulled_at", { ascending: true, nullsFirst: true }]);
+    expect(mocks.notArgs).toEqual(["gsc_site_url", "is", null]);
+    // Attempt time is stamped for BOTH shops — including the failing one — so
+    // permanently-failing shops rotate to the back of the nullsFirst queue.
+    expect(mocks.stampedShops).toEqual(["s1", "s2"]);
   });
 
   it("skips shops when time budget exceeded", async () => {

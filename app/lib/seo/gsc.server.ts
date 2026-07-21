@@ -2,6 +2,7 @@
 // Least privilege: webmasters.readonly only. The refresh token is encrypted
 // into seo_google_credential, a deny-all table only service-role code reads.
 import { encrypt, decrypt } from "~/lib/crypto.server";
+import { publicBaseUrl } from "~/lib/dashboard/http.server";
 import { getSupabase } from "~/lib/supabase.server";
 
 const SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
@@ -25,9 +26,11 @@ function clientSecret(): string {
 // so both routes can import it without one route module importing another.
 export const GSC_STATE_COOKIE = "__Host-gsc_state";
 
-export function gscRedirectUri(request: Request): string {
-  const url = new URL(request.url);
-  return `${url.origin}/dashboard/auth/gsc/callback`;
+// Pinned to the public base URL (same pattern as dashboard.auth.google):
+// deriving from the request host would produce a different redirect_uri behind
+// the apex proxy / preview hosts than the one registered with Google.
+export function gscRedirectUri(): string {
+  return `${publicBaseUrl()}/dashboard/auth/gsc/callback`;
 }
 
 export function buildGscAuthUrl(opts: { redirectUri: string; state: string }): string {
@@ -38,7 +41,6 @@ export function buildGscAuthUrl(opts: { redirectUri: string; state: string }): s
     scope: SCOPE,
     access_type: "offline",
     prompt: "consent",
-    include_granted_scopes: "true",
     state: opts.state,
   });
   return `${AUTH_URL}?${params.toString()}`;

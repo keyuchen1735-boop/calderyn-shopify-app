@@ -9,7 +9,7 @@ import { buildGscAuthUrl, GSC_STATE_COOKIE, gscRedirectUri } from "~/lib/seo/gsc
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await requireDashboardSession(request);
   const state = randomBytes(16).toString("hex");
-  return redirect(buildGscAuthUrl({ redirectUri: gscRedirectUri(request), state }), {
+  return redirect(buildGscAuthUrl({ redirectUri: gscRedirectUri(), state }), {
     headers: {
       "set-cookie": `${GSC_STATE_COOKIE}=${state}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600`,
     },

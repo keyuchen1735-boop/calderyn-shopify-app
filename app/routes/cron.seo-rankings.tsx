@@ -10,6 +10,10 @@ import { getSupabase } from "~/lib/supabase.server";
 
 const TIME_BUDGET_MS = 50_000;
 
+// The loop budgets 50s of work; give the function headroom past the default
+// so a run that uses its full budget is not killed mid-shop.
+export const config = { maxDuration: 60 };
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!isAuthorizedCron(request.headers.get("authorization"), process.env.CRON_SECRET)) {
     return new Response("Unauthorized", { status: 401 });
@@ -19,6 +23,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .from("seo_settings")
     .select("shop_id, gsc_last_pulled_at")
     .eq("gsc_connected", true)
+    .not("gsc_site_url", "is", null)
     .order("gsc_last_pulled_at", { ascending: true, nullsFirst: true });
   if (error) return json({ error: error.message }, { status: 500 });
   let pulled = 0;
@@ -28,6 +33,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (Date.now() - started > TIME_BUDGET_MS) {
       skipped = true;
       break;
+    }
+    // Stamp the attempt time before pulling so a permanently-failing shop
+    // rotates to the back of the nullsFirst queue instead of starving it.
+    const stamp = await getSupabase()
+      .from("seo_settings")
+      .update({ gsc_last_pulled_at: new Date().toISOString() })
+      .eq("shop_id", row.shop_id);
+    if (stamp.error) {
+      console.error(`[cron.seo-rankings] attempt stamp failed for shop ${row.shop_id}`, stamp.error);
     }
     try {
       await pullShopRankings(row.shop_id);

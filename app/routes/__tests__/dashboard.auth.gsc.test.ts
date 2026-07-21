@@ -19,10 +19,7 @@ vi.mock("~/lib/seo/gsc.server", () => ({
   exchangeGscCode: mocks.exchangeGscCode,
   saveGscCredential: mocks.saveGscCredential,
   GSC_STATE_COOKIE: "__Host-gsc_state",
-  gscRedirectUri: (request: Request) => {
-    const url = new URL(request.url);
-    return `${url.origin}/dashboard/auth/gsc/callback`;
-  },
+  gscRedirectUri: () => "https://app.calderyncompany.com/dashboard/auth/gsc/callback",
 }));
 vi.mock("~/lib/seo/search-console.server", () => ({
   listGscSites: mocks.listGscSites,

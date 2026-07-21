@@ -35,7 +35,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const expected = cookieValue(request, GSC_STATE_COOKIE);
   if (!code || !state || !expected || state !== expected) return back("google-error", "state_mismatch");
   try {
-    const { refreshToken, accessToken } = await exchangeGscCode(code, gscRedirectUri(request));
+    const { refreshToken, accessToken } = await exchangeGscCode(code, gscRedirectUri());
     if (!refreshToken) return back("google-error", "no_refresh_token");
     await saveGscCredential(session.shopId, refreshToken);
     const origin = await getShopStorefrontOrigin(session.shopId);
