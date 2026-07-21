@@ -22,7 +22,7 @@ const sharedCss = `
 
 export const ROAST_RECIPE_CONFIG = {
   templateId: "roast",
-  templateVersion: 1,
+  templateVersion: 2,
   concept: {
     name: "Roast",
     rationale: "An origin and brew notebook that starts with preparation, then connects merchant-authored coffee facts to live product and purchase options.",

@@ -76,7 +76,7 @@ describe("volt storefront recipe", () => {
 
     expect(report.profileVersion).toBe(1);
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "volt", templateVersion: 1 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "volt", templateVersion: 2 });
     expect(Object.keys(bundle.routes)).toEqual([
       "home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound",
     ]);

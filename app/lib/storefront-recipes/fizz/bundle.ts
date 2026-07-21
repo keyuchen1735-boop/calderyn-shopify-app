@@ -19,7 +19,7 @@ const varietyPackIntro = `<section class="fizz-section fizz-plan"><h2 class="fiz
 
 export const FIZZ_RECIPE_CONFIG = {
   templateId: "fizz",
-  templateVersion: 1,
+  templateVersion: 2,
   concept: { name: "Fizz", rationale: "A bright flavor playground that keeps discovery playful while prices, availability, variants, and offers stay merchant-owned.", noveltySignature: ["stacked-can-stage", "flavor-quiz", "bounded-variety-pack"] },
   designSystem: {
     displayFontId: "space-grotesk", bodyFontId: "inter",

@@ -106,13 +106,13 @@ describe("storefront recipe factory", () => {
     expect(() => defineRecipe(config)).toThrow(/unknown|registered/i);
   });
 
-  it("rejects unregistered new recipe versions other than v1", () => {
+  it("rejects non-positive recipe versions", () => {
     const existing = testConfig();
-    const invalidConfig = { ...existing, templateId: "volt" as const, templateVersion: 2 };
-    // @ts-expect-error New recipe configs are fixed to version 1.
+    const invalidConfig = { ...existing, templateId: "volt" as const, templateVersion: 0 };
+    // @ts-expect-error New recipe configs require a positive supported version.
     const typedInvalidConfig: RecipeConfig<"volt"> = invalidConfig;
 
-    expect(() => compileRecipeConfig(typedInvalidConfig)).toThrow(/volt.*version 1/i);
+    expect(() => compileRecipeConfig(typedInvalidConfig)).toThrow(/volt.*positive template version/i);
   });
 
   it("compiles complete route-owned compositions without imposing a shared layout", () => {

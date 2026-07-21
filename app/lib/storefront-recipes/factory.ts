@@ -78,7 +78,7 @@ export interface RecipeMediaArtifacts {
 
 export interface RecipeConfig<TTemplateId extends StoreTemplateId = StoreTemplateId> {
   templateId: TTemplateId;
-  templateVersion: TTemplateId extends NewStoreTemplateId ? 1 : number;
+  templateVersion: TTemplateId extends NewStoreTemplateId ? 1 | 2 : number;
   concept: StorefrontBundleSourceV1["concept"];
   designSystem: StorefrontBundleSourceV1["designSystem"];
   archetype: RecipeArchetype;
@@ -492,8 +492,8 @@ export function defineRecipe<const TTemplateId extends StoreTemplateId>(
 export function compileRecipeConfig<const TTemplateId extends StoreTemplateId>(
   config: RecipeConfig<TTemplateId>,
 ): DefinedRecipe<TTemplateId> {
-  if (config.templateVersion !== 1 && (["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"] as StoreTemplateId[]).includes(config.templateId)) {
-    throw new Error(`New recipe ${config.templateId} must use template version 1`);
+  if (!Number.isInteger(config.templateVersion) || config.templateVersion < 1) {
+    throw new Error(`Recipe ${config.templateId} must use a positive template version`);
   }
   const boundConfig = withRequiredHomeCommerce(withRequiredCollectionCommerce(withRequiredShellBindings(config)));
   assertDistinctSurfaceSignatures(boundConfig);

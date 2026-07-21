@@ -75,7 +75,7 @@ const notFound = {
 };
 
 export const GILT_RECIPE_CONFIG = {
-  templateId: "gilt", templateVersion: 1,
+  templateId: "gilt", templateVersion: 2,
   concept: { name: "Gilt", rationale: "An intimate object ceremony carries live jewelry and buyer-entered gifting details from cabinet to protected checkout.", noveltySignature: ["floating jewelry cabinet", "guided gifting handoff", "policy-adjacent purchase"] },
   designSystem: { displayFontId: "cormorant-garamond", bodyFontId: "manrope", tokens: { cream: "#f3ead8", black: "#0b0a08", gold: "#9a6b22", "space-gilt": "20px" }, breakpoints: { mobile: 760, wide: 1180 }, iconStyle: "fine gold hallmarks and circular object indices", motionStyle: "slow floating object reveals and restrained ceremony handoffs", globalCss: `.gilt-title{overflow-wrap:anywhere}.gilt-shell a{color:inherit;text-decoration:none}` },
   archetype: { composition: "object-ceremony", hero: "jewelry-ceremony-hero", scroll: "intimate-ceremony", cards: "object-vignettes", iconography: ["fine gold hallmarks", "circular object indices"] },

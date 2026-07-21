@@ -25,7 +25,7 @@ const preferenceGuide = `<section class="glow-guide"><header><span class="glow-k
 
 export const GLOW_RECIPE_CONFIG = {
   templateId: "glow",
-  templateVersion: 1,
+  templateVersion: 2,
   concept: {
     name: "Glow",
     rationale: "A high-key skincare cabinet that separates calm preference guidance from merchant-owned product evidence and protected commerce.",

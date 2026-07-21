@@ -32,7 +32,7 @@ const sharedRouteCss = `
 
 export const VOLT_RECIPE_CONFIG = {
   templateId: "volt",
-  templateVersion: 1,
+  templateVersion: 2,
   concept: {
     name: "Volt",
     rationale: "A premium product catalog organized as an honest system-planning surface, led by a cinematic product silhouette.",

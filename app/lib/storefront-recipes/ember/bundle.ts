@@ -22,7 +22,7 @@ const sharedCss = `
 
 export const EMBER_RECIPE_CONFIG = {
   templateId: "ember",
-  templateVersion: 1,
+  templateVersion: 2,
   concept: {
     name: "Ember",
     rationale: "A blackened tasting counter that lets real products move from a merchant-authored heat spectrum into an honest tasting flight.",

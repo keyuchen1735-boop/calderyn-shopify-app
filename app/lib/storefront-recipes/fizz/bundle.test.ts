@@ -28,7 +28,7 @@ describe("fizz storefront recipe", () => {
     expect(Object.keys(bundle.routes)).toEqual([
       "home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound",
     ]);
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "fizz", templateVersion: 1 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "fizz", templateVersion: 2 });
     expect(FIZZ_RECIPE_CONFIG.archetype.composition).toBe("flavor-playground");
     expect(bundle.routes.home.html).toContain("Find your fizz");
     expect(bundle.routes.home.html).toContain("Build a four-flavor pack");

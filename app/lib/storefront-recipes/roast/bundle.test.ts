@@ -20,7 +20,7 @@ describe("roast storefront recipe", () => {
   it("compiles nine preparation-first routes from live coffee and protected product options", () => {
     const { bundle, report } = compileRecipeConfig(ROAST_RECIPE_CONFIG);
 
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "roast", templateVersion: 1 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "roast", templateVersion: 2 });
     expect(Object.keys(bundle.routes)).toEqual([
       "home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound",
     ]);

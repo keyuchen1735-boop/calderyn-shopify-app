@@ -27,7 +27,7 @@ describe("Forge storefront recipe", () => {
       templateVersion: FORGE_RECIPE_CONFIG.templateVersion,
       concept: FORGE_RECIPE_CONFIG.concept,
     });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "forge", templateVersion: 1 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "forge", templateVersion: 2 });
     expect(config.archetype).toMatchObject({
       composition: "jobsite-blueprint",
       hero: "exploded-tool-hero",

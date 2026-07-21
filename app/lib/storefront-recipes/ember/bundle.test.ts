@@ -35,7 +35,7 @@ describe("ember storefront recipe", () => {
   it("compiles nine heat-led routes from merchant facts without fabricating proof or urgency", () => {
     const { bundle, report } = compileRecipeConfig(EMBER_RECIPE_CONFIG);
 
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ember", templateVersion: 1 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "ember", templateVersion: 2 });
     expect(Object.keys(bundle.routes)).toEqual([
       "home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound",
     ]);

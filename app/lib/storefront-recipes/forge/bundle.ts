@@ -16,7 +16,7 @@ const productCardsCss = `.forge-grid{display:grid;grid-template-columns:repeat(3
 
 export const FORGE_RECIPE_CONFIG = {
   templateId: "forge",
-  templateVersion: 1,
+  templateVersion: 2,
   concept: {
     name: "Forge",
     rationale: "A jobsite blueprint that lets working catalogs present merchant-authored compatibility evidence before protected purchase actions.",

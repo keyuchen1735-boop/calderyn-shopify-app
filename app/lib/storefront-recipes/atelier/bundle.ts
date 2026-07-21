@@ -91,7 +91,7 @@ const notFound = route(
 
 export const ATELIER_RECIPE_CONFIG = {
   templateId: "atelier",
-  templateVersion: 1,
+  templateVersion: 2,
   concept: {
     name: "Atelier Fit Laboratory",
     rationale:
