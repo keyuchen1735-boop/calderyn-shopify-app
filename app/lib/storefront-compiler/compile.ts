@@ -86,7 +86,7 @@ function deriveRouteContract(
     if (binding.ref.kind !== "data") continue;
     const owner = binding.ref.path.slice(0, binding.ref.path.indexOf("."));
     if (owner === "store") requireData({ kind: "storeIdentity" });
-    else if (owner === "collection") requireData({ kind: "currentCollection" });
+    else if (owner === "collection" && binding.ref.scopeId === "root") requireData({ kind: "currentCollection" });
     else if (owner === "cart" || owner === "cartLine") requireData({ kind: "cart" });
     else if (owner === "search") requireData({ kind: "searchResults", limit: 24 });
     else if (binding.ref.scopeId === "root" && (owner === "product" || owner === "variant")) {

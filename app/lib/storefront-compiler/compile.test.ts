@@ -12,6 +12,15 @@ describe("compileBundle", () => {
     expect(bundle.routes.home).toBeDefined();
   });
 
+  it("does not require a current collection for featured collection cards", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><section data-cd-repeat="featured.collections"><article data-cd-key="collection.id"><h2 data-cd-text="collection.title"></h2></article></section></main>`;
+
+    expect(compileBundle(source).bundle.routes.home.requiredData).toEqual([
+      { kind: "featuredCollections", limit: 12 },
+    ]);
+  });
+
   it("compiles an optional story surface", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE) as typeof VALID_BUNDLE_SOURCE & { routes: typeof VALID_BUNDLE_SOURCE.routes & { story?: typeof VALID_BUNDLE_SOURCE.routes.home } };
     source.routes.story = { ...source.routes.home, html: `<main><h1>Our story</h1></main>` };

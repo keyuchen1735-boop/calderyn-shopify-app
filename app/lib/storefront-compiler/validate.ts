@@ -671,7 +671,7 @@ function deriveContract(
   for (const binding of bindings) {
     const owner = binding.ref.kind === "data" ? binding.ref.path.slice(0, binding.ref.path.indexOf(".")) : "";
     if (owner === "store") addData({ kind: "storeIdentity" });
-    else if (owner === "collection") addData({ kind: "currentCollection" });
+    else if (owner === "collection" && binding.ref.kind === "data" && binding.ref.scopeId === "root") addData({ kind: "currentCollection" });
     else if (owner === "cart" || owner === "cartLine") addData({ kind: "cart" });
     else if (owner === "search") addData({ kind: "searchResults", limit: 24 });
     else if (binding.ref.kind === "data" && binding.ref.scopeId === "root" && (owner === "product" || owner === "variant")) addData({ kind: "currentProduct" });
