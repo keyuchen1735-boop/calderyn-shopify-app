@@ -150,9 +150,25 @@ describe("detectAll", () => {
       hasOrgDescription: false,
       lastPublishedAt: "2026-07-15T00:00:00Z",
       jsonLdIssues: [{ productId: "p1", handle: "trail-boots", title: "Boots", issues: ["missing @type"] }],
+      publishedRuntimeVersion: null,
+      competitorDiffs: [
+        {
+          competitorId: "c1",
+          competitorName: "Rival",
+          url: "https://rival.example/products/boots",
+          capturedAt: "2026-07-19T00:00:00Z",
+          diff: {
+            titleChanged: null,
+            newHeadings: [],
+            removedHeadings: [],
+            newPrices: ["$99.00"],
+            removedPrices: ["$129.00"],
+          },
+        },
+      ],
     };
     const out = detectAll(inputs, NOW);
     const kinds = out.map((c) => c.kind).sort();
-    expect(kinds).toEqual(["aeo_jsonld_fix", "aeo_refresh", "section_refresh"]);
+    expect(kinds).toEqual(["aeo_jsonld_fix", "aeo_refresh", "competitor_price", "section_refresh"]);
   });
 });

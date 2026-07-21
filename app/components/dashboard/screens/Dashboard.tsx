@@ -9,6 +9,7 @@ import { CDIcon } from "../icons";
 import { money } from "../format";
 import { CalderynHexMark } from "~/components/CalderynHexMark";
 import * as client from "~/lib/dashboard/client";
+import { fetchRadarHome, dismissRadarHomeCard, type RadarHomeVM } from "~/lib/dashboard/radar-client";
 import { HomeJourney, type JourneyProgress } from "./HomeJourney";
 import {
   cacheScreenData,
@@ -116,6 +117,30 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
     };
   }, []);
   const freshStore = catalogTotal !== null ? catalogTotal === 0 : !app.hasCatalog;
+
+  // Radar "moves ready" card: hidden at zero and while dismissed; the server
+  // revives the dismissal when newer moves arrive.
+  const [radarHome, setRadarHome] = useState<RadarHomeVM | null>(() =>
+    cachedScreenData<RadarHomeVM>(SCREEN_CACHE_KEYS.radarHome),
+  );
+  useEffect(() => {
+    let alive = true;
+    fetchRadarHome()
+      .then((p) => {
+        cacheScreenData(SCREEN_CACHE_KEYS.radarHome, p);
+        if (alive) setRadarHome(p);
+      })
+      .catch(() => {
+        // Keep whatever the cache decided - an unreadable count must never block Home.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const dismissRadarCard = useCallback(() => {
+    setRadarHome((cur) => (cur ? { ...cur, dismissed: true } : cur)); // optimistic
+    dismissRadarHomeCard().catch(() => {});
+  }, []);
 
   // Guided journey card (3-phase, replaces the old static setup checklist).
   // Seeded from the session cache so a return visit paints instantly; the
@@ -562,6 +587,44 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
           <span className="cd-promptbar-ph">Describe your first product…</span>
           <CDIcon name="arrowRight" size={15} strokeWidth={1.9} style={{ color: "var(--text-3)" }} />
         </button>
+      )}
+
+      {radarHome && !radarHome.dismissed && radarHome.readyCount > 0 && (
+        <Card>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <CDIcon name="scan" size={22} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <strong>
+                {radarHome.readyCount === 1
+                  ? "1 move ready for you"
+                  : `${radarHome.readyCount} moves ready for you`}
+              </strong>
+              <div className="cd-caption">
+                Radar drafted improvements overnight. Review the evidence and apply each in a click.
+              </div>
+            </div>
+            <Btn onClick={() => app.navigate("radar")}>Open Radar</Btn>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={dismissRadarCard}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 26,
+                height: 26,
+                background: "none",
+                border: 0,
+                color: "inherit",
+                cursor: "pointer",
+                flexShrink: 0,
+              }}
+            >
+              <CDIcon name="x" size={16} />
+            </button>
+          </div>
+        </Card>
       )}
 
       {journey && (

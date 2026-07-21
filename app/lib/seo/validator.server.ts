@@ -13,6 +13,17 @@ function isAbsoluteHttpUrl(value: string): boolean {
   }
 }
 
+/** Title/description bounds alone - the shared gate for full drafts AND for
+ *  meta-only overrides (Radar's SEO moves), so the two paths cannot drift. */
+export function validateMeta(title: string, description: string): SeoIssue[] {
+  const issues: SeoIssue[] = [];
+  const t = title.trim().length;
+  if (t < TITLE_MIN || t > TITLE_MAX) issues.push({ field: "title", message: `title must be ${TITLE_MIN}-${TITLE_MAX} chars (got ${t})` });
+  const d = description.trim().length;
+  if (d < DESC_MIN || d > DESC_MAX) issues.push({ field: "description", message: `description must be ${DESC_MIN}-${DESC_MAX} chars (got ${d})` });
+  return issues;
+}
+
 /** Per-node schema.org problems. Exported so the serve path can drop exactly the
  *  invalid node(s) rather than shipping malformed structured data. */
 export function jsonLdNodeIssues(node: JsonLd): string[] {
@@ -36,11 +47,7 @@ export function jsonLdNodeIssues(node: JsonLd): string[] {
 }
 
 export function validateDraft(draft: SeoDraft): SeoIssue[] {
-  const issues: SeoIssue[] = [];
-  const t = draft.title.trim().length;
-  if (t < TITLE_MIN || t > TITLE_MAX) issues.push({ field: "title", message: `title must be ${TITLE_MIN}-${TITLE_MAX} chars (got ${t})` });
-  const d = draft.description.trim().length;
-  if (d < DESC_MIN || d > DESC_MAX) issues.push({ field: "description", message: `description must be ${DESC_MIN}-${DESC_MAX} chars (got ${d})` });
+  const issues: SeoIssue[] = validateMeta(draft.title, draft.description);
   if (!isAbsoluteHttpUrl(draft.canonical)) issues.push({ field: "canonical", message: "canonical must be an absolute http(s) URL" });
   if (draft.jsonLd.length === 0) issues.push({ field: "jsonLd", message: "at least one schema.org node is required" });
   for (const node of draft.jsonLd) {

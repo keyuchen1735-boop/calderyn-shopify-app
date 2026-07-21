@@ -8,6 +8,7 @@
 // (e.g. a 3-day sustain check, a 7-day CTR window) - never assume the RPC's
 // 14-day bound alone is tight enough for a given detector's claim.
 import type { AiCrawlDay, JsonLdCheckedPage, RadarCandidate, RadarCollectInputs, RankingSeries, TrafficDay } from "./types";
+import { detectCompetitors } from "./detect-competitors.server";
 
 // ── Rankings thresholds (spec defaults) ──────────────────────────────────────
 export const RANK_SLIP_POSITIONS = 3;
@@ -448,5 +449,6 @@ export function detectAll(inputs: RadarCollectInputs, now: Date = new Date()): R
     ...detectTrafficDrops(inputs.traffic),
     ...detectConversionGaps(inputs.traffic),
     ...detectStaleHome(inputs.traffic, inputs.lastPublishedAt, now),
+    ...detectCompetitors(inputs.competitorDiffs),
   ];
 }

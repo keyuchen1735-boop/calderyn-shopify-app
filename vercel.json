@@ -64,6 +64,9 @@
     { "path": "/cron/order-reaper", "schedule": "20 * * * *" },
     { "path": "/cron/sourcing", "schedule": "0 2 * * *" },
     { "path": "/cron/assets", "schedule": "*/5 * * * *" },
-    { "path": "/cron/seo-rankings", "schedule": "30 9 * * *" }
+    { "path": "/cron/seo-rankings", "schedule": "30 9 * * *" },
+    { "path": "/cron/radar-discover", "schedule": "0 8 * * 1" },
+    { "path": "/cron/radar-collect", "schedule": "0 10 * * *" },
+    { "path": "/cron/radar-draft", "schedule": "30 10 * * *" }
   ]
 }

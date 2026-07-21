@@ -37,6 +37,8 @@ export type Screen =
   | "cutover"
   // Autopilot — the trust ladder / calibration surface, promoted to a screen.
   | "autopilot"
+  // Radar - overnight watcher: drafted moves the merchant applies each morning.
+  | "radar"
   // Owned commerce surfaces (RUN group).
   | "orders"
   | "customers"

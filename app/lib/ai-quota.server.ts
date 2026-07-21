@@ -8,7 +8,7 @@
 // defense-in-depth; the Anthropic workspace spend limit is the hard backstop.
 import { rateLimit } from "./rate-limit.server";
 
-export type AiFeature = "designer" | "assistant" | "listing";
+export type AiFeature = "designer" | "assistant" | "listing" | "radar" | "radar_apply" | "radar_discovery";
 
 type QuotaConfig = {
   cooldownMs: number;
@@ -24,6 +24,22 @@ const QUOTAS: Record<AiFeature, QuotaConfig> = {
   assistant: { cooldownMs: 4_000, daily: { base: 30, trusted: 300 } },
   // Listing drafts sit between the two in cost and frequency.
   listing: { cooldownMs: 3_000, daily: { base: 30, trusted: 200 } },
+  // Radar's overnight drafter: no human in the loop, calls run back-to-back
+  // inside one cron tick, so a cooldown would only false-block call 2 of 5.
+  // The 5/night spec cap IS the daily bucket; the drafter also hard-caps its
+  // own loop so quota-bypassed (dev) shops cannot overspend either.
+  radar: { cooldownMs: 0, daily: { base: 5, trusted: 5 } },
+  // A merchant clicking Apply on a drafted move. Deliberately a SEPARATE
+  // bucket from `radar`: sharing one meant the drafter's 5-attempt overnight
+  // run could exhaust the day's allowance before the merchant ever saw the
+  // dashboard, 429ing their morning Apply. No human-facing cooldown either -
+  // a merchant applying several moves back-to-back is normal use, not abuse.
+  radar_apply: { cooldownMs: 0, daily: { base: 10, trusted: 10 } },
+  // Weekly competitor auto-discovery (one web_search-equipped Claude call per
+  // shop per run). Cadence is weekly, so the daily cap of 2 is belt-and-braces
+  // against a misfiring/looping cron - and a SEPARATE bucket from `radar` so a
+  // discovery run can never eat the nightly drafter's 5-call polish budget.
+  radar_discovery: { cooldownMs: 0, daily: { base: 2, trusted: 2 } },
 };
 
 const DAY_MS = 86_400_000;
@@ -57,13 +73,15 @@ export async function checkAiQuota(opts: {
 }): Promise<QuotaVerdict> {
   if (isQuotaBypassed(opts.shopId)) return { allowed: true };
   const cfg = QUOTAS[opts.feature];
-  const cd = await rateLimit(`ai:cd:${opts.feature}:${opts.shopId}`, 1, cfg.cooldownMs);
-  if (!cd) {
-    return {
-      allowed: false,
-      code: "ai_cooldown",
-      message: `Going a little fast — try again in ${Math.ceil(cfg.cooldownMs / 1000)} seconds.`,
-    };
+  if (cfg.cooldownMs > 0) {
+    const cd = await rateLimit(`ai:cd:${opts.feature}:${opts.shopId}`, 1, cfg.cooldownMs);
+    if (!cd) {
+      return {
+        allowed: false,
+        code: "ai_cooldown",
+        message: `Going a little fast — try again in ${Math.ceil(cfg.cooldownMs / 1000)} seconds.`,
+      };
+    }
   }
   if (!cfg.daily) return { allowed: true };
   const cap = opts.trusted ? cfg.daily.trusted : cfg.daily.base;
@@ -72,7 +90,10 @@ export async function checkAiQuota(opts: {
     return {
       allowed: false,
       code: "ai_daily_limit",
-      message: "You've hit today's limit for this feature. It resets at midnight UTC.",
+      // First-use-relative phrasing, not a claimed midnight-UTC reset: the
+      // window is a fixed UTC-day bucket, but merchants read "midnight UTC"
+      // as needing to convert their own timezone to figure out when that is.
+      message: "You've hit today's limit for this feature. It resets about 24 hours after you started.",
     };
   }
   return { allowed: true };

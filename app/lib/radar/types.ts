@@ -8,7 +8,9 @@ export type RadarMoveKind =
   | "seo_content_boost"
   | "aeo_refresh"
   | "aeo_jsonld_fix"
-  | "section_refresh";
+  | "section_refresh"
+  | "competitor_counter"
+  | "competitor_price";
 
 export type RadarMoveStatus = "draft" | "applied" | "dismissed" | "expired";
 
@@ -88,6 +90,13 @@ export interface RadarCollectInputs {
   /** Last publish of the storefront (either runtime), ISO string; null when unpublished. */
   lastPublishedAt: string | null;
   jsonLdIssues: JsonLdCheckedPage[];
+  /** 1 = the current storefront runtime (per-page PDP templates); null = legacy
+   *  (block documents) or unpublished, where every product shares one PDP
+   *  page_document - a section_refresh targeting "pdp" there would write one
+   *  product's copy into the shop-wide template. */
+  publishedRuntimeVersion: number | null;
+  /** Recent competitor page diffs (watching competitors only; bounded reads). */
+  competitorDiffs: CompetitorDiffInput[];
 }
 
 /** Camel-case mirror of a radar_ploy row (mapped in store.server.ts). */
@@ -107,4 +116,58 @@ export interface RadarMoveRow {
   appliedAt: string | null;
   resolvedAt: string | null;
   expiresAt: string;
+}
+
+// ── Phase D: competitors ─────────────────────────────────────────────────────
+
+export type RadarCompetitorStatus = "suggested" | "watching" | "dismissed";
+
+export interface RadarCompetitorRow {
+  id: string;
+  shopId: string;
+  url: string;
+  name: string;
+  status: RadarCompetitorStatus;
+  discoveryEvidence: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Deterministic facts pulled from a competitor page (bounded; no Claude). */
+export interface CompetitorExtract {
+  title: string;
+  metaDescription: string;
+  headings: string[];
+  prices: string[];
+  /** Prices paired with the nearest preceding h1-h3 heading (bounded; only
+   *  present when at least one price could be correlated to a heading). This
+   *  is the one signal precise enough to name a product in a price claim -
+   *  see the truthfulness contract on CompetitorDiff. */
+  labeledPrices?: Array<{ label: string; price: string }>;
+}
+
+/** Deterministic delta vs the previous snapshot of the same url.
+ *
+ *  Truthfulness contract: `newPrices`/`removedPrices` (like the heading
+ *  fields) are page-wide SET differences - nothing ties a price to the
+ *  product it belongs to, so they can only back a generic "pricing on this
+ *  page changed" claim. Only `priceChanges` pairs a price with the heading it
+ *  was captured near on BOTH sides of the diff, so it is the sole field that
+ *  may back a specific-product claim such as "price dropped on X". */
+export interface CompetitorDiff {
+  titleChanged: { from: string; to: string } | null;
+  newHeadings: string[];
+  removedHeadings: string[];
+  newPrices: string[];
+  removedPrices: string[];
+  priceChanges?: Array<{ label: string; from: string; to: string }>;
+}
+
+/** One changed page, joined with its competitor, as the detectors consume it. */
+export interface CompetitorDiffInput {
+  competitorId: string;
+  competitorName: string;
+  url: string;
+  capturedAt: string;
+  diff: CompetitorDiff;
 }
