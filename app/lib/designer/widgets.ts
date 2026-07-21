@@ -5,9 +5,16 @@
 // markup inertly so the merchant sees the design.
 //
 // Marker shape (survives the scrub — plain data attributes):
-//   <div data-designer-widget="coupon" data-code="WELCOME10"
-//        data-headline="10% off your first order"
+//   <div data-designer-widget="coupon" data-code="<real redeemable code>"
+//        data-headline="A welcome offer"
 //        data-sub="Join the list for early access and member pricing."></div>
+//
+// Honesty contract (designer-flagship spec D5): a coupon popup renders ONLY
+// when its declared code is in the caller-supplied redeemable list. There is
+// no discounts feature today, so no caller supplies one and every marker is
+// dropped — a shopper must never be promised a code the platform can't honor.
+// When discounts exist, callers pass the shop's live codes and this widget is
+// already wired.
 
 export interface DesignerWidgetSpec {
   code: string;
@@ -77,16 +84,28 @@ function escapeHtml(v: string): string {
  *  until the shopper finds the close button. */
 export const COUPON_WIDGET_SCRIPT = `(function(){var b=document.querySelector("[data-cd-coupon]");if(!b)return;var KEY="cd_coupon_seen";function seen(){try{sessionStorage.setItem(KEY,"1")}catch(e){}}function open(){b.setAttribute("data-open","1");seen()}function close(){b.removeAttribute("data-open");seen()}if(!(function(){try{return sessionStorage.getItem(KEY)}catch(e){return null}})()){setTimeout(open,6000)}b.addEventListener("click",function(e){if(e.target===b||e.target.closest("[data-cd-coupon-close]"))close()});var f=b.querySelector("[data-cd-coupon-form]");if(f){f.addEventListener("submit",function(e){e.preventDefault();var c=b.querySelector(".cd-coupon");if(c)c.setAttribute("data-revealed","1")})}})();`;
 
-/** Replaces a coupon-widget marker with real markup. Returns the expanded html,
- *  the baseline css to append, and (when not preview) the behavior script.
- *  No marker → unchanged html and empty extras. */
-export function expandCouponWidget(html: string, opts: { preview: boolean }): { html: string; css: string; script: string } {
+/** Replaces a coupon-widget marker with real markup — but only when the
+ *  declared code is actually redeemable (present in opts.redeemableCodes).
+ *  Any other marker is stripped entirely: no code the platform can't honor
+ *  ever reaches a shopper, in preview or live. No marker → unchanged html
+ *  and empty extras. */
+export function expandCouponWidget(
+  html: string,
+  opts: { preview: boolean; redeemableCodes?: readonly string[] },
+): { html: string; css: string; script: string } {
   const match = MARKER_RE.exec(html);
   if (!match) return { html, css: "", script: "" };
   const tag = match[0];
+  const code = attr(tag, "code").trim();
+  const redeemable =
+    code !== "" &&
+    (opts.redeemableCodes ?? []).some((candidate) => candidate.trim().toUpperCase() === code.toUpperCase());
+  if (!redeemable) {
+    return { html: html.replace(MARKER_RE_ALL, ""), css: "", script: "" };
+  }
   const spec: DesignerWidgetSpec = {
-    code: attr(tag, "code") || "WELCOME10",
-    headline: attr(tag, "headline") || "10% off your first order",
+    code,
+    headline: attr(tag, "headline") || "A welcome offer",
     sub: attr(tag, "sub") || "Join the list for early access and member pricing.",
   };
   // Expand the first declaration; drop any duplicates so a second marker never

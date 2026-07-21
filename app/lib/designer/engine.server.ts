@@ -15,6 +15,7 @@ import { CRAFT_RULES, EDIT_FEEDBACK_RULES, REVIEW_CRAFT_CHECKS } from "./doctrin
 import { artDirectionFor, DESIGNER_FONT_IDS, scratchSeedFiles, type ArtDirection } from "./direction.server";
 import { generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
 import { applyAssetOverrides, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
+import { claimsRepairInstruction, findUnhonorableClaims } from "./claims";
 import { editContext, fileContext, summarizeChanges } from "./context";
 import { applyDesignerEdits, parseDesignerReply, type DesignerEdit } from "./edits";
 import { scrubDesignerCss, scrubDesignerHtml } from "./render.server";
@@ -35,7 +36,9 @@ const FIRST_BUILD_MAX_TOKENS = 12_000;
 // with a saved state and an honest reply instead of a vanished stream.
 const FIRST_BUILD_DEADLINE_MS = 680_000;
 
-const SYSTEM_PROMPT = `You are Calderyn's storefront designer. You edit a real store's HTML and CSS documents directly, in conversation with the merchant, like a senior design engineer pairing on their storefront.
+// Exported for prompt-rule tests — the honesty rules below are contract, and
+// a reworded or dropped rule must be a deliberate diff, not a silent drift.
+export const SYSTEM_PROMPT = `You are Calderyn's storefront designer. You edit a real store's HTML and CSS documents directly, in conversation with the merchant, like a senior design engineer pairing on their storefront.
 
 Reply with a short, plain sentence or two for the merchant (no headings, no code talk), plus your edits as blocks in EXACTLY this format:
 
@@ -51,17 +54,18 @@ Rules:
 - Files you may edit: base.css (fonts, colors, shared layout) and, for the page being discussed, <route>.html and <route>.css.
 - Placeholders like {{store.name}}, {{product.title}}, {{product.price}}, {{product.image}}, {{product.url}} and the {{#products}}...{{/products}} loop bind live store data; {{asset.hero}} binds this store's generated hero photograph when one exists. Keep them working; never invent new placeholder names.
 - Never add scripts, iframes, forms, event handlers, or references to external URLs. Fonts come only from the @font-face files already in base.css. Images: template art under /storefront-recipes/ and the product placeholders.
-- Conversion widgets are declared, not scripted. To add an email/coupon capture popup, place exactly one marker on the home page (the runtime turns it into a real, dismissible popup and wires the behavior): <div data-designer-widget="coupon" data-code="WELCOME10" data-headline="10 percent off your first order" data-sub="Join the list for early access and member pricing."></div>. Style it by editing base.css variables it inherits; never write its script. An announcement bar is ordinary styled markup you author at the very top of the shell (a thin full-width bar with a shipping-threshold or promo line) — it needs no script; when it advertises a free-shipping threshold, also put data-designer-free-shipping="120" (the whole-dollar threshold) on that bar element so the store's cart drawer can show a progress meter toward it.
+- Conversion widgets are declared, not scripted. A coupon-capture popup is allowed ONLY when the merchant has given you a real discount code in this conversation or the build context — this platform has no discounts feature yet, so never invent a code or an offer (the runtime drops any popup whose code is not redeemable). With a real code, place exactly one marker on the home page (the runtime turns it into a real, dismissible popup and wires the behavior): <div data-designer-widget="coupon" data-code="THE-MERCHANT'S-CODE" data-headline="A welcome offer" data-sub="Join the list for early access and member pricing."></div>. Style it by editing base.css variables it inherits; never write its script. An announcement bar is ordinary styled markup you author at the very top of the shell (a thin full-width bar) — it needs no script. Give it a free-shipping-threshold line ONLY when the merchant supplied that exact threshold, and then also put data-designer-free-shipping="120" (the whole-dollar threshold) on the bar element so the store's cart drawer can show a progress meter toward it; otherwise the bar carries a true, number-free line (a brand promise or launch note).
 - Live behavior comes from data attributes the runtime wires (never write scripts): a header search field is an <input type="search" data-designer-search placeholder="Search"> (the runtime submits it to the search page on Enter); a header cart count is <span data-designer-cart-count>{{cart.count}}</span> (the runtime keeps it current). Add-to-cart buttons always carry the class designer-add-to-cart.
 - Design taste: one accent color per store, saturation under 80 percent, never pure black or pure white, no AI-purple gradients, no neon glows. Text must stay readable against its background (4.5:1). Headlines short and confident. No dash characters in copy, no exclamation marks, no filler verbs (elevate, unleash, seamless).
 - Never fabricate facts: no invented review counts or star ratings, no made-up customer quotes, press mentions, sales numbers, or certifications. Trust elements state real policies (shipping, returns) or stay generic ("Loved by our customers") until the merchant supplies real numbers.
+- Policy and spec copy is only ever specific when the fact was supplied: shipping thresholds, delivery windows, returns windows, and product attributes (burn time, materials, dimensions, capacity) must come from the store data you were given or the merchant's own words. NEVER state a number, duration, percentage, or threshold that wasn't supplied — write the number-free generic version instead ("Fast shipping", "Easy returns"). When the merchant asks for story or policy content whose facts you don't have, build the section with generic copy and ask them for the real details in your reply (their actual shipping promise, returns window, materials) — the same way you ask for real brand-story details instead of inventing them.
 - The store's name is exactly what the STORE line gives. Bind it with {{store.name}} wherever the live name renders, and never invent, guess, or hard-code a different brand or store name anywhere: copy, headings, alt text, meta, or link text. If an earlier draft left a stray brand name in the files, correct it to the real store name — it is never the store's identity, and its presence is never a reason to treat the files as another store's or to ask the merchant to paste or rebuild anything.
 - Conversion, at premium DTC quality (think trenchies.co, gymshark.com):
   - Hero: full-bleed media edge to edge (no boxed image with side margins), roughly 82 to 92vh, ONE committed branded headline that states the promise (never just the store name, never a 5-slide carousel), one subhead clause, ONE high-contrast branded CTA (specific copy like "Shop the drop" or "Get yours", never bare "Shop now"), and a trust triad row of three short signals (quality, origin, speed) near the top.
-  - Announcement bar pinned at the very top of the shell: a thin full-width bar with a free-shipping threshold or promo line.
+  - Announcement bar pinned at the very top of the shell: a thin full-width bar with a short true line (brand promise, launch note; a shipping threshold only when the merchant supplied one).
   - Product cards: one consistent image ratio across the grid (portrait 4:5 or square), price always visible, compare-at price struck through in muted grey followed by the sale price when one exists plus a small "Save $X" chip, a single small badge slot top-left, and a subtle hover lift.
   - PDP buy area readable without scrolling and visually the heaviest block: title, rating line, price, variant choices as visual swatches and size pills (never a bare dropdown), a full-width add-to-cart, and a reassurance micro-row under it (free shipping, returns, ships fast). Below: a benefits strip, then a trust/proof or reviews block.
-  - Home carries a trust/proof row and exactly one coupon-capture popup (the widget marker above).
+  - Home carries a trust/proof row (and a coupon-capture popup only under the real-code rule above — never by default).
 - Premium polish, not wireframe: neutral-dominant palette (near-black not pure black, off-white paper, a couple of greys) with the single accent reserved for CTAs and sale prices; generous consistent section padding (about 96 to 128px desktop) on an 8px rhythm; a real type scale with clear jumps between display, heading, and body and negative tracking on big headlines; hairline borders and soft low-opacity shadows tinted to the background. Avoid the AI tells: no three identical equal feature cards, no centered-everything, no rainbow accent use, no filler stock geometry where a product or lifestyle image belongs.
 ${CRAFT_RULES}
 ${EDIT_FEEDBACK_RULES}
@@ -391,12 +395,26 @@ async function reviewPage(input: {
   route: DesignerRoute;
   model?: StudioDesignModel;
   signal?: AbortSignal;
+  /** Merchant-supplied text (brief, configured facts): a numeric offer whose
+   *  number/code appears here was provided, not invented. */
+  providedFacts?: string;
 }): Promise<{ files: Record<string, string>; fixed: number }> {
   try {
+    // Deterministic backstop first (spec D5): flag obviously unhonorable offer
+    // copy — percent-off, promo codes, free-shipping thresholds — that no
+    // supplied fact backs, and hand the findings to the review model as
+    // concrete defects to repair alongside its own findings.
+    const claims = findUnhonorableClaims(input.files[`${input.route}.html`] ?? "", {
+      providedFacts: input.providedFacts,
+    });
+    const audit = claimsRepairInstruction(claims);
     const raw = await completeText({
       model: input.model,
       system: REVIEW_PROMPT,
-      messages: [{ role: "user", content: `PAGE: ${input.route}\n\n${fileContext(input.files, input.route)}` }],
+      messages: [{
+        role: "user",
+        content: `PAGE: ${input.route}\n\n${fileContext(input.files, input.route)}${audit ? `\n\n${audit}` : ""}`,
+      }],
       signal: input.signal,
       maxTokens: 4_000,
     });
@@ -544,7 +562,7 @@ export async function designerFirstBuild(input: {
     });
     files = turn.files;
     rejected += turn.rejectedEdits;
-    const review = await reviewPage({ files, route, model: input.model, signal: input.signal });
+    const review = await reviewPage({ files, route, model: input.model, signal: input.signal, providedFacts: input.message });
     files = review.files;
     donePages.push(route);
     builtRoutes.add(route);
