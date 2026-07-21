@@ -7,6 +7,7 @@ import { CalderynError } from "~/lib/calderyn.server";
 import { requirePublishableTenantDomain } from "~/lib/storebuilder/studio.server";
 import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
 import { expireOverdueExperiment, hasRunningExperiment } from "~/lib/experiments/store-experiment.server";
+import { findImageRegistryViolations, unpublishableImageViolations } from "./image-registry.server";
 
 const PUBLISHED_ROUTES = ["base", "home", "collection", "product", "search"] as const;
 
@@ -26,7 +27,7 @@ export async function publishDesignerSite(shopId: string): Promise<string> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("designer_documents")
-    .select("route, html, css")
+    .select("route, html, css, template_id")
     .eq("shop_id", shopId)
     .in("route", [...PUBLISHED_ROUTES]);
   if (error) throw error;
@@ -36,6 +37,31 @@ export async function publishDesignerSite(shopId: string): Promise<string> {
       code: "designer_not_built",
       status: 422,
       message: "Build your store in the designer before publishing.",
+    });
+  }
+
+  // Hard image gate (spec D4): a page referencing image files that don't
+  // exist (or another template's art) must never go live — every view would
+  // 404. Build-time repair loops fix these; publishing is the backstop.
+  const files: Record<string, string> = {};
+  let templateId = "";
+  for (const row of rows) {
+    templateId = String(row.template_id ?? "");
+    if (row.route === "base") files["base.css"] = String(row.css ?? "");
+    else {
+      files[`${row.route}.html`] = String(row.html ?? "");
+      files[`${row.route}.css`] = String(row.css ?? "");
+    }
+  }
+  const broken = unpublishableImageViolations(
+    findImageRegistryViolations({ files, templateId, firstBuild: false }),
+  );
+  if (broken.length > 0) {
+    const sample = [...new Set(broken.map((violation) => violation.path))].slice(0, 3).join(", ");
+    throw new CalderynError({
+      code: "designer_broken_imagery",
+      status: 422,
+      message: `This design references image files that don't exist (${sample}). Ask the designer to replace or remove that imagery, then publish again.`,
     });
   }
 

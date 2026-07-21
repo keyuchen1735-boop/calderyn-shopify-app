@@ -16,6 +16,7 @@ import { artDirectionFor, DESIGNER_FONT_IDS, scratchSeedFiles, type ArtDirection
 import { generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
 import { applyAssetOverrides, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
 import { claimsRepairInstruction, findUnhonorableClaims } from "./claims";
+import { findImageRegistryViolations, imageRepairInstruction } from "./image-registry.server";
 import { editContext, fileContext, summarizeChanges } from "./context";
 import { applyDesignerEdits, parseDesignerReply, type DesignerEdit } from "./edits";
 import { scrubDesignerCss, scrubDesignerHtml } from "./render.server";
@@ -150,6 +151,17 @@ async function saveDocuments(
     onlyFiles?: ReadonlySet<string>;
   },
 ): Promise<void> {
+  // Observability only (spec D4): a save must never throw on a bad image
+  // reference — that would brick mid-stream page saves and the resume path.
+  // The build/edit loops feed violations back to the model as repair
+  // instructions, and publishing refuses the truly broken ones.
+  const violations = findImageRegistryViolations({ files, templateId, firstBuild: false });
+  if (violations.length > 0) {
+    console.warn("[designer] saving documents with image-registry violations", {
+      shopId,
+      violations: violations.slice(0, 8).map((violation) => `${violation.file}: ${violation.path} (${violation.reason})`),
+    });
+  }
   const stamp = new Date().toISOString();
   const rows = [
     { shop_id: shopId, route: "base", html: "", css: scrubDesignerCss(files["base.css"] ?? ""), template_id: templateId, built: true, updated_at: stamp },
@@ -301,6 +313,9 @@ async function runEditTurn(input: {
   model?: StudioDesignModel;
   signal?: AbortSignal;
   maxTokens?: number;
+  /** First builds hold donor-template art to the replacement contract; edit
+   *  turns grandfather donor paths already present in saved documents. */
+  firstBuild?: boolean;
 }): Promise<DesignerReply & { files: Record<string, string> }> {
   const context = editContext(input.data, input.route, input.files);
 
@@ -313,14 +328,23 @@ async function runEditTurn(input: {
   // other file would rewrite pages it never read, so they are rejected.
   const allowedFiles = new Set(["base.css", `${input.route}.html`, `${input.route}.css`]);
 
+  // Deterministic image audit (spec D4): violations in the files this turn
+  // may edit feed the same retry loop as failed edits — the model repairs its
+  // own output instead of a save throwing mid-stream.
+  const auditImages = (files: Record<string, string>) =>
+    findImageRegistryViolations({ files, templateId: input.templateId, firstBuild: input.firstBuild === true })
+      .filter((violation) => allowedFiles.has(violation.file));
+
   let raw = await completeText({ model: input.model, system: SYSTEM_PROMPT, messages, signal: input.signal, maxTokens: input.maxTokens });
   let parsed = parseDesignerReply(raw);
   let result = applyDesignerEdits(input.files, parsed.edits, allowedFiles);
   let attempted = parsed.edits.length + (parsed.truncated ? 1 : 0);
+  let violations = auditImages(result.files);
 
-  // One retry covering both failure shapes: SEARCH text that missed, and a
-  // reply cut off mid-block by the output-token cap.
-  if (result.rejected.length > 0 || parsed.truncated) {
+  // One retry covering the failure shapes: SEARCH text that missed, a reply
+  // cut off mid-block by the output-token cap, and image references that
+  // break the registry contract (invented paths, surviving donor art).
+  if (result.rejected.length > 0 || parsed.truncated || violations.length > 0) {
     const failed = result.rejected
       .map((edit: DesignerEdit) => `FILE: ${edit.file}\n<<<<<<< SEARCH\n${edit.search}\n=======\n${edit.replace}\n>>>>>>> REPLACE`)
       .join("\n\n");
@@ -331,6 +355,7 @@ async function runEditTurn(input: {
       result.rejected.length > 0
         ? `These blocks did not apply because their SEARCH text is not present character-for-character in the current files (or they touch a file outside base.css and the page being discussed). Re-send ONLY these edits with SEARCH text copied exactly from the files above (or use * to replace a whole file):\n\n${failed}`
         : "",
+      imageRepairInstruction(violations),
     ].filter(Boolean).join("\n\n");
     const retryRaw = await completeText({
       model: input.model,
@@ -350,6 +375,14 @@ async function runEditTurn(input: {
     attempted += retryParsed.edits.length + (retryParsed.truncated ? 1 : 0);
     result = { files: retryResult.files, applied: result.applied + retryResult.applied, rejected: retryResult.rejected };
     if (!parsed.prose && retryParsed.prose) parsed = { ...parsed, prose: retryParsed.prose };
+    violations = auditImages(result.files);
+    if (violations.length > 0) {
+      // Save still proceeds (fail-soft); publish is the hard gate.
+      console.warn("[designer] image-registry violations survived the repair retry", {
+        route: input.route,
+        violations: violations.slice(0, 8).map((violation) => `${violation.file}: ${violation.path} (${violation.reason})`),
+      });
+    }
   }
 
   // Honest reporting (rule 12): never let success prose stand when nothing
@@ -397,6 +430,9 @@ export async function designerHasDocuments(shopId: string): Promise<boolean> {
 async function reviewPage(input: {
   files: Record<string, string>;
   route: DesignerRoute;
+  templateId: string;
+  /** First builds hold donor art to the replacement contract (spec D4). */
+  firstBuild: boolean;
   model?: StudioDesignModel;
   signal?: AbortSignal;
   /** Merchant-supplied text (brief, configured facts): a numeric offer whose
@@ -411,7 +447,13 @@ async function reviewPage(input: {
     const claims = findUnhonorableClaims(input.files[`${input.route}.html`] ?? "", {
       providedFacts: input.providedFacts,
     });
-    const audit = claimsRepairInstruction(claims);
+    // Same for image references (spec D4): invented paths and surviving donor
+    // art on this page are concrete defects the review pass must repair.
+    const imagery = imageRepairInstruction(
+      findImageRegistryViolations({ files: input.files, templateId: input.templateId, firstBuild: input.firstBuild })
+        .filter((violation) => violation.file === "base.css" || violation.file.startsWith(`${input.route}.`)),
+    );
+    const audit = [claimsRepairInstruction(claims), imagery].filter(Boolean).join("\n\n");
     const raw = await completeText({
       model: input.model,
       system: REVIEW_PROMPT,
@@ -563,10 +605,11 @@ export async function designerFirstBuild(input: {
       model: input.model,
       signal: input.signal,
       maxTokens: FIRST_BUILD_MAX_TOKENS,
+      firstBuild: true,
     });
     files = turn.files;
     rejected += turn.rejectedEdits;
-    const review = await reviewPage({ files, route, model: input.model, signal: input.signal, providedFacts: input.message });
+    const review = await reviewPage({ files, route, templateId, firstBuild: true, model: input.model, signal: input.signal, providedFacts: input.message });
     files = review.files;
     donePages.push(route);
     builtRoutes.add(route);
