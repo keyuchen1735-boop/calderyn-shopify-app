@@ -332,7 +332,16 @@ async function runEditTurn(input: {
   // may edit feed the same retry loop as failed edits — the model repairs its
   // own output instead of a save throwing mid-stream.
   const auditImages = (files: Record<string, string>) =>
-    findImageRegistryViolations({ files, templateId: input.templateId, firstBuild: input.firstBuild === true })
+    findImageRegistryViolations({
+      files,
+      templateId: input.templateId,
+      firstBuild: input.firstBuild === true,
+      availableAssetKeys: input.firstBuild ? new Set(Object.keys(input.data.assets ?? {})) : undefined,
+      storeLogoAvailable: input.firstBuild ? Boolean(input.data.logoUrl?.trim()) : undefined,
+      productImagesAvailable: input.firstBuild
+        ? input.data.products.length > 0 && input.data.products.every((product) => Boolean(product.imageUrl?.trim()))
+        : undefined,
+    })
       .filter((violation) => allowedFiles.has(violation.file));
 
   let raw = await completeText({ model: input.model, system: SYSTEM_PROMPT, messages, signal: input.signal, maxTokens: input.maxTokens });
@@ -438,6 +447,9 @@ async function reviewPage(input: {
   /** Merchant-supplied text (brief, configured facts): a numeric offer whose
    *  number/code appears here was provided, not invented. */
   providedFacts?: string;
+  availableAssetKeys?: ReadonlySet<string>;
+  storeLogoAvailable?: boolean;
+  productImagesAvailable?: boolean;
 }): Promise<{ files: Record<string, string>; fixed: number }> {
   try {
     // Deterministic backstop first (spec D5): flag obviously unhonorable offer
@@ -450,7 +462,14 @@ async function reviewPage(input: {
     // Same for image references (spec D4): invented paths and surviving donor
     // art on this page are concrete defects the review pass must repair.
     const imagery = imageRepairInstruction(
-      findImageRegistryViolations({ files: input.files, templateId: input.templateId, firstBuild: input.firstBuild })
+      findImageRegistryViolations({
+        files: input.files,
+        templateId: input.templateId,
+        firstBuild: input.firstBuild,
+        availableAssetKeys: input.availableAssetKeys,
+        storeLogoAvailable: input.storeLogoAvailable,
+        productImagesAvailable: input.productImagesAvailable,
+      })
         .filter((violation) => violation.file === "base.css" || violation.file.startsWith(`${input.route}.`)),
     );
     const audit = [claimsRepairInstruction(claims), imagery].filter(Boolean).join("\n\n");
@@ -492,6 +511,27 @@ export function pickExistingHeroSource(data: DesignerStoreData): string | null {
   return productImage || data.logoUrl || null;
 }
 
+export function firstBuildRouteImageAudit(input: {
+  files: Record<string, string>;
+  route: DesignerRoute;
+  templateId: string;
+  availableAssetKeys: ReadonlySet<string>;
+  storeLogoAvailable?: boolean;
+  productImagesAvailable?: boolean;
+}) {
+  return findImageRegistryViolations({
+    files: input.files,
+    templateId: input.templateId,
+    firstBuild: true,
+    availableAssetKeys: input.availableAssetKeys,
+    storeLogoAvailable: input.storeLogoAvailable,
+    productImagesAvailable: input.productImagesAvailable,
+  }).filter(
+    (violation) =>
+      violation.file === "base.css" || violation.file.startsWith(`${input.route}.`),
+  );
+}
+
 // Exported for prompt-rule tests: the hero branch is contract (spec D4's
 // mandatory hero) — it must never be empty, whatever imagery the shop has.
 export function firstBuildInstruction(input: {
@@ -526,9 +566,7 @@ export function firstBuildInstruction(input: {
   // typographic treatment), never gray placeholder art.
   const hero = input.heroAssetUrl
     ? `A real photograph is ready for this store: use the placeholder {{asset.hero}} as an image src (hero media, a section background image, or a large brand moment). It matches this store's brief and art direction — prefer it over template art for the hero.`
-    : input.hasProductImagery
-      ? `This store has real product photography: build the hero around {{product.image}} as a committed full-bleed or composed brand moment — never a gray placeholder, never leftover template art.`
-      : `No imagery exists for this store yet: author a deliberate typographic/color hero — committed display type, the store's palette, strong composition. No image element, no gray placeholder art.`;
+    : `No adopted or generated hero exists for this store yet: author a deliberate typographic/color hero — committed display type, the store's palette, strong composition. No image element, no gray placeholder art.`;
   return `${input.brief}\n\n(${base}\n${direction}\n${continuity}\n${hero}\nEvery section must end launch-ready: no default browser styling, no placeholder copy, price and availability visible wherever a product shows.)`;
 }
 
@@ -558,7 +596,7 @@ export async function designerFirstBuild(input: {
   try {
     const catalogProducts = await getCatalog().listProducts(input.shopId, { limit: 12 });
     const withExisting = await applyAssetOverrides(input.shopId, catalogProducts).catch(() => catalogProducts);
-    await generateMissingListingImages(input.shopId, withExisting, undefined, input.signal, 6, firstBuildLimits);
+    await generateMissingListingImages(input.shopId, withExisting, undefined, input.signal, 6, firstBuildLimits, true);
   } catch (err) {
     console.error("[designer] product image generation skipped", err);
   }
@@ -617,6 +655,7 @@ export async function designerFirstBuild(input: {
       prompt: `Photorealistic lifestyle/product photograph for an online store. Brief: ${input.message.slice(0, 500)}. Mood: ${direction.mood}. Palette leaning: ${direction.palette}. Editorial commercial photography, natural light, no text, no logos, no watermarks, no people's identifiable faces.`,
       signal: input.signal,
       limits: firstBuildLimits,
+      retryOnRateLimit: true,
     });
     heroAssetUrl = hero.url;
     photosQuotaBlocked = photosQuotaBlocked || hero.quotaBlocked;
@@ -630,6 +669,7 @@ export async function designerFirstBuild(input: {
   const builtRoutes = new Set<string>(donePages);
   const remaining: DesignerRoute[] = [...routesToBuild];
   let rejected = 0;
+  let imageAuditBlocked = false;
   const total = donePages.length + remaining.length;
   while (remaining.length > 0) {
     // The platform hard-kills this function at maxDuration with no error
@@ -652,8 +692,38 @@ export async function designerFirstBuild(input: {
     });
     files = turn.files;
     rejected += turn.rejectedEdits;
-    const review = await reviewPage({ files, route, templateId, firstBuild: true, model: input.model, signal: input.signal, providedFacts: input.message });
+    const availableAssetKeys = new Set(Object.keys(data.assets ?? {}));
+    const storeLogoAvailable = Boolean(data.logoUrl?.trim());
+    const productImagesAvailable = data.products.length > 0 && data.products.every(
+      (product) => Boolean(product.imageUrl?.trim()),
+    );
+    const review = await reviewPage({
+      files,
+      route,
+      templateId,
+      firstBuild: true,
+      model: input.model,
+      signal: input.signal,
+      providedFacts: input.message,
+      availableAssetKeys,
+      storeLogoAvailable,
+      productImagesAvailable,
+    });
     files = review.files;
+    const finalImageViolations = firstBuildRouteImageAudit({
+      files,
+      route,
+      templateId,
+      availableAssetKeys,
+      storeLogoAvailable,
+      productImagesAvailable,
+    });
+    if (finalImageViolations.length > 0) {
+      imageAuditBlocked = true;
+      remaining.unshift(route);
+      await saveDocuments(input.shopId, templateId, files, { builtRoutes });
+      break;
+    }
     donePages.push(route);
     builtRoutes.add(route);
     // Persist after every page so the preview shows finished pages
@@ -676,9 +746,11 @@ export async function designerFirstBuild(input: {
     ? " Today's photo-generation limit was reached, so some imagery uses placeholders — build again tomorrow to fill them in."
     : "";
   if (remaining.length > 0) {
-    const summary = `I've designed ${donePages.length} of ${total} pages so far — the ${remaining.join(", ")} page${remaining.length > 1 ? "s are" : " is"} still on the way. Send any message and I'll finish the rest.${quotaNote}`;
+    const summary = imageAuditBlocked
+      ? `I've designed ${donePages.length} of ${total} pages so far — the ${remaining[0]} page still needs an imagery repair before I can call it finished. Send any message and I'll resume there.${quotaNote}`
+      : `I've designed ${donePages.length} of ${total} pages so far — the ${remaining.join(", ")} page${remaining.length > 1 ? "s are" : " is"} still on the way. Send any message and I'll finish the rest.${quotaNote}`;
     await appendHistory(input.shopId, "assistant", summary);
-    return { reply: summary, changed: donePages.length > 0, rejectedEdits: rejected };
+    return { reply: summary, changed: donePages.length > 0 || imageAuditBlocked, rejectedEdits: rejected };
   }
 
   const summary = (mode === "scratch"

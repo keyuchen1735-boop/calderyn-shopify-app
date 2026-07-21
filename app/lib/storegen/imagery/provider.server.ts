@@ -15,6 +15,7 @@ export interface ListingImageRequest {
   signal?: AbortSignal;
   /** Per-reservation daily-cap override (designer first-build reserve). */
   limits?: Partial<ImageGenLimits>;
+  retryOnRateLimit?: boolean;
 }
 export interface ImageProvider {
   name: string;
@@ -32,6 +33,7 @@ export function getImageProvider(): ImageProvider {
         referenceImageUrl: req.sourceImageUrl,
         signal: req.signal,
         limits: req.limits,
+        retryOnRateLimit: req.retryOnRateLimit,
       });
       return { url };
     },

@@ -154,6 +154,9 @@ export async function generateGeminiImages(input: {
   meter?: GeminiImageMeter;
   /** Per-reservation daily-cap override (designer first-build reserve). */
   limits?: Partial<ImageGenLimits>;
+  /** One in-slot retry for provider throttling. Designer first builds opt in;
+   *  shared/classic callers keep their original single-attempt behavior. */
+  retryOnRateLimit?: boolean;
 }): Promise<string[]> {
   if (!geminiImageGenerationEnabled()) {
     throw new Error("Live Gemini image generation is disabled");
@@ -217,7 +220,7 @@ export async function generateGeminiImages(input: {
       // with the final outcome. A 429 response carries no image cost, so the
       // deliberate anti-retry-storm counting (failed attempts stay in the
       // daily ceiling) is unaffected.
-      if (response.status === 429 && !signal.aborted) {
+      if (input.retryOnRateLimit === true && response.status === 429 && !signal.aborted) {
         await new Promise((resolve) =>
           setTimeout(resolve, 2_000 + Math.random() * 2_000),
         );

@@ -4,7 +4,8 @@
 // string that let gray placeholder heroes ship. Same exact-substring style as
 // engine-prompt.test.ts: a reworded rule is a deliberate diff, never drift.
 import { describe, expect, it } from "vitest";
-import { firstBuildInstruction, pickExistingHeroSource } from "./engine.server";
+import { firstBuildInstruction, firstBuildRouteImageAudit, pickExistingHeroSource } from "./engine.server";
+import { renderDesignerBody } from "./render.server";
 import { ART_DIRECTIONS } from "./direction.server";
 import type { DesignerStoreData } from "./types";
 
@@ -65,10 +66,10 @@ describe("firstBuildInstruction hero branch", () => {
     expect(out).toContain("prefer it over template art for the hero");
   });
 
-  it("builds the hero around {{product.image}} when only product photos exist", () => {
+  it("uses typographic mode when no adopted/generated hero binding exists, even if product cards have photos", () => {
     const out = instruction({ heroAssetUrl: null, hasProductImagery: true });
-    expect(out).toContain("{{product.image}}");
-    expect(out).toContain("never a gray placeholder");
+    expect(out).toContain("typographic/color hero");
+    expect(out).not.toContain("build the hero around {{product.image}}");
   });
 
   it("demands a deliberate typographic hero when no imagery exists at all", () => {
@@ -84,8 +85,118 @@ describe("firstBuildInstruction hero branch", () => {
       { heroAssetUrl: null, hasProductImagery: false },
       {},
     ]) {
-      expect(instruction(variant)).toMatch(/\{\{asset\.hero\}\}|\{\{product\.image\}\}|typographic/);
+      expect(instruction(variant)).toMatch(/\{\{asset\.hero\}\}|typographic/);
     }
+  });
+});
+
+describe("first-build hero outcome", () => {
+  it("fails the route audit when an unbound hero would render the neutral image", () => {
+    const files = {
+      "base.css": "",
+      "home.html": '<section class="hero"><img src="{{asset.hero}}"></section>',
+      "home.css": "",
+    };
+    const rendered = renderDesignerBody({
+      html: files["home.html"],
+      css: files["home.css"],
+      data: data({ products: [product("https://owned.example/card.jpg")], assets: {} }),
+    });
+    expect(rendered.bodyHtml).toContain("data:image/svg+xml");
+
+    expect(firstBuildRouteImageAudit({
+      files,
+      route: "home",
+      templateId: "scratch",
+      availableAssetKeys: new Set(),
+    })).toEqual([
+      expect.objectContaining({
+        file: "home.html",
+        path: "{{asset.hero}}",
+        reason: "missing-required-asset-binding",
+      }),
+    ]);
+  });
+
+  it("allows a real adopted/generated hero binding", () => {
+    expect(firstBuildRouteImageAudit({
+      files: {
+        "base.css": "",
+        "home.html": '<img src="{{asset.hero}}">',
+        "home.css": "",
+      },
+      route: "home",
+      templateId: "scratch",
+      availableAssetKeys: new Set(["hero"]),
+    })).toEqual([]);
+  });
+
+  it("rejects a missing store logo after proving it renders neutral artwork", () => {
+    const files = {
+      "base.css": "",
+      "home.html": '<img src="{{store.logo}}">',
+      "home.css": "",
+    };
+    const storeData = data({ logoUrl: null });
+    expect(renderDesignerBody({ html: files["home.html"], css: "", data: storeData }).bodyHtml)
+      .toContain("data:image/svg+xml");
+    expect(firstBuildRouteImageAudit({
+      files,
+      route: "home",
+      templateId: "scratch",
+      availableAssetKeys: new Set(),
+      storeLogoAvailable: false,
+      productImagesAvailable: false,
+    })).toEqual([
+      expect.objectContaining({ path: "{{store.logo}}", reason: "missing-required-asset-binding" }),
+    ]);
+  });
+
+  it("rejects product imagery unless a nonempty catalog is entirely image-ready", () => {
+    const files = {
+      "base.css": "",
+      "home.html": '{{#products}}<img src="{{product.image}}">{{/products}}',
+      "home.css": "",
+    };
+    const storeData = data({ products: [product("https://owned.example/ready.jpg"), product(null)] });
+    expect(renderDesignerBody({ html: files["home.html"], css: "", data: storeData }).bodyHtml)
+      .toContain("data:image/svg+xml");
+    expect(firstBuildRouteImageAudit({
+      files,
+      route: "home",
+      templateId: "scratch",
+      availableAssetKeys: new Set(),
+      storeLogoAvailable: false,
+      productImagesAvailable: false,
+    })).toEqual([
+      expect.objectContaining({ path: "{{product.image}}", reason: "missing-required-asset-binding" }),
+    ]);
+  });
+
+  it("accepts a real logo and an entirely image-ready nonempty catalog", () => {
+    const files = {
+      "base.css": "",
+      "home.html": '<img src="{{store.logo}}">{{#products}}<img src="{{product.image}}">{{/products}}',
+      "home.css": "",
+    };
+    const storeData = data({
+      logoUrl: "https://owned.example/logo.jpg",
+      products: [product("https://owned.example/one.jpg"), product("https://owned.example/two.jpg")],
+    });
+    const rendered = renderDesignerBody({ html: files["home.html"], css: "", data: storeData });
+    expect(rendered.bodyHtml).toContain("https://owned.example/logo.jpg");
+    expect(rendered.bodyHtml).toContain("https://owned.example/one.jpg");
+    expect(rendered.bodyHtml).toContain("https://owned.example/two.jpg");
+    expect(rendered.bodyHtml).not.toContain("data:image/svg+xml");
+
+    expect(firstBuildRouteImageAudit({
+      files,
+      route: "home",
+      templateId: "scratch",
+      availableAssetKeys: new Set(),
+      storeLogoAvailable: true,
+      productImagesAvailable: true,
+    })).toEqual([]);
   });
 });
 

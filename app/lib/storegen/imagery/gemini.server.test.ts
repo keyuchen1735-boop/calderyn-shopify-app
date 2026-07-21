@@ -128,7 +128,29 @@ describe("generateGeminiImages", () => {
     );
   });
 
-  it("retries once inside the same reserved slot on a provider 429", async () => {
+  it("does not retry a provider 429 unless the caller explicitly opts in", async () => {
+    process.env.GEMINI_API_KEY = "secret";
+    process.env.GEMINI_IMAGE_GENERATION_ENABLED = "1";
+    const imageMeter = meter(["evt-1"]);
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("throttled", { status: 429 }));
+
+    await expect(generateGeminiImages({
+      ...baseInput,
+      prompt: "classic product",
+      fetchImpl,
+      meter: imageMeter,
+    })).rejects.toThrow("Gemini image generation failed (429)");
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(imageMeter.reserve).toHaveBeenCalledTimes(1);
+    expect(imageMeter.started).toHaveBeenCalledTimes(1);
+    expect(imageMeter.complete).toHaveBeenCalledTimes(1);
+    expect(imageMeter.release).not.toHaveBeenCalled();
+  });
+
+  it("retries once inside the same reserved slot on a provider 429 when opted in", async () => {
     process.env.GEMINI_API_KEY = "secret";
     process.env.GEMINI_IMAGE_GENERATION_ENABLED = "1";
     const imageMeter = meter(["evt-1"]);
@@ -156,6 +178,7 @@ describe("generateGeminiImages", () => {
         prompt: "product",
         fetchImpl,
         meter: imageMeter,
+        retryOnRateLimit: true,
       });
       await vi.advanceTimersByTimeAsync(4_100);
       await expect(pending).resolves.toEqual(["data:image/jpeg;base64,aW1hZ2U="]);
@@ -190,6 +213,7 @@ describe("generateGeminiImages", () => {
         prompt: "product",
         fetchImpl,
         meter: imageMeter,
+        retryOnRateLimit: true,
       });
       // Attach the rejection handler BEFORE advancing so the rejection is
       // never unhandled.

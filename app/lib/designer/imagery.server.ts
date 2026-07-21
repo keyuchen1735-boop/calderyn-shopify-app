@@ -53,7 +53,7 @@ export async function adoptDesignerAsset(input: {
 }): Promise<string | null> {
   try {
     const persisted = await persistExternalImage(input.shopId, input.url, "designer", "mirrored", { signal: input.signal });
-    if (!persisted.url || persisted.url.startsWith("data:")) return null;
+    if (!persisted.persisted || !persisted.url || persisted.url.startsWith("data:")) return null;
     const { error } = await getSupabase()
       .from("designer_assets")
       .upsert(
@@ -85,6 +85,7 @@ export async function generateDesignerAsset(input: {
   signal?: AbortSignal;
   /** Per-reservation daily-cap override (the first-build reserve). */
   limits?: Partial<ImageGenLimits>;
+  retryOnRateLimit?: boolean;
 }): Promise<{ url: string | null; quotaBlocked: boolean }> {
   if (!geminiImageGenerationEnabled()) return { url: null, quotaBlocked: false };
   try {
@@ -95,10 +96,11 @@ export async function generateDesignerAsset(input: {
       count: 1,
       signal: input.signal,
       limits: input.limits,
+      retryOnRateLimit: input.retryOnRateLimit === true,
     });
     if (!dataUrl) return { url: null, quotaBlocked: false };
     const persisted = await persistExternalImage(input.shopId, dataUrl, "designer", "generated", { signal: input.signal });
-    if (!persisted.url || persisted.url.startsWith("data:")) return { url: null, quotaBlocked: false };
+    if (!persisted.persisted || !persisted.url || persisted.url.startsWith("data:")) return { url: null, quotaBlocked: false };
     const { error } = await getSupabase()
       .from("designer_assets")
       .upsert(

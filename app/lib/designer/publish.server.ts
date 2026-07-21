@@ -11,6 +11,19 @@ import { findImageRegistryViolations, unpublishableImageViolations } from "./ima
 
 const PUBLISHED_ROUTES = ["base", "home", "collection", "product", "search"] as const;
 
+const PAGE_LABELS: Record<string, string> = {
+  base: "Site styles (all pages)",
+  home: "Home (/storefront)",
+  collection: "Collection (/storefront/collections/all)",
+  product: "Product (/storefront/products/<product>)",
+  search: "Search (/storefront/search)",
+};
+
+function pageForFile(file: string): string {
+  if (file === "base.css") return PAGE_LABELS.base;
+  return PAGE_LABELS[file.replace(/\.(?:html|css)$/i, "")] ?? file;
+}
+
 /** Copies the current designer documents to the served snapshot and makes
  *  sure the tenant domain exists. Returns the public storefront URL. */
 export async function publishDesignerSite(shopId: string): Promise<string> {
@@ -27,7 +40,7 @@ export async function publishDesignerSite(shopId: string): Promise<string> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("designer_documents")
-    .select("route, html, css, template_id")
+    .select("route, html, css, template_id, built")
     .eq("shop_id", shopId)
     .in("route", [...PUBLISHED_ROUTES]);
   if (error) throw error;
@@ -37,6 +50,16 @@ export async function publishDesignerSite(shopId: string): Promise<string> {
       code: "designer_not_built",
       status: 422,
       message: "Build your store in the designer before publishing.",
+    });
+  }
+
+  const unfinished = rows.filter((row) => row.built === false);
+  if (unfinished.length > 0) {
+    const pages = [...new Set(unfinished.map((row) => PAGE_LABELS[String(row.route)] ?? String(row.route)))];
+    throw new CalderynError({
+      code: "designer_not_built",
+      status: 422,
+      message: `Finish these pages in Studio before publishing: ${pages.join(", ")}. Open each page and send any message to resume its repair.`,
     });
   }
 
@@ -57,11 +80,20 @@ export async function publishDesignerSite(shopId: string): Promise<string> {
     findImageRegistryViolations({ files, templateId, firstBuild: false }),
   );
   if (broken.length > 0) {
-    const sample = [...new Set(broken.map((violation) => violation.path))].slice(0, 3).join(", ");
+    const byPage = new Map<string, string[]>();
+    for (const violation of broken) {
+      const page = pageForFile(violation.file);
+      const paths = byPage.get(page) ?? [];
+      if (!paths.includes(violation.path)) paths.push(violation.path);
+      byPage.set(page, paths);
+    }
+    const affected = [...byPage.entries()]
+      .map(([page, paths]) => `${page}: ${paths.slice(0, 3).join(", ")}`)
+      .join("; ");
     throw new CalderynError({
       code: "designer_broken_imagery",
       status: 422,
-      message: `This design references image files that don't exist (${sample}). Ask the designer to replace or remove that imagery, then publish again.`,
+      message: `These Studio pages reference image files that don't exist: ${affected}. Open each named page, ask the designer to replace or remove that imagery, then publish again.`,
     });
   }
 

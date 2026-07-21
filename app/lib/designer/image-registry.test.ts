@@ -49,6 +49,22 @@ describe("findImageRegistryViolations — walkthrough failure shapes", () => {
     const out = check({ "home.html": '<img src="{{asset.hero}}" alt="Hero">' });
     expect(out).toEqual([]);
   });
+
+  it("flags an unbound asset placeholder when a first-build audit supplies the real asset keys", () => {
+    const out = findImageRegistryViolations({
+      files: { "home.html": '<img src="{{asset.hero}}">' },
+      templateId: "ritual-almanac",
+      firstBuild: true,
+      availableAssetKeys: new Set(["collection"]),
+    });
+    expect(out).toEqual([
+      {
+        file: "home.html",
+        path: "{{asset.hero}}",
+        reason: "missing-required-asset-binding",
+      },
+    ]);
+  });
 });
 
 describe("findImageRegistryViolations — allowed vocabulary", () => {
@@ -69,6 +85,80 @@ describe("findImageRegistryViolations — allowed vocabulary", () => {
       "base.css": '@font-face{src:url(/storefront-fonts/inter-latin.woff2)}\n.hero{background-image:url("{{asset.hero}}")}',
     });
     expect(out).toEqual([]);
+  });
+
+  it("accepts collection/texture assets and data URIs regardless of scheme case", () => {
+    const out = check({
+      "home.html": [
+        "<img SRC={{asset.collection}}>",
+        "<img src='{{asset.texture}}'>",
+        "<img src=DATA:image/svg+xml,%3Csvg%3E>",
+      ].join(""),
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("extracts quoted and unquoted src attributes case-insensitively", () => {
+    const out = check({
+      "home.html": [
+        '<img SRC="/storefront-recipes/candle-upper.jpg">',
+        "<img src='/storefront-recipes/candle-single.jpg'>",
+        "<img src=/storefront-recipes/candle-bare.jpg>",
+      ].join(""),
+    });
+    expect(out.map((violation) => violation.path)).toEqual([
+      "/storefront-recipes/candle-upper.jpg",
+      "/storefront-recipes/candle-single.jpg",
+      "/storefront-recipes/candle-bare.jpg",
+    ]);
+  });
+
+  it("checks every candidate in quoted and unquoted srcset attributes", () => {
+    const out = check({
+      "home.html": [
+        '<img srcset="{{asset.collection}} 1x, /storefront-recipes/candle-wide.jpg 2x">',
+        "<img SRCSET='{{product.image}} 320w, //evil.example/candle.jpg 640w'>",
+        "<img srcset=/storefront-recipes/candle-a.jpg,/storefront-recipes/candle-b.jpg>",
+      ].join(""),
+    });
+    expect(out.map((violation) => violation.path)).toEqual([
+      "/storefront-recipes/candle-wide.jpg",
+      "//evil.example/candle.jpg",
+      "/storefront-recipes/candle-a.jpg",
+      "/storefront-recipes/candle-b.jpg",
+    ]);
+  });
+
+  it("rejects protocol-relative and absolute external image references", () => {
+    const out = check({
+      "home.html": '<img src="//cdn.example/x.jpg"><img src=https://cdn.example/y.jpg>',
+    });
+    expect(out.map((violation) => violation.path)).toEqual([
+      "//cdn.example/x.jpg",
+      "https://cdn.example/y.jpg",
+    ]);
+  });
+
+  it("canonicalizes browser-equivalent CSS escapes before classification", () => {
+    const out = check(
+      {
+        "base.css": [
+          String.raw`.valid{background:url(\2f storefront-recipes\2f ritual-almanac\2f hero.webp)}`,
+          String.raw`.external{background:url(https\3a \2f \2f evil.example\2f x.jpg)}`,
+          String.raw`.invented{background:url(\2f storefront-recipes\2f candle-escaped.jpg)}`,
+          String.raw`.binding{background:url(\7b \7b asset.texture\7d \7d )}`,
+        ].join("\n"),
+      },
+      { firstBuild: false },
+    );
+    expect(out.map((violation) => violation.reason)).toEqual([
+      "invented-path",
+      "invented-path",
+    ]);
+    expect(out.map((violation) => violation.path)).toEqual([
+      String.raw`https\3a \2f \2f evil.example\2f x.jpg`,
+      String.raw`\2f storefront-recipes\2f candle-escaped.jpg`,
+    ]);
   });
 
   it("rejects unknown placeholders and external urls", () => {
@@ -128,5 +218,22 @@ describe("imageRepairInstruction", () => {
     expect(out).toContain("/storefront-recipes/candle-a.jpg");
     expect(out).toContain("donor template's own artwork");
     expect(out).toContain("Never keep it with rewritten alt text");
+  });
+
+  it("recommends honest image-free treatments for unavailable live bindings", () => {
+    const violations = findImageRegistryViolations({
+      files: {
+        "home.html": '<img src="{{store.logo}}"><img src="{{product.image}}">',
+      },
+      templateId: "scratch",
+      firstBuild: true,
+      availableAssetKeys: new Set(),
+      storeLogoAvailable: false,
+      productImagesAvailable: false,
+    });
+    const out = imageRepairInstruction(violations);
+    expect(out).toContain("typographic store-name treatment");
+    expect(out).toContain("image-free card treatment");
+    expect(out).not.toContain("generate");
   });
 });
