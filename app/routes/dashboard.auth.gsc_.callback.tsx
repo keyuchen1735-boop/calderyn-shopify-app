@@ -37,9 +37,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const { refreshToken, accessToken } = await exchangeGscCode(code, gscRedirectUri());
     if (!refreshToken) return back("google-error", "no_refresh_token");
-    await saveGscCredential(session.shopId, refreshToken);
+    // Resolve the site (a fallible network call) before persisting the
+    // credential, so a listGscSites failure aborts the connect without leaving
+    // an encrypted refresh token orphaned in seo_google_credential.
     const origin = await getShopStorefrontOrigin(session.shopId);
     const site = origin ? pickSiteForOrigin(await listGscSites(accessToken), origin) : null;
+    await saveGscCredential(session.shopId, refreshToken);
     // seo_settings may have no row yet for a shop that never touched SEO
     // settings, so upsert on shop_id rather than update (which would match
     // zero rows and silently no-op). upsertSeoSettings (seo-store.server.ts)

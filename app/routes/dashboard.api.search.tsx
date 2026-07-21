@@ -181,6 +181,10 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     case "gsc_disconnect": {
       return dashboardJson(async () => {
+        // Demo shops (non-uuid shopId) have no seo_settings / credential rows;
+        // hitting Supabase with a non-uuid shop_id would 500 on uuid parse.
+        // Match the read path's guard in getGoogleBlock.
+        if (!isUuid(session.shopId)) return { ok: true };
         await disconnectGsc(session.shopId);
         return { ok: true };
       });

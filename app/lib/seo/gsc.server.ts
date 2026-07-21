@@ -134,11 +134,16 @@ export async function disconnectGsc(shopId: string, fetcher: typeof fetch = fetc
     }
   }
   const sb = getSupabase();
-  const del = await sb.from("seo_google_credential").delete().eq("shop_id", shopId);
-  if (del.error) throw new Error(`disconnectGsc: ${del.error.message}`);
+  // Mark the shop disconnected before deleting the credential. If the delete
+  // then fails, the worst state is "disconnected but credential still present"
+  // (cron skips it, next connect overwrites it) rather than "still flagged
+  // connected but credential gone", which would make cron.seo-rankings pick the
+  // shop and fail on gsc_not_connected every day until a manual re-disconnect.
   const upd = await sb
     .from("seo_settings")
     .update({ gsc_connected: false, gsc_site_url: null })
     .eq("shop_id", shopId);
   if (upd.error) throw new Error(`disconnectGsc settings: ${upd.error.message}`);
+  const del = await sb.from("seo_google_credential").delete().eq("shop_id", shopId);
+  if (del.error) throw new Error(`disconnectGsc: ${del.error.message}`);
 }
