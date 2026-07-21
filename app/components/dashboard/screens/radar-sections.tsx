@@ -398,7 +398,7 @@ export function LiveRadarSignals({ app }: { app: DashboardCtx }) {
 
   return (
     <>
-      <div className="cd-stat-grid">
+      <div className="grid grid-cols-2 gap-3.5">
         <SignalStat
           label="AI assistant visits"
           value={String(signals.aiAssistants.hitsLast7)}
