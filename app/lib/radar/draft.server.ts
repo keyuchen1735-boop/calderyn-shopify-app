@@ -1,0 +1,105 @@
+// Overnight drafter: detectors -> cooldown filter -> radar_ploy rows. Claude's
+// only job here is polishing the deterministic template copy (headline +
+// rationale) for up to RADAR_NIGHTLY_CLAUDE_CAP candidates per shop per night;
+// every failure path lands on the template, so a Claude outage costs polish,
+// never coverage. checkAiQuota is called immediately before each request (the
+// check records a hit) and this loop ALSO hard-caps itself so quota-bypassed
+// dev shops cannot overspend.
+import { checkAiQuota } from "~/lib/ai-quota.server";
+import { getAnthropic, radarDraftModel } from "~/lib/assistant/anthropic.server";
+import { loadRadarInputs } from "./collect.server";
+import { detectAll } from "./detect.server";
+import {
+  expireStaleMoves,
+  insertDraftMove,
+  isCoolingDown,
+  listRecentMoveRows,
+  stampRadarState,
+} from "./store.server";
+import type { RadarCandidate } from "./types";
+
+export const RADAR_NIGHTLY_CLAUDE_CAP = 5;
+const HEADLINE_MAX = 90;
+const RATIONALE_MAX = 240;
+
+const POLISH_SYSTEM =
+  "You polish short dashboard copy for an online-store owner. Rewrite the given headline and rationale " +
+  "in plain, concrete, encouraging language a non-technical merchant instantly understands. Keep every " +
+  "number and quoted search phrase exactly as given. No jargon, no exclamation marks, no emoji. " +
+  'Respond with JSON only: {"headline":"...","rationale":"..."}';
+
+type PolishResult = { headline: string; rationale: string } | "quota_exhausted" | null;
+
+async function polish(shopId: string, c: RadarCandidate): Promise<PolishResult> {
+  const verdict = await checkAiQuota({ shopId, feature: "radar", trusted: true });
+  if (!verdict.allowed) return "quota_exhausted";
+  try {
+    const res = await getAnthropic().messages.create({
+      model: radarDraftModel(),
+      max_tokens: 300,
+      system: POLISH_SYSTEM,
+      messages: [{
+        role: "user",
+        content: JSON.stringify({ headline: c.headline, rationale: c.rationale, facts: c.evidence.facts }),
+      }],
+    });
+    const text = res.content.find((b): b is Extract<typeof b, { type: "text" }> => b.type === "text")?.text ?? "";
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    const parsed = JSON.parse(text.slice(start, end + 1)) as { headline?: unknown; rationale?: unknown };
+    const headline = typeof parsed.headline === "string" ? parsed.headline.trim() : "";
+    const rationale = typeof parsed.rationale === "string" ? parsed.rationale.trim() : "";
+    if (!headline || !rationale) return null;
+    if (headline.length > HEADLINE_MAX || rationale.length > RATIONALE_MAX) return null;
+    // The internal noun must never reach merchant copy, even via the model.
+    if (/ploy/i.test(`${headline} ${rationale}`)) return null;
+    return { headline, rationale };
+  } catch (err) {
+    console.error(`[radar] draft polish failed for shop ${shopId}`, err);
+    return null;
+  }
+}
+
+export interface DraftSummary {
+  expired: number;
+  drafted: number;
+  polished: number;
+  skipped: number;
+}
+
+export async function draftShopMoves(shopId: string, now: Date = new Date()): Promise<DraftSummary> {
+  const expired = await expireStaleMoves(shopId, now);
+  const inputs = await loadRadarInputs(shopId);
+  const candidates = detectAll(inputs, now);
+  const recent = await listRecentMoveRows(shopId);
+
+  let drafted = 0;
+  let polished = 0;
+  let skipped = 0;
+  let claudeOpen = true;
+
+  for (const c of candidates) {
+    if (isCoolingDown(recent, c, now)) {
+      skipped++;
+      continue;
+    }
+    let copy = { headline: c.headline, rationale: c.rationale };
+    if (claudeOpen && polished < RADAR_NIGHTLY_CLAUDE_CAP) {
+      const p = await polish(shopId, c);
+      if (p === "quota_exhausted") claudeOpen = false; // stop spending; templates carry the rest
+      else if (p) {
+        copy = p;
+        polished++;
+      }
+      // p === null (API/parse failure): keep trying the next candidates - the
+      // cap and quota still bound total spend.
+    }
+    const res = await insertDraftMove(shopId, { ...c, headline: copy.headline, rationale: copy.rationale });
+    if (res === "inserted") drafted++;
+    else skipped++;
+  }
+
+  await stampRadarState(shopId, { lastDraftedAt: now.toISOString() });
+  return { expired, drafted, polished, skipped };
+}
