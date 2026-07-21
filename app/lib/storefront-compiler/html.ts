@@ -254,7 +254,7 @@ export function compileHtml(source: string, options: CompileHtmlOptions): Compil
     if (!ALLOWED_TAGS.has(node.tagName)) {
       throw new CompilerError("html.tag", `Tag <${node.tagName}> is forbidden`);
     }
-    if (options.checkoutDecorative && (node.tagName === "button" || node.tagName === "details" || node.tagName === "summary" || node.tagName === "input")) {
+    if (options.checkoutDecorative && (node.tagName === "button" || node.tagName === "details" || node.tagName === "summary" || node.tagName === "input" || node.tagName === "select")) {
       throw new CompilerError("checkout.control", `Interactive checkout tag <${node.tagName}> is forbidden`);
     }
     for (const attribute of node.attrs) assertAllowedAttribute(attribute.name, attribute.value, node.tagName);
