@@ -100,6 +100,21 @@ export async function setCompetitorStatus(
   return (data ?? []).length > 0 ? "updated" : "not_found";
 }
 
+/** Bump a competitor's updated_at after it is snapshotted, so listCompetitors'
+ *  stalest-first (updated_at asc) ordering rotates the tail in on the next run.
+ *  Without this the same competitors sort first every night and any beyond the
+ *  per-run fetch budget are starved permanently. Best-effort: a failure here is
+ *  logged, never fatal to the snapshot run. */
+export async function touchCompetitorSnapshot(shopId: string, competitorId: string): Promise<void> {
+  if (!isUuid(shopId) || !isUuid(competitorId)) return;
+  const { error } = await getSupabase()
+    .from("radar_competitor")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("shop_id", shopId)
+    .eq("id", competitorId);
+  if (error) throw new Error(`touchCompetitorSnapshot: ${error.message}`);
+}
+
 export interface SnapshotBaseline {
   contentHash: string;
   extracted: CompetitorExtract;

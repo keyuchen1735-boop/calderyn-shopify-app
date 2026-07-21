@@ -11,6 +11,7 @@ import {
   listRecentDiffs,
   MAX_WATCHED_COMPETITORS,
   setCompetitorStatus,
+  touchCompetitorSnapshot,
 } from "../competitor-store.server";
 
 const SHOP = "11111111-1111-4111-8111-111111111111";
@@ -50,6 +51,22 @@ describe("insertSuggestion", () => {
   it("refuses fixture (non-uuid) shops", async () => {
     await expect(insertSuggestion("demo-shop", { url: "https://x/", name: "", evidence: {} }))
       .rejects.toThrow(/uuid/);
+    expect(mocks.from).not.toHaveBeenCalled();
+  });
+});
+
+describe("touchCompetitorSnapshot", () => {
+  it("bumps updated_at against radar_competitor", async () => {
+    mocks.from.mockReturnValueOnce(chain({ error: null }));
+    await expect(touchCompetitorSnapshot(SHOP, COMP)).resolves.toBeUndefined();
+    expect(mocks.from).toHaveBeenCalledWith("radar_competitor");
+  });
+  it("surfaces a db error", async () => {
+    mocks.from.mockReturnValueOnce(chain({ error: { message: "db down" } }));
+    await expect(touchCompetitorSnapshot(SHOP, COMP)).rejects.toThrow(/db down/);
+  });
+  it("no-ops for a fixture (non-uuid) shop without touching the db", async () => {
+    await touchCompetitorSnapshot("demo-shop", COMP);
     expect(mocks.from).not.toHaveBeenCalled();
   });
 });

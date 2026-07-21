@@ -10,6 +10,7 @@ import {
   latestSnapshots,
   listCompetitors,
   MAX_WATCHED_COMPETITORS,
+  touchCompetitorSnapshot,
 } from "./competitor-store.server";
 import { isPathAllowed, loadRobots, politeFetch } from "./fetch.server";
 import type { CompetitorDiff, CompetitorExtract } from "./types";
@@ -185,8 +186,10 @@ export interface SnapshotSummary {
 
 /** Snapshot every watching competitor for one shop, inside the caller's
  *  deadline and the per-shop fetch budget. Per-competitor failures log and
- *  move on; a budget stop is not an error (next night resumes - competitors
- *  are processed stalest-first via listCompetitors' updated_at ordering). */
+ *  move on; a budget stop is not an error (next night resumes). Competitors
+ *  are processed stalest-first via listCompetitors' updated_at ordering, and
+ *  each attempted competitor is touched (updated_at bumped) so the tail
+ *  rotates in on the next run rather than starving past the budget. */
 export async function snapshotWatchingCompetitors(
   shopId: string,
   opts: { deadline: number; fetchImpl?: typeof fetch },
@@ -249,6 +252,14 @@ export async function snapshotWatchingCompetitors(
     } catch (err) {
       summary.failed++;
       console.error(`[radar] snapshot failed for competitor ${competitor.id} (${competitor.url})`, err);
+    } finally {
+      // Rotate this attempted competitor to the back of the stalest-first
+      // queue so tail competitors are not starved past the fetch budget.
+      try {
+        await touchCompetitorSnapshot(shopId, competitor.id);
+      } catch (touchErr) {
+        console.error(`[radar] failed to rotate competitor ${competitor.id}`, touchErr);
+      }
     }
   }
   return summary;

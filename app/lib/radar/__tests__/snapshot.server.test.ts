@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   listCompetitors: vi.fn(),
   latestSnapshots: vi.fn(),
   insertSnapshot: vi.fn(),
+  touchCompetitorSnapshot: vi.fn(),
   loadRobots: vi.fn(),
   politeFetch: vi.fn(),
 }));
@@ -12,6 +13,7 @@ vi.mock("../competitor-store.server", async (importOriginal) => ({
   listCompetitors: mocks.listCompetitors,
   latestSnapshots: mocks.latestSnapshots,
   insertSnapshot: mocks.insertSnapshot,
+  touchCompetitorSnapshot: mocks.touchCompetitorSnapshot,
 }));
 vi.mock("../fetch.server", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -56,6 +58,7 @@ beforeEach(() => {
   mocks.listCompetitors.mockResolvedValue([COMP]);
   mocks.latestSnapshots.mockResolvedValue(new Map());
   mocks.insertSnapshot.mockResolvedValue(undefined);
+  mocks.touchCompetitorSnapshot.mockResolvedValue(undefined);
   mocks.loadRobots.mockResolvedValue({ disallow: [], unreachable: false });
   mocks.politeFetch.mockResolvedValue({ ok: true, status: 200, text: HOME });
 });
@@ -235,6 +238,21 @@ describe("snapshotWatchingCompetitors", () => {
   it("stops at the deadline without throwing", async () => {
     const out = await snapshotWatchingCompetitors(SHOP, { deadline: Date.now() - 1 });
     expect(out.pagesFetched).toBe(0);
+  });
+  it("rotates every attempted competitor to the back of the stalest-first queue", async () => {
+    const three = [1, 2].map((n) => ({ ...COMP, id: `2222222${n}-2222-4222-8222-22222222222${n}`, url: `https://rival${n}.example/` }));
+    mocks.listCompetitors.mockResolvedValue(three);
+    await snapshotWatchingCompetitors(SHOP, { deadline: deadline() });
+    expect(mocks.touchCompetitorSnapshot).toHaveBeenCalledTimes(2);
+    expect(mocks.touchCompetitorSnapshot).toHaveBeenCalledWith(SHOP, three[0].id);
+    expect(mocks.touchCompetitorSnapshot).toHaveBeenCalledWith(SHOP, three[1].id);
+  });
+  it("rotates a competitor even when its snapshot fails, and a rotation failure never breaks the run", async () => {
+    mocks.loadRobots.mockRejectedValueOnce(new Error("boom")); // competitor snapshot throws
+    mocks.touchCompetitorSnapshot.mockRejectedValueOnce(new Error("db down")); // rotation also throws
+    const out = await snapshotWatchingCompetitors(SHOP, { deadline: deadline() });
+    expect(out).toBeTruthy();
+    expect(mocks.touchCompetitorSnapshot).toHaveBeenCalledWith(SHOP, COMP.id);
   });
   it("stops early once the per-shop fetch budget is exhausted mid-run", async () => {
     // 3 competitors x MAX_PAGES_PER_COMPETITOR pages each would need 30 page
