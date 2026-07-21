@@ -55,6 +55,11 @@ export interface RadarOverviewVM {
   history: RadarMoveVM[];
   signals: RadarSignalsVM;
   competitors: RadarCompetitorsVM;
+  /** radar_state.lastCollectedAt - null if Radar has never checked this shop. */
+  lastCheckedAt: string | null;
+  /** true when lastCheckedAt is null or older than 20 hours - the screen uses
+   *  this to trigger an immediate per-shop check on open. */
+  stale: boolean;
 }
 
 /** Merchant-facing labels per move kind (plain language, no jargon). */
@@ -81,7 +86,7 @@ export const revertRadarMove = (moveId: string, confirm = false) =>
   apiSend<{ move: RadarMoveVM }>("POST", "/dashboard/api/radar", { action: "revert", moveId, confirm });
 
 export const confirmRadarCompetitor = (competitorId: string) =>
-  apiSend<{ competitors: RadarCompetitorsVM }>("POST", "/dashboard/api/radar", {
+  apiSend<{ competitors: RadarCompetitorsVM; firstLook?: boolean }>("POST", "/dashboard/api/radar", {
     action: "competitor_confirm",
     competitorId,
   });
@@ -91,6 +96,20 @@ export const dismissRadarCompetitor = (competitorId: string) =>
     action: "competitor_dismiss",
     competitorId,
   });
+
+export interface RadarRefreshVM {
+  refreshed: boolean;
+  reason?: "fresh";
+  /** Only present when refreshed: true. */
+  drafted?: number;
+}
+
+/** Runs an immediate per-shop check (collect + draft), rate-limited
+ *  server-side to once per 30 minutes independent of the nightly Claude
+ *  quota. Used both for the screen's own stale-on-open check and the
+ *  merchant-facing "Check now" button. */
+export const refreshRadar = (): Promise<RadarRefreshVM> =>
+  apiSend<RadarRefreshVM>("POST", "/dashboard/api/radar", { action: "refresh" });
 
 export interface RadarHomeVM {
   readyCount: number;

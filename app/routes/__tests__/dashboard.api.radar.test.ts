@@ -15,16 +15,28 @@ const mocks = vi.hoisted(() => ({
   listCompetitors: vi.fn(),
   setCompetitorStatus: vi.fn(),
   listSnapshotTimeline: vi.fn(),
+  collectShop: vi.fn(),
+  draftShopMoves: vi.fn(),
+  snapshotWatchingCompetitors: vi.fn(),
   fromMock: vi.fn(),
   rpcMock: vi.fn(),
 }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: mocks.requireDashboardSession }));
 vi.mock("~/lib/dashboard/http.server", () => ({
   requireSameOrigin: mocks.requireSameOrigin,
-  dashboardJson: async (fn: () => Promise<unknown>) => new Response(JSON.stringify(await fn()), { status: 200 }),
+  dashboardJson: async (fn: () => Promise<unknown>) => {
+    try {
+      return new Response(JSON.stringify(await fn()), { status: 200 });
+    } catch {
+      return new Response(JSON.stringify({ error: "internal_error" }), { status: 500 });
+    }
+  },
   jsonError: (s: number, e: string, m?: string) => new Response(JSON.stringify({ error: e, message: m }), { status: s }),
 }));
 vi.mock("~/lib/radar/store.server", () => ({ listMoves: mocks.listMoves, readRadarState: mocks.readRadarState }));
+vi.mock("~/lib/radar/collect.server", () => ({ collectShop: mocks.collectShop }));
+vi.mock("~/lib/radar/draft.server", () => ({ draftShopMoves: mocks.draftShopMoves }));
+vi.mock("~/lib/radar/snapshot.server", () => ({ snapshotWatchingCompetitors: mocks.snapshotWatchingCompetitors }));
 vi.mock("~/lib/radar/apply.server", async () => {
   const { RadarApplyError } = await import("../../lib/radar/apply-seo.server");
   return {
@@ -110,6 +122,9 @@ beforeEach(() => {
   mocks.rpcMock.mockResolvedValue({ data: { slipping: [{}], lastCapturedDate: "2026-07-18" }, error: null });
   mocks.listCompetitors.mockResolvedValue([]);
   mocks.listSnapshotTimeline.mockResolvedValue([]);
+  mocks.collectShop.mockResolvedValue(undefined);
+  mocks.draftShopMoves.mockResolvedValue({ expired: 0, drafted: 0, polished: 0, skipped: 0 });
+  mocks.snapshotWatchingCompetitors.mockResolvedValue({ pagesFetched: 0, pagesStored: 0, failed: 0 });
 });
 
 afterEach(() => {
@@ -181,6 +196,41 @@ describe("loader", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.signals.google).toEqual({ connected: true, lastCapturedDate: null, slippingCount: 0 });
+  });
+  it("marks stale (and lastCheckedAt null) when Radar has never checked this shop", async () => {
+    mocks.readRadarState.mockResolvedValue({ lastCollectedAt: null, lastDraftedAt: null, homeCardDismissedAt: null, lastDiscoveredAt: null });
+    const body = await ((await loader(get())) as Response).json();
+    expect(body.lastCheckedAt).toBeNull();
+    expect(body.stale).toBe(true);
+  });
+  it("marks stale when the last check is older than 20 hours", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-20T10:00:00Z"));
+    mocks.readRadarState.mockResolvedValue({
+      lastCollectedAt: "2026-07-19T13:00:00Z", // 21h old
+      lastDraftedAt: null, homeCardDismissedAt: null, lastDiscoveredAt: null,
+    });
+    const body = await ((await loader(get())) as Response).json();
+    expect(body.stale).toBe(true);
+  });
+  it("is not stale when the last check is under 20 hours old", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-20T10:00:00Z"));
+    mocks.readRadarState.mockResolvedValue({
+      lastCollectedAt: "2026-07-20T09:00:00Z", // 1h old
+      lastDraftedAt: null, homeCardDismissedAt: null, lastDiscoveredAt: null,
+    });
+    const body = await ((await loader(get())) as Response).json();
+    expect(body.lastCheckedAt).toBe("2026-07-20T09:00:00Z");
+    expect(body.stale).toBe(false);
+  });
+  it("stays stale when the state read itself fails (failure isolation)", async () => {
+    mocks.readRadarState.mockRejectedValue(new Error("state read down"));
+    const res = (await loader(get())) as Response;
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.lastCheckedAt).toBeNull();
+    expect(body.stale).toBe(true);
   });
 });
 
@@ -298,5 +348,83 @@ describe("competitor actions", () => {
     const res = (await action(post({ action: "apply" }))) as Response;
     expect(res.status).toBe(422);
     expect(mocks.setCompetitorStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe("action refresh", () => {
+  it("short-circuits (no collect, no draft) when the shop was checked under 30 minutes ago", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-20T10:20:00Z"));
+    mocks.readRadarState.mockResolvedValue({
+      lastCollectedAt: "2026-07-20T10:00:00Z", // 20 minutes ago
+      lastDraftedAt: null, homeCardDismissedAt: null, lastDiscoveredAt: null,
+    });
+    const res = (await action(post({ action: "refresh" }))) as Response;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ refreshed: false, reason: "fresh" });
+    expect(mocks.collectShop).not.toHaveBeenCalled();
+    expect(mocks.draftShopMoves).not.toHaveBeenCalled();
+  });
+  it("collects then drafts, in order, bounding the collect deadline to a 15s slice, and returns the drafted count", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-07-20T10:20:00Z");
+    vi.setSystemTime(now);
+    mocks.readRadarState.mockResolvedValue({
+      lastCollectedAt: "2026-07-20T09:00:00Z", // over 30 minutes ago
+      lastDraftedAt: null, homeCardDismissedAt: null, lastDiscoveredAt: null,
+    });
+    const order: string[] = [];
+    mocks.collectShop.mockImplementation(async () => {
+      order.push("collect");
+    });
+    mocks.draftShopMoves.mockImplementation(async () => {
+      order.push("draft");
+      return { expired: 0, drafted: 3, polished: 1, skipped: 0 };
+    });
+    const res = (await action(post({ action: "refresh" }))) as Response;
+    expect(order).toEqual(["collect", "draft"]);
+    expect(mocks.collectShop).toHaveBeenCalledWith(SHOP, now.getTime() + 15_000);
+    expect(mocks.draftShopMoves).toHaveBeenCalledWith(SHOP);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ refreshed: true, drafted: 3 });
+  });
+  it("treats a never-checked shop as due for a refresh", async () => {
+    mocks.readRadarState.mockResolvedValue({ lastCollectedAt: null, lastDraftedAt: null, homeCardDismissedAt: null, lastDiscoveredAt: null });
+    const res = (await action(post({ action: "refresh" }))) as Response;
+    expect(res.status).toBe(200);
+    expect(mocks.collectShop).toHaveBeenCalled();
+    expect(await res.json()).toMatchObject({ refreshed: true });
+  });
+  it("surfaces a collectShop failure as an error response, never a fake success", async () => {
+    mocks.readRadarState.mockResolvedValue({ lastCollectedAt: null, lastDraftedAt: null, homeCardDismissedAt: null, lastDiscoveredAt: null });
+    mocks.collectShop.mockRejectedValue(new Error("rollup rpc down"));
+    const res = (await action(post({ action: "refresh" }))) as Response;
+    expect(res.status).not.toBe(200);
+    expect(mocks.draftShopMoves).not.toHaveBeenCalled();
+  });
+});
+
+describe("competitor_confirm first-look snapshot", () => {
+  beforeEach(() => {
+    mocks.setCompetitorStatus.mockResolvedValue("updated");
+  });
+  it("takes a best-effort first snapshot after confirming and flags firstLook true on success", async () => {
+    mocks.snapshotWatchingCompetitors.mockResolvedValue({ pagesFetched: 1, pagesStored: 1, failed: 0 });
+    const res = (await action(post({ action: "competitor_confirm", competitorId: COMP_ID }))) as Response;
+    expect(res.status).toBe(200);
+    expect(mocks.snapshotWatchingCompetitors).toHaveBeenCalledWith(SHOP, { deadline: expect.any(Number) });
+    expect(await res.json()).toMatchObject({ firstLook: true });
+  });
+  it("does not fail the confirm response when the first snapshot rejects", async () => {
+    mocks.snapshotWatchingCompetitors.mockRejectedValue(new Error("fetch blew up"));
+    const res = (await action(post({ action: "competitor_confirm", competitorId: COMP_ID }))) as Response;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ firstLook: false });
+  });
+  it("never snapshots on competitor_dismiss", async () => {
+    const res = (await action(post({ action: "competitor_dismiss", competitorId: COMP_ID }))) as Response;
+    expect(res.status).toBe(200);
+    expect(mocks.snapshotWatchingCompetitors).not.toHaveBeenCalled();
+    expect((await res.json()).firstLook).toBeUndefined();
   });
 });

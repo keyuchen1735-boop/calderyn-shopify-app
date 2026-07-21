@@ -9,6 +9,9 @@ import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { listMoves, readRadarState } from "~/lib/radar/store.server";
 import { applyMove, dismissMove, revertMove, RadarApplyError } from "~/lib/radar/apply.server";
+import { collectShop } from "~/lib/radar/collect.server";
+import { draftShopMoves } from "~/lib/radar/draft.server";
+import { snapshotWatchingCompetitors } from "~/lib/radar/snapshot.server";
 import {
   listCompetitors,
   listSnapshotTimeline,
@@ -19,6 +22,18 @@ import {
 import type { CompetitorDiff, RadarCompetitorRow, RadarMoveRow } from "~/lib/radar/types";
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
+
+// Vercel's default function window is too short for a 15s collect slice plus
+// up to RADAR_NIGHTLY_CLAUDE_CAP polish calls inside the "refresh" action
+// (same convention as the sibling cron.radar-collect.tsx / cron.radar-draft.tsx).
+export const config = { maxDuration: 60 };
+
+/** A merchant-triggered "Check now" (or the screen's own stale-on-open check)
+ *  is rate-limited independently of the nightly Claude quota - this only
+ *  protects against refresh spam; draftShopMoves enforces its own cap. */
+const REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
+/** How long the loader's `stale` flag treats the last check as still fresh. */
+const STALE_THRESHOLD_MS = 20 * 60 * 60 * 1000;
 
 interface RadarMoveVM {
   id: string;
@@ -234,11 +249,20 @@ async function buildSignals(
   return signals;
 }
 
+/** true when the last check is missing or older than STALE_THRESHOLD_MS - the
+ *  screen uses this to trigger an immediate per-shop check on open. */
+function isStale(lastCheckedAt: string | null): boolean {
+  return lastCheckedAt === null || Date.now() - Date.parse(lastCheckedAt) > STALE_THRESHOLD_MS;
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => {
     if (!isUuid(session.shopId)) {
-      return { moves: [], history: [], signals: structuredClone(EMPTY_SIGNALS), competitors: EMPTY_COMPETITORS_VM };
+      return {
+        moves: [], history: [], signals: structuredClone(EMPTY_SIGNALS), competitors: EMPTY_COMPETITORS_VM,
+        lastCheckedAt: null, stale: true,
+      };
     }
     const competitorsData = await buildCompetitors(session.shopId).catch((err) => {
       console.error("[radar] competitors read failed", err);
@@ -249,7 +273,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
       listMoves(session.shopId, ["applied", "dismissed", "expired"]),
       buildSignals(session.shopId, competitorsData),
     ]);
-    return { moves: moves.map(toMoveVM), history: history.map(toMoveVM), signals, competitors: competitorsData.vm };
+    // buildSignals already reads radar_state with its own failure isolation
+    // (a state-read failure leaves signals.traffic.lastCheckedAt null, so this
+    // reuses that read rather than hitting radar_state a second time).
+    const lastCheckedAt = signals.traffic.lastCheckedAt;
+    return {
+      moves: moves.map(toMoveVM), history: history.map(toMoveVM), signals, competitors: competitorsData.vm,
+      lastCheckedAt, stale: isStale(lastCheckedAt),
+    };
   });
 }
 
@@ -268,6 +299,19 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!body || typeof body.action !== "string") {
     return jsonError(422, "bad_request", "action and moveId are required");
   }
+  if (body.action === "refresh") {
+    return dashboardJson(async () => {
+      const state = await readRadarState(session.shopId);
+      if (state.lastCollectedAt && Date.now() - Date.parse(state.lastCollectedAt) < REFRESH_COOLDOWN_MS) {
+        return { refreshed: false, reason: "fresh" as const };
+      }
+      // 15s collect slice, mirroring collectShop's own default budget - the
+      // drafter's Claude spend is separately capped inside draftShopMoves.
+      await collectShop(session.shopId, Date.now() + 15_000);
+      const summary = await draftShopMoves(session.shopId);
+      return { refreshed: true, drafted: summary.drafted };
+    });
+  }
   if (body.action === "competitor_confirm" || body.action === "competitor_dismiss") {
     if (typeof body.competitorId !== "string") {
       return jsonError(422, "bad_request", "competitorId is required");
@@ -280,7 +324,21 @@ export async function action({ request }: ActionFunctionArgs) {
           `You can watch up to ${MAX_WATCHED_COMPETITORS} competitors. Dismiss one first to add another.`);
       }
       if (outcome === "not_found") return jsonError(404, "competitor_not_found", "That competitor no longer exists.");
-      return dashboardJson(async () => ({ competitors: (await buildCompetitors(session.shopId)).vm }));
+      let firstLook = false;
+      if (body.action === "competitor_confirm") {
+        // Best-effort: the confirm itself already succeeded above, so a
+        // snapshot failure here must never turn into a failure response.
+        try {
+          await snapshotWatchingCompetitors(session.shopId, { deadline: Date.now() + 10_000 });
+          firstLook = true;
+        } catch (err) {
+          console.error(`[radar] first-look snapshot failed for competitor ${body.competitorId}`, err);
+        }
+      }
+      return dashboardJson(async () => ({
+        competitors: (await buildCompetitors(session.shopId)).vm,
+        ...(body.action === "competitor_confirm" ? { firstLook } : {}),
+      }));
     } catch (err) {
       console.error(`[radar] ${body.action} failed for competitor ${body.competitorId}`, err);
       return jsonError(500, "radar_action_failed", "That didn't go through. Your list was not changed.");
