@@ -4,7 +4,7 @@ import { loader as startLoader } from "../dashboard.auth.gsc";
 import { loader as callbackLoader } from "../dashboard.auth.gsc_.callback";
 
 const mocks = vi.hoisted(() => ({
-  requireDashboardSession: vi.fn().mockResolvedValue({ shopId: "shop-1", userId: "u1" }),
+  requireVerifiedSession: vi.fn().mockResolvedValue({ shopId: "shop-1", userId: "u1" }),
   buildGscAuthUrl: vi.fn().mockReturnValue("https://accounts.google.com/o/oauth2/v2/auth?x=1"),
   exchangeGscCode: vi.fn().mockResolvedValue({ refreshToken: "rt", accessToken: "at" }),
   saveGscCredential: vi.fn().mockResolvedValue(undefined),
@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   getShopStorefrontOrigin: vi.fn().mockResolvedValue("https://peak.calderyncompany.com"),
   settingsUpsert: vi.fn().mockResolvedValue({ error: null }),
 }));
-vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: mocks.requireDashboardSession }));
+vi.mock("~/lib/dashboard/session.server", () => ({ requireVerifiedSession: mocks.requireVerifiedSession }));
 vi.mock("~/lib/seo/gsc.server", () => ({
   buildGscAuthUrl: mocks.buildGscAuthUrl,
   exchangeGscCode: mocks.exchangeGscCode,

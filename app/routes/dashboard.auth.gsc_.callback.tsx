@@ -4,7 +4,7 @@
 // and mark the shop connected. Errors land back on the Search screen.
 import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
 import { expireCookieHeader } from "~/lib/dashboard/cookies.server";
-import { requireDashboardSession } from "~/lib/dashboard/session.server";
+import { requireVerifiedSession } from "~/lib/dashboard/session.server";
 import { exchangeGscCode, saveGscCredential, GSC_STATE_COOKIE, gscRedirectUri } from "~/lib/seo/gsc.server";
 import { listGscSites, pickSiteForOrigin } from "~/lib/seo/search-console.server";
 import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
@@ -28,7 +28,9 @@ function cookieValue(request: Request, name: string): string | null {
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const session = await requireDashboardSession(request);
+  // Top-level browser GET: an expired session must bounce through /login
+  // (returning here via ?return_to=), never render the API guard's 401 JSON.
+  const session = await requireVerifiedSession(request);
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
