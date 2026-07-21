@@ -45,6 +45,35 @@ function dayLabel(day: string): string {
     : d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
+/** Kind labels (the merchant-facing groupings already in RADAR_KIND_LABELS)
+ *  whose one-click Apply changes something the merchant would recognize as
+ *  "the store page" - used to give the apply toast a concrete receipt instead
+ *  of a generic acknowledgement. */
+const STORE_PAGE_RECEIPT_LABELS = new Set(["Store page", "Google ranking", "AI assistants"]);
+
+/** A plain-language receipt for a successful apply. Every move that reaches
+ *  the main Apply button (as opposed to the review path's "Mark done") is
+ *  guaranteed by the drafter to be a real site-changing apply - see
+ *  detect*.server.ts, every "review" applyMode always carries a deepLink and
+ *  so never lands here - so this only decides HOW concrete the receipt reads,
+ *  never whether one is warranted. */
+function applyReceiptMessage(m: RadarMoveVM): string {
+  const label = RADAR_KIND_LABELS[m.kind];
+  return label && STORE_PAGE_RECEIPT_LABELS.has(label)
+    ? "Applied — your store page was updated."
+    : "Applied. You can revert it from History.";
+}
+
+/** The moves-queue empty state, once Radar has actually checked (not stale,
+ *  not mid-check): read as a working guard reporting in, not a blank inbox. */
+function allClearSub(overview: RadarOverviewVM, relTime: (ts: number) => string): string {
+  const watching = overview.competitors.watching.length;
+  const competitorsPhrase = watching > 0 ? `${watching} competitor${watching === 1 ? "" : "s"}` : "competitors";
+  const checkedPhrase = overview.lastCheckedAt ? `${relTime(Date.parse(overview.lastCheckedAt))} ` : "";
+  return `Radar checked your store ${checkedPhrase}and nothing needs your attention. ` +
+    `It's watching your traffic, Google results, AI assistants, and ${competitorsPhrase}.`;
+}
+
 function SignalTile(props: { icon: string; label: string; value: string; note: string }) {
   return (
     <Card className="cd-stat">
@@ -59,7 +88,7 @@ function SignalTile(props: { icon: string; label: string; value: string; note: s
 }
 
 export default function Radar({ app }: { app: DashboardCtx }) {
-  const { toast } = app;
+  const { toast, relTime } = app;
   const [data, setData] = useState<RadarOverviewVM | null>(() =>
     cachedScreenData<RadarOverviewVM>(SCREEN_CACHE_KEYS.radar),
   );
@@ -180,6 +209,10 @@ export default function Radar({ app }: { app: DashboardCtx }) {
   }
 
   const { moves, history, signals, competitors } = data;
+  // "Fresh" for the empty-queue receipt: actually checked, not still stale
+  // and not the in-flight instant-check kicked off on open.
+  const showAllClear = moves.length === 0 && !data.stale && !freshLookBanner;
+  const appliedRecently = history.filter((m) => m.status === "applied").length;
 
   return (
     <div className="cd-screen">
@@ -190,6 +223,11 @@ export default function Radar({ app }: { app: DashboardCtx }) {
             Radar watches your traffic, Google results and AI assistants overnight and drafts moves you
             can apply in a click. Nothing changes on your store until you say so.
           </p>
+          {data.lastCheckedAt && !(tab === "moves" && showAllClear) && (
+            <p className="cd-caption" style={{ margin: "4px 0 0" }}>
+              Checked {relTime(Date.parse(data.lastCheckedAt))}
+            </p>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <Btn disabled={checkingNow} onClick={() => void checkNow()}>
@@ -268,11 +306,15 @@ export default function Radar({ app }: { app: DashboardCtx }) {
 
       {tab === "moves" &&
         (moves.length === 0 ? (
-          <Placeholder
-            icon="check"
-            title="All clear this morning"
-            sub="Radar checks your store nightly and whenever you open this screen: page traffic, where you show up on Google, and whether AI assistants can read you. When something needs attention, a drafted move appears here."
-          />
+          showAllClear ? (
+            <Placeholder icon="check" title="All clear" sub={allClearSub(data, relTime)} />
+          ) : (
+            <Placeholder
+              icon="check"
+              title="All clear this morning"
+              sub="Radar checks your store nightly and whenever you open this screen: page traffic, where you show up on Google, and whether AI assistants can read you. When something needs attention, a drafted move appears here."
+            />
+          )
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {moves.map((m) => (
@@ -302,7 +344,7 @@ export default function Radar({ app }: { app: DashboardCtx }) {
                     </>
                   ) : (
                     <Btn kind="primary" disabled={busyId === m.id}
-                      onClick={() => void run(m, () => applyRadarMove(m.id), "Applied. You can revert it from History.")}>
+                      onClick={() => void run(m, () => applyRadarMove(m.id), applyReceiptMessage(m))}>
                       {busyId === m.id ? "Applying…" : "Apply"}
                     </Btn>
                   )}
@@ -321,6 +363,9 @@ export default function Radar({ app }: { app: DashboardCtx }) {
           <Placeholder icon="clock" title="Nothing here yet" sub="Applied and dismissed moves will show up here." />
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {appliedRecently > 0 && (
+              <p className="cd-caption" style={{ margin: 0 }}>{appliedRecently} applied recently</p>
+            )}
             {history.map((m) => (
               <Card key={m.id}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

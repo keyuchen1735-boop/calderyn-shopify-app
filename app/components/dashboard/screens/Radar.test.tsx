@@ -92,7 +92,7 @@ function overview(
 }
 
 function dashboardApp() {
-  return { toast: vi.fn() };
+  return { toast: vi.fn(), relTime: vi.fn((_ts: number) => "3h ago") };
 }
 
 async function renderRadar(app = dashboardApp()) {
@@ -471,6 +471,129 @@ describe("Radar competitor confirm first look", () => {
     const watchBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Watch this store")!;
     await act(async () => watchBtn.click());
     expect(app.toast).toHaveBeenCalledWith("Watching. Radar took its first look at their site.", "check");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar all-clear receipt", () => {
+  it("shows an all-clear receipt with a relative check time and the watched-competitor count when the queue is empty and fresh", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], {
+        stale: false,
+        lastCheckedAt: "2026-07-20T09:00:00Z",
+        competitors: {
+          suggested: [],
+          watching: [
+            competitor({ id: "c1", status: "watching" }),
+            competitor({ id: "c2", status: "watching" }),
+            competitor({ id: "c3", status: "watching" }),
+          ],
+          watchLimit: 5,
+        },
+      }),
+    );
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    expect(host.textContent).toContain("All clear");
+    expect(host.textContent).toContain("Radar checked your store 3h ago and nothing needs your attention.");
+    expect(host.textContent).toContain("It's watching your traffic, Google results, AI assistants, and 3 competitors.");
+    expect(app.relTime).toHaveBeenCalledWith(Date.parse("2026-07-20T09:00:00Z"));
+    await act(async () => root.unmount());
+  });
+
+  it("falls back to the generic 'and competitors' phrasing when nothing is watched yet", async () => {
+    fetchRadar.mockResolvedValue(overview([], { stale: false, lastCheckedAt: "2026-07-20T09:00:00Z" }));
+    const { host, root } = await renderRadar();
+    expect(host.textContent).toContain("It's watching your traffic, Google results, AI assistants, and competitors.");
+    await act(async () => root.unmount());
+  });
+
+  it("does not show the all-clear receipt when there are moves to review", async () => {
+    fetchRadar.mockResolvedValue(overview([move()]));
+    const { host, root } = await renderRadar();
+    expect(host.textContent).not.toContain("All clear");
+    await act(async () => root.unmount());
+  });
+
+  it("does not show the all-clear receipt while stale (still shows the nightly-check copy instead)", async () => {
+    fetchRadar.mockResolvedValue(overview([], { stale: true, lastCheckedAt: null }));
+    refreshRadar.mockImplementation(() => new Promise(() => {})); // never resolves in this test
+    const { host, root } = await renderRadar();
+    expect(host.textContent).not.toContain("Radar checked your store");
+    expect(host.textContent).toContain("All clear this morning");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar header checked-ago caption", () => {
+  it("shows 'Checked <relative>' in the header when lastCheckedAt is present and the view isn't the all-clear card", async () => {
+    fetchRadar.mockResolvedValue(overview([move()], { lastCheckedAt: "2026-07-20T09:00:00Z" }));
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    expect(host.textContent).toContain("Checked 3h ago");
+    await act(async () => root.unmount());
+  });
+
+  it("omits the header caption on the all-clear view to avoid repeating the same relative time twice", async () => {
+    fetchRadar.mockResolvedValue(overview([], { stale: false, lastCheckedAt: "2026-07-20T09:00:00Z" }));
+    const { host, root } = await renderRadar();
+    // The all-clear card's own sentence states the check time; the header must not duplicate it.
+    const occurrences = host.textContent!.match(/3h ago/g) ?? [];
+    expect(occurrences.length).toBe(1);
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar history summary", () => {
+  it("shows an applied-count summary at the top of History when moves have been applied", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], {
+        history: [
+          move({ id: "h1", status: "applied" }),
+          move({ id: "h2", status: "applied" }),
+          move({ id: "h3", status: "dismissed" }),
+        ],
+      }),
+    );
+    const { host, root } = await renderRadar();
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "History")!;
+    await act(async () => tabBtn.click());
+    expect(host.textContent).toContain("2 applied recently");
+    await act(async () => root.unmount());
+  });
+
+  it("omits the applied-count summary when nothing in the loaded history was applied", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], { history: [move({ id: "h1", status: "dismissed" })] }),
+    );
+    const { host, root } = await renderRadar();
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "History")!;
+    await act(async () => tabBtn.click());
+    expect(host.textContent).not.toContain("applied recently");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar apply receipt", () => {
+  it("gives a concrete store-page receipt for a store-page-family kind", async () => {
+    applyRadarMove.mockResolvedValue({ move: move({ status: "applied" }) });
+    fetchRadar.mockResolvedValue(overview([move({ kind: "section_refresh" })]));
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    const applyBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Apply")!;
+    await act(async () => applyBtn.click());
+    expect(app.toast).toHaveBeenCalledWith("Applied — your store page was updated.", "check");
+    await act(async () => root.unmount());
+  });
+
+  it("keeps the generic apply message for a kind outside the store-page family", async () => {
+    applyRadarMove.mockResolvedValue({ move: move({ status: "applied" }) });
+    fetchRadar.mockResolvedValue(overview([move({ kind: "competitor_counter" })]));
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    const applyBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Apply")!;
+    await act(async () => applyBtn.click());
+    expect(app.toast).toHaveBeenCalledWith("Applied. You can revert it from History.", "check");
     await act(async () => root.unmount());
   });
 });
