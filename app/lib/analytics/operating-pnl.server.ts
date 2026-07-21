@@ -2,7 +2,7 @@ import { getSupabase } from "../supabase.server";
 import { quickbooksClientForShop } from "../quickbooks/client.server";
 import { readPaged } from "../db/read-paged.server";
 import {
-  allocateOperatingExpenses,
+  buildOperatingPnlProducts,
   parseQuickBooksCashFlow,
   parseQuickBooksReport,
   type OperatingPnlData,
@@ -83,15 +83,7 @@ export async function loadOperatingPnl(
   // Allocate every below-gross QuickBooks cost (operating expenses, other
   // expenses and tax), so the per-product number is net P&L rather than a
   // contribution-margin proxy that silently stops above the bottom line.
-  const belowGrossCostsCents = statement.incomeCents - statement.cogsCents - statement.netIncomeCents;
-  const allocated = allocateOperatingExpenses(products, belowGrossCostsCents)
-    .map((product) => ({
-      ...product,
-      netMarginPct: product.netRevenueCents === 0
-        ? null
-        : product.netOperatingProfitCents / product.netRevenueCents * 100,
-    }))
-    .sort((a, b) => b.netOperatingProfitCents - a.netOperatingProfitCents);
+  const allocated = buildOperatingPnlProducts(products, statement);
 
   return {
     connected: true,

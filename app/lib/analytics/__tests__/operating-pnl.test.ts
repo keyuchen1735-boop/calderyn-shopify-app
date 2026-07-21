@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allocateOperatingExpenses, parseQuickBooksCashFlow, parseQuickBooksReport } from "../operating-pnl";
+import { allocateOperatingExpenses, buildOperatingPnlProducts, parseQuickBooksCashFlow, parseQuickBooksReport } from "../operating-pnl";
 
 describe("operating P&L", () => {
   it("reads nested QuickBooks totals and daily net income from the accrual report", () => {
@@ -50,6 +50,25 @@ describe("operating P&L", () => {
 
     expect(rows.map((row) => row.allocatedOperatingExpensesCents)).toEqual([0, 0]);
     expect(rows.map((row) => row.netOperatingProfitCents)).toEqual([0, 0]);
+  });
+
+  it("reconciles every product column to the QuickBooks statement", () => {
+    const rows = buildOperatingPnlProducts([
+      { id: "a", title: "A", sku: null, imageUrl: null, netRevenueCents: 60_00, cogsCents: 20_00, contributionCents: 40_00 },
+      { id: "b", title: "B", sku: null, imageUrl: null, netRevenueCents: 40_00, cogsCents: 30_00, contributionCents: 10_00 },
+    ], { incomeCents: 125_01, cogsCents: 51_01, netIncomeCents: 41_01 });
+
+    expect(rows.reduce((sum, row) => sum + row.netRevenueCents, 0)).toBe(125_01);
+    expect(rows.reduce((sum, row) => sum + row.cogsCents, 0)).toBe(51_01);
+    expect(rows.reduce((sum, row) => sum + row.allocatedOperatingExpensesCents, 0)).toBe(32_99);
+    expect(rows.reduce((sum, row) => sum + row.netOperatingProfitCents, 0)).toBe(41_01);
+    expect(rows).toContainEqual(expect.objectContaining({
+      title: "Unattributed QuickBooks activity",
+      netRevenueCents: 25_01,
+      cogsCents: 1_01,
+      allocatedOperatingExpensesCents: 6_60,
+      netOperatingProfitCents: 17_40,
+    }));
   });
 
   it("reads the final cash change from the QuickBooks cash-flow report", () => {
