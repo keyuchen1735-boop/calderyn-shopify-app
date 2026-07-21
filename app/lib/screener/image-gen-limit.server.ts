@@ -102,12 +102,18 @@ const LEGACY_METADATA: ImageGenerationMetadata = {
  * Atomically reserve a complete batch. Database advisory locks cover the
  * count-and-insert decision so concurrent instances cannot overshoot either
  * the per-shop ceiling or the global backstop.
+ *
+ * `limits` overrides the env-derived daily caps for THIS reservation only —
+ * limits are parameters into the reservation RPC, so a caller with a reserved
+ * allowance (the designer's first build) raises its own ceiling without
+ * touching the RPC's counting semantics or any other caller's budget.
  */
 export async function reserveImageGenSlots(
   shop: string,
   count: number,
   now: Date = new Date(),
   metadata: ImageGenerationMetadata = LEGACY_METADATA,
+  limits?: Partial<ImageGenLimits>,
 ): Promise<ReserveSlotsResult> {
   if (!Number.isInteger(count) || count < 1 || count > 12) {
     throw new Error("image generation count must be between 1 and 12");
@@ -115,7 +121,7 @@ export async function reserveImageGenSlots(
   const shopId = await resolveShopId(shop);
   const generationId = metadata.generationId ?? randomUUID();
   const day = now.toISOString().slice(0, 10);
-  const { perShopDaily, globalDaily } = imageGenLimits();
+  const { perShopDaily, globalDaily } = { ...imageGenLimits(), ...limits };
   const { data, error } = await getSupabase()
     .rpc("reserve_image_generation_slots", {
       p_shop_id: shopId,

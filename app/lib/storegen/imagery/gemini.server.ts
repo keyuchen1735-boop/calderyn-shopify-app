@@ -4,6 +4,7 @@ import {
   markImageGenStarted,
   releaseImageGen,
   reserveImageGenSlots,
+  type ImageGenLimits,
   type ImageGenerationUsage,
 } from "~/lib/screener/image-gen-limit.server";
 
@@ -50,6 +51,9 @@ export interface GeminiImageMeter {
     count: number;
     generationId?: string;
     purpose: string;
+    /** Per-reservation cap override (e.g. the designer first-build reserve);
+     *  omitted = the env-derived daily limits. Counting is never affected. */
+    limits?: Partial<ImageGenLimits>;
   }): Promise<
     | { ok: true; eventIds: string[] }
     | { ok: false; scope: "shop" | "global"; limit: number }
@@ -70,12 +74,18 @@ export interface GeminiImageMeter {
 
 const defaultMeter: GeminiImageMeter = {
   async reserve(input) {
-    return reserveImageGenSlots(input.shopId, input.count, new Date(), {
-      generationId: input.generationId,
-      provider: "gemini",
-      model: GEMINI_IMAGE_MODEL,
-      purpose: input.purpose,
-    });
+    return reserveImageGenSlots(
+      input.shopId,
+      input.count,
+      new Date(),
+      {
+        generationId: input.generationId,
+        provider: "gemini",
+        model: GEMINI_IMAGE_MODEL,
+        purpose: input.purpose,
+      },
+      input.limits,
+    );
   },
   started: markImageGenStarted,
   complete: completeImageGen,
@@ -142,6 +152,8 @@ export async function generateGeminiImages(input: {
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
   meter?: GeminiImageMeter;
+  /** Per-reservation daily-cap override (designer first-build reserve). */
+  limits?: Partial<ImageGenLimits>;
 }): Promise<string[]> {
   if (!geminiImageGenerationEnabled()) {
     throw new Error("Live Gemini image generation is disabled");
@@ -168,6 +180,7 @@ export async function generateGeminiImages(input: {
     count,
     generationId: input.generationId,
     purpose: input.purpose,
+    limits: input.limits,
   });
   if (!reservation.ok) {
     throw new ImageGenerationQuotaError(reservation.scope, reservation.limit);

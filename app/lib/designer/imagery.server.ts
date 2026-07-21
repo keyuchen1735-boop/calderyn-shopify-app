@@ -6,7 +6,24 @@
 // placeholders — a build must never die on an image.
 import { getSupabase } from "~/lib/supabase.server";
 import { generateGeminiImages, geminiImageGenerationEnabled, ImageGenerationQuotaError } from "~/lib/storegen/imagery/gemini.server";
+import { imageGenLimits, type ImageGenLimits } from "~/lib/screener/image-gen-limit.server";
 import { persistExternalImage } from "~/lib/assets/persist.server";
+
+const DEFAULT_FIRST_BUILD_RESERVE = 4;
+
+/** Daily caps for a designer FIRST build: the shared per-shop limit plus a
+ *  reserved allowance (spec D4), so a merchant who spent the day's shared
+ *  budget elsewhere still gets first-build imagery. Layered as a limits
+ *  override into the existing reservation RPC — its counting semantics
+ *  (failed provider attempts stay counted) are untouched, and the global
+ *  daily backstop is deliberately NOT raised. Env-tunable via
+ *  DESIGNER_FIRST_BUILD_IMAGE_RESERVE. */
+export function designerFirstBuildImageLimits(): ImageGenLimits {
+  const limits = imageGenLimits();
+  const raw = Number(process.env.DESIGNER_FIRST_BUILD_IMAGE_RESERVE);
+  const reserve = Number.isInteger(raw) && raw >= 0 ? raw : DEFAULT_FIRST_BUILD_RESERVE;
+  return { ...limits, perShopDaily: limits.perShopDaily + reserve };
+}
 
 /** Fetch every generated asset for a shop as a {key: url} map. */
 export async function loadDesignerAssets(shopId: string): Promise<Record<string, string>> {
@@ -66,6 +83,8 @@ export async function generateDesignerAsset(input: {
   key: string;
   prompt: string;
   signal?: AbortSignal;
+  /** Per-reservation daily-cap override (the first-build reserve). */
+  limits?: Partial<ImageGenLimits>;
 }): Promise<{ url: string | null; quotaBlocked: boolean }> {
   if (!geminiImageGenerationEnabled()) return { url: null, quotaBlocked: false };
   try {
@@ -75,6 +94,7 @@ export async function generateDesignerAsset(input: {
       prompt: input.prompt,
       count: 1,
       signal: input.signal,
+      limits: input.limits,
     });
     if (!dataUrl) return { url: null, quotaBlocked: false };
     const persisted = await persistExternalImage(input.shopId, dataUrl, "designer", "generated", { signal: input.signal });

@@ -91,6 +91,34 @@ describe("atomic image generation reservations", () => {
     });
   });
 
+  it("applies a per-reservation limits override without touching the defaults", async () => {
+    setSupabaseResponses([
+      {
+        data: {
+          event_ids: ["evt-1"],
+          blocked_scope: null,
+          limit_value: null,
+          remaining: 12,
+        },
+        error: null,
+      },
+    ]);
+
+    await reserveImageGenSlots(
+      SHOP,
+      1,
+      NOW,
+      { provider: "gemini", model: "gemini-3.1-flash-lite-image", purpose: "storefront_design" },
+      { perShopDaily: 13 },
+    );
+    // The override raises only what the caller passed; the global backstop
+    // stays the env default.
+    expect(getRecorded("rpc")[0][1]).toMatchObject({
+      p_per_shop_daily: 13,
+      p_global_daily: 30,
+    });
+  });
+
   it("returns a hard global block without inserting a partial batch", async () => {
     setSupabaseResponses([
       {

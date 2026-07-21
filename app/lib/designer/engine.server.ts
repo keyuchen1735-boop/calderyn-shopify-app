@@ -13,7 +13,7 @@ import type { StudioDesignModel } from "../storebuilder/studio-types";
 import { convertTemplateToDocuments, DESIGNER_ROUTES } from "./convert.server";
 import { CRAFT_RULES, EDIT_FEEDBACK_RULES, REVIEW_CRAFT_CHECKS } from "./doctrine";
 import { artDirectionFor, DESIGNER_FONT_IDS, scratchSeedFiles, type ArtDirection } from "./direction.server";
-import { adoptDesignerAsset, generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
+import { adoptDesignerAsset, designerFirstBuildImageLimits, generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
 import { applyAssetOverrides, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
 import { claimsRepairInstruction, findUnhonorableClaims } from "./claims";
 import { donorTemplateArtPaths, findImageRegistryViolations, imageRepairInstruction } from "./image-registry.server";
@@ -551,11 +551,14 @@ export async function designerFirstBuild(input: {
   // computing what's missing so products that already have a generated photo
   // aren't paid for again. Fail-soft — then load store data so the pages are
   // designed against the real visuals.
+  // First builds carry a reserved image allowance on top of the shared daily
+  // cap (spec D4) — passed as a limits override, never a counting change.
+  const firstBuildLimits = designerFirstBuildImageLimits();
   let photosQuotaBlocked = false;
   try {
     const catalogProducts = await getCatalog().listProducts(input.shopId, { limit: 12 });
     const withExisting = await applyAssetOverrides(input.shopId, catalogProducts).catch(() => catalogProducts);
-    await generateMissingListingImages(input.shopId, withExisting, undefined, input.signal, 6);
+    await generateMissingListingImages(input.shopId, withExisting, undefined, input.signal, 6, firstBuildLimits);
   } catch (err) {
     console.error("[designer] product image generation skipped", err);
   }
@@ -613,6 +616,7 @@ export async function designerFirstBuild(input: {
       key: "hero",
       prompt: `Photorealistic lifestyle/product photograph for an online store. Brief: ${input.message.slice(0, 500)}. Mood: ${direction.mood}. Palette leaning: ${direction.palette}. Editorial commercial photography, natural light, no text, no logos, no watermarks, no people's identifiable faces.`,
       signal: input.signal,
+      limits: firstBuildLimits,
     });
     heroAssetUrl = hero.url;
     photosQuotaBlocked = photosQuotaBlocked || hero.quotaBlocked;

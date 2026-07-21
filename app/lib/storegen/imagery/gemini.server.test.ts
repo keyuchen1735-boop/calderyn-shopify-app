@@ -128,6 +128,36 @@ describe("generateGeminiImages", () => {
     );
   });
 
+  it("passes the caller's limits override through to the meter reservation", async () => {
+    process.env.GEMINI_API_KEY = "secret";
+    process.env.GEMINI_IMAGE_GENERATION_ENABLED = "1";
+    const imageMeter = meter(["evt-1"]);
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          steps: [
+            {
+              type: "model_output",
+              content: [{ type: "image", mime_type: "image/jpeg", data: "aGVsbG8=" }],
+            },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await generateGeminiImages({
+      ...baseInput,
+      prompt: "product",
+      fetchImpl,
+      meter: imageMeter,
+      limits: { perShopDaily: 13 },
+    });
+    expect(imageMeter.reserve).toHaveBeenCalledWith(
+      expect.objectContaining({ limits: { perShopDaily: 13 } }),
+    );
+  });
+
   it("blocks before the provider when the shared quota is exhausted", async () => {
     process.env.GEMINI_API_KEY = "secret";
     process.env.GEMINI_IMAGE_GENERATION_ENABLED = "1";
