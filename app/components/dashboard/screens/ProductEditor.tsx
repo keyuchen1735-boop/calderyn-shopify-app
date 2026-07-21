@@ -79,6 +79,11 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
 
   const [title, setTitle] = useState("");
   const [status, setStatus] = useState<"draft" | "active" | "archived">("draft");
+  // What the store actually has right now (loaded, then updated only on a
+  // successful save). The header pill reads THIS — the editable `status` above
+  // is a pending edit, and a failed save (e.g. 422 incomplete_shipping) must
+  // not leave the pill claiming a change that never landed.
+  const [savedStatus, setSavedStatus] = useState<"draft" | "active" | "archived">("draft");
   const [vendor, setVendor] = useState("");
   const [tags, setTags] = useState("");
   const [description, setDescription] = useState("");
@@ -122,6 +127,7 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
         if (!alive) return;
         setTitle(p.title);
         setStatus(p.status);
+        setSavedStatus(p.status);
         setVendor(p.vendor ?? "");
         setCategory(p.category ?? null);
         setTags((p.tags ?? []).join(", "));
@@ -272,6 +278,7 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
         ...(seoChanged ? { seo: { metaTitle: metaTitle.trim(), metaDescription: metaDescription.trim() } } : {}),
       };
       await client.saveProduct(draft, id ?? undefined);
+      setSavedStatus(status);
       app.toast("Product saved.", "check");
       app.navigate("catalog");
     } catch (err) {
@@ -328,7 +335,7 @@ function ProductEditorEdit({ app }: { app: DashboardCtx }) {
         <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
           <h1 className="cd-h1">{id ? "Edit product" : "New product"}</h1>
           {!loading && !loadError && (
-            <Pill tone={STATUS_TONE[status]}>{status.charAt(0).toUpperCase() + status.slice(1)}</Pill>
+            <Pill tone={STATUS_TONE[savedStatus]}>{savedStatus.charAt(0).toUpperCase() + savedStatus.slice(1)}</Pill>
           )}
         </div>
         <div className="flex items-center gap-2.5">
