@@ -12,6 +12,20 @@ import {
   type StorefrontContextAssembly,
 } from "~/lib/storefront-ai/context.server";
 import {
+  compileAuthoring,
+  parseStorefrontVersionArtifact,
+  type StorefrontVersionArtifactV1,
+} from "~/lib/storefront-ai/authoring.server";
+import {
+  runStorefrontRedesign,
+  type RunStorefrontRedesignInput,
+  type StorefrontRedesignResult,
+} from "~/lib/storefront-ai/redesign.server";
+import {
+  STOREFRONT_DESIGN_GUIDANCE_VERSION,
+  STOREFRONT_DESIGN_SOURCE_PACKAGE_COMMIT,
+} from "~/lib/storefront-ai/design-guidance-core.server";
+import {
   isStorefrontBundlePublishEnabled,
   isStorefrontRecipeBuildEnabled,
   loadStorefrontRecipe,
@@ -23,12 +37,14 @@ import {
   createStorefrontBundleVersion,
   editStorefrontDraft,
   hashStorefrontArtifact,
+  installStorefrontCustomRedesign,
   installStorefrontDraft,
   publishStorefrontRelease,
   StorefrontReleaseError,
   type CreateStorefrontBundleVersionInput,
   type EditStorefrontDraftInput,
   type HashStorefrontArtifactInput,
+  type InstallStorefrontCustomRedesignInput,
   type InstallStorefrontDraftInput,
   type PublishStorefrontReleaseInput,
 } from "~/lib/storefront-bundle/release.server";
@@ -69,6 +85,7 @@ const PRODUCTLESS_PROOF_ROUTES = ["home", "collection", "search", "cart", "check
 export interface LoadedStoreCommandVersion {
   versionId: string;
   artifactHash: string;
+  artifact?: StorefrontVersionArtifactV1;
   bundle: StorefrontBundleV1;
   resolution: Record<string, unknown>;
 }
@@ -91,6 +108,7 @@ export interface StoreCommandDependencies {
   readEnabled(): boolean;
   recipeBuildEnabled(): boolean;
   publishEnabled(): boolean;
+  customRedesignEnabled(): boolean;
   buildEvidence(shopId: string): Promise<CatalogRoutingEvidence>;
   loadReferenceImages(shopId: string, assetRefs: readonly string[]): Promise<VerifiedDesignReferenceImage[]>;
   loadContext(input: ContextAssemblyInput): Promise<StorefrontContextAssembly>;
@@ -110,6 +128,8 @@ export interface StoreCommandDependencies {
     routes?: readonly StorefrontRouteId[];
     signal?: AbortSignal;
   }): Promise<BrowserProofReport>;
+  redesign(input: RunStorefrontRedesignInput): Promise<StorefrontRedesignResult>;
+  installRedesign(input: InstallStorefrontCustomRedesignInput): Promise<string>;
   hashArtifact(input: HashStorefrontArtifactInput): Promise<string>;
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
   install(input: InstallStorefrontDraftInput): Promise<string>;
@@ -200,6 +220,19 @@ function extractBundle(value: unknown): StorefrontBundleV1 | null {
   return isBundle(artifact.bundle) ? artifact.bundle : isBundle(value) ? value : null;
 }
 
+export function parseLoadedStorefrontArtifact(value: unknown): StorefrontVersionArtifactV1 | null {
+  const bundle = extractBundle(value);
+  if (!bundle) return null;
+  const stored = value as Record<string, unknown>;
+  try {
+    return parseStorefrontVersionArtifact(
+      "sourceKind" in stored ? stored : { sourceKind: bundle.source.kind, bundle },
+    );
+  } catch {
+    return null;
+  }
+}
+
 async function loadState(shopId: string): Promise<StoreCommandState> {
   const release = await getSupabase()
     .from("storefront_release")
@@ -219,8 +252,8 @@ async function loadState(shopId: string): Promise<StoreCommandState> {
     .maybeSingle();
   if (version.error) throw version.error;
   const row = version.data as Record<string, unknown> | null;
-  const bundle = extractBundle(row?.bundle_json);
-  if (!row || row.status !== "validated" || Number(row.runtime_version) !== 1 || !bundle) {
+  const artifact = parseLoadedStorefrontArtifact(row?.bundle_json);
+  if (!row || row.status !== "validated" || Number(row.runtime_version) !== 1 || !artifact) {
     throw new StoreCommandError(
       "storefront_command_unavailable",
       "This storefront draft cannot be changed with chat yet.",
@@ -234,7 +267,8 @@ async function loadState(shopId: string): Promise<StoreCommandState> {
     draft: {
       versionId: String(row.id),
       artifactHash: String(row.artifact_hash),
-      bundle,
+      artifact,
+      bundle: artifact.bundle,
       resolution,
     },
     publishedVersionId,
@@ -248,6 +282,7 @@ const defaultDependencies: StoreCommandDependencies = {
   readEnabled: isStorefrontBundleReadEnabled,
   recipeBuildEnabled: isStorefrontRecipeBuildEnabled,
   publishEnabled: isStorefrontBundlePublishEnabled,
+  customRedesignEnabled: () => process.env.STOREFRONT_CUSTOM_REDESIGN === "1",
   buildEvidence: buildCatalogRoutingEvidence,
   loadReferenceImages: loadVerifiedDesignReferenceImages,
   loadContext: assembleStorefrontContextWithReferences,
@@ -261,6 +296,8 @@ const defaultDependencies: StoreCommandDependencies = {
   applyIntent: applyStoreIntent,
   validate: validateCompiledBundle,
   prove: storefrontAiBrowserProof,
+  redesign: runStorefrontRedesign,
+  installRedesign: installStorefrontCustomRedesign,
   hashArtifact: hashStorefrontArtifact,
   createVersion: createStorefrontBundleVersion,
   install: installStorefrontDraft,
@@ -309,6 +346,15 @@ function publicError(code: string): StoreCommandError {
       "storefront_command_rejected",
       "That storefront change could not be applied safely. Your current draft was not changed.",
       422,
+    );
+  }
+  if (code.startsWith("storefront_redesign_")) {
+    return new StoreCommandError(
+      code.endsWith("cancelled") ? "generation_cancelled" : "storefront_command_rejected",
+      code.endsWith("cancelled")
+        ? "Storefront generation was stopped. Your current draft was not changed."
+        : "That storefront change could not be applied safely. Your current draft was not changed.",
+      code.endsWith("cancelled") ? 409 : 422,
     );
   }
   if (
@@ -534,10 +580,6 @@ export async function runStoreCommand(
       );
     }
 
-    await emit(input, { stage: "preparing_products" });
-    await dependencies.prepareProductMedia(input.shopId, input.signal);
-    throwIfAborted(input.signal);
-
     const priorExclusions = state.draft ? exclusions(state.draft.resolution) : [];
     const currentTemplateId = state.draft?.bundle.source.kind === "recipe"
       ? state.draft.bundle.source.templateId
@@ -576,6 +618,188 @@ export async function runStoreCommand(
       ? await dependencies.classify(classificationInput, { signal: input.signal })
       : await dependencies.classify(classificationInput);
     throwIfAborted(input.signal);
+
+    if (state.draft?.bundle.source.kind === "custom" && intent.kind === "update_text") {
+      if (!input.command.context?.routeId) {
+        return ready(input, unchanged("That change needs an active storefront page."));
+      }
+      intent = { kind: "structural_edit", scope: { routeId: input.command.context.routeId } };
+    }
+
+    if (intent.kind === "structural_edit" || intent.kind === "full_redesign") {
+      if (!state.draft) {
+        return ready(input, unchanged("Build a storefront before redesigning it."));
+      }
+      if (!dependencies.customRedesignEnabled()) {
+        throw new StoreCommandError("storefront_command_unavailable", "Custom storefront redesign is disabled.", 503);
+      }
+      if (intent.kind === "structural_edit"
+        && (!input.command.context?.routeId || intent.scope.routeId !== input.command.context.routeId)) {
+        return ready(input, unchanged("That change needs an active storefront page."));
+      }
+      const baseArtifact = state.draft.artifact
+        ?? parseLoadedStorefrontArtifact({ sourceKind: state.draft.bundle.source.kind, bundle: state.draft.bundle });
+      if (!baseArtifact) {
+        throw new StoreCommandError("storefront_command_unavailable", "This storefront draft has no valid authoring source.", 503);
+      }
+      const expectedDraftVersionId = input.command.expectedDraftVersionId;
+      if (!expectedDraftVersionId || expectedDraftVersionId !== state.draft.versionId) {
+        throw new StoreCommandError("storefront_command_conflict", "The storefront draft changed before this request.", 409);
+      }
+      const recipe = state.draft.bundle.source.kind === "recipe"
+        ? await dependencies.loadRecipe(
+          state.draft.bundle.source.templateId,
+          state.draft.bundle.source.templateVersion,
+        )
+        : undefined;
+      await emit(input, { stage: "planning_redesign" });
+      await emit(input, { stage: "building_pages" });
+      const result = await dependencies.redesign({
+        shopId: input.shopId,
+        prompt: input.command.prompt,
+        mode: intent.kind,
+        ...(intent.kind === "structural_edit" ? { scope: { routeId: input.command.context!.routeId } } : {}),
+        baseVersionId: state.draft.versionId,
+        baseArtifact,
+        ...(recipe ? { recipe } : {}),
+        context: classificationAssembly,
+        referenceImages: verifiedReferenceImages.map(({ publicUrl: url, mediaType }) => ({ url, mediaType })),
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      throwIfAborted(input.signal);
+      if (result.artifact.sourceKind !== "custom") {
+        throw new StoreCommandError("storefront_command_invalid", "Redesign returned an invalid artifact.", 422);
+      }
+      const resultArtifactHash = await dependencies.hashArtifact({
+        schemaVersion: result.artifact.bundle.schemaVersion,
+        runtimeVersion: result.artifact.bundle.runtimeVersion,
+        validationProfileVersion: result.artifact.bundle.validationProfileVersion,
+        artifact: result.artifact as unknown as Record<string, unknown>,
+        assetManifest: result.artifact.bundle.assets as unknown as Record<string, unknown>,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      throwIfAborted(input.signal);
+      const adaptedGuidanceVersion = result.audit.adaptedGuidanceVersion
+        ?? STOREFRONT_DESIGN_GUIDANCE_VERSION;
+      const sourcePackageCommit = result.audit.sourcePackageCommit
+        ?? STOREFRONT_DESIGN_SOURCE_PACKAGE_COMMIT;
+      const provenance = {
+        generationId: result.audit.generationId,
+        promptHash: result.audit.promptHash,
+        adaptedGuidanceVersion,
+        sourcePackageCommit,
+      };
+      const versionId = await dependencies.installRedesign({
+        shopId: input.shopId,
+        actorId,
+        baseVersionId: state.draft.versionId,
+        expectedDraftVersionId,
+        baseArtifactHash: state.draft.artifactHash,
+        resultArtifactHash,
+        artifact: result.artifact as typeof result.artifact & { sourceKind: "custom" },
+        assetManifest: result.artifact.bundle.assets as unknown as Record<string, unknown>,
+        schemaVersion: result.artifact.bundle.schemaVersion,
+        runtimeVersion: result.artifact.bundle.runtimeVersion,
+        validationProfileVersion: result.artifact.bundle.validationProfileVersion,
+        validationReport: { valid: true, static: result.validation, browserProof: result.browserProof },
+        generationPrompt: input.command.prompt,
+        resolution: { kind: "custom_redesign", mode: intent.kind, provenance },
+        prompt: input.command.prompt,
+        scope: { mode: intent.kind, ...(intent.kind === "structural_edit" ? { routeId: input.command.context!.routeId } : {}) },
+        patch: { changedRouteIds: result.audit.changedRouteIds, shellChanged: result.audit.shellChanged },
+        provider: {
+          calls: result.audit.provider,
+          repairs: result.audit.repairs,
+          adaptedGuidanceVersion,
+          sourcePackageCommit,
+        },
+        validation: { static: result.validation, browserProof: result.browserProof },
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      return ready(input, {
+        status: "installed",
+        versionId,
+        undo: { targetVersionId: expectedDraftVersionId, expectedDraftVersionId: versionId },
+      });
+    }
+
+    await emit(input, { stage: "preparing_products" });
+    await dependencies.prepareProductMedia(input.shopId, input.signal);
+    throwIfAborted(input.signal);
+    contextAssembly = await dependencies.loadContext({
+      shopId: input.shopId,
+      prompt: input.command.prompt,
+      requiredProductIds: state.draft?.bundle.featuredProductIds ?? [],
+      ...(referenceImages.length > 0 ? { referenceImages } : {}),
+    });
+    throwIfAborted(input.signal);
+
+    if (state.draft?.bundle.source.kind === "custom"
+      && (intent.kind === "update_merchandising" || intent.kind === "update_visual_layer")) {
+      const expectedDraftVersionId = input.command.expectedDraftVersionId;
+      const baseArtifact = state.draft.artifact;
+      if (!expectedDraftVersionId || expectedDraftVersionId !== state.draft.versionId) {
+        throw new StoreCommandError("storefront_command_conflict", "The storefront draft changed before this request.", 409);
+      }
+      if (!baseArtifact?.authoring) {
+        return ready(input, unchanged("That change is not available for this storefront yet."));
+      }
+      const authoring = structuredClone(baseArtifact.authoring);
+      if (intent.kind === "update_merchandising") {
+        authoring.overrides.featuredProductIds = intent.productIds.map((id) => ownedProductId(id, classificationAssembly));
+      } else {
+        authoring.overrides.visualLayer = structuredClone(intent.visualLayer);
+      }
+      const compiled = compileAuthoring(authoring);
+      if (!compiled.report.ok) {
+        throw new StoreCommandError("storefront_command_invalid", "That change did not pass storefront validation.", 422);
+      }
+      const customArtifact = {
+        sourceKind: "custom" as const, bundle: compiled.bundle, authoring,
+      };
+      const requiredProductIds = compiled.bundle.featuredProductIds ?? [];
+      if (!hasOwnedProducts(contextAssembly, requiredProductIds)) {
+        contextAssembly = await dependencies.loadContext({
+          shopId: input.shopId, prompt: input.command.prompt, requiredProductIds,
+          ...(referenceImages.length > 0 ? { referenceImages } : {}),
+        });
+      }
+      await emit(input, { stage: "checking_preview" });
+      const browserProof = await dependencies.prove({
+        bundle: compiled.bundle,
+        context: proofContext(contextAssembly, requiredProductIds),
+        persistedAssets: [],
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      if (!browserProof.ok) {
+        throw new StoreCommandError("storefront_command_proof_failed", "That change did not pass preview checks.", 422);
+      }
+      const resultArtifactHash = await dependencies.hashArtifact({
+        schemaVersion: compiled.bundle.schemaVersion,
+        runtimeVersion: compiled.bundle.runtimeVersion,
+        validationProfileVersion: compiled.bundle.validationProfileVersion,
+        artifact: customArtifact as unknown as Record<string, unknown>,
+        assetManifest: compiled.bundle.assets as unknown as Record<string, unknown>,
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      const operation = operationAudit(intent, null);
+      const versionId = await dependencies.installRedesign({
+        shopId: input.shopId, actorId, baseVersionId: state.draft.versionId, expectedDraftVersionId,
+        baseArtifactHash: state.draft.artifactHash, resultArtifactHash, artifact: customArtifact,
+        assetManifest: compiled.bundle.assets as unknown as Record<string, unknown>,
+        schemaVersion: compiled.bundle.schemaVersion, runtimeVersion: compiled.bundle.runtimeVersion,
+        validationProfileVersion: compiled.bundle.validationProfileVersion,
+        validationReport: { valid: true, static: compiled.report, browserProof },
+        generationPrompt: input.command.prompt, resolution: { kind: "custom_deterministic_edit", operation },
+        prompt: input.command.prompt, scope: { operation }, patch: { operation },
+        provider: { kind: "deterministic" }, validation: { static: compiled.report, browserProof },
+        ...(input.signal ? { signal: input.signal } : {}),
+      });
+      return ready(input, {
+        status: "installed", versionId,
+        undo: { targetVersionId: expectedDraftVersionId, expectedDraftVersionId: versionId },
+      });
+    }
     let designResolution: StoreDesignResolution | null = null;
     let nextExclusions = priorExclusions;
     let nextBundle: StorefrontBundleV1;
@@ -704,7 +928,7 @@ export async function runStoreCommand(
       schemaVersion: nextBundle.schemaVersion,
       runtimeVersion: nextBundle.runtimeVersion,
       validationProfileVersion: nextBundle.validationProfileVersion,
-      artifact: versionArtifact,
+      artifact: versionArtifact as unknown as Record<string, unknown>,
       assetManifest: nextBundle.assets as unknown as Record<string, unknown>,
       ...(input.signal ? { signal: input.signal } : {}),
     });

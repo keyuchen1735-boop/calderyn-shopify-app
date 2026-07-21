@@ -210,6 +210,7 @@ describe("Store command orchestration", () => {
       kind: "prompt",
       prompt: "Use these references",
       expectedDraftVersionId: VERSION,
+      context: { routeId: "home" },
       attachments: [
         { kind: "design_reference", assetRef: "11111111-1111-4111-8111-111111111111/upload/reference.webp" },
         { kind: "fragment_shader", source },
@@ -350,7 +351,12 @@ describe("Store command orchestration", () => {
     await act(async () => send.click());
 
     expect(sendStoreCommand).toHaveBeenCalledWith(
-      { kind: "prompt", prompt: "Make it warmer", expectedDraftVersionId: VERSION },
+      {
+        kind: "prompt",
+        prompt: "Make it warmer",
+        expectedDraftVersionId: VERSION,
+        context: { routeId: "home" },
+      },
       expect.any(Function),
       expect.any(AbortSignal),
     );
@@ -359,6 +365,59 @@ describe("Store command orchestration", () => {
     expect(bubbles[1]?.textContent).toMatch(/understand|request/i);
 
     await act(async () => finish({ status: "unchanged", message: "Nothing changed." }));
+    act(() => root.unmount());
+  });
+
+  it("shows both redesign progress labels without implementation terminology", async () => {
+    let finish: (value: unknown) => void = () => {};
+    let progress: ((event: StoreCommandEvent) => void) | undefined;
+    sendStoreCommand.mockImplementationOnce((_command, onEvent: (event: StoreCommandEvent) => void) => new Promise((resolve) => {
+      progress = onEvent;
+      finish = resolve;
+    }));
+    const { host, root } = await renderStore();
+    await sendPrompt(host, "Redesign the whole site");
+
+    act(() => progress?.({ stage: "planning_redesign" } as StoreCommandEvent));
+    expect(host.textContent).toContain("Planning the redesign");
+    act(() => progress?.({ stage: "building_pages" } as StoreCommandEvent));
+    expect(host.textContent).toContain("Building pages");
+    expect(host.querySelector(".cd-bub-ai-working")?.textContent ?? "")
+      .not.toMatch(/template|recipe|compiler|model/i);
+
+    await act(async () => finish({ status: "unchanged", message: "Nothing changed." }));
+    act(() => root.unmount());
+  });
+
+  it("sends the active preview route with every follow-up prompt", async () => {
+    sendStoreCommand.mockResolvedValue({ status: "unchanged", message: "Nothing changed." });
+    const { host, root } = await renderStore();
+
+    await sendPrompt(host, "Change the home layout");
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.includes("Home page"))!.click();
+    });
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.includes("Product page"))!.click();
+    });
+    await sendPrompt(host, "Change the product layout");
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.includes("Product page"))!.click();
+    });
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.includes("Collection"))!.click();
+    });
+    await sendPrompt(host, "Change the collection layout");
+
+    expect(sendStoreCommand.mock.calls.slice(0, 3).map(([command]) => command)).toEqual([
+      expect.objectContaining({ context: { routeId: "home" } }),
+      expect.objectContaining({ context: { routeId: "product" } }),
+      expect.objectContaining({ context: { routeId: "collection" } }),
+    ]);
     act(() => root.unmount());
   });
 

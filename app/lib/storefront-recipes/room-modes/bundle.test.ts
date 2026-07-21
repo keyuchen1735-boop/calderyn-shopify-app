@@ -14,6 +14,41 @@ function actionsIn(route: RouteArtifact): string[] {
 }
 
 describe("room-modes storefront recipe", () => {
+  it("styles dynamic product cards as the source object panels", () => {
+    for (const surface of ["home", "collection"] as const) {
+      const source = ROOM_MODES_RECIPE.config.surfaces[surface].source;
+      expect(source.html).toContain('class="product"');
+      expect(source.html).toContain('class="product-media"');
+      expect(source.html).toContain('class="badge"');
+      expect(source.html).toContain('class="product-info"');
+      expect(source.css).toContain(".product-media");
+      expect(source.css).toContain(".product-info");
+      expect(source.css).toContain("--commerce-surface:#f7f8f5");
+      expect(source.css).toContain("--commerce-accent:var(--amber)");
+    }
+  });
+
+  it("lays out collection products in the three-column scene matrix", () => {
+    const collection = ROOM_MODES_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('<div class="object-catalog"><section class="object-matrix product-grid" data-cd-repeat="collection.products"');
+    expect(collection.css).toContain(".object-catalog{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.object-matrix{display:contents}");
+    expect(collection.css).toMatch(/@media\(max-width:700px\)\{[^}]*\.object-index,\.object-catalog\{grid-template-columns:1fr/);
+  });
+
+  it("nests the object-index copy in the prototype catalog head and tools layout", () => {
+    const collection = ROOM_MODES_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('<main class="catalog-view">');
+    expect(collection.html).toContain('<header class="object-index catalog-head resilient-copy"><div class="object-index-copy">');
+    expect(collection.html).toContain('<nav class="facet-bench catalog-tools"');
+    expect(collection.html).toContain('<div class="facet-chips">');
+    expect(collection.html).toContain('class="object-matrix product-grid" data-cd-repeat="collection.products"');
+    expect(collection.css).toContain(".catalog-head{display:grid;grid-template-columns:1.2fr .8fr;align-items:end");
+    expect(collection.css).toContain(".catalog-head h1{max-width:9ch");
+    expect(collection.css).toContain(".catalog-tools{display:flex;justify-content:space-between;align-items:center");
+  });
+
   it("keeps the original viewport room-scene geometry", () => {
     expect(ROOM_MODES_RECIPE.bundle.routes.home.css).toContain("min-height:100dvh");
   });
@@ -26,7 +61,7 @@ describe("room-modes storefront recipe", () => {
     const { bundle, config, report } = ROOM_MODES_RECIPE;
 
     expect(report).toMatchObject({ profileVersion: 1, ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 5 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "room-modes", templateVersion: 10 });
     expect(config.archetype).toEqual({
       composition: "spatial-scenes",
       hero: "room-mode-scene",

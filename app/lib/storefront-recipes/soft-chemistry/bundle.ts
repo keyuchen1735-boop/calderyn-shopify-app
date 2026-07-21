@@ -18,7 +18,15 @@ const home = {
   requiredCapabilities: [],
 };
 
-home.html = home.html.replace('<span class="kicker">Formulation note', '<span id="heroEyebrow" class="kicker">Formulation note');
+home.css = home.css.replace(".hero{min-height:780px}", "");
+home.html = home.html
+  .replace('<span class="kicker">Formulation note', '<span id="heroEyebrow" class="kicker">Formulation note')
+  .replace(
+    '<div class="card-info"><h3 data-cd-text="product.title"></h3><span class="visually-hidden" data-cd-text="product.description"></span><b data-cd-money="product.price"></b></div>',
+    '<div class="card-info"><h3 data-cd-text="product.title"></h3><b data-cd-money="product.price"></b><small><span data-cd-text="product.description"></span> · <span data-cd-text="product.availability"></span></small></div>',
+  );
+home.css += ".card{--commerce-surface:var(--milk);--commerce-foreground:var(--ink);--commerce-accent:var(--yellow);--commerce-accent-foreground:var(--ink)}";
+home.html += `<section data-cd-repeat="featured.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline" data-cd-theme-tokens="milk ink yellow"></aside></section>`;
 
 const collection = {
   html: `<main><section class="col-head"><img data-cd-asset="collection" alt="Minimal skincare formulations in a studio"><div class="col-copy"><span class="kicker">Concern / barrier + hydration</span><h1 data-cd-text="collection.title"></h1></div></section><div class="shop"><aside class="filters"><h3>Filter the ritual</h3><button value="all" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">All formulas</button><button value="cleanse" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Cleanse</button><button value="treat" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Treat</button><button value="moisturize" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Moisturize</button><button value="fragrance-free" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Fragrance free</button></aside><section><div class="catalog-head"><b><span data-cd-text="collection.productCount"></span> live formulas</b><button value="relevance" data-cd-on="click" data-cd-action="collection.sort">Ritual order</button></div><div class="grid" data-cd-repeat="collection.products"><article class="card" data-cd-key="product.id"><a data-cd-route="product" data-cd-param-handle="product.handle"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><div class="card-info"><h2 data-cd-text="product.title"></h2><span class="visually-hidden" data-cd-text="product.description"></span><b data-cd-money="product.price"></b><small data-cd-text="product.availability"></small></div></a></article></div><p class="empty" data-cd-empty-state>No formulas found.</p></section></div><section class="commerce-contract" data-cd-repeat="collection.products"><div data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline" data-cd-theme-tokens="milk ink yellow"></div></section></main>`,
@@ -27,6 +35,13 @@ const collection = {
   requiredCapabilities: [],
   rootScopeKind: "collection" as const,
 };
+collection.html = collection.html.replace(
+  '<div class="card-info"><h2 data-cd-text="product.title"></h2><span class="visually-hidden" data-cd-text="product.description"></span><b data-cd-money="product.price"></b><small data-cd-text="product.availability"></small></div>',
+  '<div class="card-info"><h3 data-cd-text="product.title"></h3><b data-cd-money="product.price"></b><small><span data-cd-text="product.description"></span> · <span data-cd-text="product.availability"></span></small></div>',
+);
+collection.html = collection.html.replace('<div class="grid"', '<div class="catalog-grid"><div class="grid"').replace('</div><p class="empty"', '</div></div><p class="empty"');
+collection.css = collection.css.replace('.grid{display:grid;grid-template-columns:repeat(3,1fr)}', '.catalog-grid{display:grid;grid-template-columns:repeat(3,1fr)}.grid{display:contents}').replace('.grid{grid-template-columns:1fr 1fr}', '.catalog-grid{grid-template-columns:1fr 1fr}');
+collection.css += ".card{--commerce-surface:var(--milk);--commerce-foreground:var(--ink);--commerce-accent:var(--yellow);--commerce-accent-foreground:var(--ink)}.grid h3{margin:0;font-family:Georgia,serif;font-size:27px;font-weight:500}";
 
 const product = {
   html: `<main class="overlay open"><section class="panel wide"><div class="panel-head"><b>Formula dossier / PDP</b><a class="close" data-cd-route="collection" aria-label="Close">×</a></div><div class="pdp" tabindex="0" aria-label="Product details"><section class="gallery"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><span class="badge" data-cd-text="product.availability"></span><div class="thumbs"><img data-cd-asset="texture" alt="Formula texture detail"><div class="product-thumbs" data-cd-repeat="product.images"><img data-cd-key="product.primaryImage" data-cd-src="product.primaryImage" data-cd-alt="product.title"></div></div></section><article class="detail"><span class="kicker">Formula</span><h1 data-cd-text="product.title"></h1><b data-cd-money="product.price"></b><p data-cd-text="product.description"></p></article></div></section></main><section><div data-cd-slot="variantPicker" data-cd-product="product.id" data-cd-host-size="inline" data-cd-theme-tokens="milk ink yellow"></div><div data-cd-slot="addToCart" data-cd-product="product.id" data-cd-host-size="inline" data-cd-theme-tokens="milk ink yellow"></div></section>`,
@@ -72,7 +87,7 @@ const checkout = {
 
 export const SOFT_CHEMISTRY_RECIPE = defineRecipe({
   templateId: "soft-chemistry",
-  templateVersion: 9,
+  templateVersion: 14,
   concept: {
     name: "Soft Chemistry",
     rationale:

@@ -4,6 +4,32 @@ import { describe, expect, it } from "vitest";
 import { DAILY_PROTOCOL_RECIPE } from "./bundle";
 
 describe("Daily Protocol storefront recipe", () => {
+  it("styles dynamic product cards as the source ledger rows", () => {
+    for (const surface of ["home", "collection"] as const) {
+      const source = DAILY_PROTOCOL_RECIPE.config.surfaces[surface].source;
+      expect(source.html).toContain('class="ledger-row"');
+      expect(source.html).toContain('class="ledger-image"');
+      expect(source.html).toContain('class="ledger-name"');
+      expect(source.html).toContain('class="ledger-cell glyph-line"');
+      expect(source.html).toContain('class="row-action commerce-target"');
+      expect(source.html).toContain('class="commerce-fallback"');
+      expect(source.html).toContain('class="ledger-cell format-cell"');
+      expect(source.html).toContain('class="ledger-cell serving-cell"');
+      expect(source.css).toMatch(/\.ledger-row\s*\{[^}]*grid-template-columns:/);
+      expect(source.css).toContain("minmax(150px,auto)");
+      expect(source.css).toContain(".ledger-title{color:var(--ink);text-decoration:none");
+      expect(source.css).toContain("--commerce-surface:var(--paper)");
+      expect(source.css).toContain("--commerce-accent:var(--cobalt)");
+    }
+  });
+
+  it("lays out collection products as ledger rows on the repeated owner", () => {
+    const collection = DAILY_PROTOCOL_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('class="ledger-rows" data-cd-repeat="collection.products"');
+    expect(collection.css).toMatch(/\.ledger-rows\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*1fr/);
+  });
+
   it("preserves the approved day arc and dense live product ledger", () => {
     const home = DAILY_PROTOCOL_RECIPE.config.surfaces.home.source;
 
@@ -23,7 +49,7 @@ describe("Daily Protocol storefront recipe", () => {
   it("compiles a timed protocol ledger across the complete commerce contract", () => {
     const { bundle, config, report } = DAILY_PROTOCOL_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "daily-protocol", templateVersion: 5 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "daily-protocol", templateVersion: 9 });
     expect(config.archetype).toMatchObject({ composition: "protocol-ledger", hero: "time-of-day-protocol", scroll: "routine-timeline", cards: "protocol-stacks" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "manrope", bodyFontId: "dm-mono" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);

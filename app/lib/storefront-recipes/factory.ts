@@ -225,6 +225,32 @@ function withRequiredShellBindings<const TTemplateId extends StoreTemplateId>(
   };
 }
 
+function compilerSource(config: RecipeConfig): StorefrontBundleSourceV1 {
+  return {
+    source: {
+      kind: "recipe",
+      templateId: config.templateId,
+      templateVersion: config.templateVersion,
+    },
+    concept: config.concept,
+    designSystem: config.designSystem,
+    shell: config.surfaces.shell.source,
+    routes: {
+      home: config.surfaces.home.source,
+      collection: config.surfaces.collection.source,
+      product: config.surfaces.product.source,
+      search: config.surfaces.search.source,
+      cart: config.surfaces.cart.source,
+      checkout: config.surfaces.checkout.source,
+    },
+    assets: config.assets,
+  };
+}
+
+export function recipeCompilerSource(recipe: DefinedRecipe): StorefrontBundleSourceV1 {
+  return compilerSource(recipe.config);
+}
+
 /** Compile a full recipe whose route markup and CSS remain owned by that recipe. */
 export function defineRecipe<const TTemplateId extends StoreTemplateId>(
   config: RecipeConfig<TTemplateId>,
@@ -233,24 +259,6 @@ export function defineRecipe<const TTemplateId extends StoreTemplateId>(
   assertArchetypeMatchesRegistry(boundConfig);
   assertDistinctSurfaceSignatures(boundConfig);
   assertDeclaredHomeHero(boundConfig);
-  const result = compileBundle({
-    source: {
-      kind: "recipe",
-      templateId: boundConfig.templateId,
-      templateVersion: boundConfig.templateVersion,
-    },
-    concept: boundConfig.concept,
-    designSystem: boundConfig.designSystem,
-    shell: boundConfig.surfaces.shell.source,
-    routes: {
-      home: boundConfig.surfaces.home.source,
-      collection: boundConfig.surfaces.collection.source,
-      product: boundConfig.surfaces.product.source,
-      search: boundConfig.surfaces.search.source,
-      cart: boundConfig.surfaces.cart.source,
-      checkout: boundConfig.surfaces.checkout.source,
-    },
-    assets: boundConfig.assets,
-  });
+  const result = compileBundle(compilerSource(boundConfig));
   return { ...result, config: boundConfig };
 }

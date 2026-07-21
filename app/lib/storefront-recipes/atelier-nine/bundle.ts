@@ -102,7 +102,7 @@ const homeCss = `
 .catalog-main { min-width:0 }
 .catalog-head { display:flex; align-items:center; justify-content:space-between; height:58px; padding:0 16px; border-bottom:1px solid #101010; font-size:10px; text-transform:uppercase }
 .product-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)) }
-.product { min-width:0; border-right:1px solid #aaa49b }
+.product { --commerce-surface:#f5f1e9; --commerce-foreground:#161615; --commerce-accent:#d63821; --commerce-accent-foreground:#fff; min-width:0; border-right:1px solid #aaa49b }
 .product-media { position:relative; width:100%; aspect-ratio:4 / 5; overflow:hidden; background:#ebe6de }
 .product-media img { width:100%; height:100%; object-fit:cover }
 .product-badge { position:absolute; top:10px; left:10px; padding:5px 7px; color:#fff; background:#101010; font-size:9px; text-transform:uppercase }
@@ -153,13 +153,10 @@ const collectionHtml = `
     <button class="atelier-filter" value="price_asc" data-cd-on="click" data-cd-action="collection.sort">Price ascending</button>
   </nav>
   <section class="atelier-collection-grid">
-    <article class="atelier-collection-card" data-cd-repeat="collection.products">
+    <article class="atelier-collection-card product" data-cd-repeat="collection.products">
       <a class="atelier-link" data-cd-key="product.id" data-cd-route="product" data-cd-param-handle="product.handle">
-        <img class="atelier-media atelier-collection-image" data-cd-src="product.primaryImage" data-cd-alt="product.title" width="900" height="1125" loading="lazy">
-        <span class="atelier-collection-name" data-cd-text="product.title"></span>
-        <span class="atelier-price" data-cd-money="product.price"></span>
-        <span class="atelier-card-description" data-cd-text="product.description"></span>
-        <span class="atelier-collection-availability" data-cd-text="product.availability"></span>
+        <div class="product-media atelier-product-media"><img class="atelier-media atelier-collection-image" data-cd-src="product.primaryImage" data-cd-alt="product.title" width="900" height="1125" loading="lazy"><span class="product-badge" data-cd-text="product.availability"></span></div>
+        <div class="product-info atelier-product-info"><span class="atelier-collection-name" data-cd-text="product.title"></span><span class="atelier-price" data-cd-money="product.price"></span><span class="atelier-card-description" data-cd-text="product.description"></span></div>
       </a>
     </article>
   </section>
@@ -178,6 +175,7 @@ const collectionCss = `
 .atelier-filter { padding:.2rem 0; color:#161615; background:transparent; border:0; font-family:var(--font-display); font-size:.72rem; letter-spacing:.08em; text-transform:uppercase }
 .atelier-filter:hover { color:#d63821 }
 .atelier-collection-grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)) }
+.atelier-collection-card { --commerce-surface:#f5f1e9; --commerce-foreground:#161615; --commerce-accent:#d63821; --commerce-accent-foreground:#fff }
 .atelier-collection-card { grid-column:span 4; border-right:1px solid #aaa49b; border-bottom:1px solid #aaa49b }
 .atelier-collection-card:nth-child(4n+1) { grid-column:span 5 }
 .atelier-collection-card:nth-child(4n+2) { grid-column:span 3 }
@@ -359,7 +357,7 @@ const checkoutCss = `
 
 const config = {
   templateId: "atelier-nine",
-  templateVersion: 4,
+  templateVersion: 6,
   concept: {
     name: "Atelier Grid",
     rationale: "A complete commerce journal that treats products as an edited fashion issue without obscuring purchase paths.",

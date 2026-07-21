@@ -4,7 +4,7 @@ import { ROOM_MODES_ASSETS } from "./assets";
 
 const config = {
   templateId: "room-modes",
-  templateVersion: 5,
+  templateVersion: 10,
   concept: {
     name: "Room Modes",
     rationale: "A spatial storefront that begins with room scenes, then resolves into a precise object index.",
@@ -69,7 +69,7 @@ const config = {
               <section class="room"><img class="room-bg" data-cd-asset="hero" alt="Architectural home workspace with daylight"><div class="room-copy"><span class="eyebrow">Scene 02 / studio</span><h2>Focus, held in space.</h2><p>Quiet monitoring, directional light, and tactile controls for the room where ideas become work.</p><button class="cta" data-cd-route="collection">Shop the studio</button></div><span class="scene-index">02 / FOCUS MODE / 09:16</span><button class="hotspot" data-cd-route="collection">+</button><button class="hotspot" data-cd-route="collection">+</button><div class="scene-products"><button class="scene-product" data-cd-route="collection"><small>LIGHT / DIRECTIONAL</small><b>Line Task Light</b><span>$179 · 11 in stock</span></button><button class="scene-product" data-cd-route="collection"><small>AIR / THREAD</small><b>Air Index Monitor</b><span>$129 · 3 in stock</span></button></div></section>
               <section class="room"><img class="room-bg" data-cd-asset="hero" alt="Minimal bedroom with soft low light"><div class="room-copy"><span class="eyebrow">Scene 03 / sleep</span><h2>Technology after dark.</h2><p>Low-glare, silent, and designed to make the room feel less connected when the day is done.</p><button class="cta" data-cd-route="collection">Shop the sleep room</button></div><span class="scene-index">03 / UNWIND MODE / 22:08</span><button class="hotspot" data-cd-route="collection">+</button><button class="hotspot" data-cd-route="collection">+</button><div class="scene-products"><button class="scene-product" data-cd-route="collection"><small>TIME / LOW GLARE</small><b>Quiet Bedside Clock</b><span>$98 · 20 in stock</span></button><button class="scene-product" data-cd-route="collection"><small>LIGHT / MATTER</small><b>Halo Floor Light</b><span>$289 · 8 in stock</span></button></div></section>
             </div>
-            <section class="catalog-view"><div class="catalog-head"><div><span class="eyebrow">Live merchant collection</span><h1>Objects for living systems.</h1></div><p>Browse canonical products by room, protocol, finish, and real variant availability.</p></div><div class="catalog-tools"><div class="chips"><button class="chip" value="all" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">All objects</button><button class="chip" value="living" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Living</button><button class="chip" value="studio" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Studio</button><button class="chip" value="sleep" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Sleep</button><button class="chip" value="matter" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Matter</button></div><select aria-label="Sort products" value="relevance" data-cd-on="change" data-cd-action="collection.sort"><option value="featured">Architect's order</option><option value="low">Price low → high</option><option value="high">Price high → low</option></select></div><div class="product-grid" data-cd-repeat="featured.products"><article data-cd-key="product.id"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">Inspect object</a></article></div><p class="home-empty resilient-copy" data-cd-empty-state>No objects match this room mode.</p></section>
+            <section class="catalog-view"><div class="catalog-head"><div><span class="eyebrow">Live merchant collection</span><h1>Objects for living systems.</h1></div><p>Browse canonical products by room, protocol, finish, and real variant availability.</p></div><div class="catalog-tools"><div class="chips"><button class="chip" value="all" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">All objects</button><button class="chip" value="living" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Living</button><button class="chip" value="studio" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Studio</button><button class="chip" value="sleep" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Sleep</button><button class="chip" value="matter" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Matter</button></div><select aria-label="Sort products" value="relevance" data-cd-on="change" data-cd-action="collection.sort"><option value="featured">Architect's order</option><option value="low">Price low → high</option><option value="high">Price high → low</option></select></div><div class="product-grid" data-cd-repeat="featured.products"><article class="product" data-cd-key="product.id"><div class="product-media"><img data-cd-src="product.primaryImage" data-cd-alt="product.title"><span class="badge">LIVE OBJECT</span></div><div class="product-info"><h3 data-cd-text="product.title"></h3><b data-cd-money="product.price"></b><small class="stock" data-cd-text="product.availability"></small><p class="product-copy" data-cd-text="product.description"></p><a class="object-action" data-cd-route="product" data-cd-param-handle="product.handle">+</a></div></article></div><p class="home-empty resilient-copy" data-cd-empty-state>No objects match this room mode.</p></section>
           </main>
           <nav class="control-dock"><div class="room-controls"><button class="room-control" data-cd-route="home"><i>01</i><span><b>Living</b><small>WELCOME MODE</small></span></button><button class="room-control" data-cd-route="home"><i>02</i><span><b>Studio</b><small>FOCUS MODE</small></span></button><button class="room-control" data-cd-route="home"><i>03</i><span><b>Sleep</b><small>UNWIND MODE</small></span></button></div><div class="view-toggle"><button data-cd-route="home">Scene view</button><button data-cd-route="collection">Object index</button></div></nav>
           <section data-cd-repeat="featured.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>
@@ -92,30 +92,31 @@ const config = {
       signature: "technical object index with sticky protocol facets and three-column scene-panel matrix",
       source: {
         html: `
-          <main>
-            <header class="object-index resilient-copy"><small class="protocol-copy">Live merchant collection</small><h1 data-cd-text="collection.title"></h1><p data-cd-text="collection.description"></p><b data-cd-text="collection.productCount"></b></header>
-            <nav class="facet-bench" aria-label="Collection filters">
-              <button value="living" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Living</button>
+          <main class="catalog-view">
+            <header class="object-index catalog-head resilient-copy"><div class="object-index-copy"><small class="protocol-copy">Live merchant collection</small><h1 data-cd-text="collection.title"></h1><b data-cd-text="collection.productCount"></b></div><p data-cd-text="collection.description"></p></header>
+            <nav class="facet-bench catalog-tools" aria-label="Collection filters">
+              <div class="facet-chips"><button value="living" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Living</button>
               <button value="studio" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="category">Studio</button>
-              <button value="matter" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Matter</button>
+              <button value="matter" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="tag">Matter</button></div>
               <button value="title_asc" data-cd-on="click" data-cd-action="collection.sort">Architect order</button>
             </nav>
-            <section class="object-matrix" data-cd-repeat="collection.products">
-              <article data-cd-key="product.id">
-                <img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy" width="720" height="620">
-                <h2 data-cd-text="product.title"></h2><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span>
-                <a data-cd-route="product" data-cd-param-handle="product.handle">View object</a>
-                <div data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></div>
+            <div class="object-catalog"><section class="object-matrix product-grid" data-cd-repeat="collection.products">
+              <article class="product" data-cd-key="product.id">
+                <div class="product-media"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" loading="lazy" width="720" height="620"><span class="badge">LIVE OBJECT</span></div>
+                <div class="product-info"><h3 data-cd-text="product.title"></h3><b data-cd-money="product.price"></b><small class="stock" data-cd-text="product.availability"></small><p class="product-copy" data-cd-text="product.description"></p><a class="object-action" data-cd-route="product" data-cd-param-handle="product.handle">+</a></div>
               </article>
-            </section>
+            </section></div>
             <p class="collection-empty resilient-copy" data-cd-empty-state>No objects match this room mode. Clear a protocol filter to continue.</p>
           </main>
+          <section data-cd-repeat="collection.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>
         `,
         css: `
-          .object-index{display:grid;grid-template-columns:1.2fr .8fr;gap:2rem;padding:clamp(2rem,6vw,6rem)}.object-index h1{font-size:clamp(3.5rem,8vw,8rem)}
-          .facet-bench{position:sticky;top:0;display:flex;gap:.5rem;padding:1rem;background:var(--chalk)}.facet-bench button{border:1px solid var(--ink);background:transparent;padding:.7rem}
+          .catalog-view{min-height:100dvh;padding:115px 3.5vw 4rem}.catalog-head{display:grid;grid-template-columns:1.2fr .8fr;align-items:end;gap:30px;margin-bottom:46px}.catalog-head h1{max-width:9ch;margin:6px 0 0;font-size:clamp(55px,7vw,98px);line-height:.84;letter-spacing:-.075em}.catalog-head p{margin:0;max-width:42ch}.object-index-copy b{display:block;margin-top:1rem}
+          .catalog-tools{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:12px 0;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink)}.facet-chips{display:flex;gap:.5rem;overflow:auto}.facet-bench button{min-width:max-content;border:1px solid var(--ink);background:transparent;padding:.7rem}
+          .object-catalog{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}.object-matrix{display:contents}
+          .product{border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:#f7f8f5;--commerce-surface:#f7f8f5;--commerce-foreground:var(--ink);--commerce-accent:var(--amber);--commerce-accent-foreground:var(--ink)}.product-media{position:relative;aspect-ratio:1.15/1;overflow:hidden}.product-media img{width:100%;height:100%;object-fit:cover}.badge{position:absolute;left:10px;top:10px;padding:5px 7px;background:var(--ink);color:#fff;font:8px var(--font-body)}.product-info{display:grid;grid-template-columns:1fr auto;gap:5px 14px;padding:14px}.product-info h3{margin:0;font-size:18px}.product-info small{font:9px var(--font-body);color:#68716c}.product-copy{grid-column:1/-1;margin:0}.object-action{grid-column:2;grid-row:1/3;display:grid;place-items:center;width:42px;background:var(--amber);color:var(--ink);font-size:20px}
           .collection-empty,.resilient-copy{overflow-wrap:anywhere}.collection-empty{padding:1rem}
-          @media(max-width:700px){.object-index{grid-template-columns:1fr}.facet-bench{overflow:auto}}
+          @media(max-width:700px){.object-index,.object-catalog{grid-template-columns:1fr}.catalog-view{padding:90px 14px 3rem}.catalog-tools{display:grid}.facet-bench{overflow:auto}}
         `,
         requiredData: [],
         requiredCapabilities: [],
@@ -217,6 +218,7 @@ config.surfaces.home.source.css = sourceTemplateCss(
   config.surfaces.home.source.html,
   { display: "Syne", body: "DM Mono" },
 );
+config.surfaces.home.source.css += `.product{--commerce-surface:#f7f8f5;--commerce-foreground:var(--ink);--commerce-accent:var(--amber);--commerce-accent-foreground:var(--ink)}.object-action{grid-column:2;grid-row:1/3;display:grid;place-items:center;width:42px;background:var(--amber);color:var(--ink);font-size:20px}.product-copy{grid-column:1/-1;margin:0}`;
 
 export const ROOM_MODES_RECIPE = defineRecipe(config);
 export const ROOM_MODES_BUNDLE = ROOM_MODES_RECIPE.bundle;

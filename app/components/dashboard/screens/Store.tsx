@@ -28,6 +28,7 @@ import {
   decideWelcomeBranch,
   missingPieces,
   parseProductLine,
+  previewRouteId,
   shouldShowWelcome,
   showPromptCanvas,
   type BuildPhase,
@@ -43,7 +44,13 @@ import type { PageKey } from "~/lib/storebuilder/types";
 
 const PREVIEW_PATH = "/dashboard/store/preview";
 const DESKTOP_PREVIEW_WIDTH = 1_024;
-const MERCHANT_STAGES = new Set<MerchantStage>(["understanding", "preparing_products", "checking_preview"]);
+const MERCHANT_STAGES = new Set<MerchantStage>([
+  "understanding",
+  "planning_redesign",
+  "building_pages",
+  "preparing_products",
+  "checking_preview",
+]);
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 interface StagedStoreAttachment {
@@ -165,6 +172,7 @@ function ClassicStore({ app }: { app: DashboardCtx }) {
     return () => observer.disconnect();
   }, [data]);
   const [page, setPage] = useState<PageKey>("home");
+  const activePreviewRouteId = previewRouteId(page);
   const [device, setDevice] = useState<Device>("desktop");
   const badgeRef = useRef<HTMLSpanElement>(null);
 
@@ -381,10 +389,14 @@ function ClassicStore({ app }: { app: DashboardCtx }) {
     const normalized = text.trim();
     if (!normalized) return;
     const commandAttachments = stagedAttachments.map(({ command }) => command);
+    const expectedDraftVersionId = dataRef.current?.release.draftVersionId ?? null;
     void executeCommand({
       kind: "prompt",
       prompt: normalized,
-      expectedDraftVersionId: dataRef.current?.release.draftVersionId ?? null,
+      expectedDraftVersionId,
+      ...(expectedDraftVersionId && activePreviewRouteId
+        ? { context: { routeId: activePreviewRouteId } }
+        : {}),
       ...(commandAttachments.length > 0 ? { attachments: commandAttachments } : {}),
     }, userText, stagedAttachments);
   };
@@ -519,8 +531,9 @@ function ClassicStore({ app }: { app: DashboardCtx }) {
     draftProductCount: data.draftProductCount,
     importInProgress: porting,
   });
-  const previewRoute = page === "pdp" ? "product" : page === "collection" ? "collection" : "home";
-  const previewSrc = `${PREVIEW_PATH}?route=${previewRoute}&page=${page}&v=${previewVersion}`;
+  const previewSrc = activePreviewRouteId
+    ? `${PREVIEW_PATH}?route=${activePreviewRouteId}&page=${page}&v=${previewVersion}`
+    : undefined;
   const promptCanvas = showPromptCanvas(data);
   const publishPieces: MissingPiece[] = missingPieces(data);
 

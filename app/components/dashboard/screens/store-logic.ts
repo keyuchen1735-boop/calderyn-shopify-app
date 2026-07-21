@@ -1,4 +1,6 @@
 import type { Screen } from "../context";
+import type { StorefrontRouteId } from "~/lib/storefront-bundle/types";
+import type { PageKey } from "~/lib/storebuilder/types";
 
 export interface StoreReadiness {
   productCount: number;
@@ -13,7 +15,12 @@ export interface MissingPiece {
   screen: Screen;
 }
 
-export type MerchantStage = "understanding" | "preparing_products" | "checking_preview";
+export type MerchantStage =
+  | "understanding"
+  | "planning_redesign"
+  | "building_pages"
+  | "preparing_products"
+  | "checking_preview";
 export type BuildPhase =
   | { kind: "running"; stage?: MerchantStage }
   | { kind: "failed"; message: string };
@@ -31,11 +38,21 @@ const COMMAND_STAGE_ROWS: ReadonlyArray<{ stage: MerchantStage; title: string; s
   { stage: "checking_preview", title: "Checking your preview", sub: "Opening every storefront page before saving the change." },
 ];
 
+const REDESIGN_STAGE_ROWS: ReadonlyArray<{ stage: MerchantStage; title: string; sub: string }> = [
+  COMMAND_STAGE_ROWS[0],
+  { stage: "planning_redesign", title: "Planning the redesign", sub: "Shaping a new direction around your store." },
+  { stage: "building_pages", title: "Building pages", sub: "Bringing that direction across your storefront." },
+  COMMAND_STAGE_ROWS[2],
+];
+
 export function buildSteps(phase: BuildPhase): BuildStepView[] {
   if (phase.kind === "failed") return [buildStep(phase)];
   if (!phase.stage) return [buildStep(phase)];
-  const current = COMMAND_STAGE_ROWS.findIndex(({ stage }) => stage === phase.stage);
-  return COMMAND_STAGE_ROWS.map((row, index) => ({
+  const rows = phase.stage === "planning_redesign" || phase.stage === "building_pages"
+    ? REDESIGN_STAGE_ROWS
+    : COMMAND_STAGE_ROWS;
+  const current = rows.findIndex(({ stage }) => stage === phase.stage);
+  return rows.map((row, index) => ({
     dot: index < current ? "done" : index === current ? "run" : "wait",
     title: row.title,
     sub: row.sub,
@@ -46,10 +63,20 @@ export function buildStep(phase: BuildPhase): BuildStepView {
   if (phase.kind === "failed") {
     return { dot: "wait", dotColor: "var(--red)", title: "Change failed", sub: phase.message };
   }
-  const row = phase.stage && COMMAND_STAGE_ROWS.find(({ stage }) => stage === phase.stage);
+  const row = phase.stage && (
+    COMMAND_STAGE_ROWS.find(({ stage }) => stage === phase.stage)
+    ?? REDESIGN_STAGE_ROWS.find(({ stage }) => stage === phase.stage)
+  );
   return row
     ? { dot: "run", title: row.title, sub: row.sub }
     : { dot: "run", title: "Preparing your store", sub: "This can take a moment." };
+}
+
+export function previewRouteId(page: PageKey): StorefrontRouteId | undefined {
+  if (page === "home") return "home";
+  if (page === "pdp") return "product";
+  if (page === "collection") return "collection";
+  return undefined;
 }
 
 export function missingPieces(state: StoreReadiness): MissingPiece[] {

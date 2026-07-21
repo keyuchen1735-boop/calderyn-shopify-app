@@ -12,6 +12,8 @@ describe("Companion Field Guide storefront recipe", () => {
     }
     expect(home.html).toContain("Food, support, and everyday tools selected around species");
     expect(home.html).toContain("Portraits of everyday care.");
+    expect(home.html).toContain('<div class="guide-layout"><aside class="species-rail">');
+    expect(home.html).toContain('</aside><div class="page"><main>');
     expect(home.html).toContain('data-cd-repeat="featured.products"');
     expect(home.html).toContain('data-cd-src="product.primaryImage"');
     expect(home.html).toContain('data-cd-text="product.title"');
@@ -26,10 +28,31 @@ describe("Companion Field Guide storefront recipe", () => {
     expect(css).toContain(".profile-rail button { min-width:0 }");
   });
 
+  it("lays out collection products through a static responsive field-note grid", () => {
+    const collection = COMPANION_FIELD_GUIDE_RECIPE.config.surfaces.collection.source;
+
+    expect(collection.html).toContain('class="field-note-grid" data-cd-repeat="collection.products"');
+    expect(collection.html).toContain('class="field-note-catalog"><section class="field-note-grid" data-cd-repeat="collection.products"');
+    expect(collection.css).toContain(".field-note-catalog { display:grid; grid-template-columns:repeat(3,1fr) }");
+    expect(collection.css).toContain(".field-note-grid { display:contents }");
+    expect(collection.css).toContain(".field-note-catalog { grid-template-columns:1fr 1fr }");
+  });
+
+  it("keeps prototype field-essential cards across home and collection", () => {
+    const { home, collection } = COMPANION_FIELD_GUIDE_RECIPE.config.surfaces;
+    for (const surface of [home.source, collection.source]) {
+      expect(surface.html).toContain('article class="product"');
+      expect(surface.html).toContain('class="product-media"');
+      expect(surface.html).toContain('class="product-meta"');
+    }
+    expect(home.source.css).toContain("--commerce-accent:var(--orange)");
+    expect(home.source.css).toContain(".product-info{padding:14px}");
+  });
+
   it("compiles a chaptered pet care guide across the complete commerce contract", () => {
     const { bundle, config, report } = COMPANION_FIELD_GUIDE_RECIPE;
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 5 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "companion-field-guide", templateVersion: 10 });
     expect(config.archetype).toMatchObject({ composition: "field-guide", hero: "pet-profile-hero", scroll: "chaptered-guide", cards: "field-notes" });
     expect(bundle.designSystem).toMatchObject({ displayFontId: "newsreader", bodyFontId: "manrope" });
     expect(new Set(Object.values(config.surfaces).map((surface) => surface.signature)).size).toBe(7);
