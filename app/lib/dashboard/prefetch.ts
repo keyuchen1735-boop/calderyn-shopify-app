@@ -58,6 +58,8 @@ const WARM_TARGETS: Array<[string, () => Promise<unknown>]> = [
   [SCREEN_CACHE_KEYS.storeStudio, fetchStore],
   [SCREEN_CACHE_KEYS.discover, fetchDiscover],
   [SCREEN_CACHE_KEYS.search, fetchSearchOverview],
+  // Shared by Autopilot's overnight-moves section and Analytics > Live's
+  // watch-signals block — both seed from this one key.
   [SCREEN_CACHE_KEYS.radar, fetchRadar],
   [SCREEN_CACHE_KEYS.agentic, () => apiGet("/dashboard/api/agentic")],
   [SCREEN_CACHE_KEYS.inventoryList, () => fetchInventoryList({})],

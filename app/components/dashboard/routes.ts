@@ -18,8 +18,6 @@ function seg(nav: NavState): string {
       return "";
     case "autopilot":
       return "autopilot";
-    case "radar":
-      return "radar";
     case "campaigns":
       return param ? `campaigns/${encodeURIComponent(param)}` : "campaigns";
     case "analytics":
@@ -112,8 +110,14 @@ export function parsePath(pathname: string): NavState | null {
   switch (a) {
     case "autopilot":
       return b ? null : { screen: "autopilot", param: null, sub: null };
+    // The retired standalone Radar screen: its queue lives in Autopilot now,
+    // so old bookmarks land there instead of 404ing. Parse-only aliases —
+    // pathFor never emits these, keeping it and parsePath exact inverses for
+    // every reachable NavState.
     case "radar":
-      return b ? null : { screen: "radar", param: null, sub: null };
+      return b ? null : { screen: "autopilot", param: null, sub: null };
+    case "grow":
+      return b === "radar" ? { screen: "autopilot", param: null, sub: null } : null;
     case "campaigns":
       return { screen: "campaigns", param: b ?? null, sub: null };
     case "analytics":
