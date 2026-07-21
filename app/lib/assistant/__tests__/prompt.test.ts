@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { buildSystemPrompt, ASSISTANT_SYSTEM_INSTRUCTIONS } from "../prompt.server";
 
 describe("buildSystemPrompt", () => {
-  it("caches both the static block and the snapshot block", () => {
-    const blocks = buildSystemPrompt("SNAPSHOT-XYZ");
+  it("caches both the static block and the per-shop block", () => {
+    const blocks = buildSystemPrompt("SNAPSHOT-XYZ", "native");
     expect(blocks).toHaveLength(2);
 
     expect(blocks[0].text).toBe(ASSISTANT_SYSTEM_INSTRUCTIONS);
@@ -11,8 +11,76 @@ describe("buildSystemPrompt", () => {
 
     // Snapshot is fenced as data so shop-derived text can't read as
     // instructions; the content itself must ride inside unchanged.
-    expect(blocks[1].text).toBe("<shop_snapshot>\nSNAPSHOT-XYZ\n</shop_snapshot>");
+    expect(blocks[1].text).toContain("<shop_snapshot>\nSNAPSHOT-XYZ\n</shop_snapshot>");
     expect(blocks[1].cache_control).toEqual({ type: "ephemeral" });
+  });
+
+  it("keeps the static block byte-identical across platforms (global cache prefix)", () => {
+    const native = buildSystemPrompt("S", "native");
+    const connected = buildSystemPrompt("S", "shopify_connected");
+    expect(native[0].text).toBe(connected[0].text);
+    // The platform grounding varies per shop, so it must live in the second block.
+    expect(native[1].text).not.toBe(connected[1].text);
+  });
+
+  describe("platform grounding", () => {
+    it("native: fences a <shop_platform> block that says the shop has no Shopify store", () => {
+      const perShop = buildSystemPrompt("S", "native")[1].text;
+      expect(perShop).toContain("<shop_platform>");
+      expect(perShop).toContain("platform: native");
+      expect(perShop).toContain("NO Shopify store");
+    });
+
+    it("native: payments questions are grounded in the Payments screen (Stripe), never Shopify Payments", () => {
+      const perShop = buildSystemPrompt("S", "native")[1].text;
+      expect(perShop).toContain("Payments screen (Stripe onboarding + payouts)");
+      expect(perShop).toContain(
+        "Never reference Shopify admin, Shopify Payments, or Online Store → Themes",
+      );
+    });
+
+    it("native: storefront questions are grounded in the Store screen (Calderyn's store builder)", () => {
+      const perShop = buildSystemPrompt("S", "native")[1].text;
+      expect(perShop).toContain("Store screen (Calderyn's store builder)");
+    });
+
+    it("shopify_connected: Shopify is scoped to import/migration; day-to-day still points at Calderyn screens", () => {
+      const perShop = buildSystemPrompt("S", "shopify_connected")[1].text;
+      expect(perShop).toContain("platform: shopify_connected");
+      expect(perShop).toContain("ONLY for import/migration questions");
+      expect(perShop).toContain("not the Shopify admin");
+      expect(perShop).toContain("Payments screen");
+      expect(perShop).toContain("Store screen");
+    });
+  });
+
+  it("static instructions no longer describe the assistant as embedded in a Shopify admin", () => {
+    const instructions = ASSISTANT_SYSTEM_INSTRUCTIONS.toLowerCase();
+    expect(instructions).not.toContain("embedded in a shopify merchant's admin");
+    expect(instructions).toContain("embedded in the merchant's calderyn dashboard");
+    expect(instructions).toContain("standalone commerce platform");
+  });
+
+  it("static instructions forbid Shopify surfaces for native shops and name the real Calderyn screens", () => {
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain(
+      'Never direct them to a "Shopify admin", Shopify Payments, Online Store → Themes',
+    );
+    const instructions = ASSISTANT_SYSTEM_INSTRUCTIONS.toLowerCase();
+    // Payments → Payments screen (Stripe), storefront → Store screen.
+    expect(instructions).toContain("payments screen (stripe onboarding");
+    expect(instructions).toContain("the store screen");
+    expect(instructions).toContain("never assume any merchant runs on shopify");
+  });
+
+  it("static instructions scope Shopify references to import/migration for connected shops", () => {
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain(
+      "Mention Shopify only for import/migration questions",
+    );
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("Settings → Import from Shopify");
+  });
+
+  it("static instructions point at the <shop_platform> block as authoritative", () => {
+    expect(ASSISTANT_SYSTEM_INSTRUCTIONS).toContain("<shop_platform>");
   });
 
   it("static instructions mention the cents->dollars rule and executing actions", () => {
