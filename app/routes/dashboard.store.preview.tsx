@@ -89,7 +89,8 @@ function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteDat
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const requestedTemplateId = new URL(request.url).searchParams.get("template");
+  const requestUrl = new URL(request.url);
+  const requestedTemplateId = requestUrl.searchParams.get("template");
   const reviewTemplateId = isStorefrontRecipeReviewEnabled() && isStorefrontRecipeReviewTemplateId(requestedTemplateId)
     ? requestedTemplateId
     : null;
@@ -131,7 +132,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");
         const headers = storefrontCacheHeaders({ routeId: "preview", personalized: true });
-        return json({ ...withPreviewRecipeAssetUrls(request, runtime1, reviewTemplateId ? new URL(request.url).origin : undefined), nonce }, { headers });
+        const reviewInfo = reviewTemplateId ? requestUrl.searchParams.get("info") : null;
+        const reviewPolicy = reviewInfo === "policy" ? requestUrl.searchParams.get("policy") : null;
+        return json({ ...withPreviewRecipeAssetUrls(request, runtime1, reviewTemplateId ? requestUrl.origin : undefined), nonce, reviewInfo, reviewPolicy }, { headers });
       }
     }
     const version = await readPreviewBundleVersion(shopId);
@@ -266,5 +269,9 @@ export async function action({ request }: ActionFunctionArgs) {
 export default function StoreDraftPreview() {
   const loaded = useLoaderData<typeof loader>();
   if (!isRuntime1RenderData(loaded)) throw new Error("Storefront preview data is unavailable.");
+  const reviewTemplate = loaded.bundle.source.kind === "recipe" ? loaded.bundle.source.templateId : "";
+  const reviewPolicy = "reviewPolicy" in loaded && typeof loaded.reviewPolicy === "string" ? loaded.reviewPolicy : null;
+  if ("reviewInfo" in loaded && loaded.reviewInfo === "account") return <main className="cd-account cd-account--narrow"><h1>Account preview</h1><p>Customers can securely view orders, manage saved addresses, and update payment methods after signing in.</p><a href={`/dashboard/store/preview?template=${reviewTemplate}`}>Return to store</a></main>;
+  if ("reviewInfo" in loaded && loaded.reviewInfo === "policy") return <main className="cd-account cd-account--narrow"><h1>{reviewPolicy ? `${reviewPolicy[0]?.toUpperCase()}${reviewPolicy.slice(1)} policy` : "Store policies"}</h1><p>The merchant&apos;s published policy content appears here. Review links are read-only and never expose another store&apos;s policy data.</p><a href={`/dashboard/store/preview?template=${reviewTemplate}`}>Return to store</a></main>;
   return <>{renderStorefrontSurface({ bundle: loaded.bundle, routeId: loaded.routeId, data: loaded.data, nonce: loaded.nonce, mode: "preview", visualLayerPlacement: loaded.visualLayerPlacement })}<StorefrontHydrator bundle={loaded.bundle} routeId={loaded.routeId} data={loaded.data} mode="preview" /></>;
 }

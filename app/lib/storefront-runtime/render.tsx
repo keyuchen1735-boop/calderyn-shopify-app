@@ -237,7 +237,7 @@ function routeRepeatIsEmpty(data: PublicPresentationData): boolean {
   if (data.collection) return data.collection.products.length === 0;
   if (data.search) return data.search.results.length === 0;
   if (data.cart) return data.cart.lines.length === 0;
-  return data.featuredProducts.length === 0;
+  return data.featuredProducts.length === 0 && data.featuredCollections.length === 0;
 }
 
 function itemKey(value: ScopeValue, index: number): string {
@@ -289,9 +289,11 @@ function targetHref(target: RouteTarget, context: RenderContext): string {
         return typeof value === "string" || typeof value === "number" ? [[key, String(value)]] : [];
       }),
     );
-    if (target.routeId === "account") return PATHS.account;
-    if (target.routeId === "policy") {
-      return params.policyId ? `${PATHS.policy}/${encodeURIComponent(params.policyId)}` : PATHS.policy;
+    if (target.routeId === "account" || target.routeId === "policy") {
+      const previewInfo = new URLSearchParams({ info: target.routeId });
+      if (context.previewTemplateId) previewInfo.set("template", context.previewTemplateId);
+      if (params.policyId) previewInfo.set("policy", params.policyId);
+      return `/dashboard/store/preview?${previewInfo.toString()}`;
     }
     const previewRoute = new URLSearchParams({ route: target.routeId });
     if (context.previewTemplateId) previewRoute.set("template", context.previewTemplateId);
@@ -383,7 +385,13 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
     children = context.data.policyLinks.flatMap((policy, index) => {
       const title = policy.title.trim();
       if (!policyIds.has(policy.id) || title.length === 0 || title.length > 120) return [];
-      const href = `${PATHS.policy}/${policy.id}`;
+      const href = context.mode === "preview"
+        ? `/dashboard/store/preview?${new URLSearchParams({
+          info: "policy",
+          ...(context.previewTemplateId ? { template: context.previewTemplateId } : {}),
+          policy: policy.id,
+        }).toString()}`
+        : `${PATHS.policy}/${policy.id}`;
       return [createElement("a", { key: `${key}-policy-${policy.id}-${index}`, href }, title)];
     });
   } else {

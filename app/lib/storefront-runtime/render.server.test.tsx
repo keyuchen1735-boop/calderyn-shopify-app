@@ -451,7 +451,7 @@ describe("compiled-node server renderer", () => {
   it("renders each merchant collection discovery route with its own handle", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.routes.collections = {
-      html: `<main><section data-cd-repeat="featured.collections"><a data-cd-key="collection.id" data-cd-route="collection" data-cd-param-handle="collection.handle"><span data-cd-text="collection.title"></span></a></section></main>`,
+      html: `<main><section data-cd-repeat="featured.collections"><a data-cd-key="collection.id" data-cd-route="collection" data-cd-param-handle="collection.handle"><span data-cd-text="collection.title"></span></a></section><p data-cd-empty-state>There are no collections.</p></main>`,
       css: `main { display:block }`,
       requiredData: [],
       requiredCapabilities: [],
@@ -473,6 +473,7 @@ describe("compiled-node server renderer", () => {
 
     expect(html).toContain('href="/storefront/collections/audio"');
     expect(html).toContain('href="/storefront/collections/portable"');
+    expect(html).not.toContain("There are no collections.");
   });
 
   it("renders the global shell footer after the active route", () => {
@@ -623,7 +624,7 @@ describe("compiled-node server renderer", () => {
     expect(publicHtml).not.toContain("attacker.example");
     expect(publicHtml).not.toContain("Admin");
     expect(publicHtml).not.toContain("Generated content is replaced");
-    expect(previewHtml).toContain('<a href="/storefront/policies/privacy">Privacy policy</a>');
+    expect(previewHtml).toContain('href="/dashboard/store/preview?info=policy&amp;policy=privacy"');
   });
 
   it("keeps account navigation useful in preview mode", () => {
@@ -637,7 +638,7 @@ describe("compiled-node server renderer", () => {
       mode: "preview",
     }));
 
-    expect(html).toContain('href="/storefront/account"');
+    expect(html).toContain('href="/dashboard/store/preview?info=account"');
   });
 
   it("composes deterministic collision-resistant instance IDs across nested repeats", () => {
