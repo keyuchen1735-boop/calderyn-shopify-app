@@ -17,6 +17,7 @@ import {
   OrderListTable,
   OrderListToolbar,
   OrderSortHeader,
+  downloadCsv,
   nextSortState,
   type OrderListView,
 } from "./OrderListFamily";
@@ -102,28 +103,6 @@ function compareText(a: string | null, b: string | null): number {
     sensitivity: "base",
     numeric: true,
   });
-}
-
-function csvCell(value: string | number | null): string {
-  const text = value == null ? "" : String(value);
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
-function downloadCsv(
-  filename: string,
-  rows: Array<Array<string | number | null>>,
-): void {
-  const body = rows.map((row) => row.map(csvCell).join(",")).join("\n");
-  const url = URL.createObjectURL(
-    new Blob([body], { type: "text/csv;charset=utf-8" }),
-  );
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function chargeKey(row: ShipChargeRow, index: number): string {
