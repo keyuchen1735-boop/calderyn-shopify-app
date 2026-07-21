@@ -3,6 +3,9 @@
 // reservation meter — never by changing the RPC's counting semantics, and
 // never touching the global daily backstop.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// vi.mock calls are hoisted above imports, so importing the module under test
+// here still sees the mocked seams.
+import { designerFirstBuildImageLimits, generateDesignerAsset } from "./imagery.server";
 
 const { generateGeminiImages, persistExternalImage, upsert } = vi.hoisted(() => ({
   generateGeminiImages: vi.fn(),
@@ -20,8 +23,6 @@ vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({ from: () => ({ upsert }) }),
   resolveShopId: vi.fn(async (value: string) => value),
 }));
-
-import { designerFirstBuildImageLimits, generateDesignerAsset } from "./imagery.server";
 
 const SHOP = "00000000-0000-0000-0000-000000000010";
 
