@@ -32,6 +32,10 @@ import {
   type RunStorefrontRedesignInput,
   type StorefrontRedesignDependencies,
 } from "./redesign.server";
+import {
+  STOREFRONT_DESIGN_GUIDANCE_VERSION,
+  STOREFRONT_DESIGN_SOURCE_PACKAGE_COMMIT,
+} from "./design-guidance-core.server";
 
 const { createMessage } = vi.hoisted(() => ({ createMessage: vi.fn() }));
 
@@ -262,7 +266,10 @@ describe("storefront redesign orchestration", () => {
       ...baseSource.routes.product,
       html: baseSource.routes.product.html.replace("Workshop work order", "Custom workshop work order"),
     };
-    const prove = vi.fn(async (_input: { context: StorefrontContextAssembly["context"] }) => passingProof());
+    const prove = vi.fn(async (_input: {
+      context: StorefrontContextAssembly["context"];
+      routes?: readonly string[];
+    }) => passingProof());
 
     const result = await runStorefrontRedesign(input("structural_edit"), {
       complete: fakeComplete(() => ({ routeId: "product", route: product })), prove,
@@ -275,9 +282,39 @@ describe("storefront redesign orchestration", () => {
     expect(baseSource).toEqual(snapshot);
     expect(result.artifact.bundle.source).toMatchObject({
       kind: "custom", generationId: "generation-1", derivedFromVersionId: "version-1",
-      derivedFromTemplateId: "custom-bench",
+      derivedFromTemplateId: "custom-bench", promptHash: result.audit.promptHash,
+    });
+    expect(result.audit).toMatchObject({
+      generationId: "generation-1",
+      promptHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
+      adaptedGuidanceVersion: STOREFRONT_DESIGN_GUIDANCE_VERSION,
+      sourcePackageCommit: STOREFRONT_DESIGN_SOURCE_PACKAGE_COMMIT,
     });
     expect(prove.mock.calls[0]![0].context.products[0]!.id).toBe("owned-product-id");
+    expect(prove.mock.calls[0]![0].routes).toEqual([
+      "home", "collection", "product", "search", "cart", "checkout",
+    ]);
+  });
+
+  it("fails closed without repair when an unchanged structural route fails proof", async () => {
+    const source = recipeCompilerSource(CUSTOM_BENCH_RECIPE);
+    const completeSpy = vi.fn(fakeComplete(() => ({ routeId: "product", route: source.routes.product })));
+    const complete = completeSpy as unknown as typeof completeRedesignRequest;
+    const prove = vi.fn(async (_input: { routes?: readonly string[] }) => ({
+      ok: false,
+      diagnostics: [{ routeId: "home" as const, code: "layout.home", message: "Unchanged home failed proof" }],
+      screenshots: [],
+      browserMs: 1,
+    }));
+
+    await expect(runStorefrontRedesign(input("structural_edit"), { complete, prove }))
+      .rejects.toMatchObject({ code: "storefront_redesign_proof_failed" });
+
+    expect(prove).toHaveBeenCalledOnce();
+    expect(prove.mock.calls[0]![0].routes).toEqual([
+      "home", "collection", "product", "search", "cart", "checkout",
+    ]);
+    expect(completeSpy).toHaveBeenCalledTimes(1);
   });
 
   it("freezes the plan, assembles exact full-redesign groups, and keeps only referenced allowlisted assets", async () => {

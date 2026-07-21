@@ -1,4 +1,5 @@
 export const STOREFRONT_DESIGN_GUIDANCE_VERSION = "claude-design-3c3ddb-calderyn-1" as const;
+export const STOREFRONT_DESIGN_SOURCE_PACKAGE_COMMIT = "3c3ddb07d7aa3fef051d83608596470c95cfd8fe" as const;
 
 export const DESIGN_GUIDANCE_CORE = `You are creating or judging authored storefront compiler source, not operating tools or delivering files.
 

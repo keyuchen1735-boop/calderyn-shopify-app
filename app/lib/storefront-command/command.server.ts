@@ -22,6 +22,10 @@ import {
   type StorefrontRedesignResult,
 } from "~/lib/storefront-ai/redesign.server";
 import {
+  STOREFRONT_DESIGN_GUIDANCE_VERSION,
+  STOREFRONT_DESIGN_SOURCE_PACKAGE_COMMIT,
+} from "~/lib/storefront-ai/design-guidance-core.server";
+import {
   isStorefrontBundlePublishEnabled,
   isStorefrontRecipeBuildEnabled,
   loadStorefrontRecipe,
@@ -675,6 +679,16 @@ export async function runStoreCommand(
         ...(input.signal ? { signal: input.signal } : {}),
       });
       throwIfAborted(input.signal);
+      const adaptedGuidanceVersion = result.audit.adaptedGuidanceVersion
+        ?? STOREFRONT_DESIGN_GUIDANCE_VERSION;
+      const sourcePackageCommit = result.audit.sourcePackageCommit
+        ?? STOREFRONT_DESIGN_SOURCE_PACKAGE_COMMIT;
+      const provenance = {
+        generationId: result.audit.generationId,
+        promptHash: result.audit.promptHash,
+        adaptedGuidanceVersion,
+        sourcePackageCommit,
+      };
       const versionId = await dependencies.installRedesign({
         shopId: input.shopId,
         actorId,
@@ -689,11 +703,16 @@ export async function runStoreCommand(
         validationProfileVersion: result.artifact.bundle.validationProfileVersion,
         validationReport: { valid: true, static: result.validation, browserProof: result.browserProof },
         generationPrompt: input.command.prompt,
-        resolution: { kind: "custom_redesign", mode: intent.kind },
+        resolution: { kind: "custom_redesign", mode: intent.kind, provenance },
         prompt: input.command.prompt,
         scope: { mode: intent.kind, ...(intent.kind === "structural_edit" ? { routeId: input.command.context!.routeId } : {}) },
         patch: { changedRouteIds: result.audit.changedRouteIds, shellChanged: result.audit.shellChanged },
-        provider: { calls: result.audit.provider, repairs: result.audit.repairs },
+        provider: {
+          calls: result.audit.provider,
+          repairs: result.audit.repairs,
+          adaptedGuidanceVersion,
+          sourcePackageCommit,
+        },
         validation: { static: result.validation, browserProof: result.browserProof },
         ...(input.signal ? { signal: input.signal } : {}),
       });

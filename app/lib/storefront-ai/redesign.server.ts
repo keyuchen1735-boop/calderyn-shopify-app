@@ -18,6 +18,10 @@ import type {
 } from "./contracts";
 import type { StorefrontContextAssembly } from "./context.server";
 import {
+  STOREFRONT_DESIGN_GUIDANCE_VERSION,
+  STOREFRONT_DESIGN_SOURCE_PACKAGE_COMMIT,
+} from "./design-guidance-core.server";
+import {
   redesignGroupPrompt,
   redesignPlanPrompt,
   storefrontRedesignRepairSystemPrompt,
@@ -62,6 +66,8 @@ export interface StorefrontRedesignAudit {
   baseVersionId: string;
   generationId: string;
   promptHash: string;
+  adaptedGuidanceVersion?: typeof STOREFRONT_DESIGN_GUIDANCE_VERSION;
+  sourcePackageCommit?: typeof STOREFRONT_DESIGN_SOURCE_PACKAGE_COMMIT;
   changedRouteIds: StorefrontRouteId[];
   shellChanged: boolean;
   repairs: number;
@@ -373,7 +379,7 @@ export async function runStorefrontRedesign(
             bundle: compiled!.bundle,
             context: ownedProofContext(input.context),
             persistedAssets: [],
-            routes: repairableRouteIds,
+            routes: FULL_ROUTE_IDS,
             signal: proofSignal,
             timeoutMs: PROOF_TIMEOUT_MS,
           }), proofSignal);
@@ -387,6 +393,10 @@ export async function runStorefrontRedesign(
         const failedProof = browserProof;
         failingRouteId = repairableRouteIds.find((id) => failedProof.diagnostics.some((item) => item.routeId === id) && !repairedRouteIds.has(id));
         if (failingRouteId) repairDiagnostics = proofDiagnostics(failedProof, failingRouteId);
+        else fail(
+          "storefront_redesign_proof_failed",
+          failedProof.diagnostics[0]?.message ?? "Storefront redesign did not pass browser proof.",
+        );
       }
 
       const repairLimit = input.mode === "structural_edit" ? 1 : 2;
@@ -422,6 +432,8 @@ export async function runStorefrontRedesign(
         baseVersionId: input.baseVersionId,
         generationId,
         promptHash: source.source.promptHash,
+        adaptedGuidanceVersion: STOREFRONT_DESIGN_GUIDANCE_VERSION,
+        sourcePackageCommit: STOREFRONT_DESIGN_SOURCE_PACKAGE_COMMIT,
         changedRouteIds,
         shellChanged,
         repairs,

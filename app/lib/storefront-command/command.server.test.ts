@@ -15,6 +15,7 @@ import {
   compileAuthoring,
   requireStorefrontAuthoring,
 } from "../storefront-ai/authoring.server";
+import { STOREFRONT_DESIGN_GUIDANCE_VERSION } from "../storefront-ai/design-guidance-core.server";
 import { classifyStoreIntent, type StoreIntentProvider } from "./intent.server";
 import type { StoreCommand, StoreCommandEvent, StoreCommandReceipt, StoreIntent } from "./types";
 import {
@@ -37,6 +38,7 @@ const SECOND_PRODUCT = "77777777-7777-4777-8777-777777777777";
 const SECOND_PRODUCT_REF = "product-002";
 const HASH = `sha256:${"a".repeat(64)}`;
 const RESULT_HASH = `sha256:${"b".repeat(64)}`;
+const SOURCE_PACKAGE_COMMIT = "a".repeat(40);
 
 const promptCommand = (
   expectedDraftVersionId: string | null,
@@ -156,6 +158,8 @@ function provenRedesign(mode: "structural_edit" | "full_redesign") {
     audit: {
       mode, baseVersionId: CURRENT, generationId: "generation-result",
       promptHash: `sha256:${"e".repeat(64)}`, changedRouteIds: ["product" as const],
+      adaptedGuidanceVersion: STOREFRONT_DESIGN_GUIDANCE_VERSION,
+      sourcePackageCommit: SOURCE_PACKAGE_COMMIT,
       shellChanged: false, repairs: 0, provider: [],
     },
   };
@@ -251,6 +255,8 @@ describe("runStoreCommand", () => {
       audit: {
         mode: "structural_edit", baseVersionId: CURRENT, generationId: "generation-1",
         promptHash: `sha256:${"d".repeat(64)}`, changedRouteIds: ["product"], shellChanged: false,
+        adaptedGuidanceVersion: STOREFRONT_DESIGN_GUIDANCE_VERSION,
+        sourcePackageCommit: SOURCE_PACKAGE_COMMIT,
         repairs: 0, provider: [],
       },
     });
@@ -273,6 +279,26 @@ describe("runStoreCommand", () => {
     expect(redesign).toHaveBeenCalledOnce();
     expect(deps.applyIntent).not.toHaveBeenCalled();
     expect(deps.installRedesign).toHaveBeenCalledOnce();
+    expect(deps.installRedesign).toHaveBeenCalledWith(expect.objectContaining({
+      resolution: {
+        kind: "custom_redesign",
+        mode: "structural_edit",
+        provenance: {
+          generationId: "generation-1",
+          promptHash: `sha256:${"d".repeat(64)}`,
+          adaptedGuidanceVersion: STOREFRONT_DESIGN_GUIDANCE_VERSION,
+          sourcePackageCommit: SOURCE_PACKAGE_COMMIT,
+        },
+      },
+      scope: { mode: "structural_edit", routeId: "product" },
+      patch: { changedRouteIds: ["product"], shellChanged: false },
+      provider: {
+        calls: [],
+        repairs: 0,
+        adaptedGuidanceVersion: STOREFRONT_DESIGN_GUIDANCE_VERSION,
+        sourcePackageCommit: SOURCE_PACKAGE_COMMIT,
+      },
+    }));
     expect(events.map(({ stage }) => stage)).toEqual([
       "understanding", "planning_redesign", "building_pages", "ready",
     ]);
