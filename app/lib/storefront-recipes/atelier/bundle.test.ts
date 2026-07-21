@@ -19,6 +19,25 @@ const ROUTES = [
 ] as const;
 
 describe("Atelier storefront recipe", () => {
+  it("meets the Taste storefront hardening contract", () => {
+    const surfaces = ATELIER_RECIPE_CONFIG.surfaces;
+    const visibleCopy = Object.values(surfaces).map(({ source }) => source.html).join(" ");
+
+    expect(surfaces.collections.source.html).toContain('data-cd-repeat="featured.collections"');
+    expect(surfaces.collections.source.html).toContain('data-cd-key="collection.id"');
+    expect(surfaces.collections.source.html).toContain('data-cd-param-handle="collection.handle"');
+    expect(surfaces.collections.source.html).toContain('data-cd-text="collection.title"');
+    expect(visibleCopy).not.toMatch(/[—–]|Catalog door 0\d|Fabric study 0\d|>0[1-3]<\/|404/);
+    expect(surfaces.home.source.html.match(/class="atelier-hero-line"/g)).toHaveLength(2);
+    expect(surfaces.home.source.css).toContain(".atelier-hero h1{max-width:8ch;margin:14px 0;font-family:var(--font-display);font-size:clamp(3.875rem,9vw,6rem)");
+    expect(ATELIER_RECIPE_CONFIG.designSystem.globalCss).toContain(".atelier-hero-line{display:block");
+    expect(surfaces.home.source.css).toContain("@media(max-width:760px)");
+    expect(surfaces.home.source.css).toContain("@media(prefers-reduced-motion:reduce)");
+    expect(surfaces.product.source.html).toContain('data-cd-slot="variantPicker"');
+    expect(surfaces.product.source.html).toContain('data-cd-slot="addToCart"');
+    expect(surfaces.cart.source.html).toContain('data-cd-route="collection"');
+  });
+
   it("compiles nine distinct fit-laboratory routes without Atelier Grid's magazine structure", () => {
     const result = compileRecipeConfig(ATELIER_RECIPE_CONFIG);
 
@@ -223,7 +242,7 @@ describe("Atelier storefront recipe", () => {
     expect(collectionsHtml.match(/data-cd-route="collection"/g)?.length).toBeGreaterThanOrEqual(
       1,
     );
-    expect(collectionsHtml).toContain("All products");
+    expect(collectionsHtml).toContain("Garment collection");
     expect(collectionsHtml).toContain("atelier-index-composition");
     expect(new Set(filters)).toEqual(new Set(["available"]));
     expect(ATELIER_RECIPE_CONFIG.surfaces.collection.source.html).not.toContain(

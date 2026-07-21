@@ -53,6 +53,24 @@ function productData(facts: NonNullable<NonNullable<PublicPresentationData["prod
 }
 
 describe("volt storefront recipe", () => {
+  it("meets the Taste storefront hardening contract", () => {
+    const surfaces = VOLT_RECIPE_CONFIG.surfaces;
+    const visibleCopy = Object.values(surfaces).map(({ source }) => source.html).join(" ");
+
+    expect(surfaces.collections.source.html).toContain('data-cd-repeat="featured.collections"');
+    expect(surfaces.collections.source.html).toContain('data-cd-key="collection.id"');
+    expect(surfaces.collections.source.html).toContain('data-cd-param-handle="collection.handle"');
+    expect(surfaces.collections.source.html).toContain('data-cd-text="collection.title"');
+    expect(visibleCopy).not.toMatch(/[—–]|CH 01|01 \/|02 \/|03 \/|404 \/|Checkout decoration/);
+    expect(surfaces.home.source.html.match(/class="volt-hero-line"/g)).toHaveLength(2);
+    expect(surfaces.home.source.css).toContain(".volt-hero-copy h1{font-size:clamp(4rem,10vw,6rem)");
+    expect(surfaces.home.source.css).toContain("@media(max-width:720px)");
+    expect(surfaces.home.source.css).toContain("@media(prefers-reduced-motion:reduce)");
+    expect(surfaces.product.source.html).toContain('data-cd-slot="variantPicker"');
+    expect(surfaces.product.source.html).toContain('data-cd-slot="addToCart"');
+    expect(surfaces.cart.source.html).toContain('data-cd-route="collection"');
+  });
+
   it("compiles a nine-route live-catalog system with honest conversion controls and safe motion fallback", () => {
     const { bundle, report } = VOLT_RECIPE;
 
@@ -133,7 +151,7 @@ describe("volt storefront recipe", () => {
     expect(VOLT_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-route="collections"');
     expect(bundle.routes.home.html).toContain("Collection discovery");
     expect(bundle.routes.collections!.html).toContain("volt-collection-index-grid");
-    expect(repeatsIn(bundle.routes.collections!.tree)).toContain("featured.products");
+    expect(repeatsIn(bundle.routes.collections!.tree)).toContain("featured.collections");
     expect(bundle.routes.collection.html).toContain("volt-breadcrumbs");
     expect(bundle.routes.collection.html).toContain("Sibling systems");
     expect(bundle.routes.collection.html).toContain("Applied signal");
@@ -145,7 +163,7 @@ describe("volt storefront recipe", () => {
     expect(bundle.routes.search.html).toContain("Result count");
     expect(VOLT_RECIPE_CONFIG.surfaces.search.source.html).toContain('data-cd-route="collections"');
     expect(bundle.routes.cart.html).toContain("Checkout handoff");
-    expect(VOLT_RECIPE_CONFIG.surfaces.checkout.source.html).toContain("Checkout decoration");
+    expect(VOLT_RECIPE_CONFIG.surfaces.checkout.source.html).toContain("Encrypted handoff");
   });
 
   it("keeps protected purchase controls adjacent to the product dossier and renders only supplied facts", () => {

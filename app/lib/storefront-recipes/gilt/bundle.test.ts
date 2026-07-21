@@ -9,6 +9,25 @@ function elements(nodes: readonly CompiledNode[]): Array<Extract<CompiledNode, {
 }
 
 describe("Gilt storefront recipe", () => {
+  it("meets the Taste storefront hardening contract", () => {
+    const surfaces = GILT_RECIPE_CONFIG.surfaces;
+    const visibleCopy = Object.values(surfaces).map(({ source }) => source.html).join(" ");
+
+    expect(surfaces.collections.source.html).toContain('data-cd-repeat="featured.collections"');
+    expect(surfaces.collections.source.html).toContain('data-cd-key="collection.id"');
+    expect(surfaces.collections.source.html).toContain('data-cd-param-handle="collection.handle"');
+    expect(surfaces.collections.source.html).toContain('data-cd-text="collection.title"');
+    expect(visibleCopy).not.toMatch(/[—–]|>0[1-4]<\/|404 \/|Live product •/);
+    expect(surfaces.home.source.html.match(/class="gilt-hero-line"/g)).toHaveLength(2);
+    expect(surfaces.home.source.css).toContain(".gilt-title{font-family:var(--font-display);font-size:clamp(3.2rem,8vw,6rem)");
+    expect(surfaces.home.source.css).toContain("@media(max-width:760px)");
+    expect(surfaces.home.source.css).toContain("@media(prefers-reduced-motion:reduce)");
+    expect(surfaces.product.source.html).toContain('data-cd-slot="variantPicker"');
+    expect(surfaces.product.source.html).toContain('data-cd-slot="addToCart"');
+    expect(surfaces.cart.source.html).toContain('data-cd-route="collection"');
+    expect(surfaces.home.source.css).toContain("white-space:nowrap");
+  });
+
   it("compiles nine route-owned jewelry surfaces", () => {
     const { bundle, report } = compileRecipeConfig(GILT_RECIPE_CONFIG);
     expect(report).toMatchObject({ ok: true, diagnostics: [] });
@@ -42,7 +61,7 @@ describe("Gilt storefront recipe", () => {
     expect(product.html).not.toContain("data-cd-personalization");
     expect(product.requiredData.map(({ kind }) => kind)).toContain("policyLinks");
     expect(product.html).toContain("Review the merchant's current return and shipping terms");
-    expect(product.html).toContain("Live product • current price • protected personalization");
+    expect(product.html).toContain("Live product / current price / protected personalization");
     const addToCartId = product.trustedSlots.find(({ kind }) => kind === "addToCart")!.id;
     const purchaseColumn = elements(product.tree).find(({ attributes }) => attributes.class === "gilt-purchase")!;
     const purchaseNodes = elements(purchaseColumn.children);
@@ -59,7 +78,7 @@ describe("Gilt storefront recipe", () => {
     const { bundle } = compileRecipeConfig(GILT_RECIPE_CONFIG);
     expect(GILT_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-route="collections"');
     expect(GILT_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-action="collection.filter"');
-    expect(GILT_RECIPE_CONFIG.surfaces.collections.source.html.match(/data-cd-route="collection"/g)).toHaveLength(4);
+    expect(GILT_RECIPE_CONFIG.surfaces.collections.source.html.match(/data-cd-route="collection"/g)?.length).toBeGreaterThanOrEqual(1);
     expect(bundle.routes.collection.bindings.map(({ ref }) => ref)).toEqual(expect.arrayContaining([
       expect.objectContaining({ path: "collection.productCount" }),
       expect.objectContaining({ path: "collection.image" }),
@@ -86,9 +105,10 @@ describe("Gilt storefront recipe", () => {
     );
   });
 
-  it("uses one honest all-products path until live collection data is available", () => {
+  it("uses merchant collection records for distinct collection paths", () => {
     const collections = GILT_RECIPE_CONFIG.surfaces.collections.source.html;
-    expect(collections).toContain("All products");
+    expect(collections).toContain('data-cd-repeat="featured.collections"');
+    expect(collections).toContain('data-cd-param-handle="collection.handle"');
     expect(collections).toContain('data-cd-route="collection"');
     expect(collections).not.toMatch(/Nine rooms|Collections of meaning/);
     expect(GILT_RECIPE_CONFIG.surfaces.checkout.source.html).not.toMatch(/engraving|recipient details|in the bag/i);
