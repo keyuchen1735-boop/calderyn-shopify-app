@@ -1,8 +1,10 @@
 // Radar's merchant-facing pieces, folded into existing surfaces: the drafted
-// moves queue lives inside Autopilot (OvernightMoves) and the observational
-// signals live inside Analytics > Live (LiveRadarSignals). Both talk to the
-// unchanged /dashboard/api/radar endpoint via radar-client and share the
-// screen-cache "radar" key (seed + write-through; WARM_TARGETS keeps it hot).
+// moves ride Autopilot's Action stream (useRadarQueue powers the rows the
+// CalibrationTrainer renders, OvernightMoves is the compact fallback for the
+// graduated/standing-by states) and the observational signals live inside
+// Analytics > Live (LiveRadarSignals). Everything talks to the unchanged
+// /dashboard/api/radar endpoint via radar-client and shares the screen-cache
+// "radar" key (seed + write-through; WARM_TARGETS keeps it hot).
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DashboardCtx } from "../context";
 import { Card, Btn, SkelBar } from "../ui";
@@ -43,6 +45,14 @@ function dayLabel(day: string): string {
     : d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
+/** Stream-row icon per move kind, grouped the same way as RADAR_KIND_LABELS. */
+export function radarKindIcon(kind: string): string {
+  if (kind.startsWith("seo_")) return "search";
+  if (kind.startsWith("aeo_")) return "bot";
+  if (kind.startsWith("competitor_")) return "eye";
+  return "scan";
+}
+
 /** Kind labels (the merchant-facing groupings already in RADAR_KIND_LABELS)
  *  whose one-click approve changes something the merchant would recognize as
  *  "the store page" - used to give the approve toast a concrete receipt
@@ -59,13 +69,13 @@ function applyReceiptMessage(m: RadarMoveVM): string {
   const label = RADAR_KIND_LABELS[m.kind];
   return label && STORE_PAGE_RECEIPT_LABELS.has(label)
     ? "Applied — your store page was updated."
-    : "Applied. You can undo it below.";
+    : "Applied. You can undo it anytime.";
 }
 
-/** Shared load/refresh/action state for both folded surfaces. `instantCheck`
- *  keeps the PR #627 behavior with the queue (now in Autopilot): one
- *  rate-limited check per mount when the data is stale, plus the manual
- *  "Check now" path. The Live signals view passes false and only reads. */
+/** Shared load/refresh state for every folded surface. `instantCheck` keeps
+ *  the PR #627 behavior with the queue (now in Autopilot): one rate-limited
+ *  check per mount when the data is stale, plus the manual "Check now" path.
+ *  The Live signals view passes false and only reads. */
 function useRadarOverview(app: Pick<DashboardCtx, "toast">, instantCheck: boolean) {
   const { toast } = app;
   const [data, setData] = useState<RadarOverviewVM | null>(() =>
@@ -108,7 +118,7 @@ function useRadarOverview(app: Pick<DashboardCtx, "toast">, instantCheck: boolea
         await load();
       })
       .catch(() => {
-        // Best-effort: the section still works off whatever data it has.
+        // Best-effort: the surface still works off whatever data it has.
       })
       .finally(() => setFreshLookBanner(false));
   }, [instantCheck, data, load]);
@@ -138,14 +148,33 @@ function useRadarOverview(app: Pick<DashboardCtx, "toast">, instantCheck: boolea
   return { data, loadError, freshLookBanner, checkingNow, load, checkNow };
 }
 
-/* ---------- Autopilot: the drafted-moves queue ---------- */
+export interface RadarQueue {
+  data: RadarOverviewVM | null;
+  loadError: boolean;
+  freshLookBanner: boolean;
+  checkingNow: boolean;
+  /** Drafted moves awaiting a decision. */
+  moves: RadarMoveVM[];
+  /** Recently applied moves that can still be reverted (newest first, capped). */
+  revertable: RadarMoveVM[];
+  busyId: string | null;
+  armedRevertId: string | null;
+  checkNow: () => Promise<void>;
+  /** Plain refetch of the overview (error-state retry). */
+  reload: () => Promise<void>;
+  approve: (m: RadarMoveVM) => Promise<void>;
+  /** The review path's "I did it myself" resolution for review-only moves. */
+  markDone: (m: RadarMoveVM) => Promise<void>;
+  dismiss: (m: RadarMoveVM) => Promise<void>;
+  revert: (m: RadarMoveVM) => Promise<void>;
+}
 
-/** The overnight queue, sectioned with Autopilot's own recommendations.
- *  Approve = the radar apply action, Dismiss = radar dismiss; recently
- *  applied moves keep their revert (with the two-step 409 confirm flow).
- *  Purely presentational fold - moves never become autopilot alert rows. */
-export function OvernightMoves({ app }: { app: DashboardCtx }) {
-  const { toast, relTime } = app;
+/** The queue surface's full behavior bundle: overview + instant check + the
+ *  approve/dismiss/revert actions (with the two-step 409 revert_conflict
+ *  confirm). Mounted by exactly one component at a time - the Action stream
+ *  while the store is calibrating, OvernightMoves otherwise. */
+export function useRadarQueue(app: Pick<DashboardCtx, "toast">): RadarQueue {
+  const { toast } = app;
   const { data, loadError, freshLookBanner, checkingNow, load, checkNow } = useRadarOverview(app, true);
   const [busyId, setBusyId] = useState<string | null>(null);
   // Two-step revert: a conflict (409 revert_conflict) arms the button; the
@@ -173,8 +202,57 @@ export function OvernightMoves({ app }: { app: DashboardCtx }) {
     [load, toast],
   );
 
-  const moves = data?.moves ?? [];
-  const revertable = (data?.history ?? []).filter((m) => m.canRevert).slice(0, 5);
+  const approve = useCallback(
+    (m: RadarMoveVM) => run(m, () => applyRadarMove(m.id), applyReceiptMessage(m)),
+    [run],
+  );
+  const markDone = useCallback(
+    (m: RadarMoveVM) => run(m, () => applyRadarMove(m.id), "Marked done."),
+    [run],
+  );
+  const dismiss = useCallback(
+    (m: RadarMoveVM) => run(m, () => dismissRadarMove(m.id), "Dismissed."),
+    [run],
+  );
+  const revert = useCallback(
+    (m: RadarMoveVM) => run(m, () => revertRadarMove(m.id, armedRevertId === m.id), "Reverted."),
+    [run, armedRevertId],
+  );
+
+  return {
+    data,
+    loadError,
+    freshLookBanner,
+    checkingNow,
+    moves: data?.moves ?? [],
+    revertable: (data?.history ?? []).filter((m) => m.canRevert).slice(0, 5),
+    busyId,
+    armedRevertId,
+    checkNow,
+    reload: load,
+    approve,
+    markDone,
+    dismiss,
+    revert,
+  };
+}
+
+/** Same-origin guard for a review-only move's deep link: every real deep link
+ *  is a dashboard route; anything else is ignored rather than handed straight
+ *  to window.location. */
+export function openRadarDeepLink(m: RadarMoveVM): void {
+  if (m.deepLink?.startsWith("/dashboard/")) window.location.href = m.deepLink;
+}
+
+/* ---------- Autopilot fallback: the compact drafted-moves section ---------- */
+
+/** The overnight queue as its own section - used on the Autopilot states that
+ *  have no Action stream (graduated Live Engine panel, standing by, error).
+ *  While calibrating, the stream renders these moves as rows instead. */
+export function OvernightMoves({ app }: { app: DashboardCtx }) {
+  const { relTime } = app;
+  const radar = useRadarQueue(app);
+  const { data, loadError, moves, revertable, busyId } = radar;
 
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 12 }} aria-label="Overnight moves">
@@ -189,12 +267,12 @@ export function OvernightMoves({ app }: { app: DashboardCtx }) {
             {data?.lastCheckedAt ? ` Checked ${relTime(Date.parse(data.lastCheckedAt))}.` : ""}
           </p>
         </div>
-        <Btn disabled={checkingNow || freshLookBanner} onClick={() => void checkNow()}>
-          {checkingNow ? "Checking…" : "Check now"}
+        <Btn disabled={radar.checkingNow || radar.freshLookBanner} onClick={() => void radar.checkNow()}>
+          {radar.checkingNow ? "Checking…" : "Check now"}
         </Btn>
       </div>
 
-      {freshLookBanner && (
+      {radar.freshLookBanner && (
         <p className="cd-caption" style={{ margin: 0 }}>
           Taking a fresh look at your store. New moves will show up here in a moment.
         </p>
@@ -204,61 +282,52 @@ export function OvernightMoves({ app }: { app: DashboardCtx }) {
         loadError ? (
           <p className="cd-caption" style={{ margin: 0 }}>
             Couldn&apos;t load drafted moves.{" "}
-            <button type="button" className="cd-btn cd-btn-secondary cd-btn-sm" onClick={() => void load()}>
+            <button type="button" className="cd-btn cd-btn-secondary cd-btn-sm" onClick={() => void radar.reload()}>
               Try again
             </button>
           </p>
         ) : (
           <SkelBar width="40%" />
         )
-      ) : moves.length === 0 ? (
-        !freshLookBanner && (
-          <p className="cd-caption" style={{ margin: 0 }}>
-            {data.stale
-              ? "When something needs attention, a drafted move appears here for your approval."
-              : "Nothing needs your attention right now."}
-          </p>
-        )
-      ) : (
-        moves.map((m) => (
-          <Card key={m.id}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span className="cd-chip">{RADAR_KIND_LABELS[m.kind] ?? "Store"}</span>
-              {m.chips.map((c, i) => (
-                <span key={i} className="cd-chip">{c}</span>
-              ))}
-            </div>
-            <h3 style={{ margin: "8px 0 4px" }}>{m.headline}</h3>
-            <p className="cd-caption">{m.rationale}</p>
-            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              {m.reviewOnly && m.deepLink ? (
-                <>
-                  <Btn kind="primary" onClick={() => {
-                    // Every real deep link is a same-origin dashboard route; anything else is
-                    // ignored rather than handed straight to window.location.
-                    if (m.deepLink?.startsWith("/dashboard/")) window.location.href = m.deepLink;
-                  }}>
-                    Review
-                  </Btn>
-                  <Btn disabled={busyId === m.id}
-                    onClick={() => void run(m, () => applyRadarMove(m.id), "Marked done.")}>
-                    Mark done
-                  </Btn>
-                </>
-              ) : (
-                <Btn kind="primary" disabled={busyId === m.id}
-                  onClick={() => void run(m, () => applyRadarMove(m.id), applyReceiptMessage(m))}>
-                  {busyId === m.id ? "Approving…" : "Approve"}
+      ) : moves.length === 0 && !radar.freshLookBanner ? (
+        <p className="cd-caption" style={{ margin: 0 }}>
+          {data.stale
+            ? "When something needs attention, a drafted move appears here for your approval."
+            : "Nothing needs your attention right now."}
+        </p>
+      ) : null}
+
+      {moves.map((m) => (
+        <Card key={m.id}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span className="cd-chip">{RADAR_KIND_LABELS[m.kind] ?? "Store"}</span>
+            {m.chips.map((c, i) => (
+              <span key={i} className="cd-chip">{c}</span>
+            ))}
+          </div>
+          <h3 style={{ margin: "8px 0 4px" }}>{m.headline}</h3>
+          <p className="cd-caption">{m.rationale}</p>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            {m.reviewOnly && m.deepLink ? (
+              <>
+                <Btn kind="primary" onClick={() => openRadarDeepLink(m)}>
+                  Review
                 </Btn>
-              )}
-              <Btn disabled={busyId === m.id}
-                onClick={() => void run(m, () => dismissRadarMove(m.id), "Dismissed.")}>
-                Dismiss
+                <Btn disabled={busyId === m.id} onClick={() => void radar.markDone(m)}>
+                  Mark done
+                </Btn>
+              </>
+            ) : (
+              <Btn kind="primary" disabled={busyId === m.id} onClick={() => void radar.approve(m)}>
+                {busyId === m.id ? "Approving…" : "Approve"}
               </Btn>
-            </div>
-          </Card>
-        ))
-      )}
+            )}
+            <Btn disabled={busyId === m.id} onClick={() => void radar.dismiss(m)}>
+              Dismiss
+            </Btn>
+          </div>
+        </Card>
+      ))}
 
       {revertable.length > 0 && (
         <>
@@ -270,9 +339,8 @@ export function OvernightMoves({ app }: { app: DashboardCtx }) {
                 <span className="cd-caption" style={{ margin: 0 }}>
                   {whenLabel(m.appliedAt ?? m.resolvedAt ?? m.createdAt)}
                 </span>
-                <Btn disabled={busyId === m.id}
-                  onClick={() => void run(m, () => revertRadarMove(m.id, armedRevertId === m.id), "Reverted.")}>
-                  {armedRevertId === m.id ? "Revert (overwrites newer edits)" : "Revert"}
+                <Btn disabled={busyId === m.id} onClick={() => void radar.revert(m)}>
+                  {radar.armedRevertId === m.id ? "Revert (overwrites newer edits)" : "Revert"}
                 </Btn>
               </div>
             </Card>
@@ -329,8 +397,8 @@ export function LiveRadarSignals({ app }: { app: DashboardCtx }) {
   const noCompetitors = competitors.suggested.length === 0 && competitors.watching.length === 0;
 
   return (
-    <div className="cd-grid-main">
-      <div className="flex flex-col gap-4 min-w-0">
+    <>
+      <div className="cd-stat-grid">
         <SignalStat
           label="AI assistant visits"
           value={String(signals.aiAssistants.hitsLast7)}
@@ -338,101 +406,99 @@ export function LiveRadarSignals({ app }: { app: DashboardCtx }) {
         />
         <SignalStat
           label="Google"
-          value={signals.google.connected ? `${signals.google.slippingCount} pages slipping` : "Not connected"}
+          value={signals.google.connected ? `${signals.google.slippingCount} pages slipping` : "—"}
           note={
             signals.google.connected
               ? signals.google.lastCapturedDate
                 ? `Data through ${signals.google.lastCapturedDate}`
                 : "Waiting for first data"
-              : "Connect Google in Store > Preferences"
+              : "Not connected · Connect Google in Store > Preferences"
           }
         />
       </div>
 
-      <div className="flex flex-col gap-4 min-w-0">
-        <Card>
-          <h2 className="cd-h2">Competitor watch</h2>
-          {noCompetitors && (
-            <p className="cd-caption">
-              Once your store is live, Calderyn searches the web weekly for stores selling similar
-              products and lists them here. Nothing is watched until you confirm it.
+      <Card>
+        <h2 className="cd-h2">Competitor watch</h2>
+        {noCompetitors && (
+          <p className="cd-caption">
+            Once your store is live, Calderyn searches the web weekly for stores selling similar
+            products and lists them here. Nothing is watched until you confirm it.
+          </p>
+        )}
+
+        {competitors.suggested.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
+            <h3 style={{ margin: 0 }}>Suggested</h3>
+            <p className="cd-caption" style={{ margin: 0 }}>
+              Found by web search - listed stores aren&apos;t affiliated with Calderyn. Confirm the
+              ones you want watched; watched stores are checked nightly.
             </p>
-          )}
-
-          {competitors.suggested.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
-              <h3 style={{ margin: 0 }}>Suggested</h3>
-              <p className="cd-caption" style={{ margin: 0 }}>
-                Found by web search - listed stores aren&apos;t affiliated with Calderyn. Confirm the
-                ones you want watched; watched stores are checked nightly.
-              </p>
-              {competitors.suggested.map((c: RadarCompetitorVM) => (
-                <div key={c.id}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <strong>{c.name}</strong>
-                    <span className="cd-chip">{c.host}</span>
-                  </div>
-                  {c.reason && <p className="cd-caption" style={{ margin: "4px 0 0" }}>{c.reason}</p>}
-                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                    <Btn kind="primary" small disabled={busyId === c.id}
-                      onClick={() => void runCompetitor(c.id, () => confirmRadarCompetitor(c.id), (result) =>
-                        (result as { firstLook?: boolean } | undefined)?.firstLook
-                          ? "Watching. Calderyn took its first look at their site."
-                          : "Watching. Calderyn checks it nightly.")}>
-                      {busyId === c.id ? "Confirming…" : "Watch this store"}
-                    </Btn>
-                    <Btn small disabled={busyId === c.id}
-                      onClick={() => void runCompetitor(c.id, () => dismissRadarCompetitor(c.id), "Dismissed.")}>
-                      Dismiss
-                    </Btn>
-                  </div>
+            {competitors.suggested.map((c: RadarCompetitorVM) => (
+              <div key={c.id}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <strong>{c.name}</strong>
+                  <span className="cd-chip">{c.host}</span>
                 </div>
-              ))}
-            </div>
-          )}
+                {c.reason && <p className="cd-caption" style={{ margin: "4px 0 0" }}>{c.reason}</p>}
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <Btn kind="primary" small disabled={busyId === c.id}
+                    onClick={() => void runCompetitor(c.id, () => confirmRadarCompetitor(c.id), (result) =>
+                      (result as { firstLook?: boolean } | undefined)?.firstLook
+                        ? "Watching. Calderyn took its first look at their site."
+                        : "Watching. Calderyn checks it nightly.")}>
+                    {busyId === c.id ? "Confirming…" : "Watch this store"}
+                  </Btn>
+                  <Btn small disabled={busyId === c.id}
+                    onClick={() => void runCompetitor(c.id, () => dismissRadarCompetitor(c.id), "Dismissed.")}>
+                    Dismiss
+                  </Btn>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
-          {competitors.watching.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
-              <h3 style={{ margin: 0 }}>
-                Watching ({competitors.watching.length}/{competitors.watchLimit})
-              </h3>
-              {competitors.watching.map((c: RadarCompetitorVM) => (
-                <div key={c.id}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <strong>{c.name}</strong>
-                    <span className="cd-chip">{c.host}</span>
-                  </div>
-                  {c.changes.length === 0 ? (
-                    <p className="cd-caption" style={{ margin: "4px 0 0" }}>
-                      No changes spotted yet. Checked nightly.
-                    </p>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
-                      {c.changes.map((ch, i) => (
-                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                          <span className="cd-caption" style={{ margin: 0 }}>{dayLabel(ch.day)}</span>
-                          {ch.chips.map((chip, j) => (
-                            <span key={j} className="cd-chip">{chip}</span>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                    <Btn small disabled={busyId === c.id}
-                      onClick={() => void runCompetitor(c.id, () => dismissRadarCompetitor(c.id), "Stopped watching.")}>
-                      Stop watching
-                    </Btn>
-                  </div>
+        {competitors.watching.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
+            <h3 style={{ margin: 0 }}>
+              Watching ({competitors.watching.length}/{competitors.watchLimit})
+            </h3>
+            {competitors.watching.map((c: RadarCompetitorVM) => (
+              <div key={c.id}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <strong>{c.name}</strong>
+                  <span className="cd-chip">{c.host}</span>
+                </div>
+                {c.changes.length === 0 ? (
                   <p className="cd-caption" style={{ margin: "4px 0 0" }}>
-                    Calderyn will stop watching this competitor and won&apos;t suggest it again.
+                    No changes spotted yet. Checked nightly.
                   </p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+                    {c.changes.map((ch, i) => (
+                      <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <span className="cd-caption" style={{ margin: 0 }}>{dayLabel(ch.day)}</span>
+                        {ch.chips.map((chip, j) => (
+                          <span key={j} className="cd-chip">{chip}</span>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <Btn small disabled={busyId === c.id}
+                    onClick={() => void runCompetitor(c.id, () => dismissRadarCompetitor(c.id), "Stopped watching.")}>
+                    Stop watching
+                  </Btn>
                 </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      </div>
-    </div>
+                <p className="cd-caption" style={{ margin: "4px 0 0" }}>
+                  Calderyn will stop watching this competitor and won&apos;t suggest it again.
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </>
   );
 }

@@ -27,7 +27,8 @@ import {
   sayLine,
   type MoveGroupKey,
 } from "./autopilot-cards";
-import { OvernightMoves } from "./radar-sections";
+import { OvernightMoves, openRadarDeepLink, radarKindIcon, useRadarQueue } from "./radar-sections";
+import { RADAR_KIND_LABELS, type RadarMoveVM } from "~/lib/dashboard/radar-client";
 
 /** Quick reject reasons → real RejectReason codes. "Doesn't fit" has no
  *  dedicated code, so it rides `other` with the label as the note. */
@@ -177,6 +178,11 @@ export function CalibrationTrainer({
   const [streamMoving, setStreamMoving] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [reaction, setReaction] = useState<KpiReaction | null>(null);
+
+  // The overnight drafted moves ride the same stream as the engine's own
+  // proposals: pinned above the rotating window (they're few, and each needs
+  // a decision), same row anatomy, Accept = the radar apply action.
+  const radar = useRadarQueue(app);
 
   const queue = app.actionQueue;
   const atStake = queue.reduce((n, p) => n + (p.dollar_impact > 0 ? p.dollar_impact : 0), 0);
@@ -364,6 +370,88 @@ export function CalibrationTrainer({
     }
   };
 
+  // Overnight-move row with the stream's exact anatomy: icon, one-line say,
+  // a quiet kind tag where proposals show money/confidence, chevron-expanded
+  // "why", and Reject / Accept (or Review for evidence-only moves).
+  const renderRadarRow = (m: RadarMoveVM, mode: "stream" | "static") => {
+    const open = openRow === m.id;
+    const busy = radar.busyId === m.id;
+    const review = m.reviewOnly && !!m.deepLink;
+    const whyId = `cd-apq-why-${mode}-${m.id}`;
+
+    return (
+      <div
+        key={m.id}
+        className={mode === "stream" ? "cd-ap-stream-row" : "cd-ap-stream-static-row"}
+        data-entering="0"
+        data-exiting="0"
+      >
+        <div className="cd-apq-row" data-open={open ? "1" : "0"}>
+          <button
+            type="button"
+            className="cd-apq-main"
+            aria-expanded={open}
+            aria-controls={whyId}
+            onClick={() => {
+              setOpenRow((current) => (current === m.id ? null : m.id));
+              setNote("");
+            }}
+          >
+            <span className="cd-apq-ico">
+              <CDIcon name={radarKindIcon(m.kind)} size={15} strokeWidth={1.8} />
+            </span>
+            <span className="cd-apq-say">{m.headline}</span>
+            <span className="cd-apq-conf" title="Drafted from an overnight check">
+              {RADAR_KIND_LABELS[m.kind] ?? "Store"}
+            </span>
+            <CDIcon name="chevronDown" size={14} className="cd-apq-chev" />
+          </button>
+          <div className="cd-apq-acts">
+            <button
+              type="button"
+              className="cd-btn cd-btn-secondary cd-btn-sm"
+              disabled={busy}
+              onClick={() => void radar.dismiss(m)}
+            >
+              Reject
+            </button>
+            <Btn
+              kind="primary"
+              small
+              disabled={busy}
+              onClick={() => (review ? openRadarDeepLink(m) : void radar.approve(m))}
+            >
+              {busy ? "Doing…" : review ? "Review" : "Accept"}
+            </Btn>
+          </div>
+        </div>
+
+        {open && (
+          <div className="cd-apq-why" id={whyId}>
+            <div className="cd-apq-why-line">{m.rationale}</div>
+            {(m.chips.length > 0 || review) && (
+              <div className="cd-apq-rej">
+                {m.chips.map((c, i) => (
+                  <span key={i} className="cd-chip">{c}</span>
+                ))}
+                {review && (
+                  <button
+                    type="button"
+                    className="cd-reject-chip"
+                    disabled={busy}
+                    onClick={() => void radar.markDone(m)}
+                  >
+                    Mark done
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderActionRow = (
     p: QueueProposalVM,
     mode: "stream" | "static",
@@ -504,9 +592,17 @@ export function CalibrationTrainer({
             <div className="cd-ap-stream-head">
               <span className="cd-ap-stream-live">
                 <span className="cd-live-dot on" />
-                Scanning live
+                {radar.freshLookBanner || radar.checkingNow ? "Checking your store…" : "Scanning live"}
               </span>
               <strong>Action stream</strong>
+              <button
+                type="button"
+                className="cd-btn cd-btn-secondary cd-btn-sm"
+                disabled={radar.checkingNow || radar.freshLookBanner}
+                onClick={() => void radar.checkNow()}
+              >
+                Check now
+              </button>
               <button
                 type="button"
                 className="cd-btn cd-btn-secondary cd-btn-sm"
@@ -519,10 +615,11 @@ export function CalibrationTrainer({
             </div>
 
             <div className="cd-ap-stream" data-moving={streamMoving ? "1" : "0"}>
+              {radar.moves.map((m) => renderRadarRow(m, "stream"))}
               {visibleQueue.map((proposal, index) =>
                 renderActionRow(proposal, "stream", index),
               )}
-              {queue.length === 0 && (
+              {queue.length === 0 && radar.moves.length === 0 && (
                 <div className="cd-nc-empty">Nothing waiting. Calderyn is scanning.</div>
               )}
             </div>
@@ -565,6 +662,19 @@ export function CalibrationTrainer({
                 </div>
               </div>
               <div className="cd-ap-stream-static">
+                {radar.moves.length > 0 && (
+                  <>
+                    <div className="cd-apq-grp">
+                      <span className="cd-apq-grp-ico">
+                        <CDIcon name="scan" size={13} strokeWidth={2} />
+                      </span>
+                      <span className="cd-apq-grp-name">Overnight store moves</span>
+                      <span className="cd-apq-grp-n tabular-nums">{radar.moves.length}</span>
+                      <span className="cd-apq-grp-spacer" />
+                    </div>
+                    {radar.moves.map((m) => renderRadarRow(m, "static"))}
+                  </>
+                )}
                 {groups.map((group) => {
                   const allOneClick = group.items.every(
                     (proposal) =>
@@ -605,6 +715,40 @@ export function CalibrationTrainer({
                     </Fragment>
                   );
                 })}
+                {radar.revertable.length > 0 && (
+                  <>
+                    <div className="cd-apq-grp">
+                      <span className="cd-apq-grp-ico">
+                        <CDIcon name="undo" size={13} strokeWidth={2} />
+                      </span>
+                      <span className="cd-apq-grp-name">Recently applied store moves</span>
+                      <span className="cd-apq-grp-n tabular-nums">{radar.revertable.length}</span>
+                      <span className="cd-apq-grp-spacer" />
+                    </div>
+                    {radar.revertable.map((m) => (
+                      <div key={m.id} className="cd-ap-stream-static-row">
+                        <div className="cd-apq-row" data-open="0">
+                          <span className="cd-apq-main" style={{ cursor: "default" }}>
+                            <span className="cd-apq-ico">
+                              <CDIcon name={radarKindIcon(m.kind)} size={15} strokeWidth={1.8} />
+                            </span>
+                            <span className="cd-apq-say">{m.headline}</span>
+                          </span>
+                          <div className="cd-apq-acts">
+                            <button
+                              type="button"
+                              className="cd-btn cd-btn-secondary cd-btn-sm"
+                              disabled={radar.busyId === m.id}
+                              onClick={() => void radar.revert(m)}
+                            >
+                              {radar.armedRevertId === m.id ? "Revert (overwrites newer edits)" : "Revert"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
             </Card>
           </div>
@@ -826,6 +970,7 @@ export default function Autopilot({ app }: { app: DashboardCtx }) {
       ) : data ? (
         <>
           {data.calibrationPct !== null && data.calibrationPct < 100 ? (
+            // The trainer's Action stream carries the overnight moves itself.
             <CalibrationTrainer
               app={app}
               pct={data.calibrationPct}
@@ -834,9 +979,11 @@ export default function Autopilot({ app }: { app: DashboardCtx }) {
               onReview={(p) => app.navigate("alerts", p.alertId)}
             />
           ) : (
-            <LiveEnginePanel app={app} data={data} flagged={flagged} />
+            <>
+              <LiveEnginePanel app={app} data={data} flagged={flagged} />
+              <OvernightMoves app={app} />
+            </>
           )}
-          <OvernightMoves app={app} />
           <AutopilotFeatures groups={featureGroups} app={app} />
         </>
       ) : (
