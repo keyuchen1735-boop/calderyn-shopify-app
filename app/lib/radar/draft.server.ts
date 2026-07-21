@@ -78,6 +78,7 @@ export async function draftShopMoves(shopId: string, now: Date = new Date()): Pr
   let polished = 0;
   let skipped = 0;
   let claudeOpen = true;
+  let attempts = 0; // Count every attempt (success or failure) to enforce the hard cap
 
   for (const c of candidates) {
     if (isCoolingDown(recent, c, now)) {
@@ -85,15 +86,17 @@ export async function draftShopMoves(shopId: string, now: Date = new Date()): Pr
       continue;
     }
     let copy = { headline: c.headline, rationale: c.rationale };
-    if (claudeOpen && polished < RADAR_NIGHTLY_CLAUDE_CAP) {
+    if (claudeOpen && attempts < RADAR_NIGHTLY_CLAUDE_CAP) {
+      attempts++;
       const p = await polish(shopId, c);
       if (p === "quota_exhausted") claudeOpen = false; // stop spending; templates carry the rest
       else if (p) {
         copy = p;
         polished++;
       }
-      // p === null (API/parse failure): keep trying the next candidates - the
-      // cap and quota still bound total spend.
+      // p === null (API/parse failure): keep trying the next candidates. A failed
+      // polish spent on a candidate later marked as a duplicate is wasted, but the
+      // hard attempt cap still prevents spending beyond RADAR_NIGHTLY_CLAUDE_CAP.
     }
     const res = await insertDraftMove(shopId, { ...c, headline: copy.headline, rationale: copy.rationale });
     if (res === "inserted") drafted++;

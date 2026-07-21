@@ -108,4 +108,33 @@ describe("draftShopMoves", () => {
     expect(out.expired).toBe(2);
     expect(mocks.stampRadarState).toHaveBeenCalledWith(SHOP, { lastDraftedAt: expect.any(String) });
   });
+  it("caps Claude attempts (not successes) at 5 even when polish fails", async () => {
+    // 7 candidates, but cap should prevent attempts beyond 5
+    mocks.detectAll.mockReturnValue([1, 2, 3, 4, 5, 6, 7].map(candidate));
+    // Quota always allows
+    mocks.checkAiQuota.mockResolvedValue({ allowed: true });
+    // Polish fails on attempt 2, succeeds otherwise
+    mocks.createMock
+      .mockResolvedValueOnce(claudeReply('{"headline":"Polished 1","rationale":"Good."}'))
+      .mockRejectedValueOnce(new Error("API error"))
+      .mockResolvedValueOnce(claudeReply('{"headline":"Polished 3","rationale":"Good."}'))
+      .mockResolvedValueOnce(claudeReply('{"headline":"Polished 4","rationale":"Good."}'))
+      .mockResolvedValueOnce(claudeReply('{"headline":"Polished 5","rationale":"Good."}'));
+    const out = await draftShopMoves(SHOP);
+    // Should make exactly RADAR_NIGHTLY_CLAUDE_CAP (5) calls, not 6
+    expect(mocks.checkAiQuota).toHaveBeenCalledTimes(RADAR_NIGHTLY_CLAUDE_CAP);
+    expect(mocks.createMock).toHaveBeenCalledTimes(RADAR_NIGHTLY_CLAUDE_CAP);
+    // Candidates 6 and 7 should use template copy
+    expect(mocks.insertDraftMove.mock.calls[5][1]).toMatchObject({
+      headline: "Template headline 6",
+    });
+    expect(mocks.insertDraftMove.mock.calls[6][1]).toMatchObject({
+      headline: "Template headline 7",
+    });
+    // Candidate 2 also uses template (polish failed)
+    expect(mocks.insertDraftMove.mock.calls[1][1]).toMatchObject({
+      headline: "Template headline 2",
+    });
+    expect(out).toMatchObject({ drafted: 7, polished: 4 });
+  });
 });
