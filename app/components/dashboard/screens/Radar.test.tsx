@@ -92,7 +92,7 @@ function overview(
 }
 
 function dashboardApp() {
-  return { toast: vi.fn(), relTime: vi.fn((_ts: number) => "3h ago") };
+  return { toast: vi.fn(), relTime: vi.fn((_ts: number) => "3h ago"), navigate: vi.fn() };
 }
 
 async function renderRadar(app = dashboardApp()) {
@@ -395,7 +395,7 @@ describe("Radar instant check on open", () => {
     await act(async () => root.unmount());
   });
 
-  it("clears the banner without refetching when the refresh reports fresh", async () => {
+  it("clears the banner and refetches once too when the refresh reports fresh (FIX 3 - picks up another session's newer refresh)", async () => {
     refreshRadar.mockResolvedValue({ refreshed: false, reason: "fresh" });
     fetchRadar.mockResolvedValue(overview([], { stale: true, lastCheckedAt: "2026-07-20T09:50:00Z" }));
     const { host, root } = await renderRadar();
@@ -405,7 +405,20 @@ describe("Radar instant check on open", () => {
       await Promise.resolve();
     });
     expect(host.textContent).not.toContain("Radar is taking a fresh look at your store");
-    expect(fetchRadar).toHaveBeenCalledTimes(1);
+    expect(fetchRadar).toHaveBeenCalledTimes(2);
+    await act(async () => root.unmount());
+  });
+
+  it("only ever auto-refreshes once even though the fresh branch now also refetches", async () => {
+    refreshRadar.mockResolvedValue({ refreshed: false, reason: "fresh" });
+    fetchRadar.mockResolvedValue(overview([], { stale: true, lastCheckedAt: "2026-07-20T09:50:00Z" }));
+    const { root } = await renderRadar();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(refreshRadar).toHaveBeenCalledTimes(1);
     await act(async () => root.unmount());
   });
 
@@ -439,7 +452,7 @@ describe("Radar instant check on open", () => {
     await act(async () => root.unmount());
   });
 
-  it("Check now toasts a plain message when Radar already checked recently", async () => {
+  it("Check now toasts a plain message when Radar already checked recently, using a registered icon (FIX 2)", async () => {
     refreshRadar.mockResolvedValue({ refreshed: false, reason: "fresh" });
     const app = dashboardApp();
     const { host, root } = await renderRadar(app);
@@ -448,7 +461,17 @@ describe("Radar instant check on open", () => {
       btn.click();
       await Promise.resolve();
     });
-    expect(app.toast).toHaveBeenCalledWith("Radar already checked recently", expect.any(String));
+    // "info" is not a registered CD_ICONS name - it must be one that exists.
+    expect(app.toast).toHaveBeenCalledWith("Radar already checked recently", "clock");
+    await act(async () => root.unmount());
+  });
+
+  it("disables Check now while the stale auto-refresh banner is in flight, so a click can't fire a concurrent refresh (FIX 1)", async () => {
+    refreshRadar.mockImplementation(() => new Promise(() => {})); // never resolves in this test
+    fetchRadar.mockResolvedValue(overview([], { stale: true, lastCheckedAt: null }));
+    const { host, root } = await renderRadar();
+    const btn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Check now") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
     await act(async () => root.unmount());
   });
 });
@@ -570,6 +593,22 @@ describe("Radar history summary", () => {
     const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "History")!;
     await act(async () => tabBtn.click());
     expect(host.textContent).not.toContain("applied recently");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar traffic tile cross-link (FIX 5)", () => {
+  it("links the Traffic tile to the Analytics Live subtab with a plain caption", async () => {
+    fetchRadar.mockResolvedValue(overview([]));
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    expect(host.textContent).toContain("See what's happening right now");
+    const trafficTile = [...host.querySelectorAll('[role="button"]')].find((el) =>
+      el.textContent?.includes("Traffic"),
+    ) as HTMLElement;
+    expect(trafficTile).toBeTruthy();
+    await act(async () => trafficTile.click());
+    expect(app.navigate).toHaveBeenCalledWith("analytics", null, "live");
     await act(async () => root.unmount());
   });
 });

@@ -74,21 +74,22 @@ function allClearSub(overview: RadarOverviewVM, relTime: (ts: number) => string)
     `It's watching your traffic, Google results, AI assistants, and ${competitorsPhrase}.`;
 }
 
-function SignalTile(props: { icon: string; label: string; value: string; note: string }) {
+function SignalTile(props: { icon: string; label: string; value: string; note: string; onClick?: () => void; cta?: string }) {
   return (
-    <Card className="cd-stat">
+    <Card className="cd-stat" onClick={props.onClick}>
       <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "13px", fontWeight: 650 }}>
         <CDIcon name={props.icon} size={14} strokeWidth={1.9} />
         {props.label}
       </span>
       <strong className="tabular-nums" style={{ fontSize: 22, letterSpacing: "-0.02em" }}>{props.value}</strong>
       <p className="cd-caption" style={{ margin: 0 }}>{props.note}</p>
+      {props.cta && <p className="cd-caption" style={{ margin: 0 }}>{props.cta}</p>}
     </Card>
   );
 }
 
 export default function Radar({ app }: { app: DashboardCtx }) {
-  const { toast, relTime } = app;
+  const { toast, relTime, navigate } = app;
   const [data, setData] = useState<RadarOverviewVM | null>(() =>
     cachedScreenData<RadarOverviewVM>(SCREEN_CACHE_KEYS.radar),
   );
@@ -125,8 +126,13 @@ export default function Radar({ app }: { app: DashboardCtx }) {
     autoRefreshedRef.current = true;
     setFreshLookBanner(true);
     void refreshRadar()
-      .then(async (res) => {
-        if (res.refreshed) await load();
+      .then(async () => {
+        // Refetch either way: refreshed=true means the drafter just ran on
+        // our behalf; refreshed=false ("fresh") means another session
+        // already refreshed since our cached snapshot landed - either way
+        // there may be newer data than what this mount loaded with, and
+        // autoRefreshedRef above already caps this to one run per mount.
+        await load();
       })
       .catch(() => {
         // Best-effort: the screen still works off whatever data it has.
@@ -147,7 +153,7 @@ export default function Radar({ app }: { app: DashboardCtx }) {
           "check",
         );
       } else {
-        toast("Radar already checked recently", "info");
+        toast("Radar already checked recently", "clock");
       }
     } catch (err) {
       toast(err instanceof DashboardApiError ? err.message : "That didn't go through. Try again.", "warn", "critical");
@@ -230,7 +236,7 @@ export default function Radar({ app }: { app: DashboardCtx }) {
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <Btn disabled={checkingNow} onClick={() => void checkNow()}>
+          <Btn disabled={checkingNow || freshLookBanner} onClick={() => void checkNow()}>
             {checkingNow ? "Checking…" : "Check now"}
           </Btn>
           <Segmented
@@ -265,6 +271,8 @@ export default function Radar({ app }: { app: DashboardCtx }) {
               ? `vs ${signals.traffic.weeklyAverage}/day avg · checked ${whenLabel(signals.traffic.lastCheckedAt)}`
               : "First check runs tonight"
           }
+          onClick={() => navigate("analytics", null, "live")}
+          cta="See what's happening right now"
         />
         <SignalTile
           icon="search"

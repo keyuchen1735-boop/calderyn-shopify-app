@@ -402,6 +402,17 @@ describe("action refresh", () => {
     expect(res.status).not.toBe(200);
     expect(mocks.draftShopMoves).not.toHaveBeenCalled();
   });
+  it("surfaces a draftShopMoves failure as an error response, never a fake success, even though collectShop already ran (FIX 4)", async () => {
+    // collectShop's stamps land DB-side as a side effect of the call itself,
+    // so a downstream draft failure must not be papered over as a success -
+    // but collectShop must still have been called; its work isn't lost.
+    mocks.readRadarState.mockResolvedValue({ lastCollectedAt: null, lastDraftedAt: null, homeCardDismissedAt: null, lastDiscoveredAt: null });
+    mocks.collectShop.mockResolvedValue(undefined);
+    mocks.draftShopMoves.mockRejectedValue(new Error("draft rpc down"));
+    const res = (await action(post({ action: "refresh" }))) as Response;
+    expect(res.status).not.toBe(200);
+    expect(mocks.collectShop).toHaveBeenCalled();
+  });
 });
 
 describe("competitor_confirm first-look snapshot", () => {
