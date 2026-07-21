@@ -899,7 +899,7 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
               {drafting ? (
                 <>
                   <div className="cd-h2">Drafting your listing…</div>
-                  <p className="cd-caption">Title, price, stock, description — you confirm each step next.</p>
+                  <p className="cd-caption">Title, price, description — you confirm each step next.</p>
                   {shimmerBar}
                 </>
               ) : (
@@ -1275,7 +1275,14 @@ export default function NewProductFlow({ app }: { app: DashboardCtx }) {
                           background: on ? "var(--accent-bg)" : "transparent",
                         }}
                       >
-                        <span className="cd-row-title" style={{ display: "block", color: on ? "var(--accent)" : "var(--text-1)" }}>
+                        <span
+                          className="cd-row-title"
+                          style={{ display: "flex", alignItems: "center", gap: 6, color: on ? "var(--accent)" : "var(--text-1)" }}
+                        >
+                          {/* Same selected-state cue as the collection chips: the
+                              chosen card carries a check, so "draft" vs "live" is
+                              readable at a glance, not only by border tint. */}
+                          {on && <CDIcon name="check" size={14} strokeWidth={2.4} />}
                           {o.label}
                         </span>
                         <span className="cd-caption">{o.sub}</span>

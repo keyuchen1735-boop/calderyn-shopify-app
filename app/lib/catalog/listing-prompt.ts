@@ -71,22 +71,106 @@ const COLOR_WORDS = [
 ];
 
 /** Fallback full draft when the AI endpoint is unreachable: deterministic,
- *  honest-but-basic values derived from the prompt. */
+ *  honest-but-basic values derived from the prompt. A merchant-stated price is
+ *  used verbatim; stock is only filled when the merchant said how many they
+ *  have — a fabricated count reads as real inventory and oversells. */
 export function draftPlanFromPrompt(prompt: string): ListingPlan {
   const clean = prompt.trim().replace(/\s+/g, " ").replace(/[.!?]+$/, "");
   const hash = seedFromString(clean);
   const title = titleCaseWords(clean).slice(0, 70);
   const words = clean.toLowerCase().split(" ").filter((w) => w.length > 3);
+  const stock = statedStockCount(clean);
   return {
     ops: [
       { op: "set_title", title },
-      { op: "set_price", priceCents: (18 + (hash % 46)) * 100 },
-      { op: "set_stock", stock: 10 + (hash % 40) },
+      { op: "set_price", priceCents: statedPriceCents(clean) ?? (18 + (hash % 46)) * 100 },
+      ...(stock !== null ? [{ op: "set_stock", stock } as const] : []),
       { op: "set_description", description: descriptionFor(title, hash) },
       { op: "set_tags", tags: Array.from(new Set(words)).slice(0, 4) },
     ],
     summaries: ["Drafted the listing"],
   };
+}
+
+// ---------- merchant-stated facts (authoritative over any drafted value) -----
+
+function fmtDollars(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+/** The price the merchant explicitly stated ("$26", "26 dollars"), in cents.
+ *  Null when none is stated or when several DIFFERENT amounts appear — two
+ *  amounts could be per-variant prices or a compare-at, so no single one is
+ *  safe to enforce. */
+export function statedPriceCents(prompt: string): number | null {
+  const low = prompt.toLowerCase();
+  const cents: number[] = [];
+  for (const m of low.matchAll(/\$\s*(\d+(?:\.\d{1,2})?)|\b(\d+(?:\.\d{1,2})?)\s*(?:dollars|bucks|usd)\b/g)) {
+    const n = Number(m[1] ?? m[2]);
+    const c = Math.round(n * 100);
+    if (c > 0 && c <= MAX_PRICE_CENTS) cents.push(c);
+  }
+  const distinct = new Set(cents);
+  return distinct.size === 1 ? cents[0] : null;
+}
+
+/** The on-hand count the merchant explicitly stated ("10 in stock",
+ *  "stock 25", "40 units"). Null when they never said how many they have —
+ *  bare numbers ("45 hour burn") are NOT quantities. */
+export function statedStockCount(prompt: string): number | null {
+  const low = prompt.toLowerCase();
+  // The gap excludes "$" so "12 in stock, $26" never reads the price as the
+  // count (the second pattern picks up the real 12).
+  const m =
+    low.match(/(?:stock|inventory|quantity|qty)[^\d$]{0,10}?(\d+)/) ||
+    low.match(/(\d+)\s*(?:in\s+stock|available|on\s+hand|units?\b)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n >= 0 && n <= MAX_STOCK ? Math.round(n) : null;
+}
+
+/** Fresh-draft guard: what the merchant stated wins over what the model
+ *  drafted. An explicit price is enforced verbatim (drift like "$26" → $24.00
+ *  silently misprices the store), and a stock count the merchant never gave is
+ *  removed — the wizard's stock field stays empty for them to fill, and an
+ *  unstocked variant can't oversell under the inventory ledger. Only for
+ *  from-scratch drafts; targeted edits keep the model's output as-is. */
+export function enforceStatedFacts(plan: ListingPlan, prompt: string): ListingPlan {
+  let ops = [...plan.ops];
+  let summaries = [...plan.summaries];
+
+  const price = statedPriceCents(prompt);
+  if (price !== null) {
+    const existing = ops.find((o): o is Extract<ListingOp, { op: "set_price" }> => o.op === "set_price");
+    if (existing && existing.priceCents !== price) {
+      // Keep the receipts truthful: a summary quoting the drifted price gets
+      // the stated one instead.
+      const oldTexts = [fmtDollars(existing.priceCents), `$${existing.priceCents / 100}`];
+      ops = ops.map((o) => (o.op === "set_price" ? { op: "set_price", priceCents: price } : o));
+      summaries = summaries.map((s) => {
+        for (const t of oldTexts) if (s.includes(t)) return s.replace(t, fmtDollars(price));
+        return s;
+      });
+    } else if (!existing) {
+      ops.push({ op: "set_price", priceCents: price });
+      summaries.push(`Set price to ${fmtDollars(price)}`);
+    }
+  }
+
+  const stock = statedStockCount(prompt);
+  if (stock === null) {
+    if (ops.some((o) => o.op === "set_stock")) {
+      ops = ops.filter((o) => o.op !== "set_stock");
+      summaries = summaries.filter((s) => !/stock|inventory/i.test(s));
+    }
+  } else if (!ops.some((o) => o.op === "set_stock" && o.stock === stock)) {
+    ops = ops.filter((o) => o.op !== "set_stock");
+    ops.push({ op: "set_stock", stock });
+    summaries = summaries.filter((s) => !/stock|inventory/i.test(s));
+    summaries.push(`Set stock to ${stock}`);
+  }
+
+  return { ops, summaries: summaries.length ? summaries : ["Drafted the listing"] };
 }
 
 /** First number in the text that is not a percentage ("10%" is a relative
