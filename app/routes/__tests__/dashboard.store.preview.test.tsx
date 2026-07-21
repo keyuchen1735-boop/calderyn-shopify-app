@@ -154,7 +154,11 @@ describe("dashboard.store.preview loader", () => {
       const form = new FormData();
       form.set("intent", "checkout");
       const response = await action({
-        request: new Request("https://preview.example.com/dashboard/store/preview?template=volt", { method: "POST", body: form }),
+        request: new Request("https://preview.example.com/dashboard/store/preview?template=volt", {
+          method: "POST",
+          headers: { Origin: "https://preview.example.com" },
+          body: form,
+        }),
       } as ActionFunctionArgs);
       expect(response.status).toBe(200);
       expect(sessionMock).not.toHaveBeenCalled();
@@ -162,6 +166,25 @@ describe("dashboard.store.preview loader", () => {
     } finally {
       if (previousBundleRead === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
       else process.env.STOREFRONT_BUNDLE_READ = previousBundleRead;
+      if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
+      else process.env.VERCEL_ENV = previousVercelEnv;
+    }
+  });
+
+  it("rejects cross-origin commerce actions on an allowlisted recipe review", async () => {
+    const previousVercelEnv = process.env.VERCEL_ENV;
+    process.env.VERCEL_ENV = "preview";
+    try {
+      const form = new FormData();
+      form.set("intent", "checkout");
+      await expect(action({
+        request: new Request("https://preview.example.com/dashboard/store/preview?template=volt", {
+          method: "POST",
+          headers: { Origin: "https://attacker.example.com" },
+          body: form,
+        }),
+      } as ActionFunctionArgs)).rejects.toMatchObject({ status: 403 });
+    } finally {
       if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
       else process.env.VERCEL_ENV = previousVercelEnv;
     }

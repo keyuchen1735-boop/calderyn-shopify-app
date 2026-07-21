@@ -6,7 +6,7 @@ import { useLoaderData } from "@remix-run/react";
 import { randomBytes } from "node:crypto";
 import storefrontCss from "~/styles/storefront.css?url";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
-import { requireSameOrigin } from "~/lib/dashboard/http.server";
+import { jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { getCatalog, getPreviewCatalog } from "~/lib/storefront/catalog.server";
 import { isStorefrontBundleReadEnabled } from "~/lib/storefront-runtime/csp.server";
 import {
@@ -140,11 +140,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  requireSameOrigin(request);
-  const selectedTemplateId = new URL(request.url).searchParams.get("template");
+  const requestUrl = new URL(request.url);
+  const selectedTemplateId = requestUrl.searchParams.get("template");
   const reviewTemplateId = isStorefrontRecipeReviewEnabled() && isStorefrontRecipeReviewTemplateId(selectedTemplateId)
     ? selectedTemplateId
     : null;
+  if (reviewTemplateId) {
+    if (request.headers.get("Origin") !== requestUrl.origin) throw jsonError(403, "bad_origin");
+  } else {
+    requireSameOrigin(request);
+  }
   const shopId = reviewTemplateId ? DEMO_SHOP_ID : (await requireDashboardSession(request)).shopId;
   const hasEphemeralRecipe = isStoreTemplateId(selectedTemplateId) &&
     STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === selectedTemplateId);
