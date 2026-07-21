@@ -1947,7 +1947,7 @@
 /* ---- sidebar groups ---- */
 /* Label-free nav groups: a thin gap separates the GROW/RUN/BUILD clusters. */
 .cd-nav-section { display: flex; flex-direction: column; gap: 1px; }
-.cd-nav-section + .cd-nav-section { margin-top: 7px; }
+.cd-nav-section + .cd-nav-section { margin-top: 3px; }
 .cd-nav-later { margin-left: auto; font-size: 9.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); background: var(--gray-bg); padding: 1.5px 6px; border-radius: 999px; }
 .cd-act-dot { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 var(--live); animation: cd-act 1.8s ease infinite; flex-shrink: 0; }
 @keyframes cd-act { 0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--live) 60%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
