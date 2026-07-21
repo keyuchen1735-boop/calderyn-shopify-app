@@ -33,8 +33,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // would mint a second session row and orphan the first (the cookie overwrite
   // leaves the old token live but unrevocable from this browser).
   const session = await getSessionFromRequest(request);
-  if (session) return redirect("/dashboard");
   const url = new URL(request.url);
+  if (session) {
+    return redirect(safeDashboardReturnTo(url.searchParams.get("return_to")) ?? "/dashboard");
+  }
   return redirect(`/login${url.search}`);
 }
 

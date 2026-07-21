@@ -595,32 +595,43 @@ export default function DashboardApp({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const notice = connectionNotice(params);
-    if (!notice) return;
+    // Stripe-hosted payout onboarding returns with its own one-shot param
+    // (dashboard.payouts.stripe return leg) — same strip-and-toast treatment.
+    const payoutsUpdated = params.get("payouts") === "updated";
+    if (!notice && !payoutsUpdated) return;
     // Strip the consumed one-shot params from the LANDING entry first
     // (unrelated params + hash survive), THEN navigate — otherwise the pushed
     // settings entry inherits the params and the original ?provider=connected
     // URL stays behind the Back button, re-announcing on every pop.
-    params.delete(notice.key);
-    params.delete("reason");
+    if (notice) {
+      params.delete(notice.key);
+      params.delete("reason");
+    }
+    if (payoutsUpdated) params.delete("payouts");
     const query = params.toString();
     window.history.replaceState(
       window.history.state,
       "",
       `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
     );
-    if (shouldOpenConnectorsAfterOAuth(window.location.pathname)) {
+    if (notice && shouldOpenConnectorsAfterOAuth(window.location.pathname)) {
       navigate("settings", null, "connectors");
     }
-    if (notice.ok) {
-      toast(`${notice.provider} connected`, "check");
-    } else {
-      toast(
-        notice.reason
-          ? `Couldn't connect ${notice.provider} (${notice.reason})`
-          : `Couldn't connect ${notice.provider}`,
-        "x",
-        "critical",
-      );
+    if (notice) {
+      if (notice.ok) {
+        toast(`${notice.provider} connected`, "check");
+      } else {
+        toast(
+          notice.reason
+            ? `Couldn't connect ${notice.provider} (${notice.reason})`
+            : `Couldn't connect ${notice.provider}`,
+          "x",
+          "critical",
+        );
+      }
+    }
+    if (payoutsUpdated) {
+      toast("Payout setup updated", "check");
     }
   }, [navigate, toast]);
 

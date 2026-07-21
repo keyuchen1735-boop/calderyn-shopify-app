@@ -234,7 +234,9 @@ function ConnectionActions({ it, app }: { it: IntegrationVM; app: DashboardCtx }
         onClick={async () => {
           setBusy(true);
           try {
-            const { url } = await startIntegrationConnect(provider);
+            // Land back on the Connectors tab after the provider round-trip,
+            // not the dashboard root.
+            const { url } = await startIntegrationConnect(provider, "/dashboard/settings/connectors");
             window.location.assign(url);
           } catch (err) {
             fail(err, `Couldn't start the ${it.name} connection.`);

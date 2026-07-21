@@ -15,6 +15,7 @@ import {
   GOAUTH_COOKIE,
 } from "./cookies.server";
 import { SHOP_HINT_COOKIE_NAME as CONNECT_SHOP_HINT } from "../connect-deeplink.server";
+import { safeDashboardReturnTo } from "./http.server";
 
 export const SESSION_COOKIE_NAME = "__Host-calderyn_dash";
 const SESSION_TTL_MS = 30 * 86_400_000; // 30 days
@@ -184,13 +185,26 @@ export async function getDashboardSessionAllowUnverified(
   return session;
 }
 
+/**
+ * The /login URL that brings a signed-out visitor back to the exact dashboard
+ * page (path + query) they were headed to. Post-OAuth connector callbacks land
+ * on deep links like /dashboard/campaigns?meta=connected; without carrying that
+ * destination through the signin round-trip, any auth bounce strands the
+ * merchant on the bare dashboard and silently eats the one-shot connect notice.
+ */
+function loginUrlFor(request: Request): string {
+  const url = new URL(request.url);
+  const returnTo = safeDashboardReturnTo(url.pathname + url.search);
+  return returnTo ? `/login?return_to=${encodeURIComponent(returnTo)}` : "/login";
+}
+
 export async function requireVerifiedSession(
   request: Request,
 ): Promise<DashboardSession> {
   const session = await getSessionFromRequest(request);
   // Signed-out visitors land on the first-party signin page, which links out to
   // the Shopify-OAuth entry (/dashboard/login) for embedded merchants.
-  if (!session) throw redirect("/login");
+  if (!session) throw redirect(loginUrlFor(request));
   // Onboarding runs right after signup, before the verify gate — check it first.
   if (needsOnboarding(session)) throw redirect("/dashboard/onboarding");
   if (unverifiedFirstParty(session)) throw redirect("/dashboard/verify-needed");
@@ -223,7 +237,7 @@ export async function getSessionOrRedirect(
   request: Request,
 ): Promise<DashboardSession> {
   const session = await getSessionFromRequest(request);
-  if (!session) throw redirect("/login");
+  if (!session) throw redirect(loginUrlFor(request));
   return session;
 }
 

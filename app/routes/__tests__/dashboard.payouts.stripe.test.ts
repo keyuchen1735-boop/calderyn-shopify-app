@@ -1,13 +1,13 @@
 import { it, expect, beforeEach, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
-  requireDashboardSession: vi.fn(),
+  requireVerifiedSession: vi.fn(),
   syncAccountStatus: vi.fn(),
   startOnboarding: vi.fn(),
   getConnectedAccount: vi.fn(),
 }));
 
-vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: h.requireDashboardSession }));
+vi.mock("~/lib/dashboard/session.server", () => ({ requireVerifiedSession: h.requireVerifiedSession }));
 vi.mock("~/lib/payments/connect.server", () => ({
   syncAccountStatus: h.syncAccountStatus,
   startOnboarding: h.startOnboarding,
@@ -28,7 +28,7 @@ function call(leg: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.requireDashboardSession.mockResolvedValue({ shopId: "shop-1" });
+  h.requireVerifiedSession.mockResolvedValue({ shopId: "shop-1" });
   h.getConnectedAccount.mockResolvedValue({ stripe_account_id: "acct_1" });
 });
 
@@ -37,7 +37,7 @@ it("return: syncs status then redirects into the dashboard", async () => {
   const res = await call("return");
   expect(h.syncAccountStatus).toHaveBeenCalledWith("shop-1");
   expect(res.status).toBe(302);
-  expect(res.headers.get("Location")).toBe("/dashboard?payouts=updated");
+  expect(res.headers.get("Location")).toBe("/dashboard/payments?payouts=updated");
 });
 
 it("refresh: mints a fresh account link and redirects to Stripe", async () => {
@@ -53,16 +53,16 @@ it("return: a transient sync failure still lands the merchant in the dashboard (
   h.syncAccountStatus.mockRejectedValue(new Error("stripe blip"));
   const res = await call("return");
   expect(res.status).toBe(302);
-  expect(res.headers.get("Location")).toBe("/dashboard?payouts=updated");
+  expect(res.headers.get("Location")).toBe("/dashboard/payments?payouts=updated");
   expect(warn).toHaveBeenCalledWith(expect.stringMatching(/return-leg status sync failed/));
   warn.mockRestore();
 });
 
-it("refresh: NEVER creates an account on GET — no connected row redirects home", async () => {
+it("refresh: NEVER creates an account on GET — no connected row redirects to Payments", async () => {
   h.getConnectedAccount.mockResolvedValue(null);
   const res = await call("refresh");
   expect(res.status).toBe(302);
-  expect(res.headers.get("Location")).toBe("/dashboard");
+  expect(res.headers.get("Location")).toBe("/dashboard/payments");
   expect(h.startOnboarding).not.toHaveBeenCalled();
 });
 
