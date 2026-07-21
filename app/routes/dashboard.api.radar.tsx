@@ -9,7 +9,14 @@ import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { listMoves, readRadarState } from "~/lib/radar/store.server";
 import { applyMove, dismissMove, revertMove, RadarApplyError } from "~/lib/radar/apply.server";
-import type { RadarMoveRow } from "~/lib/radar/types";
+import {
+  listCompetitors,
+  listSnapshotTimeline,
+  MAX_WATCHED_COMPETITORS,
+  setCompetitorStatus,
+  type SnapshotTimelineRow,
+} from "~/lib/radar/competitor-store.server";
+import type { CompetitorDiff, RadarCompetitorRow, RadarMoveRow } from "~/lib/radar/types";
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
 
@@ -52,21 +59,98 @@ interface RadarSignalsVM {
   traffic: { yesterdayViews: number; weeklyAverage: number; lastCheckedAt: string | null };
   google: { connected: boolean; lastCapturedDate: string | null; slippingCount: number };
   aiAssistants: { hitsLast7: number; hitsPrior7: number };
-  competitors: { comingSoon: true };
+  competitors: { watching: number; suggested: number; changesLast7: number; lastChangeAt: string | null };
 }
 
 const EMPTY_SIGNALS: RadarSignalsVM = {
   traffic: { yesterdayViews: 0, weeklyAverage: 0, lastCheckedAt: null },
   google: { connected: false, lastCapturedDate: null, slippingCount: 0 },
   aiAssistants: { hitsLast7: 0, hitsPrior7: 0 },
-  competitors: { comingSoon: true },
+  competitors: { watching: 0, suggested: 0, changesLast7: 0, lastChangeAt: null },
 };
 
 const DAY_MS = 86_400_000;
 
+interface RadarCompetitorChangeVM {
+  day: string; // YYYY-MM-DD
+  url: string;
+  chips: string[];
+}
+
+interface RadarCompetitorVM {
+  id: string;
+  name: string;
+  host: string;
+  url: string;
+  status: string;
+  reason: string;
+  addedAt: string;
+  changes: RadarCompetitorChangeVM[];
+}
+
+interface RadarCompetitorsVM {
+  suggested: RadarCompetitorVM[];
+  watching: RadarCompetitorVM[];
+  watchLimit: number;
+}
+
+const EMPTY_COMPETITORS_VM: RadarCompetitorsVM = { suggested: [], watching: [], watchLimit: MAX_WATCHED_COMPETITORS };
+
+/** Plain-language chips for one page diff (data shown is from the stored diff only). */
+function diffChips(diff: CompetitorDiff): string[] {
+  const chips: string[] = [];
+  if (diff.titleChanged) chips.push("new headline");
+  if (diff.newHeadings.length > 0) {
+    chips.push(`${diff.newHeadings.length} new section${diff.newHeadings.length === 1 ? "" : "s"}`);
+  }
+  if (diff.newPrices.length > 0 || diff.removedPrices.length > 0) chips.push("prices changed");
+  return chips;
+}
+
+function toCompetitorVM(c: RadarCompetitorRow, timeline: SnapshotTimelineRow[]): RadarCompetitorVM {
+  let host = c.url;
+  try {
+    host = new URL(c.url).hostname;
+  } catch {
+    // keep the raw value
+  }
+  return {
+    id: c.id,
+    name: c.name || host,
+    host,
+    url: c.url,
+    status: c.status,
+    reason: typeof c.discoveryEvidence.reason === "string" ? c.discoveryEvidence.reason : "",
+    addedAt: c.createdAt,
+    changes: timeline
+      .filter((t) => t.competitorId === c.id)
+      .slice(0, 10)
+      .map((t) => ({ day: t.capturedAt.slice(0, 10), url: t.url, chips: diffChips(t.diff) })),
+  };
+}
+
+async function buildCompetitors(shopId: string): Promise<{ vm: RadarCompetitorsVM; timeline: SnapshotTimelineRow[] }> {
+  const [suggested, watching, timeline] = await Promise.all([
+    listCompetitors(shopId, ["suggested"]),
+    listCompetitors(shopId, ["watching"]),
+    listSnapshotTimeline(shopId),
+  ]);
+  return {
+    vm: {
+      suggested: suggested.map((c) => toCompetitorVM(c, [])),
+      watching: watching.map((c) => toCompetitorVM(c, timeline)),
+      watchLimit: MAX_WATCHED_COMPETITORS,
+    },
+    timeline,
+  };
+}
+
 // Each tile is best-effort: a failed read logs and zeroes that tile; the
 // screen itself never breaks (same posture as the Search screen's Google card).
-async function buildSignals(shopId: string): Promise<RadarSignalsVM> {
+async function buildSignals(
+  shopId: string,
+  comp: { vm: RadarCompetitorsVM; timeline: SnapshotTimelineRow[] },
+): Promise<RadarSignalsVM> {
   const sb = getSupabase();
   const signals: RadarSignalsVM = structuredClone(EMPTY_SIGNALS);
   try {
@@ -132,6 +216,15 @@ async function buildSignals(shopId: string): Promise<RadarSignalsVM> {
   } catch (err) {
     console.error("[radar] ai-assistant signal failed", err);
   }
+  try {
+    const weekAgo = Date.now() - 7 * DAY_MS;
+    signals.competitors.watching = comp.vm.watching.length;
+    signals.competitors.suggested = comp.vm.suggested.length;
+    signals.competitors.changesLast7 = comp.timeline.filter((t) => Date.parse(t.capturedAt) >= weekAgo).length;
+    signals.competitors.lastChangeAt = comp.timeline[0]?.capturedAt ?? null;
+  } catch (err) {
+    console.error("[radar] competitor signal failed", err);
+  }
   return signals;
 }
 
@@ -139,14 +232,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
   return dashboardJson(async () => {
     if (!isUuid(session.shopId)) {
-      return { moves: [], history: [], signals: structuredClone(EMPTY_SIGNALS) };
+      return { moves: [], history: [], signals: structuredClone(EMPTY_SIGNALS), competitors: EMPTY_COMPETITORS_VM };
     }
+    const competitorsData = await buildCompetitors(session.shopId).catch((err) => {
+      console.error("[radar] competitors read failed", err);
+      return { vm: EMPTY_COMPETITORS_VM, timeline: [] as SnapshotTimelineRow[] };
+    });
     const [moves, history, signals] = await Promise.all([
       listMoves(session.shopId, ["draft"]),
       listMoves(session.shopId, ["applied", "dismissed", "expired"]),
-      buildSignals(session.shopId),
+      buildSignals(session.shopId, competitorsData),
     ]);
-    return { moves: moves.map(toMoveVM), history: history.map(toMoveVM), signals };
+    return { moves: moves.map(toMoveVM), history: history.map(toMoveVM), signals, competitors: competitorsData.vm };
   });
 }
 
@@ -154,6 +251,7 @@ interface RadarBody {
   action?: string;
   moveId?: string;
   confirm?: boolean;
+  competitorId?: string;
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -161,7 +259,28 @@ export async function action({ request }: ActionFunctionArgs) {
   const session = await requireDashboardSession(request);
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
   const body = (await request.json().catch(() => null)) as RadarBody | null;
-  if (!body || typeof body.action !== "string" || typeof body.moveId !== "string") {
+  if (!body || typeof body.action !== "string") {
+    return jsonError(422, "bad_request", "action and moveId are required");
+  }
+  if (body.action === "competitor_confirm" || body.action === "competitor_dismiss") {
+    if (typeof body.competitorId !== "string") {
+      return jsonError(422, "bad_request", "competitorId is required");
+    }
+    const status = body.action === "competitor_confirm" ? ("watching" as const) : ("dismissed" as const);
+    try {
+      const outcome = await setCompetitorStatus(session.shopId, body.competitorId, status);
+      if (outcome === "limit_reached") {
+        return jsonError(422, "watch_limit",
+          `You can watch up to ${MAX_WATCHED_COMPETITORS} competitors. Dismiss one first to add another.`);
+      }
+      if (outcome === "not_found") return jsonError(404, "competitor_not_found", "That competitor no longer exists.");
+      return dashboardJson(async () => ({ competitors: (await buildCompetitors(session.shopId)).vm }));
+    } catch (err) {
+      console.error(`[radar] ${body.action} failed for competitor ${body.competitorId}`, err);
+      return jsonError(500, "radar_action_failed", "That didn't go through. Your list was not changed.");
+    }
+  }
+  if (typeof body.moveId !== "string") {
     return jsonError(422, "bad_request", "action and moveId are required");
   }
   const { moveId } = body;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";
 const MOVE_ID = "99999999-1111-2222-3333-444444444444";
+const COMP_ID = "77777777-8888-9999-0000-111122223333";
 
 const mocks = vi.hoisted(() => ({
   requireDashboardSession: vi.fn(),
@@ -11,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   applyMove: vi.fn(),
   dismissMove: vi.fn(),
   revertMove: vi.fn(),
+  listCompetitors: vi.fn(),
+  setCompetitorStatus: vi.fn(),
+  listSnapshotTimeline: vi.fn(),
   fromMock: vi.fn(),
   rpcMock: vi.fn(),
 }));
@@ -31,6 +35,12 @@ vi.mock("~/lib/radar/apply.server", async () => {
   };
 });
 vi.mock("~/lib/radar/apply-seo.server", async (importActual) => (await importActual()) as Record<string, unknown>);
+vi.mock("~/lib/radar/competitor-store.server", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  listCompetitors: mocks.listCompetitors,
+  setCompetitorStatus: mocks.setCompetitorStatus,
+  listSnapshotTimeline: mocks.listSnapshotTimeline,
+}));
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({ from: mocks.fromMock, rpc: mocks.rpcMock }),
 }));
@@ -48,6 +58,15 @@ function moveRow(patch: Record<string, unknown> = {}) {
     payload: { applyMode: "publish_meta", handle: "mug", focusQuery: "mug" },
     dedupKey: "d", priorState: null, appliedStateHash: null,
     createdAt: "2026-07-20T00:00:00Z", appliedAt: null, resolvedAt: null, expiresAt: "e",
+    ...patch,
+  };
+}
+
+function competitorRow(status: "suggested" | "watching", patch: Record<string, unknown> = {}) {
+  return {
+    id: COMP_ID, shopId: SHOP, url: "https://rivalgear.example/", name: "Rival Gear", status,
+    discoveryEvidence: { reason: "Sells hiking boots and packs" },
+    createdAt: "2026-07-14T08:00:00Z", updatedAt: "2026-07-14T08:00:00Z",
     ...patch,
   };
 }
@@ -89,6 +108,8 @@ beforeEach(() => {
     throw new Error(`unexpected table ${table}`);
   });
   mocks.rpcMock.mockResolvedValue({ data: { slipping: [{}], lastCapturedDate: "2026-07-18" }, error: null });
+  mocks.listCompetitors.mockResolvedValue([]);
+  mocks.listSnapshotTimeline.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -114,7 +135,7 @@ describe("loader", () => {
     expect(body.signals.traffic).toEqual({ yesterdayViews: 40, weeklyAverage: expect.any(Number), lastCheckedAt: "2026-07-20T10:00:00Z" });
     expect(body.signals.google).toEqual({ connected: true, lastCapturedDate: "2026-07-18", slippingCount: 1 });
     expect(body.signals.aiAssistants).toEqual({ hitsLast7: expect.any(Number), hitsPrior7: expect.any(Number) });
-    expect(body.signals.competitors).toEqual({ comingSoon: true });
+    expect(body.signals.competitors).toEqual({ watching: 0, suggested: 0, changesLast7: 0, lastChangeAt: null });
   });
   it("marks review moves and surfaces their deep link", async () => {
     mocks.listMoves
@@ -127,8 +148,10 @@ describe("loader", () => {
     mocks.requireDashboardSession.mockResolvedValue({ shopId: "demo-shop", userId: "u1" });
     const body = await ((await loader(get())) as Response).json();
     expect(body.moves).toEqual([]);
+    expect(body.competitors).toEqual({ suggested: [], watching: [], watchLimit: 5 });
     expect(mocks.listMoves).not.toHaveBeenCalled();
     expect(mocks.fromMock).not.toHaveBeenCalled();
+    expect(mocks.listCompetitors).not.toHaveBeenCalled();
   });
   it("excludes today's partial-day row from the traffic tile (matches the collect.server read boundary)", async () => {
     vi.useFakeTimers();
@@ -188,5 +211,69 @@ describe("action", () => {
     expect(bad.status).toBe(422);
     const noId = (await action(post({ action: "apply" }))) as Response;
     expect(noId.status).toBe(422);
+  });
+});
+
+describe("loader competitors block", () => {
+  it("ships suggested + watching VMs and a live competitors tile", async () => {
+    mocks.listCompetitors.mockImplementation(async (_shop: string, statuses: string[]) =>
+      statuses.includes("suggested") ? [competitorRow("suggested")]
+        : statuses.includes("watching") ? [competitorRow("watching")] : []);
+    mocks.listSnapshotTimeline.mockResolvedValue([{
+      competitorId: COMP_ID, url: "https://rivalgear.example/", capturedAt: "2026-07-20T00:00:00Z",
+      diff: { titleChanged: { from: "a", to: "b" }, newHeadings: ["Sale"], removedHeadings: [], newPrices: ["$9.00"], removedPrices: ["$12.00"] },
+    }]);
+    const res = (await loader(get())) as Response;
+    const body = await res.json();
+    expect(body.competitors.suggested[0]).toMatchObject({
+      id: COMP_ID, name: "Rival Gear", host: "rivalgear.example", reason: "Sells hiking boots and packs",
+    });
+    expect(body.competitors.watching[0].changes[0].chips).toEqual(
+      expect.arrayContaining(["new headline", "prices changed"]),
+    );
+    expect(body.competitors.watchLimit).toBe(5);
+    expect(body.signals.competitors).toMatchObject({ watching: 1, suggested: 1, changesLast7: 1 });
+    expect(JSON.stringify(body)).not.toMatch(/ploy/i);
+  });
+  it("keeps the screen alive when the competitors read fails", async () => {
+    mocks.listCompetitors.mockRejectedValue(new Error("db down"));
+    const res = (await loader(get())) as Response;
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.competitors).toEqual({ suggested: [], watching: [], watchLimit: 5 });
+  });
+});
+
+describe("competitor actions", () => {
+  it("confirm flips a suggestion to watching", async () => {
+    mocks.setCompetitorStatus.mockResolvedValue("updated");
+    const res = (await action(post({ action: "competitor_confirm", competitorId: COMP_ID }))) as Response;
+    expect(res.status).toBe(200);
+    expect(mocks.requireSameOrigin).toHaveBeenCalled();
+    expect(mocks.setCompetitorStatus).toHaveBeenCalledWith(SHOP, COMP_ID, "watching");
+  });
+  it("surfaces the 5-competitor watch limit as a 422 with plain copy", async () => {
+    mocks.setCompetitorStatus.mockResolvedValue("limit_reached");
+    const res = (await action(post({ action: "competitor_confirm", competitorId: COMP_ID }))) as Response;
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toBe("watch_limit");
+  });
+  it("dismiss works for suggested and watching rows; missing rows 404", async () => {
+    mocks.setCompetitorStatus.mockResolvedValue("updated");
+    const ok = (await action(post({ action: "competitor_dismiss", competitorId: COMP_ID }))) as Response;
+    expect(ok.status).toBe(200);
+    expect(mocks.setCompetitorStatus).toHaveBeenCalledWith(SHOP, COMP_ID, "dismissed");
+    mocks.setCompetitorStatus.mockResolvedValue("not_found");
+    const nf = (await action(post({ action: "competitor_dismiss", competitorId: COMP_ID }))) as Response;
+    expect(nf.status).toBe(404);
+  });
+  it("rejects competitor actions without a competitorId", async () => {
+    const res = (await action(post({ action: "competitor_confirm" }))) as Response;
+    expect(res.status).toBe(422);
+  });
+  it("still requires moveId for move actions (unaffected by the competitor branch)", async () => {
+    const res = (await action(post({ action: "apply" }))) as Response;
+    expect(res.status).toBe(422);
+    expect(mocks.setCompetitorStatus).not.toHaveBeenCalled();
   });
 });
