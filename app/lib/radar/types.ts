@@ -8,7 +8,9 @@ export type RadarMoveKind =
   | "seo_content_boost"
   | "aeo_refresh"
   | "aeo_jsonld_fix"
-  | "section_refresh";
+  | "section_refresh"
+  | "competitor_counter"
+  | "competitor_price";
 
 export type RadarMoveStatus = "draft" | "applied" | "dismissed" | "expired";
 
@@ -93,6 +95,8 @@ export interface RadarCollectInputs {
    *  page_document - a section_refresh targeting "pdp" there would write one
    *  product's copy into the shop-wide template. */
   publishedRuntimeVersion: number | null;
+  /** Recent competitor page diffs (watching competitors only; bounded reads). */
+  competitorDiffs: CompetitorDiffInput[];
 }
 
 /** Camel-case mirror of a radar_ploy row (mapped in store.server.ts). */
@@ -112,4 +116,45 @@ export interface RadarMoveRow {
   appliedAt: string | null;
   resolvedAt: string | null;
   expiresAt: string;
+}
+
+// ── Phase D: competitors ─────────────────────────────────────────────────────
+
+export type RadarCompetitorStatus = "suggested" | "watching" | "dismissed";
+
+export interface RadarCompetitorRow {
+  id: string;
+  shopId: string;
+  url: string;
+  name: string;
+  status: RadarCompetitorStatus;
+  discoveryEvidence: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Deterministic facts pulled from a competitor page (bounded; no Claude). */
+export interface CompetitorExtract {
+  title: string;
+  metaDescription: string;
+  headings: string[];
+  prices: string[];
+}
+
+/** Deterministic delta vs the previous snapshot of the same url. */
+export interface CompetitorDiff {
+  titleChanged: { from: string; to: string } | null;
+  newHeadings: string[];
+  removedHeadings: string[];
+  newPrices: string[];
+  removedPrices: string[];
+}
+
+/** One changed page, joined with its competitor, as the detectors consume it. */
+export interface CompetitorDiffInput {
+  competitorId: string;
+  competitorName: string;
+  url: string;
+  capturedAt: string;
+  diff: CompetitorDiff;
 }

@@ -83,6 +83,7 @@ describe("loadRadarInputs", () => {
       lastPublishedAt: null,
       jsonLdIssues: [],
       publishedRuntimeVersion: null,
+      competitorDiffs: [],
     });
     expect(mocks.fromMock).not.toHaveBeenCalled();
     expect(mocks.rpcMock).not.toHaveBeenCalled();

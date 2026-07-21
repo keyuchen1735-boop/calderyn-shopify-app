@@ -126,6 +126,7 @@ export async function loadRadarInputs(shopId: string): Promise<RadarCollectInput
       lastPublishedAt: null,
       jsonLdIssues: [],
       publishedRuntimeVersion: null,
+      competitorDiffs: [],
     };
   }
   // radar_rollup_traffic (collectShop) writes a row for the CURRENT UTC day at
@@ -180,5 +181,6 @@ export async function loadRadarInputs(shopId: string): Promise<RadarCollectInput
     lastPublishedAt: publishedAt,
     jsonLdIssues,
     publishedRuntimeVersion: release.publishedRuntimeVersion,
+    competitorDiffs: [],
   };
 }

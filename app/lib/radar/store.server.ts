@@ -180,13 +180,14 @@ export interface RadarState {
   lastCollectedAt: string | null;
   lastDraftedAt: string | null;
   homeCardDismissedAt: string | null;
+  lastDiscoveredAt: string | null;
 }
 
 export async function readRadarState(shopId: string): Promise<RadarState> {
-  if (!isUuid(shopId)) return { lastCollectedAt: null, lastDraftedAt: null, homeCardDismissedAt: null };
+  if (!isUuid(shopId)) return { lastCollectedAt: null, lastDraftedAt: null, homeCardDismissedAt: null, lastDiscoveredAt: null };
   const { data, error } = await getSupabase()
     .from("radar_state")
-    .select("last_collected_at, last_drafted_at, home_card_dismissed_at")
+    .select("last_collected_at, last_drafted_at, home_card_dismissed_at, last_discovered_at")
     .eq("shop_id", shopId)
     .maybeSingle();
   if (error) throw new Error(`readRadarState: ${error.message}`);
@@ -194,18 +195,20 @@ export async function readRadarState(shopId: string): Promise<RadarState> {
     lastCollectedAt: (data?.last_collected_at as string | null) ?? null,
     lastDraftedAt: (data?.last_drafted_at as string | null) ?? null,
     homeCardDismissedAt: (data?.home_card_dismissed_at as string | null) ?? null,
+    lastDiscoveredAt: (data?.last_discovered_at as string | null) ?? null,
   };
 }
 
 export async function stampRadarState(
   shopId: string,
-  patch: Partial<{ lastCollectedAt: string; lastDraftedAt: string; homeCardDismissedAt: string }>,
+  patch: Partial<{ lastCollectedAt: string; lastDraftedAt: string; homeCardDismissedAt: string; lastDiscoveredAt: string }>,
 ): Promise<void> {
   if (!isUuid(shopId)) return;
   const row: Record<string, unknown> = { shop_id: shopId, updated_at: new Date().toISOString() };
   if (patch.lastCollectedAt !== undefined) row.last_collected_at = patch.lastCollectedAt;
   if (patch.lastDraftedAt !== undefined) row.last_drafted_at = patch.lastDraftedAt;
   if (patch.homeCardDismissedAt !== undefined) row.home_card_dismissed_at = patch.homeCardDismissedAt;
+  if (patch.lastDiscoveredAt !== undefined) row.last_discovered_at = patch.lastDiscoveredAt;
   const { error } = await getSupabase().from("radar_state").upsert(row, { onConflict: "shop_id" });
   if (error) throw new Error(`stampRadarState: ${error.message}`);
 }
