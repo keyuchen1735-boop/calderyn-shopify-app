@@ -24,13 +24,37 @@ export interface RadarSignalsVM {
   traffic: { yesterdayViews: number; weeklyAverage: number; lastCheckedAt: string | null };
   google: { connected: boolean; lastCapturedDate: string | null; slippingCount: number };
   aiAssistants: { hitsLast7: number; hitsPrior7: number };
-  competitors: { comingSoon: true };
+  competitors: { watching: number; suggested: number; changesLast7: number; lastChangeAt: string | null };
+}
+
+export interface RadarCompetitorChangeVM {
+  day: string;
+  url: string;
+  chips: string[];
+}
+
+export interface RadarCompetitorVM {
+  id: string;
+  name: string;
+  host: string;
+  url: string;
+  status: "suggested" | "watching" | "dismissed";
+  reason: string;
+  addedAt: string;
+  changes: RadarCompetitorChangeVM[];
+}
+
+export interface RadarCompetitorsVM {
+  suggested: RadarCompetitorVM[];
+  watching: RadarCompetitorVM[];
+  watchLimit: number;
 }
 
 export interface RadarOverviewVM {
   moves: RadarMoveVM[];
   history: RadarMoveVM[];
   signals: RadarSignalsVM;
+  competitors: RadarCompetitorsVM;
 }
 
 /** Merchant-facing labels per move kind (plain language, no jargon). */
@@ -41,6 +65,8 @@ export const RADAR_KIND_LABELS: Record<string, string> = {
   aeo_refresh: "AI assistants",
   aeo_jsonld_fix: "AI assistants",
   section_refresh: "Store page",
+  competitor_counter: "Competitor",
+  competitor_price: "Competitor pricing",
 };
 
 export const fetchRadar = (): Promise<RadarOverviewVM> => apiGet<RadarOverviewVM>("/dashboard/api/radar");
@@ -53,6 +79,18 @@ export const dismissRadarMove = (moveId: string) =>
 
 export const revertRadarMove = (moveId: string, confirm = false) =>
   apiSend<{ move: RadarMoveVM }>("POST", "/dashboard/api/radar", { action: "revert", moveId, confirm });
+
+export const confirmRadarCompetitor = (competitorId: string) =>
+  apiSend<{ competitors: RadarCompetitorsVM }>("POST", "/dashboard/api/radar", {
+    action: "competitor_confirm",
+    competitorId,
+  });
+
+export const dismissRadarCompetitor = (competitorId: string) =>
+  apiSend<{ competitors: RadarCompetitorsVM }>("POST", "/dashboard/api/radar", {
+    action: "competitor_dismiss",
+    competitorId,
+  });
 
 export interface RadarHomeVM {
   readyCount: number;

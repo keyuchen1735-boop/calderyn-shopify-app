@@ -10,15 +10,18 @@ import { cachedScreenData, cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dash
 import { DashboardApiError } from "~/lib/dashboard/client";
 import {
   applyRadarMove,
+  confirmRadarCompetitor,
+  dismissRadarCompetitor,
   dismissRadarMove,
   fetchRadar,
   RADAR_KIND_LABELS,
   revertRadarMove,
+  type RadarCompetitorVM,
   type RadarMoveVM,
   type RadarOverviewVM,
 } from "~/lib/dashboard/radar-client";
 
-type Tab = "moves" | "history";
+type Tab = "moves" | "history" | "competitors";
 
 function whenLabel(iso: string | null): string {
   if (!iso) return "";
@@ -87,6 +90,22 @@ export default function Radar({ app }: { app: DashboardCtx }) {
     [load, toast],
   );
 
+  const runCompetitor = useCallback(
+    async (competitorId: string, fn: () => Promise<unknown>, doneMsg: string) => {
+      setBusyId(competitorId);
+      try {
+        await fn();
+        toast(doneMsg, "check");
+        await load();
+      } catch (err) {
+        toast(err instanceof DashboardApiError ? err.message : "That didn't go through. Try again.", "warn", "critical");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [load, toast],
+  );
+
   if (!data) {
     if (loadError) {
       return (
@@ -102,7 +121,7 @@ export default function Radar({ app }: { app: DashboardCtx }) {
     return <TableSkeleton />;
   }
 
-  const { moves, history, signals } = data;
+  const { moves, history, signals, competitors } = data;
 
   return (
     <div className="cd-screen">
@@ -120,6 +139,10 @@ export default function Radar({ app }: { app: DashboardCtx }) {
           onChange={(v) => setTab(v as Tab)}
           options={[
             { value: "moves", label: `Moves${moves.length > 0 ? ` (${moves.length})` : ""}` },
+            {
+              value: "competitors",
+              label: `Competitors${competitors.suggested.length > 0 ? ` (${competitors.suggested.length})` : ""}`,
+            },
             { value: "history", label: "History" },
           ]}
         />
@@ -154,7 +177,24 @@ export default function Radar({ app }: { app: DashboardCtx }) {
           value={`${signals.aiAssistants.hitsLast7} visits`}
           note={`${signals.aiAssistants.hitsPrior7} the week before`}
         />
-        <SignalTile icon="eye" label="Competitors" value="Coming soon" note="Radar will watch confirmed competitors here" />
+        <SignalTile
+          icon="eye"
+          label="Competitors"
+          value={
+            signals.competitors.watching > 0
+              ? `${signals.competitors.watching} watched`
+              : signals.competitors.suggested > 0
+                ? `${signals.competitors.suggested} suggested`
+                : "None yet"
+          }
+          note={
+            signals.competitors.watching > 0
+              ? signals.competitors.changesLast7 > 0
+                ? `${signals.competitors.changesLast7} change${signals.competitors.changesLast7 === 1 ? "" : "s"} this week · last ${whenLabel(signals.competitors.lastChangeAt)}`
+                : "No changes this week"
+              : "Radar suggests stores weekly - confirm to watch"
+          }
+        />
       </div>
 
       {tab === "moves" &&
@@ -235,6 +275,83 @@ export default function Radar({ app }: { app: DashboardCtx }) {
             ))}
           </div>
         ))}
+
+      {tab === "competitors" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {competitors.suggested.length === 0 && competitors.watching.length === 0 && (
+            <Placeholder
+              icon="eye"
+              title="No competitors yet"
+              sub="Once your store is live, Radar searches the web weekly for stores selling similar products and lists them here. Nothing is watched until you confirm it."
+            />
+          )}
+
+          {competitors.suggested.length > 0 && (
+            <>
+              <h3 style={{ margin: "4px 0 0" }}>Suggested</h3>
+              <p className="cd-caption" style={{ margin: 0 }}>
+                Found by web search - listed stores aren't affiliated with Calderyn. Confirm the ones you
+                want watched; Radar checks watched stores nightly.
+              </p>
+              {competitors.suggested.map((c: RadarCompetitorVM) => (
+                <Card key={c.id}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <strong>{c.name}</strong>
+                    <span className="cd-chip">{c.host}</span>
+                  </div>
+                  {c.reason && <p className="cd-caption">{c.reason}</p>}
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <Btn kind="primary" disabled={busyId === c.id}
+                      onClick={() => void runCompetitor(c.id, () => confirmRadarCompetitor(c.id), "Watching. Radar checks it nightly.")}>
+                      {busyId === c.id ? "Confirming…" : "Watch this store"}
+                    </Btn>
+                    <Btn disabled={busyId === c.id}
+                      onClick={() => void runCompetitor(c.id, () => dismissRadarCompetitor(c.id), "Dismissed.")}>
+                      Dismiss
+                    </Btn>
+                  </div>
+                </Card>
+              ))}
+            </>
+          )}
+
+          {competitors.watching.length > 0 && (
+            <>
+              <h3 style={{ margin: "4px 0 0" }}>
+                Watching ({competitors.watching.length}/{competitors.watchLimit})
+              </h3>
+              {competitors.watching.map((c: RadarCompetitorVM) => (
+                <Card key={c.id}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <strong>{c.name}</strong>
+                    <span className="cd-chip">{c.host}</span>
+                  </div>
+                  {c.changes.length === 0 ? (
+                    <p className="cd-caption">No changes spotted yet. Radar checks nightly.</p>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+                      {c.changes.map((ch, i) => (
+                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                          <span className="cd-caption" style={{ margin: 0 }}>{whenLabel(ch.day)}</span>
+                          {ch.chips.map((chip, j) => (
+                            <span key={j} className="cd-chip">{chip}</span>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <Btn disabled={busyId === c.id}
+                      onClick={() => void runCompetitor(c.id, () => dismissRadarCompetitor(c.id), "Stopped watching.")}>
+                      Stop watching
+                    </Btn>
+                  </div>
+                </Card>
+              ))}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

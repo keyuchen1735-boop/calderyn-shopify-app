@@ -3,15 +3,24 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Radar from "./Radar";
-import type { RadarMoveVM, RadarOverviewVM } from "~/lib/dashboard/radar-client";
+import type { RadarCompetitorVM, RadarMoveVM, RadarOverviewVM } from "~/lib/dashboard/radar-client";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-const { fetchRadar, applyRadarMove, dismissRadarMove, revertRadarMove } = vi.hoisted(() => ({
+const {
+  fetchRadar,
+  applyRadarMove,
+  dismissRadarMove,
+  revertRadarMove,
+  confirmRadarCompetitor,
+  dismissRadarCompetitor,
+} = vi.hoisted(() => ({
   fetchRadar: vi.fn(),
   applyRadarMove: vi.fn(),
   dismissRadarMove: vi.fn(),
   revertRadarMove: vi.fn(),
+  confirmRadarCompetitor: vi.fn(),
+  dismissRadarCompetitor: vi.fn(),
 }));
 
 vi.mock("~/lib/dashboard/screen-cache", () => ({
@@ -29,6 +38,8 @@ vi.mock("~/lib/dashboard/radar-client", () => ({
   applyRadarMove,
   dismissRadarMove,
   revertRadarMove,
+  confirmRadarCompetitor,
+  dismissRadarCompetitor,
   RADAR_KIND_LABELS: { section_refresh: "Store page" },
 }));
 
@@ -43,7 +54,24 @@ function move(patch: Partial<RadarMoveVM> = {}): RadarMoveVM {
   };
 }
 
-function overview(moves: RadarMoveVM[]): RadarOverviewVM {
+function competitor(patch: Partial<RadarCompetitorVM> = {}): RadarCompetitorVM {
+  return {
+    id: "c1",
+    name: "Northwind Goods",
+    host: "northwindgoods.com",
+    url: "https://northwindgoods.com",
+    status: "suggested",
+    reason: "Sells similar products",
+    addedAt: "2026-07-20T00:00:00Z",
+    changes: [],
+    ...patch,
+  };
+}
+
+function overview(
+  moves: RadarMoveVM[],
+  patch: Partial<RadarOverviewVM> = {},
+): RadarOverviewVM {
   return {
     moves,
     history: [],
@@ -51,8 +79,10 @@ function overview(moves: RadarMoveVM[]): RadarOverviewVM {
       traffic: { yesterdayViews: 0, weeklyAverage: 0, lastCheckedAt: null },
       google: { connected: false, lastCapturedDate: null, slippingCount: 0 },
       aiAssistants: { hitsLast7: 0, hitsPrior7: 0 },
-      competitors: { comingSoon: true },
+      competitors: { watching: 0, suggested: 0, changesLast7: 0, lastChangeAt: null },
     },
+    competitors: { suggested: [], watching: [], watchLimit: 5 },
+    ...patch,
   };
 }
 
@@ -132,5 +162,159 @@ describe("Radar deep-link navigation", () => {
     expect(window.location.href).toBe("/dashboard/products/p1");
     await act(async () => root.unmount());
     restore();
+  });
+});
+
+describe("Radar competitors tile", () => {
+  it("shows 'None yet' when there are no suggested or watched competitors", async () => {
+    fetchRadar.mockResolvedValue(overview([]));
+    const { host, root } = await renderRadar();
+    expect(host.textContent).toContain("None yet");
+    expect(host.textContent).toContain("Radar suggests stores weekly - confirm to watch");
+    await act(async () => root.unmount());
+  });
+
+  it("shows a suggested count when nothing is watched yet", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], {
+        signals: {
+          traffic: { yesterdayViews: 0, weeklyAverage: 0, lastCheckedAt: null },
+          google: { connected: false, lastCapturedDate: null, slippingCount: 0 },
+          aiAssistants: { hitsLast7: 0, hitsPrior7: 0 },
+          competitors: { watching: 0, suggested: 2, changesLast7: 0, lastChangeAt: null },
+        },
+        competitors: { suggested: [competitor(), competitor({ id: "c2" })], watching: [], watchLimit: 5 },
+      }),
+    );
+    const { host, root } = await renderRadar();
+    expect(host.textContent).toContain("2 suggested");
+    await act(async () => root.unmount());
+  });
+
+  it("shows watched count and recent-change note when competitors are watched", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], {
+        signals: {
+          traffic: { yesterdayViews: 0, weeklyAverage: 0, lastCheckedAt: null },
+          google: { connected: false, lastCapturedDate: null, slippingCount: 0 },
+          aiAssistants: { hitsLast7: 0, hitsPrior7: 0 },
+          competitors: { watching: 1, suggested: 0, changesLast7: 3, lastChangeAt: "2026-07-19T00:00:00Z" },
+        },
+        competitors: {
+          suggested: [],
+          watching: [competitor({ status: "watching" })],
+          watchLimit: 5,
+        },
+      }),
+    );
+    const { host, root } = await renderRadar();
+    expect(host.textContent).toContain("1 watched");
+    expect(host.textContent).toContain("3 changes this week");
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Radar competitors tab", () => {
+  it("adds a Competitors segmented option with a suggested count", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], { competitors: { suggested: [competitor(), competitor({ id: "c2" })], watching: [], watchLimit: 5 } }),
+    );
+    const { host, root } = await renderRadar();
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Competitors"));
+    expect(tabBtn?.textContent).toBe("Competitors (2)");
+    await act(async () => root.unmount());
+  });
+
+  it("shows the empty state when there are no suggested or watched competitors", async () => {
+    fetchRadar.mockResolvedValue(overview([]));
+    const { host, root } = await renderRadar();
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Competitors");
+    await act(async () => tabBtn!.click());
+    expect(host.textContent).toContain("No competitors yet");
+    await act(async () => root.unmount());
+  });
+
+  it("confirms a suggested competitor and reloads the list", async () => {
+    confirmRadarCompetitor.mockResolvedValue({ competitors: { suggested: [], watching: [], watchLimit: 5 } });
+    fetchRadar.mockResolvedValue(
+      overview([], { competitors: { suggested: [competitor()], watching: [], watchLimit: 5 } }),
+    );
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Competitors"));
+    await act(async () => tabBtn!.click());
+    expect(host.textContent).toContain("Northwind Goods");
+    expect(host.textContent).toContain("northwindgoods.com");
+    expect(host.textContent).toContain("Sells similar products");
+
+    fetchRadar.mockResolvedValue(overview([]));
+    const watchBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Watch this store")!;
+    await act(async () => watchBtn.click());
+    expect(confirmRadarCompetitor).toHaveBeenCalledWith("c1");
+    expect(app.toast).toHaveBeenCalledWith("Watching. Radar checks it nightly.", "check");
+    expect(fetchRadar).toHaveBeenCalledTimes(2);
+    await act(async () => root.unmount());
+  });
+
+  it("dismisses a suggested competitor", async () => {
+    dismissRadarCompetitor.mockResolvedValue({ competitors: { suggested: [], watching: [], watchLimit: 5 } });
+    fetchRadar.mockResolvedValue(
+      overview([], { competitors: { suggested: [competitor()], watching: [], watchLimit: 5 } }),
+    );
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Competitors"));
+    await act(async () => tabBtn!.click());
+
+    fetchRadar.mockResolvedValue(overview([]));
+    const dismissBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Dismiss")!;
+    await act(async () => dismissBtn.click());
+    expect(dismissRadarCompetitor).toHaveBeenCalledWith("c1");
+    expect(app.toast).toHaveBeenCalledWith("Dismissed.", "check");
+    await act(async () => root.unmount());
+  });
+
+  it("shows a watched competitor's recent-changes timeline and lets the merchant stop watching", async () => {
+    dismissRadarCompetitor.mockResolvedValue({ competitors: { suggested: [], watching: [], watchLimit: 5 } });
+    fetchRadar.mockResolvedValue(
+      overview([], {
+        competitors: {
+          suggested: [],
+          watching: [
+            competitor({
+              status: "watching",
+              changes: [{ day: "2026-07-19", url: "https://northwindgoods.com", chips: ["new headline", "prices changed"] }],
+            }),
+          ],
+          watchLimit: 5,
+        },
+      }),
+    );
+    const app = dashboardApp();
+    const { host, root } = await renderRadar(app);
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Competitors"));
+    await act(async () => tabBtn!.click());
+    expect(host.textContent).toContain("Watching (1/5)");
+    expect(host.textContent).toContain("new headline");
+    expect(host.textContent).toContain("prices changed");
+
+    const stopBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Stop watching")!;
+    await act(async () => stopBtn.click());
+    expect(dismissRadarCompetitor).toHaveBeenCalledWith("c1");
+    expect(app.toast).toHaveBeenCalledWith("Stopped watching.", "check");
+    await act(async () => root.unmount());
+  });
+
+  it("shows a no-changes-yet note for a watched competitor with no changes", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], {
+        competitors: { suggested: [], watching: [competitor({ status: "watching", changes: [] })], watchLimit: 5 },
+      }),
+    );
+    const { host, root } = await renderRadar();
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Competitors"));
+    await act(async () => tabBtn!.click());
+    expect(host.textContent).toContain("No changes spotted yet. Radar checks nightly.");
+    await act(async () => root.unmount());
   });
 });
