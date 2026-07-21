@@ -317,6 +317,60 @@ describe("embeddedReturnUrl", () => {
     ).toBe("https://calderyncompany.com/dashboard?meta=error&reason=access_denied");
   });
 
+  // Sessions are __Host- cookies locked to one host, and the dashboard is
+  // served from two (the apex proxy and the app host). The connect-time origin
+  // rides the packed state so the callback returns to the host that actually
+  // holds the merchant's cookie — landing on the other host bounces through
+  // login and silently drops the one-shot connect notice.
+  it("prefers the allowlisted connect-time origin over the public URL", () => {
+    process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
+    process.env.SHOPIFY_APP_URL = "https://app.calderyncompany.com";
+    expect(
+      embeddedReturnUrl(
+        "/app/settings",
+        { quickbooks: "connected" },
+        {
+          host: null, shop: null, dashboard: true,
+          returnTo: "/dashboard/settings",
+          origin: "https://app.calderyncompany.com",
+        },
+      ),
+    ).toBe("https://app.calderyncompany.com/dashboard/settings?quickbooks=connected");
+  });
+
+  it("ignores a non-allowlisted origin and falls back to the public URL", () => {
+    process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
+    process.env.SHOPIFY_APP_URL = "https://app.calderyncompany.com";
+    expect(
+      embeddedReturnUrl(
+        "/app/settings",
+        { quickbooks: "connected" },
+        { host: null, shop: null, dashboard: true, origin: "https://attacker.example" },
+      ),
+    ).toBe("https://calderyncompany.com/dashboard?quickbooks=connected");
+  });
+
+  it("round-trips the origin through pack/parse only when allowlisted", () => {
+    process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
+    process.env.SHOPIFY_APP_URL = "https://app.calderyncompany.com";
+    const packed = packOAuthState("nonce123", {
+      dashboard: true,
+      origin: "https://app.calderyncompany.com",
+      returnTo: "/dashboard/settings",
+    });
+    expect(parseOAuthState(packed)).toMatchObject({
+      nonce: "nonce123",
+      dashboard: true,
+      origin: "https://app.calderyncompany.com",
+      returnTo: "/dashboard/settings",
+    });
+    const evil = packOAuthState("nonce456", {
+      dashboard: true,
+      origin: "https://attacker.example",
+    });
+    expect(parseOAuthState(evil).origin).toBeUndefined();
+  });
+
   it("falls back to the app host, then a relative path, when the public URL is unset", () => {
     process.env.SHOPIFY_APP_URL = "https://app.calderyncompany.com";
     expect(

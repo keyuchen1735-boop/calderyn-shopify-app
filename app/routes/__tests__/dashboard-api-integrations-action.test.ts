@@ -62,9 +62,27 @@ describe("POST /dashboard/api/integrations", () => {
     const res = await call({ intent: "connect", provider: "meta", returnTo: "/dashboard/campaigns/new" });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ url: "https://facebook.com/dialog?state=abc" });
-    // (provider, host, popup, dashboard) — the dashboard flag steers the callback
-    // back to /dashboard instead of the embedded admin.
-    expect(startOAuth).toHaveBeenCalledWith("meta", null, false, true, "/dashboard/campaigns/new");
+    // (provider, host, popup, dashboard, returnTo, origin) — the dashboard flag
+    // steers the callback back to /dashboard instead of the embedded admin.
+    expect(startOAuth).toHaveBeenCalledWith("meta", null, false, true, "/dashboard/campaigns/new", null);
+  });
+
+  it("connect: passes through an allowlisted browser origin and drops others", async () => {
+    process.env.DASHBOARD_PUBLIC_URL = "https://calderyncompany.com";
+    process.env.SHOPIFY_APP_URL = "https://app.calderyncompany.com";
+    startOAuth.mockResolvedValue({ redirectUrl: "https://facebook.com/dialog?state=abc" });
+    await call({
+      intent: "connect", provider: "meta",
+      returnTo: "/dashboard/settings", origin: "https://app.calderyncompany.com",
+    });
+    expect(startOAuth).toHaveBeenCalledWith(
+      "meta", null, false, true, "/dashboard/settings", "https://app.calderyncompany.com",
+    );
+    startOAuth.mockClear();
+    await call({ intent: "connect", provider: "meta", origin: "https://attacker.example" });
+    expect(startOAuth).toHaveBeenCalledWith("meta", null, false, true, null, null);
+    delete process.env.DASHBOARD_PUBLIC_URL;
+    delete process.env.SHOPIFY_APP_URL;
   });
 
   it("connect: rejects a non-OAuth provider at the boundary", async () => {
@@ -77,7 +95,7 @@ describe("POST /dashboard/api/integrations", () => {
     startOAuth.mockResolvedValue({ redirectUrl: "https://facebook.com/dialog?state=abc" });
     const res = await call({ intent: "connect", provider: "meta", returnTo: "//attacker.example/steal" });
     expect(res.status).toBe(200);
-    expect(startOAuth).toHaveBeenCalledWith("meta", null, false, true, null);
+    expect(startOAuth).toHaveBeenCalledWith("meta", null, false, true, null, null);
   });
 
   it("connect-key: stores the pasted credential and returns refreshed rows", async () => {

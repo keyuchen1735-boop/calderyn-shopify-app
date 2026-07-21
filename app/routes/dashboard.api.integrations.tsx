@@ -11,7 +11,7 @@ import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { dashboardJson, jsonError, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { calderynClient, type IntegrationProvider } from "~/lib/calderyn.server";
 import { APIKEY_PROVIDERS, OAUTH_PROVIDERS } from "~/lib/integrations";
-import { safeDashboardOAuthReturnTo } from "~/lib/meta/oauth-state.server";
+import { safeDashboardOAuthOrigin, safeDashboardOAuthReturnTo } from "~/lib/meta/oauth-state.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
@@ -49,12 +49,17 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!isOAuth(provider)) return jsonError(422, "invalid_provider");
     return dashboardJson(async () => {
       const returnTo = safeDashboardOAuthReturnTo(body.returnTo);
+      // The browser reports which origin it is on (apex vs app host) so the
+      // OAuth callback can land back where the session cookie actually lives.
+      // Allowlist-validated — an unknown origin degrades to the default base.
+      const origin = safeDashboardOAuthOrigin(body.origin);
       const { redirectUrl } = await client.integrations.startOAuth(
         provider,
         null,
         false,
         /* dashboard */ true,
         returnTo,
+        origin,
       );
       return { url: redirectUrl };
     });

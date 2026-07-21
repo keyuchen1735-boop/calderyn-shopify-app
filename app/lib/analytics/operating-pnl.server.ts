@@ -68,9 +68,12 @@ export async function loadOperatingPnl(
     return { connected: false, currency: "USD", startDate, endDate, statement: null, netCashFlowCents: null, products: [] };
   }
 
+  // Column granularity tracks the window so the by-period chart stays legible:
+  // daily bars up to 90 days, monthly for a year, yearly for the all-time view.
+  const summarizeBy = days <= 90 ? "Days" : days <= 365 ? "Months" : "Years";
   const [profitAndLoss, cashFlow, currency, products] = await Promise.all([
     connection.client.queryReport("ProfitAndLoss", {
-      startDate, endDate, accountingMethod: "Accrual", summarizeBy: "Days",
+      startDate, endDate, accountingMethod: "Accrual", summarizeBy,
     }),
     connection.client.queryReport("CashFlow", { startDate, endDate, accountingMethod: "Cash" }),
     connection.client.queryHomeCurrency(),

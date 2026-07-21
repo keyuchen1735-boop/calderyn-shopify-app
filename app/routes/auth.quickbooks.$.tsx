@@ -50,7 +50,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const sb = getSupabase();
   const shopId = await consumeOAuthState(sb, state);
-  if (!shopId) throw new Response("Invalid or expired OAuth state", { status: 400 });
+  if (!shopId) {
+    // Single-use nonce already consumed or past its 10-minute TTL (merchant
+    // lingered on Intuit's consent/login screens). For dashboard-started
+    // connects the packed return context still parses, so send them back to
+    // the dashboard with the one-shot error notice (a toast + retry beats a
+    // bare 400 page). Non-dashboard flows keep the hard 400.
+    if (returnCtx.dashboard) {
+      return redirect(embeddedReturnUrl("/dashboard", { quickbooks: "error", reason: "expired, please retry" }, returnCtx));
+    }
+    throw new Response("Invalid or expired OAuth state", { status: 400 });
+  }
 
   const fetcher = async (
     u: string,
