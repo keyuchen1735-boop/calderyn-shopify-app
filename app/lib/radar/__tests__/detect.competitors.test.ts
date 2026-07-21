@@ -19,18 +19,65 @@ function diffRow(patch: Partial<CompetitorDiffInput["diff"]>, url = "https://riv
 }
 
 describe("detectCompetitorPriceMoves", () => {
-  it("drafts an informational review move when a price moved (never auto-apply)", () => {
+  it("stays GENERIC (no was/now pairing anywhere) when only set-difference fields changed", () => {
+    // newPrices/removedPrices are unordered page-wide set differences - nothing ties
+    // removedPrices[0] to newPrices[0], so this case must never claim a specific
+    // "$129.00 is now $99.00" pairing (per the truthfulness contract in types.ts).
     const out = detectCompetitorPriceMoves([diffRow({ newPrices: ["$99.00"], removedPrices: ["$129.00"] })]);
     expect(out).toHaveLength(1);
     expect(out[0].kind).toBe("competitor_price");
     expect(out[0].dedupKey).toBe(`comp-price:${COMP}:/products/boots`);
     // Pricing moves are informational ALWAYS - review mode, deep link, no auto-apply.
     expect(out[0].payload).toMatchObject({ applyMode: "review", deepLink: "/dashboard/products" });
-    expect(out[0].evidence.chips).toEqual(
-      expect.arrayContaining(["Rival Gear", "was $129.00", "now $99.00"]),
-    );
-    expect(out[0].evidence.facts).toMatchObject({ url: "https://rival.example/products/boots" });
+    expect(out[0].headline).toContain("Rival Gear");
+    expect(out[0].rationale).toContain("Rival Gear");
+    expect(out[0].rationale).toContain(`their "boots" page`);
+    const allCopy = [out[0].headline, out[0].rationale, ...out[0].evidence.chips].join(" ");
+    expect(allCopy).not.toMatch(/\bwas\s/i);
+    expect(allCopy).not.toMatch(/\bnow\s/i);
+    expect(allCopy).not.toContain("$99.00");
+    expect(allCopy).not.toContain("$129.00");
+    // Raw set-difference arrays may still live in evidence.facts for audit.
+    expect(out[0].evidence.facts).toMatchObject({
+      url: "https://rival.example/products/boots",
+      newPrices: ["$99.00"],
+      removedPrices: ["$129.00"],
+    });
+  });
+  it("drafts a specific labeled claim when priceChanges pairs a product with its from->to move", () => {
+    const out = detectCompetitorPriceMoves([
+      diffRow({
+        newPrices: ["$99.00"],
+        removedPrices: ["$129.00"],
+        priceChanges: [{ label: "Boots", from: "$129.00", to: "$99.00" }],
+      }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].kind).toBe("competitor_price");
+    expect(out[0].dedupKey).toBe(`comp-price:${COMP}:/products/boots`);
+    expect(out[0].payload).toMatchObject({ applyMode: "review", deepLink: "/dashboard/products" });
+    const allCopy = [out[0].headline, out[0].rationale, ...out[0].evidence.chips].join(" ");
+    expect(allCopy).toContain("Boots");
+    expect(allCopy).toContain("$129.00");
+    expect(allCopy).toContain("$99.00");
+    expect(out[0].rationale).toMatch(/Boots.*\$129\.00 is now \$99\.00/);
+    expect(out[0].evidence.facts).toMatchObject({
+      priceChanges: [{ label: "Boots", from: "$129.00", to: "$99.00" }],
+    });
     expect(`${out[0].headline} ${out[0].rationale}`).not.toMatch(/ploy/i);
+  });
+  it("names additional changes when priceChanges has more than one entry", () => {
+    const out = detectCompetitorPriceMoves([
+      diffRow({
+        newPrices: ["$99.00", "$40.00"],
+        removedPrices: ["$129.00", "$50.00"],
+        priceChanges: [
+          { label: "Boots", from: "$129.00", to: "$99.00" },
+          { label: "Gloves", from: "$50.00", to: "$40.00" },
+        ],
+      }),
+    ]);
+    expect(out[0].rationale).toMatch(/and 1 more change/);
   });
   it("stays silent when prices only appeared or only disappeared", () => {
     expect(detectCompetitorPriceMoves([diffRow({ newPrices: ["$99.00"] })])).toHaveLength(0);

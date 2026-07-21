@@ -8,8 +8,13 @@
 //    to the merchant's own pricing; applying just marks it done.
 //  - competitor_counter: positioning/copy change or new page/product signals
 //    (title change, or 2+ new headings). Counter = refresh the merchant's OWN
-//    home hero via apply-time generation; ONE open counter per competitor
-//    (dedup on the competitor id) so a busy rival cannot flood the queue.
+//    home hero via apply-time generation. Dedup key is `comp-counter:{competitorId}`
+//    with no page/date component, so only ONE open counter move can exist per
+//    competitor at a time - this is a deliberate product decision (not an
+//    implementation shortcut): an uncluttered move queue wins over surfacing
+//    every individual page change, so additional shifts from the same
+//    competitor while a counter is open, or still cooling down after being
+//    resolved, are intentionally absorbed rather than queued as new moves.
 import type { CompetitorDiffInput, RadarCandidate } from "./types";
 
 /** A "positioning shift" needs a title change or at least this many new headings. */
@@ -33,25 +38,56 @@ function pageLabel(url: string): string {
 export function detectCompetitorPriceMoves(diffs: CompetitorDiffInput[]): RadarCandidate[] {
   const out: RadarCandidate[] = [];
   for (const d of diffs) {
-    if (d.diff.newPrices.length === 0 || d.diff.removedPrices.length === 0) continue;
-    const was = d.diff.removedPrices[0];
-    const now = d.diff.newPrices[0];
+    const priceChanges = d.diff.priceChanges ?? [];
+    const hasLabeledChange = priceChanges.length > 0;
+    const hasSetDifference = d.diff.newPrices.length > 0 && d.diff.removedPrices.length > 0;
+    if (!hasLabeledChange && !hasSetDifference) continue;
+
+    // Truthfulness contract (see CompetitorDiff in types.ts): newPrices/removedPrices
+    // are unordered page-wide set differences - nothing ties removedPrices[0] to
+    // newPrices[0], so they can only back a generic "pricing changed" claim. Only
+    // priceChanges pairs a price with the heading it was captured near on both
+    // sides of the diff, so ONLY that field may name a page/product and show a
+    // was->now pairing.
+    const baseFacts = {
+      competitorId: d.competitorId,
+      url: d.url,
+      newPrices: d.diff.newPrices,
+      removedPrices: d.diff.removedPrices,
+      capturedAt: d.capturedAt,
+    };
+
+    if (hasLabeledChange) {
+      const [first, ...rest] = priceChanges;
+      const more =
+        rest.length > 0 ? ` (and ${rest.length} more change${rest.length === 1 ? "" : "s"})` : "";
+      out.push({
+        kind: "competitor_price",
+        dedupKey: `comp-price:${d.competitorId}:${pathOf(d.url)}`,
+        headline: `${d.competitorName} changed their prices`,
+        rationale:
+          `${first.label}: ${first.from} is now ${first.to} at ${d.competitorName}.${more} ` +
+          `Worth a quick look at your own prices - nothing changes unless you decide to.`,
+        evidence: {
+          chips: [d.competitorName, `${first.label}: was ${first.from}`, `now ${first.to}`],
+          facts: { ...baseFacts, priceChanges },
+        },
+        payload: { applyMode: "review", deepLink: "/dashboard/products", competitorId: d.competitorId, url: d.url },
+      });
+      continue;
+    }
+
+    // Set-difference only: generic copy, no was/now pairing anywhere.
     out.push({
       kind: "competitor_price",
       dedupKey: `comp-price:${d.competitorId}:${pathOf(d.url)}`,
-      headline: `${d.competitorName} changed their prices`,
+      headline: `Pricing changed at ${d.competitorName}`,
       rationale:
-        `${d.competitorName} changed pricing on ${pageLabel(d.url)} (for example ${was} is now ${now}). ` +
-        `Worth a quick look at your own prices - nothing changes unless you decide to.`,
+        `${d.competitorName} changed prices on ${pageLabel(d.url)}. ` +
+        `Take a look and decide if your own pricing still stands up.`,
       evidence: {
-        chips: [d.competitorName, `was ${was}`, `now ${now}`],
-        facts: {
-          competitorId: d.competitorId,
-          url: d.url,
-          newPrices: d.diff.newPrices,
-          removedPrices: d.diff.removedPrices,
-          capturedAt: d.capturedAt,
-        },
+        chips: [d.competitorName, `${pageLabel(d.url)}`.replace(/^their /, "")],
+        facts: baseFacts,
       },
       payload: { applyMode: "review", deepLink: "/dashboard/products", competitorId: d.competitorId, url: d.url },
     });
