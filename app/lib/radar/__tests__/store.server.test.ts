@@ -118,6 +118,21 @@ describe("row reads and transitions", () => {
       status: "applied", applied_at: "t", prior_state: { a: 1 }, applied_state_hash: "x",
     });
   });
+  it("updateMove with expectedStatus conditions the write and reports whether it took", async () => {
+    const MOVE_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const select = vi.fn().mockResolvedValue({ data: [{ id: MOVE_ID }], error: null });
+    const eqStatus = vi.fn().mockReturnValue({ select });
+    const eqId = vi.fn().mockReturnValue({ eq: eqStatus });
+    const eqShop = vi.fn().mockReturnValue({ eq: eqId });
+    const update = vi.fn().mockReturnValue({ eq: eqShop });
+    fromMock.mockReturnValue({ update });
+    await expect(updateMove(SHOP, MOVE_ID, { status: "applied" }, "draft")).resolves.toBe(true);
+    expect(eqStatus).toHaveBeenCalledWith("status", "draft");
+    expect(select).toHaveBeenCalledWith("id");
+
+    select.mockResolvedValue({ data: [], error: null });
+    await expect(updateMove(SHOP, MOVE_ID, { status: "applied" }, "draft")).resolves.toBe(false);
+  });
   it("expireStaleMoves sweeps open drafts past their expiry", async () => {
     const select = vi.fn().mockResolvedValue({ data: [{ id: "m1" }, { id: "m2" }], error: null });
     const lt = vi.fn().mockReturnValue({ select });

@@ -10,6 +10,7 @@ import { readStorefrontReleaseState } from "~/lib/storefront-bundle/build.server
 import { rollbackStorefrontRelease } from "~/lib/storefront-bundle/release.server";
 import { runStoreCommand, StoreCommandError } from "~/lib/storefront-command/command.server";
 import { loadDraftDoc, loadPublishedDoc, publishDoc, saveDraft } from "~/lib/storebuilder/page-document.server";
+import { sanitizeDocHtml } from "~/lib/storebuilder/sanitize-html.server";
 import { validateDocument } from "~/lib/storebuilder/validate";
 import type { BlockDocument, PageKey } from "~/lib/storebuilder/types";
 import { getCatalog } from "~/lib/storefront/catalog.server";
@@ -90,14 +91,21 @@ async function applyRuntime1(
       409,
     );
   }
-  const brief = String(move.payload.brief ?? "");
+  const brief = String(move.payload.brief ?? "").trim();
   if (!brief) throw new RadarApplyError("bad_payload", "This move is missing its refresh brief.", 422);
+  // Tracks the prompt-stage receipt so a later publish-stage failure can best-effort undo the
+  // orphaned draft it left behind, rather than leaving it sitting on the shop blaming the merchant
+  // (draft_in_progress guard, above) for a draft Radar itself created.
+  let edit: Awaited<ReturnType<typeof runStoreCommand>> | null = null;
   try {
-    const edit = await runStoreCommand({
+    edit = await runStoreCommand({
       shopId,
       actorId,
       command: { kind: "prompt", prompt: brief, expectedDraftVersionId: release.draftVersionId ?? null },
     });
+    if (edit.status === "unchanged") {
+      throw new RadarApplyError("section_apply_failed", edit.message, 422);
+    }
     if (edit.status !== "installed") {
       throw new RadarApplyError("section_apply_failed", "The store change did not produce a draft.", 500);
     }
@@ -120,6 +128,17 @@ async function applyRuntime1(
       appliedStateHash: published.versionId,
     };
   } catch (err) {
+    if (edit?.status === "installed" && edit.undo) {
+      try {
+        await runStoreCommand({
+          shopId,
+          actorId,
+          command: { kind: "undo", targetVersionId: edit.undo.targetVersionId, expectedDraftVersionId: edit.undo.expectedDraftVersionId },
+        });
+      } catch (undoErr) {
+        console.error(`[radar] failed to undo orphaned draft for shop ${shopId}`, undoErr);
+      }
+    }
     if (err instanceof StoreCommandError) {
       throw new RadarApplyError(err.code, err.message, err.status);
     }
@@ -141,9 +160,20 @@ function pickSectionBlock(doc: BlockDocument): { index: number; type: "hero" | "
   return null;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 async function applyLegacy(shopId: string, move: RadarMoveRow, actorId: string | null): Promise<ApplyOutcome> {
   const target = String(move.payload.target ?? "home");
   const pageKey: PageKey = target === "pdp" ? "pdp" : "home";
+  const brief = String(move.payload.brief ?? "").trim();
+  if (!brief) throw new RadarApplyError("bad_payload", "This move is missing its refresh brief.", 422);
   const published = await loadPublishedDoc(shopId, pageKey);
   if (!published) {
     throw new RadarApplyError(
@@ -173,7 +203,7 @@ async function applyLegacy(shopId: string, move: RadarMoveRow, actorId: string |
         subhead: typeof block.props.subhead === "string" ? block.props.subhead : "",
       }
     : { headline: "", subhead: "" };
-  const copy = await generateSectionCopy(shopId, String(move.payload.brief ?? ""), current);
+  const copy = await generateSectionCopy(shopId, brief, current);
 
   const next: BlockDocument = JSON.parse(JSON.stringify(published)) as BlockDocument;
   const nextBlock = next.blocks[picked.index];
@@ -181,10 +211,18 @@ async function applyLegacy(shopId: string, move: RadarMoveRow, actorId: string |
     nextBlock.props = { ...nextBlock.props, headline: copy.headline, subhead: copy.subhead };
   } else {
     const html = String(nextBlock.props.html);
+    const escapedHeadline = escapeHtml(copy.headline);
     nextBlock.props = {
       ...nextBlock.props,
-      // Replace only the first heading's inner text; saveDraft re-sanitizes.
-      html: html.replace(/(<h[1-4][^>]*>)[\s\S]*?(<\/h[1-4]>)/i, `$1${copy.headline}$2`),
+      // Replace only the first heading's inner text. A replacer FUNCTION (not a replacement
+      // pattern string) so a headline containing $1/$&/$`/$'-shaped substrings (e.g. "Save $2
+      // today") is inserted verbatim rather than being read as a capture-group reference and
+      // corrupting the surrounding markup; entity-escaped since it's untrusted merchant/AI text
+      // going straight into HTML. saveDraft re-sanitizes regardless.
+      html: html.replace(
+        /(<h[1-4][^>]*>)[\s\S]*?(<\/h[1-4]>)/i,
+        (_match, open: string, close: string) => `${open}${escapedHeadline}${close}`,
+      ),
     };
   }
 
@@ -203,7 +241,11 @@ async function applyLegacy(shopId: string, move: RadarMoveRow, actorId: string |
   await publishDoc(shopId, pageKey);
   return {
     priorState: { kind: "section", runtime: 0, pageKey, doc: published, actorId },
-    appliedStateHash: sha256(result.doc),
+    // publishDoc copies whatever saveDraft persisted, and saveDraft sanitizes (sanitizeDocHtml) on
+    // the way in - so the doc that actually lands in published_json is sanitizeDocHtml(result.doc),
+    // not result.doc itself. Hash the same thing the revert-side staleness check reads
+    // (loadPublishedDoc, i.e. the real sanitized row) so an untouched page never demands confirm.
+    appliedStateHash: sha256(sanitizeDocHtml(result.doc)),
   };
 }
 
@@ -267,6 +309,17 @@ export async function revertSectionRefresh(
     throw new RadarApplyError(
       "revert_conflict",
       "This page was edited after the move was applied. Reverting will overwrite those edits.",
+      409,
+    );
+  }
+  // Draft guard: saveDraft below overwrites draft_json unconditionally. If the merchant has
+  // started (unpublished) edits since the apply, blowing those away silently would blame them for
+  // work Radar itself destroyed - require the same explicit confirm as the staleness guard above.
+  const liveDraft = await loadDraftDoc(shopId, pageKey);
+  if (liveDraft && sha256(liveDraft) !== sha256(current) && !opts.confirm) {
+    throw new RadarApplyError(
+      "revert_conflict",
+      "You have unpublished edits on this page. Reverting will overwrite them.",
       409,
     );
   }

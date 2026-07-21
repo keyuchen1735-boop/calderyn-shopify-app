@@ -43,6 +43,12 @@ import { applySectionRefresh, revertSectionRefresh } from "../apply-section.serv
 // eslint-disable-next-line import/first -- vitest vi.hoisted() requires mocks before imports
 import { sha256 } from "../apply-seo.server";
 // eslint-disable-next-line import/first -- vitest vi.hoisted() requires mocks before imports
+import { StoreCommandError } from "~/lib/storefront-command/command.server";
+// eslint-disable-next-line import/first -- vitest vi.hoisted() requires mocks before imports
+import { sanitizeDocHtml } from "~/lib/storebuilder/sanitize-html.server";
+// eslint-disable-next-line import/first -- vitest vi.hoisted() requires mocks before imports
+import type { BlockDocument } from "~/lib/storebuilder/types";
+// eslint-disable-next-line import/first -- vitest vi.hoisted() requires mocks before imports
 import type { RadarMoveRow } from "../types";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";
@@ -53,6 +59,18 @@ const V_PUB2 = "cccccccc-1111-2222-3333-444444444444";
 const HOME_DOC = {
   kind: "singleton", pageKey: "home",
   blocks: [{ id: "b1", type: "hero", props: { headline: "Old headline", subhead: "Old subhead" }, layout: { x: 0, y: 0, w: 12, h: 4 } }],
+};
+
+// Single-quoted style attribute: sanitize-html always re-serializes attributes double-quoted, so
+// this document is guaranteed to come out of sanitizeDocHtml byte-different from how it went in -
+// the fixture that proves the apply-time hash must be computed post-sanitize (finding 2).
+const RAWHTML_DOC = {
+  kind: "singleton", pageKey: "home",
+  blocks: [{
+    id: "b1", type: "rawHtml",
+    props: { html: "<section style='padding:1rem'><h2>Old headline</h2><p>Old body</p></section>" },
+    layout: { x: 0, y: 0, w: 12, h: 4 },
+  }],
 };
 
 function move(payload: Record<string, unknown>, patch: Partial<RadarMoveRow> = {}): RadarMoveRow {
@@ -107,6 +125,49 @@ describe("runtime 1", () => {
     await expect(applySectionRefresh(SHOP, move({}), null))
       .rejects.toMatchObject({ code: "draft_in_progress", status: 409 });
     expect(mocks.runStoreCommand).not.toHaveBeenCalled();
+  });
+  it("rejects an empty or whitespace-only brief before touching the store", async () => {
+    mocks.runStoreCommand.mockReset();
+    await expect(applySectionRefresh(SHOP, move({ brief: "   " }), "u1"))
+      .rejects.toMatchObject({ code: "bad_payload", status: 422 });
+    expect(mocks.runStoreCommand).not.toHaveBeenCalled();
+  });
+  it("surfaces the receipt's own message when the prompt stage reports unchanged", async () => {
+    mocks.runStoreCommand.mockReset();
+    mocks.runStoreCommand.mockResolvedValueOnce({ status: "unchanged", message: "Nothing to change." });
+    await expect(applySectionRefresh(SHOP, move({}), "u1"))
+      .rejects.toMatchObject({ code: "section_apply_failed", status: 422, message: "Nothing to change." });
+    expect(mocks.runStoreCommand).toHaveBeenCalledTimes(1); // no publish attempt, no undo attempt
+  });
+  it("best-effort undoes the orphaned draft when the publish stage fails after prompt succeeds", async () => {
+    mocks.runStoreCommand.mockReset();
+    mocks.runStoreCommand
+      .mockResolvedValueOnce({ status: "installed", versionId: V_NEW, undo: { targetVersionId: V_PUB, expectedDraftVersionId: V_NEW } })
+      .mockRejectedValueOnce(new StoreCommandError("storefront_command_failed", "publish boom", 500))
+      .mockResolvedValueOnce({ status: "installed", versionId: V_PUB, undo: null });
+    await expect(applySectionRefresh(SHOP, move({}), "u1"))
+      .rejects.toMatchObject({ code: "storefront_command_failed", status: 500 });
+    expect(mocks.runStoreCommand).toHaveBeenCalledTimes(3);
+    expect(mocks.runStoreCommand).toHaveBeenNthCalledWith(3, {
+      shopId: SHOP, actorId: "u1",
+      command: { kind: "undo", targetVersionId: V_PUB, expectedDraftVersionId: V_NEW },
+    });
+  });
+  it("swallows an undo failure and still surfaces the original publish error", async () => {
+    mocks.runStoreCommand.mockReset();
+    mocks.runStoreCommand
+      .mockResolvedValueOnce({ status: "installed", versionId: V_NEW, undo: { targetVersionId: V_PUB, expectedDraftVersionId: V_NEW } })
+      .mockRejectedValueOnce(new StoreCommandError("storefront_command_failed", "publish boom", 500))
+      .mockRejectedValueOnce(new Error("undo also failed"));
+    await expect(applySectionRefresh(SHOP, move({}), "u1"))
+      .rejects.toMatchObject({ code: "storefront_command_failed", status: 500 });
+  });
+  it("does not attempt an undo when the prompt stage never installed a draft", async () => {
+    mocks.runStoreCommand.mockReset();
+    mocks.runStoreCommand.mockRejectedValueOnce(new StoreCommandError("storefront_command_conflict", "conflict", 409));
+    await expect(applySectionRefresh(SHOP, move({}), "u1"))
+      .rejects.toMatchObject({ code: "storefront_command_conflict", status: 409 });
+    expect(mocks.runStoreCommand).toHaveBeenCalledTimes(1);
   });
   it("reverts via rollbackStorefrontRelease with the current published pointer", async () => {
     mocks.releaseState.mockResolvedValue({
@@ -171,6 +232,44 @@ describe("legacy runtime", () => {
       .rejects.toMatchObject({ code: "section_copy_failed" });
     expect(mocks.publishDoc).not.toHaveBeenCalled();
   });
+  it("rejects an empty or whitespace-only brief before generating copy", async () => {
+    await expect(applySectionRefresh(SHOP, move({ brief: "   " }), null))
+      .rejects.toMatchObject({ code: "bad_payload", status: 422 });
+    expect(mocks.createMock).not.toHaveBeenCalled();
+  });
+  it("escapes the headline and never treats it as a replacement pattern (rawHtml path)", async () => {
+    mocks.loadPublishedDoc.mockResolvedValue(RAWHTML_DOC);
+    mocks.createMock.mockResolvedValue({
+      content: [{ type: "text", text: '{"headline":"Save $2 today & more","subhead":"Fresh subhead"}' }],
+    });
+    await applySectionRefresh(SHOP, move({}), "u1");
+    const savedDoc = mocks.saveDraft.mock.calls[0][2] as BlockDocument;
+    const html = savedDoc.blocks[0].props.html as string;
+    // Entity-escaped, and the "$2" inside the headline was never read as a capture-group
+    // reference (which would have deleted the closing </h2> and corrupted the markup).
+    expect(html).toBe('<section style=\'padding:1rem\'><h2>Save $2 today &amp; more</h2><p>Old body</p></section>');
+    expect(html).not.toContain("$1");
+    expect(html).not.toContain("$&");
+  });
+  it("hashes the sanitize-normalized doc so an untouched revert never demands confirm (rawHtml path)", async () => {
+    mocks.loadPublishedDoc.mockResolvedValue(RAWHTML_DOC);
+    const out = await applySectionRefresh(SHOP, move({}), "u1");
+    // What actually lands in published_json: saveDraft's real sanitizeDocHtml applied to the doc
+    // it received (single-quoted style attribute gets re-serialized double-quoted).
+    const savedDoc = mocks.saveDraft.mock.calls[0][2] as BlockDocument;
+    const actualPublished = sanitizeDocHtml(savedDoc);
+    expect(sha256(savedDoc)).not.toBe(sha256(actualPublished)); // sanity: the sanitizer DID normalize something
+    expect(out.appliedStateHash).toBe(sha256(actualPublished));
+
+    const applied = move({}, {
+      status: "applied",
+      priorState: { kind: "section", runtime: 0, pageKey: "home", doc: RAWHTML_DOC },
+      appliedStateHash: out.appliedStateHash,
+    });
+    mocks.loadPublishedDoc.mockResolvedValue(actualPublished); // what's actually live now
+    await revertSectionRefresh(SHOP, applied, { confirm: false }, null); // must NOT throw revert_conflict
+    expect(mocks.saveDraft).toHaveBeenCalledWith(SHOP, "home", RAWHTML_DOC);
+  });
   it("reverts by republishing the stored doc after a clean hash check", async () => {
     const applied = move({}, {
       status: "applied",
@@ -185,5 +284,19 @@ describe("legacy runtime", () => {
     mocks.loadPublishedDoc.mockResolvedValue({ ...HOME_DOC, blocks: [] });
     await expect(revertSectionRefresh(SHOP, applied, { confirm: false }, null))
       .rejects.toMatchObject({ code: "revert_conflict", status: 409 });
+  });
+  it("requires confirm when the merchant has unpublished draft edits, even if published is unchanged", async () => {
+    const applied = move({}, {
+      status: "applied",
+      priorState: { kind: "section", runtime: 0, pageKey: "home", doc: HOME_DOC },
+      appliedStateHash: sha256(HOME_DOC),
+    });
+    mocks.loadPublishedDoc.mockResolvedValue(HOME_DOC); // published unchanged since apply
+    mocks.loadDraftDoc.mockResolvedValue({ ...HOME_DOC, blocks: [] }); // merchant has unpublished edits
+    await expect(revertSectionRefresh(SHOP, applied, { confirm: false }, null))
+      .rejects.toMatchObject({ code: "revert_conflict", status: 409 });
+    expect(mocks.saveDraft).not.toHaveBeenCalled();
+    await revertSectionRefresh(SHOP, applied, { confirm: true }, null);
+    expect(mocks.saveDraft).toHaveBeenCalledWith(SHOP, "home", HOME_DOC);
   });
 });

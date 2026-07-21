@@ -99,6 +99,12 @@ export async function getMove(shopId: string, moveId: string): Promise<RadarMove
   return data ? mapRow(data as unknown as Record<string, unknown>) : null;
 }
 
+/**
+ * @param expectedStatus When given, the write is conditioned on the row's current status matching
+ * (`.eq("status", expectedStatus)`) so a status-changing transition (e.g. draft -> applied) can't
+ * silently clobber a concurrent transition that landed first. Returns whether the row was actually
+ * updated - callers that pass expectedStatus must check it; callers that omit it always get true.
+ */
 export async function updateMove(
   shopId: string,
   moveId: string,
@@ -110,7 +116,8 @@ export async function updateMove(
     appliedStateHash: string | null;
     payload: Record<string, unknown>;
   }>,
-): Promise<void> {
+  expectedStatus?: RadarMoveStatus,
+): Promise<boolean> {
   const row: Record<string, unknown> = {};
   if (patch.status !== undefined) row.status = patch.status;
   if (patch.appliedAt !== undefined) row.applied_at = patch.appliedAt;
@@ -118,12 +125,19 @@ export async function updateMove(
   if (patch.priorState !== undefined) row.prior_state = patch.priorState;
   if (patch.appliedStateHash !== undefined) row.applied_state_hash = patch.appliedStateHash;
   if (patch.payload !== undefined) row.payload = patch.payload;
-  const { error } = await getSupabase()
+  const query = getSupabase()
     .from("radar_ploy")
     .update(row)
     .eq("shop_id", shopId)
     .eq("id", moveId);
+  if (expectedStatus === undefined) {
+    const { error } = await query;
+    if (error) throw new Error(`updateMove: ${error.message}`);
+    return true;
+  }
+  const { data, error } = await query.eq("status", expectedStatus).select("id");
   if (error) throw new Error(`updateMove: ${error.message}`);
+  return (data ?? []).length > 0;
 }
 
 /** Sweep open drafts past expires_at. Returns how many were expired. */

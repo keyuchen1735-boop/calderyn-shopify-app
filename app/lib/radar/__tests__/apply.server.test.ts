@@ -43,7 +43,7 @@ function row(patch: Partial<RadarMoveRow>): RadarMoveRow {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.updateMove.mockResolvedValue(undefined);
+  mocks.updateMove.mockResolvedValue(true);
   mocks.applySeoMeta.mockResolvedValue({ priorState: { kind: "seo_meta" }, appliedStateHash: "hash" });
 });
 
@@ -55,7 +55,7 @@ describe("applyMove", () => {
     expect(mocks.updateMove).toHaveBeenCalledWith(SHOP, MOVE_ID, expect.objectContaining({
       status: "applied", appliedAt: expect.any(String),
       priorState: { kind: "seo_meta" }, appliedStateHash: "hash",
-    }));
+    }), "draft");
     expect(out.status).toBe("applied");
   });
   it("review moves apply without touching the store", async () => {
@@ -63,7 +63,13 @@ describe("applyMove", () => {
     await applyMove({ shopId: SHOP, moveId: MOVE_ID, actorId: null });
     expect(mocks.applySeoMeta).not.toHaveBeenCalled();
     expect(mocks.applySectionRefresh).not.toHaveBeenCalled();
-    expect(mocks.updateMove).toHaveBeenCalledWith(SHOP, MOVE_ID, expect.objectContaining({ status: "applied", priorState: null }));
+    expect(mocks.updateMove).toHaveBeenCalledWith(SHOP, MOVE_ID, expect.objectContaining({ status: "applied", priorState: null }), "draft");
+  });
+  it("refuses the status flip when the move was already handled by a concurrent apply", async () => {
+    mocks.getMove.mockResolvedValue(row({}));
+    mocks.updateMove.mockResolvedValueOnce(false);
+    await expect(applyMove({ shopId: SHOP, moveId: MOVE_ID, actorId: null }))
+      .rejects.toMatchObject({ code: "move_not_open", status: 409 });
   });
   it("dispatches refresh_section and refresh_org", async () => {
     mocks.applySectionRefresh.mockResolvedValue({ priorState: { kind: "section" }, appliedStateHash: "v" });

@@ -39,12 +39,17 @@ export async function applyMove(input: {
   else if (mode === "refresh_section") outcome = await applySectionRefresh(input.shopId, move, input.actorId);
   else outcome = { priorState: null, appliedStateHash: null }; // review: applying = reviewed
   const appliedAt = new Date().toISOString();
-  await updateMove(input.shopId, move.id, {
+  // Conditional on the move still being "draft": a concurrent apply of the same move (double
+  // click, retried request) must not silently overwrite whichever attempt's outcome landed first.
+  const flipped = await updateMove(input.shopId, move.id, {
     status: "applied",
     appliedAt,
     priorState: outcome.priorState,
     appliedStateHash: outcome.appliedStateHash,
-  });
+  }, "draft");
+  if (!flipped) {
+    throw new RadarApplyError("move_not_open", "This move was already handled.", 409);
+  }
   return { ...move, status: "applied", appliedAt, priorState: outcome.priorState, appliedStateHash: outcome.appliedStateHash };
 }
 
