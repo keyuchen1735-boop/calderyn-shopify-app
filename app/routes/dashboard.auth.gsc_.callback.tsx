@@ -3,13 +3,14 @@
 // store the encrypted refresh token, auto-pick the matching GSC property,
 // and mark the shop connected. Errors land back on the Search screen.
 import { redirect, type LoaderFunctionArgs } from "@remix-run/node";
+import { expireCookieHeader } from "~/lib/dashboard/cookies.server";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
 import { exchangeGscCode, saveGscCredential, GSC_STATE_COOKIE, gscRedirectUri } from "~/lib/seo/gsc.server";
 import { listGscSites, pickSiteForOrigin } from "~/lib/seo/search-console.server";
 import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 import { getSupabase } from "~/lib/supabase.server";
 
-const CLEAR_STATE = `${GSC_STATE_COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0`;
+const CLEAR_STATE = expireCookieHeader(GSC_STATE_COOKIE);
 
 function back(result: "google-connected" | "google-error", reason?: string): Response {
   const q = new URLSearchParams({ search: result });
