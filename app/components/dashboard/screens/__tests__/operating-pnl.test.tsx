@@ -36,4 +36,19 @@ describe("Operating P&L", () => {
     expect(html).toContain("Jul 1");
     expect(html).toContain("Jul 30");
   });
+
+  it("gives net P&L a signed visual summary", () => {
+    cacheScreenData(operatingPnlCacheKey(30), data);
+    expect(renderToStaticMarkup(<OperatingPnl />)).toContain(
+      "cd-pnl-stat--net cd-pnl-stat--positive",
+    );
+
+    cacheScreenData(operatingPnlCacheKey(30), {
+      ...data,
+      statement: { ...data.statement!, netIncomeCents: -40_00 },
+    });
+    const negative = renderToStaticMarkup(<OperatingPnl />);
+    expect(negative).toContain("cd-pnl-stat--net cd-pnl-stat--negative");
+    expect(negative).toContain("cd-pnl-product-table");
+  });
 });
