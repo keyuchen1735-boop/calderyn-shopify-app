@@ -128,6 +128,89 @@ describe("generateGeminiImages", () => {
     );
   });
 
+  it("retries once inside the same reserved slot on a provider 429", async () => {
+    process.env.GEMINI_API_KEY = "secret";
+    process.env.GEMINI_IMAGE_GENERATION_ENABLED = "1";
+    const imageMeter = meter(["evt-1"]);
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("throttled", { status: 429 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            steps: [
+              {
+                type: "model_output",
+                content: [{ type: "image", mime_type: "image/jpeg", data: "aW1hZ2U=" }],
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+    vi.useFakeTimers();
+    try {
+      const pending = generateGeminiImages({
+        ...baseInput,
+        prompt: "product",
+        fetchImpl,
+        meter: imageMeter,
+      });
+      await vi.advanceTimersByTimeAsync(4_100);
+      await expect(pending).resolves.toEqual(["data:image/jpeg;base64,aW1hZ2U="]);
+    } finally {
+      vi.useRealTimers();
+    }
+    // In-slot: one reservation, one started mark, ONE ledger completion —
+    // the retry never touches the meter.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(imageMeter.reserve).toHaveBeenCalledTimes(1);
+    expect(imageMeter.started).toHaveBeenCalledTimes(1);
+    expect(imageMeter.complete).toHaveBeenCalledTimes(1);
+    expect(imageMeter.complete).toHaveBeenCalledWith(
+      "evt-1",
+      expect.objectContaining({ status: "succeeded" }),
+    );
+    expect(imageMeter.release).not.toHaveBeenCalled();
+  });
+
+  it("never retries more than once on repeated 429s (anti-retry-storm)", async () => {
+    process.env.GEMINI_API_KEY = "secret";
+    process.env.GEMINI_IMAGE_GENERATION_ENABLED = "1";
+    const imageMeter = meter(["evt-1"]);
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response("throttled", { status: 429 }));
+
+    vi.useFakeTimers();
+    try {
+      const pending = generateGeminiImages({
+        ...baseInput,
+        prompt: "product",
+        fetchImpl,
+        meter: imageMeter,
+      });
+      // Attach the rejection handler BEFORE advancing so the rejection is
+      // never unhandled.
+      const outcome = expect(pending).rejects.toThrow(
+        "Gemini image generation failed (429)",
+      );
+      await vi.advanceTimersByTimeAsync(4_100);
+      await outcome;
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    // The throttled attempt stays counted — failed completion, no release.
+    expect(imageMeter.complete).toHaveBeenCalledTimes(1);
+    expect(imageMeter.complete).toHaveBeenCalledWith(
+      "evt-1",
+      expect.objectContaining({ status: "failed" }),
+    );
+    expect(imageMeter.release).not.toHaveBeenCalled();
+  });
+
   it("passes the caller's limits override through to the meter reservation", async () => {
     process.env.GEMINI_API_KEY = "secret";
     process.env.GEMINI_IMAGE_GENERATION_ENABLED = "1";

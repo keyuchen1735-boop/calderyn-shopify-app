@@ -191,24 +191,38 @@ export async function generateGeminiImages(input: {
     try {
       await meter.started(eventId);
       providerStarted = true;
-      const response = await (input.fetchImpl ?? fetch)(ENDPOINT, {
-        method: "POST",
-        headers: {
-          "x-goog-api-key": key,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: GEMINI_IMAGE_MODEL,
-          input: requestInput,
-          response_format: {
-            type: "image",
-            mime_type: "image/jpeg",
-            aspect_ratio: "1:1",
-            image_size: "1K",
+      const attempt = () =>
+        (input.fetchImpl ?? fetch)(ENDPOINT, {
+          method: "POST",
+          headers: {
+            "x-goog-api-key": key,
+            "Content-Type": "application/json",
           },
-        }),
-        signal,
-      });
+          body: JSON.stringify({
+            model: GEMINI_IMAGE_MODEL,
+            input: requestInput,
+            response_format: {
+              type: "image",
+              mime_type: "image/jpeg",
+              aspect_ratio: "1:1",
+              image_size: "1K",
+            },
+          }),
+          signal,
+        });
+      let response = await attempt();
+      // Bounded in-slot retry on provider throttle: exactly one retry, short
+      // jittered backoff, INSIDE the already-started (already-counted) event —
+      // zero extra ledger rows, and complete() below still fires exactly once
+      // with the final outcome. A 429 response carries no image cost, so the
+      // deliberate anti-retry-storm counting (failed attempts stay in the
+      // daily ceiling) is unaffected.
+      if (response.status === 429 && !signal.aborted) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 2_000 + Math.random() * 2_000),
+        );
+        if (!signal.aborted) response = await attempt();
+      }
       if (!response.ok)
         throw new Error(`Gemini image generation failed (${response.status})`);
       const payload = (await response.json()) as GeminiResponse;
