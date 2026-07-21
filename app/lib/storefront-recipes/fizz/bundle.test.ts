@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CompiledNode } from "~/lib/storefront-bundle/types";
 import { hydrateStorefront, teardownStorefront } from "~/lib/storefront-runtime/hydrate";
@@ -74,6 +76,10 @@ describe("fizz storefront recipe", () => {
     expect(FIZZ_RECIPE_CONFIG.surfaces.home.source.html).toContain('data-cd-route="collections"');
     expect(bundle.routes.collections!.html).toContain("Flavor map");
     expect(bundle.routes.collections!.html).toContain("Collection lanes use this merchant catalog");
+    expect(repeatsIn(bundle.routes.collections!.tree)).toContain("featured.collections");
+    expect(FIZZ_RECIPE_CONFIG.surfaces.collections.source.html).toContain('data-cd-key="collection.id"');
+    expect(FIZZ_RECIPE_CONFIG.surfaces.collections.source.html).toContain('data-cd-param-handle="collection.handle"');
+    expect(FIZZ_RECIPE_CONFIG.surfaces.collections.source.html).toContain('data-cd-text="collection.title"');
     expect(bundle.routes.collection.html).toContain("Flavor map");
     expect(bundle.routes.collection.html).toContain("Sibling flavor lanes");
     expect(bundle.routes.collection.html).toContain("Applied filter");
@@ -84,7 +90,30 @@ describe("fizz storefront recipe", () => {
     expect(bundle.routes.search.html).toContain("Result count");
     expect(bundle.routes.search.html).toContain("Recover by browsing flavor lanes");
     expect(bundle.routes.cart.html).toContain("Review line quantities, current totals, and merchant policies before checkout");
+    expect(FIZZ_RECIPE_CONFIG.surfaces.cart.source.html).toMatch(
+      /data-cd-empty-state[\s\S]*data-cd-route="collection"/,
+    );
     expect(bundle.routes.checkout.decorativeHtml).toContain("Protected checkout continues below");
+    expect(FIZZ_RECIPE_CONFIG.surfaces.home.source.html.match(/<h1[^>]*>[\s\S]*?<\/h1>/)?.[0].match(/<br>/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    expect(FIZZ_RECIPE_CONFIG.surfaces.home.source.css).toMatch(
+      /\.fizz-display\{[^}]*font-size:clamp\(3\.5rem,8vw,6rem\)/,
+    );
+    expect(FIZZ_RECIPE_CONFIG.surfaces.home.source.css).toContain("--fizz-radius:1.5rem");
+    expect(FIZZ_RECIPE_CONFIG.surfaces.home.source.css).toContain(".fizz-card img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--fizz-radius)}");
+    expect(FIZZ_RECIPE_CONFIG.surfaces.home.source.css).toContain(".fizz-door{display:grid;min-height:9rem;align-content:end;padding:1rem;border:2px solid var(--cobalt);border-radius:var(--fizz-radius)");
+
+    const customerHtml = Object.values(FIZZ_RECIPE_CONFIG.surfaces)
+      .map(({ source }) => source.html)
+      .join(" ");
+    expect(customerHtml).not.toMatch(/[—–]|>0[1-9](?:\s*\/|<)/);
+    const prototype = readFileSync(resolve(
+      process.cwd(),
+      "docs/superpowers/prototypes/storefront-recipes/fizz.html",
+    ), "utf8");
+    expect(prototype).toContain('data-cd-repeat="featured.collections"');
+    expect(prototype).toContain('data-cd-param-handle="collection.handle"');
+    expect(prototype).not.toMatch(/[—–]|>0[1-9](?:\s*\/|<)/);
+    expect(prototype).toContain("--fizz-radius:1.5rem");
   });
 
   it("hydrates truthful flavor guidance while commerce stays in the protected pack builder", () => {

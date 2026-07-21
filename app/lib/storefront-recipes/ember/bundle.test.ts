@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
@@ -91,6 +91,7 @@ describe("ember storefront recipe", () => {
     expect(homeHtml).toContain("including the same product more than once");
     expect(bundle.routes.home.interactions.state).toEqual([]);
     expect(homeHtml).not.toContain("ember-ugc");
+    expect(homeHtml).not.toContain("ember-proof-strip");
     expect(homeHtml).not.toMatch(/★★★★★|“[^”]+”|verified buyer/i);
 
     expect(EMBER_RECIPE_CONFIG.surfaces.product.source.html).toContain('data-cd-text="product.availability"');
@@ -124,10 +125,18 @@ describe("ember storefront recipe", () => {
 
   it("deepens Ember catalog discovery without crossing commerce truth boundaries", () => {
     const { bundle } = compileRecipeConfig(EMBER_RECIPE_CONFIG);
+    const customerHtml = Object.values(EMBER_RECIPE_CONFIG.surfaces)
+      .map(({ source }) => source.html)
+      .join(" ");
 
     expect(bundle.routes.home.html).toContain("ember-collection-hooks");
     expect(bundle.routes.collections?.html).toContain("ember-shelf-index");
-    expect(bundle.routes.collections?.html).toContain("data-cd-bind-text");
+    expect(repeatsIn(bundle.routes.collections!.tree)).toContain("featured.collections");
+    expect(EMBER_RECIPE_CONFIG.surfaces.collections.source.html).toContain('data-cd-key="collection.id"');
+    expect(dataPaths(bundle.routes.collections!)).toContain("collection.title");
+    expect(EMBER_RECIPE_CONFIG.surfaces.collections.source.html).toContain(
+      'data-cd-param-handle="collection.handle"',
+    );
     expect(bundle.routes.collection.html).toContain("ember-breadcrumbs");
     expect(bundle.routes.collection.html).toContain("ember-sibling-nav");
     expect(bundle.routes.collection.html).toContain("ember-applied-filters");
@@ -141,6 +150,12 @@ describe("ember storefront recipe", () => {
     expect(bundle.routes.search.html).toContain("Browse sauce shelves");
     expect(bundle.routes.cart.html).toContain("ember-cart-progress");
     expect(bundle.routes.cart.html).toContain("Policy links below reflect the merchant's current store terms.");
+    expect(EMBER_RECIPE_CONFIG.surfaces.cart.source.html).toMatch(
+      /data-cd-empty-state[\s\S]*data-cd-route="collection"/,
+    );
+    expect(EMBER_RECIPE_CONFIG.surfaces.home.source.html.match(/<h1[^>]*>[\s\S]*?<\/h1>/)?.[0].match(/<br>/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    expect(EMBER_RECIPE_CONFIG.surfaces.home.source.css).toContain(".ember-hero h1{font-size:clamp(3.5rem,8vw,6rem)");
+    expect(customerHtml).not.toMatch(/[—–]|>0[1-9](?:\s*\/|<)/);
     expect(bundle.routes.checkout.decorativeHtml).toContain("Products, delivery, payment, and final totals remain controlled by the platform.");
     expect(Object.values(bundle.routes).map((route) => "html" in route ? route.html : route.decorativeHtml).join(" ")).not.toMatch(/verified buyer|★★★★★|scarcity|discount|ships today|ships tomorrow|clinical|performance/i);
   });
@@ -152,5 +167,14 @@ describe("ember storefront recipe", () => {
     ]) {
       expect(existsSync(resolve(process.cwd(), path)), path).toBe(true);
     }
+    const prototype = readFileSync(resolve(
+      process.cwd(),
+      "docs/superpowers/prototypes/storefront-recipes/ember.html",
+    ), "utf8");
+    expect(prototype).toContain('data-cd-repeat="featured.collections"');
+    expect(prototype).toContain('data-cd-param-handle="collection.handle"');
+    expect(prototype).not.toContain("ember-proof-strip");
+    expect(prototype).not.toMatch(/[—–]|>0[1-9](?:\s*\/|<)/);
+    expect(prototype).toContain(".ember-hero h1{font-size:clamp(3.5rem,8vw,6rem)");
   });
 });

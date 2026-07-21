@@ -97,8 +97,11 @@ describe("roast storefront recipe", () => {
 
     expect(home.match(/data-cd-route="collection"/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
     expect(collections).toContain("Method notebooks");
-    expect(collections.match(/data-cd-route="collection"/g)?.length ?? 0).toBeGreaterThanOrEqual(4);
-    expect(collections).toContain('data-cd-repeat="featured.products"');
+    expect(collections).toContain('data-cd-repeat="featured.collections"');
+    expect(collections).toContain('data-cd-key="collection.id"');
+    expect(collections).toContain('data-cd-param-handle="collection.handle"');
+    expect(collections).toContain('data-cd-text="collection.title"');
+    expect(repeatsIn(bundle.routes.collections!.tree)).toContain("featured.collections");
 
     expect(collection).toContain("Origin index / merchant record");
     expect(collection).toContain("Sibling notebooks");
@@ -127,7 +130,15 @@ describe("roast storefront recipe", () => {
     expect(cart).toContain('data-cd-slot="cartLineControls"');
     expect(cart).toContain('data-cd-slot="cartSummary"');
     expect(cart).toContain("Checkout stays protected");
+    expect(cart).toMatch(/data-cd-empty-state[\s\S]*data-cd-route="collection"/);
     expect(ROAST_RECIPE_CONFIG.surfaces.checkout.source.html).toContain("platform controlled");
+
+    const customerHtml = Object.values(ROAST_RECIPE_CONFIG.surfaces)
+      .map(({ source }) => source.html)
+      .join(" ");
+    expect(customerHtml).not.toMatch(/[—–]|>0[1-9](?:\s*\/|<)|Notebook 0[1-9]/i);
+    expect(home.match(/<h1[^>]*>[\s\S]*?<\/h1>/)?.[0].match(/<br>/g)?.length ?? 0).toBeLessThanOrEqual(1);
+    expect(ROAST_RECIPE_CONFIG.surfaces.home.source.css).toContain(".roast-hero h1{font-size:clamp(3.5rem,8vw,6rem)");
   });
 
   it("ships the recipe-owned static asset contract and visual prototype", () => {
@@ -148,5 +159,9 @@ describe("roast storefront recipe", () => {
     expect(prototype).toContain('class="roast-hero-image" data-cd-asset-key="hero"');
     expect(prototype).not.toContain("<video");
     expect(prototype).not.toMatch(/matched for you|recommended coffee|best coffee for|guaranteed match/i);
+    expect(prototype).toContain('data-cd-repeat="featured.collections"');
+    expect(prototype).toContain('data-cd-param-handle="collection.handle"');
+    expect(prototype).not.toMatch(/[—–]|>0[1-9](?:\s*\/|<)|Notebook 0[1-9]/i);
+    expect(prototype).toContain(".roast-hero h1{font-size:clamp(3.5rem,8vw,6rem)");
   });
 });
