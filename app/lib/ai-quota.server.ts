@@ -8,7 +8,7 @@
 // defense-in-depth; the Anthropic workspace spend limit is the hard backstop.
 import { rateLimit } from "./rate-limit.server";
 
-export type AiFeature = "designer" | "assistant" | "listing";
+export type AiFeature = "designer" | "assistant" | "listing" | "radar";
 
 type QuotaConfig = {
   cooldownMs: number;
@@ -24,6 +24,11 @@ const QUOTAS: Record<AiFeature, QuotaConfig> = {
   assistant: { cooldownMs: 4_000, daily: { base: 30, trusted: 300 } },
   // Listing drafts sit between the two in cost and frequency.
   listing: { cooldownMs: 3_000, daily: { base: 30, trusted: 200 } },
+  // Radar's overnight drafter: no human in the loop, calls run back-to-back
+  // inside one cron tick, so a cooldown would only false-block call 2 of 5.
+  // The 5/night spec cap IS the daily bucket; the drafter also hard-caps its
+  // own loop so quota-bypassed (dev) shops cannot overspend either.
+  radar: { cooldownMs: 0, daily: { base: 5, trusted: 5 } },
 };
 
 const DAY_MS = 86_400_000;
@@ -57,13 +62,15 @@ export async function checkAiQuota(opts: {
 }): Promise<QuotaVerdict> {
   if (isQuotaBypassed(opts.shopId)) return { allowed: true };
   const cfg = QUOTAS[opts.feature];
-  const cd = await rateLimit(`ai:cd:${opts.feature}:${opts.shopId}`, 1, cfg.cooldownMs);
-  if (!cd) {
-    return {
-      allowed: false,
-      code: "ai_cooldown",
-      message: `Going a little fast — try again in ${Math.ceil(cfg.cooldownMs / 1000)} seconds.`,
-    };
+  if (cfg.cooldownMs > 0) {
+    const cd = await rateLimit(`ai:cd:${opts.feature}:${opts.shopId}`, 1, cfg.cooldownMs);
+    if (!cd) {
+      return {
+        allowed: false,
+        code: "ai_cooldown",
+        message: `Going a little fast — try again in ${Math.ceil(cfg.cooldownMs / 1000)} seconds.`,
+      };
+    }
   }
   if (!cfg.daily) return { allowed: true };
   const cap = opts.trusted ? cfg.daily.trusted : cfg.daily.base;

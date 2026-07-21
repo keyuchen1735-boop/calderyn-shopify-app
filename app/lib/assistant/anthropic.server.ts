@@ -73,3 +73,10 @@ export function digestModel(): string {
 export function listingDraftModel(): string {
   return process.env.LISTING_DRAFT_MODEL || DEFAULT_DIGEST_MODEL;
 }
+
+/** Model for Radar's overnight move drafting and apply-time section copy:
+ *  short structured rewrites over deterministic templates, so the digest-class
+ *  model is the right default. Override with RADAR_DRAFT_MODEL. */
+export function radarDraftModel(): string {
+  return process.env.RADAR_DRAFT_MODEL || DEFAULT_DIGEST_MODEL;
+}
