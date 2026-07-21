@@ -19,7 +19,10 @@ export type RankingRow = {
 };
 
 export async function listGscSites(accessToken: string, fetcher: typeof fetch = fetch): Promise<string[]> {
-  const res = await fetcher(`${API}/sites`, { headers: { authorization: `Bearer ${accessToken}` } });
+  const res = await fetcher(`${API}/sites`, {
+    headers: { authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(10_000),
+  });
   const text = await res.text();
   if (!res.ok) throw new Error(`GSC sites ${res.status}: ${text}`);
   const parsed = JSON.parse(text) as { siteEntry?: Array<{ siteUrl: string }> };
@@ -54,6 +57,7 @@ export async function fetchSearchAnalytics(
     method: "POST",
     headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
     body: JSON.stringify({ startDate: day, endDate: day, dimensions: ["query", "page"], rowLimit: ROW_LIMIT }),
+    signal: AbortSignal.timeout(10_000),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`GSC searchAnalytics ${res.status}: ${text}`);
@@ -115,5 +119,10 @@ export async function pullShopRankings(
     const day = isoDay(new Date(today.getTime() - back * 86_400_000));
     rows += await upsertRankings(shopId, day, await fetchSearchAnalytics(accessToken, siteUrl, day, fetcher));
   }
+  const { error: stampError } = await getSupabase()
+    .from("seo_settings")
+    .update({ gsc_last_pulled_at: new Date().toISOString() })
+    .eq("shop_id", shopId);
+  if (stampError) console.error(`[search-console] gsc_last_pulled_at stamp failed for shop ${shopId}`, stampError);
   return { days: PULL_DAYS, rows };
 }

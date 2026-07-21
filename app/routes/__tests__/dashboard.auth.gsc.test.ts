@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
   listGscSites: vi.fn().mockResolvedValue(["https://peak.calderyncompany.com/"]),
   pickSiteForOrigin: vi.fn().mockReturnValue("https://peak.calderyncompany.com/"),
   getShopStorefrontOrigin: vi.fn().mockResolvedValue("https://peak.calderyncompany.com"),
-  updateEq: vi.fn().mockResolvedValue({ error: null }),
+  settingsUpsert: vi.fn().mockResolvedValue({ error: null }),
 }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: mocks.requireDashboardSession }));
 vi.mock("~/lib/seo/gsc.server", () => ({
@@ -30,7 +30,7 @@ vi.mock("~/lib/seo/search-console.server", () => ({
 }));
 vi.mock("~/lib/storefront/shop.server", () => ({ getShopStorefrontOrigin: mocks.getShopStorefrontOrigin }));
 vi.mock("~/lib/supabase.server", () => ({
-  getSupabase: () => ({ from: () => ({ upsert: mocks.updateEq }) }),
+  getSupabase: () => ({ from: () => ({ upsert: mocks.settingsUpsert }) }),
 }));
 
 describe("GET /dashboard/auth/gsc", () => {
@@ -68,6 +68,10 @@ describe("GET /dashboard/auth/gsc/callback", () => {
     } as never);
     expect(mocks.exchangeGscCode).toHaveBeenCalled();
     expect(mocks.saveGscCredential).toHaveBeenCalledWith("shop-1", "rt");
+    expect(mocks.settingsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ gsc_connected: true, gsc_site_url: "https://peak.calderyncompany.com/" }),
+      { onConflict: "shop_id" },
+    );
     const location = res.headers.get("location") ?? "";
     expect(location.startsWith("/dashboard/store/preferences?")).toBe(true);
     expect(location).toContain("google-connected");

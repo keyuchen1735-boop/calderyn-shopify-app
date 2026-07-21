@@ -565,7 +565,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
             <div className="cd-seo__row">
               <div className="cd-seo__info">
                 <div className="cd-seo__label">Not connected</div>
-                <div className="cd-seo__hint">See how your store ranks on Google and catch pages that slip.</div>
+                <div className="cd-seo__hint">Connect your Google account to start tracking results.</div>
               </div>
               <div className="cd-seo__control">
                 <Btn kind="primary" small onClick={() => { window.location.href = "/dashboard/auth/gsc"; }}>

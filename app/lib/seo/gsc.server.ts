@@ -52,6 +52,7 @@ async function tokenRequest(
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: body.toString(),
+    signal: AbortSignal.timeout(10_000),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`Google token endpoint ${res.status}: ${text}`);
@@ -112,7 +113,24 @@ export async function loadGscRefreshToken(shopId: string): Promise<string | null
   return data ? decrypt(data.refresh_token_encrypted) : null;
 }
 
-export async function disconnectGsc(shopId: string): Promise<void> {
+const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
+
+export async function disconnectGsc(shopId: string, fetcher: typeof fetch = fetch): Promise<void> {
+  const refreshToken = await loadGscRefreshToken(shopId);
+  if (refreshToken) {
+    // Best-effort: Google-side revoke reduces standing grant exposure, but a
+    // failure here must never block the local disconnect below.
+    try {
+      await fetcher(REVOKE_URL, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ token: refreshToken }).toString(),
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (err) {
+      console.error(`[gsc] revoke failed for shop ${shopId}`, err);
+    }
+  }
   const sb = getSupabase();
   const del = await sb.from("seo_google_credential").delete().eq("shop_id", shopId);
   if (del.error) throw new Error(`disconnectGsc: ${del.error.message}`);

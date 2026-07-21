@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { buildGscAuthUrl, exchangeGscCode, refreshGscAccessToken, saveGscCredential, loadGscRefreshToken } from "../gsc.server";
+import {
+  buildGscAuthUrl,
+  exchangeGscCode,
+  refreshGscAccessToken,
+  saveGscCredential,
+  loadGscRefreshToken,
+  disconnectGsc,
+} from "../gsc.server";
 
 const { fromMock } = vi.hoisted(() => ({ fromMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
@@ -67,5 +74,61 @@ describe("credential store", () => {
       { onConflict: "shop_id" },
     );
     await expect(loadGscRefreshToken("shop-1")).resolves.toBe("rt");
+  });
+});
+
+describe("disconnectGsc", () => {
+  function mockTables(opts: { hasToken: boolean }) {
+    const maybeSingle = vi.fn().mockResolvedValue({
+      data: opts.hasToken ? { refresh_token_encrypted: "enc:rt" } : null,
+      error: null,
+    });
+    const del = vi.fn().mockResolvedValue({ error: null });
+    const update = vi.fn().mockResolvedValue({ error: null });
+    fromMock.mockImplementation((table: string) => {
+      if (table === "seo_google_credential") {
+        return {
+          select: () => ({ eq: () => ({ maybeSingle }) }),
+          delete: () => ({ eq: del }),
+        };
+      }
+      if (table === "seo_settings") {
+        return { update: () => ({ eq: update }) };
+      }
+      throw new Error(`unexpected table ${table}`);
+    });
+    return { del, update };
+  }
+
+  it("revokes with Google using the stored token, then deletes and clears settings", async () => {
+    const { del, update } = mockTables({ hasToken: true });
+    const fetcher = vi.fn().mockResolvedValue(new Response("", { status: 200 }));
+    await disconnectGsc("shop-1", fetcher as typeof fetch);
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://oauth2.googleapis.com/revoke",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const [, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe("token=rt");
+    expect(del).toHaveBeenCalledWith("shop_id", "shop-1");
+    expect(update).toHaveBeenCalledWith("shop_id", "shop-1");
+  });
+
+  it("still deletes and clears settings when revoke fails", async () => {
+    const { del, update } = mockTables({ hasToken: true });
+    const fetcher = vi.fn().mockRejectedValue(new Error("network down"));
+    await expect(disconnectGsc("shop-1", fetcher as typeof fetch)).resolves.toBeUndefined();
+    expect(fetcher).toHaveBeenCalled();
+    expect(del).toHaveBeenCalledWith("shop_id", "shop-1");
+    expect(update).toHaveBeenCalledWith("shop_id", "shop-1");
+  });
+
+  it("skips revoke when no token is stored", async () => {
+    const { del, update } = mockTables({ hasToken: false });
+    const fetcher = vi.fn();
+    await disconnectGsc("shop-1", fetcher as typeof fetch);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(del).toHaveBeenCalledWith("shop_id", "shop-1");
+    expect(update).toHaveBeenCalledWith("shop_id", "shop-1");
   });
 });

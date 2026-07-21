@@ -6,11 +6,23 @@ const mocks = vi.hoisted(() => ({
   pullShopRankings: vi.fn(),
   rows: [{ shop_id: "s1" }, { shop_id: "s2" }],
   settingsResult: { data: null as any, error: null as any },
+  orderArgs: [] as unknown[],
 }));
 vi.mock("~/lib/seo/search-console.server", () => ({ pullShopRankings: mocks.pullShopRankings }));
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({
-    from: () => ({ select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: mocks.settingsResult.data, error: mocks.settingsResult.error }) }) }) }),
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          // Plain closure (not vi.fn) so vi.restoreAllMocks() in afterEach
+          // can't wipe the recorded args or the settingsResult passthrough.
+          order: (...args: unknown[]) => {
+            mocks.orderArgs = args;
+            return Promise.resolve({ data: mocks.settingsResult.data, error: mocks.settingsResult.error });
+          },
+        }),
+      }),
+    }),
   }),
 }));
 
@@ -43,6 +55,7 @@ describe("cron.seo-rankings", () => {
     const body = await res.json();
     expect(body).toMatchObject({ pulled: 1, failed: 1 });
     expect(mocks.pullShopRankings).toHaveBeenCalledTimes(2);
+    expect(mocks.orderArgs).toEqual(["gsc_last_pulled_at", { ascending: true, nullsFirst: true }]);
   });
 
   it("skips shops when time budget exceeded", async () => {
@@ -60,7 +73,7 @@ describe("cron.seo-rankings", () => {
     });
     const res = await loader(req("Bearer sekrit"));
     const body = await res.json();
-    expect(body.skipped).toBe(true);
+    expect(body).toMatchObject({ pulled: 0, failed: 0, skipped: true });
     expect(mocks.pullShopRankings).not.toHaveBeenCalled();
   });
 

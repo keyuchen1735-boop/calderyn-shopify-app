@@ -58,12 +58,13 @@ describe("upsertRankings", () => {
 });
 
 describe("pullShopRankings", () => {
-  it("pulls the three lagged days idempotently", async () => {
+  it("pulls the three lagged days idempotently and stamps the cursor", async () => {
     const upsert = vi.fn().mockResolvedValue({ error: null });
     const maybeSingle = vi.fn().mockResolvedValue({ data: { gsc_site_url: "sc-domain:x.com" }, error: null });
+    const stampUpdate = vi.fn().mockResolvedValue({ error: null });
     fromMock.mockImplementation((table: string) =>
       table === "seo_settings"
-        ? { select: () => ({ eq: () => ({ maybeSingle }) }) }
+        ? { select: () => ({ eq: () => ({ maybeSingle }) }), update: () => ({ eq: stampUpdate }) }
         : { upsert });
     const fetcher = vi.fn().mockImplementation(() =>
       Promise.resolve(new Response(JSON.stringify({ rows: [] }), { status: 200 })),
@@ -71,6 +72,7 @@ describe("pullShopRankings", () => {
     const out = await pullShopRankings("shop-1", { fetcher: fetcher as typeof fetch, today: new Date("2026-07-20T12:00:00Z") });
     expect(out.days).toBe(3);
     expect(fetcher).toHaveBeenCalledTimes(3); // 2026-07-18, 17, 16
+    expect(stampUpdate).toHaveBeenCalledWith("shop_id", "shop-1");
   });
 
   it("rejects when gsc_refresh_token is not connected", async () => {
