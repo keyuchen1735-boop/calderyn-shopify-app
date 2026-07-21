@@ -30,7 +30,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       break;
     }
     try {
-      await collectShop(row.shop_id);
+      await collectShop(row.shop_id, started + TIME_BUDGET_MS);
       collected++;
     } catch (err) {
       failed++;

@@ -4,6 +4,7 @@
 // subsystem's tables; nothing is duplicated here.
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
+import { isShowcaseShop } from "~/lib/demo/showcase.server";
 import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
@@ -13,6 +14,7 @@ import { validateDraft } from "~/lib/seo/validator.server";
 import { readStorefrontReleaseState, type StorefrontReleaseState } from "~/lib/storefront-bundle/build.server";
 import { parseStorefrontPath } from "./detect.server";
 import { listRecentDiffs } from "./competitor-store.server";
+import { snapshotWatchingCompetitors } from "./snapshot.server";
 import type { AiCrawlDay, JsonLdCheckedPage, RadarCollectInputs, RankingSeries, TrafficDay, TrafficPath } from "./types";
 
 export const ROLLUP_DAYS = 10;
@@ -26,7 +28,7 @@ function isoDaysAgo(days: number): string {
   return new Date(Date.now() - days * DAY_MS).toISOString().slice(0, 10);
 }
 
-export async function collectShop(shopId: string): Promise<void> {
+export async function collectShop(shopId: string, deadline: number = Date.now() + 30_000): Promise<void> {
   if (!isUuid(shopId)) return; // demo/fixture tenants have no rows
   const sb = getSupabase();
   const { error } = await sb.rpc("radar_rollup_traffic", { p_shop: shopId, p_days: ROLLUP_DAYS });
@@ -36,6 +38,15 @@ export async function collectShop(shopId: string): Promise<void> {
     { onConflict: "shop_id" },
   );
   if (stamp.error) throw new Error(`radar_state stamp: ${stamp.error.message}`);
+  // Competitor snapshots ride the same nightly step. External fetches NEVER
+  // run for demo shops; failures are logged with payloads (surfaced in cron
+  // logs) but must not fail the shop's collect - the rollup above succeeded.
+  if (await isShowcaseShop(shopId)) return;
+  try {
+    await snapshotWatchingCompetitors(shopId, { deadline });
+  } catch (err) {
+    console.error(`[radar] competitor snapshots failed for shop ${shopId}`, err);
+  }
 }
 
 function mapTraffic(rows: Array<Record<string, unknown>>): TrafficDay[] {

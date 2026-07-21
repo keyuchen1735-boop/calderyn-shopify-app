@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   getSeoSettingsMock: vi.fn(),
   releaseStateMock: vi.fn(),
   listRecentDiffsMock: vi.fn(),
+  isShowcaseShopMock: vi.fn(),
+  snapshotWatchingCompetitorsMock: vi.fn(),
 }));
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({ rpc: mocks.rpcMock, from: mocks.fromMock }),
@@ -21,6 +23,8 @@ vi.mock("~/lib/storefront/shop.server", () => ({ getShopStorefrontOrigin: mocks.
 vi.mock("~/lib/seo/seo-store.server", () => ({ getSeoSettings: mocks.getSeoSettingsMock }));
 vi.mock("~/lib/storefront-bundle/build.server", () => ({ readStorefrontReleaseState: mocks.releaseStateMock }));
 vi.mock("../competitor-store.server", () => ({ listRecentDiffs: mocks.listRecentDiffsMock }));
+vi.mock("~/lib/demo/showcase.server", () => ({ isShowcaseShop: mocks.isShowcaseShopMock }));
+vi.mock("../snapshot.server", () => ({ snapshotWatchingCompetitors: mocks.snapshotWatchingCompetitorsMock }));
 
 // eslint-disable-next-line import/first -- import must follow vi.mock so the mocks register first
 import { collectShop, loadRadarInputs, JSONLD_CHECK_MAX_PAGES } from "../collect.server";
@@ -48,6 +52,8 @@ beforeEach(() => {
   mocks.getSeoSettingsMock.mockResolvedValue({ allowAiCrawlers: true, orgDescription: "We sell boots." });
   mocks.releaseStateMock.mockResolvedValue({ draftVersionId: null, publishedVersionId: null, draftRuntimeVersion: null, publishedRuntimeVersion: null });
   mocks.listRecentDiffsMock.mockResolvedValue([]);
+  mocks.isShowcaseShopMock.mockResolvedValue(false);
+  mocks.snapshotWatchingCompetitorsMock.mockResolvedValue({ pagesFetched: 0, pagesStored: 0, failed: 0 });
 });
 
 afterEach(() => {
@@ -71,6 +77,27 @@ describe("collectShop", () => {
     expect(mocks.rpcMock).not.toHaveBeenCalled();
     mocks.rpcMock.mockResolvedValueOnce({ data: null, error: { message: "boom" } });
     await expect(collectShop(SHOP)).rejects.toThrow(/boom/);
+  });
+  it("calls snapshotWatchingCompetitors with the passed deadline for a real shop", async () => {
+    const state = tableStub({ data: null, error: null });
+    mocks.fromMock.mockReturnValue(state);
+    const deadline = Date.now() + 50_000;
+    await collectShop(SHOP, deadline);
+    expect(mocks.snapshotWatchingCompetitorsMock).toHaveBeenCalledWith(SHOP, { deadline });
+  });
+  it("does not call snapshotWatchingCompetitors when isShowcaseShop resolves true", async () => {
+    const state = tableStub({ data: null, error: null });
+    mocks.fromMock.mockReturnValue(state);
+    mocks.isShowcaseShopMock.mockResolvedValueOnce(true);
+    await collectShop(SHOP);
+    expect(mocks.snapshotWatchingCompetitorsMock).not.toHaveBeenCalled();
+  });
+  it("does not throw when snapshotWatchingCompetitors rejects", async () => {
+    const state = tableStub({ data: null, error: null });
+    mocks.fromMock.mockReturnValue(state);
+    mocks.snapshotWatchingCompetitorsMock.mockRejectedValueOnce(new Error("snapshot failed"));
+    await expect(collectShop(SHOP)).resolves.toBeUndefined();
+    expect(mocks.snapshotWatchingCompetitorsMock).toHaveBeenCalled();
   });
 });
 
