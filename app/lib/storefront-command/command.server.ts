@@ -765,10 +765,15 @@ export async function runStoreCommand(
         });
       }
       await emit(input, { stage: "checking_preview" });
+      const proofCtx = proofContext(contextAssembly, requiredProductIds);
       const browserProof = await dependencies.prove({
         bundle: compiled.bundle,
-        context: proofContext(contextAssembly, requiredProductIds),
+        context: proofCtx,
         persistedAssets: [],
+        // Mirror the recipe/fresh path: with no products the `product` route is
+        // unreachable, so proving it would fail a legitimate edit on a
+        // zero-catalog custom store.
+        ...(proofCtx.products.length === 0 ? { routes: PRODUCTLESS_PROOF_ROUTES } : {}),
         ...(input.signal ? { signal: input.signal } : {}),
       });
       if (!browserProof.ok) {
