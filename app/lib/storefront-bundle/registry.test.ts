@@ -77,7 +77,7 @@ describe("versioned storefront recipe registry", () => {
       ember: 3,
       roast: 3,
       fizz: 3,
-      forge: 3,
+      forge: 4,
       haven: 3,
       glow: 3,
     } as const;

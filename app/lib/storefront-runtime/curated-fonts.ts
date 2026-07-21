@@ -99,6 +99,14 @@ export function storefrontDesignSystemCss(designSystem: StorefrontBundleV1["desi
     ':where([data-cd-bundle-runtime]) :where(section:not([class])):has(>:where(div:not([class]))>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"])){display:grid;grid-template-columns:repeat(auto-fill,minmax(16rem,1fr));gap:1rem;align-items:start;padding:1rem}',
     ':where([data-cd-bundle-runtime]) :where(section:not([class]))>:where(div:not([class])):has(>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"])){min-width:0}',
     ':where([data-cd-bundle-runtime]) :where(section:not([class]))>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"]:only-child){max-width:26rem;margin:0.35rem 1rem}',
+    ...(templateId === "forge" && templateVersion !== undefined && templateVersion >= 4 ? [
+      ':where([data-cd-bundle-route="product"])>section:not([class]):has(>[data-cd-trusted-slot="variantPicker"]){position:sticky;bottom:0;z-index:72;display:grid;grid-template-columns:minmax(10rem,16rem) minmax(14rem,28rem);justify-content:end;gap:.75rem;padding:1rem clamp(1rem,3vw,3rem);border-block:1px solid var(--steel);background:var(--parchment);box-shadow:0 -12px 30px rgb(32 36 38/.14)}',
+      ':where([data-cd-bundle-route="product"])>section:not([class])>[data-cd-trusted-slot="variantPicker"] select{width:100%;min-height:3.25rem;padding:.75rem;border:1px solid var(--steel);background:var(--parchment);color:var(--steel)}',
+      ':where([data-cd-bundle-route="product"])>section:not([class])>[data-cd-trusted-slot="addToCart"]{display:grid;min-height:3.25rem;background:#a63a1e;color:#eceae3}',
+      ':where([data-cd-bundle-route="product"])>section:not([class])>[data-cd-trusted-slot="addToCart"] form{display:grid;height:100%}',
+      ':where([data-cd-bundle-route="product"])>section:not([class])>[data-cd-trusted-slot="addToCart"] :where(button,input[type="submit"]){width:100%!important;min-height:3.25rem!important;padding:.75rem 1.25rem!important;border:1px solid #a63a1e!important;background:#a63a1e!important;color:#eceae3!important;font-weight:700!important;text-transform:uppercase;cursor:pointer}',
+      '@media(max-width:600px){:where([data-cd-bundle-route="product"])>section:not([class]):has(>[data-cd-trusted-slot="variantPicker"]){grid-template-columns:1fr 1.35fr;padding:.75rem}}',
+    ] : []),
     ...(templateId === "soft-chemistry" && templateVersion !== undefined && templateVersion < 6 ? [
       ':where([data-cd-bundle-route="product"])>main:has(>section:not([class])>[data-cd-trusted-slot="variantPicker"]){position:relative}',
       ':where([data-cd-bundle-route="product"])>main>section:not([class]):has(>[data-cd-trusted-slot="variantPicker"]){position:absolute;right:max(47px,calc((100% - 1090px)/2 + 47px));bottom:34px;display:grid;grid-template-columns:auto 1fr;gap:.5rem;width:min(450px,calc(48% - 68px));font-size:10px;text-transform:uppercase}',

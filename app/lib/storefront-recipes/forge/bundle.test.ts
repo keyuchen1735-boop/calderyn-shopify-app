@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
 import { hydrateStorefront } from "~/lib/storefront-runtime/hydrate";
+import { storefrontDesignSystemCss } from "~/lib/storefront-runtime/curated-fonts";
 import { createRuntimeAdapters } from "~/lib/storefront-runtime/storefront-hydrator";
 
 const repeats = (nodes: readonly CompiledNode[]): string[] => nodes.flatMap((node) =>
@@ -27,11 +28,11 @@ describe("Forge storefront recipe", () => {
       templateVersion: FORGE_RECIPE_CONFIG.templateVersion,
       concept: FORGE_RECIPE_CONFIG.concept,
     });
-    expect(bundle.source).toEqual({ kind: "recipe", templateId: "forge", templateVersion: 3 });
+    expect(bundle.source).toEqual({ kind: "recipe", templateId: "forge", templateVersion: 4 });
     expect(config.archetype).toMatchObject({
       composition: "jobsite-blueprint",
       hero: "exploded-tool-hero",
-      scroll: "tool-conveyor",
+      scroll: "blueprint-flow",
       cards: "tool-diagrams",
     });
     expect(Object.keys(bundle.routes)).toEqual([
@@ -86,6 +87,14 @@ describe("Forge storefront recipe", () => {
     expect(bundle.routes.product.trustedSlots.map((slot) => slot.kind)).toEqual(
       expect.arrayContaining(["variantPicker", "addToCart"]),
     );
+    const productSource = config.surfaces.product.source.html;
+    const addToCartIndex = productSource.indexOf('data-cd-slot="addToCart"');
+    expect(addToCartIndex).toBeGreaterThan(productSource.indexOf('data-cd-text="product.title"'));
+    expect(addToCartIndex).toBeLessThan(productSource.indexOf("Declared facts"));
+    expect(addToCartIndex).toBeLessThan(productSource.indexOf("Related project records"));
+    expect(bundle.designSystem.globalCss).not.toContain("forge-conveyor");
+    expect(productSource).toContain('<section><div data-cd-slot="variantPicker"');
+    expect(storefrontDesignSystemCss(bundle.designSystem, "forge", 4)).toContain('data-cd-trusted-slot="addToCart"]{display:grid');
 
     const routeMarkup = Object.values(bundle.routes)
       .map((route) => "html" in route ? route.html : route.decorativeHtml)

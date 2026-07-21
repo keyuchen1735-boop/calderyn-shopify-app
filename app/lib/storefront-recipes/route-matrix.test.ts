@@ -17,7 +17,7 @@ const LIGHT_RECIPE_CONTRACTS = {
   ember: { font: "archivo-black", colors: ["#f4e4d2", "#29120d", "#b63218"], scroll: "heat-shear" },
   roast: { font: "fraunces", colors: ["#f2e7d3", "#382116", "#b53b28"], scroll: "origin-stack" },
   fizz: { font: "syne", colors: ["#fff4ae", "#173176", "#f24877"], scroll: "flavor-buoyancy" },
-  forge: { font: "barlow-condensed", colors: ["#eceae3", "#202426", "#a63a1e"], scroll: "tool-conveyor" },
+  forge: { font: "barlow-condensed", colors: ["#eceae3", "#202426", "#a63a1e"], scroll: "blueprint-flow" },
   haven: { font: "newsreader", colors: ["#eef1e7", "#254437", "#c88163"], scroll: "room-wipe" },
   glow: { font: "source-serif-4", colors: ["#fbf7ef", "#23483c", "#9dcdb3"], scroll: "formula-morph" },
 } as const;
