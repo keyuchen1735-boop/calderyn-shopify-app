@@ -25,7 +25,12 @@ import {
 import type { PublicRouteContext } from "~/lib/storefront-runtime/public-data.server";
 import { StorefrontHydrator } from "~/lib/storefront-runtime/storefront-hydrator";
 import { getStorefrontRecipe } from "~/lib/storefront-recipes";
+import {
+  isStorefrontRecipeReviewEnabled,
+  isStorefrontRecipeReviewTemplateId,
+} from "~/lib/storefront-recipes/review.server";
 import { isStoreTemplateId, STORE_TEMPLATE_REGISTRY } from "~/lib/storefront-bundle/registry";
+import { DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: storefrontCss }];
 export const headers: HeadersFunction = ({ loaderHeaders }) => loaderHeaders;
@@ -50,8 +55,8 @@ async function previewRouteContext(request: Request, shopId: string): Promise<Pu
   return { kind: "home" };
 }
 
-function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteData): Runtime1RouteData {
-  const configuredOrigin = process.env.SHOPIFY_APP_URL || new URL(request.url).origin;
+function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteData, reviewOrigin?: string): Runtime1RouteData {
+  const configuredOrigin = reviewOrigin || process.env.SHOPIFY_APP_URL || new URL(request.url).origin;
   let assetOrigin: string;
   try {
     assetOrigin = new URL(configuredOrigin).origin;
@@ -62,7 +67,7 @@ function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteDat
   if (runtime1.bundle.source.kind === "recipe") {
     const extension = { "image/webp": "webp", "video/webm": "webm", "video/mp4": "mp4" } as const;
     for (const asset of runtime1.bundle.assets.entries) {
-      if (!urls[asset.key] && asset.mediaType in extension) {
+      if (asset.mediaType in extension && (reviewOrigin || !urls[asset.key])) {
         urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.contentHash}.${extension[asset.mediaType as keyof typeof extension]}`;
       }
     }
@@ -76,10 +81,13 @@ function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteDat
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const session = await requireDashboardSession(request);
-  const shopId = session.shopId;
+  const requestedTemplateId = new URL(request.url).searchParams.get("template");
+  const reviewTemplateId = isStorefrontRecipeReviewEnabled() && isStorefrontRecipeReviewTemplateId(requestedTemplateId)
+    ? requestedTemplateId
+    : null;
+  const shopId = reviewTemplateId ? DEMO_SHOP_ID : (await requireDashboardSession(request)).shopId;
   if (isStorefrontBundleReadEnabled()) {
-    const templateId = new URL(request.url).searchParams.get("template");
+    const templateId = reviewTemplateId ?? requestedTemplateId;
     const registered = isStoreTemplateId(templateId) && STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === templateId)
       ? templateId
       : null;
@@ -108,7 +116,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");
         const headers = storefrontCacheHeaders({ routeId: "preview", personalized: true });
-        return json({ ...withPreviewRecipeAssetUrls(request, runtime1), nonce }, { headers });
+        return json({ ...withPreviewRecipeAssetUrls(request, runtime1, reviewTemplateId ? new URL(request.url).origin : undefined), nonce }, { headers });
       }
     }
     const version = await readPreviewBundleVersion(shopId);
@@ -133,9 +141,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
 export async function action({ request }: ActionFunctionArgs) {
   requireSameOrigin(request);
-  const session = await requireDashboardSession(request);
-  const shopId = session.shopId;
   const selectedTemplateId = new URL(request.url).searchParams.get("template");
+  const reviewTemplateId = isStorefrontRecipeReviewEnabled() && isStorefrontRecipeReviewTemplateId(selectedTemplateId)
+    ? selectedTemplateId
+    : null;
+  const shopId = reviewTemplateId ? DEMO_SHOP_ID : (await requireDashboardSession(request)).shopId;
   const hasEphemeralRecipe = isStoreTemplateId(selectedTemplateId) &&
     STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === selectedTemplateId);
   if (!isStorefrontBundleReadEnabled() || (!hasEphemeralRecipe && !(await readPreviewBundleVersion(shopId)))) {

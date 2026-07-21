@@ -118,6 +118,55 @@ describe("dashboard.store.preview loader", () => {
     }
   });
 
+  it("renders an allowlisted recipe with demo data on a Vercel preview without a dashboard session", async () => {
+    const previousBundleRead = process.env.STOREFRONT_BUNDLE_READ;
+    const previousVercelEnv = process.env.VERCEL_ENV;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    process.env.VERCEL_ENV = "preview";
+    sessionMock.mockRejectedValue(new Error("dashboard session should not be required"));
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    bundle.assets.entries = [{ key: "hero", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 }];
+    getRecipeMock.mockReturnValue({ bundle: { ...bundle, source: { kind: "recipe", templateId: "volt", templateVersion: 1 } } });
+    try {
+      const result = await loaderData("https://preview.example.com/dashboard/store/preview?template=volt&route=home");
+      expect(result).toMatchObject({ runtime: 1, bundleId: "preview:volt", routeId: "home" });
+      expect(sessionMock).not.toHaveBeenCalled();
+      expect(readPreviewCommerceSessionMock).toHaveBeenCalledWith(expect.any(Request), "demo-shop");
+      expect(getPreviewCatalogMock).toHaveBeenCalled();
+      expect(result.data.storefrontAssetUrls.hero).toBe(
+        `https://preview.example.com/storefront-recipes/volt/${"a".repeat(64)}.webp`,
+      );
+    } finally {
+      if (previousBundleRead === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previousBundleRead;
+      if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
+      else process.env.VERCEL_ENV = previousVercelEnv;
+    }
+  });
+
+  it("keeps allowlisted preview commerce interactive without a dashboard session", async () => {
+    const previousBundleRead = process.env.STOREFRONT_BUNDLE_READ;
+    const previousVercelEnv = process.env.VERCEL_ENV;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    process.env.VERCEL_ENV = "preview";
+    sessionMock.mockRejectedValue(new Error("dashboard session should not be required"));
+    try {
+      const form = new FormData();
+      form.set("intent", "checkout");
+      const response = await action({
+        request: new Request("https://preview.example.com/dashboard/store/preview?template=volt", { method: "POST", body: form }),
+      } as ActionFunctionArgs);
+      expect(response.status).toBe(200);
+      expect(sessionMock).not.toHaveBeenCalled();
+      expect(await response.json()).toEqual({ kind: "simulated", status: "ready" });
+    } finally {
+      if (previousBundleRead === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previousBundleRead;
+      if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
+      else process.env.VERCEL_ENV = previousVercelEnv;
+    }
+  });
+
   it("renders selected Larder videos from immutable same-origin public paths", async () => {
     const previous = process.env.STOREFRONT_BUNDLE_READ;
     process.env.STOREFRONT_BUNDLE_READ = "1";

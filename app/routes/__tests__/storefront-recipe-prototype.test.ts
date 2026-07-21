@@ -12,20 +12,12 @@ async function load(template: string) {
 
 describe("storefront recipe prototype resource", () => {
   it.each([
-    ["volt", "Volt storefront"],
-    ["atelier", "Atelier Fit Laboratory storefront"],
-    ["gilt", "Gilt storefront"],
-    ["ember", "Ember storefront"],
-    ["roast", "Roast storefront"],
-    ["fizz", "Fizz storefront"],
-    ["forge", "Forge storefront"],
-    ["haven", "Haven storefront"],
-    ["glow", "Glow storefront"],
-  ])("serves the existing %s prototype as HTML", async (template, title) => {
+    "volt", "atelier", "gilt", "ember", "roast", "fizz", "forge", "haven", "glow",
+  ])("opens the hydrated %s storefront review", async (template) => {
     const response = await load(template);
 
-    expect(response.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
-    expect(await response.text()).toContain(`<title>${title}</title>`);
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe(`/dashboard/store/preview?template=${template}`);
   });
 
   it.each(["unknown", "toString"])("returns 404 for %s outside the review allowlist", async (template) => {
