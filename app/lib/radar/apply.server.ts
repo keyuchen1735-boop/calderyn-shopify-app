@@ -14,6 +14,10 @@ import { applySectionRefresh, revertSectionRefresh } from "./apply-section.serve
 import { getMove, updateMove } from "./store.server";
 import type { RadarMoveRow } from "./types";
 
+// Re-exported so callers (the dashboard API route) can import the error type
+// from this orchestrator module without also reaching into apply-seo.server.
+export { RadarApplyError };
+
 async function loadOpenMove(shopId: string, moveId: string, wantStatus: "draft" | "applied"): Promise<RadarMoveRow> {
   const move = await getMove(shopId, moveId);
   if (!move) throw new RadarApplyError("move_not_found", "That move no longer exists.", 404);
