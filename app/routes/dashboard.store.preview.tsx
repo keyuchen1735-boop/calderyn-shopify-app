@@ -132,7 +132,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       if (runtime1) {
         const nonce = randomBytes(18).toString("base64url");
         const headers = storefrontCacheHeaders({ routeId: "preview", personalized: true });
-        const reviewInfo = reviewTemplateId ? requestUrl.searchParams.get("info") : null;
+        const reviewInfo = requestUrl.searchParams.get("info");
         const reviewPolicy = reviewInfo === "policy" ? requestUrl.searchParams.get("policy") : null;
         return json({ ...withPreviewRecipeAssetUrls(request, runtime1, reviewTemplateId ? requestUrl.origin : undefined), nonce, reviewInfo, reviewPolicy }, { headers });
       }

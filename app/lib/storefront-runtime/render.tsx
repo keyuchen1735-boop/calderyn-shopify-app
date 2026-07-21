@@ -49,6 +49,7 @@ interface RenderContext {
   instanceSuffix?: string;
   mode: "public" | "preview";
   previewTemplateId?: StoreTemplateId;
+  routeId?: CompiledStorefrontRouteId;
   assetUrls: ReadonlyMap<string, string>;
   productPlaceholderUrl?: string;
   visualLayer?: StorefrontVisualPlacement;
@@ -233,11 +234,13 @@ function repeatValues(node: CompiledElementNode, data: PublicPresentationData): 
   }
 }
 
-function routeRepeatIsEmpty(data: PublicPresentationData): boolean {
+function routeRepeatIsEmpty(data: PublicPresentationData, routeId?: CompiledStorefrontRouteId): boolean {
   if (data.collection) return data.collection.products.length === 0;
   if (data.search) return data.search.results.length === 0;
   if (data.cart) return data.cart.lines.length === 0;
-  return data.featuredProducts.length === 0 && data.featuredCollections.length === 0;
+  if (routeId === "collections") return data.featuredCollections.length === 0;
+  if (data.product) return data.relatedProducts.length === 0;
+  return data.featuredProducts.length === 0;
 }
 
 function itemKey(value: ScopeValue, index: number): string {
@@ -327,7 +330,7 @@ function targetHref(target: RouteTarget, context: RenderContext): string {
 function renderOne(node: CompiledNode, context: RenderContext, key: string): ReactNode {
   if (node.kind === "text") return node.value;
   if (!isAllowedCompiledTag(node.tag)) throw new Error(`Unsupported compiled tag ${node.tag}`);
-  if (node.attributes["data-cd-empty-state"] !== undefined && !routeRepeatIsEmpty(context.data)) return null;
+  if (node.attributes["data-cd-empty-state"] !== undefined && !routeRepeatIsEmpty(context.data, context.routeId)) return null;
 
   if (node.trustedSlotId) {
     const slot = context.slots.get(node.trustedSlotId);
@@ -447,6 +450,7 @@ function contextFor(
   previewTemplateId?: StoreTemplateId,
   visualLayer?: StorefrontVisualPlacement,
   productPlaceholderUrl?: string,
+  routeId?: CompiledStorefrontRouteId,
 ): RenderContext {
   const bindings = new Map<string, CompiledBinding[]>();
   for (const binding of treeBindings) {
@@ -463,6 +467,7 @@ function contextFor(
     instancePath: [],
     mode,
     previewTemplateId,
+    routeId,
     assetUrls,
     productPlaceholderUrl,
     visualLayer,
@@ -479,8 +484,9 @@ function renderTree(
   previewTemplateId?: StoreTemplateId,
   visualLayer?: StorefrontVisualPlacement,
   productPlaceholderUrl?: string,
+  routeId?: CompiledStorefrontRouteId,
 ): ReactNode[] {
-  const context = contextFor(bindings, trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer, productPlaceholderUrl);
+  const context = contextFor(bindings, trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer, productPlaceholderUrl, routeId);
   return tree.map((node, index) => renderNode(node, context, `node-${index}`));
 }
 
@@ -606,7 +612,7 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
     routeResult = (
       <div data-cd-bundle={routeId} data-cd-bundle-route={routeId}>
         {route.css ? <StorefrontStyle nonce={nonce} css={route.css} kind={routeId} /> : null}
-        {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined, productPlaceholderUrl)}
+        {renderTree(route.tree, route.bindings, route.trustedSlots, data, mode, assetUrls, previewTemplateId, visualLayer ?? undefined, productPlaceholderUrl, routeId)}
       </div>
     );
   }
