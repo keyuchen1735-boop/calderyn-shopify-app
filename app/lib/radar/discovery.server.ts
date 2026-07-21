@@ -41,11 +41,16 @@ interface RawSuggestion {
 }
 
 function parseSuggestions(text: string): RawSuggestion[] {
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
+  // Strip Markdown code fences first if present
+  const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  const toparse = fenceMatch ? fenceMatch[1] : text;
+
+  // Use lastIndexOf to find the last [ to avoid markdown link brackets [text](url)
+  const start = toparse.lastIndexOf("[");
+  const end = toparse.lastIndexOf("]");
   if (start < 0 || end <= start) return [];
   try {
-    const parsed = JSON.parse(text.slice(start, end + 1)) as unknown;
+    const parsed = JSON.parse(toparse.slice(start, end + 1)) as unknown;
     return Array.isArray(parsed) ? (parsed as RawSuggestion[]) : [];
   } catch {
     return [];
@@ -60,7 +65,7 @@ function normalizeOrigin(raw: unknown, ownHost: string | null): { url: string; h
   } catch {
     return null;
   }
-  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  if (u.protocol !== "https:") return null;
   const host = u.host.toLowerCase();
   if (ownHost && host === ownHost) return null;
   if (BLOCKED_HOST_FRAGMENTS.some((frag) => host.includes(frag))) return null;
@@ -68,10 +73,9 @@ function normalizeOrigin(raw: unknown, ownHost: string | null): { url: string; h
 }
 
 /** Echo a model turn's response content back in as the next request's assistant
- *  turn (the documented pattern for resuming a paused server-tool loop). The
- *  response-side block types (Anthropic.ContentBlock) carry a few fields the
- *  request-side param types don't (e.g. ServerToolUseBlock.caller) - the API
- *  ignores anything extra, so this is a deliberate, narrow `unknown` bridge
+ *  turn (the documented pattern for resuming a paused server-tool loop).
+ *  ContentBlock and ContentBlockParam are distinct union types; the API ignores
+ *  extra response-side fields, so this is a deliberate, narrow `unknown` bridge
  *  rather than a widened `any`. */
 function toAssistantTurn(content: Anthropic.ContentBlock[]): Anthropic.ContentBlockParam[] {
   return content as unknown as Anthropic.ContentBlockParam[];
@@ -110,12 +114,13 @@ export async function discoverShopCompetitors(
     { role: "user", content: `Find competitors for this store:\n${JSON.stringify(seeds)}` },
   ];
 
-  // Each request (initial + pause_turn resume) is a fresh quota hit - the
-  // check records it, so it sits immediately before the spend.
+  // Check quota once upfront before the loop; pause_turn continuations proceed
+  // without further quota checks (the loop is bounded by MAX_PAUSE_RESUMES).
+  const verdict = await checkAiQuota({ shopId, feature: "radar_discovery", trusted: true });
+  if (!verdict.allowed) return { skipped: verdict.code };
+
   let res: Anthropic.Message | null = null;
   for (let attempt = 0; attempt <= MAX_PAUSE_RESUMES; attempt++) {
-    const verdict = await checkAiQuota({ shopId, feature: "radar_discovery", trusted: true });
-    if (!verdict.allowed) return res ? { suggested: 0 } : { skipped: verdict.code };
     res = await getAnthropic().messages.create({
       model: radarDiscoveryModel(),
       max_tokens: 1500,

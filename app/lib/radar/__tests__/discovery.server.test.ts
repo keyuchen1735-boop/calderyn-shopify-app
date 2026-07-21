@@ -102,7 +102,7 @@ describe("discoverShopCompetitors", () => {
     expect(await discoverShopCompetitors(SHOP)).toEqual({ skipped: "suggestion_backlog" });
     expect(mocks.messagesCreate).not.toHaveBeenCalled();
   });
-  it("resumes pause_turn (fresh quota check per request) and survives junk JSON", async () => {
+  it("resumes pause_turn with single upfront quota check and survives junk JSON", async () => {
     mocks.messagesCreate
       .mockResolvedValueOnce({ stop_reason: "pause_turn", content: [{ type: "server_tool_use", id: "s1", name: "web_search", input: {} }] })
       .mockResolvedValueOnce(textResponse(JSON.stringify([
@@ -111,11 +111,51 @@ describe("discoverShopCompetitors", () => {
     const out = await discoverShopCompetitors(SHOP);
     expect(out).toEqual({ suggested: 1 });
     expect(mocks.messagesCreate).toHaveBeenCalledTimes(2);
-    expect(mocks.checkAiQuota).toHaveBeenCalledTimes(2);
+    expect(mocks.checkAiQuota).toHaveBeenCalledTimes(1);
 
     mocks.messagesCreate.mockReset();
     mocks.messagesCreate.mockResolvedValue(textResponse("sorry, no JSON here"));
     expect(await discoverShopCompetitors(SHOP)).toEqual({ suggested: 0 });
     expect(mocks.insertSuggestion).toHaveBeenCalledTimes(1); // only the earlier run
+  });
+  it("rejects http:// suggestions, accepts https:// only", async () => {
+    mocks.messagesCreate.mockResolvedValue(textResponse(JSON.stringify([
+      { url: "http://insecure.example/", name: "Insecure", reason: "http not allowed" },
+      { url: "https://secure.example/", name: "Secure", reason: "https allowed" },
+    ])));
+    const out = await discoverShopCompetitors(SHOP);
+    expect(out).toEqual({ suggested: 1 });
+    expect(mocks.insertSuggestion).toHaveBeenCalledTimes(1);
+    expect(mocks.insertSuggestion).toHaveBeenCalledWith(SHOP, expect.objectContaining({
+      url: "https://secure.example/",
+      name: "Secure",
+    }));
+  });
+  it("extracts JSON from Markdown code fences", async () => {
+    mocks.messagesCreate.mockResolvedValue(textResponse(
+      `Here are some suggestions:\n\`\`\`json\n${JSON.stringify([
+        { url: "https://fenced.example/", name: "Fenced", reason: "inside markdown" },
+      ])}\n\`\`\``
+    ));
+    const out = await discoverShopCompetitors(SHOP);
+    expect(out).toEqual({ suggested: 1 });
+    expect(mocks.insertSuggestion).toHaveBeenCalledWith(SHOP, expect.objectContaining({
+      url: "https://fenced.example/",
+      name: "Fenced",
+    }));
+  });
+  it("parses JSON after prose with markdown links", async () => {
+    const jsonArray = JSON.stringify([
+      { url: "https://afterlink.example/", name: "AfterLink", reason: "after prose" },
+    ]);
+    mocks.messagesCreate.mockResolvedValue(textResponse(
+      `Check out [this store](https://example.com) and here are similar ones:\n${jsonArray}`
+    ));
+    const out = await discoverShopCompetitors(SHOP);
+    expect(out).toEqual({ suggested: 1 });
+    expect(mocks.insertSuggestion).toHaveBeenCalledWith(SHOP, expect.objectContaining({
+      url: "https://afterlink.example/",
+      name: "AfterLink",
+    }));
   });
 });
