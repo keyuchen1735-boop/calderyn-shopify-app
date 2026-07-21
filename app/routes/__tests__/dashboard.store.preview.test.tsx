@@ -121,7 +121,7 @@ describe("dashboard.store.preview loader", () => {
   it("renders an allowlisted recipe with demo data on a Vercel preview without a dashboard session", async () => {
     const previousBundleRead = process.env.STOREFRONT_BUNDLE_READ;
     const previousVercelEnv = process.env.VERCEL_ENV;
-    process.env.STOREFRONT_BUNDLE_READ = "1";
+    delete process.env.STOREFRONT_BUNDLE_READ;
     process.env.VERCEL_ENV = "preview";
     sessionMock.mockRejectedValue(new Error("dashboard session should not be required"));
     const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
@@ -147,7 +147,7 @@ describe("dashboard.store.preview loader", () => {
   it("keeps allowlisted preview commerce interactive without a dashboard session", async () => {
     const previousBundleRead = process.env.STOREFRONT_BUNDLE_READ;
     const previousVercelEnv = process.env.VERCEL_ENV;
-    process.env.STOREFRONT_BUNDLE_READ = "1";
+    delete process.env.STOREFRONT_BUNDLE_READ;
     process.env.VERCEL_ENV = "preview";
     sessionMock.mockRejectedValue(new Error("dashboard session should not be required"));
     try {

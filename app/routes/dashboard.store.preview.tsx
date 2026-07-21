@@ -86,7 +86,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     ? requestedTemplateId
     : null;
   const shopId = reviewTemplateId ? DEMO_SHOP_ID : (await requireDashboardSession(request)).shopId;
-  if (isStorefrontBundleReadEnabled()) {
+  if (reviewTemplateId || isStorefrontBundleReadEnabled()) {
     const templateId = reviewTemplateId ?? requestedTemplateId;
     const registered = isStoreTemplateId(templateId) && STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === templateId)
       ? templateId
@@ -148,7 +148,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const shopId = reviewTemplateId ? DEMO_SHOP_ID : (await requireDashboardSession(request)).shopId;
   const hasEphemeralRecipe = isStoreTemplateId(selectedTemplateId) &&
     STORE_TEMPLATE_REGISTRY.templates.some((template) => template.id === selectedTemplateId);
-  if (!isStorefrontBundleReadEnabled() || (!hasEphemeralRecipe && !(await readPreviewBundleVersion(shopId)))) {
+  if ((!reviewTemplateId && !isStorefrontBundleReadEnabled()) || (!hasEphemeralRecipe && !(await readPreviewBundleVersion(shopId)))) {
     throw new Response(null, { status: 404 });
   }
   const current = await readPreviewCommerceSession(request, shopId);
