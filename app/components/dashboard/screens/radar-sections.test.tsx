@@ -213,7 +213,7 @@ describe("OvernightMoves approve/dismiss", () => {
     const { app, host, root } = await renderMoves();
     const approveBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "Approve")!;
     await act(async () => approveBtn.click());
-    expect(app.toast).toHaveBeenCalledWith("Applied. You can undo it below.", "check");
+    expect(app.toast).toHaveBeenCalledWith("Applied. You can undo it anytime.", "check");
     await act(async () => root.unmount());
   });
 });
