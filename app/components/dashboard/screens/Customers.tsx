@@ -13,6 +13,7 @@ import {
   type CustomerDetail,
   type CustomerRow,
   type CustomerSegment,
+  type SegmentDef,
   type WeatherSuggestionDTO,
 } from "~/lib/dashboard/customers-client";
 import { cacheScreenData, cachedScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
@@ -21,6 +22,7 @@ import {
   OrderListToolbar,
   OrderPageReadout,
   OrderSortHeader,
+  downloadCsv,
   nextSortState,
 } from "./OrderListFamily";
 import { WeatherSegments } from "../WeatherSegments";
@@ -53,16 +55,55 @@ function compareCustomers(
   dir: "asc" | "desc",
 ): number {
   const mul = dir === "asc" ? 1 : -1;
+  // ISO timestamps compare correctly as strings. Newest-joined-first is the tie-break on every
+  // column, so equal-valued rows keep one stable order instead of whatever the previous sort
+  // left behind.
+  const byJoined = b.createdAt.localeCompare(a.createdAt);
   switch (sort) {
     case "customer":
-      return mul * a.email.localeCompare(b.email);
+      return mul * a.email.localeCompare(b.email) || byJoined;
+    case "location": {
+      const la = locationLabel(a.city, a.country);
+      const lb = locationLabel(b.city, b.country);
+      // Rows with no location sink to the bottom in both directions.
+      if (la === "—" || lb === "—") return la === lb ? byJoined : la === "—" ? 1 : -1;
+      return mul * la.localeCompare(lb) || byJoined;
+    }
+    case "segment":
+      // Priority order (VIP first), not alphabetical — matches the filter-view ordering so
+      // "ascending" reads as most- to least-valuable.
+      return (
+        mul * (SEGMENT_ORDER.indexOf(a.segment) - SEGMENT_ORDER.indexOf(b.segment)) || byJoined
+      );
     case "orders":
-      return mul * (a.orders - b.orders);
+      return mul * (a.orders - b.orders) || byJoined;
     case "spent":
-      return mul * (a.spentCents - b.spentCents);
+      return mul * (a.spentCents - b.spentCents) || byJoined;
     default:
-      // ISO timestamps compare correctly as strings.
       return mul * a.createdAt.localeCompare(b.createdAt);
+  }
+}
+
+// Segments list: curated server order by default; Name sorts A-Z, and both numeric columns sort
+// by member count (the % column is count ÷ total, so the two orderings are the same — each
+// header still shows its own arrow).
+const DEFAULT_SEG_SORT = { sort: "curated", dir: "desc" } as const;
+
+function compareSegments(
+  a: SegmentDef,
+  b: SegmentDef,
+  sort: string,
+  dir: "asc" | "desc",
+): number {
+  const mul = dir === "asc" ? 1 : -1;
+  switch (sort) {
+    case "name":
+      return mul * a.name.localeCompare(b.name);
+    case "pct":
+    case "count":
+      return mul * (a.count - b.count) || a.name.localeCompare(b.name);
+    default:
+      return 0;
   }
 }
 
@@ -430,6 +471,7 @@ export default function Customers({ app }: { app: DashboardCtx }) {
     DEFAULT_CUST_SORT,
   );
   const [segQuery, setSegQuery] = useState("");
+  const [segSort, setSegSort] = useState<{ sort: string; dir: "asc" | "desc" }>(DEFAULT_SEG_SORT);
   const [wx, setWx] = useState<WeatherSuggestionDTO[]>(page?.weatherSuggestions ?? []);
   const toast = app.toast;
   const buyerId = app.nav.param;
@@ -595,12 +637,14 @@ export default function Customers({ app }: { app: DashboardCtx }) {
   }, [page, segFilter, q, custSort]);
 
   const segQ = segQuery.trim().toLowerCase();
-  const segMatches =
-    page === null
-      ? []
-      : page.segments.filter(
-          (s) => !segQ || s.name.toLowerCase().includes(segQ) || s.basis.toLowerCase().includes(segQ),
-        );
+  const segMatches = useMemo(() => {
+    if (page === null) return [];
+    const rows = page.segments.filter(
+      (s) => !segQ || s.name.toLowerCase().includes(segQ) || s.basis.toLowerCase().includes(segQ),
+    );
+    if (segSort.sort === "curated") return rows;
+    return [...rows].sort((a, b) => compareSegments(a, b, segSort.sort, segSort.dir));
+  }, [page, segQ, segSort]);
 
   // Same header anatomy as Orders/Products: h1, then the stat readout strip.
   // Empty until the first page lands — the readout renders its own same-height
@@ -652,28 +696,114 @@ export default function Customers({ app }: { app: DashboardCtx }) {
   // from a customer detail — scoped to this table so it can never pick up a
   // `.cd-trow` from another screen. Search keystrokes are deliberately excluded:
   // replaying the entrance on every character would make the list flicker while
-  // typing.
+  // typing. revertOnUpdate + explicit end values keep back-to-back sort clicks
+  // clean (a from() started mid-tween would capture the half-faded state as its
+  // target), and the row signature skips replays that wouldn't move anything —
+  // the mount revalidation confirming the cached page, or a sort flip where
+  // every visible value ties.
   const listRef = useRef<HTMLDivElement>(null);
+  const animatedRowsKey = useRef<string | null>(null);
   useGSAP(
     () => {
-      if (reduced() || !listRef.current) return;
+      if (!listRef.current) {
+        // Detail view replaced the list DOM; forget the last entrance so the
+        // return to the directory animates again.
+        animatedRowsKey.current = null;
+        return;
+      }
+      if (reduced()) return;
       const rows = listRef.current.querySelectorAll<HTMLElement>(".cd-trow");
-      if (!rows.length) return;
-      gsap.from(rows, {
-        autoAlpha: 0,
-        y: 6,
-        duration: 0.25,
-        stagger: 0.02,
-        ease: "power2.out",
-        clearProps: "opacity,visibility,transform",
-      });
+      if (!rows.length) {
+        animatedRowsKey.current = null;
+        return;
+      }
+      const key = visibleRows.map((c) => c.id).join("|");
+      if (animatedRowsKey.current === key) return;
+      animatedRowsKey.current = key;
+      gsap.fromTo(
+        rows,
+        { autoAlpha: 0, y: 6 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.25,
+          stagger: 0.02,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        },
+      );
     },
-    { dependencies: [page, segFilter, custSort, buyerId] },
+    { dependencies: [page, segFilter, custSort, buyerId], scope: listRef, revertOnUpdate: true },
+  );
+
+  // Same hardened entrance for the segments list, replayed on re-sorts only —
+  // search keystrokes stay excluded here too.
+  const segListRef = useRef<HTMLDivElement>(null);
+  const animatedSegKey = useRef<string | null>(null);
+  useGSAP(
+    () => {
+      if (!segListRef.current) {
+        animatedSegKey.current = null;
+        return;
+      }
+      if (reduced()) return;
+      const rows = segListRef.current.querySelectorAll<HTMLElement>(".cd-trow");
+      if (!rows.length) {
+        animatedSegKey.current = null;
+        return;
+      }
+      const key = segMatches.map((s) => s.key).join("|");
+      if (animatedSegKey.current === key) return;
+      animatedSegKey.current = key;
+      gsap.fromTo(
+        rows,
+        { autoAlpha: 0, y: 6 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.25,
+          stagger: 0.02,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        },
+      );
+    },
+    { dependencies: [page, segSort], scope: segListRef, revertOnUpdate: true },
   );
 
   if (buyerId) {
     return <DetailView app={app} detail={detail} loading={detailLoading} />;
   }
+
+  const segSortHd = (label: string, col: string, align?: "right") => (
+    <OrderSortHeader
+      label={label}
+      col={col}
+      sort={segSort.sort}
+      dir={segSort.dir}
+      onSort={(c) => setSegSort((cur) => nextSortState(cur, c, DEFAULT_SEG_SORT))}
+      align={align}
+    />
+  );
+
+  // Exports what the merchant is looking at: the current segment view + search,
+  // in the current sort order.
+  const exportCustomers = () => {
+    downloadCsv("customers.csv", [
+      ["Email", "Location", "Segment", "Orders", "Spent", "Joined", "Last order"],
+      ...visibleRows.map((c) => [
+        c.email,
+        c.city || c.country ? locationLabel(c.city, c.country) : "",
+        c.segment,
+        c.orders,
+        (c.spentCents / 100).toFixed(2),
+        c.createdAt,
+        c.lastOrderAt ?? "",
+      ]),
+    ]);
+  };
+
+  const narrowed = segFilter !== "All" || q !== "";
 
   const sortHd = (label: string, col: string, align?: "right") => (
     <OrderSortHeader
@@ -723,33 +853,35 @@ export default function Customers({ app }: { app: DashboardCtx }) {
                     onChange={(e) => setSegQuery(e.target.value)}
                   />
                 </div>
-                <Pan min={440}>
-                  <div className="cd-tablehd" style={{ gridTemplateColumns: SEG_COLS }}>
-                    <span>Name</span>
-                    <span style={{ textAlign: "right" }}>% of customers</span>
-                    <span style={{ textAlign: "right" }}>Customers</span>
-                  </div>
-                  {segMatches.length === 0 ? (
-                    <div className="cd-caption" style={{ padding: "16px 20px" }}>
-                      No segments match your search.
+                <div ref={segListRef}>
+                  <Pan min={440}>
+                    <div className="cd-tablehd" style={{ gridTemplateColumns: SEG_COLS }}>
+                      {segSortHd("Name", "name")}
+                      {segSortHd("% of customers", "pct", "right")}
+                      {segSortHd("Customers", "count", "right")}
                     </div>
-                  ) : (
-                    segMatches.map((s) => (
-                      <div key={s.key} className="cd-trow" style={{ gridTemplateColumns: SEG_COLS }}>
-                        <div style={{ minWidth: 0 }}>
-                          <div className="cd-row-title truncate">{s.name}</div>
-                          <div className="cd-caption truncate">{s.basis}</div>
-                        </div>
-                        <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                          {s.pct}
-                        </div>
-                        <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
-                          {s.count}
-                        </div>
+                    {segMatches.length === 0 ? (
+                      <div className="cd-caption" style={{ padding: "16px 20px" }}>
+                        No segments match your search.
                       </div>
-                    ))
-                  )}
-                </Pan>
+                    ) : (
+                      segMatches.map((s) => (
+                        <div key={s.key} className="cd-trow" style={{ gridTemplateColumns: SEG_COLS }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div className="cd-row-title truncate">{s.name}</div>
+                            <div className="cd-caption truncate">{s.basis}</div>
+                          </div>
+                          <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
+                            {s.pct}
+                          </div>
+                          <div className="cd-row-num tabular-nums" style={{ textAlign: "right" }}>
+                            {s.count}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </Pan>
+                </div>
               </>
             )}
           </Card>
@@ -773,6 +905,14 @@ export default function Customers({ app }: { app: DashboardCtx }) {
               searchAriaLabel="Search customers"
               onSearchChange={setSearch}
               filterLabel="Customer"
+              viewExtras={
+                page && narrowed ? (
+                  <span className="cd-caption tabular-nums" aria-live="polite">
+                    {visibleRows.length} of {page.customers.length}
+                  </span>
+                ) : undefined
+              }
+              onExport={page && page.customers.length > 0 ? exportCustomers : undefined}
             />
 
             <div ref={listRef}>
@@ -780,7 +920,7 @@ export default function Customers({ app }: { app: DashboardCtx }) {
                 loading={loading}
                 error={pageError}
                 empty={visibleRows.length === 0}
-                filtered={segFilter !== "All" || q !== ""}
+                filtered={narrowed}
                 minWidth={680}
                 columns={DIR_COLS}
                 emptyIcon="user"
@@ -791,8 +931,8 @@ export default function Customers({ app }: { app: DashboardCtx }) {
                 headers={
                   <>
                     {sortHd("Customer", "customer")}
-                    <span>Location</span>
-                    <span>Segment</span>
+                    {sortHd("Location", "location")}
+                    {sortHd("Segment", "segment")}
                     {sortHd("Orders", "orders")}
                     {sortHd("Spent", "spent", "right")}
                     <span />

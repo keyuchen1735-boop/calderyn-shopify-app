@@ -609,29 +609,43 @@ export default function Orders({ app }: { app: DashboardCtx }) {
 
   // Subtle staggered rise on every fresh page of rows — initial load, a tab switch, a filter
   // change, paging. Keyed on the page object itself (a new reference every fetch), scoped to just
-  // this table so it can never pick up a `.cd-trow` from an unrelated screen.
+  // this table so it can never pick up a `.cd-trow` from an unrelated screen. revertOnUpdate +
+  // explicit end values keep back-to-back sort/filter fetches clean (a from() started mid-tween
+  // would capture the half-faded state as its target), and the row signature skips replays over
+  // an identical page (e.g. a revalidation returning the same rows).
   const listRef = useRef<HTMLDivElement>(null);
+  const animatedRowsKey = useRef<string | null>(null);
   useGSAP(
     () => {
-      if (
-        reduced() ||
-        !displayRows ||
-        displayRows.length === 0 ||
-        !listRef.current
-      )
+      if (!listRef.current) {
+        // A detail view replaced the list DOM; forget the last entrance so the return to the
+        // list animates again.
+        animatedRowsKey.current = null;
         return;
+      }
+      if (reduced() || !displayRows || displayRows.length === 0) return;
       const rows = listRef.current.querySelectorAll<HTMLElement>(".cd-trow");
-      if (!rows.length) return;
-      gsap.from(rows, {
-        autoAlpha: 0,
-        y: 6,
-        duration: 0.25,
-        stagger: 0.02,
-        ease: "power2.out",
-        clearProps: "opacity,visibility,transform",
-      });
+      if (!rows.length) {
+        animatedRowsKey.current = null;
+        return;
+      }
+      const key = displayRows.map((r) => `${r.source}:${r.id}`).join("|");
+      if (animatedRowsKey.current === key) return;
+      animatedRowsKey.current = key;
+      gsap.fromTo(
+        rows,
+        { autoAlpha: 0, y: 6 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.25,
+          stagger: 0.02,
+          ease: "power2.out",
+          clearProps: "opacity,visibility,transform",
+        },
+      );
     },
-    { dependencies: [ordersListPage] },
+    { dependencies: [ordersListPage, app.nav.param], scope: listRef, revertOnUpdate: true },
   );
 
   const selectableIds = useMemo(

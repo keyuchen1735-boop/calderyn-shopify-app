@@ -14,7 +14,7 @@ export interface OrderListView {
 /** Sort keys whose first click reads most naturally ascending (text columns, A-Z); every other
  *  key (dates, money) starts at newest/biggest first. Shared by every screen that renders
  *  OrderSortHeader so the same-named column never sorts in opposite first directions. */
-const ASC_FIRST_SORT_COLS = new Set(["customer", "order", "title"]);
+const ASC_FIRST_SORT_COLS = new Set(["customer", "order", "title", "name", "location", "segment"]);
 
 /** State transition for a column-header click, shared by the unified list and the sub-lists so
  *  the policy can't drift: a new column sorts by its natural first direction; the active column
@@ -32,6 +32,32 @@ export function nextSortState(
     return { sort: col, dir: naturalDir === "asc" ? "desc" : "asc" };
   }
   return defaults;
+}
+
+function csvCell(value: string | number | null): string {
+  let text = value == null ? "" : String(value);
+  // Text fields carry customer-controlled values (emails, cities): neutralize spreadsheet
+  // formula injection. Numbers are exempt so negative amounts survive untouched.
+  if (typeof value === "string" && /^[=+\-@]/.test(text)) text = `'${text}`;
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** Client-side CSV download shared by every list screen's Export action. */
+export function downloadCsv(
+  filename: string,
+  rows: Array<Array<string | number | null>>,
+): void {
+  const body = rows.map((row) => row.map(csvCell).join(",")).join("\n");
+  const url = URL.createObjectURL(
+    new Blob([body], { type: "text/csv;charset=utf-8" }),
+  );
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 /** Column-header sort control: the header label itself is the button, with an up/down arrow that
