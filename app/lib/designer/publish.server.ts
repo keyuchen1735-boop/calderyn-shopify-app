@@ -8,6 +8,7 @@ import { requirePublishableTenantDomain } from "~/lib/storebuilder/studio.server
 import { tenantDomain } from "~/lib/storefront/vercel-domain.server";
 import { expireOverdueExperiment, hasRunningExperiment } from "~/lib/experiments/store-experiment.server";
 import { findImageRegistryViolations, unpublishableImageViolations } from "./image-registry.server";
+import { designerProductImagesAvailable } from "./product-imagery.server";
 
 const PUBLISHED_ROUTES = ["base", "home", "collection", "product", "search"] as const;
 
@@ -76,9 +77,26 @@ export async function publishDesignerSite(shopId: string): Promise<string> {
       files[`${row.route}.css`] = String(row.css ?? "");
     }
   }
-  const broken = unpublishableImageViolations(
-    findImageRegistryViolations({ files, templateId, firstBuild: false }),
-  );
+  let findings = findImageRegistryViolations({
+    files,
+    templateId,
+    firstBuild: false,
+    // First pass discovers whether these documents reserve synthetic product
+    // media. Only those stores need the catalog lookup below.
+    productImagesAvailable: false,
+  });
+  if (findings.some((violation) =>
+    violation.reason === "synthetic-product-media-stand-in"
+    || (violation.reason === "missing-required-asset-binding" && /\{\{\s*product\.image\s*\}\}/i.test(violation.path)))) {
+    const productImagesAvailable = await designerProductImagesAvailable(shopId);
+    findings = findImageRegistryViolations({
+      files,
+      templateId,
+      firstBuild: false,
+      productImagesAvailable,
+    });
+  }
+  const broken = unpublishableImageViolations(findings);
   if (broken.length > 0) {
     const byPage = new Map<string, string[]>();
     for (const violation of broken) {
@@ -93,7 +111,7 @@ export async function publishDesignerSite(shopId: string): Promise<string> {
     throw new CalderynError({
       code: "designer_broken_imagery",
       status: 422,
-      message: `These Studio pages reference image files that don't exist: ${affected}. Open each named page, ask the designer to replace or remove that imagery, then publish again.`,
+      message: `These Studio pages contain broken or placeholder imagery: ${affected}. Open each named page, ask the designer to replace or remove that imagery, then publish again.`,
     });
   }
 

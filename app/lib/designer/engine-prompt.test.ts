@@ -49,4 +49,9 @@ describe("designer SYSTEM_PROMPT honesty rules", () => {
     expect(SYSTEM_PROMPT).not.toContain("template art under /storefront-recipes/ and the product placeholders");
     expect(SYSTEM_PROMPT).toContain("template art paths already present in the current files");
   });
+
+  it("does not demand a fake image ratio when a first build has no complete product photography", () => {
+    expect(SYSTEM_PROMPT).toContain("When real product photography is available");
+    expect(SYSTEM_PROMPT).toContain("use image-free product cards with no media region");
+  });
 });

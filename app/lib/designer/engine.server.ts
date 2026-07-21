@@ -17,6 +17,7 @@ import { adoptDesignerAsset, designerFirstBuildImageLimits, generateDesignerAsse
 import { applyAssetOverrides, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
 import { claimsRepairInstruction, findUnhonorableClaims } from "./claims";
 import { donorTemplateArtPaths, findImageRegistryViolations, imageRepairInstruction } from "./image-registry.server";
+import { designerProductImagesAvailable } from "./product-imagery.server";
 import { editContext, fileContext, summarizeChanges } from "./context";
 import { applyDesignerEdits, parseDesignerReply, type DesignerEdit } from "./edits";
 import { scrubDesignerCss, scrubDesignerHtml } from "./render.server";
@@ -64,7 +65,7 @@ Rules:
 - Conversion, at premium DTC quality (think trenchies.co, gymshark.com):
   - Hero: full-bleed media edge to edge (no boxed image with side margins), roughly 82 to 92vh, ONE committed branded headline that states the promise (never just the store name, never a 5-slide carousel), one subhead clause, ONE high-contrast branded CTA (specific copy like "Shop the drop" or "Get yours", never bare "Shop now"), and a trust triad row of three short signals (quality, origin, speed) near the top.
   - Announcement bar pinned at the very top of the shell: a thin full-width bar with a short true line (brand promise, launch note; a shipping threshold only when the merchant supplied one).
-  - Product cards: one consistent image ratio across the grid (portrait 4:5 or square), price always visible, compare-at price struck through in muted grey followed by the sale price when one exists plus a small "Save $X" chip, a single small badge slot top-left, and a subtle hover lift.
+  - Product cards: When real product photography is available, use one consistent image ratio across the grid (portrait 4:5 or square). When the first-build instruction says photography is unavailable or incomplete, use image-free product cards with no media region or visual stand-in. Price is always visible; compare-at price is struck through in muted grey followed by the sale price when one exists plus a small "Save $X" chip, with a single small badge slot and a subtle hover lift.
   - PDP buy area readable without scrolling and visually the heaviest block: title, rating line, price, variant choices as visual swatches and size pills (never a bare dropdown), a full-width add-to-cart, and a reassurance micro-row under it (free shipping, returns, ships fast). Below: a benefits strip, then a trust/proof or reviews block.
   - Home carries a trust/proof row (and a coupon-capture popup only under the real-code rule above — never by default).
 - Premium polish, not wireframe: neutral-dominant palette (near-black not pure black, off-white paper, a couple of greys) with the single accent reserved for CTAs and sale prices; generous consistent section padding (about 96 to 128px desktop) on an 8px rhythm; a real type scale with clear jumps between display, heading, and body and negative tracking on big headlines; hairline borders and soft low-opacity shadows tinted to the background. Avoid the AI tells: no three identical equal feature cards, no centered-everything, no rainbow accent use, no filler stock geometry where a product or lifestyle image belongs.
@@ -313,6 +314,7 @@ async function runEditTurn(input: {
   model?: StudioDesignModel;
   signal?: AbortSignal;
   maxTokens?: number;
+  productImagesAvailable?: boolean;
   /** First builds hold donor-template art to the replacement contract; edit
    *  turns grandfather donor paths already present in saved documents. */
   firstBuild?: boolean;
@@ -338,9 +340,7 @@ async function runEditTurn(input: {
       firstBuild: input.firstBuild === true,
       availableAssetKeys: input.firstBuild ? new Set(Object.keys(input.data.assets ?? {})) : undefined,
       storeLogoAvailable: input.firstBuild ? Boolean(input.data.logoUrl?.trim()) : undefined,
-      productImagesAvailable: input.firstBuild
-        ? input.data.products.length > 0 && input.data.products.every((product) => Boolean(product.imageUrl?.trim()))
-        : undefined,
+      productImagesAvailable: input.productImagesAvailable,
     })
       .filter((violation) => allowedFiles.has(violation.file));
 
@@ -544,6 +544,8 @@ export function firstBuildInstruction(input: {
   heroAssetUrl?: string | null;
   /** Whether any catalog product carries a usable photo ({{product.image}}). */
   hasProductImagery?: boolean;
+  /** True only when every product that can repeat in a card has real media. */
+  productImagesAvailable?: boolean;
 }): string {
   // Donor-art replacement contract (spec D4): a first build names the donor
   // template's REAL art paths and requires each to be replaced or removed —
@@ -567,7 +569,12 @@ export function firstBuildInstruction(input: {
   const hero = input.heroAssetUrl
     ? `A real photograph is ready for this store: use the placeholder {{asset.hero}} as an image src (hero media, a section background image, or a large brand moment). It matches this store's brief and art direction — prefer it over template art for the hero.`
     : `No adopted or generated hero exists for this store yet: author a deliberate typographic/color hero — committed display type, the store's palette, strong composition. No image element, no gray placeholder art.`;
-  return `${input.brief}\n\n(${base}\n${direction}\n${continuity}\n${hero}\nEvery section must end launch-ready: no default browser styling, no placeholder copy, price and availability visible wherever a product shows.)`;
+  const productMedia = input.productImagesAvailable === false
+    ? "Catalog photography is unavailable or incomplete: product cards must be genuinely image-free; remove the media region entirely and compose the card from the real title, price, availability, and action. Use no image or media wrapper, no reserved aspect-ratio box, no blank/neutral block, and no gradient, initials, icon, or illustration stand-in."
+    : input.productImagesAvailable === true
+      ? "Every catalog product has real photography: product-card media may bind {{product.image}}."
+      : "";
+  return `${input.brief}\n\n(${base}\n${direction}\n${continuity}\n${hero}${productMedia ? `\n${productMedia}` : ""}\nEvery section must end launch-ready: no default browser styling, no placeholder copy, price and availability visible wherever a product shows.)`;
 }
 
 /** The first build: designs EVERY page, saving and reporting page by page so
@@ -601,6 +608,7 @@ export async function designerFirstBuild(input: {
     console.error("[designer] product image generation skipped", err);
   }
   const data = await loadDesignerStoreData(input.shopId);
+  const productImagesAvailable = await designerProductImagesAvailable(input.shopId);
 
   // Resume: an interrupted build left documents with built=false routes.
   // Reuse the saved files and design only the remaining pages.
@@ -682,21 +690,29 @@ export async function designerFirstBuild(input: {
       files,
       templateId,
       route,
-      userMessage: firstBuildInstruction({ brief: input.message, route, mode, templateId, direction, donePages, heroAssetUrl, hasProductImagery }),
+      userMessage: firstBuildInstruction({
+        brief: input.message,
+        route,
+        mode,
+        templateId,
+        direction,
+        donePages,
+        heroAssetUrl,
+        hasProductImagery,
+        productImagesAvailable,
+      }),
       history: [],
       data,
       model: input.model,
       signal: input.signal,
       maxTokens: FIRST_BUILD_MAX_TOKENS,
       firstBuild: true,
+      productImagesAvailable,
     });
     files = turn.files;
     rejected += turn.rejectedEdits;
     const availableAssetKeys = new Set(Object.keys(data.assets ?? {}));
     const storeLogoAvailable = Boolean(data.logoUrl?.trim());
-    const productImagesAvailable = data.products.length > 0 && data.products.every(
-      (product) => Boolean(product.imageUrl?.trim()),
-    );
     const review = await reviewPage({
       files,
       route,
@@ -770,8 +786,11 @@ export async function designerTurn(input: {
   signal?: AbortSignal;
 }): Promise<DesignerReply> {
   const route: DesignerRoute = input.route && (DESIGNER_ROUTES as readonly string[]).includes(input.route) ? input.route : "home";
-  const data = await loadDesignerStoreData(input.shopId);
-  const documents = await loadDocuments(input.shopId);
+  const [data, documents, productImagesAvailable] = await Promise.all([
+    loadDesignerStoreData(input.shopId),
+    loadDocuments(input.shopId),
+    designerProductImagesAvailable(input.shopId),
+  ]);
   // The route only calls this once designerHasDocuments is true. If the set
   // vanished in the gap (a reset/harness race), do NOT silently launch a full
   // multi-call build inside this plain-JSON path — report a retryable state.
@@ -813,6 +832,7 @@ export async function designerTurn(input: {
     data,
     model: input.model,
     signal: input.signal,
+    productImagesAvailable,
   });
 
   let changes: DesignerChange[] = [];
