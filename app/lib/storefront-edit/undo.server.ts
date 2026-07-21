@@ -4,10 +4,13 @@ import {
   createStorefrontBundleVersion,
   editStorefrontDraft,
   hashStorefrontArtifact,
+  restoreStorefrontCustomVersion,
   StorefrontReleaseError,
   type CreateStorefrontBundleVersionInput,
   type EditStorefrontDraftInput,
   type HashStorefrontArtifactInput,
+  type StorefrontCustomRestoreArtifact,
+  type RestoreStorefrontCustomVersionInput,
 } from "~/lib/storefront-bundle/release.server";
 import { isStoreTemplateId } from "~/lib/storefront-bundle/registry";
 import type { StorefrontBundleV1 } from "~/lib/storefront-bundle/types";
@@ -17,10 +20,14 @@ import {
   type StorefrontContextAssembly,
 } from "~/lib/storefront-ai/context.server";
 import { storefrontAiBrowserProof } from "~/lib/storefront-validation/browser.server";
+import {
+  parseStorefrontVersionArtifact,
+} from "~/lib/storefront-ai/authoring.server";
 
 interface LoadedStorefrontVersion {
   versionId: string;
   artifactHash: string;
+  artifact?: StorefrontCustomRestoreArtifact;
   bundle: StorefrontBundleV1;
   resolution: Record<string, unknown>;
 }
@@ -42,15 +49,31 @@ export interface StorefrontUndoDependencies {
   hashArtifact(input: HashStorefrontArtifactInput): Promise<string>;
   createVersion(input: CreateStorefrontBundleVersionInput): Promise<string>;
   editDraft(input: EditStorefrontDraftInput): Promise<string>;
+  restoreCustomVersion(input: RestoreStorefrontCustomVersionInput): Promise<string>;
 }
 
-function extractBundle(value: unknown): StorefrontBundleV1 | null {
+function parseStoredArtifact(value: unknown): {
+  artifact: StorefrontCustomRestoreArtifact;
+  bundle: StorefrontBundleV1;
+} | null {
   if (!value || typeof value !== "object") return null;
-  const artifact = value as Record<string, unknown>;
-  const candidate = artifact.bundle ?? value;
-  return candidate && typeof candidate === "object" && (candidate as StorefrontBundleV1).runtimeVersion === 1
-    ? candidate as StorefrontBundleV1
-    : null;
+  const stored = value as Record<string, unknown>;
+  const candidate = stored.bundle ?? value;
+  if (!candidate || typeof candidate !== "object" || (candidate as StorefrontBundleV1).runtimeVersion !== 1) return null;
+  try {
+    const parsed = parseStorefrontVersionArtifact(
+      "sourceKind" in stored
+        ? stored
+        : { sourceKind: (candidate as StorefrontBundleV1).source.kind, bundle: candidate },
+    );
+    if (Object.hasOwn(stored, "authoring") && !parsed.authoring) return null;
+    return {
+      artifact: value as StorefrontCustomRestoreArtifact,
+      bundle: parsed.bundle,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function loadVersion(shopId: string, versionId: string): Promise<LoadedStorefrontVersion | null> {
@@ -62,12 +85,12 @@ async function loadVersion(shopId: string, versionId: string): Promise<LoadedSto
     .maybeSingle();
   if (result.error) throw result.error;
   const row = result.data as Record<string, unknown> | null;
-  const bundle = extractBundle(row?.bundle_json);
-  if (!row || row.status !== "validated" || Number(row.runtime_version) !== 1 || !bundle) return null;
+  const stored = parseStoredArtifact(row?.bundle_json);
+  if (!row || row.status !== "validated" || Number(row.runtime_version) !== 1 || !stored) return null;
   const resolution = row.resolution_json && typeof row.resolution_json === "object" && !Array.isArray(row.resolution_json)
     ? row.resolution_json as Record<string, unknown>
     : {};
-  return { versionId: String(row.id), artifactHash: String(row.artifact_hash), bundle, resolution };
+  return { versionId: String(row.id), artifactHash: String(row.artifact_hash), ...stored, resolution };
 }
 
 async function loadDraft(shopId: string): Promise<LoadedStorefrontVersion | null> {
@@ -105,6 +128,7 @@ const defaultDependencies: StorefrontUndoDependencies = {
   hashArtifact: hashStorefrontArtifact,
   createVersion: createStorefrontBundleVersion,
   editDraft: editStorefrontDraft,
+  restoreCustomVersion: restoreStorefrontCustomVersion,
 };
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -161,9 +185,6 @@ export async function undoStorefrontEdit(
     const target = await dependencies.loadVersion(input.shopId, input.targetVersionId);
     throwIfAborted(input.signal);
     if (!target) throw new StorefrontUndoError("storefront_undo_target_missing", "The undo version is no longer available.", 409);
-    if (target.bundle.source.kind !== "recipe") {
-      throw new StorefrontUndoError("storefront_command_unavailable", "This storefront version cannot be restored with chat yet.", 503);
-    }
     const validation = dependencies.validate(target.bundle);
     if (!validation.ok) {
       throw new StorefrontUndoError("storefront_undo_target_invalid", "The undo version no longer passes storefront validation.", 409, validation.diagnostics);
@@ -185,12 +206,12 @@ export async function undoStorefrontEdit(
     if (!browserProof.ok) {
       throw new StorefrontUndoError("storefront_edit_browser_proof_failed", "The undo version did not pass preview checks.", 422, browserProof);
     }
-    const artifact = { sourceKind: "recipe" as const, bundle: target.bundle };
+    const artifact = target.artifact ?? { sourceKind: target.bundle.source.kind, bundle: target.bundle };
     const artifactHash = await dependencies.hashArtifact({
       schemaVersion: target.bundle.schemaVersion,
       runtimeVersion: target.bundle.runtimeVersion,
       validationProfileVersion: target.bundle.validationProfileVersion,
-      artifact,
+      artifact: artifact as unknown as Record<string, unknown>,
       assetManifest: target.bundle.assets as unknown as Record<string, unknown>,
       ...(input.signal ? { signal: input.signal } : {}),
     });
@@ -198,25 +219,45 @@ export async function undoStorefrontEdit(
     if (artifactHash !== target.artifactHash) {
       throw new StorefrontUndoError("storefront_undo_target_invalid", "The undo version no longer matches its immutable artifact.", 409);
     }
+    const validationReport = { ...validation, valid: true, browserProof };
+    const resolution = {
+      kind: "undo",
+      restoredFromVersionId: target.versionId,
+      undoneVersionId: current.versionId,
+      excludedTemplateIds: exclusions(target),
+    };
+    if (target.bundle.source.kind === "custom") {
+      terminalDispatched = true;
+      const versionId = await dependencies.restoreCustomVersion({
+        shopId: input.shopId,
+        baseVersionId: current.versionId,
+        targetVersionId: target.versionId,
+        expectedDraftVersionId: input.expectedDraftVersionId,
+        actorId: input.actorId ?? null,
+        baseArtifactHash: current.artifactHash,
+        targetArtifactHash: artifactHash,
+        artifact,
+        validationReport,
+        resolution,
+      });
+      return { status: "installed", versionId, undoneVersionId: current.versionId };
+    }
     const versionId = await dependencies.createVersion({
       shopId: input.shopId,
-      sourceKind: "recipe",
-      templateId: target.bundle.source.templateId,
-      templateVersion: target.bundle.source.templateVersion,
+      sourceKind: target.bundle.source.kind,
+      ...(target.bundle.source.kind === "recipe" ? {
+        templateId: target.bundle.source.templateId,
+        templateVersion: target.bundle.source.templateVersion,
+      } : {}),
       status: "validated",
       schemaVersion: target.bundle.schemaVersion,
       runtimeVersion: target.bundle.runtimeVersion,
       validationProfileVersion: target.bundle.validationProfileVersion,
-      artifact,
+      artifact: artifact as unknown as Record<string, unknown>,
       assetManifest: target.bundle.assets as unknown as Record<string, unknown>,
-      validationReport: { ...validation, valid: true, browserProof },
+      validationReport,
       generationPrompt: "Undo storefront edit",
-      resolution: {
-        kind: "undo",
-        restoredFromVersionId: target.versionId,
-        undoneVersionId: current.versionId,
-        excludedTemplateIds: exclusions(target),
-      },
+      resolution,
       ...(input.signal ? { signal: input.signal } : {}),
     });
     throwIfAborted(input.signal);

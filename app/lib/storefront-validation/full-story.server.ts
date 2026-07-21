@@ -203,6 +203,7 @@ export async function createStorefrontFullStory() {
     merchantShaderSource: MERCHANT_SHADER_SOURCE,
     protectedAssetsBeforeEdits,
     protectedAssetsAfterEdits,
+    redesignCalls: harness.redesignCalls(),
     unsupported,
     beforeStartOver,
     startedOverVersionId: startedOver.versionId,

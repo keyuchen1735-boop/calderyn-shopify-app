@@ -96,7 +96,7 @@ describe("sendStoreCommand", () => {
   it("parses fragmented, batched, blank, and trailing NDJSON lines", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(responseFromChunks([
       '{"stage":"under',
-      'standing"}\n\n{"stage":"preparing_products"}\n{"stage":"checking_preview"}\n{"stage":"rea',
+      'standing"}\n\n{"stage":"planning_redesign"}\n{"stage":"building_pages"}\n{"stage":"preparing_products"}\n{"stage":"checking_preview"}\n{"stage":"rea',
       'dy","receipt":{"status":"installed","versionId":"33333333-3333-3333-3333-333333333333","undo":null}}',
     ])));
     const events: StoreCommandEvent[] = [];
@@ -106,7 +106,14 @@ describe("sendStoreCommand", () => {
       (event) => { events.push(event); },
     );
 
-    expect(events.map(({ stage }) => stage)).toEqual(["understanding", "preparing_products", "checking_preview", "ready"]);
+    expect(events.map(({ stage }) => stage)).toEqual([
+      "understanding",
+      "planning_redesign",
+      "building_pages",
+      "preparing_products",
+      "checking_preview",
+      "ready",
+    ]);
     expect(receipt).toEqual({ status: "installed", versionId: VERSION, undo: null });
   });
 

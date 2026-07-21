@@ -4,6 +4,7 @@ import type { StudioState } from "~/lib/storebuilder/studio-types";
 import type { StoreCommand, StoreCommandEvent, StoreCommandReceipt } from "~/lib/storefront-command/types";
 
 export type { StudioState };
+type StoreCommandProgressStage = Exclude<StoreCommandEvent["stage"], "ready" | "error">;
 
 export async function fetchStore(): Promise<StudioState> {
   return apiGet<StudioState>("/dashboard/api/store");
@@ -49,8 +50,14 @@ function event(line: string): StoreCommandEvent {
     throw new DashboardApiError(502, "storefront_command_stream_invalid", "The storefront response was invalid.");
   }
   const candidate = value as Record<string, unknown>;
-  if (["understanding", "preparing_products", "checking_preview"].includes(String(candidate.stage))) {
-    return { stage: candidate.stage as "understanding" | "preparing_products" | "checking_preview" };
+  if ([
+    "understanding",
+    "planning_redesign",
+    "building_pages",
+    "preparing_products",
+    "checking_preview",
+  ].includes(String(candidate.stage))) {
+    return { stage: candidate.stage as StoreCommandProgressStage };
   }
   if (candidate.stage === "ready") {
     const parsedReceipt = receipt(candidate.receipt);

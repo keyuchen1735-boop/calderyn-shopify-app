@@ -72,6 +72,21 @@ describe("parseStoreCommand", () => {
     }).ok).toBe(false);
   });
 
+  it("accepts route-only preview context and rejects unknown context keys", () => {
+    expect(parseStoreCommand({
+      kind: "prompt",
+      prompt: "Change this route",
+      expectedDraftVersionId: VERSION,
+      context: { routeId: "product" },
+    }).ok).toBe(true);
+    expect(parseStoreCommand({
+      kind: "prompt",
+      prompt: "Change this route",
+      expectedDraftVersionId: VERSION,
+      context: { routeId: "product", markup: "<main />" },
+    }).ok).toBe(false);
+  });
+
   it.each([
     ["more than four design references", {
       attachments: Array.from({ length: 5 }, (_, index) => ({

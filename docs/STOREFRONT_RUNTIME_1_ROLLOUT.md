@@ -39,3 +39,23 @@ Alert and stop rollout on any of the following:
 Disable the newest writer switch first. A kill switch blocks new work; it does not mutate installed releases or route merchants into legacy StoreGen. Use immutable release history to restore the last validated compatible bundle. If runtime support is lost, select the newest compatible retained history entry and alert operators. Never blank the storefront and never reactivate a historical legacy experiment.
 
 After rollback, rerun the browser verifier and smoke one recipe, one custom bundle, one deterministic edit, one structural edit, undo, cart/search, and checkout before resuming the rollout.
+
+## Custom redesign post-PR rollout
+
+Do not change an environment from the implementation branch. After the pull request has a Preview deployment in `READY`, set `STOREFRONT_CUSTOM_REDESIGN=1` in Preview and wait for the resulting Preview deployment itself to reach `READY`.
+
+On one controlled tenant, record the deployment ID and commit SHA, then verify in order:
+
+1. An initial prompt installs a recipe and makes no redesign call.
+2. A copy edit remains recipe-linked and completes on the bounded edit path.
+3. A selected-route structural edit creates a custom artifact, changes only that route, and preserves every other authored route.
+4. A full redesign changes all authored routes.
+5. A subsequent structural edit reads the persisted custom authoring source.
+6. Undo restores the prior complete artifact.
+7. Publish promotes the expected restored version.
+8. Public home, collection, product, search, cart, and checkout routes render; cart and checkout transact only through trusted platform controls.
+9. Stop/cancel and one intentionally invalid prompt leave the draft version unchanged.
+
+Record route-by-route results, provider/model/token usage, repair count, total and per-proof duration, artifact byte size, and authoring byte size. Any compiler, trusted-slot, proof, ownership, cancellation, or compare-and-swap failure must show an unchanged draft pointer and no partial version/audit record.
+
+After Preview evidence is approved, set `STOREFRONT_CUSTOM_REDESIGN=1` in Production. This flag change must produce a new Production deployment: record its deployment ID and commit SHA, wait for that exact deployment to become `READY`, then repeat the same lifecycle and negative smoke against `app.calderyncompany.com` and one tenant storefront domain. Disable only `STOREFRONT_CUSTOM_REDESIGN` immediately if any stop condition occurs; installed custom storefronts remain readable and publishable.

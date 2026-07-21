@@ -1,9 +1,14 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStorefrontBundleVersion,
   editStorefrontDraft,
+  installStorefrontCustomRedesign,
   installStorefrontDraft,
   publishStorefrontRelease,
+  restoreStorefrontCustomVersion,
   rollbackStorefrontRelease,
   validateStorefrontBundleVersion,
 } from "./release.server";
@@ -25,6 +30,39 @@ vi.mock("~/lib/experiments/store-experiment.server", () => ({ hasRunningExperime
 const SHOP = "11111111-1111-1111-1111-111111111111";
 const VERSION = "22222222-2222-2222-2222-222222222222";
 const BASE = "33333333-3333-3333-3333-333333333333";
+const REDESIGN_MIGRATION = readFileSync(path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../supabase/migrations/20260720233809_storefront_atomic_custom_redesign.sql",
+), "utf8").toLowerCase();
+
+const redesignInput = () => {
+  const source = structuredClone(VALID_BUNDLE_SOURCE);
+  return {
+    shopId: SHOP,
+    baseVersionId: BASE,
+    expectedDraftVersionId: BASE,
+    actorId: null,
+    schemaVersion: 1,
+    runtimeVersion: 1,
+    validationProfileVersion: 1,
+    resultArtifactHash: `sha256:${"b".repeat(64)}`,
+    artifact: {
+      sourceKind: "custom" as const,
+      bundle: compileBundle(source).bundle,
+      authoring: { version: 1 as const, source, overrides: {} },
+    },
+    assetManifest: { entries: [] },
+    validationReport: { valid: true, profileVersion: 1 },
+    generationPrompt: "Move the product grid above the story",
+    resolution: { kind: "structural_edit" },
+    baseArtifactHash: `sha256:${"a".repeat(64)}`,
+    prompt: "Move the product grid above the story",
+    scope: { mode: "structural_edit", routeId: "home" },
+    patch: { mode: "structural_edit", changedRouteIds: ["home"] },
+    provider: { kind: "anthropic", model: "configured", calls: [] },
+    validation: { valid: true, profileVersion: 1, browserProof: { ok: true } },
+  };
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -252,6 +290,166 @@ describe("storefront bundle release repository", () => {
       p_provider_json: expect.objectContaining({ kind: "deterministic" }),
       p_validation_json: expect.objectContaining({ valid: true }),
     }));
+  });
+
+  it("installs a complete custom redesign and its audit through one atomic RPC", async () => {
+    const input = redesignInput();
+    await expect(installStorefrontCustomRedesign(input)).resolves.toBe(VERSION);
+
+    expect(hasRunningExperiment).toHaveBeenCalledWith(SHOP);
+    expect(rpc).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("install_storefront_custom_redesign", {
+      p_shop_id: SHOP,
+      p_base_version_id: BASE,
+      p_expected_draft_version_id: BASE,
+      p_actor_id: null,
+      p_schema_version: input.artifact.bundle.schemaVersion,
+      p_runtime_version: input.artifact.bundle.runtimeVersion,
+      p_validation_profile_version: input.artifact.bundle.validationProfileVersion,
+      p_result_artifact_hash: `sha256:${"b".repeat(64)}`,
+      p_bundle_json: input.artifact,
+      p_asset_manifest: input.artifact.bundle.assets,
+      p_validation_report: input.validationReport,
+      p_generation_prompt: input.generationPrompt,
+      p_resolution_json: input.resolution,
+      p_base_artifact_hash: input.baseArtifactHash,
+      p_prompt: input.prompt,
+      p_scope_json: { mode: "structural_edit", routeId: "home" },
+      p_patch_json: input.patch,
+      p_provider_json: input.provider,
+      p_validation_json: input.validation,
+    });
+  });
+
+  it("rejects release metadata that disagrees with the complete custom artifact", async () => {
+    const mismatches: Array<(input: ReturnType<typeof redesignInput>) => void> = [
+      (input) => { input.schemaVersion += 1; },
+      (input) => { input.runtimeVersion += 1; },
+      (input) => { input.validationProfileVersion += 1; },
+      (input) => { Object.assign(input.assetManifest, { invented: true }); },
+    ];
+
+    for (const mismatch of mismatches) {
+      const input = redesignInput();
+      mismatch(input);
+      await expect(installStorefrontCustomRedesign(input)).rejects.toMatchObject({
+        code: "invalid_storefront_release",
+        status: 422,
+      });
+    }
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("maps a stale custom redesign without issuing cleanup writes that could leave partial state", async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: "storefront_edit_conflict", code: "40001" } });
+
+    await expect(installStorefrontCustomRedesign(redesignInput())).rejects.toMatchObject({
+      code: "storefront_edit_conflict",
+      status: 409,
+    });
+    expect(rpc).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["modern", () => redesignInput().artifact],
+    ["legacy envelope", () => ({ bundle: redesignInput().artifact.bundle })],
+    ["bare bundle", () => redesignInput().artifact.bundle],
+  ])("atomically restores an exact %s custom artifact without inventing authoring", async (_label, artifact) => {
+    const value = artifact();
+    await expect(restoreStorefrontCustomVersion({
+      shopId: SHOP,
+      baseVersionId: VERSION,
+      targetVersionId: BASE,
+      expectedDraftVersionId: VERSION,
+      baseArtifactHash: `sha256:${"b".repeat(64)}`,
+      targetArtifactHash: `sha256:${"a".repeat(64)}`,
+      artifact: value,
+      validationReport: { valid: true, profileVersion: 1, browserProof: { ok: true } },
+      resolution: { kind: "undo", restoredFromVersionId: BASE, undoneVersionId: VERSION },
+    })).resolves.toBe(VERSION);
+
+    const bundle = "bundle" in value ? value.bundle : value;
+    expect(rpc).toHaveBeenCalledWith("restore_storefront_custom_version", {
+      p_shop_id: SHOP,
+      p_base_version_id: VERSION,
+      p_target_version_id: BASE,
+      p_expected_draft_version_id: VERSION,
+      p_actor_id: null,
+      p_schema_version: bundle.schemaVersion,
+      p_runtime_version: bundle.runtimeVersion,
+      p_validation_profile_version: bundle.validationProfileVersion,
+      p_target_artifact_hash: `sha256:${"a".repeat(64)}`,
+      p_bundle_json: value,
+      p_asset_manifest: bundle.assets,
+      p_validation_report: { valid: true, profileVersion: 1, browserProof: { ok: true } },
+      p_resolution_json: { kind: "undo", restoredFromVersionId: BASE, undoneVersionId: VERSION },
+      p_base_artifact_hash: `sha256:${"b".repeat(64)}`,
+    });
+    vi.clearAllMocks();
+    hasRunningExperiment.mockResolvedValue(false);
+  });
+
+  it("rejects a custom restore envelope whose source kind disagrees with its runtime bundle", async () => {
+    const artifact = redesignInput().artifact;
+    await expect(restoreStorefrontCustomVersion({
+      shopId: SHOP,
+      baseVersionId: VERSION,
+      targetVersionId: BASE,
+      expectedDraftVersionId: VERSION,
+      baseArtifactHash: `sha256:${"b".repeat(64)}`,
+      targetArtifactHash: `sha256:${"a".repeat(64)}`,
+      artifact: { ...artifact, sourceKind: "recipe" },
+      validationReport: { valid: true },
+      resolution: { kind: "undo" },
+    })).rejects.toMatchObject({ code: "invalid_storefront_release", status: 422 });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("creates, validates, audits, and swaps the draft in one rollback-safe SQL transaction", () => {
+    const atomic = REDESIGN_MIGRATION.match(
+      /function public\.install_storefront_custom_redesign[\s\S]+?\$\$;/,
+    )?.[0] ?? "";
+
+    for (const operation of [
+      "create_storefront_bundle_version",
+      "clone_storefront_bundle_asset_provenance",
+      "validate_storefront_bundle_version",
+      "edit_storefront_draft",
+    ]) expect(atomic).toContain(operation);
+    expect(atomic).toMatch(/sourcekind' is distinct from 'custom'/);
+    expect(atomic).toMatch(/jsonb_typeof\(p_bundle_json -> 'authoring'\) is distinct from 'object'/);
+    expect(atomic).not.toMatch(/exception\s+when/);
+    expect(REDESIGN_MIGRATION).toMatch(
+      /revoke all on function public\.install_storefront_custom_redesign[^;]+from public, anon, authenticated/,
+    );
+    expect(REDESIGN_MIGRATION).toMatch(
+      /grant execute on function public\.install_storefront_custom_redesign[^;]+to service_role/,
+    );
+  });
+
+  it("verifies and atomically restores an existing custom target without requiring authoring", () => {
+    const atomic = REDESIGN_MIGRATION.match(
+      /function public\.restore_storefront_custom_version[\s\S]+?\$\$;/,
+    )?.[0] ?? "";
+
+    expect(atomic).toMatch(/source_kind = 'custom'/);
+    expect(atomic).toMatch(/artifact_hash = p_target_artifact_hash/);
+    expect(atomic).toMatch(/bundle_json = p_bundle_json/);
+    expect(atomic).not.toContain("authoring");
+    expect(atomic).toContain("undo storefront edit");
+    expect(atomic).toContain("restoreversion");
+    for (const operation of [
+      "create_storefront_bundle_version",
+      "clone_storefront_bundle_asset_provenance",
+      "validate_storefront_bundle_version",
+      "edit_storefront_draft",
+    ]) expect(atomic).toContain(operation);
+    expect(REDESIGN_MIGRATION).toMatch(
+      /revoke all on function public\.restore_storefront_custom_version[^;]+from public, anon, authenticated/,
+    );
+    expect(REDESIGN_MIGRATION).toMatch(
+      /grant execute on function public\.restore_storefront_custom_version[^;]+to service_role/,
+    );
   });
 
   it("accepts a timed-out edit when the requested draft version committed", async () => {

@@ -21,6 +21,7 @@ const fakes = vi.hoisted(() => ({
   editDraft: vi.fn(),
   getSupabase: vi.fn(),
   hashArtifact: vi.fn(),
+  installRedesign: vi.fn(),
   installDraft: vi.fn(),
   loadRecipe: vi.fn(),
   listPreviewProducts: vi.fn(),
@@ -75,6 +76,7 @@ vi.mock("~/lib/storefront-bundle/release.server", () => ({
   createStorefrontBundleVersion: fakes.createVersion,
   editStorefrontDraft: fakes.editDraft,
   hashStorefrontArtifact: fakes.hashArtifact,
+  installStorefrontCustomRedesign: fakes.installRedesign,
   installStorefrontDraft: fakes.installDraft,
   publishStorefrontRelease: fakes.publishRelease,
   StorefrontReleaseError: class StorefrontReleaseError extends Error {
@@ -429,6 +431,7 @@ describe("Store vertical command path", () => {
           kind: "prompt",
           prompt: PROMPT,
           expectedDraftVersionId: CURRENT,
+          context: { routeId: "home" },
           attachments: [{ kind: "design_reference", assetRef: REFERENCE_ASSET_REF }],
         }),
       }),

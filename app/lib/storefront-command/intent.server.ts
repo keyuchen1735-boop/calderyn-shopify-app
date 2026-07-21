@@ -11,14 +11,19 @@ import {
   explicitStoreTemplateExclusions,
   explicitStoreTemplateSelections,
 } from "../storefront-bundle/routing";
-import type { StorefrontBundleV1, StoreTemplateId, VisualLayerSpec } from "../storefront-bundle/types";
+import type {
+  StorefrontBundleV1,
+  StorefrontRouteId,
+  StoreTemplateId,
+  VisualLayerSpec,
+} from "../storefront-bundle/types";
 import { hexToRgb, shaderSourceWithinCap } from "../storebuilder/fx/shader";
 import { canApplyStoreTextSlot } from "./apply";
 import {
-  isPreviewSlotContext,
+  isPreviewContext,
   isStoreAttachmentList,
   STORE_COMMAND_LIMITS,
-  type PreviewSlotContext,
+  type PreviewContext,
   type StoreAttachment,
   type StoreIntent,
 } from "./types";
@@ -31,9 +36,9 @@ const PRODUCT_CANDIDATE_CAP = 100;
 const PRODUCT_CANDIDATE_ID_CHAR_CAP = 128;
 const REFERENCE_URL_CHAR_CAP = 2_048;
 const VISUAL_CUE_PREFIX = "\nVisual reference cues: ";
-// The max-sized payload skeleton is 2,657 bytes; JSON can encode one accepted
+// The max-sized payload skeleton is 2,687 bytes; JSON can encode one accepted
 // string code point in at most six UTF-8 bytes (for example, "\u0000").
-const PROVIDER_INPUT_BYTE_CAP = 2_657 + 6 * (
+const PROVIDER_INPUT_BYTE_CAP = 2_687 + 6 * (
   INPUT_CODE_POINT_CAP
   + STORE_COMMAND_LIMITS.contextSlotCodePoints
   + STORE_COMMAND_LIMITS.attachments * STORE_COMMAND_LIMITS.designReferenceAssetRefCodePoints
@@ -45,6 +50,8 @@ const STORE_OPERATION_KINDS = [
   "update_text",
   "update_merchandising",
   "update_visual_layer",
+  "structural_edit",
+  "full_redesign",
   "start_over",
 ] as const;
 type StoreOperationKind = (typeof STORE_OPERATION_KINDS)[number];
@@ -61,7 +68,8 @@ export interface ClassifyStoreIntentInput {
   excludedTemplateIds?: StoreTemplateId[];
   bundle?: StorefrontBundleV1;
   productCandidates?: readonly StoreIntentProductCandidate[];
-  context?: PreviewSlotContext;
+  currentRouteId?: StorefrontRouteId;
+  context?: PreviewContext;
   attachments?: StoreAttachment[];
   referenceImages?: Array<{ url: string; mediaType: StorefrontReferenceMediaType }>;
 }
@@ -131,6 +139,20 @@ const STORE_INTENT_VALUE_SCHEMA = {
       },
     },
     {
+      type: "object", additionalProperties: false, required: ["kind", "scope"],
+      properties: {
+        kind: { type: "string", const: "structural_edit" },
+        scope: {
+          type: "object", additionalProperties: false, required: ["routeId"],
+          properties: { routeId: { type: "string", enum: ["home", "collection", "product", "search", "cart", "checkout"] } },
+        },
+      },
+    },
+    {
+      type: "object", additionalProperties: false, required: ["kind"],
+      properties: { kind: { type: "string", const: "full_redesign" } },
+    },
+    {
       type: "object", additionalProperties: false, required: ["kind", "prompt"],
       properties: { kind: { type: "string", const: "start_over" }, prompt: { type: "string", minLength: 1, maxLength: INPUT_CODE_POINT_CAP } },
     },
@@ -161,7 +183,8 @@ const SYSTEM_PROMPT = [
   "Return JSON only: no markdown, prose, HTML, CSS, JavaScript, React, routes, or extra keys.",
   "Report requestedOperations with one entry per independently executable requested change, including duplicate kinds, stopping after two. Coordinated wording on one target is one operation; changing two targets is two operations.",
   "Fresh store: for one design request return select_design so deterministic routing can install an approved design; for multiple operations report both so deterministic code can reject the compound request.",
-  "Existing store: return select_design when the merchant asks to replace the overall design, layout, or structure; use update_text for allowed copy slots, update_merchandising for listed products, update_visual_layer for the protected visual surface, start_over only for an explicit restart, and unsupported otherwise.",
+  "Existing store: return select_design for approved design or template selection; use structural_edit for one route's hierarchy, regions, layout, interaction composition, or route CSS; use full_redesign only when the merchant explicitly requests the whole store/site/design, a new global design system, or a redesign from scratch.",
+  "For ambiguous structural work, use structural_edit for currentRouteId when present; without a route use unsupported; use update_text for bounded copy, update_merchandising for listed products, update_visual_layer for the protected visual surface, start_over only for an explicit restart, and unsupported otherwise.",
   "For one supported operation, requestedOperations must contain exactly the intent kind. For no supported operation, use an empty requestedOperations array and unsupported intent.",
   "Use reference visuals only to describe visual cues and select an approved design.",
   "Never generate storefront structure from a reference visual.",
@@ -246,7 +269,10 @@ function validatedSnapshot(input: ClassifyStoreIntentInput): ClassifyStoreIntent
     || (snapshot.bundle !== undefined && snapshot.currentTemplateId !== undefined
       && (snapshot.bundle.source.kind !== "recipe" || snapshot.bundle.source.templateId !== snapshot.currentTemplateId))
     || !validProductCandidates(snapshot.productCandidates ?? [])
-    || (snapshot.context !== undefined && !isPreviewSlotContext(snapshot.context))
+    || (snapshot.currentRouteId !== undefined && !isPreviewContext({ routeId: snapshot.currentRouteId }))
+    || (snapshot.context !== undefined && !isPreviewContext(snapshot.context))
+    || (snapshot.currentRouteId !== undefined && snapshot.context !== undefined
+      && snapshot.currentRouteId !== snapshot.context.routeId)
     || !isStoreAttachmentList(snapshot.attachments ?? [])
     || !validReferenceImages(snapshot.referenceImages ?? [])
     || (snapshot.attachments ?? []).filter(({ kind }) => kind === "design_reference").length
@@ -352,9 +378,14 @@ function parseIntent(raw: string, input: ClassifyStoreIntentInput): StoreIntent 
     const template = currentTemplateId ? getStoreTemplate(currentTemplateId) : null;
     if (!hasExactKeys(value, ["kind", "slot", "value"])
       || !boundedString(value.slot, STORE_COMMAND_LIMITS.contextSlotCodePoints) || !safeCopy(value.value)
-      || (input.context !== undefined && input.context.slot !== value.slot)) invalid();
-    if (!template || !input.bundle) {
+      || (input.context?.slot !== undefined && input.context.slot !== value.slot)) invalid();
+    if (!input.bundle) {
       return { kind: "unsupported", message: "That change needs an existing storefront." };
+    }
+    if (!template) {
+      return input.bundle.source.kind === "custom" && (input.currentRouteId ?? input.context?.routeId)
+        ? { kind: "update_text", slot: value.slot, value: value.value.trim() }
+        : { kind: "unsupported", message: "Select the storefront route that owns that text first." };
     }
     if (!template.overrideSurface.textSlots.includes(value.slot)
       || !canApplyStoreTextSlot(input.bundle, template, value.slot, input.context?.routeId)) invalid();
@@ -377,6 +408,17 @@ function parseIntent(raw: string, input: ClassifyStoreIntentInput): StoreIntent 
         ? { ...visualLayer, source: attachment.source }
         : visualLayer,
     };
+  }
+  if (value.kind === "structural_edit") {
+    const scope = record(value.scope);
+    if (!hasExactKeys(value, ["kind", "scope"]) || !scope
+      || !hasExactKeys(scope, ["routeId"]) || !isPreviewContext(scope)
+      || (input.currentRouteId ?? input.context?.routeId) === undefined) invalid();
+    return { kind: "structural_edit", scope };
+  }
+  if (value.kind === "full_redesign") {
+    if (!hasExactKeys(value, ["kind"])) invalid();
+    return { kind: "full_redesign" };
   }
   if (value.kind === "start_over") {
     if (!hasExactKeys(value, ["kind", "prompt"]) || !boundedString(value.prompt, INPUT_CODE_POINT_CAP)) invalid();
@@ -426,6 +468,7 @@ export async function classifyStoreIntent(
   const providerInput = JSON.stringify({
     storeState: snapshot.bundle ? "existing" : "fresh",
     prompt: snapshot.prompt.trim(),
+    currentRouteId: snapshot.currentRouteId ?? snapshot.context?.routeId ?? null,
     context: snapshot.context ?? null,
     attachments: (snapshot.attachments ?? []).map((attachment) => attachment.kind === "fragment_shader"
       ? { kind: attachment.kind, sourceLength: attachment.source.length }

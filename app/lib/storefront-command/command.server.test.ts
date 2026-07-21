@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { applyStoreIntent } from "./apply";
 import { getStoreTemplate } from "../storefront-bundle/registry";
-import { CUSTOM_BENCH_BUNDLE } from "../storefront-recipes/custom-bench/bundle";
+import { CUSTOM_BENCH_BUNDLE, CUSTOM_BENCH_RECIPE } from "../storefront-recipes/custom-bench/bundle";
 import { SOFT_CHEMISTRY_BUNDLE } from "../storefront-recipes/soft-chemistry/bundle";
 import { STOREFRONT_RECIPES } from "../storefront-recipes";
 import { StorefrontReleaseError } from "../storefront-bundle/release.server";
@@ -10,10 +10,17 @@ import { storefrontProofContext } from "../storefront-validation/fixtures";
 import { proveStorefrontBundle } from "../storefront-validation/browser.server";
 import { launchChromium } from "../browser/chromium.server";
 import { assembleStorefrontContextWithReferences, type StorefrontContextSource } from "../storefront-ai/context.server";
+import {
+  authoringFromRecipe,
+  compileAuthoring,
+  requireStorefrontAuthoring,
+} from "../storefront-ai/authoring.server";
+import { STOREFRONT_DESIGN_GUIDANCE_VERSION } from "../storefront-ai/design-guidance-core.server";
 import { classifyStoreIntent, type StoreIntentProvider } from "./intent.server";
 import type { StoreCommand, StoreCommandEvent, StoreCommandReceipt, StoreIntent } from "./types";
 import {
   runStoreCommand,
+  parseLoadedStorefrontArtifact,
   StoreCommandError,
   type LoadedStoreCommandVersion,
   type StoreCommandDependencies,
@@ -31,6 +38,7 @@ const SECOND_PRODUCT = "77777777-7777-4777-8777-777777777777";
 const SECOND_PRODUCT_REF = "product-002";
 const HASH = `sha256:${"a".repeat(64)}`;
 const RESULT_HASH = `sha256:${"b".repeat(64)}`;
+const SOURCE_PACKAGE_COMMIT = "a".repeat(40);
 
 const promptCommand = (
   expectedDraftVersionId: string | null,
@@ -125,6 +133,78 @@ function state(excludedTemplateIds = ["soft-chemistry" as const]) {
   };
 }
 
+function customState() {
+  const artifact = authoringFromRecipe(CUSTOM_BENCH_RECIPE, {
+    generationId: "generation-current",
+    promptHash: `sha256:${"d".repeat(64)}`,
+    derivedFromVersionId: CURRENT,
+  });
+  return {
+    draft: { versionId: CURRENT, artifactHash: HASH, artifact, bundle: artifact.bundle, resolution: {} },
+    publishedVersionId: TARGET,
+  };
+}
+
+function provenRedesign(mode: "structural_edit" | "full_redesign") {
+  const artifact = authoringFromRecipe(CUSTOM_BENCH_RECIPE, {
+    generationId: "generation-result",
+    promptHash: `sha256:${"e".repeat(64)}`,
+    derivedFromVersionId: CURRENT,
+  });
+  return {
+    artifact,
+    validation: { profileVersion: 1 as const, ok: true, diagnostics: [] },
+    browserProof: { ok: true, diagnostics: [], screenshots: [], browserMs: 1 },
+    audit: {
+      mode, baseVersionId: CURRENT, generationId: "generation-result",
+      promptHash: `sha256:${"e".repeat(64)}`, changedRouteIds: ["product" as const],
+      adaptedGuidanceVersion: STOREFRONT_DESIGN_GUIDANCE_VERSION,
+      sourcePackageCommit: SOURCE_PACKAGE_COMMIT,
+      shellChanged: false, repairs: 0, provider: [],
+    },
+  };
+}
+
+describe("loaded storefront command artifacts", () => {
+  it("retains custom authoring through stored JSON", () => {
+    const stored = JSON.parse(JSON.stringify(authoringFromRecipe(CUSTOM_BENCH_RECIPE, {
+      generationId: "generation-1",
+      promptHash: "sha256:prompt",
+      derivedFromVersionId: CURRENT,
+    })));
+
+    const artifact = parseLoadedStorefrontArtifact(stored);
+
+    expect(artifact).not.toBeNull();
+    expect(requireStorefrontAuthoring(artifact!)).toEqual(stored.authoring);
+  });
+
+  it.each([
+    ["recipe artifact", { sourceKind: "recipe", bundle: CUSTOM_BENCH_BUNDLE }, "recipe"],
+    ["raw recipe bundle", CUSTOM_BENCH_BUNDLE, "recipe"],
+    ["legacy custom artifact", {
+      sourceKind: "custom",
+      bundle: authoringFromRecipe(CUSTOM_BENCH_RECIPE, {
+        generationId: "generation-2",
+        promptHash: "sha256:legacy",
+        derivedFromVersionId: CURRENT,
+      }).bundle,
+    }, "custom"],
+  ] as const)("loads a compatible %s without inventing authoring", (_case, stored, sourceKind) => {
+    const artifact = parseLoadedStorefrontArtifact(JSON.parse(JSON.stringify(stored)));
+
+    expect(artifact).toMatchObject({ sourceKind });
+    expect(artifact).not.toHaveProperty("authoring");
+  });
+
+  it("fails closed instead of inferring over an invalid stored artifact", () => {
+    expect(parseLoadedStorefrontArtifact({
+      sourceKind: "legacy",
+      bundle: CUSTOM_BENCH_BUNDLE,
+    })).toBeNull();
+  });
+});
+
 function dependencies(overrides: Partial<StoreCommandDependencies> = {}): StoreCommandDependencies {
   return {
     loadState: vi.fn().mockResolvedValue({ draft: null, publishedVersionId: null }),
@@ -133,6 +213,7 @@ function dependencies(overrides: Partial<StoreCommandDependencies> = {}): StoreC
     readEnabled: () => true,
     recipeBuildEnabled: () => true,
     publishEnabled: () => true,
+    customRedesignEnabled: () => true,
     buildEvidence: vi.fn().mockResolvedValue({
       productTitles: [], productTypes: [], productTags: [], optionNames: [], collectionTitles: [], fingerprint: "sha256:catalog",
     }),
@@ -148,6 +229,8 @@ function dependencies(overrides: Partial<StoreCommandDependencies> = {}): StoreC
     applyIntent: vi.fn((bundle) => ({ bundle: { ...structuredClone(bundle), featuredProductIds: ["product-a"] } })),
     validate: vi.fn().mockReturnValue({ profileVersion: 1, ok: true, diagnostics: [] }),
     prove: vi.fn().mockResolvedValue({ ok: true, diagnostics: [], screenshots: ["proof"], browserMs: 1 }),
+    redesign: vi.fn(),
+    installRedesign: vi.fn().mockResolvedValue(RESULT),
     hashArtifact: vi.fn().mockResolvedValue(RESULT_HASH),
     createVersion: vi.fn().mockResolvedValue(RESULT),
     install: vi.fn().mockResolvedValue(RESULT),
@@ -159,6 +242,183 @@ function dependencies(overrides: Partial<StoreCommandDependencies> = {}): StoreC
 }
 
 describe("runStoreCommand", () => {
+  it("routes a scoped structural edit through redesign and one atomic install", async () => {
+    const artifact = authoringFromRecipe(CUSTOM_BENCH_RECIPE, {
+      generationId: "generation-1",
+      promptHash: `sha256:${"d".repeat(64)}`,
+      derivedFromVersionId: CURRENT,
+    });
+    const redesign = vi.fn().mockResolvedValue({
+      artifact,
+      validation: { profileVersion: 1, ok: true, diagnostics: [] },
+      browserProof: { ok: true, diagnostics: [], screenshots: [], browserMs: 1 },
+      audit: {
+        mode: "structural_edit", baseVersionId: CURRENT, generationId: "generation-1",
+        promptHash: `sha256:${"d".repeat(64)}`, changedRouteIds: ["product"], shellChanged: false,
+        adaptedGuidanceVersion: STOREFRONT_DESIGN_GUIDANCE_VERSION,
+        sourcePackageCommit: SOURCE_PACKAGE_COMMIT,
+        repairs: 0, provider: [],
+      },
+    });
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      classify: vi.fn().mockResolvedValue({ kind: "structural_edit", scope: { routeId: "product" } }),
+      redesign,
+    });
+    const events: StoreCommandEvent[] = [];
+
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: { ...promptCommand(CURRENT), context: { routeId: "product" } },
+      onEvent: (event) => { events.push(event); },
+    }, deps)).resolves.toEqual({
+      status: "installed", versionId: RESULT,
+      undo: { targetVersionId: CURRENT, expectedDraftVersionId: RESULT },
+    });
+
+    expect(redesign).toHaveBeenCalledOnce();
+    expect(deps.applyIntent).not.toHaveBeenCalled();
+    expect(deps.installRedesign).toHaveBeenCalledOnce();
+    expect(deps.installRedesign).toHaveBeenCalledWith(expect.objectContaining({
+      resolution: {
+        kind: "custom_redesign",
+        mode: "structural_edit",
+        provenance: {
+          generationId: "generation-1",
+          promptHash: `sha256:${"d".repeat(64)}`,
+          adaptedGuidanceVersion: STOREFRONT_DESIGN_GUIDANCE_VERSION,
+          sourcePackageCommit: SOURCE_PACKAGE_COMMIT,
+        },
+      },
+      scope: { mode: "structural_edit", routeId: "product" },
+      patch: { changedRouteIds: ["product"], shellChanged: false },
+      provider: {
+        calls: [],
+        repairs: 0,
+        adaptedGuidanceVersion: STOREFRONT_DESIGN_GUIDANCE_VERSION,
+        sourcePackageCommit: SOURCE_PACKAGE_COMMIT,
+      },
+    }));
+    expect(events.map(({ stage }) => stage)).toEqual([
+      "understanding", "planning_redesign", "building_pages", "ready",
+    ]);
+  });
+
+  it("rejects redesign before provider spend when the feature flag is off", async () => {
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      classify: vi.fn().mockResolvedValue({ kind: "full_redesign" }),
+      customRedesignEnabled: () => false,
+    });
+
+    await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT) }, deps))
+      .rejects.toMatchObject({ code: "storefront_command_unavailable", status: 503 });
+    expect(deps.redesign).not.toHaveBeenCalled();
+    expect(deps.installRedesign).not.toHaveBeenCalled();
+    expect(deps.prepareProductMedia).not.toHaveBeenCalled();
+  });
+
+  it("routes a full redesign without inventing route scope", async () => {
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      classify: vi.fn().mockResolvedValue({ kind: "full_redesign" }),
+      redesign: vi.fn().mockResolvedValue(provenRedesign("full_redesign")),
+    });
+
+    await runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT) }, deps);
+
+    expect(deps.redesign).toHaveBeenCalledWith(expect.objectContaining({ mode: "full_redesign" }));
+    expect(vi.mocked(deps.redesign).mock.calls[0]![0]).not.toHaveProperty("scope");
+    expect(deps.prepareProductMedia).not.toHaveBeenCalled();
+  });
+
+  it("rejects structural scope that does not match the active route", async () => {
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      classify: vi.fn().mockResolvedValue({ kind: "structural_edit", scope: { routeId: "home" } }),
+    });
+
+    await expect(runStoreCommand({
+      shopId: SHOP,
+      command: { ...promptCommand(CURRENT), context: { routeId: "product" } },
+    }, deps)).resolves.toMatchObject({ status: "unchanged" });
+    expect(deps.redesign).not.toHaveBeenCalled();
+    expect(deps.prepareProductMedia).not.toHaveBeenCalled();
+  });
+
+  it("routes custom update_text through the active structural route", async () => {
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(customState()),
+      classify: vi.fn().mockResolvedValue({ kind: "update_text", slot: "title", value: "New" }),
+      redesign: vi.fn().mockResolvedValue(provenRedesign("structural_edit")),
+    });
+
+    await runStoreCommand({
+      shopId: SHOP,
+      command: { ...promptCommand(CURRENT), context: { routeId: "product", slot: "title" } },
+    }, deps);
+
+    expect(deps.redesign).toHaveBeenCalledWith(expect.objectContaining({
+      mode: "structural_edit", scope: { routeId: "product" },
+    }));
+    expect(deps.applyIntent).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ kind: "update_merchandising" as const, productIds: ["product-a"] }, "featuredProductIds", ["product-a"]],
+    [{ kind: "update_visual_layer" as const, visualLayer: { kind: "none" as const } }, "visualLayer", { kind: "none" }],
+  ])("persists custom deterministic %s in authoring overrides", async (intent, key, expected) => {
+    const current = customState();
+    const preservedKey = key === "featuredProductIds" ? "visualLayer" : "featuredProductIds";
+    const preserved = key === "featuredProductIds" ? { kind: "none" as const } : ["product-a"];
+    current.draft.artifact.authoring.overrides[preservedKey] = preserved as never;
+    current.draft.artifact.bundle = compileAuthoring(current.draft.artifact.authoring).bundle;
+    current.draft.bundle = current.draft.artifact.bundle;
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(current),
+      classify: vi.fn().mockResolvedValue(intent),
+    });
+
+    await runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT) }, deps);
+
+    const installed = vi.mocked(deps.installRedesign).mock.calls[0]![0].artifact;
+    expect(installed.authoring.overrides[key as keyof typeof installed.authoring.overrides]).toEqual(expected);
+    expect(installed.authoring.overrides[preservedKey]).toEqual(preserved);
+    expect(deps.redesign).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    Object.assign(new Error("proof failed"), { code: "storefront_redesign_proof_failed" }),
+    Object.assign(new Error("cancelled"), { code: "storefront_redesign_cancelled" }),
+  ])("leaves the draft untouched when redesign fails: $code", async (error) => {
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      classify: vi.fn().mockResolvedValue({ kind: "full_redesign" }),
+      redesign: vi.fn().mockRejectedValue(error),
+    });
+
+    await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT) }, deps)).rejects.toBeInstanceOf(StoreCommandError);
+    expect(deps.hashArtifact).not.toHaveBeenCalled();
+    expect(deps.installRedesign).not.toHaveBeenCalled();
+  });
+
+  it("surfaces atomic redesign install conflict without a second write", async () => {
+    const deps = dependencies({
+      loadState: vi.fn().mockResolvedValue(state()),
+      classify: vi.fn().mockResolvedValue({ kind: "full_redesign" }),
+      redesign: vi.fn().mockResolvedValue(provenRedesign("full_redesign")),
+      installRedesign: vi.fn().mockRejectedValue(new StorefrontReleaseError(
+        "storefront_edit_conflict", "stale", 409,
+      )),
+    });
+
+    await expect(runStoreCommand({ shopId: SHOP, command: promptCommand(CURRENT) }, deps))
+      .rejects.toMatchObject({ code: "storefront_command_conflict", status: 409 });
+    expect(deps.installRedesign).toHaveBeenCalledOnce();
+    expect(deps.createVersion).not.toHaveBeenCalled();
+    expect(deps.edit).not.toHaveBeenCalled();
+  });
+
   it("installs a fresh hidden design only after proof and emits no design identifiers", async () => {
     const deps = dependencies();
     const events: StoreCommandEvent[] = [];
@@ -171,9 +431,6 @@ describe("runStoreCommand", () => {
     }, deps);
 
     expect(deps.prepareProductMedia).toHaveBeenCalledWith(SHOP, undefined);
-    expect(vi.mocked(deps.prepareProductMedia).mock.invocationCallOrder[0]).toBeLessThan(
-      vi.mocked(deps.loadContext).mock.invocationCallOrder[0]!,
-    );
     expect(deps.resolveDesign).toHaveBeenCalledWith(expect.objectContaining({ excludedTemplateIds: [] }), expect.anything());
     expect(deps.classify).toHaveBeenCalledWith(expect.objectContaining({
       prompt: "Make it calm",
@@ -202,6 +459,8 @@ describe("runStoreCommand", () => {
     { kind: "update_text", slot: "heroTitle", value: "New title" },
     { kind: "update_merchandising", productIds: ["product-a"] },
     { kind: "update_visual_layer", visualLayer: { kind: "none" } },
+    { kind: "structural_edit", scope: { routeId: "home" } },
+    { kind: "full_redesign" },
   ] as const)("leaves a fresh store unchanged for $kind intent", async (intent) => {
     const deps = dependencies({ classify: vi.fn().mockResolvedValue(intent) });
 

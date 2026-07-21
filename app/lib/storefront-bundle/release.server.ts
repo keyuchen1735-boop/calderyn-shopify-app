@@ -1,8 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
 import { hasRunningExperiment } from "~/lib/experiments/store-experiment.server";
 import { isUuid } from "~/lib/ids";
 import { getSupabase } from "~/lib/supabase.server";
 import { editAuditRpcParams, type StorefrontEditAuditInput } from "./edit-audit.server";
 import { validateCompiledBundle } from "~/lib/storefront-compiler/validate";
+import type { StorefrontAuthoringV1, StorefrontVersionArtifactV1 } from "~/lib/storefront-ai/authoring.server";
+import type { StorefrontBundleV1 } from "~/lib/storefront-bundle/types";
 
 export type StorefrontBundleSourceKind = "legacy" | "recipe" | "custom";
 export type StorefrontBundleStatus = "candidate" | "validated" | "failed";
@@ -169,6 +172,142 @@ export interface InstallStorefrontDraftInput {
   expectedDraftVersionId: string | null;
   actorId?: string | null;
   signal?: AbortSignal;
+}
+
+export interface InstallStorefrontCustomRedesignInput extends StorefrontEditAuditInput {
+  shopId: string;
+  baseVersionId: string;
+  expectedDraftVersionId: string;
+  actorId?: string | null;
+  schemaVersion: number;
+  runtimeVersion: number;
+  validationProfileVersion: number;
+  resultArtifactHash: string;
+  artifact: StorefrontVersionArtifactV1 & { sourceKind: "custom"; authoring: StorefrontAuthoringV1 };
+  assetManifest: Record<string, unknown>;
+  validationReport: Record<string, unknown>;
+  generationPrompt?: string | null;
+  resolution: Record<string, unknown>;
+  signal?: AbortSignal;
+}
+
+export async function installStorefrontCustomRedesign(input: InstallStorefrontCustomRedesignInput): Promise<string> {
+  throwIfReleaseAborted(input.signal);
+  await assertStorefrontWriteAllowed(input.shopId);
+  throwIfReleaseAborted(input.signal);
+  requireUuid(input.baseVersionId, "baseVersionId");
+  requireUuid(input.expectedDraftVersionId, "expectedDraftVersionId");
+  if (!/^sha256:[a-f0-9]{64}$/.test(input.resultArtifactHash)) {
+    throw new StorefrontReleaseError("invalid_storefront_release", "resultArtifactHash must be a canonical SHA-256 hash", 422);
+  }
+  const bundle = input.artifact.bundle;
+  if (input.schemaVersion !== bundle.schemaVersion
+    || input.runtimeVersion !== bundle.runtimeVersion
+    || input.validationProfileVersion !== bundle.validationProfileVersion
+    || !isDeepStrictEqual(input.assetManifest, bundle.assets)) {
+    throw new StorefrontReleaseError(
+      "invalid_storefront_release",
+      "Release metadata must match the complete storefront artifact",
+      422,
+    );
+  }
+  throwIfReleaseAborted(input.signal);
+  const id = await writeRpc<string>("install_storefront_custom_redesign", {
+    p_shop_id: input.shopId,
+    p_base_version_id: input.baseVersionId,
+    p_expected_draft_version_id: input.expectedDraftVersionId,
+    p_actor_id: input.actorId ?? null,
+    p_schema_version: bundle.schemaVersion,
+    p_runtime_version: bundle.runtimeVersion,
+    p_validation_profile_version: bundle.validationProfileVersion,
+    p_bundle_json: input.artifact,
+    p_asset_manifest: bundle.assets,
+    p_validation_report: input.validationReport,
+    p_generation_prompt: input.generationPrompt ?? null,
+    p_resolution_json: input.resolution,
+    ...editAuditRpcParams(input),
+  }, "storefront_redesign_install_failed", input.signal);
+  requireUuid(id, "bundleVersionId");
+  return id;
+}
+
+export type StorefrontCustomRestoreArtifact =
+  | StorefrontVersionArtifactV1
+  | StorefrontBundleV1
+  | { bundle: StorefrontBundleV1 };
+
+export interface RestoreStorefrontCustomVersionInput {
+  shopId: string;
+  baseVersionId: string;
+  targetVersionId: string;
+  expectedDraftVersionId: string;
+  actorId?: string | null;
+  baseArtifactHash: string;
+  targetArtifactHash: string;
+  artifact: StorefrontCustomRestoreArtifact;
+  validationReport: Record<string, unknown>;
+  resolution: Record<string, unknown>;
+  signal?: AbortSignal;
+}
+
+function customRestoreBundle(artifact: StorefrontCustomRestoreArtifact): StorefrontBundleV1 {
+  const envelope = artifact as unknown as Record<string, unknown>;
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)
+    || (Object.hasOwn(envelope, "sourceKind") && envelope.sourceKind !== "custom")) {
+    throw new StorefrontReleaseError("invalid_storefront_release", "Custom restore artifact is invalid", 422);
+  }
+  const candidate = Object.hasOwn(envelope, "bundle") ? envelope.bundle : envelope;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    throw new StorefrontReleaseError("invalid_storefront_release", "Custom restore bundle is invalid", 422);
+  }
+  const bundle = candidate as Record<string, unknown>;
+  const source = bundle.source;
+  if (!source || typeof source !== "object" || Array.isArray(source)
+    || (source as Record<string, unknown>).kind !== "custom"
+    || !Number.isInteger(bundle.schemaVersion)
+    || !Number.isInteger(bundle.runtimeVersion)
+    || !Number.isInteger(bundle.validationProfileVersion)
+    || !bundle.assets || typeof bundle.assets !== "object" || Array.isArray(bundle.assets)) {
+    throw new StorefrontReleaseError("invalid_storefront_release", "Custom restore bundle is invalid", 422);
+  }
+  return candidate as StorefrontBundleV1;
+}
+
+export async function restoreStorefrontCustomVersion(input: RestoreStorefrontCustomVersionInput): Promise<string> {
+  throwIfReleaseAborted(input.signal);
+  requireUuid(input.shopId, "shopId");
+  requireUuid(input.baseVersionId, "baseVersionId");
+  requireUuid(input.targetVersionId, "targetVersionId");
+  requireUuid(input.expectedDraftVersionId, "expectedDraftVersionId");
+  for (const [field, hash] of [
+    ["baseArtifactHash", input.baseArtifactHash],
+    ["targetArtifactHash", input.targetArtifactHash],
+  ] as const) {
+    if (!/^sha256:[a-f0-9]{64}$/.test(hash)) {
+      throw new StorefrontReleaseError("invalid_storefront_release", `${field} must be a canonical SHA-256 hash`, 422);
+    }
+  }
+  const bundle = customRestoreBundle(input.artifact);
+  await assertStorefrontWriteAllowed(input.shopId);
+  throwIfReleaseAborted(input.signal);
+  const id = await writeRpc<string>("restore_storefront_custom_version", {
+    p_shop_id: input.shopId,
+    p_base_version_id: input.baseVersionId,
+    p_target_version_id: input.targetVersionId,
+    p_expected_draft_version_id: input.expectedDraftVersionId,
+    p_actor_id: input.actorId ?? null,
+    p_schema_version: bundle.schemaVersion,
+    p_runtime_version: bundle.runtimeVersion,
+    p_validation_profile_version: bundle.validationProfileVersion,
+    p_target_artifact_hash: input.targetArtifactHash,
+    p_bundle_json: input.artifact,
+    p_asset_manifest: bundle.assets,
+    p_validation_report: input.validationReport,
+    p_resolution_json: input.resolution,
+    p_base_artifact_hash: input.baseArtifactHash,
+  }, "storefront_custom_restore_failed", input.signal);
+  requireUuid(id, "bundleVersionId");
+  return id;
 }
 
 export async function installStorefrontDraft(input: InstallStorefrontDraftInput): Promise<string> {
