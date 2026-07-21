@@ -12,6 +12,7 @@ import { buildProductDraft } from "~/lib/seo/writer.server";
 import { validateDraft } from "~/lib/seo/validator.server";
 import { readStorefrontReleaseState, type StorefrontReleaseState } from "~/lib/storefront-bundle/build.server";
 import { parseStorefrontPath } from "./detect.server";
+import { listRecentDiffs } from "./competitor-store.server";
 import type { AiCrawlDay, JsonLdCheckedPage, RadarCollectInputs, RankingSeries, TrafficDay, TrafficPath } from "./types";
 
 export const ROLLUP_DAYS = 10;
@@ -138,7 +139,7 @@ export async function loadRadarInputs(shopId: string): Promise<RadarCollectInput
   // and the belt-and-suspenders in-memory filter below.
   const today = isoDaysAgo(0);
   const sb = getSupabase();
-  const [trafficRes, seriesRes, crawlRes, seo, release] = await Promise.all([
+  const [trafficRes, seriesRes, crawlRes, seo, release, competitorDiffs] = await Promise.all([
     sb.from("radar_traffic_daily")
       .select("day, views, sessions, cart_adds, checkouts, top_paths")
       .eq("shop_id", shopId)
@@ -152,6 +153,7 @@ export async function loadRadarInputs(shopId: string): Promise<RadarCollectInput
       .gte("day", isoDaysAgo(CRAWL_WINDOW_DAYS)),
     getSeoSettings(shopId),
     readStorefrontReleaseState(shopId),
+    listRecentDiffs(shopId),
   ]);
   if (trafficRes.error) throw new Error(`radar_traffic_daily read: ${trafficRes.error.message}`);
   if (seriesRes.error) throw new Error(`read_radar_ranking_series: ${seriesRes.error.message}`);
@@ -181,6 +183,6 @@ export async function loadRadarInputs(shopId: string): Promise<RadarCollectInput
     lastPublishedAt: publishedAt,
     jsonLdIssues,
     publishedRuntimeVersion: release.publishedRuntimeVersion,
-    competitorDiffs: [],
+    competitorDiffs,
   };
 }

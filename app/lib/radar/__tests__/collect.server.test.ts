@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getShopStorefrontOriginMock: vi.fn(),
   getSeoSettingsMock: vi.fn(),
   releaseStateMock: vi.fn(),
+  listRecentDiffsMock: vi.fn(),
 }));
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({ rpc: mocks.rpcMock, from: mocks.fromMock }),
@@ -19,6 +20,7 @@ vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: mocks.get
 vi.mock("~/lib/storefront/shop.server", () => ({ getShopStorefrontOrigin: mocks.getShopStorefrontOriginMock }));
 vi.mock("~/lib/seo/seo-store.server", () => ({ getSeoSettings: mocks.getSeoSettingsMock }));
 vi.mock("~/lib/storefront-bundle/build.server", () => ({ readStorefrontReleaseState: mocks.releaseStateMock }));
+vi.mock("../competitor-store.server", () => ({ listRecentDiffs: mocks.listRecentDiffsMock }));
 
 // eslint-disable-next-line import/first -- import must follow vi.mock so the mocks register first
 import { collectShop, loadRadarInputs, JSONLD_CHECK_MAX_PAGES } from "../collect.server";
@@ -45,6 +47,7 @@ beforeEach(() => {
   mocks.getShopStorefrontOriginMock.mockResolvedValue("https://peak.example");
   mocks.getSeoSettingsMock.mockResolvedValue({ allowAiCrawlers: true, orgDescription: "We sell boots." });
   mocks.releaseStateMock.mockResolvedValue({ draftVersionId: null, publishedVersionId: null, draftRuntimeVersion: null, publishedRuntimeVersion: null });
+  mocks.listRecentDiffsMock.mockResolvedValue([]);
 });
 
 afterEach(() => {
