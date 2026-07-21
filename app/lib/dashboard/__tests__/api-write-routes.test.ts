@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type * as CalderynServer from "../../calderyn.server";
+import type * as CutoverOrgMode from "../../cutover/org-mode.server";
+import type * as DashboardHttp from "../http.server";
+import type * as DashboardSession from "../session.server";
+import type * as ShopifyInventory from "../../shopify/inventory.server";
 
 import { action as campaignAction } from "../../../routes/dashboard.api.campaigns.$id.action";
 import { action as alertAction } from "../../../routes/dashboard.api.alerts.$id.action";
@@ -27,14 +32,14 @@ const snoozeAlert = vi.fn();
 const unauthenticatedAdmin = vi.fn();
 
 vi.mock("../session.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../session.server")>()),
+  ...(await importOriginal<typeof DashboardSession>()),
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
   getDashboardSessionAllowUnverified: (...a: unknown[]) => getDashboardSessionAllowUnverified(...a),
   getSessionFromRequest: (...a: unknown[]) => getSessionFromRequest(...a),
   revokeSession: (...a: unknown[]) => revokeSession(...a),
 }));
 vi.mock("../http.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../http.server")>()),
+  ...(await importOriginal<typeof DashboardHttp>()),
   requireSameOrigin: (...a: unknown[]) => requireSameOrigin(...a),
 }));
 vi.mock("../../actions/execute.server", () => ({
@@ -60,7 +65,7 @@ vi.mock("../../supabase.server", () => {
   };
 });
 vi.mock("../../calderyn.server", async (importOriginal) => {
-  const orig = await importOriginal<typeof import("../../calderyn.server")>();
+  const orig = await importOriginal<typeof CalderynServer>();
   return {
     ...orig,
     calderynClient: () => ({
@@ -84,7 +89,7 @@ vi.mock("../../calderyn.server", async (importOriginal) => {
   };
 });
 vi.mock("../../shopify/inventory.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../shopify/inventory.server")>()),
+  ...(await importOriginal<typeof ShopifyInventory>()),
   inventoryAdjustQuantities: (...a: unknown[]) => inventoryAdjustQuantities(...a),
 }));
 vi.mock("../../alerts.server", () => ({
@@ -102,7 +107,7 @@ vi.mock("../../../shopify.server", () => ({
 // answers every read with "no row", which getOrgMode treats as shop-not-found.
 // Pin the default mode instead — routing itself is covered in alert-action.test.ts.
 vi.mock("../../cutover/org-mode.server", async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
+  ...(await importOriginal<typeof CutoverOrgMode>()),
   getOrgMode: vi.fn(async () => "mirror"),
   // These routes cover Shopify-connected shops (shopDomain set); pin the connection
   // probe so the executors take the Shopify write branch. Native-shop routing (no
@@ -622,8 +627,9 @@ describe("POST /dashboard/api/audit/:id/undo", () => {
       "shop-1",
       "a1",
       expect.anything(),
-      // inventory undos need a Shopify admin client; the route passes one through
-      expect.objectContaining({ admin: expect.anything() }),
+      // Without a forward audit row, the route cannot justify initializing
+      // Shopify; undoAction performs the scoped lookup and fails loudly if absent.
+      { admin: undefined },
     );
   });
 

@@ -19,7 +19,11 @@ import type { ActionKind, Alert, AuditEntry, GuardrailConfig } from "../types";
 import { discontinueProduct } from "../shopify/product.server";
 import { resolveSkuForDiscontinue, setDoNotReorder } from "./discontinue.server";
 import { getOrgMode, writesToOwned, dualWrites, shopHasShopifyConnection } from "../cutover/org-mode.server";
-import { resolveOwnedMoveTarget, applyOwnedInventoryMove } from "./owned-writes.server";
+import {
+  archiveOwnedProductForSku,
+  resolveOwnedMoveTarget,
+  applyOwnedInventoryMove,
+} from "./owned-writes.server";
 import type { WriteTarget } from "./execute.server";
 
 export type InventoryAlertActionKind = "reallocate_inventory" | "snooze_alert";
@@ -250,13 +254,13 @@ export async function executeInventoryAlertAction(opts: {
 }
 
 /** Discontinue a SKU's product: set the internal do_not_reorder flag (blocks
- *  create_po_draft, shows on Inventory) AND archive the product on live Shopify.
+ *  create_po_draft, shows on Inventory) AND archive it in the authoritative catalog.
  *  Same trust contract as executeInventoryAlertAction — every mutation input is
  *  re-derived from the alert record (its sku → sku_dim), never the request body.
  *  Reversible via the discontinue_sku branch in undo.server.ts. */
 export async function executeDiscontinueAlertAction(opts: {
   client: AlertActionClient;
-  admin: AdminGraphqlClient;
+  admin: AdminGraphqlClient | null;
   sb: SupabaseClient;
   shopId: string;
   alertId: string;
@@ -312,7 +316,10 @@ export async function executeDiscontinueAlertAction(opts: {
       message: "The alert's SKU was not found for this shop.",
     });
   }
-  if (!target.productGid) {
+  const orgMode = await getOrgMode(shopId);
+  const hasShopify = await shopHasShopifyConnection(shopId);
+  const owned = !hasShopify || writesToOwned(orgMode);
+  if (!owned && !target.productGid) {
     // Rule 12: surface WHY the move can't run rather than offering a dead button.
     throw new CalderynError({
       code: "discontinue_no_product",
@@ -321,24 +328,48 @@ export async function executeDiscontinueAlertAction(opts: {
         "This SKU has no linked Shopify product, so it can't be archived. Discontinue it in Shopify directly.",
     });
   }
+  if (!owned && !admin) {
+    throw new CalderynError({
+      code: "shopify_required",
+      status: 422,
+      message: "Connect a Shopify store to use this action.",
+    });
+  }
 
   // 1. Set the internal flag FIRST: a flagged-but-not-archived state is the safe
   //    failure mode (PO drafts are blocked even if the Shopify call later fails),
   //    and the undo clears it regardless.
   await setDoNotReorder(sb, shopId, target.skuId, true);
 
-  // 2. Archive on Shopify. A failure here throws — the audit row below is only
-  //    written on success (rule 12: no "succeeded" row for an un-archived product).
+  // 2. Archive in the authoritative catalog. A failure here throws — the audit row
+  //    below is only written on success (rule 12: no "succeeded" row for an
+  //    un-archived product).
   let archivedStatus: string;
+  let productId: string;
   try {
-    ({ status: archivedStatus } = await discontinueProduct(admin, target.productGid));
+    if (owned) {
+      const ownedProductId = await archiveOwnedProductForSku(shopId, target.skuId);
+      if (!ownedProductId) {
+        throw new CalderynError({
+          code: "discontinue_no_product",
+          status: 422,
+          message: "This SKU has no owned product to archive.",
+        });
+      }
+      productId = ownedProductId;
+      archivedStatus = "archived";
+    } else {
+      ({ status: archivedStatus } = await discontinueProduct(admin!, target.productGid!));
+      productId = target.productGid!;
+    }
   } catch (err) {
     // Roll the flag back so a failed archive doesn't silently block reorders.
     await setDoNotReorder(sb, shopId, target.skuId, false);
+    if (err instanceof CalderynError) throw err;
     throw new CalderynError({
       code: "action_failed",
       status: 502,
-      message: err instanceof Error ? err.message : "Shopify product archive failed.",
+      message: err instanceof Error ? err.message : "Product archive failed.",
     });
   }
 
@@ -349,11 +380,11 @@ export async function executeDiscontinueAlertAction(opts: {
     target: alert.sku,
     sku: alert.sku,
     sku_id: target.skuId,
-    product_id: target.productGid,
+    product_id: productId,
     estimate_cents: alert.dollar_impact,
     archived_status: archivedStatus,
+    ...(owned ? { owned: true } : {}),
   };
-  // Discontinue always archives on live Shopify (not org_mode-routed).
   const audit = await client.actions.execute({
     alertId,
     kind,
@@ -361,7 +392,7 @@ export async function executeDiscontinueAlertAction(opts: {
     idempotencyKey,
     actor,
     triggerReason,
-    writeTarget: "shopify_admin",
+    writeTarget: owned ? "owned_sot" : "shopify_admin",
   });
 
   const acknowledged = await acknowledgeAlert(sb, shopId, alertId);

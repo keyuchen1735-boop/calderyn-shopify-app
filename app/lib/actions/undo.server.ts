@@ -12,6 +12,7 @@ import { restoreProduct } from "../shopify/product.server";
 import { setVariantPrice } from "../shopify/price.server";
 import { setDoNotReorder } from "./discontinue.server";
 import { setOwnedVariantPrice, applyOwnedInventoryMove } from "./owned-writes.server";
+import { setProductStatus } from "../catalog/catalog.server";
 import type { MetaClient } from "../meta/campaigns.server";
 import type { MetaWriteConn } from "../meta/ad-create.server";
 import { deleteAd as realDeleteAd, metaWriteClientForShopId } from "../meta/ad-create.server";
@@ -321,22 +322,26 @@ export async function undoAction(
       }
     }
   } else if (orig.action_kind === "discontinue_sku") {
-    // Reverse a discontinue: re-activate the product on Shopify, then clear the
-    // internal flag. Refuse loudly without an admin client rather than record a
-    // success that never touched Shopify (rule 12 — same stance as inventory).
-    if (!deps.admin) {
-      throw new Error("Shopify admin client unavailable; cannot undo a product discontinue");
-    }
-    const dp = (orig.params ?? {}) as { sku_id?: string; product_id?: string };
+    // Reverse a discontinue in the same catalog that the original action changed,
+    // then clear the internal flag.
+    const dp = (orig.params ?? {}) as { sku_id?: string; product_id?: string; owned?: boolean };
     if (!dp.product_id || !dp.sku_id) {
       throw new Error(`audit ${auditId} lacks the product/sku to restore; cannot undo`);
     }
-    // Restore to ACTIVE (restoreProduct's default — the pre-status isn't captured
-    // on the write path; a previously-DRAFT product re-activating is the safe,
-    // visible default rather than staying archived).
-    await restoreProduct(deps.admin, dp.product_id, "ACTIVE");
+    if (dp.owned) {
+      await setProductStatus(shopId, dp.product_id, "active");
+      writeTarget = "owned_sot";
+    } else {
+      if (!deps.admin) {
+        throw new Error("Shopify admin client unavailable; cannot undo a product discontinue");
+      }
+      // Restore to ACTIVE (restoreProduct's default — the pre-status isn't captured
+      // on the write path; a previously-DRAFT product re-activating is the safe,
+      // visible default rather than staying archived).
+      await restoreProduct(deps.admin, dp.product_id, "ACTIVE");
+      writeTarget = "shopify_admin";
+    }
     await setDoNotReorder(sb, shopId, dp.sku_id, false);
-    writeTarget = "shopify_admin"; // re-activates the product on live Shopify
   } else if (orig.action_kind === "adjust_price") {
     const pp = (orig.params ?? {}) as {
       variant_id?: string;

@@ -12,17 +12,36 @@ export async function action({ request, params }: ActionFunctionArgs) {
   if (request.method !== "POST") return jsonError(405, "method_not_allowed");
 
   return dashboardJson(async () => {
-    // Best-effort: only inventory undos need Shopify admin; a missing offline
-    // session must not break campaign undos. The executor refuses loudly when
-    // an inventory undo arrives without it.
+    const sb = getSupabase();
+    // Read the forward action's target before resolving Shopify. Native-owned
+    // reversals must stay entirely inside Calderyn; only legacy store writes need
+    // an Admin client. `undoAction` repeats the scoped read as its authorization
+    // and replay boundary, so a missing/changed row still fails loudly there.
+    const { data: original, error } = await sb
+      .from("action_audit")
+      .select("action_kind, params")
+      .eq("shop_id", session.shopId)
+      .eq("id", String(params.id))
+      .maybeSingle();
+    if (error) throw error;
+    const actionKind = String((original as { action_kind?: unknown } | null)?.action_kind ?? "");
+    const actionParams = ((original as { params?: unknown } | null)?.params ?? {}) as { owned?: boolean };
+    const needsShopifyAdmin =
+      !actionParams.owned &&
+      (actionKind === "reallocate_inventory" ||
+        actionKind === "adjust_price" ||
+        actionKind === "discontinue_sku");
+
     let admin: AdminGraphqlClient | undefined;
-    try {
-      ({ admin } = await unauthenticated.admin(session.shopDomain ?? ""));
-    } catch (err) {
-      console.error("[undo] unauthenticated.admin failed — proceeding without Shopify admin client", err);
-      admin = undefined;
+    if (needsShopifyAdmin && session.shopDomain) {
+      try {
+        ({ admin } = await unauthenticated.admin(session.shopDomain));
+      } catch (err) {
+        console.error("[undo] unauthenticated.admin failed — proceeding without Shopify admin client", err);
+        admin = undefined;
+      }
     }
-    const result = await undoAction(session.shopId, String(params.id), getSupabase(), { admin });
+    const result = await undoAction(session.shopId, String(params.id), sb, { admin });
     return { audit_id: result.id };
   });
 }

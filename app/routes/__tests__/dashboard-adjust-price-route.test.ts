@@ -5,6 +5,8 @@
 // auth boundary; assert the wiring.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { action as alertAction } from "../dashboard.api.alerts.$id.action";
+import type * as CalderynServer from "~/lib/calderyn.server";
+import type * as DashboardHttp from "~/lib/dashboard/http.server";
 
 const requireDashboardSession = vi.fn();
 const executeAdjustPriceAlertAction = vi.fn();
@@ -12,6 +14,8 @@ const executeCreatePoDraft = vi.fn();
 const executeReallocateSpendSku = vi.fn();
 const alertsGetSpy = vi.fn();
 const recordApprovalSpy = vi.fn();
+const getOrgMode = vi.fn();
+const shopHasShopifyConnection = vi.fn();
 
 vi.mock("~/lib/dashboard/session.server", () => ({
   requireDashboardSession: (...a: unknown[]) => requireDashboardSession(...a),
@@ -23,18 +27,23 @@ vi.mock("~/lib/actions/reallocate-sku.server", () => ({
   executeReallocateSpendSku: (...a: unknown[]) => executeReallocateSpendSku(...a),
 }));
 vi.mock("~/lib/dashboard/http.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/lib/dashboard/http.server")>()),
+  ...(await importOriginal<typeof DashboardHttp>()),
   requireSameOrigin: vi.fn(),
 }));
 vi.mock("~/lib/actions/adjust-price.server", () => ({
   executeAdjustPriceAlertAction: (...a: unknown[]) => executeAdjustPriceAlertAction(...a),
 }));
 vi.mock("~/lib/calderyn.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/lib/calderyn.server")>()),
+  ...(await importOriginal<typeof CalderynServer>()),
   calderynClient: () => ({ alerts: { get: (...a: unknown[]) => alertsGetSpy(...a) } }),
 }));
 vi.mock("~/lib/calibration/approval.server", () => ({
   recordApproval: (...a: unknown[]) => recordApprovalSpy(...a),
+}));
+vi.mock("~/lib/cutover/org-mode.server", () => ({
+  getOrgMode: (...a: unknown[]) => getOrgMode(...a),
+  shopHasShopifyConnection: (...a: unknown[]) => shopHasShopifyConnection(...a),
+  writesToOwned: (mode: string) => mode === "live",
 }));
 vi.mock("~/shopify.server", () => ({
   unauthenticated: { admin: vi.fn(async () => ({ admin: { graphql: vi.fn() } })) },
@@ -56,6 +65,8 @@ describe("POST /dashboard/api/alerts/:id/action — adjust_price", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: "x.myshopify.com" });
+    getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(true);
     alertsGetSpy.mockResolvedValue({ id: "a1", detector_id: "margin_erosion" });
     recordApprovalSpy.mockResolvedValue({ delta: 1, before: 22, after: 23 });
     executeAdjustPriceAlertAction.mockResolvedValue({
@@ -109,6 +120,8 @@ describe("POST /dashboard/api/alerts/:id/action — create_po_draft", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: "x.myshopify.com" });
+    getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(true);
     alertsGetSpy.mockResolvedValue({ id: "a1", detector_id: "reorder_timing" });
     recordApprovalSpy.mockResolvedValue({ delta: 1, before: 22, after: 23 });
     executeCreatePoDraft.mockResolvedValue({
@@ -156,6 +169,8 @@ describe('POST /dashboard/api/alerts/:id/action — reallocate_spend_sku ("Move 
   beforeEach(() => {
     vi.clearAllMocks();
     requireDashboardSession.mockResolvedValue({ shopId: "shop-1", shopDomain: "x.myshopify.com" });
+    getOrgMode.mockResolvedValue("mirror");
+    shopHasShopifyConnection.mockResolvedValue(true);
     alertsGetSpy.mockResolvedValue({ id: "a1", detector_id: "ad_tax_overload" });
     recordApprovalSpy.mockResolvedValue({ delta: 1, before: 22, after: 23 });
     executeReallocateSpendSku.mockResolvedValue({

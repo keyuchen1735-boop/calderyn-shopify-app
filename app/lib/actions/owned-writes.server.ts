@@ -8,7 +8,7 @@
 // owned branch -- the routing changes the WRITE target, not the safety envelope).
 
 import { getSupabase } from "~/lib/supabase.server";
-import { setVariantPrice } from "../catalog/catalog.server";
+import { setProductStatus, setVariantPrice } from "../catalog/catalog.server";
 import { createTransfer } from "../inventory/engine.server";
 
 /** Resolve a SKU code to its owned variant id + current retail price (cents), shop-scoped.
@@ -47,6 +47,25 @@ export async function setOwnedVariantPrice(
   priceCents: number,
 ): Promise<{ priorPriceCents: number | null }> {
   return setVariantPrice(shopId, variantId, priceCents);
+}
+
+/** Archive the Calderyn-owned product that contains this owned SKU. */
+export async function archiveOwnedProductForSku(
+  shopId: string,
+  skuId: string,
+): Promise<string | null> {
+  const sb = getSupabase();
+  const { data: variant, error } = await sb
+    .from("variant_dim")
+    .select("product_id")
+    .eq("shop_id", shopId)
+    .eq("id", skuId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!variant?.product_id) return null;
+  const productId = String(variant.product_id);
+  await setProductStatus(shopId, productId, "archived");
+  return productId;
 }
 
 /**
