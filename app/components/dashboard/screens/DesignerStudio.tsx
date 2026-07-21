@@ -142,11 +142,12 @@ export default function DesignerStudio({ app }: { app: DashboardCtx }) {
 
     if (baseline !== undefined) {
       const pollBase = baseline;
+      const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
       void (async () => {
         const startedAt = Date.now();
         let delay = 3_000;
         while (!settled && Date.now() - startedAt < 180_000) {
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await sleep(delay);
           delay = Math.min(delay + 1_000, 8_000);
           if (settled) return;
           try {

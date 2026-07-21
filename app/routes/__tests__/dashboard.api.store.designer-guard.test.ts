@@ -21,7 +21,7 @@ vi.mock("~/lib/storefront-command/command.server", () => ({
   StoreCommandError: class StoreCommandError extends Error {},
 }));
 vi.mock("~/lib/dashboard/http.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/lib/dashboard/http.server")>()),
+  ...(await importOriginal<Record<string, unknown>>()),
   rateLimit,
 }));
 
