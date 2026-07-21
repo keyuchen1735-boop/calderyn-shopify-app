@@ -10,6 +10,10 @@ import { getSupabase } from "~/lib/supabase.server";
 
 const TIME_BUDGET_MS = 50_000;
 
+// The loop budgets 50s of work; give the function headroom past the default
+// so a run that uses its full budget is not killed mid-shop.
+export const config = { maxDuration: 60 };
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!isAuthorizedCron(request.headers.get("authorization"), process.env.CRON_SECRET)) {
     return new Response("Unauthorized", { status: 401 });
