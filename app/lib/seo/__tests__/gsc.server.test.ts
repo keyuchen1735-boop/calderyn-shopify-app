@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildGscAuthUrl,
@@ -16,8 +16,31 @@ vi.mock("~/lib/crypto.server", () => ({
   decrypt: (s: string) => s.replace(/^enc:/, ""),
 }));
 
-// Set up required environment variables for tests
-process.env.GOOGLE_ADS_CLIENT_SECRET = "test-secret";
+// The module reads Google client env at call time; snapshot and restore so
+// per-test mutations never leak into other suites in the same worker.
+const ENV_KEYS = [
+  "GOOGLE_ADS_CLIENT_ID",
+  "GOOGLE_ADS_CLIENT_SECRET",
+  "GOOGLE_SEARCH_CONSOLE_CLIENT_ID",
+  "GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET",
+] as const;
+const savedEnv: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
+
+beforeEach(() => {
+  for (const key of ENV_KEYS) savedEnv[key] = process.env[key];
+  process.env.GOOGLE_ADS_CLIENT_ID = "test-client";
+  process.env.GOOGLE_ADS_CLIENT_SECRET = "test-secret";
+  delete process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_ID;
+  delete process.env.GOOGLE_SEARCH_CONSOLE_CLIENT_SECRET;
+});
+
+afterEach(() => {
+  for (const key of ENV_KEYS) {
+    const prior = savedEnv[key];
+    if (prior === undefined) delete process.env[key];
+    else process.env[key] = prior;
+  }
+});
 
 describe("buildGscAuthUrl", () => {
   it("requests offline webmasters.readonly consent", () => {
