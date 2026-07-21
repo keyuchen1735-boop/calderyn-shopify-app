@@ -27,6 +27,7 @@ import {
   sayLine,
   type MoveGroupKey,
 } from "./autopilot-cards";
+import { OvernightMoves } from "./radar-sections";
 
 /** Quick reject reasons → real RejectReason codes. "Doesn't fit" has no
  *  dedicated code, so it rides `other` with the label as the note. */
@@ -812,13 +813,16 @@ export default function Autopilot({ app }: { app: DashboardCtx }) {
       </header>
 
       {standingBy ? (
-        <Card>
-          <Placeholder
-            icon="bolt"
-            title="Autopilot is standing by"
-            sub="It trains on your store's real orders and campaigns. Add products or connect an ad account, and calibration starts on its own."
-          />
-        </Card>
+        <>
+          <Card>
+            <Placeholder
+              icon="bolt"
+              title="Autopilot is standing by"
+              sub="It trains on your store's real orders and campaigns. Add products or connect an ad account, and calibration starts on its own."
+            />
+          </Card>
+          <OvernightMoves app={app} />
+        </>
       ) : data ? (
         <>
           {data.calibrationPct !== null && data.calibrationPct < 100 ? (
@@ -832,20 +836,24 @@ export default function Autopilot({ app }: { app: DashboardCtx }) {
           ) : (
             <LiveEnginePanel app={app} data={data} flagged={flagged} />
           )}
+          <OvernightMoves app={app} />
           <AutopilotFeatures groups={featureGroups} app={app} />
         </>
       ) : (
-        <Card>
-          <Placeholder
-            icon="bolt"
-            title={app.loading ? "Starting the engine" : "Engine data unavailable"}
-            sub={
-              app.loading
-                ? "Reading your autopilot features, recent actions, and calibration."
-                : "Could not load the Live Engine just now. Refresh to try again."
-            }
-          />
-        </Card>
+        <>
+          <Card>
+            <Placeholder
+              icon="bolt"
+              title={app.loading ? "Starting the engine" : "Engine data unavailable"}
+              sub={
+                app.loading
+                  ? "Reading your autopilot features, recent actions, and calibration."
+                  : "Could not load the Live Engine just now. Refresh to try again."
+              }
+            />
+          </Card>
+          <OvernightMoves app={app} />
+        </>
       )}
     </div>
   );

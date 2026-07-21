@@ -600,10 +600,10 @@ export default function Dashboard({ app }: { app: DashboardCtx }) {
                   : `${radarHome.readyCount} moves ready for you`}
               </strong>
               <div className="cd-caption">
-                Radar drafted improvements overnight. Review the evidence and apply each in a click.
+                Calderyn drafted improvements overnight. Review the evidence and approve each in a click.
               </div>
             </div>
-            <Btn onClick={() => app.navigate("radar")}>Open Radar</Btn>
+            <Btn onClick={() => app.navigate("autopilot")}>Review moves</Btn>
             <button
               type="button"
               aria-label="Dismiss"

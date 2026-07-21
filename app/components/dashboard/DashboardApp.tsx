@@ -71,7 +71,6 @@ import ScreenCollections from "./screens/Collections";
 import ScreenImportShopify from "./screens/ImportShopify";
 import ScreenCutover from "./screens/Cutover";
 import ScreenAutopilot from "./screens/Autopilot";
-import ScreenRadar from "./screens/Radar";
 import ScreenOrders from "./screens/Orders";
 import ScreenCustomers from "./screens/Customers";
 import ScreenShipping from "./screens/Shipping";
@@ -113,7 +112,6 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
     items: [
       { id: "dashboard", label: "Home", icon: "home" },
       { id: "autopilot", label: "Autopilot", icon: "bolt" },
-      { id: "radar", label: "Radar", icon: "scan" },
       { id: "campaigns", label: "Campaigns", icon: "megaphone" },
       {
         id: "analytics",
@@ -292,7 +290,6 @@ const SCREENS: Record<ScreenId, (props: { app: DashboardCtx }) => JSX.Element> =
   // Hidden (not in the nav rail) — reached via the secret dot in Settings.
   labs: ScreenLabs,
   autopilot: ScreenAutopilot,
-  radar: ScreenRadar,
   orders: ScreenOrders,
   customers: ScreenCustomers,
   shipping: ScreenShipping,

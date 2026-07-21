@@ -36,9 +36,8 @@ export type Screen =
   // Go live (Step 9 slice 3) — cutover status, go-live checklist, mode transitions.
   | "cutover"
   // Autopilot — the trust ladder / calibration surface, promoted to a screen.
+  // Also hosts the overnight drafted-moves queue (the folded Radar surface).
   | "autopilot"
-  // Radar - overnight watcher: drafted moves the merchant applies each morning.
-  | "radar"
   // Owned commerce surfaces (RUN group).
   | "orders"
   | "customers"

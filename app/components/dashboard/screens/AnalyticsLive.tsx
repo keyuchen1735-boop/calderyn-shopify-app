@@ -8,6 +8,8 @@ import { Card, CountMoney, CountNum, Meter, Placeholder } from "../ui";
 import { useLiveAnalytics } from "../use-live-analytics";
 import LiveGlobe from "../live-globe";
 import type { LiveAnalyticsSnapshot } from "~/lib/dashboard/client";
+import type { DashboardCtx } from "../context";
+import { LiveRadarSignals } from "./radar-sections";
 
 export function LiveSnapshotView({
   snapshot,
@@ -193,7 +195,12 @@ export function LiveSnapshotView({
   );
 }
 
-export default function AnalyticsLive({ dark = false }: { dark?: boolean }) {
+export default function AnalyticsLive({ app, dark = false }: { app: DashboardCtx; dark?: boolean }) {
   const { snapshot, error } = useLiveAnalytics(true);
-  return <LiveSnapshotView snapshot={snapshot} error={error} dark={dark} />;
+  return (
+    <>
+      <LiveSnapshotView snapshot={snapshot} error={error} dark={dark} />
+      <LiveRadarSignals app={app} />
+    </>
+  );
 }

@@ -98,6 +98,8 @@ export const SCREEN_CACHE_KEYS = {
   learnedRules: "settings-learned-rules",
   setupProgress: "setup-progress",
   radarHome: "radar-home",
+  // The radar overview feeds two surfaces since the standalone screen was
+  // folded away: Autopilot (drafted moves) and Analytics > Live (signals).
   radar: "radar",
 } as const;
 

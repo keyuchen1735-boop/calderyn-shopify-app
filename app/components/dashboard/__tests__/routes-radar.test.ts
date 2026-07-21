@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { parsePath, pathFor } from "../routes";
+import { parsePath } from "../routes";
 
-describe("Radar route", () => {
-  it("round-trips /dashboard/radar", () => {
-    const nav = { screen: "radar" as const, param: null, sub: null };
-    expect(pathFor(nav)).toBe("/dashboard/radar");
-    expect(parsePath("/dashboard/radar")).toEqual(nav);
+// The standalone Radar screen is gone; its queue lives inside Autopilot. Old
+// bookmarks must keep working, so the retired paths parse straight to
+// Autopilot (parse-only aliases — pathFor never emits them).
+describe("retired Radar paths", () => {
+  it("aliases /dashboard/radar to Autopilot", () => {
+    expect(parsePath("/dashboard/radar")).toEqual({ screen: "autopilot", param: null, sub: null });
   });
-  it("rejects unknown radar sub-paths", () => {
+  it("aliases /dashboard/grow/radar to Autopilot", () => {
+    expect(parsePath("/dashboard/grow/radar")).toEqual({ screen: "autopilot", param: null, sub: null });
+  });
+  it("still rejects unknown radar sub-paths (shell falls back to Mission Control)", () => {
     expect(parsePath("/dashboard/radar/extra")).toBeNull();
+    expect(parsePath("/dashboard/grow/other")).toBeNull();
   });
 });
