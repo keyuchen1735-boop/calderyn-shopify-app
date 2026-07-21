@@ -66,7 +66,7 @@ export type StoreCommandReceipt =
   | { status: "unchanged"; message: string };
 
 export type StoreCommandEvent =
-  | { stage: "understanding" | "preparing_products" | "checking_preview" }
+  | { stage: "understanding" | "preparing_products" | "planning_redesign" | "building_pages" | "checking_preview" }
   | { stage: "ready"; receipt: StoreCommandReceipt }
   | { stage: "error"; code: string; status: number; message: string };
 
