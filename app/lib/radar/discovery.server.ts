@@ -14,6 +14,7 @@ import { getCatalog } from "~/lib/storefront/catalog.server";
 import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 import { countCompetitors, insertSuggestion, MAX_WATCHED_COMPETITORS } from "./competitor-store.server";
+import { isPubliclyRoutableHttps } from "./fetch.server";
 import { stampRadarState } from "./store.server";
 
 export const DISCOVERY_MAX_SEARCHES = 3;
@@ -40,25 +41,39 @@ interface RawSuggestion {
   reason?: unknown;
 }
 
+/** Try to JSON.parse a `[start, lastIndexOf("]")]` slice; null on any failure
+ *  (bad indices, parse error, or a non-array result). */
+function tryParseArraySlice(text: string, start: number, end: number): RawSuggestion[] | null {
+  if (start < 0 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1)) as unknown;
+    return Array.isArray(parsed) ? (parsed as RawSuggestion[]) : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseSuggestions(text: string): RawSuggestion[] {
   // Strip Markdown code fences first if present
   const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   const toparse = fenceMatch ? fenceMatch[1] : text;
 
-  // Use lastIndexOf to find the last [ to avoid markdown link brackets [text](url)
-  const start = toparse.lastIndexOf("[");
-  const end = toparse.lastIndexOf("]");
-  if (start < 0 || end <= start) return [];
-  try {
-    const parsed = JSON.parse(toparse.slice(start, end + 1)) as unknown;
-    return Array.isArray(parsed) ? (parsed as RawSuggestion[]) : [];
-  } catch {
-    return [];
-  }
+  const lastBracket = toparse.lastIndexOf("]");
+  // Try the first "[" first: this is the correct slice whenever the JSON
+  // array itself is the only bracketed content (e.g. a suggestion's `reason`
+  // field legitimately contains a "["). Fall back to the last "[" - the
+  // previous behavior - which is what correctly skips past leading markdown
+  // link brackets like "[text](url)" that precede the real array.
+  return (
+    tryParseArraySlice(toparse, toparse.indexOf("["), lastBracket) ??
+    tryParseArraySlice(toparse, toparse.lastIndexOf("["), lastBracket) ??
+    []
+  );
 }
 
 function normalizeOrigin(raw: unknown, ownHost: string | null): { url: string; host: string } | null {
   if (typeof raw !== "string") return null;
+  if (!isPubliclyRoutableHttps(raw)) return null;
   let u: URL;
   try {
     u = new URL(raw);
@@ -90,8 +105,18 @@ export async function discoverShopCompetitors(
     countCompetitors(shopId, "suggested"),
     countCompetitors(shopId, "watching"),
   ]);
-  if (suggestedCount >= DISCOVERY_MAX_SUGGESTIONS) return { skipped: "suggestion_backlog" };
-  if (watchingCount >= MAX_WATCHED_COMPETITORS) return { skipped: "watch_list_full" };
+  // These two skips are routine and can recur night after night for the same
+  // shop (a merchant who never confirms suggestions, or who has watched the
+  // max already) - stamping the cursor here keeps such a shop from wedging
+  // the front of the nulls-first discovery queue forever.
+  if (suggestedCount >= DISCOVERY_MAX_SUGGESTIONS) {
+    await stampRadarState(shopId, { lastDiscoveredAt: new Date().toISOString() });
+    return { skipped: "suggestion_backlog" };
+  }
+  if (watchingCount >= MAX_WATCHED_COMPETITORS) {
+    await stampRadarState(shopId, { lastDiscoveredAt: new Date().toISOString() });
+    return { skipped: "watch_list_full" };
+  }
 
   const [store, seo, products, origin] = await Promise.all([
     getStoreSettings(shopId),
@@ -117,7 +142,13 @@ export async function discoverShopCompetitors(
   // Check quota once upfront before the loop; pause_turn continuations proceed
   // without further quota checks (the loop is bounded by MAX_PAUSE_RESUMES).
   const verdict = await checkAiQuota({ shopId, feature: "radar_discovery", trusted: true });
-  if (!verdict.allowed) return { skipped: verdict.code };
+  // A quota denial is just as capable of wedging the queue head as the two
+  // backlog checks above (a shop stuck over its daily/plan cap would
+  // otherwise sort first every night), so it stamps the cursor too.
+  if (!verdict.allowed) {
+    await stampRadarState(shopId, { lastDiscoveredAt: new Date().toISOString() });
+    return { skipped: verdict.code };
+  }
 
   let res: Anthropic.Message | null = null;
   for (let attempt = 0; attempt <= MAX_PAUSE_RESUMES; attempt++) {
@@ -153,9 +184,13 @@ export async function discoverShopCompetitors(
     const outcome = await insertSuggestion(shopId, {
       url: normalized.url,
       name: typeof s.name === "string" ? s.name.slice(0, 120) : normalized.host,
+      // Only `reason` is ever read back (dashboard.api.radar.tsx's competitor
+      // VM projects discoveryEvidence.reason and nothing else) - the seed
+      // payload (store description + top products) is the same object for
+      // every suggestion in a run, so persisting it per-row was pure storage
+      // waste with no reader.
       evidence: {
         reason: typeof s.reason === "string" ? s.reason.slice(0, 300) : "",
-        seeds,
         discoveredAt: new Date().toISOString(),
       },
     });

@@ -123,7 +123,7 @@ export function discoverPageUrls(homeHtml: string, origin: string): string[] {
     } catch {
       continue;
     }
-    if (resolved.host !== base.host) continue;
+    if (resolved.origin !== base.origin) continue;
     if (!interesting.test(resolved.pathname)) continue;
     const clean = `${resolved.origin}${resolved.pathname}`;
     if (!urls.includes(clean)) urls.push(clean);

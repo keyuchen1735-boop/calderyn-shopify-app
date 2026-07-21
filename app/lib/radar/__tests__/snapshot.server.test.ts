@@ -140,6 +140,15 @@ describe("discoverPageUrls", () => {
     expect(urls.length).toBeLessThanOrEqual(MAX_PAGES_PER_COMPETITOR);
     expect(MAX_PAGES_PER_COMPETITOR).toBe(10);
   });
+  it("excludes an http:// same-host link (downgrade) but keeps an https:// same-origin link", () => {
+    const html = `<html><body>
+      <a href="http://rival.example/products/downgraded">HTTP boots</a>
+      <a href="https://rival.example/products/secure">HTTPS boots</a>
+    </body></html>`;
+    const urls = discoverPageUrls(html, "https://rival.example");
+    expect(urls).not.toContain("http://rival.example/products/downgraded");
+    expect(urls).toContain("https://rival.example/products/secure");
+  });
 });
 
 describe("diffExtracts", () => {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   FETCH_TIMEOUT_MS,
   isPathAllowed,
+  isPubliclyRoutableHttps,
   loadRobots,
   MAX_RESPONSE_BYTES,
   parseRobots,
@@ -46,6 +47,53 @@ describe("politeFetch", () => {
     const resErr = await politeFetch("https://rival.example/", boom as unknown as typeof fetch);
     expect(resErr.ok).toBe(false);
     if (!resErr.ok) expect(resErr.error).toContain("socket hang up");
+  });
+});
+
+describe("isPubliclyRoutableHttps", () => {
+  it("allows a normal public https host", () => {
+    expect(isPubliclyRoutableHttps("https://rival.example/")).toBe(true);
+  });
+  it("rejects localhost", () => {
+    expect(isPubliclyRoutableHttps("https://localhost/")).toBe(false);
+  });
+  it("rejects IPv4 literals in private/reserved ranges", () => {
+    expect(isPubliclyRoutableHttps("https://10.0.0.1/")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://172.16.0.5/")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://172.31.255.255/")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://192.168.1.1/")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://127.0.0.1/")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://169.254.169.254/")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://0.0.0.0/")).toBe(false);
+  });
+  it("rejects bracketed IPv6 literals of any kind", () => {
+    expect(isPubliclyRoutableHttps("https://[::1]/")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://[2001:db8::1]/")).toBe(false);
+  });
+  it("rejects .internal and .local suffixed hosts", () => {
+    expect(isPubliclyRoutableHttps("https://svc.internal/")).toBe(false);
+    expect(isPubliclyRoutableHttps("https://printer.local/")).toBe(false);
+  });
+  it("rejects non-https protocols and invalid URLs", () => {
+    expect(isPubliclyRoutableHttps("http://rival.example/")).toBe(false);
+    expect(isPubliclyRoutableHttps("not-a-url")).toBe(false);
+  });
+});
+
+describe("politeFetch SSRF guard", () => {
+  it("blocks a private-target URL at entry without calling fetchImpl", async () => {
+    const impl = vi.fn();
+    const res = await politeFetch("https://10.0.0.1/", impl as unknown as typeof fetch);
+    expect(res).toMatchObject({ ok: false, reason: "blocked_host" });
+    expect(impl).not.toHaveBeenCalled();
+  });
+  it("blocks localhost and loopback IPv6 targets", async () => {
+    const impl = vi.fn();
+    const res1 = await politeFetch("https://localhost/", impl as unknown as typeof fetch);
+    expect(res1).toMatchObject({ ok: false, reason: "blocked_host" });
+    const res2 = await politeFetch("https://[::1]/", impl as unknown as typeof fetch);
+    expect(res2).toMatchObject({ ok: false, reason: "blocked_host" });
+    expect(impl).not.toHaveBeenCalled();
   });
 });
 
@@ -103,6 +151,32 @@ describe("politeFetch redirect handling", () => {
     const res = await politeFetch("https://rival.example/r1", impl as unknown as typeof fetch);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("too_many_redirects");
+  });
+
+  it("aborts a redirect chain that overruns the ~12s overall wall-clock cap", async () => {
+    // Deterministic stand-in for real network latency: each hop advances a
+    // mocked Date.now() by 5s (matching FETCH_TIMEOUT_MS), so a 3-hop chain
+    // simulates ~15s of wall-clock time without any real sleeping.
+    let now = 0;
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const impl = vi.fn(async (url: string) => {
+        now += FETCH_TIMEOUT_MS;
+        const match = url.match(/\d+/);
+        const n = match ? parseInt(match[0]) : 0;
+        return new Response("", {
+          status: 302,
+          headers: { location: `https://rival.example/r${n + 1}` },
+        });
+      });
+      const res = await politeFetch("https://rival.example/r1", impl as unknown as typeof fetch);
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.reason).toBe("timeout");
+      // Cap enforced before a 4th hop could be attempted.
+      expect(impl.mock.calls.length).toBeLessThan(4);
+    } finally {
+      dateSpy.mockRestore();
+    }
   });
 });
 

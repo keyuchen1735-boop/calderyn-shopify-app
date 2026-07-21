@@ -7,6 +7,9 @@
 export const RADAR_USER_AGENT = "CalderynRadar/1.0 (+https://calderyncompany.com)";
 export const FETCH_TIMEOUT_MS = 5000;
 export const MAX_RESPONSE_BYTES = 1_000_000;
+/** Overall wall-clock cap across a full redirect chain (all hops combined).
+ *  Without this, a 4-hop chain at FETCH_TIMEOUT_MS per hop could take ~20s. */
+export const REDIRECT_CHAIN_DEADLINE_MS = 12_000;
 
 export type PoliteFetchResult =
   | { ok: true; status: number; text: string }
@@ -20,23 +23,74 @@ function getOrigin(urlStr: string): string {
   }
 }
 
+/** IPv4 literal check for the private/reserved ranges an SSRF-hardened
+ *  fetcher must refuse: 10/8, 172.16/12, 192.168/16, 127/8, 169.254/16,
+ *  and the 0.0.0.0 "this network" address. */
+function isPrivateIPv4(hostname: string): boolean {
+  const parts = hostname.split(".");
+  if (parts.length !== 4) return false;
+  const nums = parts.map((p) => Number(p));
+  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = nums;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 0 && b === 0 && nums[2] === 0 && nums[3] === 0) return true;
+  return false;
+}
+
+/** Shared SSRF guard: true only for an https URL whose hostname is a real,
+ *  publicly routable name/address - never localhost, a private/reserved
+ *  IPv4 literal, any IPv6 literal, or a .internal/.local suffixed host.
+ *  Used both to filter model-suggested competitor URLs (normalizeOrigin)
+ *  and as the first check inside politeFetch itself. */
+export function isPubliclyRoutableHttps(urlStr: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(urlStr);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:") return false;
+  const hostname = u.hostname.toLowerCase();
+  if (hostname === "localhost") return false;
+  if (hostname.endsWith(".internal") || hostname.endsWith(".local")) return false;
+  // Bracketed IPv6 literals ("[::1]", "[2001:db8::1]") - URL.hostname keeps
+  // the brackets for IPv6 hosts, which is what marks it as a literal here.
+  if (hostname.startsWith("[") && hostname.endsWith("]")) return false;
+  if (isPrivateIPv4(hostname)) return false;
+  return true;
+}
+
 export async function politeFetch(
   url: string,
   fetchImpl: typeof fetch = fetch
 ): Promise<PoliteFetchResult> {
-  return fetchWithRedirects(url, fetchImpl, 0);
+  if (!isPubliclyRoutableHttps(url)) {
+    return { ok: false, error: "blocked private/loopback/internal target", reason: "blocked_host" };
+  }
+  return fetchWithRedirects(url, fetchImpl, 0, Date.now() + REDIRECT_CHAIN_DEADLINE_MS);
 }
 
 // Hop counting stays module-private so the 3-hop cap is an enforced
 // invariant, not a caller-overridable parameter. Each hop re-applies the
 // full politeness set (UA, per-hop 5s timeout, size cap on the final
-// response), so a max-length chain is bounded by ~4x the per-hop timeout,
-// not 5s total.
+// response). The redirect target is already origin-pinned (see the
+// cross-host check below), so the SSRF host guard only needs to run once,
+// at entry in politeFetch - it is not re-checked per hop. `deadline` is an
+// overall wall-clock cap threaded across every hop of one chain so a
+// max-length chain can't take ~4x the per-hop timeout.
 async function fetchWithRedirects(
   url: string,
   fetchImpl: typeof fetch,
-  hops: number
+  hops: number,
+  deadline: number
 ): Promise<PoliteFetchResult> {
+  if (Date.now() >= deadline) {
+    return { ok: false, error: "redirect chain exceeded the overall wall-clock cap", reason: "timeout" };
+  }
   try {
     const res = await fetchImpl(url, {
       headers: {
@@ -80,7 +134,7 @@ async function fetchWithRedirects(
       }
 
       // Follow the same-origin redirect recursively
-      return fetchWithRedirects(nextUrl, fetchImpl, hops + 1);
+      return fetchWithRedirects(nextUrl, fetchImpl, hops + 1, deadline);
     }
 
     if (!res.ok) return { ok: false, status: res.status, error: `HTTP ${res.status}` };

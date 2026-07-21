@@ -96,11 +96,29 @@ describe("discoverShopCompetitors", () => {
     expect(await discoverShopCompetitors(SHOP)).toEqual({ skipped: "ai_daily_limit" });
     expect(mocks.messagesCreate).not.toHaveBeenCalled();
   });
-  it("skips when the suggestion backlog is already full", async () => {
+  it("skips when the suggestion backlog is already full, but still stamps the cursor", async () => {
     mocks.countCompetitors.mockImplementation(async (_shop: string, status: string) =>
       status === "suggested" ? 5 : 0);
     expect(await discoverShopCompetitors(SHOP)).toEqual({ skipped: "suggestion_backlog" });
     expect(mocks.messagesCreate).not.toHaveBeenCalled();
+    expect(mocks.stampRadarState).toHaveBeenCalledWith(SHOP, expect.objectContaining({
+      lastDiscoveredAt: expect.any(String),
+    }));
+  });
+  it("skips when the watch list is already full, but still stamps the cursor", async () => {
+    mocks.countCompetitors.mockImplementation(async (_shop: string, status: string) =>
+      status === "watching" ? 5 : 0);
+    expect(await discoverShopCompetitors(SHOP)).toEqual({ skipped: "watch_list_full" });
+    expect(mocks.messagesCreate).not.toHaveBeenCalled();
+    expect(mocks.stampRadarState).toHaveBeenCalledWith(SHOP, expect.objectContaining({
+      lastDiscoveredAt: expect.any(String),
+    }));
+  });
+  it("does NOT stamp the cursor for demo/fixture shops (no radar_state row intent)", async () => {
+    expect(await discoverShopCompetitors("demo-shop")).toEqual({ skipped: "fixture_shop" });
+    mocks.isShowcaseShop.mockResolvedValue(true);
+    expect(await discoverShopCompetitors(SHOP)).toEqual({ skipped: "demo_shop" });
+    expect(mocks.stampRadarState).not.toHaveBeenCalled();
   });
   it("resumes pause_turn with single upfront quota check and survives junk JSON", async () => {
     mocks.messagesCreate
@@ -142,6 +160,42 @@ describe("discoverShopCompetitors", () => {
     expect(mocks.insertSuggestion).toHaveBeenCalledWith(SHOP, expect.objectContaining({
       url: "https://fenced.example/",
       name: "Fenced",
+    }));
+  });
+  it("rejects private/loopback/internal host suggestions (SSRF guard)", async () => {
+    mocks.messagesCreate.mockResolvedValue(textResponse(JSON.stringify([
+      { url: "https://10.0.0.1/", name: "Private IP", reason: "internal" },
+      { url: "https://localhost/", name: "Localhost", reason: "loopback" },
+      { url: "https://svc.internal/", name: "Internal host", reason: "internal suffix" },
+      { url: "https://good.example/", name: "Good", reason: "public" },
+    ])));
+    const out = await discoverShopCompetitors(SHOP);
+    expect(out).toEqual({ suggested: 1 });
+    expect(mocks.insertSuggestion).toHaveBeenCalledTimes(1);
+    expect(mocks.insertSuggestion).toHaveBeenCalledWith(SHOP, expect.objectContaining({
+      url: "https://good.example/",
+    }));
+  });
+  it("stores only reason (not the seeds blob) in discovery_evidence", async () => {
+    mocks.messagesCreate.mockResolvedValue(textResponse(JSON.stringify([
+      { url: "https://rivalgear.example/", name: "Rival Gear", reason: "similar products" },
+    ])));
+    await discoverShopCompetitors(SHOP);
+    expect(mocks.insertSuggestion).toHaveBeenCalledTimes(1);
+    const evidence = mocks.insertSuggestion.mock.calls[0][1].evidence;
+    expect(evidence.reason).toBe("similar products");
+    expect(evidence.seeds).toBeUndefined();
+    expect(evidence.storeName).toBeUndefined();
+    expect(evidence.topProducts).toBeUndefined();
+  });
+  it("parses a reason string containing '[' via the robust bracket-slice fallback", async () => {
+    mocks.messagesCreate.mockResolvedValue(textResponse(JSON.stringify([
+      { url: "https://bracket.example/", name: "Bracket Co", reason: "sells [premium] gear" },
+    ])));
+    const out = await discoverShopCompetitors(SHOP);
+    expect(out).toEqual({ suggested: 1 });
+    expect(mocks.insertSuggestion).toHaveBeenCalledWith(SHOP, expect.objectContaining({
+      url: "https://bracket.example/",
     }));
   });
   it("parses JSON after prose with markdown links", async () => {
