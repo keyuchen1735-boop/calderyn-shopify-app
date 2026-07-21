@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import type { CompiledNode } from "~/lib/storefront-bundle/types";
 import { hydrateStorefront, teardownStorefront } from "~/lib/storefront-runtime/hydrate";
-import { HAVEN_VIDEO_ASSET_KEYS, HAVEN_VIDEO_ROLES } from "./assets";
+import { HAVEN_ASSET_KEYS } from "./assets";
 import { HAVEN_RECIPE, HAVEN_RECIPE_CONFIG } from "./bundle";
 
 function repeatsIn(nodes: readonly CompiledNode[]): string[] {
@@ -57,11 +56,15 @@ describe("haven storefront recipe", () => {
     expect(purchaseColumn?.querySelector('.haven-product-facts [data-cd-text="fact.value"]')).not.toBeNull();
     expect(purchaseColumn?.querySelector('.haven-product-facts [data-cd-href="fact.url"]')).not.toBeNull();
 
-    expect(HAVEN_VIDEO_ROLES).toEqual(["hero", "hero-alt", "pdp-detail"]);
-    expect(HAVEN_VIDEO_ASSET_KEYS).toHaveLength(9);
-    expect(HAVEN_RECIPE_CONFIG.assets.entries).toEqual([]);
-    expect(report.diagnostics.filter(({ code }) => code === "asset.reference_missing")).toHaveLength(9);
-    expect(report.diagnostics.filter(({ code }) => code === "asset.media_mismatch")).toHaveLength(9);
+    expect(HAVEN_ASSET_KEYS).toEqual(["hero"]);
+    expect(HAVEN_RECIPE_CONFIG.assets.entries).toEqual([
+      expect.objectContaining({ key: "hero", contentHash: expect.stringMatching(/^[a-f0-9]{64}$/), mediaType: "image/webp" }),
+    ]);
+    expect(HAVEN_RECIPE_CONFIG.assets.entries[0]?.byteSize).toBeGreaterThan(0);
+    expect(report.ok).toBe(true);
+    expect(report.diagnostics).toEqual([]);
+    expect(bundle.routes.home.html).toContain('class="haven-hero-image" data-cd-asset-key="hero"');
+    expect(Object.values(bundle.routes).map((route) => "html" in route ? route.html : route.decorativeHtml).join(" ")).not.toContain("data-cd-video");
   });
 
   it("hydrates the room-planning checklist and clamps it to four evidence-only panels", () => {
@@ -83,13 +86,4 @@ describe("haven storefront recipe", () => {
     expect(result.dataset.cdActiveIndex).toBe("0");
   });
 
-  it("keeps exactly three 8–12 second video briefs in the approved role format", () => {
-    const briefs = readFileSync("app/lib/storefront-recipes/haven/video-brief.md", "utf8");
-    expect(briefs.match(/^\[VIDEO BRIEF — haven \/ (?:hero|hero-alt|pdp-detail)\]$/gm)).toEqual([
-      "[VIDEO BRIEF — haven / hero]",
-      "[VIDEO BRIEF — haven / hero-alt]",
-      "[VIDEO BRIEF — haven / pdp-detail]",
-    ]);
-    expect(briefs.match(/Duration: (?:8|9|10|11|12) seconds/g)).toHaveLength(3);
-  });
 });

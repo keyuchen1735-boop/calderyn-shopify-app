@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 
-import { existsSync, readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
 import { renderStorefrontRoute, type PublicPresentationData } from "~/lib/storefront-runtime/render.server";
-import { GLOW_ASSETS, GLOW_VIDEO_ASSET_KEYS, GLOW_VIDEO_ROLES } from "./assets";
+import { GLOW_ASSETS, GLOW_ASSET_KEYS } from "./assets";
 import { GLOW_RECIPE, GLOW_RECIPE_CONFIG } from "./bundle";
 
 function repeatsIn(nodes: readonly CompiledNode[]): string[] {
@@ -74,7 +73,8 @@ describe("glow storefront recipe", () => {
       "product.title", "product.description", "product.price", "product.availability",
       "fact.label", "fact.value", "fact.url", "variant.title", "variant.price", "variant.availability",
     ]));
-    expect(report.diagnostics.filter(({ code }) => code === "asset.reference_missing")).toHaveLength(9);
+    expect(report.ok).toBe(true);
+    expect(report.diagnostics).toEqual([]);
   });
 
   it("uses preference-only guidance and a protected routine builder without making treatment claims", () => {
@@ -123,25 +123,14 @@ describe("glow storefront recipe", () => {
     expect(evidenceHtml).toContain('href="https://merchant.example/formula"');
   });
 
-  it("keeps exact blocked media contracts and thumb-safe navigation", () => {
-    const briefsPath = "app/lib/storefront-recipes/glow/video-brief.md";
-    const proofPath = "app/lib/storefront-recipes/glow/video-proof.json";
-    expect(existsSync(briefsPath)).toBe(true);
-    expect(existsSync(proofPath)).toBe(true);
-    if (!existsSync(briefsPath) || !existsSync(proofPath)) return;
-
-    const briefs = readFileSync(briefsPath, "utf8");
-    expect(briefs.match(/^\[VIDEO BRIEF — glow \/ (?:hero|hero-alt|pdp-detail)\]$/gm)).toEqual([
-      "[VIDEO BRIEF — glow / hero]",
-      "[VIDEO BRIEF — glow / hero-alt]",
-      "[VIDEO BRIEF — glow / pdp-detail]",
+  it("requires one generated hero image, ships no runtime video, and keeps thumb-safe navigation", () => {
+    expect(GLOW_ASSET_KEYS).toEqual(["hero"]);
+    expect(GLOW_ASSETS.entries).toEqual([
+      expect.objectContaining({ key: "hero", contentHash: expect.stringMatching(/^[a-f0-9]{64}$/), mediaType: "image/webp" }),
     ]);
-    expect(briefs.match(/Duration: (?:8|9|10|11|12) seconds/g)).toHaveLength(3);
-    const proof = JSON.parse(readFileSync(proofPath, "utf8")) as { templateId: string; status: string; records: unknown[] };
-    expect(proof).toEqual(expect.objectContaining({ templateId: "glow", status: "blocked", records: [] }));
-    expect(GLOW_VIDEO_ROLES).toEqual(["hero", "hero-alt", "pdp-detail"]);
-    expect(GLOW_VIDEO_ASSET_KEYS).toHaveLength(9);
-    expect(GLOW_ASSETS.entries).toEqual([]);
+    expect(GLOW_ASSETS.entries[0]?.byteSize).toBeGreaterThan(0);
+    expect(GLOW_RECIPE.bundle.routes.home.html).toContain('class="glow-hero-image" data-cd-asset-key="hero"');
+    expect(Object.values(GLOW_RECIPE.bundle.routes).map((route) => "html" in route ? route.html : route.decorativeHtml).join(" ")).not.toContain("data-cd-video");
     expect(GLOW_RECIPE_CONFIG.surfaces.shell.source.css).toContain(".glow-mark{display:flex;align-items:center;min-height:44px");
     expect(GLOW_RECIPE_CONFIG.surfaces.shell.source.css).toContain(".glow-footer a{display:inline-flex;align-items:center;min-height:44px");
     expect(GLOW_RECIPE_CONFIG.surfaces.product.source.css).toContain(".glow-fact a,.glow-product-copy nav a{display:inline-flex;align-items:center;min-height:44px");

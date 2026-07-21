@@ -78,7 +78,7 @@ describe("deterministic store design resolver", () => {
         evidence(),
         STORE_TEMPLATE_REGISTRY,
       ),
-    ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
+    ).toMatchObject({ kind: "recipe", templateId: "atelier", selectionKind: "explicit_name" });
     expect(
       resolveStoreDesign(
         { prompt: "Do not feature Atelier; use Soft Chemistry" },
@@ -102,14 +102,29 @@ describe("deterministic store design resolver", () => {
         evidence(),
         STORE_TEMPLATE_REGISTRY,
       ),
-    ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
+    ).toMatchObject({ kind: "recipe", templateId: "atelier", selectionKind: "explicit_name" });
     expect(
       resolveStoreDesign(
         { prompt: "I do not like the launch notes that recommend Atelier" },
         evidence(),
         STORE_TEMPLATE_REGISTRY,
       ),
-    ).toMatchObject({ kind: "recipe", templateId: "atelier-nine", selectionKind: "explicit_name" });
+    ).toMatchObject({ kind: "recipe", templateId: "atelier", selectionKind: "explicit_name" });
+  });
+
+  it("keeps Atelier and Atelier Grid as unambiguous explicit identities", () => {
+    expect(resolveStoreDesign({ prompt: "Use Atelier" }, evidence(), STORE_TEMPLATE_REGISTRY)).toMatchObject({
+      kind: "recipe",
+      templateId: "atelier",
+      selectionKind: "explicit_name",
+    });
+    for (const prompt of ["Use Atelier Grid", "Use Atelier Nine"]) {
+      expect(resolveStoreDesign({ prompt }, evidence(), STORE_TEMPLATE_REGISTRY)).toMatchObject({
+        kind: "recipe",
+        templateId: "atelier-nine",
+        selectionKind: "explicit_name",
+      });
+    }
   });
 
   it("keeps focus constructions positive while choosing one first-build recipe", () => {

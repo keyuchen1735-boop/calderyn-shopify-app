@@ -1,10 +1,9 @@
 // @vitest-environment jsdom
 
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { hydrateStorefront } from "../../storefront-runtime/hydrate";
 import { compileRecipeConfig } from "../factory";
-import { ATELIER_ASSETS } from "./assets";
+import { ATELIER_ASSETS, ATELIER_ASSET_KEYS } from "./assets";
 import { ATELIER_RECIPE, ATELIER_RECIPE_CONFIG } from "./bundle";
 
 const ROUTES = [
@@ -49,7 +48,7 @@ describe("Atelier storefront recipe", () => {
         result.report.diagnostics
           .map(({ code }) => code),
       ),
-    ).toEqual(new Set(["asset.reference_missing", "asset.media_mismatch"]));
+    ).toEqual(new Set());
   });
 
   it("binds live garments and variants to the fit and purchase flow", () => {
@@ -231,42 +230,24 @@ describe("Atelier storefront recipe", () => {
     ).toThrow(/protected commerce host or ancestor/);
   });
 
-  it("declares exactly three poster-first video briefs while media proof remains honestly blocked", () => {
+  it("requires one static hero while secondary media uses CSS and live product imagery", () => {
     const { bundle, report } = compileRecipeConfig(ATELIER_RECIPE_CONFIG);
-    const brief = readFileSync(
-      "app/lib/storefront-recipes/atelier/video-brief.md",
-      "utf8",
-    );
-    const html = [bundle.routes.home.html, bundle.routes.product.html].join(
-      "\n",
-    );
-    const keys = [
-      "hero-poster",
-      "hero-webm",
-      "hero-mp4",
-      "hero-alt-poster",
-      "hero-alt-webm",
-      "hero-alt-mp4",
-      "pdp-detail-poster",
-      "pdp-detail-webm",
-      "pdp-detail-mp4",
-    ];
+    const html = Object.values(bundle.routes).flatMap((route) => "html" in route ? [route.html] : []).join("\n");
 
-    expect(html.match(/data-cd-video/g) ?? []).toHaveLength(3);
-    expect(
-      brief.match(
-        /^\[VIDEO BRIEF — atelier \/ (hero|hero-alt|pdp-detail)\]$/gm,
-      ),
-    ).toHaveLength(3);
-    for (const key of keys) expect(html).toContain(key);
-    expect(ATELIER_ASSETS.entries).toEqual([]);
-    expect(report.ok).toBe(false);
+    expect(ATELIER_ASSET_KEYS).toEqual(["hero"]);
+    expect(bundle.routes.home.html).toMatch(/<img[^>]*class="atelier-hero-image"[^>]*data-cd-asset-key="hero"/);
+    expect(html).not.toContain("data-cd-video");
+    expect(ATELIER_ASSETS.entries).toEqual([
+      expect.objectContaining({ key: "hero", mediaType: "image/webp" }),
+    ]);
+    expect(ATELIER_ASSETS.entries[0]?.byteSize).toBeGreaterThan(0);
+    expect(ATELIER_ASSETS.entries[0]?.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(report.ok).toBe(true);
     expect(
       report.diagnostics
         .filter(({ code }) => code === "asset.reference_missing")
         .map(({ path }) => path.replace("assets.references.", ""))
-        .sort(),
-    ).toEqual([...keys].sort());
+    ).toEqual([]);
   });
 
   it("provides protected cart controls and a live order ledger", () => {

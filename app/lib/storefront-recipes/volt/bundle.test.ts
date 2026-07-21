@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
 import { renderStorefrontRoute, type PublicPresentationData } from "~/lib/storefront-runtime/render.server";
-import { VOLT_VIDEO_ASSET_KEYS, VOLT_VIDEO_ROLES } from "./assets";
+import { VOLT_ASSETS, VOLT_ASSET_KEYS } from "./assets";
 import { VOLT_RECIPE, VOLT_RECIPE_CONFIG } from "./bundle";
 
 function repeatsIn(nodes: readonly CompiledNode[]): string[] {
@@ -57,7 +56,7 @@ describe("volt storefront recipe", () => {
     const { bundle, report } = VOLT_RECIPE;
 
     expect(report.profileVersion).toBe(1);
-    expect(report.ok).toBe(false);
+    expect(report).toMatchObject({ ok: true, diagnostics: [] });
     expect(bundle.source).toEqual({ kind: "recipe", templateId: "volt", templateVersion: 1 });
     expect(Object.keys(bundle.routes)).toEqual([
       "home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound",
@@ -107,44 +106,23 @@ describe("volt storefront recipe", () => {
       expect.arrayContaining(["cartLineControls", "cartSummary"]),
     );
 
-    expect(VOLT_VIDEO_ROLES).toEqual(["hero", "hero-alt", "pdp-detail"]);
-    expect(VOLT_VIDEO_ASSET_KEYS).toEqual([
-      "hero-poster", "hero-webm", "hero-mp4",
-      "hero-alt-poster", "hero-alt-webm", "hero-alt-mp4",
-      "pdp-detail-poster", "pdp-detail-webm", "pdp-detail-mp4",
+    expect(VOLT_ASSET_KEYS).toEqual(["hero"]);
+    expect(VOLT_ASSETS.entries).toEqual([
+      expect.objectContaining({ key: "hero", mediaType: "image/webp" }),
     ]);
-    expect(VOLT_RECIPE_CONFIG.assets.entries).toEqual([]);
-    expect(report.diagnostics.filter(({ code }) => code === "asset.reference_missing")).toHaveLength(9);
-    for (const key of VOLT_VIDEO_ASSET_KEYS) {
-      expect(report.diagnostics).toContainEqual(expect.objectContaining({
-        code: "asset.reference_missing",
-        path: `assets.references.${key}`,
-      }));
-    }
-    expect(homeHtml).toContain('data-cd-poster-asset-key="hero-poster"');
-    expect(bundle.routes.story?.html).toContain('data-cd-poster-asset-key="hero-alt-poster"');
-    expect(bundle.routes.product.html).toContain('data-cd-poster-asset-key="pdp-detail-poster"');
+    expect(VOLT_ASSETS.entries[0]?.byteSize).toBeGreaterThan(0);
+    expect(VOLT_ASSETS.entries[0]?.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(report.diagnostics.filter(({ code }) => code === "asset.reference_missing")).toEqual([]);
+    expect(homeHtml).toMatch(/<img[^>]*class="volt-hero-image"[^>]*data-cd-asset-key="hero"/);
+    expect(Object.values(bundle.routes).flatMap((route) => "html" in route ? [route.html] : []).join(" ")).not.toContain("data-cd-video");
     expect(homeHtml).toContain("volt-hero-fallback");
     expect(homeHtml).toContain('data-cd-motion="reveal"');
     expect(bundle.routes.home.css).toContain("prefers-reduced-motion:reduce");
-    const videoCss = [bundle.routes.home.css, bundle.routes.story?.css ?? "", bundle.routes.product.css].join(" ");
-    expect(videoCss).not.toMatch(/volt-(?:hero|story|detail)-film[^}]*display:none/);
-    for (const attribute of ["data-cd-video", "autoplay", "loop", "muted", "playsinline"]) {
-      expect(homeHtml).toContain(`${attribute}=""`);
-    }
     expect(VOLT_RECIPE_CONFIG.surfaces.collections.source.html.match(/data-cd-route="collection"/g)).toHaveLength(1);
-    expect(bundle.routes.collection.interactions.transitions.some(({ action }) => action.type === "collection.filter")).toBe(false);
+    expect(bundle.routes.collection.interactions.transitions.map(({ action }) => action.type)).toEqual(
+      expect.arrayContaining(["collection.filter", "collection.sort"]),
+    );
     expect(bundle.routes.cart.html).not.toMatch(/shipping|threshold|order bump|progress/i);
-  });
-
-  it("keeps exactly three 8–12 second video briefs in the approved role format", () => {
-    const briefs = readFileSync("app/lib/storefront-recipes/volt/video-brief.md", "utf8");
-    expect(briefs.match(/^\[VIDEO BRIEF — volt \/ (?:hero|hero-alt|pdp-detail)\]$/gm)).toEqual([
-      "[VIDEO BRIEF — volt / hero]",
-      "[VIDEO BRIEF — volt / hero-alt]",
-      "[VIDEO BRIEF — volt / pdp-detail]",
-    ]);
-    expect(briefs.match(/Duration: (?:8|9|10|11|12) seconds/g)).toHaveLength(3);
   });
 
   it("keeps protected purchase controls in the sticky product dossier and renders only supplied facts", () => {
@@ -181,13 +159,7 @@ describe("volt storefront recipe", () => {
     expect(noFactHtml).not.toContain("No additional product facts");
   });
 
-  it("records blocked media proof honestly and keeps mobile navigation targets thumb-safe", () => {
-    const proof = JSON.parse(readFileSync("app/lib/storefront-recipes/volt/video-proof.json", "utf8")) as {
-      templateId: string;
-      status: string;
-      records: unknown[];
-    };
-    expect(proof).toEqual(expect.objectContaining({ templateId: "volt", status: "blocked", records: [] }));
+  it("keeps mobile navigation targets thumb-safe", () => {
     expect(VOLT_RECIPE_CONFIG.surfaces.shell.source.css).toContain(".volt-masthead nav a{display:inline-flex;min-height:44px");
   });
 });

@@ -20,17 +20,26 @@ import type {
   VersionedStoreTemplateRegistry,
 } from "./types";
 import { ATELIER_GRID_ASSETS } from "../storefront-recipes/atelier-nine/assets";
+import { ATELIER_ASSETS } from "../storefront-recipes/atelier/assets";
 import { BROADCAST_PATCH_BAY_ASSETS } from "../storefront-recipes/broadcast-patch-bay/assets";
 import { COMMONS_INDEX_ASSETS } from "../storefront-recipes/commons-index/assets";
 import { COMPANION_FIELD_GUIDE_ASSETS } from "../storefront-recipes/companion-field-guide/assets";
 import { CUSTOM_BENCH_ASSETS } from "../storefront-recipes/custom-bench/assets";
 import { DAILY_PROTOCOL_ASSETS } from "../storefront-recipes/daily-protocol/assets";
 import { DIAGNOSTIC_DECK_ASSETS } from "../storefront-recipes/diagnostic-deck/assets";
+import { EMBER_ASSETS } from "../storefront-recipes/ember/assets";
+import { FIZZ_ASSETS } from "../storefront-recipes/fizz/assets";
+import { FORGE_ASSETS } from "../storefront-recipes/forge/assets";
+import { GILT_ASSETS } from "../storefront-recipes/gilt/assets";
+import { GLOW_ASSETS } from "../storefront-recipes/glow/assets";
+import { HAVEN_ASSETS } from "../storefront-recipes/haven/assets";
 import { LARDER_ASSETS } from "../storefront-recipes/larder/assets";
 import { REP_REST_ASSETS } from "../storefront-recipes/rep-rest/assets";
+import { ROAST_ASSETS } from "../storefront-recipes/roast/assets";
 import { RITUAL_ALMANAC_ASSETS } from "../storefront-recipes/ritual-almanac/assets";
 import { ROOM_MODES_ASSETS } from "../storefront-recipes/room-modes/assets";
 import { SOFT_CHEMISTRY_ASSETS } from "../storefront-recipes/soft-chemistry/assets";
+import { VOLT_ASSETS } from "../storefront-recipes/volt/assets";
 import {
   RECIPE_CARD_TOPOLOGIES,
   RECIPE_COMPOSITION_FAMILIES,
@@ -82,6 +91,15 @@ const VERSIONED_ASSET_MANIFESTS_BY_TEMPLATE_ID = {
   "broadcast-patch-bay": [...repeatManifest(heroManifest("c95d86839d3b7efea39f439452011aaad78e4519e9928890246f67b0bf9f5363", 78150), 4), BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS, BROADCAST_PATCH_BAY_ASSETS],
   "atelier-nine": repeatManifest(ATELIER_GRID_ASSETS, 5),
   larder: [LARDER_ASSETS],
+  volt: [VOLT_ASSETS],
+  atelier: [ATELIER_ASSETS],
+  gilt: [GILT_ASSETS],
+  ember: [EMBER_ASSETS],
+  roast: [ROAST_ASSETS],
+  fizz: [FIZZ_ASSETS],
+  forge: [FORGE_ASSETS],
+  haven: [HAVEN_ASSETS],
+  glow: [GLOW_ASSETS],
 } satisfies Readonly<Record<RegisteredStoreTemplateId, readonly AssetManifest[]>>;
 
 const TEXT_SLOTS_BY_TEMPLATE_ID = {
@@ -96,7 +114,16 @@ const TEXT_SLOTS_BY_TEMPLATE_ID = {
   "ritual-almanac": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "broadcast-patch-bay": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "atelier-nine": ["announcement", "heroTitle", "heroBody", "ctaLabel"],
-  larder: ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+  larder: ["heroTitle", "heroBody", "ctaLabel"],
+  volt: ["heroTitle", "heroBody", "ctaLabel"],
+  atelier: ["heroTitle", "ctaLabel"],
+  gilt: ["heroTitle", "ctaLabel"],
+  ember: ["heroTitle", "heroBody", "ctaLabel"],
+  roast: ["heroTitle", "heroBody", "ctaLabel"],
+  fizz: ["heroTitle", "heroBody", "ctaLabel"],
+  forge: ["heroTitle", "heroBody", "ctaLabel"],
+  haven: ["heroTitle", "heroBody", "ctaLabel"],
+  glow: ["heroTitle", "heroBody", "ctaLabel"],
 } as const satisfies Readonly<Record<RegisteredStoreTemplateId, readonly string[]>>;
 
 const DEFAULT_OVERRIDE_SURFACE = {
@@ -326,6 +353,15 @@ const RECIPE_SEMANTIC_SIGNATURES: Readonly<Record<RegisteredStoreTemplateId, Rec
     signatureInteractions: ["six-place pantry building", "shelf replenishment browsing"],
     forbiddenGenericStructures: ["generic grocery card wall", "fabricated subscription selector"],
   },
+  volt: { compositionFamily: "system-architecture", heroTreatment: "cinematic-rim-hero", scrollModel: "system-sequence", displayFontId: "space-grotesk", bodyFontId: "ibm-plex-mono", iconRules: ["precision channel marks", "battery line diagrams"], cardTopology: "spec-modules", signatureInteractions: ["live product comparison", "three-piece ecosystem building"], forbiddenGenericStructures: ["generic electronics carousel", "unsupported compatibility claims"] },
+  atelier: { compositionFamily: "fit-laboratory", heroTreatment: "fabric-study-hero", scrollModel: "fit-study", displayFontId: "space-grotesk", bodyFontId: "newsreader", iconRules: ["measured garment marks", "restrained fit notation"], cardTopology: "garment-studies", signatureInteractions: ["fit preference guidance", "live variant confirmation"], forbiddenGenericStructures: ["magazine collage grid", "invented size recommendation"] },
+  gilt: { compositionFamily: "object-ceremony", heroTreatment: "jewelry-ceremony-hero", scrollModel: "intimate-ceremony", displayFontId: "cormorant-garamond", bodyFontId: "manrope", iconRules: ["fine gold hallmarks", "circular object indices"], cardTopology: "object-vignettes", signatureInteractions: ["protected engraving handoff", "recipient gifting flow"], forbiddenGenericStructures: ["generic luxury mosaic", "unprotected personalization form"] },
+  ember: { compositionFamily: "tasting-counter", heroTreatment: "heat-spectrum-hero", scrollModel: "heat-tasting", displayFontId: "archivo-black", bodyFontId: "barlow-condensed", iconRules: ["pepper scale marks", "raw tasting stamps"], cardTopology: "tasting-flights", signatureInteractions: ["heat level selection", "tasting flight assembly"], forbiddenGenericStructures: ["generic snack grid", "fabricated heat claims"] },
+  roast: { compositionFamily: "origin-notebook", heroTreatment: "origin-brew-hero", scrollModel: "brew-notebook", displayFontId: "archivo-black", bodyFontId: "dm-mono", iconRules: ["brew ratio marks", "origin plot symbols"], cardTopology: "origin-cards", signatureInteractions: ["brew method guidance", "subscription cadence selection"], forbiddenGenericStructures: ["coffee splash hero", "invented origin notes"] },
+  fizz: { compositionFamily: "flavor-playground", heroTreatment: "flavor-play-hero", scrollModel: "flavor-modules", displayFontId: "space-grotesk", bodyFontId: "inter", iconRules: ["rounded fruit slices", "bubble cluster marks"], cardTopology: "flavor-tiles", signatureInteractions: ["flavor personality guidance", "variety pack building"], forbiddenGenericStructures: ["generic beverage rainbow", "unsupported functional claims"] },
+  forge: { compositionFamily: "jobsite-blueprint", heroTreatment: "exploded-tool-hero", scrollModel: "blueprint-flow", displayFontId: "oswald", bodyFontId: "dm-mono", iconRules: ["numbered drawing callouts", "dimension ticks"], cardTopology: "tool-diagrams", signatureInteractions: ["compatibility filtering", "project kit assembly"], forbiddenGenericStructures: ["generic hardware aisle", "invented compatibility data"] },
+  haven: { compositionFamily: "spatial-studies", heroTreatment: "material-room-hero", scrollModel: "spatial-quiet", displayFontId: "fraunces", bodyFontId: "inter", iconRules: ["quiet floor plan marks", "joinery lines"], cardTopology: "material-panels", signatureInteractions: ["room fit checking", "swatch ordering path"], forbiddenGenericStructures: ["generic furniture collage", "fake augmented reality controls"] },
+  glow: { compositionFamily: "clinical-evidence", heroTreatment: "clinical-liquid-hero", scrollModel: "clinical-proof", displayFontId: "source-serif-4", bodyFontId: "atkinson-hyperlegible", iconRules: ["formula index marks", "quiet laboratory rules"], cardTopology: "evidence-cards", signatureInteractions: ["skin preference routine", "ingredient evidence reveal"], forbiddenGenericStructures: ["generic beauty collage", "unsupported clinical claims"] },
 };
 
 function protectedSlotsFor(blueprint: StorefrontRecipeBlueprintId, templateId: RegisteredStoreTemplateId): RecipeProtectedSlotPlacement[] {
@@ -333,7 +369,9 @@ function protectedSlotsFor(blueprint: StorefrontRecipeBlueprintId, templateId: R
     case "shell": return [{ slot: "cartDrawer", region: "shell.utility" }];
     case "home": return templateId === "larder"
       ? [{ slot: "bundleBuilder", region: "home.pantry-box" }, { slot: "quickViewCommerce", region: "home.featured" }]
-      : [{ slot: "quickViewCommerce", region: "home.featured" }];
+      : templateId === "volt"
+        ? [{ slot: "bundleBuilder", region: "home.ecosystem-builder" }, { slot: "quickViewCommerce", region: "home.featured" }]
+        : [{ slot: "quickViewCommerce", region: "home.featured" }];
     case "collection": return [
       { slot: "quickViewCommerce", region: "collection.results" },
       { slot: "productDescription", region: "collection.results" },
@@ -554,7 +592,7 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     name: "Atelier Grid",
     niche: "Editorial fashion, beauty, jewelry, and quiet luxury",
     descriptor: "Editorial / restrained / fashion-led",
-    aliases: ["atelier nine", "atelier"],
+    aliases: ["atelier nine"],
     strongPhrases: ["quiet luxury", "editorial fashion", "jewelry label", "fashion studio", "luxury skincare"],
     promptTerms: ["editorial", "fashion", "jewelry", "luxury", "apparel", "studio"],
     catalogTerms: ["fashion", "jewelry", "apparel", "quiet luxury", "fine jewelry", "designer clothing"],
@@ -573,6 +611,15 @@ const RECIPES: readonly VersionedStoreTemplate[] = [
     legacyVibe: "warm",
     generationInstructions: "Use a tactile working pantry, live shelf browsing, and a protected six-place box builder with warm paper, tomato, and olive tones.",
   }),
+  recipe({ id: "volt", name: "Volt", niche: "Wireless audio and smart electronics", descriptor: "Cinematic system architecture / technical / dark", aliases: ["volt audio system"], strongPhrases: ["wireless audio ecosystem", "smart audio system", "connected speakers"], promptTerms: ["audio", "headphones", "speakers", "wireless", "soundbar", "listening"], catalogTerms: ["wireless audio", "headphones", "speaker", "soundbar", "earbuds", "amplifier"], legacyVibe: "bold", generationInstructions: "Use a rim-lit technical launch, live specification comparison, and a protected three-piece ecosystem builder." }),
+  recipe({ id: "atelier", name: "Atelier", niche: "Elevated apparel and wardrobe basics", descriptor: "Fit laboratory / measured / calm", aliases: ["atelier fit laboratory"], strongPhrases: ["elevated basics", "apparel fit finder", "wardrobe essentials"], promptTerms: ["apparel", "garments", "wardrobe", "clothing", "fit", "basics"], catalogTerms: ["apparel", "garment", "wardrobe basics", "clothing", "size guide", "fabric"], legacyVibe: "minimal", generationInstructions: "Use a measured garment laboratory, shopper-entered fit preferences, live variants, and calm stone and oxblood styling." }),
+  recipe({ id: "gilt", name: "Gilt", niche: "Fine jewelry and personal accessories", descriptor: "Object ceremony / intimate / gifting-led", aliases: ["gilt object ceremony"], strongPhrases: ["fine jewelry", "engraved jewelry", "jewelry gifting"], promptTerms: ["jewelry", "gold", "engraving", "accessories", "keepsake", "recipient"], catalogTerms: ["fine jewelry", "gold jewelry", "engraving", "necklace", "bracelet", "earrings"], legacyVibe: "minimal", generationInstructions: "Use an intimate object ceremony with live jewelry, protected engraving, gift notes, wrapping, and recipient details." }),
+  recipe({ id: "ember", name: "Ember", niche: "Hot sauce and gourmet snacks", descriptor: "Tasting counter / heat-led / raw", aliases: ["ember tasting counter"], strongPhrases: ["hot sauce", "spicy snacks", "heat level tasting"], promptTerms: ["spicy", "sauce", "pepper", "heat", "snacks", "tasting"], catalogTerms: ["hot sauce", "spicy snack", "pepper sauce", "heat level", "tasting flight", "chili"], legacyVibe: "bold", generationInstructions: "Use a raw tasting counter, honest heat selection, tasting flights, and live catalog proof." }),
+  recipe({ id: "roast", name: "Roast", niche: "Specialty coffee and brewing", descriptor: "Origin notebook / brew-led / tactile", aliases: ["roast origin notebook"], strongPhrases: ["specialty coffee", "coffee roaster", "brew method"], promptTerms: ["coffee", "roaster", "beans", "brew", "espresso", "grind"], catalogTerms: ["specialty coffee", "coffee beans", "espresso", "grind size", "pour over", "single origin"], legacyVibe: "warm", generationInstructions: "Use an origin notebook, brew-method guidance, grind options, and protected subscription cadence." }),
+  recipe({ id: "fizz", name: "Fizz", niche: "Functional soda and non-alcoholic drinks", descriptor: "Flavor playground / buoyant / colorful", aliases: ["fizz flavor playground"], strongPhrases: ["functional soda", "non alcoholic drinks", "variety pack soda"], promptTerms: ["soda", "flavor", "sparkling", "adaptogen", "functional", "cans"], catalogTerms: ["functional soda", "sparkling drink", "non alcoholic", "variety pack", "adaptogen drink", "flavored soda"], legacyVibe: "bold", generationInstructions: "Use a buoyant flavor playground, personality guidance, and a live variety-pack path without unsupported wellness claims." }),
+  recipe({ id: "forge", name: "Forge", niche: "Professional hand tools and hardware", descriptor: "Jobsite blueprint / precise / rugged", aliases: ["forge jobsite blueprint"], strongPhrases: ["professional hand tools", "project tool kit", "tool compatibility"], promptTerms: ["tools", "hardware", "workshop", "jobsite", "project", "compatibility"], catalogTerms: ["hand tools", "hardware", "tool kit", "jobsite", "wrench", "screwdriver"], legacyVibe: "bold", generationInstructions: "Use a jobsite blueprint, merchant-supplied compatibility, project kits, and specification sheets." }),
+  recipe({ id: "haven", name: "Haven", niche: "Modern modular furniture", descriptor: "Spatial studies / material-led / quiet", aliases: ["haven spatial studio"], strongPhrases: ["modular furniture", "modern furniture", "room fit"], promptTerms: ["furniture", "modular", "sofa", "interior", "room", "swatch"], catalogTerms: ["modular furniture", "sofa", "sectional", "dining table", "material swatch", "room dimensions"], legacyVibe: "warm", generationInstructions: "Use quiet spatial studies, room-fit dimensions, material swatches, and live delivery information." }),
+  recipe({ id: "glow", name: "Glow", niche: "Clinical skincare and personal care", descriptor: "Clinical evidence / luminous / precise", aliases: ["glow clinical studio"], strongPhrases: ["clinical skincare", "skin routine", "ingredient glossary"], promptTerms: ["serum", "routine", "ingredients", "clinical", "replenishment"], catalogTerms: ["clinical skincare", "skin serum", "moisturizer", "ingredient glossary", "skin routine", "cleanser"], legacyVibe: "minimal", generationInstructions: "Use a luminous clinical evidence system, preference-led routine guidance, ingredient records, and replenishment." }),
 ] as const;
 
 function normalizedKey(value: string): string {

@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CompiledNode } from "~/lib/storefront-bundle/types";
 import { hydrateStorefront, teardownStorefront } from "~/lib/storefront-runtime/hydrate";
-import { FIZZ_VIDEO_ASSET_KEYS, FIZZ_VIDEO_ROLES } from "./assets";
+import { FIZZ_STATIC_ASSET_KEYS } from "./assets";
 import { FIZZ_RECIPE, FIZZ_RECIPE_CONFIG } from "./bundle";
 
 function repeatsIn(nodes: readonly CompiledNode[]): string[] {
@@ -51,22 +51,26 @@ describe("fizz storefront recipe", () => {
     expect(bundle.routes.home.html).not.toMatch(/fit this flavor direction/i);
     expect(copy).toContain("Eligible first-order offers appear at checkout.");
 
-    expect(FIZZ_VIDEO_ROLES).toEqual(["hero", "hero-alt", "pdp-detail"]);
-    expect(FIZZ_VIDEO_ASSET_KEYS).toHaveLength(9);
-    expect(FIZZ_RECIPE_CONFIG.assets.entries).toEqual([]);
-    expect(report.diagnostics.filter(({ code }) => code === "asset.reference_missing")).toHaveLength(9);
-    expect(bundle.routes.home.html).toContain('data-cd-poster-asset-key="hero-poster"');
-    expect(bundle.routes.story?.html).toContain('data-cd-poster-asset-key="hero-alt-poster"');
-    expect(bundle.routes.product.html).toContain('data-cd-poster-asset-key="pdp-detail-poster"');
+    expect(report).toMatchObject({ ok: true, diagnostics: [] });
+    expect(FIZZ_STATIC_ASSET_KEYS).toEqual(["hero"]);
+    expect(FIZZ_RECIPE_CONFIG.assets.entries).toEqual([
+      expect.objectContaining({
+        key: "hero",
+        mediaType: "image/webp",
+        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    ]);
+    expect(FIZZ_RECIPE_CONFIG.assets.entries[0]!.byteSize).toBeGreaterThan(0);
+    expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
+    expect(Object.values(bundle.routes).map((route) => "html" in route ? route.html : route.decorativeHtml).join(" ")).not.toContain("<video");
     expect(bundle.routes.home.css).toContain("prefers-reduced-motion:reduce");
+    expect(bundle.routes.home.css).toContain("scroll-snap-type:x mandatory");
   });
 
   it("hydrates truthful flavor guidance while commerce stays in the protected pack builder", () => {
     const route = FIZZ_RECIPE.bundle.routes.home;
     document.body.innerHTML = route.html;
     vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true })));
-    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
-
     const runtime = hydrateStorefront({
       root: document.body,
       artifact: {

@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { compileRecipeConfig } from "../factory";
 import { GILT_RECIPE_CONFIG } from "./bundle";
-import { GILT_VIDEO_ROLES } from "./assets";
+import { GILT_ASSETS, GILT_ASSET_KEYS } from "./assets";
 import type { CompiledNode } from "../../storefront-bundle/types";
 
 function elements(nodes: readonly CompiledNode[]): Array<Extract<CompiledNode, { kind: "element" }>> {
@@ -98,6 +97,11 @@ describe("Gilt storefront recipe", () => {
     expect(GILT_RECIPE_CONFIG.surfaces.product.source.html).toContain("destination is entered during secure checkout");
   });
 
+  it("uses the runtime-supported availability facet", () => {
+    expect(GILT_RECIPE_CONFIG.surfaces.collection.source.html).toContain('data-cd-facet="available"');
+    expect(GILT_RECIPE_CONFIG.surfaces.collection.source.html).not.toContain('data-cd-facet="availability"');
+  });
+
   it("keeps the object ceremony legible on wide and narrow storefronts", () => {
     const { bundle } = compileRecipeConfig(GILT_RECIPE_CONFIG);
     expect(bundle.shell.css).toMatch(/@media\s*\(max-width:760px\)/);
@@ -109,19 +113,16 @@ describe("Gilt storefront recipe", () => {
     expect(bundle.routes.product.css).toMatch(/@media\(max-width:760px\)\{[^}]*\.gilt-gallery[^}]*\}[^}]*\.gilt-purchase-copy\{[^}]*margin-left:0/);
   });
 
-  it("declares exactly three blocked video roles without invented approvals", () => {
-    expect(GILT_VIDEO_ROLES).toEqual(["hero", "hero-alt", "pdp-detail"]);
-    expect(GILT_RECIPE_CONFIG.assets.entries).toEqual([]);
-    const brief = readFileSync(new URL("./video-brief.md", import.meta.url), "utf8");
-    expect(brief.match(/^\[VIDEO BRIEF — gilt \/ (?:hero|hero-alt|pdp-detail)\]$/gm)).toEqual([
-      "[VIDEO BRIEF — gilt / hero]",
-      "[VIDEO BRIEF — gilt / hero-alt]",
-      "[VIDEO BRIEF — gilt / pdp-detail]",
+  it("requires one static ceremony hero without runtime video", () => {
+    const { bundle, report } = compileRecipeConfig(GILT_RECIPE_CONFIG);
+    expect(GILT_ASSET_KEYS).toEqual(["hero"]);
+    expect(GILT_ASSETS.entries).toEqual([
+      expect.objectContaining({ key: "hero", mediaType: "image/webp" }),
     ]);
-    for (const field of ["Duration:", "Aspect:", "Style:", "Subject:", "Motion:", "Constraints:"]) {
-      expect(brief.match(new RegExp(`^${field}`, "gm")), field).toHaveLength(3);
-    }
-    const proof = JSON.parse(readFileSync(new URL("./video-proof.json", import.meta.url), "utf8")) as { status: string; approved: boolean };
-    expect(proof).toEqual(expect.objectContaining({ status: "blocked", approved: false }));
+    expect(GILT_ASSETS.entries[0]?.byteSize).toBeGreaterThan(0);
+    expect(GILT_ASSETS.entries[0]?.contentHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(bundle.routes.home.html).toMatch(/<img[^>]*class="gilt-hero-image"[^>]*data-cd-asset-key="hero"/);
+    expect(Object.values(bundle.routes).flatMap((route) => "html" in route ? [route.html] : []).join(" ")).not.toContain("data-cd-video");
+    expect(report.diagnostics.filter(({ code }) => code === "asset.reference_missing")).toEqual([]);
   });
 });

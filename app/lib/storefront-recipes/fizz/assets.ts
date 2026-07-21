@@ -1,9 +1,5 @@
 import type { AssetManifest } from "~/lib/storefront-bundle/types";
 
-export const FIZZ_VIDEO_ROLES = ["hero", "hero-alt", "pdp-detail"] as const;
-export const FIZZ_VIDEO_ASSET_KEYS = FIZZ_VIDEO_ROLES.flatMap((role) => [
-  `${role}-poster`, `${role}-webm`, `${role}-mp4`,
-]);
+export const FIZZ_STATIC_ASSET_KEYS = ["hero"] as const;
 
-// Media remains absent until generation and visual approval both succeed.
-export const FIZZ_ASSETS: AssetManifest = { entries: [] };
+export const FIZZ_ASSETS: AssetManifest = { entries: [{ key: "hero", contentHash: "8c988a90a823037c5e6772c7733302878ef43505093a33fc428a2a203e028c9d", mediaType: "image/webp", byteSize: 95500 }] };

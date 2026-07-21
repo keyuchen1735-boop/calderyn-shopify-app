@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   STORE_TEMPLATE_REGISTRY,
@@ -18,11 +19,20 @@ const EXPECTED_TEXT_SLOTS = {
   "ritual-almanac": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "broadcast-patch-bay": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "atelier-nine": ["announcement", "heroTitle", "heroBody", "ctaLabel"],
-  larder: ["heroEyebrow", "heroTitle", "heroBody", "ctaLabel"],
+  larder: ["heroTitle", "heroBody", "ctaLabel"],
+  volt: ["heroTitle", "heroBody", "ctaLabel"],
+  atelier: ["heroTitle", "ctaLabel"],
+  gilt: ["heroTitle", "ctaLabel"],
+  ember: ["heroTitle", "heroBody", "ctaLabel"],
+  roast: ["heroTitle", "heroBody", "ctaLabel"],
+  fizz: ["heroTitle", "heroBody", "ctaLabel"],
+  forge: ["heroTitle", "heroBody", "ctaLabel"],
+  haven: ["heroTitle", "heroBody", "ctaLabel"],
+  glow: ["heroTitle", "heroBody", "ctaLabel"],
 } as const;
 
 describe("versioned storefront recipe registry", () => {
-  it("registers the eleven stable recipes plus approved Larder with complete route and override metadata", () => {
+  it("registers all twenty-one approved recipes with complete route and override metadata", () => {
     expect(STORE_TEMPLATE_REGISTRY.templates.map((recipe) => recipe.id)).toEqual([
       "custom-bench",
       "commons-index",
@@ -36,6 +46,15 @@ describe("versioned storefront recipe registry", () => {
       "broadcast-patch-bay",
       "atelier-nine",
       "larder",
+      "volt",
+      "atelier",
+      "gilt",
+      "ember",
+      "roast",
+      "fizz",
+      "forge",
+      "haven",
+      "glow",
     ]);
     expect(STORE_TEMPLATE_REGISTRY.registryVersion).toBe(2);
     expect(STORE_TEMPLATE_REGISTRY.routingVersion).toBe(1);
@@ -52,6 +71,15 @@ describe("versioned storefront recipe registry", () => {
       "broadcast-patch-bay": 10,
       "atelier-nine": 5,
       larder: 1,
+      volt: 1,
+      atelier: 1,
+      gilt: 1,
+      ember: 1,
+      roast: 1,
+      fizz: 1,
+      forge: 1,
+      haven: 1,
+      glow: 1,
     } as const;
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
       expect(recipe.activeVersion).toBe(activeVersions[recipe.id as keyof typeof activeVersions]);
@@ -65,6 +93,11 @@ describe("versioned storefront recipe registry", () => {
       expect(recipe.versions.length).toBeGreaterThan(0);
       for (const version of recipe.versions) {
         expect(provenance.artifacts).toHaveProperty(version.baselineArtifact);
+        for (const [viewport, screenshot] of Object.entries(version.screenshots)) {
+          const bytes = readFileSync(screenshot);
+          expect(bytes.subarray(0, 4).toString("ascii"), `${recipe.id}@${version.templateVersion} ${viewport} baseline`).toBe("RIFF");
+          expect(bytes.subarray(8, 12).toString("ascii"), `${recipe.id}@${version.templateVersion} ${viewport} baseline`).toBe("WEBP");
+        }
       }
       const activeVersion = recipe.versions.find((version) => version.templateVersion === recipe.activeVersion);
       expect(activeVersion).toBeDefined();
@@ -124,6 +157,10 @@ describe("versioned storefront recipe registry", () => {
     expect(getStoreTemplate("atelier-nine").name).toBe("Atelier Grid");
     expect(getStoreTemplate("larder").previewSrc).toBe("/template-previews/larder.webp");
     expect(getStoreTemplate("larder").versions[0]?.visualLayer.fallbackAssetKey).toBe("hero-poster");
+    expect(getStoreTemplate("volt").versions[0]?.routeBlueprints.home.protectedSlotPlacement).toContainEqual({
+      slot: "bundleBuilder",
+      region: "home.ecosystem-builder",
+    });
   });
 
   it("requires descriptions, placeholders, heroes, and one visual surface", () => {

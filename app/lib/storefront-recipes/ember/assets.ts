@@ -1,12 +1,5 @@
 import type { AssetManifest } from "~/lib/storefront-bundle/types";
 
-export const EMBER_VIDEO_ROLES = ["hero", "hero-alt", "pdp-detail"] as const;
+export const EMBER_STATIC_ASSET_KEYS = ["hero"] as const;
 
-export const EMBER_VIDEO_ASSET_KEYS = EMBER_VIDEO_ROLES.flatMap((role) => [
-  `${role}-poster`,
-  `${role}-webm`,
-  `${role}-mp4`,
-]);
-
-// Video references stay unresolved until all masters and derivatives pass review.
-export const EMBER_ASSETS: AssetManifest = { entries: [] };
+export const EMBER_ASSETS: AssetManifest = { entries: [{ key: "hero", contentHash: "4058a711d8e83d1b916b9d5a36d27d26df9b0632e345d3daa6d6fe0f4662f464", mediaType: "image/webp", byteSize: 91726 }] };

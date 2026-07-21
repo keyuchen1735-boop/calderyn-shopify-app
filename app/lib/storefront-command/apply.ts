@@ -14,6 +14,8 @@ import type { StorefrontPatchOperation } from "../storefront-edit/types";
 import type { StoreIntent } from "./types";
 
 const ROUTE_IDS = ["home", "collection", "product", "search", "cart", "checkout"] as const;
+const OPTIONAL_ROUTE_IDS = ["collections", "story", "notFound"] as const;
+const ALLOWED_ROUTE_IDS: ReadonlySet<string> = new Set([...ROUTE_IDS, ...OPTIONAL_ROUTE_IDS]);
 const PRODUCT_ID_CAP = 12;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/; // eslint-disable-line no-control-regex
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
@@ -165,7 +167,8 @@ function heroReferences(bundle: StorefrontBundleV1, key: string): string[] {
   const visit = (routeId: StorefrontRouteId, nodes: readonly CompiledNode[]): void => {
     for (const node of nodes) {
       if (node.kind !== "element") continue;
-      if (node.attributes["data-cd-asset-key"] === key) references.push(`${routeId}:${node.id}:${key}`);
+      if (node.attributes["data-cd-asset-key"] === key
+        || node.attributes["data-cd-poster-asset-key"] === key) references.push(`${routeId}:${node.id}:${key}`);
       visit(routeId, node.children);
     }
   };
@@ -183,7 +186,8 @@ function versionFor(bundle: StorefrontBundleV1, template: VersionedStoreTemplate
 
 function assertBundleContract(bundle: StorefrontBundleV1, template: VersionedStoreTemplate): void {
   const routeIds = Object.keys(bundle.routes);
-  if (routeIds.length !== ROUTE_IDS.length || ROUTE_IDS.some((routeId) => !routeIds.includes(routeId))) fail();
+  if (ROUTE_IDS.some((routeId) => !routeIds.includes(routeId))
+    || routeIds.some((routeId) => !ALLOWED_ROUTE_IDS.has(routeId))) fail();
   const version = versionFor(bundle, template);
   if (!bundle.assets.entries.some(({ key }) => key === version.visualLayer.fallbackAssetKey)
     || heroReferences(bundle, version.visualLayer.fallbackAssetKey).length === 0

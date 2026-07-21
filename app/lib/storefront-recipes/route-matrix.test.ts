@@ -35,7 +35,7 @@ describe("storefront recipe route matrix", () => {
     const recipeIds = STOREFRONT_RECIPES.map((recipe) => recipe.config.templateId);
 
     expect(recipeIds).toEqual(registeredIds);
-    expect(new Set(recipeIds).size).toBe(12);
+    expect(new Set(recipeIds).size).toBe(21);
     expect(Object.keys(STOREFRONT_RECIPE_BY_ID).sort()).toEqual([...registeredIds].sort());
     for (const recipe of STOREFRONT_RECIPES) {
       expect(recipe.report).toMatchObject({ ok: true, profileVersion: 1, diagnostics: [] });
@@ -48,12 +48,12 @@ describe("storefront recipe route matrix", () => {
     }
   });
 
-  it("keeps all twelve visual systems structurally distinct", () => {
+  it("keeps all visual systems structurally distinct", () => {
     for (const identity of ["composition", "hero", "scroll", "cards"] as const) {
-      expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.config.archetype[identity])).size).toBe(12);
+      expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.config.archetype[identity])).size).toBe(21);
     }
-    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.iconStyle)).size).toBe(12);
-    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.motionStyle)).size).toBe(12);
+    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.iconStyle)).size).toBe(21);
+    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.motionStyle)).size).toBe(21);
     expect(new Set(STOREFRONT_RECIPES.map((recipe) =>
       `${recipe.bundle.designSystem.displayFontId}/${recipe.bundle.designSystem.bodyFontId}`,
     )).size).toBeGreaterThanOrEqual(8);
@@ -62,10 +62,11 @@ describe("storefront recipe route matrix", () => {
       recipe.bundle.shell.css,
       ...ROUTES.map((routeId) => recipe.bundle.routes[routeId].css),
       recipe.bundle.routes.checkout.decorativeCss,
-    ].join("\n"))).size).toBe(12);
-    expect(new Set(STOREFRONT_RECIPES.flatMap((recipe) =>
+    ].join("\n"))).size).toBe(21);
+    const surfaceSignatures = STOREFRONT_RECIPES.flatMap((recipe) =>
       Object.values(recipe.config.surfaces).map((surface) => surface.signature),
-    )).size).toBe(87);
+    );
+    expect(new Set(surfaceSignatures).size).toBe(surfaceSignatures.length);
   });
 
   it("covers browse, discovery, purchase, cart, and checkout with merchant-bound data", () => {
@@ -86,7 +87,6 @@ describe("storefront recipe route matrix", () => {
         expect.arrayContaining(["collection.filter", "collection.sort"]),
       );
       expect(slotKinds(bundle.routes.collection)).toContain("quickViewCommerce");
-
       expect(bundle.routes.product.requiredData).toContainEqual({ kind: "currentProduct" });
       expect(dataPaths(bundle.routes.product)).toEqual(expect.arrayContaining([
         "product.title", "product.description", "product.price", "product.availability",

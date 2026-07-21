@@ -351,10 +351,19 @@ function withRequiredShellBindings<const TTemplateId extends StoreTemplateId>(
   if (!html.includes('data-cd-route="home"')) {
     html += `<a class="recipe-platform-binding" data-cd-route="home">Home</a>`;
   }
+  if (!html.includes('data-cd-route="collection"')) {
+    html += `<a class="recipe-platform-binding" data-cd-route="collection">Catalog</a>`;
+  }
+  if (!html.includes('data-cd-route="cart"')) {
+    html += `<a class="recipe-platform-binding" data-cd-route="cart">Cart</a>`;
+  }
   if (!html.includes("niche-icon")) {
     html += `<span class="niche-icon recipe-platform-binding" aria-hidden="true">${config.templateId}</span>`;
   }
-  if (html === config.surfaces.shell.source.html) return config;
+  const responsiveCss = /@media\s*\(max-width:/.test(config.surfaces.shell.source.css)
+    ? ""
+    : "@media(max-width:720px){header nav{max-width:100%;overflow-x:auto}}";
+  if (html === config.surfaces.shell.source.html && !responsiveCss) return config;
   return {
     ...config,
     surfaces: {
@@ -364,8 +373,35 @@ function withRequiredShellBindings<const TTemplateId extends StoreTemplateId>(
         source: {
           ...config.surfaces.shell.source,
           html,
-          css: `${config.surfaces.shell.source.css}footer,footer nav{display:flex;flex-wrap:wrap;gap:1rem}footer{padding:1rem}footer a,.recipe-platform-binding{color:inherit;text-decoration:none}.recipe-platform-binding{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}`,
+          css: `${config.surfaces.shell.source.css}${responsiveCss}footer,footer nav{display:flex;flex-wrap:wrap;gap:1rem}footer{padding:1rem}footer a,.recipe-platform-binding{color:inherit;text-decoration:none}.recipe-platform-binding{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}`,
         },
+      },
+    },
+  };
+}
+
+function withRequiredCollectionCommerce<const TTemplateId extends StoreTemplateId>(
+  config: RecipeConfig<TTemplateId>,
+): RecipeConfig<TTemplateId> {
+  const source = config.surfaces.collection.source;
+  let html = source.html;
+  if (!html.includes('data-cd-action="collection.filter"')) {
+    html += `<button value="true" data-cd-on="click" data-cd-action="collection.filter" data-cd-facet="available">Available now</button>`;
+  }
+  if (!html.includes('data-cd-action="collection.sort"')) {
+    html += `<button value="price_asc" data-cd-on="click" data-cd-action="collection.sort">Price, low first</button>`;
+  }
+  if (!html.includes('data-cd-slot="quickViewCommerce"')) {
+    html += `<section data-cd-repeat="collection.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>`;
+  }
+  if (html === source.html) return config;
+  return {
+    ...config,
+    surfaces: {
+      ...config.surfaces,
+      collection: {
+        ...config.surfaces.collection,
+        source: { ...source, html, css: `${source.css}button{min-height:44px}` },
       },
     },
   };
@@ -375,7 +411,7 @@ function withRequiredShellBindings<const TTemplateId extends StoreTemplateId>(
 export function defineRecipe<const TTemplateId extends StoreTemplateId>(
   config: RecipeConfig<TTemplateId>,
 ): DefinedRecipe<TTemplateId> {
-  const boundConfig = withRequiredShellBindings(config);
+  const boundConfig = withRequiredCollectionCommerce(withRequiredShellBindings(config));
   assertArchetypeMatchesRegistry(boundConfig);
   assertDistinctSurfaceSignatures(boundConfig);
   assertDeclaredHomeHero(boundConfig);
@@ -390,7 +426,7 @@ export function compileRecipeConfig<const TTemplateId extends StoreTemplateId>(
   if (!isStoreTemplateId(config.templateId) && config.templateVersion !== 1) {
     throw new Error(`Unregistered recipe ${config.templateId} must use template version 1`);
   }
-  const boundConfig = withRequiredShellBindings(config);
+  const boundConfig = withRequiredCollectionCommerce(withRequiredShellBindings(config));
   assertDistinctSurfaceSignatures(boundConfig);
   const result = compileBundle({
     source: {

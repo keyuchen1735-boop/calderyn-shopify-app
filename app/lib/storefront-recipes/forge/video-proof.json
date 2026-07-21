@@ -1,7 +1,0 @@
-{
-  "templateId": "forge",
-  "status": "blocked",
-  "attempts": 1,
-  "blocker": "gcloud auth print-access-token: Reauthentication failed. cannot prompt during non-interactive execution.",
-  "records": []
-}

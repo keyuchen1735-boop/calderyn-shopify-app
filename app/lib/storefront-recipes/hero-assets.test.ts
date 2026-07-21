@@ -15,7 +15,18 @@ const EXPECTED_HERO_HASHES: Readonly<Record<string, string>> = {
   "ritual-almanac": "17eb9713bfc652eb445769c84f886ef591e26d3e8171728c20f32aa26612e8a0",
   "room-modes": "15b65243fb73023d2af89bc2db8146c4f0f8f0fa5b3fd6db2917c44e15a083d0",
   "soft-chemistry": "3e4065d68a9fd398f6d9d0ee492ee3ad099d7b7f31f669d822a07504b1f584e8",
+  volt: "c7f489849039c52e57ea3a8ae8ac981cecd8efd0faeee36b0251eb0f5b7b6236",
+  atelier: "e9a1b1ca7c49b0fb735f4908e0b28afca06d39428fe2754d2427098fb2a15b42",
+  gilt: "817cb9566e5ca7202f04370d68124e28236f075dd01e65c37ccbebbdab7be076",
+  ember: "4058a711d8e83d1b916b9d5a36d27d26df9b0632e345d3daa6d6fe0f4662f464",
+  roast: "07efad6a3cb6c3821919f3e2f0256f94625f7ce9715a0ee10d81c5372f610c6a",
+  fizz: "8c988a90a823037c5e6772c7733302878ef43505093a33fc428a2a203e028c9d",
+  forge: "45d0e15cf882b70f4b8f59b1133474f6eb8960b6898b46101173752b9fdea718",
+  haven: "f775d040ec74ea90405b24926bcc716271cc5d6b4beae2b5a748214ac6795c4e",
+  glow: "6ae2e74fcd0ec2ab1c03f4703617c2a8887fca318385d1ce23fda784efbbf0fb",
 };
+
+const CONTENT_ADDRESSED_ONLY = new Set(["volt", "atelier", "gilt", "ember", "roast", "fizz", "forge", "haven", "glow"]);
 
 const LEGACY_HERO_HASHES: Readonly<Record<string, string>> = {
   "broadcast-patch-bay": "c95d86839d3b7efea39f439452011aaad78e4519e9928890246f67b0bf9f5363",
@@ -35,7 +46,7 @@ describe("storefront recipe hero assets", () => {
     for (const [templateId, expectedHash] of Object.entries(EXPECTED_HERO_HASHES)) {
       const recipe = STOREFRONT_RECIPES.find(({ config }) => config.templateId === templateId);
       expect(recipe, templateId).toBeDefined();
-      const bytes = readFileSync(`public/storefront-recipes/${templateId}/hero.webp`);
+      const bytes = readFileSync(`public/storefront-recipes/${templateId}/${CONTENT_ADDRESSED_ONLY.has(templateId) ? expectedHash : "hero"}.webp`);
       const hash = createHash("sha256").update(bytes).digest("hex");
       const manifestHero = recipe?.config.assets.entries.find(({ key }) => key === "hero");
 

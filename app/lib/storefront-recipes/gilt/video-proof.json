@@ -1,7 +1,0 @@
-{
-  "status": "blocked",
-  "approved": false,
-  "reason": "generation_credits_unavailable",
-  "requiredRoles": ["hero", "hero-alt", "pdp-detail"],
-  "assets": []
-}

@@ -1,12 +1,17 @@
 import type { BindingScopeKind } from "~/lib/storefront-compiler/bindings";
 import type { RouteSource } from "~/lib/storefront-compiler/compile";
 import { proofBandFragment } from "../library/commerce";
-import { videoFragment } from "../library/media";
 import { motionAttributes } from "../library/motion";
 import { compileRecipeConfig, type RecipeConfig } from "../factory";
 import { VOLT_ASSETS } from "./assets";
 
 function route(html: string, css: string, rootScopeKind?: BindingScopeKind): RouteSource {
+  if (rootScopeKind === "search") {
+    html = html.replace(/(<main\b[^>]*>)/, '$1<nav class="volt-search-channel" aria-label="Search signal path"><span>Query</span><span>Signal</span><span>Result</span></nav>');
+  }
+  if (rootScopeKind === "cart") {
+    html = html.replace(/(<main\b[^>]*>)/, '$1<nav class="volt-cart-system" aria-label="System checkout path"><span>Components</span><span>Review</span><span>Checkout</span></nav>');
+  }
   return { html, css, requiredData: [], requiredCapabilities: [], ...(rootScopeKind ? { rootScopeKind } : {}) };
 }
 
@@ -14,9 +19,6 @@ const catalogProof = proofBandFragment({
   className: "volt-proof",
   copy: "Live pricing, availability, and options from this store's catalog.",
 });
-const heroVideo = videoFragment({ className: "volt-hero-film", posterAssetKey: "hero-poster", webmAssetKey: "hero-webm", mp4AssetKey: "hero-mp4" });
-const heroAltVideo = videoFragment({ className: "volt-story-film", posterAssetKey: "hero-alt-poster", webmAssetKey: "hero-alt-webm", mp4AssetKey: "hero-alt-mp4" });
-const productVideo = videoFragment({ className: "volt-detail-film", posterAssetKey: "pdp-detail-poster", webmAssetKey: "pdp-detail-webm", mp4AssetKey: "pdp-detail-mp4" });
 
 const sharedRouteCss = `
   .volt-page{background:var(--paper);color:var(--ink);min-height:70dvh}
@@ -84,7 +86,7 @@ export const VOLT_RECIPE_CONFIG = {
       source: route(`
         <main class="volt-page volt-home">
           <section class="volt-hero-fallback" aria-label="Premium product silhouette in a dark studio">
-            ${heroVideo.html}
+            <img class="volt-hero-image" data-cd-asset="hero" alt="Premium product silhouette in a dark studio" width="1600" height="900">
             <div class="volt-hero-orbit" aria-hidden="true"></div>
             <div class="volt-hero-copy" ${motionAttributes("reveal")}>
               <span class="volt-kicker">Live catalog / product-by-product planning</span>
@@ -107,18 +109,18 @@ export const VOLT_RECIPE_CONFIG = {
           </section>
           <section class="volt-compare" ${motionAttributes("scroll-progress")}>
             <header><span class="volt-kicker">Live catalog evidence</span><h2 class="volt-display">Compare live products.</h2><p>Compare current price and availability here; open a product for its merchant-supplied options and full details.</p></header>
-            <div class="volt-compare-rail" data-cd-repeat="featured.products"><article class="volt-compare-row" data-cd-key="product.id"><span data-cd-text="product.title"></span><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">View product details</a></article></div>
+            <div class="volt-compare-rail" data-cd-repeat="featured.products"><article class="volt-compare-row" data-cd-key="product.id"><span data-cd-text="product.title"></span><p data-cd-text="product.description"></p><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">View product details</a></article></div>
           </section>
           <section class="volt-planner-intro" ${motionAttributes("pinned")}><header><span class="volt-kicker">Ecosystem builder</span><h2 class="volt-display">Build a three-piece setup.</h2><p>Choose any three live products, including the same product more than once. The protected builder verifies current variants, prices, and availability before adding the complete setup.</p></header></section>
         </main>
         <section data-cd-slot="bundleBuilder" data-cd-bundle-slots="3" data-cd-host-size="block" data-cd-theme-tokens="ink paper signal"></section>
       `, `${sharedRouteCss}
         .volt-hero-fallback{position:relative;display:grid;min-height:min(820px,88dvh);align-items:end;overflow:hidden;padding:clamp(1.5rem,6vw,6rem);background:radial-gradient(circle at 72% 44%,rgba(183,255,60,.18),transparent 8%),radial-gradient(ellipse at 72% 48%,#4b515b 0,#20242a 18%,#0a0b0d 52%);color:var(--paper)}
-        .volt-hero-film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.volt-hero-fallback:after{content:"";position:absolute;inset:9% 8% 9% 57%;border:1px solid rgba(242,243,239,.22);border-radius:48% 48% 42% 42%;box-shadow:0 0 70px rgba(183,255,60,.12)}.volt-hero-orbit{position:absolute;width:52vw;height:52vw;right:-9vw;top:4%;border:1px solid rgba(242,243,239,.12);border-radius:50%}.volt-hero-copy{position:relative;z-index:1;max-width:44rem}.volt-hero-copy h1{font-size:clamp(4rem,10vw,9rem);margin:.5rem 0}.volt-hero-copy p{max-width:38rem;font-size:1.05rem;line-height:1.6}.volt-channel{position:absolute;right:1.5rem;bottom:1.5rem;font-family:var(--font-body);font-size:.7rem;letter-spacing:.12em}
+        .volt-hero-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.volt-hero-fallback:after{content:"";position:absolute;inset:9% 8% 9% 57%;border:1px solid rgba(242,243,239,.22);border-radius:48% 48% 42% 42%;box-shadow:0 0 70px rgba(183,255,60,.12)}.volt-hero-orbit{position:absolute;width:52vw;height:52vw;right:-9vw;top:4%;border:1px solid rgba(242,243,239,.12);border-radius:50%}.volt-hero-copy{position:relative;z-index:1;max-width:44rem}.volt-hero-copy h1{font-size:clamp(4rem,10vw,9rem);margin:.5rem 0}.volt-hero-copy p{max-width:38rem;font-size:1.05rem;line-height:1.6}.volt-channel{position:absolute;right:1.5rem;bottom:1.5rem;font-family:var(--font-body);font-size:.7rem;letter-spacing:.12em}
         .volt-catalog,.volt-compare,.volt-planner-intro{padding:clamp(3rem,7vw,7rem) clamp(1rem,4vw,4rem)}.volt-catalog header,.volt-compare header,.volt-planner-intro header{max-width:64rem;margin-bottom:2rem}.volt-catalog h2,.volt-compare h2,.volt-planner-intro h2{font-size:clamp(3rem,7vw,7rem);margin:.5rem 0}.volt-product-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line)}.volt-product-module{display:grid;gap:1rem;padding:1rem;background:var(--paper)}.volt-product-module img{width:100%;aspect-ratio:1;object-fit:cover;background:var(--panel)}.volt-product-module a{color:inherit;text-decoration:none}.volt-product-module h3{font-size:1.4rem}.volt-product-meta{display:flex;justify-content:space-between;gap:1rem;font-family:var(--font-body);font-size:.78rem}
-        .volt-compare{background:var(--ink);color:var(--paper)}.volt-compare-rail{display:grid;border-top:1px solid var(--line)}.volt-compare-row{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:1rem;align-items:center;min-height:70px;border-bottom:1px solid var(--line);font-family:var(--font-body)}.volt-compare-rail a{color:var(--signal)}
+        .volt-compare{background:var(--ink);color:var(--paper)}.volt-compare-rail{display:grid;border-top:1px solid var(--line)}.volt-compare-row{display:grid;grid-template-columns:1.5fr 2fr 1fr 1fr auto;gap:1rem;align-items:center;min-height:70px;border-bottom:1px solid var(--line);font-family:var(--font-body)}.volt-compare-rail a{color:var(--signal)}
         @media(max-width:720px){.volt-hero-fallback{min-height:76dvh}.volt-hero-fallback:after{inset:14% -20% 18% 46%}.volt-product-grid{grid-template-columns:1fr}.volt-compare-row{grid-template-columns:1fr 1fr}.volt-compare-row a{grid-column:1/-1;min-height:44px}}
-        @media(prefers-reduced-motion:reduce){.volt-hero-orbit{transform:none}.volt-hero-copy,.volt-catalog,.volt-compare,.volt-planner-intro,.volt-hero-film{animation:none;transition:none;scroll-behavior:auto}}
+        @media(prefers-reduced-motion:reduce){.volt-hero-orbit{transform:none}.volt-hero-copy,.volt-catalog,.volt-compare,.volt-planner-intro{animation:none;transition:none;scroll-behavior:auto}}
       `),
     },
     collections: {
@@ -137,10 +139,10 @@ export const VOLT_RECIPE_CONFIG = {
       signature: "cinematic product runway beside variant evidence and adjacent protected purchase hosts",
       source: route(`
         <main class="volt-product">
-          <section class="volt-product-gallery"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="1000" height="1000"><div data-cd-repeat="product.images"><img data-cd-key="product.primaryImage" data-cd-src="product.primaryImage" data-cd-alt="product.title" width="720" height="720"></div><div class="volt-detail-fallback" aria-label="Abstract close view of product materials">${productVideo.html}</div></section>
+          <section class="volt-product-gallery"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="1000" height="1000"><div data-cd-repeat="product.images"><img data-cd-key="product.primaryImage" data-cd-src="product.primaryImage" data-cd-alt="product.title" width="720" height="720"></div><div class="volt-detail-fallback" aria-label="Abstract close view of product materials"></div></section>
           <article class="volt-product-dossier"><div class="volt-product-copy"><span class="volt-kicker">Product / live specification</span><h1 class="volt-display" data-cd-text="product.title"></h1><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><p data-cd-text="product.description"></p>${catalogProof.html}<section class="volt-facts"><h2>Merchant-supplied facts</h2><dl data-cd-repeat="product.facts"><div class="volt-fact" data-cd-key="fact.id"><dt data-cd-text="fact.label"></dt><dd data-cd-text="fact.value"></dd><a data-cd-href="fact.url">Open merchant reference</a></div></dl></section><h2>Available configurations</h2><div class="volt-variants" data-cd-repeat="product.variants"><div class="volt-variant" data-cd-key="variant.id"><b data-cd-text="variant.title"></b><span data-cd-text="variant.availability"></span><strong data-cd-money="variant.price"></strong></div></div><aside><b>Store policies</b><nav data-cd-policy-links></nav></aside></div><div data-cd-slot="variantPicker" data-cd-product="product.id" data-cd-host-size="block" data-cd-theme-tokens="ink paper signal"></div><div data-cd-slot="addToCart" data-cd-product="product.id" data-cd-host-size="block" data-cd-theme-tokens="ink paper signal"></div></article>
         </main>
-      `, `${sharedRouteCss}.volt-product-gallery{position:sticky;top:0;float:left;display:grid;width:60%;gap:1px;background:var(--line)}.volt-product-gallery>img,.volt-product-gallery>div img{width:100%;aspect-ratio:1;object-fit:cover}.volt-detail-fallback{min-height:280px;background:radial-gradient(circle at 54% 46%,rgba(183,255,60,.18),transparent 10%),linear-gradient(135deg,#282e35,#0a0b0d)}.volt-detail-film{width:100%;height:100%;min-height:280px;object-fit:cover}.volt-product-copy{display:grid;gap:1.25rem;min-height:100dvh;margin-left:60%;padding:clamp(1.5rem,4vw,4rem);background:var(--paper)}.volt-product-copy h1{font-size:clamp(3.2rem,6vw,6rem);margin:.4rem 0}.volt-facts dl,.volt-facts dd{margin:0}.volt-fact,.volt-variant{display:grid;grid-template-columns:1fr auto;gap:.35rem 1rem;padding:.7rem 0;border-top:1px solid var(--line)}.volt-facts a{grid-column:1/-1;color:inherit}.volt-variants{display:grid;border-top:1px solid var(--line)}@media(max-width:720px){.volt-product-gallery{position:static;float:none;width:auto}.volt-product-copy{min-height:auto;margin-left:0}}@media(prefers-reduced-motion:reduce){.volt-product-gallery{scroll-behavior:auto}.volt-detail-film{animation:none;transition:none}}`, "product"),
+      `, `${sharedRouteCss}.volt-product-gallery{position:sticky;top:0;float:left;display:grid;width:60%;gap:1px;background:var(--line)}.volt-product-gallery>img,.volt-product-gallery>div img{width:100%;aspect-ratio:1;object-fit:cover}.volt-detail-fallback{min-height:280px;background:radial-gradient(circle at 54% 46%,rgba(183,255,60,.18),transparent 10%),linear-gradient(135deg,#282e35,#0a0b0d)}.volt-product-copy{display:grid;gap:1.25rem;min-height:100dvh;margin-left:60%;padding:clamp(1.5rem,4vw,4rem);background:var(--paper)}.volt-product-copy h1{font-size:clamp(3.2rem,6vw,6rem);margin:.4rem 0}.volt-facts dl,.volt-facts dd{margin:0}.volt-fact,.volt-variant{display:grid;grid-template-columns:1fr auto;gap:.35rem 1rem;padding:.7rem 0;border-top:1px solid var(--line)}.volt-facts a{grid-column:1/-1;color:inherit}.volt-variants{display:grid;border-top:1px solid var(--line)}@media(max-width:720px){.volt-product-gallery{position:static;float:none;width:auto}.volt-product-copy{min-height:auto;margin-left:0}}@media(prefers-reduced-motion:reduce){.volt-product-gallery{scroll-behavior:auto}}`, "product"),
     },
     search: {
       signature: "dark command search with live ranked product modules and explicit empty-state recovery",
@@ -151,8 +153,8 @@ export const VOLT_RECIPE_CONFIG = {
     story: {
       signature: "engineering manifesto with quiet signal diagrams and merchant-owned policy evidence",
       source: route(`
-        <main class="volt-page volt-story"><header>${heroAltVideo.html}<span class="volt-kicker">Engineering / product before promise</span><h1 class="volt-display">Plan with the facts available.</h1><p><span data-cd-text="store.name"></span> presents each live product as part of a clear planning path.</p></header><section><article><b>01 / Inspect</b><h2>Begin with the live record.</h2><p>Choose from current products without inventing performance or availability claims.</p></article><article><b>02 / Plan</b><h2>Compare what is known.</h2><p>Live catalog facts stay close to every path into purchase.</p></article><article><b>03 / Support</b><h2>Keep the handoff clear.</h2><p>Review this store's policies before purchase.</p></article></section><a class="volt-button" data-cd-route="collection">Explore current products</a></main><nav data-cd-policy-links></nav>
-      `, `${sharedRouteCss}.volt-story{padding:clamp(3rem,8vw,8rem)}.volt-story>header{max-width:72rem}.volt-story-film{width:100%;aspect-ratio:16/9;object-fit:cover;background:radial-gradient(circle at 70% 45%,#39413d,var(--ink) 50%)}.volt-story h1{font-size:clamp(4rem,10vw,9rem);margin:.5rem 0}.volt-story>section{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin:5rem 0;background:var(--line)}.volt-story article{min-height:280px;padding:1.5rem;background:var(--paper)}@media(max-width:720px){.volt-story>section{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){.volt-story-film{animation:none;transition:none}}`),
+        <main class="volt-page volt-story"><header><span class="volt-kicker">Engineering / product before promise</span><h1 class="volt-display">Plan with the facts available.</h1><p><span data-cd-text="store.name"></span> presents each live product as part of a clear planning path.</p></header><section><article><b>01 / Inspect</b><h2>Begin with the live record.</h2><p>Choose from current products without inventing performance or availability claims.</p></article><article><b>02 / Plan</b><h2>Compare what is known.</h2><p>Live catalog facts stay close to every path into purchase.</p></article><article><b>03 / Support</b><h2>Keep the handoff clear.</h2><p>Review this store's policies before purchase.</p></article></section><a class="volt-button" data-cd-route="collection">Explore current products</a></main><nav data-cd-policy-links></nav>
+      `, `${sharedRouteCss}.volt-story{padding:clamp(3rem,8vw,8rem)}.volt-story>header{max-width:72rem;padding:clamp(2rem,6vw,6rem);background:radial-gradient(circle at 70% 45%,#39413d,var(--ink) 50%);color:var(--paper)}.volt-story h1{font-size:clamp(4rem,10vw,9rem);margin:.5rem 0}.volt-story>section{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin:5rem 0;background:var(--line)}.volt-story article{min-height:280px;padding:1.5rem;background:var(--paper)}@media(max-width:720px){.volt-story>section{grid-template-columns:1fr}}`),
     },
     cart: {
       signature: "system rack cart ledger with trusted line controls, live totals, and checkout handoff",
@@ -163,7 +165,7 @@ export const VOLT_RECIPE_CONFIG = {
     checkout: {
       signature: "restrained secure checkout frame with system continuity and platform-owned order summary",
       source: {
-        html: `<header class="volt-checkout"><span>Secure checkout / encrypted handoff</span><h1 data-cd-text="store.name"></h1><p>Your live cart, pricing, delivery, and payment remain controlled by the platform through checkout.</p></header><aside class="volt-checkout-proof"><b>System continuity</b><span>Selected variants retained</span><span>Final totals shown by checkout</span></aside><footer data-cd-policy-links></footer>`,
+        html: `<section class="volt-checkout-frame"><header class="volt-checkout"><span>Secure checkout / encrypted handoff</span><h1 data-cd-text="store.name"></h1><p>Your live cart, pricing, delivery, and payment remain controlled by the platform through checkout.</p></header><aside class="volt-checkout-proof"><b>System continuity</b><span>Selected variants retained</span><span>Final totals shown by checkout</span></aside><footer data-cd-policy-links></footer></section>`,
         css: `.volt-checkout{padding:48px;max-width:760px}.volt-checkout h1{font-size:64px}.volt-checkout-proof{display:grid;gap:12px;padding:32px;border-left-width:1px;border-style:solid;border-color:var(--line)}`,
         layout: {
           columnMode: "summaryAside",

@@ -80,12 +80,17 @@ describe("applyStoreIntent", () => {
     for (const recipe of STOREFRONT_RECIPES) {
       const activeTemplate = getStoreTemplate(recipe.config.templateId);
       for (const slot of activeTemplate.overrideSurface.textSlots) {
-        const result = applyStoreIntent(recipe.bundle, activeTemplate, {
-          kind: "update_text",
-          slot,
-          value: "Replacement copy",
-        });
         const key = `${recipe.config.templateId}:${slot}`;
+        let result: ReturnType<typeof applyStoreIntent>;
+        try {
+          result = applyStoreIntent(recipe.bundle, activeTemplate, {
+            kind: "update_text",
+            slot,
+            value: "Replacement copy",
+          });
+        } catch (error) {
+          throw new Error(`${key} failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
         const renderedText = `${result.bundle.shell.html} ${result.bundle.routes.home.html}`
           .replace(/<[^>]+>/g, " ")
           .replace(/\s+/g, " ");
@@ -206,6 +211,13 @@ describe("applyStoreIntent", () => {
     const missingRoute = bundle() as StorefrontBundleV1 & { routes: Partial<StorefrontBundleV1["routes"]> };
     Reflect.deleteProperty(missingRoute.routes, "checkout");
     expect(() => applyStoreIntent(missingRoute as StorefrontBundleV1, template, {
+      kind: "update_merchandising",
+      productIds: ["product-a"],
+    })).toThrowError(expect.objectContaining({ code: "storefront_template_integrity_failed" }));
+
+    const unknownRoute = bundle() as StorefrontBundleV1 & { routes: StorefrontBundleV1["routes"] & Record<"unknown", StorefrontBundleV1["routes"]["home"]> };
+    unknownRoute.routes.unknown = structuredClone(unknownRoute.routes.home);
+    expect(() => applyStoreIntent(unknownRoute, template, {
       kind: "update_merchandising",
       productIds: ["product-a"],
     })).toThrowError(expect.objectContaining({ code: "storefront_template_integrity_failed" }));

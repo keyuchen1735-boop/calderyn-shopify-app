@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
 import { compileRecipeConfig } from "../factory";
-import { ROAST_ASSETS, ROAST_VIDEO_ASSET_KEYS, ROAST_VIDEO_ROLES } from "./assets";
+import { ROAST_ASSETS, ROAST_STATIC_ASSET_KEYS } from "./assets";
 import { ROAST_RECIPE_CONFIG } from "./bundle";
 
 function repeatsIn(nodes: readonly CompiledNode[]): string[] {
@@ -70,37 +70,24 @@ describe("roast storefront recipe", () => {
       .join(" ");
     expect(customerCopy).not.toMatch(/matched for you|recommended coffee|best coffee for|guaranteed match/i);
 
-    expect(report.ok).toBe(false);
-    expect(ROAST_VIDEO_ROLES).toEqual(["hero", "brew-context", "bean-grind"]);
-    expect(ROAST_VIDEO_ASSET_KEYS).toEqual([
-      "hero-poster", "hero-webm", "hero-mp4",
-      "brew-context-poster", "brew-context-webm", "brew-context-mp4",
-      "bean-grind-poster", "bean-grind-webm", "bean-grind-mp4",
+    expect(report).toMatchObject({ ok: true, diagnostics: [] });
+    expect(ROAST_STATIC_ASSET_KEYS).toEqual(["hero"]);
+    expect(ROAST_ASSETS.entries).toEqual([
+      expect.objectContaining({
+        key: "hero",
+        mediaType: "image/webp",
+        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
     ]);
-    expect(ROAST_ASSETS.entries).toEqual([]);
-    expect(report.diagnostics).toHaveLength(18);
-    expect([...new Set(report.diagnostics.map(({ code }) => code))].sort()).toEqual([
-      "asset.media_mismatch", "asset.reference_missing",
-    ]);
-    expect(report.diagnostics.filter(({ code }) => code === "asset.media_mismatch")).toHaveLength(9);
-    expect(report.diagnostics.filter(({ code }) => code === "asset.reference_missing")).toHaveLength(9);
-    for (const key of ROAST_VIDEO_ASSET_KEYS) {
-      expect(report.diagnostics).toContainEqual(expect.objectContaining({
-        code: "asset.reference_missing",
-        path: `assets.references.${key}`,
-      }));
-    }
-    expect(bundle.routes.home.html).toContain('data-cd-poster-asset-key="hero-poster"');
-    expect(bundle.routes.story?.html).toContain('data-cd-poster-asset-key="brew-context-poster"');
-    expect(bundle.routes.product.html).toContain('data-cd-poster-asset-key="bean-grind-poster"');
+    expect(ROAST_ASSETS.entries[0]!.byteSize).toBeGreaterThan(0);
+    expect(bundle.routes.home.html).toContain('data-cd-asset-key="hero"');
+    expect(Object.values(bundle.routes).map((route) => "html" in route ? route.html : route.decorativeHtml).join(" ")).not.toContain("<video");
     expect(bundle.routes.home.css).toContain("prefers-reduced-motion:reduce");
   });
 
-  it("ships the recipe-owned media contract and visual prototype", () => {
+  it("ships the recipe-owned static asset contract and visual prototype", () => {
     for (const path of [
       "app/lib/storefront-recipes/roast/assets.ts",
-      "app/lib/storefront-recipes/roast/video-brief.md",
-      "app/lib/storefront-recipes/roast/video-proof.json",
       "docs/superpowers/prototypes/storefront-recipes/roast.html",
     ]) {
       expect(existsSync(resolve(process.cwd(), path)), path).toBe(true);
@@ -111,9 +98,10 @@ describe("roast storefront recipe", () => {
       "docs/superpowers/prototypes/storefront-recipes/roast.html",
     ), "utf8");
     expect(prototype).toContain("Brew-method field guide");
-    expect(prototype.match(/data-method=/g)).toHaveLength(3);
+    expect(prototype.match(/data-cd-action="tabs.select"/g)).toHaveLength(3);
     expect(prototype).toContain("This guide does not claim a catalog match");
-    expect(prototype).toContain("Recurring delivery appears only when the merchant offers it");
+    expect(prototype).toContain('class="roast-hero-image" data-cd-asset-key="hero"');
+    expect(prototype).not.toContain("<video");
     expect(prototype).not.toMatch(/matched for you|recommended coffee|best coffee for|guaranteed match/i);
   });
 });

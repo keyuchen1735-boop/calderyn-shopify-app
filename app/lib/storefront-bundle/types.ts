@@ -15,7 +15,7 @@ export type ExistingStoreTemplateId =
   | "broadcast-patch-bay"
   | "atelier-nine";
 export type NewStoreTemplateId = "volt" | "atelier" | "gilt" | "larder" | "ember" | "roast" | "fizz" | "forge" | "haven" | "glow";
-export type RegisteredStoreTemplateId = ExistingStoreTemplateId | "larder";
+export type RegisteredStoreTemplateId = ExistingStoreTemplateId | NewStoreTemplateId;
 export type StoreTemplateId = ExistingStoreTemplateId | NewStoreTemplateId;
 
 export type VisualLayerSpec =

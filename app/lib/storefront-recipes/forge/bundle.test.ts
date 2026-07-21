@@ -144,7 +144,7 @@ describe("Forge storefront recipe", () => {
     runtime.teardown();
   });
 
-  it("fails media closed while preserving exactly three trusted video roles", async () => {
+  it("requires one generated hero image and ships no runtime video", async () => {
     const module = await import("./bundle").catch(() => null);
     const assetsModule = await import("./assets").catch(() => null);
     expect(module).not.toBeNull();
@@ -152,44 +152,33 @@ describe("Forge storefront recipe", () => {
     if (!module || !assetsModule) return;
 
     const { FORGE_RECIPE } = module;
-    const { FORGE_ASSETS, FORGE_VIDEO_ROLES } = assetsModule;
-    expect(FORGE_VIDEO_ROLES).toEqual(["hero", "hero-alt", "pdp-detail"]);
-    expect(FORGE_ASSETS).toEqual({ entries: [] });
-    expect(FORGE_RECIPE.report.ok).toBe(false);
-    expect(FORGE_RECIPE.report.diagnostics).toHaveLength(18);
-    expect([...new Set(FORGE_RECIPE.report.diagnostics.map((diagnostic) => diagnostic.code))])
-      .toEqual(["asset.media_mismatch", "asset.reference_missing"]);
-    expect(FORGE_RECIPE.report.diagnostics.filter((diagnostic) => diagnostic.code === "asset.media_mismatch"))
-      .toHaveLength(9);
-    expect(FORGE_RECIPE.report.diagnostics.filter((diagnostic) => diagnostic.code === "asset.reference_missing"))
-      .toHaveLength(9);
+    const { FORGE_ASSETS, FORGE_ASSET_KEYS } = assetsModule;
+    expect(FORGE_ASSET_KEYS).toEqual(["hero"]);
+    expect(FORGE_ASSETS.entries).toEqual([
+      expect.objectContaining({ key: "hero", contentHash: expect.stringMatching(/^[a-f0-9]{64}$/), mediaType: "image/webp" }),
+    ]);
+    expect(FORGE_ASSETS.entries[0]?.byteSize).toBeGreaterThan(0);
+    expect(FORGE_RECIPE.report.ok).toBe(true);
+    expect(FORGE_RECIPE.report.diagnostics).toEqual([]);
 
-    const videoMarkup = Object.values(FORGE_RECIPE.config.surfaces)
+    const routeMarkup = Object.values(FORGE_RECIPE.config.surfaces)
       .map((surface) => surface.source.html)
       .join(" ");
-    for (const role of FORGE_VIDEO_ROLES) {
-      expect(videoMarkup).toContain(`data-cd-poster-asset="${role}-poster"`);
-      expect(videoMarkup).toContain(`data-cd-asset="${role}-webm"`);
-      expect(videoMarkup).toContain(`data-cd-asset="${role}-mp4"`);
-    }
-    expect(videoMarkup.match(/data-cd-video/g)).toHaveLength(3);
+    expect(FORGE_RECIPE.bundle.routes.home.html).toContain('class="forge-hero-image" data-cd-asset-key="hero"');
+    expect(routeMarkup).not.toContain("data-cd-video");
     expect(FORGE_RECIPE.bundle.designSystem.globalCss).toContain("prefers-reduced-motion");
   });
 
-  it("ships a self-contained static blueprint prototype and exactly three briefs", () => {
+  it("ships a self-contained static blueprint prototype", () => {
     const prototypePath = resolve(process.cwd(), "docs/superpowers/prototypes/storefront-recipes/forge.html");
-    const briefPath = resolve(process.cwd(), "app/lib/storefront-recipes/forge/video-brief.md");
     const prototype = readFileSync(prototypePath, "utf8");
-    const brief = readFileSync(briefPath, "utf8");
 
     expect(prototype).toContain("<!doctype html>");
-    expect(prototype).toContain("Merchant compatibility record");
-    expect(prototype).toContain("Project filters / live catalog tags");
-    expect(prototype).toContain("Only live products carrying the selected catalog tag appear");
+    expect(prototype).toContain("Build from<br>the drawing.");
+    expect(prototype).toContain("current inventory");
+    expect(prototype).toContain("protected builder verifies each current variant");
+    expect(prototype).toContain('class="forge-hero-image" data-cd-asset-key="hero"');
+    expect(prototype).not.toContain("<video");
     expect(prototype).not.toMatch(/https?:\/\//);
-    expect(brief.match(/^## Video brief:/gm)).toHaveLength(3);
-    const durations = [...brief.matchAll(/^- Duration: (\d+) seconds/gm)].map((match) => Number(match[1]));
-    expect(durations).toHaveLength(3);
-    expect(durations.every((duration) => duration >= 8 && duration <= 12)).toBe(true);
   });
 });

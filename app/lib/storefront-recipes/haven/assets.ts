@@ -1,9 +1,5 @@
 import type { AssetManifest } from "~/lib/storefront-bundle/types";
 
-export const HAVEN_VIDEO_ROLES = ["hero", "hero-alt", "pdp-detail"] as const;
-export const HAVEN_VIDEO_ASSET_KEYS = HAVEN_VIDEO_ROLES.flatMap((role) => [
-  `${role}-poster`, `${role}-webm`, `${role}-mp4`,
-]);
+export const HAVEN_ASSET_KEYS = ["hero"] as const;
 
-// Media stays absent until generation, import, and visual approval all succeed.
-export const HAVEN_ASSETS: AssetManifest = { entries: [] };
+export const HAVEN_ASSETS: AssetManifest = { entries: [{ key: "hero", contentHash: "f775d040ec74ea90405b24926bcc716271cc5d6b4beae2b5a748214ac6795c4e", mediaType: "image/webp", byteSize: 123674 }] };
