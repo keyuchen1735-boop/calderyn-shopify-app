@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CompiledNode } from "~/lib/storefront-bundle/types";
 import { hydrateStorefront, teardownStorefront } from "~/lib/storefront-runtime/hydrate";
@@ -127,6 +129,33 @@ describe("haven storefront recipe", () => {
     expect(surfaces.cart.source.html).toContain('data-cd-route="checkout"');
     expect(surfaces.cart.source.html).toContain('data-cd-policy-links');
     expect(surfaces.checkout.source.html).toContain("Final variants, totals, delivery, and payment remain platform controlled");
+  });
+
+  it("uses merchant collections and a readable two-line hero with empty-cart recovery", () => {
+    const { bundle } = HAVEN_RECIPE;
+    const surfaces = HAVEN_RECIPE_CONFIG.surfaces;
+    const collections = surfaces.collections.source.html;
+    const routeHtml = Object.values(surfaces).map(({ source }) => source.html).join(" ");
+    const prototype = readFileSync(resolve(process.cwd(), "docs/superpowers/prototypes/storefront-recipes/haven.html"), "utf8");
+
+    expect(collections).toContain('data-cd-repeat="featured.collections"');
+    expect(collections).toContain('data-cd-key="collection.id"');
+    expect(collections).toContain('data-cd-param-handle="collection.handle"');
+    expect(collections).toContain('data-cd-text="collection.title"');
+    expect(routeHtml).not.toMatch(/[—–]/);
+    expect(routeHtml).not.toMatch(/>0[1-9](?:\s*\/[^<]*)?</);
+    expect(surfaces.home.source.css).toContain("clamp(3.5rem,6vw,6rem)");
+    expect(surfaces.home.source.css).toContain(".haven-hero:after");
+    expect(surfaces.home.source.html).not.toContain("haven-proof");
+    expect(surfaces.home.source.css).not.toContain("haven-proof");
+    expect(surfaces.cart.source.html).toContain('data-cd-route="collections"');
+    expect(bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(
+      expect.arrayContaining(["variantPicker", "addToCart"]),
+    );
+    expect(prototype).toContain("clamp(3.5rem,6vw,6rem)");
+    expect(prototype).toContain(".haven-hero:after");
+    expect(prototype).not.toContain("haven-proof");
+    expect(prototype).not.toMatch(/[—–]/);
   });
 
 });

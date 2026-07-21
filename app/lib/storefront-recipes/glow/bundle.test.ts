@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { CompiledNode, RouteArtifact } from "~/lib/storefront-bundle/types";
@@ -169,5 +171,34 @@ describe("glow storefront recipe", () => {
     expect(GLOW_RECIPE_CONFIG.surfaces.checkout.source.css).toContain(".glow-checkout-policy a{display:inline-flex;align-items:center;min-height:44px");
     expect(GLOW_RECIPE_CONFIG.surfaces.notFound.source.css).toContain(".glow-lost nav a{display:inline-flex;align-items:center;min-height:44px");
     expect(GLOW_RECIPE.bundle.routes.home.css).toContain("prefers-reduced-motion:reduce");
+  });
+
+  it("uses live collection shelves, one accent, visible hero CTA, and empty-bag recovery", () => {
+    const { bundle } = GLOW_RECIPE;
+    const surfaces = GLOW_RECIPE_CONFIG.surfaces;
+    const collections = surfaces.collections.source.html;
+    const routeHtml = Object.values(surfaces).map(({ source }) => source.html).join(" ");
+    const prototype = readFileSync(resolve(process.cwd(), "docs/superpowers/prototypes/storefront-recipes/glow.html"), "utf8");
+
+    expect(collections).toContain('data-cd-repeat="featured.collections"');
+    expect(collections).toContain('data-cd-key="collection.id"');
+    expect(collections).toContain('data-cd-param-handle="collection.handle"');
+    expect(collections).toContain('data-cd-text="collection.title"');
+    expect(routeHtml).not.toMatch(/[—–]/);
+    expect(routeHtml).not.toMatch(/>0[1-9]</);
+    expect(surfaces.home.source.css).toContain("clamp(3.5rem,6vw,6rem)");
+    expect(surfaces.home.source.css).toContain(".glow-hero-actions .glow-button{color:var(--porcelain)}");
+    expect(surfaces.home.source.css).toContain(".glow-routine{background:var(--serum)}");
+    expect(surfaces.home.source.css).not.toContain("var(--blush)");
+    expect(surfaces.home.source.html).not.toContain("glow-proof");
+    expect(surfaces.home.source.css).not.toContain("glow-proof");
+    expect(surfaces.cart.source.html).toContain('data-cd-route="collections"');
+    expect(bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(
+      expect.arrayContaining(["variantPicker", "addToCart"]),
+    );
+    expect(prototype).toContain("clamp(3.5rem,6vw,6rem)");
+    expect(prototype).toContain(".glow-hero-actions .glow-button{color:var(--porcelain)}");
+    expect(prototype).not.toContain("glow-proof");
+    expect(prototype).not.toMatch(/[—–]/);
   });
 });

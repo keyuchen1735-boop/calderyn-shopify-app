@@ -47,7 +47,7 @@ describe("Forge storefront recipe", () => {
     }
 
     expect(repeats(bundle.routes.home.tree)).toContain("featured.products");
-    expect(bundle.routes.home.html).toContain("Collection doorways / live projects");
+    expect(bundle.routes.home.html).toContain("Live project collections");
     expect(dataPaths(bundle.routes.home)).toEqual(expect.arrayContaining([
       "product.primaryImage", "product.title", "product.description", "product.price", "product.availability",
     ]));
@@ -71,7 +71,7 @@ describe("Forge storefront recipe", () => {
       "product.price", "product.availability",
     ]));
     expect(bundle.routes.collection.trustedSlots.map((slot) => slot.kind)).toContain("quickViewCommerce");
-    expect(bundle.routes.collections!.html).toContain("Project doorway 01");
+    expect(repeats(bundle.routes.collections!.tree)).toContain("featured.collections");
     expect(repeats(bundle.routes.collections!.tree)).toContain("featured.products");
 
     expect(repeats(bundle.routes.product.tree)).toEqual(expect.arrayContaining(["product.images", "product.facts", "product.variants"]));
@@ -182,16 +182,37 @@ describe("Forge storefront recipe", () => {
     expect(FORGE_RECIPE.bundle.designSystem.globalCss).toContain("prefers-reduced-motion");
   });
 
+  it("uses live collection doorways and Taste-safe recovery without dropping protected commerce", async () => {
+    const { FORGE_RECIPE, FORGE_RECIPE_CONFIG } = await import("./bundle");
+    const collections = FORGE_RECIPE_CONFIG.surfaces.collections.source.html;
+    const routeHtml = Object.values(FORGE_RECIPE_CONFIG.surfaces).map(({ source }) => source.html).join(" ");
+
+    expect(collections).toContain('data-cd-repeat="featured.collections"');
+    expect(collections).toContain('data-cd-key="collection.id"');
+    expect(collections).toContain('data-cd-param-handle="collection.handle"');
+    expect(collections).toContain('data-cd-text="collection.title"');
+    expect(routeHtml).not.toMatch(/[—–]/);
+    expect(routeHtml).not.toMatch(/\b(?:drawing|plate|project doorway)\s*0[1-9]|>0[1-9]</i);
+    expect(FORGE_RECIPE_CONFIG.surfaces.home.source.css).toContain("clamp(4rem,6vw,6rem)");
+    expect(FORGE_RECIPE_CONFIG.surfaces.cart.source.html).toContain('data-cd-route="collections"');
+    expect(FORGE_RECIPE.bundle.routes.product.trustedSlots.map(({ kind }) => kind)).toEqual(
+      expect.arrayContaining(["variantPicker", "addToCart"]),
+    );
+  });
+
   it("ships a self-contained static blueprint prototype", () => {
     const prototypePath = resolve(process.cwd(), "docs/superpowers/prototypes/storefront-recipes/forge.html");
     const prototype = readFileSync(prototypePath, "utf8");
 
     expect(prototype).toContain("<!doctype html>");
     expect(prototype).toContain("Build from<br>the drawing.");
-    expect(prototype).toContain("current inventory");
+    expect(prototype).toContain("Current inventory");
     expect(prototype).toContain("protected builder verifies each current variant");
     expect(prototype).toContain('class="forge-hero-image" data-cd-asset-key="hero"');
     expect(prototype).not.toContain("<video");
     expect(prototype).not.toMatch(/https?:\/\//);
+    expect(prototype).not.toMatch(/[—–]/);
+    expect(prototype).not.toMatch(/\b(?:drawing|plate|project doorway)\s*0[1-9]|>0[1-9]</i);
+    expect(prototype).toContain("clamp(4rem,6vw,6rem)");
   });
 });
