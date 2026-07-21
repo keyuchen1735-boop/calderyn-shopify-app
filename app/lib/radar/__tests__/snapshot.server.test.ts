@@ -27,6 +27,7 @@ import {
   extractFacts,
   MAX_PAGES_PER_COMPETITOR,
   normalizeText,
+  SNAPSHOT_FETCH_BUDGET,
   snapshotWatchingCompetitors,
 } from "../snapshot.server";
 
@@ -68,6 +69,12 @@ describe("normalizeText / contentHash", () => {
     expect(contentHash(a)).toBe(contentHash(b));
     expect(contentHash(a)).toMatch(/^[0-9a-f]{64}$/);
   });
+  it("strips HTML comments before tag-eating, even when a comment body contains '>'", () => {
+    const out = normalizeText("<p>Before</p><!-- old price > $50 --><p>After</p>");
+    expect(out).toBe("Before After");
+    expect(out).not.toContain("$50");
+    expect(out).not.toContain("-->");
+  });
 });
 
 describe("extractFacts", () => {
@@ -83,6 +90,43 @@ describe("extractFacts", () => {
     const facts = extractFacts(many);
     expect(facts.headings.length).toBeLessThanOrEqual(20);
     expect(facts.prices.length).toBeLessThanOrEqual(20);
+  });
+  it("reads meta description with content before name", () => {
+    const facts = extractFacts(`<html><head><meta name="description" content="Boots and packs"></head></html>`);
+    expect(facts.metaDescription).toBe("Boots and packs");
+  });
+  it("reads meta description with name before content (either attribute order)", () => {
+    const facts = extractFacts(`<html><head><meta content="Boots and packs" name="description"></head></html>`);
+    expect(facts.metaDescription).toBe("Boots and packs");
+  });
+  it("labels a price with the nearest preceding h1-h3 heading", () => {
+    const html = `<html><body><h2>Trail Boots</h2><p>Great for hiking. $129.00 today.</p></body></html>`;
+    const facts = extractFacts(html);
+    expect(facts.labeledPrices).toContainEqual({ label: "Trail Boots", price: "$129.00" });
+  });
+});
+
+describe("price extraction (locale formats)", () => {
+  it("captures complete money tokens in US convention", () => {
+    const facts = extractFacts(`<html><body><h1>Shop</h1><span>$1,299.00</span></body></html>`);
+    expect(facts.prices).toContain("$1,299.00");
+  });
+  it("captures complete money tokens in European convention", () => {
+    const facts = extractFacts(`<html><body><h1>Shop</h1><span>&euro;1.299,00</span></body></html>`.replace("&euro;", "€"));
+    expect(facts.prices).toContain("€1.299,00");
+  });
+  it("captures a plain integer price with no decimal", () => {
+    const facts = extractFacts(`<html><body><h1>Shop</h1><span>£999</span></body></html>`);
+    expect(facts.prices).toContain("£999");
+  });
+  it("captures a simple two-decimal price", () => {
+    const facts = extractFacts(`<html><body><h1>Shop</h1><span>$29.99</span></body></html>`);
+    expect(facts.prices).toContain("$29.99");
+  });
+  it("regression: does not truncate a European price mid-token", () => {
+    const facts = extractFacts(`<html><body><h1>Shop</h1><span>€1.299,00</span></body></html>`);
+    expect(facts.prices).not.toContain("€1.29");
+    expect(facts.prices).toContain("€1.299,00");
   });
 });
 
@@ -113,6 +157,33 @@ describe("diffExtracts", () => {
       newPrices: ["$99.00"],
       removedPrices: ["$129.00"],
     });
+  });
+  it("pairs a same-label price change into priceChanges", () => {
+    const prev = { ...base, labeledPrices: [{ label: "Trail Boots", price: "$129.00" }] };
+    const next = { ...base, prices: ["$99.00"], labeledPrices: [{ label: "Trail Boots", price: "$99.00" }] };
+    const diff = diffExtracts(prev, next);
+    expect(diff?.priceChanges).toEqual([{ label: "Trail Boots", from: "$129.00", to: "$99.00" }]);
+  });
+  it("does not cross-pair unrelated simultaneous price changes on different labels", () => {
+    const prev = { ...base, labeledPrices: [{ label: "A", price: "$129.00" }, { label: "B", price: "$89.00" }] };
+    const next = {
+      ...base,
+      prices: ["$99.00", "$134.00"],
+      labeledPrices: [{ label: "A", price: "$99.00" }, { label: "B", price: "$134.00" }],
+    };
+    const diff = diffExtracts(prev, next);
+    expect(diff?.priceChanges).toEqual(expect.arrayContaining([
+      { label: "A", from: "$129.00", to: "$99.00" },
+      { label: "B", from: "$89.00", to: "$134.00" },
+    ]));
+    expect(diff?.priceChanges).toHaveLength(2);
+    expect(diff?.priceChanges).not.toContainEqual({ label: "A", from: "$129.00", to: "$134.00" });
+    expect(diff?.priceChanges).not.toContainEqual({ label: "B", from: "$89.00", to: "$99.00" });
+  });
+  it("omits priceChanges when labeledPrices is missing on either side", () => {
+    const next = { ...base, prices: ["$99.00"] };
+    const diff = diffExtracts(base, next);
+    expect(diff?.priceChanges).toBeUndefined();
   });
 });
 
@@ -155,5 +226,28 @@ describe("snapshotWatchingCompetitors", () => {
   it("stops at the deadline without throwing", async () => {
     const out = await snapshotWatchingCompetitors(SHOP, { deadline: Date.now() - 1 });
     expect(out.pagesFetched).toBe(0);
+  });
+  it("stops early once the per-shop fetch budget is exhausted mid-run", async () => {
+    // 3 competitors x MAX_PAGES_PER_COMPETITOR pages each would need 30 page
+    // fetches alone (before counting the 3 robots.txt loads), which exceeds
+    // SNAPSHOT_FETCH_BUDGET (30) - the run must stop partway through.
+    const HOME_MANY = `<html><head><title>Rival</title></head><body>${Array.from(
+      { length: 9 },
+      (_, i) => `<a href="/products/p${i}">Item ${i}</a>`,
+    ).join("")}</body></html>`;
+    const manyCompetitors = [1, 2, 3].map((n) => ({
+      ...COMP,
+      id: `comp-${n}`,
+      url: `https://rival${n}.example/`,
+    }));
+    mocks.listCompetitors.mockResolvedValue(manyCompetitors);
+    mocks.politeFetch.mockImplementation(async (url: string) =>
+      /^https:\/\/rival\d\.example\/$/.test(url)
+        ? { ok: true, status: 200, text: HOME_MANY }
+        : { ok: true, status: 200, text: "<html><title>Changed</title></html>" });
+    const out = await snapshotWatchingCompetitors(SHOP, { deadline: deadline() });
+    expect(out.pagesFetched).toBeLessThanOrEqual(SNAPSHOT_FETCH_BUDGET);
+    expect(out.pagesFetched).toBeLessThan(manyCompetitors.length * MAX_PAGES_PER_COMPETITOR);
+    expect(mocks.politeFetch.mock.calls.length).toBe(out.pagesFetched);
   });
 });

@@ -25,6 +25,7 @@ const MAX_ITEM_CHARS = 160;
 
 export function normalizeText(html: string): string {
   return html
+    .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<[^>]+>/g, " ")
@@ -34,6 +35,15 @@ export function normalizeText(html: string): string {
     .slice(0, MAX_TEXT_CHARS);
 }
 
+/** Matches a complete money token in either thousands/decimal convention:
+ *  "$1,299.00" (US), "€1.299,00" (EU), "£999" (no decimal), "$29.99" (simple).
+ *  The trailing (?!\d) is a tail guard: it refuses to stop mid-number, so an
+ *  ambiguous run of digits with no separator (e.g. "$1234.56") fails to match
+ *  entirely rather than silently truncating to "$123". */
+const PRICE_RE = /[$£€]\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?(?!\d)/g;
+/** Nearest-heading correlation window, in characters of source HTML. */
+const LABEL_PROXIMITY_CHARS = 500;
+
 export function contentHash(normalized: string): string {
   return createHash("sha256").update(normalized, "utf8").digest("hex");
 }
@@ -42,25 +52,60 @@ function stripTags(fragment: string): string {
   return fragment.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_ITEM_CHARS);
 }
 
+/** Matches a <meta name="description" content="..."> tag in either
+ *  attribute order (name-then-content or content-then-name). */
+const META_DESCRIPTION_RE =
+  /<meta[^>]+(?:name=["']description["'][^>]*content=["']([^"']*)["']|content=["']([^"']*)["'][^>]*name=["']description["'])[^>]*>/i;
+
 export function extractFacts(html: string): CompetitorExtract {
   const title = stripTags(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? "");
-  const metaDescription =
-    /<meta[^>]+name=["']description["'][^>]*content=["']([^"']*)["']/i.exec(html)?.[1]?.trim().slice(0, MAX_ITEM_CHARS)
-    ?? "";
-  const headings: string[] = [];
+  const metaMatch = META_DESCRIPTION_RE.exec(html);
+  const metaDescription = (metaMatch?.[1] ?? metaMatch?.[2] ?? "").trim().slice(0, MAX_ITEM_CHARS);
+
+  // Scanned well past MAX_LIST (bounded, not unbounded) so labeledPrices can
+  // still correlate against headings further down the page than the top 20
+  // kept in `headings`.
+  const headingMatches: Array<{ index: number; text: string }> = [];
   const headingRe = /<h[123][^>]*>([\s\S]*?)<\/h[123]>/gi;
-  for (let m = headingRe.exec(html); m && headings.length < MAX_LIST; m = headingRe.exec(html)) {
+  for (let m = headingRe.exec(html); m && headingMatches.length < MAX_LIST * 10; m = headingRe.exec(html)) {
     const text = stripTags(m[1]);
-    if (text) headings.push(text);
+    if (text) headingMatches.push({ index: m.index, text });
   }
+  const headings = headingMatches.slice(0, MAX_LIST).map((h) => h.text);
+
   const prices: string[] = [];
-  const priceRe = /[$£€]\s?\d[\d,]*(?:\.\d{2})?/g;
   const normalized = normalizeText(html);
-  for (let m = priceRe.exec(normalized); m && prices.length < MAX_LIST; m = priceRe.exec(normalized)) {
+  const normalizedPriceRe = new RegExp(PRICE_RE);
+  for (let m = normalizedPriceRe.exec(normalized); m && prices.length < MAX_LIST; m = normalizedPriceRe.exec(normalized)) {
     const price = m[0].replace(/\s+/g, "");
     if (!prices.includes(price)) prices.push(price);
   }
-  return { title, metaDescription, headings, prices };
+
+  // Labeled prices are correlated on the raw source HTML (not the normalized
+  // text) so a price's index can be compared against a heading's index in
+  // the same coordinate space.
+  const labeledPrices: Array<{ label: string; price: string }> = [];
+  const sourcePriceRe = new RegExp(PRICE_RE);
+  for (let m = sourcePriceRe.exec(html); m && labeledPrices.length < MAX_LIST; m = sourcePriceRe.exec(html)) {
+    const priceIndex = m.index;
+    let nearest: { index: number; text: string } | null = null;
+    for (const heading of headingMatches) {
+      if (heading.index <= priceIndex && priceIndex - heading.index <= LABEL_PROXIMITY_CHARS) {
+        if (!nearest || heading.index > nearest.index) nearest = heading;
+      }
+    }
+    if (nearest) {
+      labeledPrices.push({ label: nearest.text, price: m[0].replace(/\s+/g, "") });
+    }
+  }
+
+  return {
+    title,
+    metaDescription,
+    headings,
+    prices,
+    ...(labeledPrices.length > 0 ? { labeledPrices } : {}),
+  };
 }
 
 /** Home first, then same-host store-shaped links (products/collections/shop/
@@ -93,13 +138,33 @@ function delta(prev: string[], next: string[]): { added: string[]; removed: stri
   };
 }
 
+/** Labeled prices present on both sides, whose label carried a different
+ *  price value each side. This is the only truthful basis for a
+ *  specific-product price claim - see the contract on CompetitorDiff. */
+function labeledPriceChanges(
+  prev: CompetitorExtract,
+  next: CompetitorExtract,
+): Array<{ label: string; from: string; to: string }> | undefined {
+  if (!prev.labeledPrices || !next.labeledPrices) return undefined;
+  const prevByLabel = new Map(prev.labeledPrices.map((p) => [p.label, p.price]));
+  const changes: Array<{ label: string; from: string; to: string }> = [];
+  for (const entry of next.labeledPrices) {
+    const from = prevByLabel.get(entry.label);
+    if (from !== undefined && from !== entry.price) {
+      changes.push({ label: entry.label, from, to: entry.price });
+    }
+  }
+  return changes.length > 0 ? changes : undefined;
+}
+
 /** Null when the extracts are equivalent (belt-and-braces behind the hash gate). */
 export function diffExtracts(prev: CompetitorExtract, next: CompetitorExtract): CompetitorDiff | null {
   const headings = delta(prev.headings, next.headings);
   const prices = delta(prev.prices, next.prices);
   const titleChanged = prev.title !== next.title ? { from: prev.title, to: next.title } : null;
+  const priceChanges = labeledPriceChanges(prev, next);
   if (!titleChanged && headings.added.length === 0 && headings.removed.length === 0
-    && prices.added.length === 0 && prices.removed.length === 0) {
+    && prices.added.length === 0 && prices.removed.length === 0 && !priceChanges) {
     return null;
   }
   return {
@@ -108,6 +173,7 @@ export function diffExtracts(prev: CompetitorExtract, next: CompetitorExtract): 
     removedHeadings: headings.removed,
     newPrices: prices.added,
     removedPrices: prices.removed,
+    ...(priceChanges ? { priceChanges } : {}),
   };
 }
 
