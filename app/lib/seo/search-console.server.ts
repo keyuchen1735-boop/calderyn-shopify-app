@@ -36,7 +36,11 @@ export function pickSiteForOrigin(sites: string[], origin: string): string | nul
     }
   });
   if (prefix) return prefix;
-  const domain = sites.find((s) => s.startsWith("sc-domain:") && host.endsWith(s.slice("sc-domain:".length)));
+  const domain = sites.find((s) => {
+    if (!s.startsWith("sc-domain:")) return false;
+    const d = s.slice("sc-domain:".length);
+    return host === d || host.endsWith(`.${d}`);
+  });
   return domain ?? null;
 }
 

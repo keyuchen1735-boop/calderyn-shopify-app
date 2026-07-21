@@ -8,6 +8,7 @@ vi.mock("../gsc.server", () => ({
 }));
 
 import { fetchSearchAnalytics, pickSiteForOrigin, upsertRankings, pullShopRankings } from "../search-console.server";
+import { loadGscRefreshToken } from "../gsc.server";
 
 describe("pickSiteForOrigin", () => {
   it("prefers exact url-prefix property, then sc-domain", () => {
@@ -15,6 +16,15 @@ describe("pickSiteForOrigin", () => {
     expect(pickSiteForOrigin(sites, "https://peak.calderyncompany.com")).toBe("https://peak.calderyncompany.com/");
     expect(pickSiteForOrigin(["sc-domain:calderyncompany.com"], "https://peak.calderyncompany.com")).toBe("sc-domain:calderyncompany.com");
     expect(pickSiteForOrigin(["https://other.com/"], "https://peak.calderyncompany.com")).toBeNull();
+  });
+
+  it("rejects suffix false-positive for sc-domain", () => {
+    // "shop-abc.com" endsWith("abc.com") is true, but should NOT match sc-domain:abc.com
+    expect(pickSiteForOrigin(["sc-domain:abc.com"], "https://shop-abc.com")).toBeNull();
+  });
+
+  it("matches subdomain correctly with sc-domain", () => {
+    expect(pickSiteForOrigin(["sc-domain:abc.com"], "https://www.abc.com")).toBe("sc-domain:abc.com");
   });
 });
 
@@ -61,5 +71,19 @@ describe("pullShopRankings", () => {
     const out = await pullShopRankings("shop-1", { fetcher: fetcher as typeof fetch, today: new Date("2026-07-20T12:00:00Z") });
     expect(out.days).toBe(3);
     expect(fetcher).toHaveBeenCalledTimes(3); // 2026-07-18, 17, 16
+  });
+
+  it("rejects when gsc_refresh_token is not connected", async () => {
+    vi.mocked(loadGscRefreshToken).mockResolvedValueOnce(null);
+    await expect(pullShopRankings("shop-1")).rejects.toThrow(/gsc_not_connected/);
+  });
+
+  it("rejects when seo_settings has no gsc_site_url", async () => {
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { gsc_site_url: null }, error: null });
+    fromMock.mockImplementation((table: string) =>
+      table === "seo_settings"
+        ? { select: () => ({ eq: () => ({ maybeSingle }) }) }
+        : { upsert: vi.fn() });
+    await expect(pullShopRankings("shop-1")).rejects.toThrow(/gsc_site_not_set/);
   });
 });
