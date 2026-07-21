@@ -4,7 +4,6 @@ import { getStoreTemplate } from "~/lib/storefront-bundle/registry";
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
 import { STOREFRONT_RECIPE_BY_ID } from "~/lib/storefront-recipes";
-import { storefrontRecipeMediaPath } from "~/lib/storefront-recipes/library/media";
 import { isolateCompiledShellCss } from "~/lib/storefront-compiler/css";
 import { isStorefrontBundleReadEnabled } from "./csp.server";
 import { resolveStorefrontVisualPlacement, type StorefrontVisualPlacement } from "./visual-layer.server";
@@ -62,17 +61,6 @@ function recipeDerivedStaticAssets(bundle: StorefrontBundleV1): {
       urls: Object.fromEntries(mediaEntries.map((entry) => [
         entry.key,
         `/storefront-recipes/larder/${entry.contentHash}.${RECIPE_MEDIA_EXTENSIONS[entry.mediaType as keyof typeof RECIPE_MEDIA_EXTENSIONS]}`,
-      ])),
-      ownedManifest: { entries: [] },
-    };
-  }
-  if (bundle.source.kind === "recipe" && new Set(["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"]).has(bundle.source.templateId)) {
-    const templateId = bundle.source.templateId;
-    const mediaEntries = bundle.assets.entries.filter((entry) => entry.mediaType === "image/webp" || entry.mediaType === "video/webm" || entry.mediaType === "video/mp4");
-    return {
-      urls: Object.fromEntries(mediaEntries.map((entry) => [
-        entry.key,
-        `/storage/v1/object/public/${storefrontRecipeMediaPath(templateId, entry.contentHash, entry.mediaType as "image/webp" | "video/webm" | "video/mp4")}`,
       ])),
       ownedManifest: { entries: [] },
     };

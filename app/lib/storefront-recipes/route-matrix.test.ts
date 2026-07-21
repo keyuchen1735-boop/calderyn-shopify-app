@@ -10,18 +10,6 @@ import { STOREFRONT_RECIPES, STOREFRONT_RECIPE_BY_ID } from ".";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const ROUTES = ["home", "collection", "product", "search", "cart"] as const;
 const PRODUCT_ROUTES = ["home", "collection", "product", "search"] as const;
-const LIGHT_RECIPE_CONTRACTS = {
-  volt: { font: "chakra-petch", colors: ["#e9f3f2", "#102b35", "#a5dd1f"], scroll: "signal-scan" },
-  atelier: { font: "young-serif", colors: ["#f3e9dc", "#31201e", "#b72b34"], scroll: "fabric-curtain" },
-  gilt: { font: "cormorant-garamond", colors: ["#f8f0df", "#38271d", "#c79421"], scroll: "jewelry-orbit" },
-  ember: { font: "archivo-black", colors: ["#f4e4d2", "#29120d", "#b63218"], scroll: "heat-shear" },
-  roast: { font: "fraunces", colors: ["#f2e7d3", "#382116", "#b53b28"], scroll: "origin-stack" },
-  fizz: { font: "syne", colors: ["#fff4ae", "#173176", "#f24877"], scroll: "flavor-buoyancy" },
-  forge: { font: "barlow-condensed", colors: ["#eceae3", "#202426", "#a63a1e"], scroll: "blueprint-flow" },
-  haven: { font: "newsreader", colors: ["#eef1e7", "#254437", "#c88163"], scroll: "room-wipe" },
-  glow: { font: "source-serif-4", colors: ["#fbf7ef", "#23483c", "#9dcdb3"], scroll: "formula-morph" },
-} as const;
-
 function dataPaths(route: RouteArtifact): string[] {
   return route.bindings.flatMap((binding) => binding.ref.kind === "data" ? [binding.ref.path] : []);
 }
@@ -40,25 +28,13 @@ function emptyStateCount(nodes: RouteArtifact["tree"]): number {
     : count + Number(node.attributes["data-cd-empty-state"] !== undefined) + emptyStateCount(node.children), 0);
 }
 
-function repeatSources(nodes: RouteArtifact["tree"]): string[] {
-  return nodes.flatMap((node) => node.kind === "text"
-    ? []
-    : [...(node.repeat ? [node.repeat.source] : []), ...repeatSources(node.children)]);
-}
-
-function routeTargets(nodes: RouteArtifact["tree"]): string[] {
-  return nodes.flatMap((node) => node.kind === "text"
-    ? []
-    : [...(node.routeTarget ? [node.routeTarget.routeId] : []), ...routeTargets(node.children)]);
-}
-
 describe("storefront recipe route matrix", () => {
   it("implements exactly one validated active recipe for every registered template", () => {
     const registeredIds = STORE_TEMPLATE_REGISTRY.templates.map((template) => template.id);
     const recipeIds = STOREFRONT_RECIPES.map((recipe) => recipe.config.templateId);
 
     expect(recipeIds).toEqual(registeredIds);
-    expect(new Set(recipeIds).size).toBe(21);
+    expect(new Set(recipeIds).size).toBe(12);
     expect(Object.keys(STOREFRONT_RECIPE_BY_ID).sort()).toEqual([...registeredIds].sort());
     for (const recipe of STOREFRONT_RECIPES) {
       expect(recipe.report).toMatchObject({ ok: true, profileVersion: 1, diagnostics: [] });
@@ -73,10 +49,10 @@ describe("storefront recipe route matrix", () => {
 
   it("keeps all visual systems structurally distinct", () => {
     for (const identity of ["composition", "hero", "scroll", "cards"] as const) {
-      expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.config.archetype[identity])).size).toBe(21);
+      expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.config.archetype[identity])).size).toBe(12);
     }
-    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.iconStyle)).size).toBe(21);
-    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.motionStyle)).size).toBe(21);
+    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.iconStyle)).size).toBe(12);
+    expect(new Set(STOREFRONT_RECIPES.map((recipe) => recipe.bundle.designSystem.motionStyle)).size).toBe(12);
     expect(new Set(STOREFRONT_RECIPES.map((recipe) =>
       `${recipe.bundle.designSystem.displayFontId}/${recipe.bundle.designSystem.bodyFontId}`,
     )).size).toBeGreaterThanOrEqual(8);
@@ -85,7 +61,7 @@ describe("storefront recipe route matrix", () => {
       recipe.bundle.shell.css,
       ...ROUTES.map((routeId) => recipe.bundle.routes[routeId].css),
       recipe.bundle.routes.checkout.decorativeCss,
-    ].join("\n"))).size).toBe(21);
+    ].join("\n"))).size).toBe(12);
     const surfaceSignatures = STOREFRONT_RECIPES.flatMap((recipe) =>
       Object.values(recipe.config.surfaces).map((surface) => surface.signature),
     );
@@ -172,42 +148,6 @@ describe("storefront recipe route matrix", () => {
       for (const routeId of ["home", "collection", "search", "cart"] as const) {
         expect(emptyStateCount(bundle.routes[routeId].tree), `${config.templateId}/${routeId}`).toBe(1);
       }
-    }
-  });
-
-  it("Taste-hardens the nine niche recipes without weakening commerce", () => {
-    const ids = new Set(["volt", "atelier", "gilt", "ember", "roast", "fizz", "forge", "haven", "glow"]);
-    for (const { bundle, config } of STOREFRONT_RECIPES.filter(({ config }) => ids.has(config.templateId))) {
-      expect(bundle.routes.collections, config.templateId).toBeDefined();
-      expect(repeatSources(bundle.routes.collections!.tree), config.templateId).toContain("featured.collections");
-      expect(bundle.routes.collections!.requiredData, config.templateId).toContainEqual({ kind: "featuredCollections", limit: 12 });
-      expect(bundle.routes.story, config.templateId).toBeDefined();
-      expect(bundle.shell.requiredData, config.templateId).toContainEqual({ kind: "policyLinks" });
-      expect(slotKinds(bundle.routes.product), config.templateId).toEqual(expect.arrayContaining(["variantPicker", "addToCart"]));
-      expect(routeTargets(bundle.routes.cart.tree).some((routeId) => routeId === "collection" || routeId === "collections"), config.templateId).toBe(true);
-      expect(`${visibleText(bundle.routes.home.tree)} ${visibleText(bundle.routes.story!.tree)}`, config.templateId)
-        .not.toMatch(/[–—]|(?:^|\s)0[1-9]\s*(?:\/|·)/u);
-    }
-  });
-
-  it("gives the nine ecommerce recipes distinct light three-color visual systems", () => {
-    for (const [templateId, contract] of Object.entries(LIGHT_RECIPE_CONTRACTS)) {
-      const { bundle, config } = STOREFRONT_RECIPE_BY_ID[templateId as keyof typeof LIGHT_RECIPE_CONTRACTS];
-      const css = [JSON.stringify(bundle.designSystem.tokens), bundle.designSystem.globalCss, bundle.shell.css, ...Object.values(bundle.routes).flatMap((route) =>
-        "css" in route ? [route.css] : [route.decorativeCss]),
-      ].join("\n");
-      const colors = new Set([...css.matchAll(/#[\da-f]{3,8}\b/gi)].map(([hex]) => {
-        const value = hex.toLowerCase();
-        return value.length === 4 ? `#${value.slice(1).split("").map((digit) => digit + digit).join("")}` : value.slice(0, 7);
-      }));
-
-      expect(bundle.designSystem.displayFontId, templateId).toBe(contract.font);
-      expect(config.archetype.scroll, templateId).toBe(contract.scroll);
-      expect([...colors], templateId).toEqual(expect.arrayContaining([...contract.colors]));
-      expect(colors.size, templateId).toBeLessThanOrEqual(3);
-      const primaryToken = Object.entries(bundle.designSystem.tokens).find(([, value]) => value === contract.colors[0])?.[0];
-      expect(primaryToken, templateId).toBeDefined();
-      expect(css, templateId).toMatch(new RegExp(`background(?:-color)?:${contract.colors[0]}|background(?:-color)?:var\\(--${primaryToken}\\)`, "i"));
     }
   });
 

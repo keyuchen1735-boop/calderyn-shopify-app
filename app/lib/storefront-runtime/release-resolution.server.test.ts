@@ -78,26 +78,6 @@ describe("storefront release resolution", () => {
     expect(result?.routeId).toBe("home");
   });
 
-  it("resolves registered recipe video bytes from immutable public media paths", async () => {
-    const source = structuredClone(VALID_BUNDLE_SOURCE);
-    source.source = { kind: "recipe", templateId: "volt", templateVersion: 1 };
-    source.assets.entries = [
-      { key: "hero-poster", contentHash: "b".repeat(64), mediaType: "image/webp", byteSize: 42 },
-      { key: "hero-mp4", contentHash: "a".repeat(64), mediaType: "video/mp4", byteSize: 42 },
-    ];
-    source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
-    const bundle = compileBundle(source).bundle;
-    const live = { ...version("video-recipe", 1, "2026-07-02T00:00:00Z"), sourceKind: "recipe" as const, artifact: { sourceKind: "recipe" as const, bundle } };
-    const result = await resolveRuntime1Route({
-      shopId: SHOP, route: { kind: "home" }, reader: reader(live, []), bundleReadEnabled: true,
-      dataDependencies: {
-        catalog: { searchProductPage: vi.fn(emptySearchPage), listProductPage: vi.fn(async () => ({ items: [], nextCursor: null })), listProducts: vi.fn(async () => []), listCollections: vi.fn(async () => []), getProduct: vi.fn(async () => null) },
-        settingsLoader: async () => ({ storeName: "Acme", logoUrl: null }) as never,
-      },
-    });
-    expect(result?.data.storefrontAssetUrls?.["hero-mp4"]).toContain(`/storage/v1/object/public/storefront-recipe-assets/volt/${"a".repeat(64)}.mp4`);
-  });
-
   it("serves approved Larder video derivatives from shipped local public paths", async () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.source = { kind: "recipe", templateId: "larder", templateVersion: 1 };

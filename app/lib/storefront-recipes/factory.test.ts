@@ -87,32 +87,13 @@ function videoArtifacts(config: RecipeConfig<"atelier-nine">): RecipeMediaArtifa
 }
 
 describe("storefront recipe factory", () => {
-  it("compiles an unregistered new recipe config without making it registry-valid", () => {
-    const existing = testConfig();
-    const config: RecipeConfig<"volt"> = {
-      ...existing,
-      templateId: "volt",
-      templateVersion: 1,
-      archetype: { composition: "system-architecture", hero: "cinematic-rim-hero", scroll: "system-sequence", cards: "spec-modules", iconography: ["technical line icons"] },
-      surfaces: {
-        ...existing.surfaces,
-        collections: { signature: "ecosystem collection directory", source: existing.surfaces.home.source },
-        story: { signature: "engineering origin narrative", source: existing.surfaces.home.source },
-        notFound: { signature: "lost signal recovery surface", source: existing.surfaces.home.source },
-      },
-    };
-
-    expect(compileRecipeConfig(config).bundle.routes.story).toBeDefined();
-    expect(() => defineRecipe(config)).toThrow(/unknown|registered/i);
-  });
-
   it("rejects non-positive recipe versions", () => {
     const existing = testConfig();
-    const invalidConfig = { ...existing, templateId: "volt" as const, templateVersion: 0 };
+    const invalidConfig = { ...existing, templateId: "larder" as const, templateVersion: 0 };
     // @ts-expect-error New recipe configs require a positive supported version.
-    const typedInvalidConfig: RecipeConfig<"volt"> = invalidConfig;
+    const typedInvalidConfig: RecipeConfig<"larder"> = invalidConfig;
 
-    expect(() => compileRecipeConfig(typedInvalidConfig)).toThrow(/volt.*positive template version/i);
+    expect(() => compileRecipeConfig(typedInvalidConfig)).toThrow(/larder.*positive template version/i);
   });
 
   it("compiles complete route-owned compositions without imposing a shared layout", () => {
@@ -184,11 +165,11 @@ describe("storefront recipe factory", () => {
 
   it("rejects swapped video hero ownership and role identities", () => {
     const swappedManifest = videoHeroConfig();
-    videoArtifacts(swappedManifest).manifest.templateId = "volt";
+    videoArtifacts(swappedManifest).manifest.templateId = "larder";
     expect(() => defineRecipe(swappedManifest)).toThrow(/template|ownership|identity/i);
 
     const swappedTemplate = videoHeroConfig();
-    videoArtifacts(swappedTemplate).manifest.records[0].templateId = "volt";
+    videoArtifacts(swappedTemplate).manifest.records[0].templateId = "larder";
     expect(() => defineRecipe(swappedTemplate)).toThrow(/template|ownership|identity/i);
 
     const swappedRole = videoHeroConfig();
@@ -196,7 +177,7 @@ describe("storefront recipe factory", () => {
     expect(() => defineRecipe(swappedRole)).toThrow(/role|hero|identity/i);
 
     const swappedProofTemplate = videoHeroConfig();
-    videoArtifacts(swappedProofTemplate).proof.records[0].templateId = "volt";
+    videoArtifacts(swappedProofTemplate).proof.records[0].templateId = "larder";
     expect(() => defineRecipe(swappedProofTemplate)).toThrow(/approval|proof|identity/i);
 
     const swappedProofRole = videoHeroConfig();

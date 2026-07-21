@@ -14,7 +14,7 @@ export type ExistingStoreTemplateId =
   | "ritual-almanac"
   | "broadcast-patch-bay"
   | "atelier-nine";
-export type NewStoreTemplateId = "volt" | "atelier" | "gilt" | "larder" | "ember" | "roast" | "fizz" | "forge" | "haven" | "glow";
+export type NewStoreTemplateId = "larder";
 export type RegisteredStoreTemplateId = ExistingStoreTemplateId | NewStoreTemplateId;
 export type StoreTemplateId = ExistingStoreTemplateId | NewStoreTemplateId;
 
@@ -89,8 +89,7 @@ export const RECIPE_COMPOSITION_FAMILIES = [
   "editorial-almanac",
   "signal-patch-bay",
   "asymmetric-magazine",
-  "system-architecture", "fit-laboratory", "object-ceremony", "working-pantry", "tasting-counter",
-  "origin-notebook", "flavor-playground", "jobsite-blueprint", "spatial-studies", "clinical-evidence",
+  "working-pantry",
 ] as const;
 export type RecipeCompositionIdentity = (typeof RECIPE_COMPOSITION_FAMILIES)[number];
 export const ROUTE_COMPOSITION_PATTERNS = {
@@ -117,8 +116,7 @@ export const RECIPE_HERO_TREATMENTS = [
   "ritual-time-hero",
   "rig-signal-chain",
   "editorial-grid-hero",
-  "cinematic-rim-hero", "fabric-study-hero", "jewelry-ceremony-hero", "pantry-table-hero", "heat-spectrum-hero",
-  "origin-brew-hero", "flavor-play-hero", "exploded-tool-hero", "material-room-hero", "clinical-liquid-hero",
+  "pantry-table-hero",
 ] as const;
 export type RecipeHeroIdentity = (typeof RECIPE_HERO_TREATMENTS)[number];
 export const ROUTE_HERO_PATTERNS = {
@@ -145,10 +143,7 @@ export const RECIPE_SCROLL_MODELS = [
   "almanac-chapters",
   "modular-patching",
   "restrained-editorial",
-  "system-sequence", "fit-study", "intimate-ceremony", "pantry-rhythm", "heat-tasting",
-  "brew-notebook", "flavor-modules", "blueprint-flow", "spatial-quiet", "clinical-proof",
-  "signal-scan", "fabric-curtain", "jewelry-orbit", "heat-shear", "origin-stack",
-  "flavor-buoyancy", "tool-conveyor", "room-wipe", "formula-morph",
+  "pantry-rhythm",
 ] as const;
 export type RecipeScrollIdentity = (typeof RECIPE_SCROLL_MODELS)[number];
 export const ROUTE_SCROLL_PATTERNS = {
@@ -175,8 +170,7 @@ export const RECIPE_CARD_TOPOLOGIES = [
   "ritual-entries",
   "signal-modules",
   "magazine-grid",
-  "spec-modules", "garment-studies", "object-vignettes", "pantry-shelves", "tasting-flights",
-  "origin-cards", "flavor-tiles", "tool-diagrams", "material-panels", "evidence-cards",
+  "pantry-shelves",
 ] as const;
 export type RecipeCardIdentity = (typeof RECIPE_CARD_TOPOLOGIES)[number];
 export const ROUTE_CARD_PATTERNS = {

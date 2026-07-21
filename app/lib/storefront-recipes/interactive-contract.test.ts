@@ -31,7 +31,7 @@ function duplicateTemplateIds(keyFor: (recipe: typeof STOREFRONT_RECIPES[number]
 
 describe("interactive storefront recipe contracts", () => {
   it("keeps every template's HTML and CSS while binding merchant identity and catalog photography", () => {
-    expect(STOREFRONT_RECIPES).toHaveLength(21);
+    expect(STOREFRONT_RECIPES).toHaveLength(12);
     for (const recipe of STOREFRONT_RECIPES) {
       const { bundle } = recipe;
       expect(bundle.shell.bindings.some((binding) =>

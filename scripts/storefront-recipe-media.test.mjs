@@ -9,7 +9,7 @@ import { after, before, test } from "node:test";
 
 const importer = resolve("scripts/import-storefront-recipe-media.mjs");
 const verifier = resolve("scripts/verify-storefront-recipe-media.mjs");
-const templateIds = ["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"];
+const templateIds = ["larder"];
 const roles = ["hero", "hero-alt", "pdp-detail"];
 let directory;
 let importedManifest;
@@ -68,7 +68,7 @@ function recordFor(baseRecord, templateId, role, includeLocalPath) {
     entries: baseRecord.entries.map((entry) => ({
       ...entry,
       ...(includeLocalPath ? {} : { localPath: undefined }),
-      objectPath: entry.objectPath.replace("storefront-recipe-assets/volt/", `storefront-recipe-assets/${templateId}/`),
+      objectPath: entry.objectPath.replace("storefront-recipe-assets/larder/", `storefront-recipe-assets/${templateId}/`),
     })),
   };
 }
@@ -85,9 +85,9 @@ before(async () => {
   assert.equal(generated.status, 0, generated.stderr);
   const masterHash = createHash("sha256").update(await readFile(masterPath)).digest("hex");
   proofPath = join(directory, "video-proof.json");
-  await writeFile(proofPath, JSON.stringify(exactApproval("volt", "hero", masterHash)));
+  await writeFile(proofPath, JSON.stringify(exactApproval("larder", "hero", masterHash)));
 
-  const imported = run(process.execPath, [importer, "volt", "hero", masterPath, proofPath, join(directory, "derived"), "--no-upload"]);
+  const imported = run(process.execPath, [importer, "larder", "hero", masterPath, proofPath, join(directory, "derived"), "--no-upload"]);
   assert.equal(imported.status, 0, imported.stderr);
   importedManifest = JSON.parse(imported.stdout);
   const baseRecord = importedManifest.records?.[0] ?? {
@@ -99,7 +99,7 @@ before(async () => {
     height: importedManifest.height,
     entries: importedManifest.entries,
   };
-  manifest = { templateId: "volt", records: roles.map((role) => recordFor(baseRecord, "volt", role, true)) };
+  manifest = { templateId: "larder", records: roles.map((role) => recordFor(baseRecord, "larder", role, true)) };
   manifestPath = join(directory, "media-manifest.json");
   await writeFile(manifestPath, JSON.stringify(manifest));
   await writeFile(proofPath, JSON.stringify(approvalsFor(manifest.records)));
@@ -134,9 +134,9 @@ after(async () => {
 });
 
 test("importer emits one portable record without an absolute proof path", () => {
-  assert.equal(importedManifest.templateId, "volt");
+  assert.equal(importedManifest.templateId, "larder");
   assert.equal(importedManifest.records.length, 1);
-  assert.equal(importedManifest.records[0].templateId, "volt");
+  assert.equal(importedManifest.records[0].templateId, "larder");
   assert.equal(importedManifest.records[0].role, "hero");
   assert.equal(importedManifest.records[0].entries.every((entry) => !isAbsolute(entry.localPath)), true);
   assert.equal("proofPath" in importedManifest, false);
@@ -147,8 +147,8 @@ test("importer rejects approval bound to another role", async () => {
   const bytes = await readFile(masterPath);
   const masterHash = createHash("sha256").update(bytes).digest("hex");
   const wrongProof = join(directory, "wrong-import-proof.json");
-  await writeFile(wrongProof, JSON.stringify(exactApproval("volt", "hero-alt", masterHash)));
-  const imported = run(process.execPath, [importer, "volt", "hero", masterPath, wrongProof, join(directory, "wrong-derived"), "--no-upload"]);
+  await writeFile(wrongProof, JSON.stringify(exactApproval("larder", "hero-alt", masterHash)));
+  const imported = run(process.execPath, [importer, "larder", "hero", masterPath, wrongProof, join(directory, "wrong-derived"), "--no-upload"]);
   assert.notEqual(imported.status, 0);
   assert.match(imported.stderr, /template.*role.*master|approval identity/i);
 });
@@ -156,7 +156,7 @@ test("importer rejects approval bound to another role", async () => {
 test("verifies exactly one local derivative record for every required role", () => {
   const verified = run(process.execPath, [verifier, manifestPath, proofPath]);
   assert.equal(verified.status, 0, verified.stderr);
-  for (const role of roles) assert.match(verified.stdout, new RegExp(`Verified volt/${role}`));
+  for (const role of roles) assert.match(verified.stdout, new RegExp(`Verified larder/${role}`));
 });
 
 test("rejects approval that does not bind every derivative hash", async () => {
@@ -204,7 +204,7 @@ test("rejects missing, duplicate, and unexpected roles", async (context) => {
   for (const [label, records] of Object.entries(cases)) {
     await context.test(label, async () => {
       const path = join(directory, `${label}-roles.json`);
-      await writeFile(path, JSON.stringify({ templateId: "volt", records }));
+      await writeFile(path, JSON.stringify({ templateId: "larder", records }));
       const verified = run(process.execPath, [verifier, path, proofPath]);
       assert.notEqual(verified.status, 0);
       assert.match(verified.stderr, /exactly one.*hero.*hero-alt.*pdp-detail|role/i);
@@ -228,11 +228,11 @@ test("rejects swapped or cross-template proof identities", async (context) => {
   const [hero, heroAlt, pdp] = manifest.records;
   const cases = {
     swapped: [
-      exactApproval("volt", "hero-alt", hero.masterHash).records[0],
-      exactApproval("volt", "hero", heroAlt.masterHash).records[0],
-      exactApproval("volt", "pdp-detail", pdp.masterHash).records[0],
+      exactApproval("larder", "hero-alt", hero.masterHash).records[0],
+      exactApproval("larder", "hero", heroAlt.masterHash).records[0],
+      exactApproval("larder", "pdp-detail", pdp.masterHash).records[0],
     ],
-    reused: manifest.records.map((record) => exactApproval("atelier", record.role, record.masterHash).records[0]),
+    reused: manifest.records.map((record) => exactApproval("custom-bench", record.role, record.masterHash).records[0]),
   };
   for (const [label, records] of Object.entries(cases)) {
     await context.test(label, async () => {
@@ -246,12 +246,12 @@ test("rejects swapped or cross-template proof identities", async (context) => {
 });
 
 test("discovers one template and fetches immutable public objects without local binaries", async () => {
-  const verified = await runAsync(process.execPath, [verifier, "--template", "volt"], {
+  const verified = await runAsync(process.execPath, [verifier, "--template", "larder"], {
     cwd: repositoryPath,
     env: { ...process.env, STOREFRONT_RECIPE_ASSET_BASE_URL: publicAssetBaseUrl, TMPDIR: verificationTmp },
   });
   assert.equal(verified.status, 0, verified.stderr);
-  for (const role of roles) assert.match(verified.stdout, new RegExp(`Verified volt/${role}`));
+  for (const role of roles) assert.match(verified.stdout, new RegExp(`Verified larder/${role}`));
   assert.deepEqual(await readdir(verificationTmp), []);
 });
 
@@ -270,7 +270,7 @@ test("fails loudly when media is neither local nor publicly fetchable", async ()
   assert.match(verified.stderr, /No readable local derivative or public Supabase URL/);
 });
 
-test("discovers all thirty required recipe records", async () => {
+test("discovers every required recipe record", async () => {
   const masterHashes = new Set();
   const approvalIdentities = new Set();
   for (const templateId of templateIds) {
@@ -280,8 +280,8 @@ test("discovers all thirty required recipe records", async () => {
     for (const record of checkedManifest.records) masterHashes.add(record.masterHash);
     for (const approval of checkedProof.records) approvalIdentities.add(`${approval.templateId}:${approval.role}:${approval.masterHash}`);
   }
-  assert.equal(masterHashes.size, 30);
-  assert.equal(approvalIdentities.size, 30);
+  assert.equal(masterHashes.size, 3);
+  assert.equal(approvalIdentities.size, 3);
   const verified = await runAsync(process.execPath, [verifier], {
     cwd: repositoryPath,
     env: { ...process.env, STOREFRONT_RECIPE_ASSET_BASE_URL: publicAssetBaseUrl, TMPDIR: verificationTmp },
@@ -294,42 +294,47 @@ test("discovers all thirty required recipe records", async () => {
 });
 
 test("template discovery rejects manifest and role ownership mismatches", async () => {
-  const path = join(repositoryPath, "app", "lib", "storefront-recipes", "volt", "media-manifest.json");
+  const path = join(repositoryPath, "app", "lib", "storefront-recipes", "larder", "media-manifest.json");
   const invalid = structuredClone(manifest);
-  invalid.templateId = "atelier";
-  invalid.records[0].templateId = "glow";
+  invalid.templateId = "custom-bench";
+  invalid.records[0].templateId = "custom-bench";
   invalid.records.forEach((record) => { record.entries = record.entries.map(({ localPath: _localPath, ...entry }) => entry); });
   await writeFile(path, JSON.stringify(invalid));
   try {
-    const verified = await runAsync(process.execPath, [verifier, "--template", "volt"], {
+    const verified = await runAsync(process.execPath, [verifier, "--template", "larder"], {
       cwd: repositoryPath,
       env: { ...process.env, STOREFRONT_RECIPE_ASSET_BASE_URL: publicAssetBaseUrl },
     });
     assert.notEqual(verified.status, 0);
-    assert.match(verified.stderr, /expected volt|ownership|template/i);
+    assert.match(verified.stderr, /expected larder|ownership|template/i);
   } finally {
     const baseRecord = manifest.records[0];
-    const restored = { templateId: "volt", records: roles.map((role) => recordFor(baseRecord, "volt", role, false)) };
+    const restored = { templateId: "larder", records: roles.map((role) => recordFor(baseRecord, "larder", role, false)) };
     await writeFile(path, JSON.stringify(restored));
   }
 });
 
 test("all-template discovery fails loudly on incomplete proof", async () => {
-  const proof = join(repositoryPath, "app", "lib", "storefront-recipes", "glow", "video-proof.json");
-  await writeFile(proof, JSON.stringify({ records: [{
-    templateId: "glow",
-    role: "hero",
-    masterHash: masterHashFor("glow", "hero"),
-    technicalApproval: { approved: true, masterHash: masterHashFor("glow", "hero") },
-  }] }));
-  const verified = await runAsync(process.execPath, [verifier], {
-    cwd: repositoryPath,
-    env: { ...process.env, STOREFRONT_RECIPE_ASSET_BASE_URL: publicAssetBaseUrl },
-  });
-  assert.notEqual(verified.status, 0);
-  assert.match(verified.stderr, /glow/);
-  assert.match(verified.stderr, /video-proof\.json/);
-  assert.match(verified.stderr, /full-loop visual approval/i);
+  const proof = join(repositoryPath, "app", "lib", "storefront-recipes", "larder", "video-proof.json");
+  const original = await readFile(proof, "utf8");
+  try {
+    await writeFile(proof, JSON.stringify({ records: [{
+      templateId: "larder",
+      role: "hero",
+      masterHash: masterHashFor("larder", "hero"),
+      technicalApproval: { approved: true, masterHash: masterHashFor("larder", "hero") },
+    }] }));
+    const verified = await runAsync(process.execPath, [verifier], {
+      cwd: repositoryPath,
+      env: { ...process.env, STOREFRONT_RECIPE_ASSET_BASE_URL: publicAssetBaseUrl },
+    });
+    assert.notEqual(verified.status, 0);
+    assert.match(verified.stderr, /larder/);
+    assert.match(verified.stderr, /video-proof\.json/);
+    assert.match(verified.stderr, /full-loop visual approval/i);
+  } finally {
+    await writeFile(proof, original);
+  }
 });
 
 test("rejects a poster whose bytes are not WebP", async () => {
@@ -340,7 +345,7 @@ test("rejects a poster whose bytes are not WebP", async () => {
   const hash = createHash("sha256").update(bytes).digest("hex");
   const invalid = structuredClone(manifest);
   invalid.records[0].entries = invalid.records[0].entries.map((entry) => entry.mediaType === "image/webp"
-    ? { ...entry, localPath: invalidPoster, contentHash: hash, byteSize: bytes.byteLength, objectPath: `storefront-recipe-assets/volt/${hash}.webp` }
+    ? { ...entry, localPath: invalidPoster, contentHash: hash, byteSize: bytes.byteLength, objectPath: `storefront-recipe-assets/larder/${hash}.webp` }
     : entry);
   const invalidManifest = join(directory, "invalid-poster-manifest.json");
   await writeFile(invalidManifest, JSON.stringify(invalid));
@@ -353,7 +358,7 @@ test("rejects a poster whose bytes are not WebP", async () => {
 
 test("rejects an extension-specific object path mismatch", async () => {
   const invalid = structuredClone(manifest);
-  invalid.records[0].entries[0].objectPath = `storefront-recipe-assets/volt/${invalid.records[0].entries[0].contentHash}.wrong`;
+  invalid.records[0].entries[0].objectPath = `storefront-recipe-assets/larder/${invalid.records[0].entries[0].contentHash}.wrong`;
   const invalidManifest = join(directory, "invalid-path-manifest.json");
   await writeFile(invalidManifest, JSON.stringify(invalid));
   const verified = run(process.execPath, [verifier, invalidManifest, proofPath]);

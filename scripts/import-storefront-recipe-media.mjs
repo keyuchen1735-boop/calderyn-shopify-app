@@ -7,7 +7,7 @@ import { createClient } from "@supabase/supabase-js";
 const args = process.argv.slice(2);
 const noUpload = args.includes("--no-upload");
 const [templateId, role, masterInput, proofInput, outputInput] = args.filter((arg) => arg !== "--no-upload");
-const templateIds = new Set(["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"]);
+const templateIds = new Set(["larder"]);
 const roles = new Set(["hero", "hero-alt", "pdp-detail"]);
 if (!templateIds.has(templateId) || !roles.has(role) || !masterInput || !proofInput) {
   throw new Error("Usage: node scripts/import-storefront-recipe-media.mjs <templateId> <hero|hero-alt|pdp-detail> <master> <video-proof.json> [output-dir] [--no-upload]");

@@ -77,14 +77,14 @@ function artifact(overrides: Partial<RouteArtifact> = {}): RouteArtifact {
 }
 
 describe("compiled-node server renderer", () => {
-  it("renders an isolated unregistered volt v1 recipe", () => {
+  it("renders an isolated recipe", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
-    source.source = { kind: "recipe", templateId: "volt", templateVersion: 1 };
+    source.source = { kind: "recipe", templateId: "custom-bench", templateVersion: 1 };
     const html = renderToStaticMarkup(renderStorefrontSurface({
       bundle: compileBundle(source).bundle,
       routeId: "home",
       data,
-      nonce: "volt-nonce",
+      nonce: "recipe-nonce",
       mode: "public",
     }));
 

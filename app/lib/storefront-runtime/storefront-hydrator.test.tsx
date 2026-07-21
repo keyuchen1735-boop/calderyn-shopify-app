@@ -3,7 +3,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { STOREFRONT_RECIPES } from "~/lib/storefront-recipes";
-import { FIZZ_RECIPE_CONFIG } from "~/lib/storefront-recipes/fizz/bundle";
 import { compileRecipeConfig } from "~/lib/storefront-recipes/factory";
 import { LARDER_RECIPE_CONFIG } from "~/lib/storefront-recipes/larder/bundle";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
@@ -68,7 +67,7 @@ describe("runtime-1 route adapters", () => {
   it("submits a completed bundle to the authenticated preview action", async () => {
     const fetcher = vi.fn<RuntimeFetcher>(async () => new Response("{}", { status: 200 }));
     const adapters = createRuntimeAdapters({
-      mode: "preview", previewTemplateId: "fizz", data: quickViewData, fetcher, refresh: vi.fn(),
+      mode: "preview", previewTemplateId: "larder", data: quickViewData, fetcher, refresh: vi.fn(),
     });
     const host = document.createElement("div");
     const shadowRoot = host.attachShadow({ mode: "open" });
@@ -86,7 +85,7 @@ describe("runtime-1 route adapters", () => {
 
     await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
     const [url, init] = fetcher.mock.calls[0]!;
-    expect(url).toBe("/dashboard/store/preview?template=fizz");
+    expect(url).toBe("/dashboard/store/preview?template=larder");
     expect((init?.body as FormData).get("intent")).toBe("addBundle");
     expect(JSON.parse(String((init?.body as FormData).get("lines")))).toEqual([
       { variantId: "v1", quantity: 1 }, { variantId: "v1", quantity: 1 },
@@ -125,7 +124,6 @@ describe("runtime-1 route adapters", () => {
 
   it.each([
     ["larder", 6, LARDER_RECIPE_CONFIG],
-    ["fizz", 4, FIZZ_RECIPE_CONFIG],
   ] as const)("hydrates the real %s recipe builder and submits all %i slots in preview", async (templateId, slotCount, config) => {
     const artifact = compileRecipeConfig(config).bundle.routes.home;
     expect(artifact.trustedSlots).toEqual(expect.arrayContaining([

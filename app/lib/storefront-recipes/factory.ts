@@ -447,18 +447,8 @@ function withRequiredHomeCommerce<const TTemplateId extends StoreTemplateId>(
 ): RecipeConfig<TTemplateId> {
   const source = config.surfaces.home.source;
   let html = source.html;
-  if ((["volt", "atelier", "gilt", "ember", "roast", "fizz", "forge", "haven", "glow"] as StoreTemplateId[]).includes(config.templateId)
-    && !html.includes("cta-label")) {
-    html = html.replace(/<a([^>]*data-cd-route="collection"[^>]*)>/, (tag, attributes: string) => {
-      const className = `${config.templateId}-cta-label`;
-      return attributes.includes('class="')
-        ? tag.replace('class="', `class="${className} `)
-        : `<a class="${className}"${attributes}>`;
-    });
-  }
-  const hostTag = config.templateId === "ember" ? "section" : "aside";
   if (!html.includes('data-cd-slot="quickViewCommerce"')) {
-    html += `<section data-cd-repeat="featured.products"><${hostTag} data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></${hostTag}></section>`;
+    html += `<section data-cd-repeat="featured.products"><aside data-cd-key="product.id" data-cd-slot="quickViewCommerce" data-cd-product="product.id" data-cd-host-size="inline"></aside></section>`;
   }
   if (html === source.html) return config;
   return {

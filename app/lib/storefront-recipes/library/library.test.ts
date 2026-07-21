@@ -15,7 +15,7 @@ describe("recipe fragment library", () => {
     expect(fragment.css).toBe("");
     expect(fragment.html).toContain('class="volt-film"');
     expect(compileHtml(fragment.html, { namespace: "home" }).html).toContain('data-cd-poster-asset-key="hero-poster"');
-    expect(storefrontRecipeMediaPath("volt", "a".repeat(64), "video/mp4")).toBe(`storefront-recipe-assets/volt/${"a".repeat(64)}.mp4`);
+    expect(storefrontRecipeMediaPath("larder", "a".repeat(64), "video/mp4")).toBe(`storefront-recipe-assets/larder/${"a".repeat(64)}.mp4`);
   });
 
   it("keeps commerce fragment layout and copy caller-owned", () => {

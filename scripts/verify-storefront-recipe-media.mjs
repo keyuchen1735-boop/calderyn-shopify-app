@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const templateIds = ["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"];
+const templateIds = ["larder"];
 const templateIdSet = new Set(templateIds);
 const requiredRoles = ["hero", "hero-alt", "pdp-detail"];
 

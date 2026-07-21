@@ -20,19 +20,10 @@ const EXPECTED_TEXT_SLOTS = {
   "broadcast-patch-bay": ["heroEyebrow", "heroTitle", "heroBody", "sectionHeading", "ctaLabel"],
   "atelier-nine": ["announcement", "heroTitle", "heroBody", "ctaLabel"],
   larder: ["heroTitle", "heroBody", "ctaLabel"],
-  volt: ["heroTitle", "heroBody", "ctaLabel"],
-  atelier: ["heroTitle", "ctaLabel"],
-  gilt: ["heroTitle", "ctaLabel"],
-  ember: ["heroTitle", "heroBody", "ctaLabel"],
-  roast: ["heroTitle", "heroBody", "ctaLabel"],
-  fizz: ["heroTitle", "heroBody", "ctaLabel"],
-  forge: ["heroTitle", "heroBody", "ctaLabel"],
-  haven: ["heroTitle", "heroBody", "ctaLabel"],
-  glow: ["heroTitle", "heroBody", "ctaLabel"],
 } as const;
 
 describe("versioned storefront recipe registry", () => {
-  it("registers all twenty-one approved recipes with complete route and override metadata", () => {
+  it("registers all twelve approved recipes with complete route and override metadata", () => {
     expect(STORE_TEMPLATE_REGISTRY.templates.map((recipe) => recipe.id)).toEqual([
       "custom-bench",
       "commons-index",
@@ -46,15 +37,6 @@ describe("versioned storefront recipe registry", () => {
       "broadcast-patch-bay",
       "atelier-nine",
       "larder",
-      "volt",
-      "atelier",
-      "gilt",
-      "ember",
-      "roast",
-      "fizz",
-      "forge",
-      "haven",
-      "glow",
     ]);
     expect(STORE_TEMPLATE_REGISTRY.registryVersion).toBe(2);
     expect(STORE_TEMPLATE_REGISTRY.routingVersion).toBe(1);
@@ -71,15 +53,6 @@ describe("versioned storefront recipe registry", () => {
       "broadcast-patch-bay": 11,
       "atelier-nine": 6,
       larder: 1,
-      volt: 3,
-      atelier: 3,
-      gilt: 3,
-      ember: 3,
-      roast: 3,
-      fizz: 3,
-      forge: 4,
-      haven: 3,
-      glow: 3,
     } as const;
     for (const recipe of STORE_TEMPLATE_REGISTRY.templates) {
       expect(recipe.activeVersion).toBe(activeVersions[recipe.id as keyof typeof activeVersions]);
@@ -157,10 +130,6 @@ describe("versioned storefront recipe registry", () => {
     expect(getStoreTemplate("atelier-nine").name).toBe("Atelier Grid");
     expect(getStoreTemplate("larder").previewSrc).toBe("/template-previews/larder.webp");
     expect(getStoreTemplate("larder").versions[0]?.visualLayer.fallbackAssetKey).toBe("hero-poster");
-    expect(getStoreTemplate("volt").versions[0]?.routeBlueprints.home.protectedSlotPlacement).toContainEqual({
-      slot: "bundleBuilder",
-      region: "home.ecosystem-builder",
-    });
   });
 
   it("requires descriptions, placeholders, heroes, and one visual surface", () => {
