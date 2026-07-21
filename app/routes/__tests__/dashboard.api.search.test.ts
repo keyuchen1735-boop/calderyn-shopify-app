@@ -15,6 +15,9 @@ const {
   listProductsMock,
   buildStoreDescriptionMock,
   getShopStorefrontOriginMock,
+  disconnectGscMock,
+  gscMaybeSingleMock,
+  gscRpcMock,
 } = vi.hoisted(() => ({
   requireDashboardSessionMock: vi.fn().mockResolvedValue({ shopId: "shop1", userId: "u1", shopDomain: null, sessionId: "s1" }),
   requireSameOriginMock: vi.fn(),
@@ -25,9 +28,30 @@ const {
   listProductsMock: vi.fn().mockResolvedValue([{ id: "p1", handle: "cedar", title: "Cedar" }]),
   buildStoreDescriptionMock: vi.fn().mockReturnValue("Ember sells Soy Candles. Candles."),
   getShopStorefrontOriginMock: vi.fn().mockResolvedValue("https://ember.calderyncompany.com"),
+  disconnectGscMock: vi.fn().mockResolvedValue(undefined),
+  // Default: not connected, no site url — most tests don't care about Google state.
+  gscMaybeSingleMock: vi.fn().mockResolvedValue({ data: { gsc_connected: false, gsc_site_url: null }, error: null }),
+  gscRpcMock: vi.fn().mockResolvedValue({
+    data: { clicks: 0, impressions: 0, topQueries: [], slipping: [], lastCapturedDate: null },
+    error: null,
+  }),
 }));
 
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: requireDashboardSessionMock }));
+vi.mock("~/lib/seo/gsc.server", () => ({ disconnectGsc: disconnectGscMock }));
+// The Google card reads the raw gsc_connected/gsc_site_url columns directly (no
+// getSeoSettings coverage for them) and calls the rankings-summary RPC — both via
+// getSupabase(), stubbed here so no real Supabase client is ever constructed.
+vi.mock("~/lib/supabase.server", () => ({
+  getSupabase: () => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: gscMaybeSingleMock }),
+      }),
+    }),
+    rpc: gscRpcMock,
+  }),
+}));
 vi.mock("~/lib/dashboard/http.server", () => ({
   requireSameOrigin: requireSameOriginMock,
   dashboardJson: async (fn: () => Promise<unknown>) => new Response(JSON.stringify(await fn()), { status: 200 }),
@@ -71,6 +95,47 @@ describe("dashboard.api.search loader", () => {
     getShopStorefrontOriginMock.mockResolvedValueOnce("");
     const body = await ((await loader({ request: req(undefined, "GET") } as never)) as Response).json();
     expect(body.sitemapUrl).toBeNull();
+  });
+
+  it("returns a disconnected google block when Search Console isn't connected", async () => {
+    const body = await ((await loader({ request: req(undefined, "GET") } as never)) as Response).json();
+    expect(body.google).toMatchObject({ connected: false, siteUrl: null, clicks: 0, impressions: 0 });
+    expect(gscRpcMock).not.toHaveBeenCalled();
+  });
+
+  it("includes the google block when connected", async () => {
+    gscMaybeSingleMock.mockResolvedValueOnce({
+      data: { gsc_connected: true, gsc_site_url: "https://ember.calderyncompany.com" },
+      error: null,
+    });
+    gscRpcMock.mockResolvedValueOnce({
+      data: { clicks: 12, impressions: 340, topQueries: [], slipping: [], lastCapturedDate: "2026-07-18" },
+      error: null,
+    });
+    const res = (await loader({ request: req(undefined, "GET") } as never)) as Response;
+    const body = await res.json();
+    expect(body.google).toMatchObject({
+      connected: true,
+      siteUrl: "https://ember.calderyncompany.com",
+      clicks: 12,
+      impressions: 340,
+      lastCapturedDate: "2026-07-18",
+    });
+    expect(gscRpcMock).toHaveBeenCalledWith("read_seo_rankings_summary", { p_shop: "shop1" });
+  });
+
+  it("returns a zeroed google block when the RPC fails (never breaks the screen)", async () => {
+    gscMaybeSingleMock.mockResolvedValueOnce({
+      data: { gsc_connected: true, gsc_site_url: "https://ember.calderyncompany.com" },
+      error: null,
+    });
+    gscRpcMock.mockRejectedValueOnce(new Error("rankings summary unavailable"));
+    const res = (await loader({ request: req(undefined, "GET") } as never)) as Response;
+    const body = await res.json();
+    expect(body.google.connected).toBe(true);
+    expect(body.google.clicks).toBe(0);
+    expect(body.google.impressions).toBe(0);
+    expect(body.google.topQueries).toEqual([]);
   });
 });
 
@@ -136,6 +201,12 @@ describe("dashboard.api.search action", () => {
   it("422s an unknown action", async () => {
     const res = (await action({ request: req({ action: "nope" }) } as never)) as Response;
     expect(res.status).toBe(422);
+  });
+  it("disconnects on gsc_disconnect", async () => {
+    const res = (await action({ request: req({ action: "gsc_disconnect" }) } as never)) as Response;
+    expect(res.status).toBe(200);
+    expect(disconnectGscMock).toHaveBeenCalledWith("shop1");
+    expect((await res.json()).ok).toBe(true);
   });
   it("suggestDescription composes from collection titles and returns the draft without saving", async () => {
     const res = (await action({ request: req({ action: "suggestDescription" }) } as never)) as Response;
