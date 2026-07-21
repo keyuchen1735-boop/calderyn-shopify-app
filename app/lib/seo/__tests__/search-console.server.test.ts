@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { fetchSearchAnalytics, pickSiteForOrigin, upsertRankings, pullShopRankings } from "../search-console.server";
+import { loadGscRefreshToken } from "../gsc.server";
+
 const { fromMock } = vi.hoisted(() => ({ fromMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
 vi.mock("../gsc.server", () => ({
   loadGscRefreshToken: vi.fn().mockResolvedValue("rt"),
   refreshGscAccessToken: vi.fn().mockResolvedValue("at"),
 }));
-
-import { fetchSearchAnalytics, pickSiteForOrigin, upsertRankings, pullShopRankings } from "../search-console.server";
-import { loadGscRefreshToken } from "../gsc.server";
 
 describe("pickSiteForOrigin", () => {
   it("prefers exact url-prefix property, then sc-domain", () => {

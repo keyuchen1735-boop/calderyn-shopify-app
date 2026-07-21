@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { loader as startLoader } from "../dashboard.auth.gsc";
+import { loader as callbackLoader } from "../dashboard.auth.gsc_.callback";
+
 const mocks = vi.hoisted(() => ({
   requireDashboardSession: vi.fn().mockResolvedValue({ shopId: "shop-1", userId: "u1" }),
   buildGscAuthUrl: vi.fn().mockReturnValue("https://accounts.google.com/o/oauth2/v2/auth?x=1"),
@@ -29,9 +32,6 @@ vi.mock("~/lib/storefront/shop.server", () => ({ getShopStorefrontOrigin: mocks.
 vi.mock("~/lib/supabase.server", () => ({
   getSupabase: () => ({ from: () => ({ upsert: mocks.updateEq }) }),
 }));
-
-import { loader as startLoader } from "../dashboard.auth.gsc";
-import { loader as callbackLoader } from "../dashboard.auth.gsc_.callback";
 
 describe("GET /dashboard/auth/gsc", () => {
   it("sets a state cookie and redirects to Google", async () => {

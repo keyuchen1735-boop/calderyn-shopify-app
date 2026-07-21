@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 
+import { loader } from "../cron.seo-rankings";
+
 const mocks = vi.hoisted(() => ({
   pullShopRankings: vi.fn(),
   rows: [{ shop_id: "s1" }, { shop_id: "s2" }],
@@ -11,8 +13,6 @@ vi.mock("~/lib/supabase.server", () => ({
     from: () => ({ select: () => ({ eq: () => ({ order: () => Promise.resolve({ data: mocks.settingsResult.data, error: mocks.settingsResult.error }) }) }) }),
   }),
 }));
-
-import { loader } from "../cron.seo-rankings";
 
 function req(auth?: string): never {
   return {

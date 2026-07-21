@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { buildGscAuthUrl, exchangeGscCode, refreshGscAccessToken, saveGscCredential, loadGscRefreshToken } from "../gsc.server";
+
 const { fromMock } = vi.hoisted(() => ({ fromMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
 vi.mock("~/lib/crypto.server", () => ({
   encrypt: (s: string) => `enc:${s}`,
   decrypt: (s: string) => s.replace(/^enc:/, ""),
 }));
-
-import { buildGscAuthUrl, exchangeGscCode, refreshGscAccessToken, saveGscCredential, loadGscRefreshToken } from "../gsc.server";
 
 // Set up required environment variables for tests
 process.env.GOOGLE_ADS_CLIENT_SECRET = "test-secret";
