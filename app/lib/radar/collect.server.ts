@@ -10,7 +10,7 @@ import { getShopStorefrontOrigin } from "~/lib/storefront/shop.server";
 import { getSeoSettings } from "~/lib/seo/seo-store.server";
 import { buildProductDraft } from "~/lib/seo/writer.server";
 import { validateDraft } from "~/lib/seo/validator.server";
-import { readStorefrontReleaseState } from "~/lib/storefront-bundle/build.server";
+import { readStorefrontReleaseState, type StorefrontReleaseState } from "~/lib/storefront-bundle/build.server";
 import { parseStorefrontPath } from "./detect.server";
 import type { AiCrawlDay, JsonLdCheckedPage, RadarCollectInputs, RankingSeries, TrafficDay, TrafficPath } from "./types";
 
@@ -58,8 +58,7 @@ function mapTraffic(rows: Array<Record<string, unknown>>): TrafficDay[] {
 /** Last time either storefront runtime published. Legacy uses the home
  *  page_document's updated_at (drafts also bump it - an acceptable staleness
  *  proxy that only ever UNDER-reports staleness, never over). */
-async function lastPublishedAt(shopId: string): Promise<string | null> {
-  const release = await readStorefrontReleaseState(shopId);
+async function lastPublishedAt(shopId: string, release: StorefrontReleaseState): Promise<string | null> {
   const sb = getSupabase();
   if (release.publishedRuntimeVersion === 1 && release.publishedVersionId) {
     const { data, error } = await sb
@@ -126,14 +125,24 @@ export async function loadRadarInputs(shopId: string): Promise<RadarCollectInput
       hasOrgDescription: false,
       lastPublishedAt: null,
       jsonLdIssues: [],
+      publishedRuntimeVersion: null,
     };
   }
+  // radar_rollup_traffic (collectShop) writes a row for the CURRENT UTC day at
+  // cron time - at most a few hours of data, never a complete day. Excluding
+  // it here, at the single read boundary every detector's inputs pass
+  // through, is what stops a partial "today" from ever being read as a
+  // complete "yesterday" downstream (guaranteed false traffic-drop moves
+  // otherwise). `today` is computed once and reused for both the query filter
+  // and the belt-and-suspenders in-memory filter below.
+  const today = isoDaysAgo(0);
   const sb = getSupabase();
-  const [trafficRes, seriesRes, crawlRes, seo] = await Promise.all([
+  const [trafficRes, seriesRes, crawlRes, seo, release] = await Promise.all([
     sb.from("radar_traffic_daily")
       .select("day, views, sessions, cart_adds, checkouts, top_paths")
       .eq("shop_id", shopId)
       .gte("day", isoDaysAgo(TRAFFIC_WINDOW_DAYS))
+      .lt("day", today)
       .order("day"),
     sb.rpc("read_radar_ranking_series", { p_shop: shopId }),
     sb.from("seo_ai_crawl_daily")
@@ -141,12 +150,17 @@ export async function loadRadarInputs(shopId: string): Promise<RadarCollectInput
       .eq("shop_id", shopId)
       .gte("day", isoDaysAgo(CRAWL_WINDOW_DAYS)),
     getSeoSettings(shopId),
+    readStorefrontReleaseState(shopId),
   ]);
   if (trafficRes.error) throw new Error(`radar_traffic_daily read: ${trafficRes.error.message}`);
   if (seriesRes.error) throw new Error(`read_radar_ranking_series: ${seriesRes.error.message}`);
   if (crawlRes.error) throw new Error(`seo_ai_crawl_daily read: ${crawlRes.error.message}`);
 
-  const traffic = mapTraffic((trafficRes.data ?? []) as Array<Record<string, unknown>>);
+  // The query above already excludes today; filter again in-memory so this
+  // boundary is correct even if the query changes later or a test/mocked
+  // client bypasses the `.lt` filter.
+  const traffic = mapTraffic((trafficRes.data ?? []) as Array<Record<string, unknown>>)
+    .filter((d) => d.day < today);
   const rankings = (Array.isArray(seriesRes.data) ? seriesRes.data : []) as RankingSeries[];
   const aiCrawl: AiCrawlDay[] = ((crawlRes.data ?? []) as Array<Record<string, unknown>>).map((r) => ({
     botName: String(r.bot_name),
@@ -154,7 +168,7 @@ export async function loadRadarInputs(shopId: string): Promise<RadarCollectInput
     hits: Number(r.hits ?? 0),
   }));
   const [publishedAt, jsonLdIssues] = await Promise.all([
-    lastPublishedAt(shopId),
+    lastPublishedAt(shopId, release),
     checkTopProductJsonLd(shopId, traffic),
   ]);
   return {
@@ -165,5 +179,6 @@ export async function loadRadarInputs(shopId: string): Promise<RadarCollectInput
     hasOrgDescription: Boolean(seo.orgDescription?.trim()),
     lastPublishedAt: publishedAt,
     jsonLdIssues,
+    publishedRuntimeVersion: release.publishedRuntimeVersion,
   };
 }

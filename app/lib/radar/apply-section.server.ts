@@ -31,7 +31,7 @@ async function generateSectionCopy(
   brief: string,
   current: { headline: string; subhead: string },
 ): Promise<{ headline: string; subhead: string }> {
-  const verdict = await checkAiQuota({ shopId, feature: "radar", trusted: true });
+  const verdict = await checkAiQuota({ shopId, feature: "radar_apply", trusted: true });
   if (!verdict.allowed) throw new RadarApplyError(verdict.code, verdict.message, 429);
   let text = "";
   try {
@@ -170,16 +170,28 @@ function escapeHtml(value: string): string {
 
 async function applyLegacy(shopId: string, move: RadarMoveRow, actorId: string | null): Promise<ApplyOutcome> {
   const target = String(move.payload.target ?? "home");
-  const pageKey: PageKey = target === "pdp" ? "pdp" : "home";
+  // Defensive backstop: on the legacy runtime every product shares ONE PDP
+  // page_document, so applying a product-specific refresh here would write
+  // that one product's copy into the shop-wide template. draft.server.ts's
+  // downgradeLegacyPdpCandidate keeps this from ever being drafted as an
+  // applyable move going forward, but this guard fails safe for anything
+  // already drafted before that check existed - checked before any read, so
+  // it can never be bypassed by publish state.
+  if (target === "pdp") {
+    throw new RadarApplyError(
+      "pdp_shared_template",
+      "Product pages share one layout on this store. Open the store builder to update it.",
+      422,
+    );
+  }
+  const pageKey: PageKey = "home";
   const brief = String(move.payload.brief ?? "").trim();
   if (!brief) throw new RadarApplyError("bad_payload", "This move is missing its refresh brief.", 422);
   const published = await loadPublishedDoc(shopId, pageKey);
   if (!published) {
     throw new RadarApplyError(
       "page_not_published",
-      target === "pdp"
-        ? "This store's product pages use the standard layout, which Radar can't refresh yet. Open the store editor to change them."
-        : "This page isn't published yet, so there's nothing to refresh.",
+      "This page isn't published yet, so there's nothing to refresh.",
       409,
     );
   }

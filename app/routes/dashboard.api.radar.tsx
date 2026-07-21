@@ -76,14 +76,20 @@ async function buildSignals(shopId: string): Promise<RadarSignalsVM> {
     console.error("[radar] state read failed", err);
   }
   try {
+    // radar_rollup_traffic writes a row for the CURRENT UTC day at cron time
+    // (a partial, ~10h-of-data day) - exclude it here too, same as the
+    // detector read boundary in collect.server.ts's loadRadarInputs, so this
+    // tile always shows the last COMPLETE day, never a partial "today".
+    const today = new Date().toISOString().slice(0, 10);
     const { data, error } = await sb
       .from("radar_traffic_daily")
       .select("day, views")
       .eq("shop_id", shopId)
+      .lt("day", today)
       .order("day", { ascending: false })
       .limit(8);
     if (error) throw new Error(error.message);
-    const rows = (data ?? []) as Array<{ day: string; views: number }>;
+    const rows = ((data ?? []) as Array<{ day: string; views: number }>).filter((r) => r.day < today);
     signals.traffic.yesterdayViews = rows[0]?.views ?? 0;
     const rest = rows.slice(1);
     signals.traffic.weeklyAverage = rest.length

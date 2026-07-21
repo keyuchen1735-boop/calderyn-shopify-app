@@ -109,10 +109,10 @@ export async function applySeoMeta(
       entityId: product.id,
       prior: prior ? { metaTitle: prior.metaTitle, metaDescription: prior.metaDescription } : null,
     },
-    // jsonb-symmetry audit (Task 9 class): meta_title/meta_description are flat text columns, and
-    // both sides hash a hand-built { metaTitle, metaDescription } literal in this same key order -
-    // never a whole jsonb blob round-tripped through Postgres - so there's no canonicalization to
-    // go asymmetric on. Nothing to change here.
+    // meta_title/meta_description are flat text columns, and both sides hash a hand-built
+    // { metaTitle, metaDescription } literal in this same key order - never a whole jsonb blob
+    // round-tripped through Postgres - so there's no canonicalization for the apply-time hash and
+    // the revert-time re-read to go asymmetric on.
     appliedStateHash: sha256({ metaTitle: meta.title, metaDescription: meta.description }),
   };
 }

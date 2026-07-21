@@ -170,8 +170,8 @@ export default function Radar({ app }: { app: DashboardCtx }) {
               <Card key={m.id}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                   <span className="cd-chip">{RADAR_KIND_LABELS[m.kind] ?? "Store"}</span>
-                  {m.chips.map((c) => (
-                    <span key={c} className="cd-chip">{c}</span>
+                  {m.chips.map((c, i) => (
+                    <span key={i} className="cd-chip">{c}</span>
                   ))}
                 </div>
                 <h3 style={{ margin: "8px 0 4px" }}>{m.headline}</h3>
@@ -179,7 +179,11 @@ export default function Radar({ app }: { app: DashboardCtx }) {
                 <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                   {m.reviewOnly && m.deepLink ? (
                     <>
-                      <Btn kind="primary" onClick={() => { window.location.href = m.deepLink as string; }}>
+                      <Btn kind="primary" onClick={() => {
+                        // Every real deep link is a same-origin dashboard route; anything else is
+                        // ignored rather than handed straight to window.location.
+                        if (m.deepLink?.startsWith("/dashboard/")) window.location.href = m.deepLink;
+                      }}>
                         Review
                       </Btn>
                       <Btn disabled={busyId === m.id}

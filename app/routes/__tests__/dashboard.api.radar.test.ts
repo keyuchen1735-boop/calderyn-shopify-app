@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const SHOP = "11111111-2222-3333-4444-555555555555";
 const MOVE_ID = "99999999-1111-2222-3333-444444444444";
@@ -67,7 +67,7 @@ function post(body: unknown) {
 // Chainable stub for the signals reads.
 function tableStub(result: { data: unknown; error: null }) {
   const q: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "gte", "order", "limit"]) q[m] = vi.fn().mockReturnValue(q);
+  for (const m of ["select", "eq", "gte", "lt", "order", "limit"]) q[m] = vi.fn().mockReturnValue(q);
   q.maybeSingle = vi.fn().mockResolvedValue(result);
   q.then = (resolve: (v: unknown) => unknown) => Promise.resolve(result).then(resolve);
   return q;
@@ -89,6 +89,10 @@ beforeEach(() => {
     throw new Error(`unexpected table ${table}`);
   });
   mocks.rpcMock.mockResolvedValue({ data: { slipping: [{}], lastCapturedDate: "2026-07-18" }, error: null });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("loader", () => {
@@ -125,6 +129,28 @@ describe("loader", () => {
     expect(body.moves).toEqual([]);
     expect(mocks.listMoves).not.toHaveBeenCalled();
     expect(mocks.fromMock).not.toHaveBeenCalled();
+  });
+  it("excludes today's partial-day row from the traffic tile (matches the collect.server read boundary)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-20T09:00:00Z"));
+    mocks.fromMock.mockImplementation((table: string) => {
+      if (table === "radar_traffic_daily") {
+        return tableStub({
+          data: [
+            { day: "2026-07-20", views: 5 }, // today, partial - must be excluded
+            { day: "2026-07-19", views: 40 },
+            { day: "2026-07-18", views: 60 },
+          ],
+          error: null,
+        });
+      }
+      if (table === "seo_settings") return tableStub({ data: { gsc_connected: true }, error: null });
+      if (table === "seo_ai_crawl_daily") return tableStub({ data: [], error: null });
+      throw new Error(`unexpected table ${table}`);
+    });
+    const body = await ((await loader(get())) as Response).json();
+    expect(body.signals.traffic.yesterdayViews).toBe(40);
+    vi.useRealTimers();
   });
   it("keeps the screen alive when a signals read fails", async () => {
     mocks.rpcMock.mockRejectedValue(new Error("summary down"));

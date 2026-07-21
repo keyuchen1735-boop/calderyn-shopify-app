@@ -88,6 +88,11 @@ export interface RadarCollectInputs {
   /** Last publish of the storefront (either runtime), ISO string; null when unpublished. */
   lastPublishedAt: string | null;
   jsonLdIssues: JsonLdCheckedPage[];
+  /** 1 = the current storefront runtime (per-page PDP templates); null = legacy
+   *  (block documents) or unpublished, where every product shares one PDP
+   *  page_document - a section_refresh targeting "pdp" there would write one
+   *  product's copy into the shop-wide template. */
+  publishedRuntimeVersion: number | null;
 }
 
 /** Camel-case mirror of a radar_ploy row (mapped in store.server.ts). */

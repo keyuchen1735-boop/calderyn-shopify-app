@@ -44,6 +44,31 @@ function candidate(n: number): RadarCandidate {
   };
 }
 
+function pdpCandidate(n: number): RadarCandidate {
+  return {
+    kind: "section_refresh",
+    dedupKey: `pdp${n}`,
+    headline: `Product ${n} lost visits`,
+    rationale: `Product ${n} averaged 100 views a day but got 40 yesterday. A refreshed section can re-engage shoppers; nothing changes until you apply it.`,
+    evidence: { chips: [`down`], facts: { n } },
+    payload: {
+      applyMode: "refresh_section", target: "pdp", handle: `product-${n}`, productId: `p${n}`,
+      path: `/storefront/products/product-${n}`, brief: "Refresh this product page's top section.",
+    },
+  };
+}
+
+function homeCandidate(): RadarCandidate {
+  return {
+    kind: "section_refresh",
+    dedupKey: "stale:home",
+    headline: "Your home page hasn't changed in a while",
+    rationale: "Your home page was last updated a while ago.",
+    evidence: { chips: [], facts: {} },
+    payload: { applyMode: "refresh_section", target: "home", path: "/storefront", brief: "Refresh the hero." },
+  };
+}
+
 function claudeReply(text: string) {
   return { content: [{ type: "text", text }] };
 }
@@ -136,5 +161,45 @@ describe("draftShopMoves", () => {
       headline: "Template headline 2",
     });
     expect(out).toMatchObject({ drafted: 7, polished: 4 });
+  });
+
+  describe("legacy PDP downgrade", () => {
+    // Deny quota so the polish step never overwrites the downgraded template copy -
+    // these tests are about what the downgrade itself produces, not Claude's polish.
+    beforeEach(() => {
+      mocks.checkAiQuota.mockResolvedValue({ allowed: false, code: "ai_daily_limit", message: "cap" });
+    });
+    it("downgrades a product-specific pdp section_refresh to a review move when the storefront is on the legacy runtime", async () => {
+      mocks.loadRadarInputs.mockResolvedValue({ publishedRuntimeVersion: null });
+      mocks.detectAll.mockReturnValue([pdpCandidate(1)]);
+      await draftShopMoves(SHOP);
+      expect(mocks.insertDraftMove).toHaveBeenCalledTimes(1);
+      const inserted = mocks.insertDraftMove.mock.calls[0][1];
+      expect(inserted.payload).toEqual({ applyMode: "review", deepLink: "/dashboard/store" });
+      expect(inserted.rationale).toMatch(/share one layout/i);
+      expect(inserted.rationale).toMatch(/store builder/i);
+      expect(mocks.createMock).not.toHaveBeenCalled(); // quota denied - never reaches Claude
+    });
+    it("downgrades the same way when the storefront has never published (unpublished, not runtime 1)", async () => {
+      mocks.loadRadarInputs.mockResolvedValue({ publishedRuntimeVersion: undefined });
+      mocks.detectAll.mockReturnValue([pdpCandidate(2)]);
+      await draftShopMoves(SHOP);
+      const inserted = mocks.insertDraftMove.mock.calls[0][1];
+      expect(inserted.payload).toEqual({ applyMode: "review", deepLink: "/dashboard/store" });
+    });
+    it("leaves a pdp section_refresh untouched when the storefront is on runtime 1", async () => {
+      mocks.loadRadarInputs.mockResolvedValue({ publishedRuntimeVersion: 1 });
+      mocks.detectAll.mockReturnValue([pdpCandidate(3)]);
+      await draftShopMoves(SHOP);
+      const inserted = mocks.insertDraftMove.mock.calls[0][1];
+      expect(inserted.payload).toMatchObject({ applyMode: "refresh_section", target: "pdp" });
+    });
+    it("leaves a non-pdp (home) section_refresh untouched even on the legacy runtime", async () => {
+      mocks.loadRadarInputs.mockResolvedValue({ publishedRuntimeVersion: null });
+      mocks.detectAll.mockReturnValue([homeCandidate()]);
+      await draftShopMoves(SHOP);
+      const inserted = mocks.insertDraftMove.mock.calls[0][1];
+      expect(inserted.payload).toMatchObject({ applyMode: "refresh_section", target: "home" });
+    });
   });
 });

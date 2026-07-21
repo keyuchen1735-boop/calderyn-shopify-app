@@ -227,7 +227,7 @@ describe("legacy runtime", () => {
   });
   it("rewrites the hero copy via quota-gated Claude, validates, publishes and hashes", async () => {
     const out = await applySectionRefresh(SHOP, move({}), "u1");
-    expect(mocks.checkAiQuota).toHaveBeenCalledWith({ shopId: SHOP, feature: "radar", trusted: true });
+    expect(mocks.checkAiQuota).toHaveBeenCalledWith({ shopId: SHOP, feature: "radar_apply", trusted: true });
     expect(mocks.saveDraft).toHaveBeenCalledWith(SHOP, "home", expect.objectContaining({
       blocks: [expect.objectContaining({ props: { headline: "Fresh headline", subhead: "Fresh subhead" } })],
     }));
@@ -249,6 +249,19 @@ describe("legacy runtime", () => {
     await expect(applySectionRefresh(SHOP, move({ brief: "   " }), null))
       .rejects.toMatchObject({ code: "bad_payload", status: 422 });
     expect(mocks.createMock).not.toHaveBeenCalled();
+  });
+  it("refuses a legacy pdp target regardless of publish state - the defensive backstop for a move drafted before the legacy-pdp downgrade existed", async () => {
+    // Even if a pdp page happens to be published, applying would overwrite the
+    // shop-wide template with one product's copy - must fail before any read.
+    mocks.loadPublishedDoc.mockResolvedValue(HOME_DOC);
+    await expect(applySectionRefresh(SHOP, move({ target: "pdp" }), "u1"))
+      .rejects.toMatchObject({
+        status: 422,
+        message: "Product pages share one layout on this store. Open the store builder to update it.",
+      });
+    expect(mocks.loadPublishedDoc).not.toHaveBeenCalled();
+    expect(mocks.createMock).not.toHaveBeenCalled();
+    expect(mocks.saveDraft).not.toHaveBeenCalled();
   });
   it("escapes the headline and never treats it as a replacement pattern (rawHtml path)", async () => {
     mocks.loadPublishedDoc.mockResolvedValue(RAWHTML_DOC);

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   rpcMock: vi.fn(),
@@ -29,7 +29,7 @@ const SHOP = "11111111-2222-3333-4444-555555555555";
 // to the queued result for its table.
 function tableStub(result: { data: unknown; error: null | { message: string } }) {
   const q: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "gte", "order", "limit"]) {
+  for (const m of ["select", "eq", "gte", "lt", "order", "limit"]) {
     q[m] = vi.fn().mockReturnValue(q);
   }
   q.maybeSingle = vi.fn().mockResolvedValue(result);
@@ -45,6 +45,10 @@ beforeEach(() => {
   mocks.getShopStorefrontOriginMock.mockResolvedValue("https://peak.example");
   mocks.getSeoSettingsMock.mockResolvedValue({ allowAiCrawlers: true, orgDescription: "We sell boots." });
   mocks.releaseStateMock.mockResolvedValue({ draftVersionId: null, publishedVersionId: null, draftRuntimeVersion: null, publishedRuntimeVersion: null });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("collectShop", () => {
@@ -78,6 +82,7 @@ describe("loadRadarInputs", () => {
       hasOrgDescription: false,
       lastPublishedAt: null,
       jsonLdIssues: [],
+      publishedRuntimeVersion: null,
     });
     expect(mocks.fromMock).not.toHaveBeenCalled();
     expect(mocks.rpcMock).not.toHaveBeenCalled();
@@ -117,6 +122,7 @@ describe("loadRadarInputs", () => {
     expect(inputs.allowAiCrawlers).toBe(true);
     expect(inputs.hasOrgDescription).toBe(true);
     expect(inputs.lastPublishedAt).toBe("2026-06-01T00:00:00Z");
+    expect(inputs.publishedRuntimeVersion).toBeNull(); // legacy runtime (release stub default)
     expect(mocks.getProductMock).toHaveBeenCalledWith(SHOP, "mug");
     expect(inputs.jsonLdIssues[0]).toMatchObject({ productId: "p1", handle: "mug" });
     expect(inputs.jsonLdIssues[0].issues.length).toBeGreaterThan(0);
@@ -137,9 +143,38 @@ describe("loadRadarInputs", () => {
     });
     const inputs = await loadRadarInputs(SHOP);
     expect(inputs.lastPublishedAt).toBe("2026-07-01T00:00:00Z");
+    expect(inputs.publishedRuntimeVersion).toBe(1);
     expect(inputs.jsonLdIssues).toEqual([]); // no traffic -> no pages to check
   });
   it("caps the JSON-LD sweep", () => {
     expect(JSONLD_CHECK_MAX_PAGES).toBe(10);
+  });
+  it("excludes the current UTC day's partial row (radar_rollup_traffic writes a same-day row at cron time)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T10:00:00Z"));
+    const traffic = tableStub({
+      data: [
+        { day: "2026-07-18", views: 100, sessions: 80, cart_adds: 3, checkouts: 1, top_paths: [] },
+        // Today - only ~10h of data has accumulated by cron time. Must never be
+        // treated as a complete "yesterday" by detectors.
+        { day: "2026-07-19", views: 12, sessions: 9, cart_adds: 0, checkouts: 0, top_paths: [] },
+      ],
+      error: null,
+    });
+    const crawl = tableStub({ data: [], error: null });
+    const pageDoc = tableStub({ data: null, error: null });
+    mocks.fromMock.mockImplementation((table: string) => {
+      if (table === "radar_traffic_daily") return traffic;
+      if (table === "seo_ai_crawl_daily") return crawl;
+      if (table === "page_document") return pageDoc;
+      throw new Error(`unexpected table ${table}`);
+    });
+    mocks.rpcMock.mockResolvedValue({ data: [], error: null });
+    const inputs = await loadRadarInputs(SHOP);
+    expect(inputs.traffic).toEqual([{
+      day: "2026-07-18", views: 100, sessions: 80, cartAdds: 3, checkouts: 1, topPaths: [],
+    }]);
+    expect(inputs.traffic.some((d) => d.day === "2026-07-19")).toBe(false);
+    expect(traffic.lt).toHaveBeenCalledWith("day", "2026-07-19");
   });
 });

@@ -34,10 +34,44 @@ describe("radar AiFeature", () => {
     await checkAiQuota({ shopId: SHOP, feature: "radar", trusted: true });
     expect(rateLimitMock).toHaveBeenLastCalledWith(`ai:day:radar:${SHOP}`, 5, 86_400_000);
   });
+  it("describes the daily-limit reset relative to first use, not a claimed midnight-UTC reset", async () => {
+    rateLimitMock.mockResolvedValue(false);
+    const verdict = await checkAiQuota({ shopId: SHOP, feature: "radar", trusted: true });
+    if (verdict.allowed) throw new Error("expected the daily cap to deny");
+    expect(verdict.message).not.toMatch(/midnight/i);
+    expect(verdict.message).toMatch(/24 hours after you started/i);
+  });
   it("leaves features with a cooldown untouched", async () => {
     rateLimitMock.mockResolvedValue(true);
     await checkAiQuota({ shopId: SHOP, feature: "assistant", trusted: false });
     expect(rateLimitMock).toHaveBeenCalledWith(`ai:cd:assistant:${SHOP}`, 1, 4_000);
+  });
+});
+
+describe("radar_apply AiFeature", () => {
+  it("has its own bucket, independent of the drafter's radar bucket", async () => {
+    rateLimitMock.mockResolvedValue(true);
+    await checkAiQuota({ shopId: SHOP, feature: "radar_apply", trusted: true });
+    expect(rateLimitMock).toHaveBeenCalledWith(`ai:day:radar_apply:${SHOP}`, 10, 86_400_000);
+    expect(rateLimitMock).not.toHaveBeenCalledWith(expect.stringContaining("ai:cd:radar_apply"), expect.anything(), expect.anything());
+  });
+  it("exhausting the drafter's radar bucket never touches radar_apply, and vice versa", async () => {
+    // The drafter (feature "radar") burns its 5/day bucket overnight...
+    rateLimitMock.mockImplementation(async (key: string) => !key.startsWith("ai:day:radar:"));
+    const drafterVerdict = await checkAiQuota({ shopId: SHOP, feature: "radar", trusted: true });
+    expect(drafterVerdict).toMatchObject({ allowed: false, code: "ai_daily_limit" });
+    // ...but the merchant's morning Apply (feature "radar_apply") is untouched.
+    const applyVerdict = await checkAiQuota({ shopId: SHOP, feature: "radar_apply", trusted: true });
+    expect(applyVerdict).toEqual({ allowed: true });
+    expect(rateLimitMock).toHaveBeenCalledWith(`ai:day:radar_apply:${SHOP}`, 10, 86_400_000);
+  });
+  it("has no cooldown between back-to-back applies", async () => {
+    rateLimitMock.mockResolvedValue(true);
+    await checkAiQuota({ shopId: SHOP, feature: "radar_apply", trusted: false });
+    await checkAiQuota({ shopId: SHOP, feature: "radar_apply", trusted: false });
+    expect(rateLimitMock).toHaveBeenCalledTimes(2);
+    expect(rateLimitMock).toHaveBeenNthCalledWith(1, `ai:day:radar_apply:${SHOP}`, 10, 86_400_000);
+    expect(rateLimitMock).toHaveBeenNthCalledWith(2, `ai:day:radar_apply:${SHOP}`, 10, 86_400_000);
   });
 });
 
