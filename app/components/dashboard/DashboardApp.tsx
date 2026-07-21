@@ -1153,7 +1153,7 @@ export default function DashboardApp({
             .then((au) => setAudit(au))
             .catch(() => {});
           toast(
-            `${label} — price updated on Shopify. Logged to action history; reversible there.` +
+            `${label} — price updated on ${shopDomain ? "Shopify" : "your store"}. Logged to action history; reversible there.` +
               (acknowledged ? "" : " Alert couldn't be acknowledged."),
             "check",
           );
@@ -1181,7 +1181,7 @@ export default function DashboardApp({
       );
       return { ok: false, receipt: null };
     },
-    [campaigns, refreshCalibration, toast],
+    [campaigns, refreshCalibration, shopDomain, toast],
   );
 
   const undoAction = useCallback(
@@ -1972,7 +1972,9 @@ export default function DashboardApp({
                 <Toggle value={dark} onChange={setNightMode} ariaLabel="Night mode" />
               </div>
               <div className="cd-caption" style={{ paddingLeft: 2 }}>
-                Shopify · Meta · Google · TikTok · QuickBooks
+                {shopDomain
+                  ? "Shopify · Meta · Google · TikTok · QuickBooks"
+                  : "Meta · Google · TikTok · QuickBooks"}
               </div>
             </div>
           </div>

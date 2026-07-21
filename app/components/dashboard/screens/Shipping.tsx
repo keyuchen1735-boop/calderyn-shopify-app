@@ -712,7 +712,7 @@ function ShippingSetup({
             <Placeholder
               icon="globe"
               title="Not registered"
-              sub="The Shopify CarrierService wires quotes into checkout during dual-run."
+              sub="Only needed while your checkout still runs on Shopify during a dual run."
             />
           )}
         </Card>

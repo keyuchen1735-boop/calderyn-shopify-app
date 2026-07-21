@@ -1060,7 +1060,11 @@ export default function Settings({ app }: { app: DashboardCtx }) {
 
           <SettingRow
             label="Shipping cost source"
-            sub="How each order's shipping cost is estimated. Automatic picks the most trustworthy source per order; period totals, carrier invoices, and per-order overrides live in the Shopify admin."
+            sub={`How each order's shipping cost is estimated. Automatic picks the most trustworthy source per order.${
+              app.shopDomain
+                ? " Period totals, carrier invoices, and per-order overrides live in the Shopify admin."
+                : ""
+            }`}
           >
             <div className="flex items-center gap-2" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
               {missingWeight > 0 && <Pill tone="warn">{`${missingWeight}% missing weight`}</Pill>}
@@ -1081,7 +1085,9 @@ export default function Settings({ app }: { app: DashboardCtx }) {
             <>
               <SettingRow
                 label="Unmatched carrier charges"
-                sub="Carrier charges we couldn't tie to an order, so they aren't in margin yet. Map them to orders in the Shopify admin."
+                sub={`Carrier charges we couldn't tie to an order, so they aren't in margin yet.${
+                  app.shopDomain ? " Map them to orders in the Shopify admin." : ""
+                }`}
               >
                 <Pill tone="warn">{`${unmatchedShip.count} unmatched`}</Pill>
                 <FoldBtn
@@ -1191,7 +1197,11 @@ export default function Settings({ app }: { app: DashboardCtx }) {
 
           <SettingRow
             label="Go live"
-            sub="Where your store is on the path from Shopify to Calderyn — checklist, dual run, and the switch."
+            sub={
+              app.shopDomain
+                ? "Where your store is on the path from Shopify to Calderyn — checklist, dual run, and the switch."
+                : "Your store's go-live checklist and status."
+            }
           >
             <Btn small onClick={() => app.navigate("cutover")}>
               Open
@@ -1440,10 +1450,12 @@ export default function Settings({ app }: { app: DashboardCtx }) {
                 {CLI_NOTE}
               </div>
             </div>
-            <div className="cd-caption">
-              Manage access keys &amp; connected workspaces from the Calderyn app in your Shopify
-              admin.
-            </div>
+            {app.shopDomain != null && (
+              <div className="cd-caption">
+                Manage access keys &amp; connected workspaces from the Calderyn app in your
+                Shopify admin.
+              </div>
+            )}
           </div>
         </SettingsCard>
       )}
@@ -1455,7 +1467,7 @@ export default function Settings({ app }: { app: DashboardCtx }) {
       {showDesigner && <DesignerSwitch />}
 
       <div className="cd-secret-foot">
-        <span>Calderyn for Shopify · v2.4.1 · build 1180</span>
+        <span>Calderyn · v2.4.1 · build 1180</span>
         <button
           type="button"
           className="cd-secret-dot"

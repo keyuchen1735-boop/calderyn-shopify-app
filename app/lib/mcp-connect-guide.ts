@@ -39,7 +39,7 @@ export const CONNECTOR_STEPS: ReadonlyArray<GuideStep> = [
     n: 3,
     icon: "signin",
     title: "Connect and sign in",
-    body: "Click Add → Connect, then sign in with your Shopify store. Claude can now read your alerts, campaigns, SKUs, and audit log.",
+    body: "Click Add → Connect, then sign in to your Calderyn account. Claude can now read your alerts, campaigns, SKUs, and audit log.",
   },
 ];
 
