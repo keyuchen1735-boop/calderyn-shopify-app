@@ -7,7 +7,7 @@ Make the dashboard Operating P&L feel native in dark mode and easier to scan as 
 ## Scope
 
 - Keep the existing header, 7/14/30 day control, four metrics, daily P&L chart, statement, product table, explanatory hover text, loading, and error states.
-- Replace the screen's fixed navy, emerald, and paper colors with the dashboard theme tokens.
+- Preserve the screen's dashboard theme-token colors; the current base already replaced its former fixed navy, emerald, and paper values during this design review.
 - Add small, page-scoped visual hierarchy: a distinct net-profit metric, quieter supporting metrics, readable dividers, a restrained chart zero line, and a compact product-table header.
 - Preserve the existing two-column desktop and stacked/mobile layout. The product table stays horizontally scrollable on narrow screens.
 
