@@ -97,6 +97,7 @@ export const SCREEN_CACHE_KEYS = {
   unmatchedShip: "settings-unmatched-ship",
   learnedRules: "settings-learned-rules",
   setupProgress: "setup-progress",
+  radarHome: "radar-home",
 } as const;
 
 export function catalogCacheKey(search: string, status: string | undefined): string {
