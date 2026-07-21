@@ -21,6 +21,10 @@ export const ROLLUP_DAYS = 10;
 export const TRAFFIC_WINDOW_DAYS = 35; // bounded: at most 35 rows per shop
 export const CRAWL_WINDOW_DAYS = 28; // bounded: <= 28 days x 13 known bots
 export const JSONLD_CHECK_MAX_PAGES = 10;
+// One shop's unresponsive competitor hosts must not eat the whole cron-wide
+// budget (cron.radar-collect.tsx's TIME_BUDGET_MS) - bound each shop's own
+// snapshot slice so later shops in the same run still get their turn.
+export const COMPETITOR_SNAPSHOT_SLICE_MS = 15_000;
 
 const DAY_MS = 86_400_000;
 
@@ -43,7 +47,8 @@ export async function collectShop(shopId: string, deadline: number = Date.now() 
   // logs) but must not fail the shop's collect - the rollup above succeeded.
   if (await isShowcaseShop(shopId)) return;
   try {
-    await snapshotWatchingCompetitors(shopId, { deadline });
+    const shopDeadline = Math.min(deadline, Date.now() + COMPETITOR_SNAPSHOT_SLICE_MS);
+    await snapshotWatchingCompetitors(shopId, { deadline: shopDeadline });
   } catch (err) {
     console.error(`[radar] competitor snapshots failed for shop ${shopId}`, err);
   }

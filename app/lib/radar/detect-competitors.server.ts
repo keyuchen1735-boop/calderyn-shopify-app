@@ -2,19 +2,21 @@
 // detect.server.ts: no DB, no Claude, thresholds as named constants,
 // evidence limited to facts actually present in the stored diff).
 //
-// Two families:
+// Two families, BOTH aggregated per competitor (dedup key has no page/date
+// component, so only ONE open move of each kind can exist per competitor at a
+// time) - this is a deliberate product decision (not an implementation
+// shortcut): an uncluttered move queue wins over surfacing every individual
+// page change, so additional signals from the same competitor while a move is
+// open, or still cooling down after being resolved, are intentionally
+// absorbed rather than queued as new moves. Without this, a single site-wide
+// sale or relaunch could draft up to one move per changed page per night.
 //  - competitor_price: a comparable price MOVED (both a removed and a new
-//    price on the same page). Informational ALWAYS - review mode + deep link
-//    to the merchant's own pricing; applying just marks it done.
+//    price on the same page) on one or more of the competitor's pages.
+//    Informational ALWAYS - review mode + deep link to the merchant's own
+//    pricing; applying just marks it done. Dedup key is `comp-price:{competitorId}`.
 //  - competitor_counter: positioning/copy change or new page/product signals
 //    (title change, or 2+ new headings). Counter = refresh the merchant's OWN
-//    home hero via apply-time generation. Dedup key is `comp-counter:{competitorId}`
-//    with no page/date component, so only ONE open counter move can exist per
-//    competitor at a time - this is a deliberate product decision (not an
-//    implementation shortcut): an uncluttered move queue wins over surfacing
-//    every individual page change, so additional shifts from the same
-//    competitor while a counter is open, or still cooling down after being
-//    resolved, are intentionally absorbed rather than queued as new moves.
+//    home hero via apply-time generation. Dedup key is `comp-counter:{competitorId}`.
 import type { CompetitorDiffInput, RadarCandidate } from "./types";
 
 /** A "positioning shift" needs a title change or at least this many new headings. */
@@ -36,60 +38,87 @@ function pageLabel(url: string): string {
 }
 
 export function detectCompetitorPriceMoves(diffs: CompetitorDiffInput[]): RadarCandidate[] {
-  const out: RadarCandidate[] = [];
+  // Aggregate per competitor: one price move covering every changed page, same
+  // as detectCompetitorShifts' comp-counter - a site-wide sale must draft ONE
+  // move per competitor per night, not one per changed page.
+  const byCompetitor = new Map<string, { name: string; rows: CompetitorDiffInput[] }>();
   for (const d of diffs) {
-    const priceChanges = d.diff.priceChanges ?? [];
-    const hasLabeledChange = priceChanges.length > 0;
+    const hasLabeledChange = (d.diff.priceChanges ?? []).length > 0;
     const hasSetDifference = d.diff.newPrices.length > 0 && d.diff.removedPrices.length > 0;
     if (!hasLabeledChange && !hasSetDifference) continue;
+    const entry = byCompetitor.get(d.competitorId) ?? { name: d.competitorName, rows: [] };
+    entry.rows.push(d);
+    byCompetitor.set(d.competitorId, entry);
+  }
 
+  const out: RadarCandidate[] = [];
+  for (const [competitorId, { name, rows }] of byCompetitor) {
     // Truthfulness contract (see CompetitorDiff in types.ts): newPrices/removedPrices
     // are unordered page-wide set differences - nothing ties removedPrices[0] to
     // newPrices[0], so they can only back a generic "pricing changed" claim. Only
     // priceChanges pairs a price with the heading it was captured near on both
     // sides of the diff, so ONLY that field may name a page/product and show a
     // was->now pairing.
-    const baseFacts = {
-      competitorId: d.competitorId,
-      url: d.url,
-      newPrices: d.diff.newPrices,
-      removedPrices: d.diff.removedPrices,
-      capturedAt: d.capturedAt,
-    };
+    const allPriceChanges = rows.flatMap((r) => r.diff.priceChanges ?? []);
+    const hasLabeledChange = allPriceChanges.length > 0;
+    // Every labeled pairing counts as one change; every page whose ONLY signal
+    // is the generic set-difference (no priceChanges of its own) counts as one
+    // more, so "and N more" reflects every changed page, not just labeled ones.
+    const genericOnlyPageCount = rows.filter((r) => (r.diff.priceChanges ?? []).length === 0).length;
+    const totalChanges = allPriceChanges.length + genericOnlyPageCount;
+
+    const pages = rows.map((r) => ({
+      url: r.url,
+      capturedAt: r.capturedAt,
+      newPrices: r.diff.newPrices,
+      removedPrices: r.diff.removedPrices,
+      priceChanges: r.diff.priceChanges ?? [],
+    }));
+    const baseFacts = { competitorId, pages };
+    const firstUrl = rows[0].url;
 
     if (hasLabeledChange) {
-      const [first, ...rest] = priceChanges;
+      const [first] = allPriceChanges;
+      const moreCount = totalChanges - 1;
       const more =
-        rest.length > 0 ? ` (and ${rest.length} more change${rest.length === 1 ? "" : "s"})` : "";
+        moreCount > 0 ? ` (and ${moreCount} more change${moreCount === 1 ? "" : "s"})` : "";
       out.push({
         kind: "competitor_price",
-        dedupKey: `comp-price:${d.competitorId}:${pathOf(d.url)}`,
-        headline: `${d.competitorName} changed their prices`,
+        dedupKey: `comp-price:${competitorId}`,
+        headline: `${name} changed their prices`,
         rationale:
-          `${first.label}: ${first.from} is now ${first.to} at ${d.competitorName}.${more} ` +
+          `${first.label}: ${first.from} is now ${first.to} at ${name}.${more} ` +
           `Worth a quick look at your own prices - nothing changes unless you decide to.`,
         evidence: {
-          chips: [d.competitorName, `${first.label}: was ${first.from}`, `now ${first.to}`],
-          facts: { ...baseFacts, priceChanges },
+          chips: [name, `${first.label}: was ${first.from}`, `now ${first.to}`],
+          // pricingClaim marks this move as safe to polish for the drafter -
+          // see FIX 4 in draft.server.ts: only "labeled" copy may be sent to
+          // Claude, since it already names a specific product's was->now move.
+          facts: { ...baseFacts, priceChanges: allPriceChanges, pricingClaim: "labeled" as const },
         },
-        payload: { applyMode: "review", deepLink: "/dashboard/products", competitorId: d.competitorId, url: d.url },
+        payload: { applyMode: "review", deepLink: "/dashboard/products", competitorId, url: firstUrl },
       });
       continue;
     }
 
-    // Set-difference only: generic copy, no was/now pairing anywhere.
+    // Set-difference only, across every changed page: generic copy, no
+    // was/now pairing anywhere.
+    const pagesPhrase = rows.length === 1 ? pageLabel(rows[0].url) : `${rows.length} pages`;
     out.push({
       kind: "competitor_price",
-      dedupKey: `comp-price:${d.competitorId}:${pathOf(d.url)}`,
-      headline: `Pricing changed at ${d.competitorName}`,
+      dedupKey: `comp-price:${competitorId}`,
+      headline: `Pricing changed at ${name}`,
       rationale:
-        `${d.competitorName} changed prices on ${pageLabel(d.url)}. ` +
+        `${name} changed prices on ${pagesPhrase}. ` +
         `Take a look and decide if your own pricing still stands up.`,
       evidence: {
-        chips: [d.competitorName, `${pageLabel(d.url)}`.replace(/^their /, "")],
-        facts: baseFacts,
+        chips: [name, rows.length === 1 ? pagesPhrase.replace(/^their /, "") : `${rows.length} pages changed`],
+        // Generic (unpaired) copy must NEVER be polished by Claude - facts here
+        // carry no was->now pairing for the model to invent one from. See
+        // draft.server.ts's polish gate, which reads this marker.
+        facts: { ...baseFacts, pricingClaim: "generic" as const },
       },
-      payload: { applyMode: "review", deepLink: "/dashboard/products", competitorId: d.competitorId, url: d.url },
+      payload: { applyMode: "review", deepLink: "/dashboard/products", competitorId, url: firstUrl },
     });
   }
   return out;

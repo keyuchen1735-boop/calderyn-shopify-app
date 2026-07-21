@@ -54,6 +54,18 @@ function downgradeLegacyPdpCandidate(c: RadarCandidate, publishedRuntimeVersion:
   };
 }
 
+/** FIX 4: a generic (set-difference-only) competitor_price move's facts carry
+ *  an unordered newPrices/removedPrices pair with no was->now pairing (see the
+ *  truthfulness contract in types.ts). "Keep every number exact" does not stop
+ *  Claude from pairing them into a fabricated "$129 is now $99" claim, so
+ *  these moves skip polish entirely and ship the deterministic template copy,
+ *  which is already contract-safe. Labeled competitor_price moves (a real
+ *  was->now pairing from priceChanges) still polish normally. The detector
+ *  marks this via evidence.facts.pricingClaim (see detect-competitors.server.ts). */
+function skipsPolish(c: RadarCandidate): boolean {
+  return c.kind === "competitor_price" && c.evidence.facts.pricingClaim === "generic";
+}
+
 async function polish(shopId: string, c: RadarCandidate): Promise<PolishResult> {
   const verdict = await checkAiQuota({ shopId, feature: "radar", trusted: true });
   if (!verdict.allowed) return "quota_exhausted";
@@ -111,7 +123,7 @@ export async function draftShopMoves(shopId: string, now: Date = new Date()): Pr
       continue;
     }
     let copy = { headline: c.headline, rationale: c.rationale };
-    if (claudeOpen && attempts < RADAR_NIGHTLY_CLAUDE_CAP) {
+    if (!skipsPolish(c) && claudeOpen && attempts < RADAR_NIGHTLY_CLAUDE_CAP) {
       attempts++;
       const p = await polish(shopId, c);
       if (p === "quota_exhausted") claudeOpen = false; // stop spending; templates carry the rest

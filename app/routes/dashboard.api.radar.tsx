@@ -220,8 +220,14 @@ async function buildSignals(
     const weekAgo = Date.now() - 7 * DAY_MS;
     signals.competitors.watching = comp.vm.watching.length;
     signals.competitors.suggested = comp.vm.suggested.length;
-    signals.competitors.changesLast7 = comp.timeline.filter((t) => Date.parse(t.capturedAt) >= weekAgo).length;
-    signals.competitors.lastChangeAt = comp.timeline[0]?.capturedAt ?? null;
+    // listSnapshotTimeline is unfiltered by status (suggested/dismissed
+    // competitors can still have old snapshot rows) - only count snapshots for
+    // competitors currently in the watching set, so this tile always agrees
+    // with what the per-card timelines show (e.g. after "Stop watching").
+    const watchingIds = new Set(comp.vm.watching.map((c) => c.id));
+    const watchingTimeline = comp.timeline.filter((t) => watchingIds.has(t.competitorId));
+    signals.competitors.changesLast7 = watchingTimeline.filter((t) => Date.parse(t.capturedAt) >= weekAgo).length;
+    signals.competitors.lastChangeAt = watchingTimeline[0]?.capturedAt ?? null;
   } catch (err) {
     console.error("[radar] competitor signal failed", err);
   }

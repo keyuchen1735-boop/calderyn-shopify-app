@@ -235,6 +235,29 @@ describe("loader competitors block", () => {
     expect(body.signals.competitors).toMatchObject({ watching: 1, suggested: 1, changesLast7: 1 });
     expect(JSON.stringify(body)).not.toMatch(/ploy/i);
   });
+  it("excludes a dismissed/no-longer-watching competitor's snapshots from the changesLast7 tile (FIX 10)", async () => {
+    // listSnapshotTimeline is unfiltered by status - a competitor that was
+    // dismissed still has old snapshot rows. The tile must only count
+    // snapshots for competitors currently in the watching set, matching what
+    // the per-card timelines already show.
+    mocks.listCompetitors.mockImplementation(async (_shop: string, statuses: string[]) =>
+      statuses.includes("watching") ? [competitorRow("watching")] : []);
+    mocks.listSnapshotTimeline.mockResolvedValue([
+      {
+        competitorId: COMP_ID, // watching - should count
+        url: "https://rivalgear.example/", capturedAt: new Date().toISOString(),
+        diff: { titleChanged: null, newHeadings: [], removedHeadings: [], newPrices: ["$9"], removedPrices: ["$12"] },
+      },
+      {
+        competitorId: "dismissed-competitor-id", // not in the watching set - must not count
+        url: "https://old-rival.example/", capturedAt: new Date().toISOString(),
+        diff: { titleChanged: null, newHeadings: [], removedHeadings: [], newPrices: ["$1"], removedPrices: ["$2"] },
+      },
+    ]);
+    const res = (await loader(get())) as Response;
+    const body = await res.json();
+    expect(body.signals.competitors.changesLast7).toBe(1);
+  });
   it("keeps the screen alive when the competitors read fails", async () => {
     mocks.listCompetitors.mockRejectedValue(new Error("db down"));
     const res = (await loader(get())) as Response;

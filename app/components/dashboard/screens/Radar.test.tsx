@@ -305,6 +305,48 @@ describe("Radar competitors tab", () => {
     await act(async () => root.unmount());
   });
 
+  it("renders a change day using the UTC calendar date, never shifting a day earlier west of UTC (FIX 8)", async () => {
+    // new Date("2026-07-20") is UTC midnight; in any timezone behind UTC
+    // (e.g. the Americas), naively formatting it with the local timezone
+    // renders the PRIOR day. The stored value is a plain YYYY-MM-DD date with
+    // no time-of-day, so it must always format as that exact calendar date.
+    fetchRadar.mockResolvedValue(
+      overview([], {
+        competitors: {
+          suggested: [],
+          watching: [
+            competitor({
+              status: "watching",
+              changes: [{ day: "2026-07-20", url: "https://northwindgoods.com", chips: [] }],
+            }),
+          ],
+          watchLimit: 5,
+        },
+      }),
+    );
+    const { host, root } = await renderRadar();
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Competitors"));
+    await act(async () => tabBtn!.click());
+    expect(host.textContent).toContain("Jul 20");
+    expect(host.textContent).not.toContain("Jul 19");
+    await act(async () => root.unmount());
+  });
+
+  it("tells the merchant Stop watching is permanent (FIX 11 - copy only, no re-add flow)", async () => {
+    fetchRadar.mockResolvedValue(
+      overview([], {
+        competitors: { suggested: [], watching: [competitor({ status: "watching" })], watchLimit: 5 },
+      }),
+    );
+    const { host, root } = await renderRadar();
+    const tabBtn = [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Competitors"));
+    await act(async () => tabBtn!.click());
+    // Button label is unchanged; the permanence lives in nearby copy.
+    expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Stop watching")).toBe(true);
+    expect(host.textContent).toContain("Radar will stop watching this competitor and won't suggest it again.");
+    await act(async () => root.unmount());
+  });
+
   it("shows a no-changes-yet note for a watched competitor with no changes", async () => {
     fetchRadar.mockResolvedValue(
       overview([], {

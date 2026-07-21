@@ -58,6 +58,39 @@ function pdpCandidate(n: number): RadarCandidate {
   };
 }
 
+function genericCompetitorPriceCandidate(): RadarCandidate {
+  return {
+    kind: "competitor_price",
+    dedupKey: "comp-price:c1",
+    headline: "Pricing changed at Rival Gear",
+    rationale: "Rival Gear changed prices on 2 pages. Take a look and decide if your own pricing still stands up.",
+    evidence: {
+      chips: ["Rival Gear", "2 pages changed"],
+      facts: { competitorId: "c1", pages: [], pricingClaim: "generic" },
+    },
+    payload: { applyMode: "review", deepLink: "/dashboard/products", competitorId: "c1", url: "https://rival.example/" },
+  };
+}
+
+function labeledCompetitorPriceCandidate(): RadarCandidate {
+  return {
+    kind: "competitor_price",
+    dedupKey: "comp-price:c2",
+    headline: "Rival Gear changed their prices",
+    rationale: "Boots: $129.00 is now $99.00 at Rival Gear. Worth a quick look at your own prices - nothing changes unless you decide to.",
+    evidence: {
+      chips: ["Rival Gear", "Boots: was $129.00", "now $99.00"],
+      facts: {
+        competitorId: "c2",
+        pages: [],
+        priceChanges: [{ label: "Boots", from: "$129.00", to: "$99.00" }],
+        pricingClaim: "labeled",
+      },
+    },
+    payload: { applyMode: "review", deepLink: "/dashboard/products", competitorId: "c2", url: "https://rival.example/products/boots" },
+  };
+}
+
 function homeCandidate(): RadarCandidate {
   return {
     kind: "section_refresh",
@@ -161,6 +194,39 @@ describe("draftShopMoves", () => {
       headline: "Template headline 2",
     });
     expect(out).toMatchObject({ drafted: 7, polished: 4 });
+  });
+
+  describe("competitor_price polish gate (FIX 4 - never let Claude pair unlabeled prices)", () => {
+    it("never sends a generic (unpaired) competitor_price candidate to Claude and keeps the deterministic copy", async () => {
+      mocks.detectAll.mockReturnValue([genericCompetitorPriceCandidate()]);
+      const out = await draftShopMoves(SHOP);
+      expect(mocks.checkAiQuota).not.toHaveBeenCalled();
+      expect(mocks.createMock).not.toHaveBeenCalled();
+      expect(mocks.insertDraftMove).toHaveBeenCalledTimes(1);
+      expect(mocks.insertDraftMove.mock.calls[0][1]).toMatchObject({
+        headline: "Pricing changed at Rival Gear",
+        rationale: "Rival Gear changed prices on 2 pages. Take a look and decide if your own pricing still stands up.",
+      });
+      expect(out).toMatchObject({ drafted: 1, polished: 0 });
+    });
+    it("still polishes a labeled competitor_price candidate", async () => {
+      mocks.detectAll.mockReturnValue([labeledCompetitorPriceCandidate()]);
+      const out = await draftShopMoves(SHOP);
+      expect(mocks.checkAiQuota).toHaveBeenCalledTimes(1);
+      expect(mocks.createMock).toHaveBeenCalledTimes(1);
+      expect(mocks.insertDraftMove.mock.calls[0][1]).toMatchObject({ headline: "Polished" });
+      expect(out).toMatchObject({ drafted: 1, polished: 1 });
+    });
+    it("does not spend an attempt-cap slot on a generic candidate, leaving the cap for others", async () => {
+      mocks.detectAll.mockReturnValue([
+        genericCompetitorPriceCandidate(),
+        ...([1, 2, 3, 4, 5].map(candidate)),
+      ]);
+      const out = await draftShopMoves(SHOP);
+      // 5 candidates worth of real Claude attempts, none spent on the generic one.
+      expect(mocks.createMock).toHaveBeenCalledTimes(RADAR_NIGHTLY_CLAUDE_CAP);
+      expect(out).toMatchObject({ drafted: 6, polished: RADAR_NIGHTLY_CLAUDE_CAP });
+    });
   });
 
   describe("legacy PDP downgrade", () => {

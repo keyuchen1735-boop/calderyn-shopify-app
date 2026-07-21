@@ -29,6 +29,21 @@ function whenLabel(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/** Formats a plain YYYY-MM-DD (no time-of-day, e.g. a snapshot's captured
+ *  day) as that exact calendar date, regardless of the viewer's timezone.
+ *  `new Date("2026-07-20")` parses as UTC midnight - naively formatting it
+ *  with `toLocaleDateString` in a timezone behind UTC (most of the Americas)
+ *  renders the PRIOR day. Passing timeZone: "UTC" keeps the label pinned to
+ *  the date the string actually names. */
+function dayLabel(day: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(day);
+  if (!m) return whenLabel(day);
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
 function SignalTile(props: { icon: string; label: string; value: string; note: string }) {
   return (
     <Card className="cd-stat">
@@ -332,7 +347,7 @@ export default function Radar({ app }: { app: DashboardCtx }) {
                     <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
                       {c.changes.map((ch, i) => (
                         <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                          <span className="cd-caption" style={{ margin: 0 }}>{whenLabel(ch.day)}</span>
+                          <span className="cd-caption" style={{ margin: 0 }}>{dayLabel(ch.day)}</span>
                           {ch.chips.map((chip, j) => (
                             <span key={j} className="cd-chip">{chip}</span>
                           ))}
@@ -346,6 +361,9 @@ export default function Radar({ app }: { app: DashboardCtx }) {
                       Stop watching
                     </Btn>
                   </div>
+                  <p className="cd-caption" style={{ margin: "4px 0 0" }}>
+                    Radar will stop watching this competitor and won&apos;t suggest it again.
+                  </p>
                 </Card>
               ))}
             </>

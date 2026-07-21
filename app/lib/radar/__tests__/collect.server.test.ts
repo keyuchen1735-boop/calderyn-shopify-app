@@ -78,12 +78,26 @@ describe("collectShop", () => {
     mocks.rpcMock.mockResolvedValueOnce({ data: null, error: { message: "boom" } });
     await expect(collectShop(SHOP)).rejects.toThrow(/boom/);
   });
-  it("calls snapshotWatchingCompetitors with the passed deadline for a real shop", async () => {
+  it("bounds the per-shop snapshot slice to 15s even when the global cron deadline is much farther out", async () => {
+    // FIX 7: one shop with unresponsive competitor hosts must not consume the
+    // whole cron-wide budget - the per-shop slice is capped at ~15s so later
+    // shops in the same run still get their turn.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-20T00:00:00Z"));
     const state = tableStub({ data: null, error: null });
     mocks.fromMock.mockReturnValue(state);
-    const deadline = Date.now() + 50_000;
-    await collectShop(SHOP, deadline);
-    expect(mocks.snapshotWatchingCompetitorsMock).toHaveBeenCalledWith(SHOP, { deadline });
+    const globalDeadline = Date.now() + 50_000; // cron-wide budget, much farther out than 15s
+    await collectShop(SHOP, globalDeadline);
+    expect(mocks.snapshotWatchingCompetitorsMock).toHaveBeenCalledWith(SHOP, { deadline: Date.now() + 15_000 });
+  });
+  it("passes the global cron deadline through unchanged when it is sooner than the 15s slice", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-20T00:00:00Z"));
+    const state = tableStub({ data: null, error: null });
+    mocks.fromMock.mockReturnValue(state);
+    const globalDeadline = Date.now() + 5_000; // cron is almost out of time already
+    await collectShop(SHOP, globalDeadline);
+    expect(mocks.snapshotWatchingCompetitorsMock).toHaveBeenCalledWith(SHOP, { deadline: globalDeadline });
   });
   it("does not call snapshotWatchingCompetitors when isShowcaseShop resolves true", async () => {
     const state = tableStub({ data: null, error: null });
