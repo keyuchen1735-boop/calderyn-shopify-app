@@ -1,5 +1,6 @@
-import DesignerStudio, { DESIGNER_STATE_CACHE_KEY } from "./DesignerStudio";
+import DesignerStudio from "./DesignerStudio";
 import { fetchDesignerState } from "~/lib/designer/client";
+import { readDesignerState, reconcileDesignerState } from "~/lib/designer/state";
 import {
   useCallback,
   useEffect,
@@ -96,16 +97,19 @@ function sleep(ms: number): Promise<void> {
 export default function Store({ app }: { app: DashboardCtx }) {
   // Hidden designer engine (sparkle in Settings): when it's on, the Store tab
   // IS the designer studio; the classic builder below stays untouched.
+  // Seed from the shared designer-state store (which a Settings toggle writes
+  // through synchronously), then refresh from the server. The refresh is
+  // reconciled against any in-flight toggle so a stale read that raced the
+  // flip can never swap the wrong engine back in (walkthrough F1).
   const [designerEnabled, setDesignerEnabled] = useState<boolean>(
-    () => cachedScreenData<{ enabled?: boolean }>(DESIGNER_STATE_CACHE_KEY)?.enabled === true,
+    () => readDesignerState()?.enabled === true,
   );
   useEffect(() => {
     let alive = true;
     fetchDesignerState()
       .then((state) => {
         if (!alive) return;
-        cacheScreenData(DESIGNER_STATE_CACHE_KEY, state);
-        setDesignerEnabled(state.enabled);
+        setDesignerEnabled(reconcileDesignerState(state).enabled);
       })
       .catch(() => {});
     return () => {

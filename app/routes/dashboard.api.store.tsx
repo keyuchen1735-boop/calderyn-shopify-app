@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { dashboardJson, jsonError, rateLimit, requireSameOrigin } from "~/lib/dashboard/http.server";
 import { requireDashboardSession } from "~/lib/dashboard/session.server";
+import { getStoreSettings } from "~/lib/storefront/settings.server";
 import { loadStudioState } from "~/lib/storebuilder/studio.server";
 import { runStoreCommand, StoreCommandError } from "~/lib/storefront-command/command.server";
 import { parseStoreCommand, type StoreCommandEvent } from "~/lib/storefront-command/types";
@@ -85,6 +86,24 @@ export async function action({ request }: ActionFunctionArgs) {
   }
   const parsed = parseStoreCommand(body);
   if (!parsed.ok) return jsonError(422, parsed.code);
+
+  // Routing check only (designer-flagship spec D1): a shop whose designer
+  // engine is on must never have a message silently run through the classic
+  // pipeline — that's how a merchant's flagship prompt died in a misleading
+  // rejection. Answer honestly instead. Fail-open on a lookup hiccup so a
+  // settings read blip can't take the classic builder down for everyone else.
+  try {
+    if ((await getStoreSettings(session.shopId)).composerEnabled) {
+      return jsonError(
+        409,
+        "designer_enabled",
+        "The designer is on for this store — reload the Store screen to open it.",
+      );
+    }
+  } catch (error) {
+    console.error("[dashboard.api.store] designer flag lookup failed", error);
+  }
+
   if (parsed.value.kind === "prompt"
     && !(await rateLimit(`storefront-build:${session.shopId}`, 10, 60_000))) {
     return jsonError(429, "rate_limited", "Too many storefront changes. Please wait a moment.");

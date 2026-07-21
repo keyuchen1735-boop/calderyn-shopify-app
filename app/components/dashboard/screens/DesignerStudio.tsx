@@ -4,8 +4,8 @@
 // take the secret surface with them again.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { DashboardApiError } from "~/lib/dashboard/client";
-import { cachedScreenData, cacheScreenData } from "~/lib/dashboard/screen-cache";
 import { fetchDesignerState, publishDesignerSite, type DesignerStateVM } from "~/lib/designer/client";
+import { readDesignerState, reconcileDesignerState } from "~/lib/designer/state";
 import { DESIGNER_PAGE_LABELS } from "~/lib/designer/context";
 import type { StudioDesignModel } from "~/lib/storebuilder/studio-types";
 import {
@@ -21,7 +21,7 @@ import DesignerDock from "../store/DesignerDock";
 import type { ChatMsg } from "../store/chat-types";
 import { Btn } from "../ui";
 
-export const DESIGNER_STATE_CACHE_KEY = "designer-studio";
+export { DESIGNER_STATE_CACHE_KEY } from "~/lib/designer/state";
 
 type DesignerPageKey = "home" | "collection" | "product" | "search" | "cart" | "checkout";
 // Shared with the edit-result card so the picker and the card name pages
@@ -32,9 +32,7 @@ const PAGES: { key: DesignerPageKey; label: string }[] = (
 
 export default function DesignerStudio({ app }: { app: DashboardCtx }) {
   const toast = app.toast;
-  const [state, setState] = useState<DesignerStateVM | null>(() =>
-    cachedScreenData<DesignerStateVM>(DESIGNER_STATE_CACHE_KEY),
-  );
+  const [state, setState] = useState<DesignerStateVM | null>(() => readDesignerState());
   const aliveRef = useRef(true);
   useEffect(() => {
     aliveRef.current = true;
@@ -62,9 +60,10 @@ export default function DesignerStudio({ app }: { app: DashboardCtx }) {
 
   const refresh = useCallback(async () => {
     try {
-      const next = await fetchDesignerState();
+      // Reconciled against any in-flight sparkle toggle so a stale read
+      // can't flip the cached engine choice back (see ~/lib/designer/state).
+      const next = reconcileDesignerState(await fetchDesignerState());
       if (!aliveRef.current) return;
-      cacheScreenData(DESIGNER_STATE_CACHE_KEY, next);
       setState(next);
       // Reload recovery: the session seeds from the saved chat exactly once,
       // and never over a thread with live messages.
