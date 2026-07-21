@@ -152,6 +152,14 @@ export default function OperatingPnl() {
         <Segmented value={String(days)} options={RANGE_OPTIONS} onChange={(value) => setDays(Number(value) as OperatingPnlDays)} />
       </header>
 
+      {error && (
+        <Card>
+          <strong style={{ fontSize: 13, color: "var(--red)" }}>
+            {error} Showing the last range that loaded — pick another range or retry.
+          </strong>
+        </Card>
+      )}
+
       <div className="cd-stat-grid">
         <Metric label="Accrual income" value={money(statement.incomeCents, data.currency)} explain="income" />
         <Metric label="Gross profit" value={money(grossProfit, data.currency)} explain="gross" />
@@ -169,6 +177,11 @@ export default function OperatingPnl() {
           </div>
           <div style={{ height: 190, display: "flex", gap: 4, position: "relative", borderBottom: "1px solid var(--hairline-strong)" }}>
             <i style={{ position: "absolute", left: 0, right: 0, top: "50%", height: 1, background: "var(--hairline)" }} />
+            {statement.daily.length === 0 && (
+              <span style={{ margin: "auto", fontSize: 12, color: "var(--text-3)" }}>
+                QuickBooks didn't provide a per-{unit} breakdown for this range; the totals above are still complete.
+              </span>
+            )}
             {statement.daily.map((row) => {
               const height = Math.max(4, Math.abs(row.netIncomeCents) / chartMax * 82);
               const positive = row.netIncomeCents >= 0;

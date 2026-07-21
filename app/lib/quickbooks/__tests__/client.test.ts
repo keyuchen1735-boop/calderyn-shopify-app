@@ -128,6 +128,24 @@ describe("quickbooksClientForShop", () => {
     expect(url.searchParams.get("summarize_column_by")).toBe("Days");
   });
 
+  // Intuit's summarize_column_by enum is singular for Month/Year (plural
+  // "Months"/"Years" is rejected with a 400 — found live on the sandbox).
+  it("passes the singular Month/Year summarize values through verbatim", async () => {
+    const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9341452" });
+    const fetcher = vi.fn().mockResolvedValue({
+      access_token: "acc", refresh_token: "ref2", expires_in: 3600, x_refresh_token_expires_in: 8640000,
+    });
+    const httpFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ Rows: { Row: [] } }) });
+    const conn = await quickbooksClientForShop("s1", { sb, fetcher, httpFetch: httpFetch as unknown as typeof fetch });
+    for (const summarizeBy of ["Month", "Year"] as const) {
+      await conn!.client.queryReport("ProfitAndLoss", {
+        startDate: "2016-07-24", endDate: "2026-07-21", accountingMethod: "Accrual", summarizeBy,
+      });
+    }
+    const params = httpFetch.mock.calls.map((c) => new URL(c[0] as string).searchParams.get("summarize_column_by"));
+    expect(params).toEqual(["Month", "Year"]);
+  });
+
   it("throws when the QBO query returns a non-ok status", async () => {
     const { sb } = fakeSb({ access_token_encrypted: encrypt("ref1"), external_account_id: "9341452" });
     const fetcher = vi.fn().mockResolvedValue({

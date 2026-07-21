@@ -70,11 +70,21 @@ export async function loadOperatingPnl(
 
   // Column granularity tracks the window so the by-period chart stays legible:
   // daily bars up to 90 days, monthly for a year, yearly for the all-time view.
-  const summarizeBy = days <= 90 ? "Days" : days <= 365 ? "Months" : "Years";
+  // QBO's summarize_column_by enum is singular for Month/Year but plural for
+  // Days. If QuickBooks still rejects the summarized query, retry without it
+  // (single-total columns) — correct totals with no per-period bars beats
+  // failing the whole screen.
+  const summarizeBy = days <= 90 ? "Days" : days <= 365 ? "Month" : "Year";
+  const profitAndLossP = connection.client
+    .queryReport("ProfitAndLoss", { startDate, endDate, accountingMethod: "Accrual", summarizeBy })
+    .catch((err: unknown) => {
+      console.error(`[operating-pnl] summarized P&L (${summarizeBy}) failed, retrying unsummarized`, err);
+      return connection.client.queryReport("ProfitAndLoss", {
+        startDate, endDate, accountingMethod: "Accrual",
+      });
+    });
   const [profitAndLoss, cashFlow, currency, products] = await Promise.all([
-    connection.client.queryReport("ProfitAndLoss", {
-      startDate, endDate, accountingMethod: "Accrual", summarizeBy,
-    }),
+    profitAndLossP,
     connection.client.queryReport("CashFlow", { startDate, endDate, accountingMethod: "Cash" }),
     connection.client.queryHomeCurrency(),
     loadProductContributions(shopId, start.toISOString()),
