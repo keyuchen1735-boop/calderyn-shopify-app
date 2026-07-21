@@ -7,13 +7,14 @@ import type {
   PublicDataRef,
   RouteArtifact,
   RouteTarget,
+  CompiledStorefrontRouteId,
   StorefrontBundleV1,
   StorefrontRouteId,
   StoreTemplateId,
   TrustedSlotManifest,
 } from "~/lib/storefront-bundle/types";
 import { isAllowedCompiledTag } from "~/lib/storefront-compiler/html";
-import { getStoreTemplate } from "~/lib/storefront-bundle/registry";
+import { getStoreTemplate, isStoreTemplateId } from "~/lib/storefront-bundle/registry";
 import { CheckoutIslands } from "./checkout-islands";
 import { storefrontDesignSystemCss } from "./curated-fonts";
 import type {
@@ -33,6 +34,7 @@ type ScopeValue =
   | PublicProduct
   | PublicVariant
   | PublicMedia
+  | NonNullable<PublicProduct["facts"]>[number]
   | PublicCart["lines"][number];
 
 interface RenderContext {
@@ -64,7 +66,7 @@ function StorefrontStyle({ nonce, css, kind }: { nonce: string; css: string; kin
   return <style nonce={nonce} data-cd-bundle-style={kind} dangerouslySetInnerHTML={{ __html: css }} />;
 }
 
-const PATHS: Record<StorefrontRouteId | "account" | "policy", string> = {
+const PATHS: Record<CompiledStorefrontRouteId | "account" | "policy", string> = {
   home: "/storefront",
   collection: "/storefront/collections",
   product: "/storefront/products",
@@ -73,6 +75,9 @@ const PATHS: Record<StorefrontRouteId | "account" | "policy", string> = {
   checkout: "/storefront/checkout",
   account: "/storefront/account",
   policy: "/storefront/policies",
+  collections: "/storefront/collections",
+  story: "/storefront/story",
+  notFound: "/storefront",
 };
 
 function rootValue(data: PublicPresentationData, path: string): unknown {
@@ -100,6 +105,7 @@ function objectValue(value: unknown, field: string): unknown {
       field === "lines" || field === "subtotal" || field === "discounts" || field === "total" ||
       field === "query" || field === "results" || field === "nextCursor" || field === "quantity" ||
       field === "unitPrice") return record[field] ?? null;
+  if (field === "facts" || field === "kind" || field === "label" || field === "value" || field === "unit" || field === "url") return record[field] ?? null;
   return null;
 }
 
@@ -143,6 +149,15 @@ function formatBinding(binding: CompiledBinding, value: unknown): string | null 
       return null;
     }
   }
+  if (binding.kind === "href") {
+    if (typeof value !== "string") return null;
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && !url.username && !url.password ? url.toString() : null;
+    } catch {
+      return null;
+    }
+  }
   if (binding.kind === "alt") {
     const candidate = typeof value === "string" ? value : (value as PublicMedia | null)?.alt;
     return typeof candidate === "string" ? candidate : "";
@@ -178,13 +193,14 @@ function assetUrlsForBundle(
   const urls = new Map<string, string>();
   for (const asset of bundle.assets.entries) {
     if (bundle.source.kind === "recipe") {
-      if (asset.mediaType === "image/webp") {
+      const extension = { "image/webp": "webp", "video/webm": "webm", "video/mp4": "mp4" }[asset.mediaType];
+      if (extension) {
         urls.set(asset.key, safeAssetUrl(customAssetUrls?.[asset.key]) ??
-          `/storefront-recipes/${bundle.source.templateId}/${asset.contentHash}.webp`);
+          `/storefront-recipes/${bundle.source.templateId}/${asset.contentHash}.${extension}`);
       }
       continue;
     }
-    if (!new Set(["image/avif", "image/webp", "image/png", "image/jpeg"]).has(asset.mediaType)) continue;
+    if (!new Set(["image/avif", "image/webp", "image/png", "image/jpeg", "video/webm", "video/mp4"]).has(asset.mediaType)) continue;
     const resolved = safeAssetUrl(customAssetUrls?.[asset.key]);
     if (resolved) urls.set(asset.key, resolved);
   }
@@ -195,6 +211,8 @@ function reactAttributeName(name: string): string {
   if (name === "class") return "className";
   if (name === "for") return "htmlFor";
   if (name === "tabindex") return "tabIndex";
+  if (name === "autoplay") return "autoPlay";
+  if (name === "playsinline") return "playsInline";
   return name;
 }
 
@@ -207,6 +225,7 @@ function repeatValues(node: CompiledElementNode, data: PublicPresentationData): 
     case "cart.lines": return data.cart?.lines ?? [];
     case "product.images": return data.product?.images ?? [];
     case "product.variants": return data.product?.variants ?? [];
+    case "product.facts": return data.product?.facts ?? [];
     default: return [];
   }
 }
@@ -237,6 +256,7 @@ function instanceSuffix(path: readonly string[]): string {
 }
 
 function authorityKeyForSlot(slot: TrustedSlotManifest, context: RenderContext): string {
+  if (slot.kind === "bundleBuilder") return "bundle:catalog";
   const scope = slot.scopeId && slot.scopeId !== "root" ? context.scopes.get(slot.scopeId) : undefined;
   if (slot.kind === "cartLineControls") {
     if (slot.scopeId === context.currentScopeId && scope && "quantity" in scope && typeof scope.id === "string") {
@@ -319,7 +339,9 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
   const props: Record<string, unknown> = { key };
   for (const [name, value] of Object.entries(node.attributes)) {
     const reactName = reactAttributeName(name);
-    if (reactName === "value" && (node.tag === "input" || node.tag === "select" || node.tag === "textarea")) {
+    if (node.tag === "video" && ["muted", "autoplay", "playsinline", "loop"].includes(name)) {
+      props[reactName] = value === "";
+    } else if (reactName === "value" && (node.tag === "input" || node.tag === "select" || node.tag === "textarea")) {
       props.defaultValue = value;
     } else {
       props[reactName] = value;
@@ -334,6 +356,11 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
     const assetUrl = context.assetUrls.get(assetKey);
     if (assetUrl) props.src = assetUrl;
   }
+  const posterAssetKey = node.attributes["data-cd-poster-asset-key"];
+  if (node.tag === "video" && posterAssetKey) {
+    const posterUrl = context.assetUrls.get(posterAssetKey);
+    if (posterUrl) props.poster = posterUrl;
+  }
   props.id = context.instanceSuffix ? `${node.id}-${context.instanceSuffix}` : node.id;
   props["data-cd-compiler-id"] = node.id;
   if (context.instanceSuffix) props["data-cd-instance"] = context.instanceSuffix;
@@ -343,6 +370,7 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
   const nodeBindings = context.bindings.get(node.id) ?? [];
   let missingBoundImage = false;
   let missingBoundProductImage = false;
+  let missingBoundHref = false;
   let children: ReactNode[];
   if (node.attributes["data-cd-platform-content"] === "policyLinks") {
     const policyIds = new Set(["privacy", "terms", "refund", "shipping"]);
@@ -364,7 +392,10 @@ function renderOne(node: CompiledNode, context: RenderContext, key: string): Rea
       missingBoundProductImage = binding.ref.kind === "data" && binding.ref.path === "product.primaryImage";
     }
     else if (binding.kind === "alt") props.alt = formatted ?? "";
+    else if (binding.kind === "href" && formatted !== null) props.href = formatted;
+    else if (binding.kind === "href") missingBoundHref = true;
   }
+  if (missingBoundHref) return null;
   if (node.tag === "img" && missingBoundImage && props.src === undefined) {
     props.src = missingBoundProductImage
       ? context.productPlaceholderUrl ?? EMPTY_MEDIA_DATA_URL
@@ -496,7 +527,7 @@ export function renderCheckoutRoute({ artifact, data, nonce, platformContent, as
 
 export interface RenderStorefrontSurfaceInput {
   bundle: StorefrontBundleV1;
-  routeId: StorefrontRouteId;
+  routeId: CompiledStorefrontRouteId;
   data: PublicPresentationData;
   nonce: string;
   mode: "public" | "preview";
@@ -520,7 +551,7 @@ export function isRuntime1RenderData(value: unknown): value is {
   bundle: StorefrontBundleV1;
   data: PublicPresentationData;
   nonce: string;
-  routeId: StorefrontRouteId;
+  routeId: CompiledStorefrontRouteId;
   visualLayerPlacement: StorefrontVisualPlacement | null;
 } {
   if (!value || typeof value !== "object") return false;
@@ -534,7 +565,7 @@ export function isRuntime1RenderData(value: unknown): value is {
 export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, checkoutContent, customAssetUrls, visualLayerPlacement }: RenderStorefrontSurfaceInput): ReactElement {
   const assetUrls = assetUrlsForBundle(bundle, customAssetUrls ?? data.storefrontAssetUrls);
   const recipeSource = bundle.source.kind === "recipe" ? bundle.source : null;
-  const productPlaceholderUrl = recipeSource
+  const productPlaceholderUrl = recipeSource && isStoreTemplateId(recipeSource.templateId)
     ? assetUrls.get(getStoreTemplate(recipeSource.templateId).versions
       .find(({ templateVersion }) => templateVersion === recipeSource.templateVersion)
       ?.productPlaceholderAssetKey ?? "")
@@ -556,7 +587,8 @@ export function renderStorefrontSurface({ bundle, routeId, data, nonce, mode, ch
       </div>
     );
   } else {
-    const route: RouteArtifact = bundle.routes[routeId];
+    const route = bundle.routes[routeId];
+    if (!route) throw new Error(`Missing compiled route ${routeId}`);
     routeResult = (
       <div data-cd-bundle={routeId} data-cd-bundle-route={routeId}>
         {route.css ? <StorefrontStyle nonce={nonce} css={route.css} kind={routeId} /> : null}

@@ -1,4 +1,4 @@
-import type { DataRequirement, StorefrontRouteId } from "~/lib/storefront-bundle/types";
+import type { CompiledStorefrontRouteId, DataRequirement } from "~/lib/storefront-bundle/types";
 import type { StorefrontCatalog, StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 import { selectStorefrontPriceVariant } from "~/lib/storefront/catalog";
 import { getCatalog } from "~/lib/storefront/catalog.server";
@@ -27,6 +27,12 @@ export interface PublicVariant {
   compareAtPrice: PublicMoney | null;
   availability: "In stock" | "Sold out";
   available: boolean;
+  sellingPlans?: Array<{
+    id: string;
+    name: string;
+    cadence: string;
+    priceAdjustment: { type: "fixed_price"; valueCents: number; currency: string } | null;
+  }>;
 }
 
 export interface PublicProduct {
@@ -41,6 +47,7 @@ export interface PublicProduct {
   price: PublicMoney | null;
   compareAtPrice: PublicMoney | null;
   availability: "In stock" | "Sold out";
+  facts?: Array<{ id: string; kind: string; label: string; value: string; unit: string | null; url: string | null }>;
 }
 
 export interface PublicCollection {
@@ -63,6 +70,7 @@ export interface PublicCart {
     quantity: number;
     unitPrice: PublicMoney;
     total: PublicMoney;
+    sellingPlan?: { id: string; name: string; cadence: string } | null;
   }>;
   subtotal: PublicMoney;
   discounts: PublicMoney;
@@ -84,6 +92,7 @@ export interface PublicPresentationData {
       categories: Array<{ value: string; count: number }>;
       tags: Array<{ value: string; count: number }>;
       collections: Array<{ value: string; count: number }>;
+      facts?: Record<string, string[]>;
     };
     total: number;
     nextCursor: string | null;
@@ -93,7 +102,7 @@ export interface PublicPresentationData {
 }
 
 export type PublicRouteContext =
-  | { kind: "home" | "cart" | "checkout" }
+  | { kind: "home" | "cart" | "checkout" | "collections" | "story" | "notFound" }
   | { kind: "product"; handle: string }
   | { kind: "collection"; handle: string; searchInput?: StorefrontSearchInput }
   | { kind: "search"; query: string; searchInput?: StorefrontSearchInput };
@@ -161,6 +170,12 @@ function presentProduct(product: StoreProduct): PublicProduct {
     compareAtPrice: money(variant, "compareAtPriceCents"),
     availability: variant.available ? "In stock" : "Sold out",
     available: variant.available,
+    sellingPlans: (variant.sellingPlans ?? []).map((plan) => ({
+      id: plan.id,
+      name: plan.name,
+      cadence: plan.cadence,
+      priceAdjustment: plan.priceAdjustment ? { ...plan.priceAdjustment } : null,
+    })),
   }));
   const selectedId = selectStorefrontPriceVariant(product)?.id;
   const selected = variants.find((variant) => variant.id === selectedId) ?? null;
@@ -176,6 +191,7 @@ function presentProduct(product: StoreProduct): PublicProduct {
     price: selected?.price ?? null,
     compareAtPrice: selected?.compareAtPrice ?? null,
     availability: variants.some((variant) => variant.available) ? "In stock" : "Sold out",
+    facts: (product.facts ?? []).map(({ id, kind, label, value, unit, url }) => ({ id, kind, label, value, unit, url })),
   };
 }
 
@@ -326,6 +342,6 @@ export async function resolvePublicData(
   return data;
 }
 
-export function routeIdForPublicContext(route: PublicRouteContext): StorefrontRouteId {
+export function routeIdForPublicContext(route: PublicRouteContext): CompiledStorefrontRouteId {
   return route.kind;
 }

@@ -20,9 +20,18 @@ function topology(nodes: readonly CompiledNode[], depth = 0): string {
     : [`${depth}:${node.tag}`, topology(node.children, depth + 1)]).join("|");
 }
 
+function duplicateTemplateIds(keyFor: (recipe: typeof STOREFRONT_RECIPES[number], index: number) => string): string[][] {
+  const groups = new Map<string, string[]>();
+  STOREFRONT_RECIPES.forEach((recipe, index) => {
+    const key = keyFor(recipe, index);
+    groups.set(key, [...(groups.get(key) ?? []), recipe.config.templateId]);
+  });
+  return [...groups.values()].filter((templateIds) => templateIds.length > 1);
+}
+
 describe("interactive storefront recipe contracts", () => {
   it("keeps every template's HTML and CSS while binding merchant identity and catalog photography", () => {
-    expect(STOREFRONT_RECIPES).toHaveLength(11);
+    expect(STOREFRONT_RECIPES).toHaveLength(21);
     for (const recipe of STOREFRONT_RECIPES) {
       const { bundle } = recipe;
       expect(bundle.shell.bindings.some((binding) =>
@@ -110,7 +119,7 @@ describe("interactive storefront recipe contracts", () => {
   });
 
   it("emits collection intents accepted by the public adapter and search parser", () => {
-    const facets = new Set(["category", "tag", "available"]);
+    const facets = new Set(["category", "tag", "available", "fact-material", "fact-compatibility", "fact-ingredient", "fact-concern", "fact-heat-level"]);
     const sorts = new Set(["relevance", "title_asc", "title_desc", "price_asc", "price_desc"]);
     for (const recipe of STOREFRONT_RECIPES) {
       const nodes = new Map(elements(recipe.bundle.routes.collection.tree).map((node) => [node.id, node]));
@@ -119,7 +128,7 @@ describe("interactive storefront recipe contracts", () => {
         if (transition.action.type === "collection.filter") {
           expect(facets.has(transition.action.facetId),
             `${recipe.config.templateId} facet ${transition.action.facetId}`).toBe(true);
-          expect(value, `${recipe.config.templateId} filter value`).toBeTruthy();
+          expect(value !== undefined || nodes.get(transition.sourceId)?.tag === "input", `${recipe.config.templateId} filter value`).toBe(true);
         }
         if (transition.action.type === "collection.sort") {
           expect(sorts.has(value ?? ""), `${recipe.config.templateId} sort ${value}`).toBe(true);
@@ -144,14 +153,13 @@ describe("interactive storefront recipe contracts", () => {
     }
   });
 
-  it("keeps buyer route topologies materially distinct across all eleven stores", () => {
+  it("keeps buyer route topologies materially distinct across all stores", () => {
     for (const routeId of ["product", "search", "cart"] as const) {
-      const fingerprints = STOREFRONT_RECIPES.map((recipe) => topology(recipe.bundle.routes[routeId].tree));
-      expect(new Set(fingerprints).size, `${routeId} topology count`).toBe(STOREFRONT_RECIPES.length);
+      expect(duplicateTemplateIds((recipe) => topology(recipe.bundle.routes[routeId].tree)), routeId).toEqual([]);
     }
     const checkoutFingerprints = STOREFRONT_RECIPES.map((recipe) =>
       `${topology(recipe.bundle.routes.checkout.decorativeTree)}|${recipe.bundle.routes.checkout.layout.columnMode}|${recipe.bundle.routes.checkout.layout.sectionOrder.join(",")}`,
     );
-    expect(new Set(checkoutFingerprints).size, "checkout topology count").toBe(STOREFRONT_RECIPES.length);
+    expect(duplicateTemplateIds((_, index) => checkoutFingerprints[index]!), "checkout").toEqual([]);
   });
 });

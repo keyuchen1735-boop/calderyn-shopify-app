@@ -76,6 +76,50 @@ function artifact(overrides: Partial<RouteArtifact> = {}): RouteArtifact {
 }
 
 describe("compiled-node server renderer", () => {
+  it("renders an isolated unregistered volt v1 recipe", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.source = { kind: "recipe", templateId: "volt", templateVersion: 1 };
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle: compileBundle(source).bundle,
+      routeId: "home",
+      data,
+      nonce: "volt-nonce",
+      mode: "public",
+    }));
+
+    expect(html).toContain('data-cd-bundle="home"');
+  });
+
+  it("renders poster-first video with manifest-resolved sources only", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.assets.entries = [
+      { key: "hero-poster", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 42 },
+      { key: "hero-webm", contentHash: "b".repeat(64), mediaType: "video/webm", byteSize: 84 },
+      { key: "hero-mp4", contentHash: "c".repeat(64), mediaType: "video/mp4", byteSize: 84 },
+    ];
+    source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster" muted autoplay playsinline loop preload="metadata"><source data-cd-asset="hero-webm" type="video/webm"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
+    const bundle = compileBundle(source).bundle;
+    const html = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "home", data, nonce: "video-nonce", mode: "public",
+      customAssetUrls: { "hero-poster": "/poster.webp", "hero-webm": "/hero.webm", "hero-mp4": "/hero.mp4" },
+    }));
+
+    expect(html).toContain('poster="/poster.webp"');
+    expect(html).toContain('src="/hero.webm"');
+    expect(html).toContain('src="/hero.mp4"');
+    expect(html).toContain("autoplay");
+    expect(html).toContain("playsinline");
+  });
+
+  it("does not treat persisted autoplay false as enabled", () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const root = bundle.routes.home.tree[0];
+    if (root.kind !== "element") throw new Error("Expected home root");
+    root.tag = "video";
+    root.attributes.autoplay = "false";
+    const html = renderToStaticMarkup(renderStorefrontSurface({ bundle, routeId: "home", data, nonce: "video-false", mode: "public" }));
+    expect(html).not.toContain("autoplay");
+  });
   it("emits validated design tokens and every curated self-hosted font beneath the bundle root", () => {
     for (const fontId of CURATED_FONT_IDS) {
       const source = structuredClone(VALID_BUNDLE_SOURCE);
@@ -439,6 +483,28 @@ describe("compiled-node server renderer", () => {
     expect(html.match(/data-cd-compiler-id="cd-home-card"/g)).toHaveLength(2);
     expect(html.match(/id="cd-home-card-i-[^"]+"/g)).toHaveLength(2);
     expect(html.match(/data-cd-repeat-owner="true"/g)).toHaveLength(2);
+  });
+
+  it("hides an empty product fact repeat and renders only projected safe fact URLs", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.product.html = `<main><dl data-cd-repeat="product.facts"><div data-cd-key="fact.id"><dt data-cd-text="fact.label"></dt><dd data-cd-text="fact.value"></dd><a data-cd-href="fact.url">Open fact</a></div></dl></main>`;
+    const bundle = compileBundle(source).bundle;
+    const empty = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "product", data: { ...data, product: publicProduct }, nonce: "empty-facts", mode: "public",
+    }));
+    expect(empty).not.toContain("Open fact");
+    const withFact = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "product", data: { ...data, product: { ...publicProduct, facts: [{ id: "f1", kind: "document_url", label: "Document", value: "https://cdn.example/spec.pdf", unit: null, url: "https://cdn.example/spec.pdf" }] } }, nonce: "facts", mode: "public",
+    }));
+    expect(withFact).toContain('href="https://cdn.example/spec.pdf"');
+    expect(withFact).toContain("Document");
+    const mixed = renderToStaticMarkup(renderStorefrontSurface({
+      bundle, routeId: "product", data: { ...data, product: { ...publicProduct, facts: [
+        { id: "f1", kind: "material", label: "Material", value: "Walnut", unit: null, url: null },
+        { id: "f2", kind: "document_url", label: "Document", value: "https://cdn.example/spec.pdf", unit: null, url: "https://cdn.example/spec.pdf" },
+      ] } }, nonce: "mixed-facts", mode: "public",
+    }));
+    expect(mixed.match(/>Open fact<\/a>/g)).toHaveLength(1);
   });
 
   it("excerpts repeated product descriptions while preserving the complete PDP description", () => {

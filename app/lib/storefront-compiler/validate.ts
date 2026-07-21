@@ -12,6 +12,7 @@ import {
   type RouteTarget,
   type RuntimeActionSpec,
   type RuntimeCapability,
+  type TrustedPersonalizationField,
   type TrustedSlotManifest,
 } from "../storefront-bundle/types";
 import { compileState, assertInteractionCompatibility } from "./interactions";
@@ -56,20 +57,21 @@ type UnknownRecord = Record<string, unknown>;
 type AddDiagnostic = (code: string, path: string, message: string) => void;
 
 const encoder = new TextEncoder();
-const ROUTE_IDS = new Set(["home", "collection", "product", "search", "cart", "checkout", "account", "policy"]);
+const ROUTE_IDS = new Set(["home", "collection", "product", "search", "cart", "checkout", "collections", "story", "notFound", "account", "policy"]);
 const EVENTS = new Set(["click", "change", "input", "keydown", "inview", "scrollProgress"]);
-const BINDING_KINDS = new Set<CompiledBindingKind>(["text", "money", "src", "alt"]);
+const BINDING_KINDS = new Set<CompiledBindingKind>(["text", "money", "src", "alt", "href"]);
 const SLOT_KINDS = new Set<TrustedSlotManifest["kind"]>([
-  "variantPicker", "addToCart", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce",
+  "variantPicker", "addToCart", "bundleBuilder", "cartLineControls", "cartSummary", "cartDrawer", "quickViewCommerce",
 ]);
 const HOST_SIZES = new Set<TrustedSlotManifest["hostSize"]>(["inline", "block", "panel", "page"]);
 const COMPILED_ATTRIBUTES = new Set([
   "class", "title", "role", "tabindex", "alt", "width", "height", "loading", "decoding", "open", "href", "for",
-  "type", "name", "placeholder", "value",
-  "data-cd-repeat-id", "data-cd-bind-text", "data-cd-bind-money", "data-cd-bind-src", "data-cd-bind-alt",
+  "type", "name", "placeholder", "value", "muted", "autoplay", "playsinline", "loop", "preload", "data-cd-video",
+  "data-cd-repeat-id", "data-cd-bind-text", "data-cd-bind-money", "data-cd-bind-src", "data-cd-bind-alt", "data-cd-bind-href",
   "data-cd-route-target", "data-cd-trusted-slot-id", "data-cd-platform-content", "data-cd-asset-key",
-  "data-cd-empty-state", "data-cd-native-control",
+  "data-cd-empty-state", "data-cd-native-control", "data-cd-poster-asset-key", "data-cd-motion",
 ]);
+const DECLARATIVE_MOTIONS = new Set(["reveal", "parallax", "count-up", "pinned", "scroll-progress"]);
 
 function record(value: unknown): UnknownRecord | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as UnknownRecord : null;
@@ -108,10 +110,17 @@ function hasControlCharacter(value: string): boolean {
 }
 
 function validControlAttribute(tag: unknown, name: string, value: string): boolean {
-  if (name === "type") return tag === "input" && ["search", "text", "radio", "checkbox"].includes(value);
+  if (name === "type") {
+    if (tag === "input") return ["search", "text", "radio", "checkbox"].includes(value);
+    return tag === "source" && ["video/webm", "video/mp4"].includes(value);
+  }
   if (name === "name") return tag === "input" && isIdentifier(value) && value.length <= 80;
   if (name === "placeholder") return tag === "input" && value.length <= 160 && !hasControlCharacter(value);
   if (name === "value") return (tag === "input" || tag === "button" || tag === "option" || tag === "select") && value.length <= 120 && !hasControlCharacter(value);
+  if (["muted", "autoplay", "playsinline", "loop", "data-cd-video"].includes(name)) return tag === "video" && value === "";
+  if (name === "preload") return tag === "video" && ["none", "metadata", "auto"].includes(value);
+  if (name === "data-cd-poster-asset-key") return tag === "video" && isCompilerIdentifier(value);
+  if (name === "data-cd-motion") return DECLARATIVE_MOTIONS.has(value);
   return true;
 }
 
@@ -340,6 +349,7 @@ function parseTree(
     if (element.attributes["data-cd-platform-content"] && element.attributes["data-cd-platform-content"] !== "policyLinks") add("tree.platform_content", `${path}.${element.id}`, "Platform content marker is unsupported");
     if (element.attributes["data-cd-empty-state"] !== undefined && element.attributes["data-cd-empty-state"] !== "") add("tree.empty_state", `${path}.${element.id}`, "Empty-state marker is malformed");
     if (element.attributes["data-cd-asset-key"] && !isIdentifier(element.attributes["data-cd-asset-key"])) add("asset.key", `${path}.${element.id}`, "Compiled asset key is malformed");
+    if (element.attributes["data-cd-poster-asset-key"] && !isIdentifier(element.attributes["data-cd-poster-asset-key"])) add("asset.key", `${path}.${element.id}`, "Compiled poster asset key is malformed");
   }
   return context;
 }
@@ -607,6 +617,22 @@ function parseSlots(value: unknown, path: string, tree: TreeContext, add: AddDia
       (typeof input.scopeId !== "string" || tree.scopes.get(input.scopeId)?.kind !== "cartLine")) {
       add("slot.scope", currentPath, "cartLineControls requires an exact cartLine repeat scope");
     }
+    const personalizationFields = input.personalizationFields;
+    const slotCount = input.slotCount;
+    const validSlotCount = input.kind === "bundleBuilder"
+      ? Number.isSafeInteger(slotCount) && Number(slotCount) >= 2 && Number(slotCount) <= 12
+      : slotCount === undefined;
+    if (!validSlotCount) add("slot.bundle", currentPath, "bundleBuilder slot count is malformed or unsupported");
+    const validPersonalizationFields = personalizationFields === undefined || (
+      input.kind === "addToCart" && Array.isArray(personalizationFields) &&
+      personalizationFields.length > 0 && personalizationFields.length <= 4 &&
+      new Set(personalizationFields).size === personalizationFields.length &&
+      personalizationFields.every((field): field is TrustedPersonalizationField =>
+        field === "engraving" || field === "giftNote" || field === "giftWrap" || field === "recipient")
+    );
+    if (!validPersonalizationFields) {
+      add("slot.personalization", currentPath, "Trusted personalization fields are malformed or unsupported");
+    }
     const host = tree.elements.get(input.id);
     if (!host || host.trustedSlotId !== input.id) add("slot.unresolved_host", currentPath, "Trusted slot host is unresolved");
     else {
@@ -624,6 +650,10 @@ function parseSlots(value: unknown, path: string, tree: TreeContext, add: AddDia
       scopeId: typeof input.scopeId === "string" ? input.scopeId : undefined,
       hostSize: input.hostSize as TrustedSlotManifest["hostSize"],
       themeTokenIds: input.themeTokenIds as string[],
+      ...(validPersonalizationFields && Array.isArray(personalizationFields)
+        ? { personalizationFields: personalizationFields as TrustedPersonalizationField[] }
+        : {}),
+      ...(validSlotCount && typeof slotCount === "number" ? { slotCount } : {}),
     });
   });
   return slots;
@@ -660,7 +690,8 @@ function deriveContract(
   if (namespace === "cart") addData({ kind: "cart" });
   if ([...tree.elements.values()].some((node) => node.attributes["data-cd-platform-content"] === "policyLinks")) addData({ kind: "policyLinks" });
   for (const slot of slots) {
-    if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") addData({ kind: "cart" });
+    if (slot.kind === "bundleBuilder") addData({ kind: "featuredProducts", limit: 12 });
+    else if (slot.kind === "cartLineControls" || slot.kind === "cartSummary" || slot.kind === "cartDrawer") addData({ kind: "cart" });
     else if (namespace === "product" && !slot.scopeId) addData({ kind: "currentProduct" });
   }
   const dataOrder: readonly DataRequirement["kind"][] = ["storeIdentity", "policyLinks", "currentProduct", "currentCollection", "cart", "featuredProducts", "relatedProducts", "searchResults"];
@@ -711,7 +742,10 @@ function validateRoute(value: unknown, namespace: string, path: string, add: Add
   if (interactionsJson && bytes(interactionsJson) > validationLimitsV1.interactionManifestBytes) add("interaction.byte_limit", `${path}.interactions`, "Interaction manifest exceeds 40KB");
   const interactions = parseInteractions(input.interactions, `${path}.interactions`, tree, add);
   for (const element of tree.elements.values()) {
-    if (element.tag === "a" && !element.routeTarget && !element.attributes.href) add("tree.inert_control", `${path}.tree.${element.id}`, "Compiled anchor is inert");
+    const hasBoundHref = bindings.some((binding) => binding.targetId === element.id && binding.kind === "href");
+    if (element.tag === "a" && !element.routeTarget && !element.attributes.href && !hasBoundHref) {
+      add("tree.inert_control", `${path}.tree.${element.id}`, "Compiled anchor is inert");
+    }
     if (element.tag === "button" && !element.routeTarget && !interactions.transitions.some((transition) => transition.sourceId === element.id)) add("tree.inert_control", `${path}.tree.${element.id}`, "Compiled button is inert");
   }
   const slots = parseSlots(input.trustedSlots, `${path}.trustedSlots`, tree, add);
@@ -785,15 +819,25 @@ function validateCheckout(value: unknown, add: AddDiagnostic): TreeContext {
 function validateAssetReferenceSet(bundle: UnknownRecord, trees: readonly TreeContext[], add: AddDiagnostic): void {
   const assets = record(bundle.assets);
   if (!assets || !Array.isArray(assets.entries)) return;
-  const manifestKeys = new Set(assets.entries.flatMap((entry) => {
+  const manifestTypes = new Map(assets.entries.flatMap((entry) => {
     const item = record(entry);
-    return typeof item?.key === "string" ? [item.key] : [];
+    return typeof item?.key === "string" && typeof item.mediaType === "string" ? [[item.key, item.mediaType] as const] : [];
   }));
+  const manifestKeys = new Set(manifestTypes.keys());
   const referencedKeys = new Set<string>();
   for (const tree of trees) {
     for (const element of tree.elements.values()) {
-      const key = element.attributes["data-cd-asset-key"];
-      if (key) referencedKeys.add(key);
+      const assetKey = element.attributes["data-cd-asset-key"];
+      const posterKey = element.attributes["data-cd-poster-asset-key"];
+      if (posterKey && manifestTypes.get(posterKey) !== "image/webp") {
+        add("asset.media_mismatch", `assets.references.${posterKey}`, "Video poster asset must be image/webp");
+      }
+      if (element.tag === "source" && assetKey && manifestTypes.get(assetKey) !== element.attributes.type) {
+        add("asset.media_mismatch", `assets.references.${assetKey}`, "Video source type must match its manifest media type");
+      }
+      for (const key of [element.attributes["data-cd-asset-key"], element.attributes["data-cd-poster-asset-key"]]) {
+        if (key) referencedKeys.add(key);
+      }
     }
   }
   for (const key of [...referencedKeys].sort(compareCodeUnits)) {
@@ -874,6 +918,9 @@ function validateDesignTokenCoverage(bundle: UnknownRecord, add: AddDiagnostic):
       `routes.${routeId}.css`,
       record(routes?.[routeId])?.css,
     ] as [string, unknown]),
+    ...(["collections", "story", "notFound"] as const).flatMap((routeId) => routes?.[routeId] === undefined ? [] : [[
+      `routes.${routeId}.css`, record(routes[routeId])?.css,
+    ] as [string, unknown]]),
     ["routes.checkout.decorativeCss", record(routes?.checkout)?.decorativeCss],
   ];
   for (const [path, css] of cssArtifacts) {
@@ -886,7 +933,7 @@ function validateDesignTokenCoverage(bundle: UnknownRecord, add: AddDiagnostic):
       // The artifact-specific CSS validator reports malformed CSS separately.
     }
   }
-  for (const [routeId, route] of [["shell", bundle.shell], ...(["home", "collection", "product", "search", "cart"] as const).map((id) => [id, routes?.[id]])] as Array<[string, unknown]>) {
+  for (const [routeId, route] of [["shell", bundle.shell], ...(["home", "collection", "product", "search", "cart", "collections", "story", "notFound"] as const).map((id) => [id, routes?.[id]])] as Array<[string, unknown]>) {
     const trustedSlots = record(route)?.trustedSlots;
     if (!Array.isArray(trustedSlots)) continue;
     trustedSlots.forEach((slot, index) => {
@@ -924,6 +971,12 @@ export function validateCompiledBundle(value: unknown): BundleValidationReport {
     if (!routes) add("bundle.routes", "routes", "Bundle routes must be an object");
     for (const routeId of ["home", "collection", "product", "search", "cart"] as const) {
       const tree = validateRoute(routes?.[routeId], routeId, `routes.${routeId}`, add);
+      trees.push(tree);
+      protectedNodes.push(...tree.protectedNodes);
+    }
+    for (const routeId of ["collections", "story", "notFound"] as const) {
+      if (routes?.[routeId] === undefined) continue;
+      const tree = validateRoute(routes[routeId], routeId, `routes.${routeId}`, add);
       trees.push(tree);
       protectedNodes.push(...tree.protectedNodes);
     }

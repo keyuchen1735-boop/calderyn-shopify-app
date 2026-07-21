@@ -46,6 +46,7 @@ async function previewRouteContext(request: Request, shopId: string): Promise<Pu
   }
   if (route === "search") return { kind: "search", query: url.searchParams.get("q")?.slice(0, 200) ?? "" };
   if (route === "cart" || route === "checkout") return { kind: route };
+  if (route === "collections" || route === "story" || route === "notFound") return { kind: route };
   return { kind: "home" };
 }
 
@@ -59,9 +60,10 @@ function withPreviewRecipeAssetUrls(request: Request, runtime1: Runtime1RouteDat
   }
   const urls: Record<string, string> = { ...runtime1.data.storefrontAssetUrls };
   if (runtime1.bundle.source.kind === "recipe") {
+    const extension = { "image/webp": "webp", "video/webm": "webm", "video/mp4": "mp4" } as const;
     for (const asset of runtime1.bundle.assets.entries) {
-      if (asset.mediaType === "image/webp") {
-        urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.contentHash}.webp`;
+      if (!urls[asset.key] && asset.mediaType in extension) {
+        urls[asset.key] = `/storefront-recipes/${runtime1.bundle.source.templateId}/${asset.contentHash}.${extension[asset.mediaType as keyof typeof extension]}`;
       }
     }
   }
@@ -146,10 +148,44 @@ export async function action({ request }: ActionFunctionArgs) {
   if (intent === "checkout") {
     return json(adapter.checkout(), { headers: storefrontCacheHeaders({ routeId: "preview", personalized: true }) });
   }
-  if (intent === "add") {
+  if (intent === "addBundle") {
+    const entries = [...form.entries()];
+    if (entries.length !== 2 || form.getAll("intent").length !== 1 || form.getAll("lines").length !== 1 ||
+      entries.some(([key]) => key !== "intent" && key !== "lines")) {
+      throw new Response("Invalid preview bundle", { status: 400 });
+    }
+    const encoded = form.get("lines");
+    let lines: unknown;
+    try { lines = typeof encoded === "string" && encoded.length <= 4096 ? JSON.parse(encoded) : null; } catch { lines = null; }
+    if (!Array.isArray(lines) || lines.length < 2 || lines.length > 12 || lines.some((line) => {
+      if (!line || typeof line !== "object" || Array.isArray(line)) return true;
+      const candidate = line as Record<string, unknown>;
+      return Object.keys(candidate).some((key) => key !== "variantId" && key !== "quantity") ||
+        typeof candidate.variantId !== "string" || !candidate.variantId || candidate.variantId.length > 128 || candidate.quantity !== 1;
+    })) throw new Response("Invalid preview bundle", { status: 400 });
+    const catalog = getCatalog();
+    const products = catalog.getVariantById ? null : await catalog.listProducts(shopId);
+    const resolvedLines = await Promise.all((lines as Array<{ variantId: string; quantity: 1 }>).map(async (line) => {
+      const resolved = catalog.getVariantById
+        ? await catalog.getVariantById(shopId, line.variantId)
+        : products!.flatMap((product) => product.variants.map((variant) => ({ product, variant })))
+          .find((entry) => entry.variant.id === line.variantId) ?? null;
+      if (!resolved || !resolved.variant.available) throw new Response("Variant unavailable", { status: 422 });
+      return {
+        lineId: `preview:${line.variantId}`,
+        variantId: line.variantId,
+        title: resolved.variant.title && resolved.variant.title !== resolved.product.title
+          ? `${resolved.product.title} - ${resolved.variant.title}`
+          : resolved.product.title,
+        quantity: line.quantity,
+        unitPrice: { cents: resolved.variant.priceCents, currency: resolved.variant.currency.toUpperCase() },
+      };
+    }));
+    try { adapter.addBundle(resolvedLines); } catch { throw new Response("Invalid preview bundle", { status: 422 }); }
+  } else if (intent === "add") {
     const variantId = form.get("variantId");
     const quantity = Number(form.get("quantity") ?? 1);
-    if (typeof variantId !== "string" || !Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+    if (typeof variantId !== "string" || !Number.isInteger(quantity) || quantity < 1 || quantity > 999) {
       throw new Response("Invalid preview cart line", { status: 400 });
     }
     const catalog = getCatalog();
@@ -171,7 +207,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const lineId = form.get("lineId");
     const quantity = Number(form.get("quantity"));
     if (typeof lineId !== "string") throw new Response("lineId is required", { status: 400 });
-    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 99) {
+    if (!Number.isInteger(quantity) || quantity < 0 || quantity > 999) {
       throw new Response("Invalid preview quantity", { status: 400 });
     }
     adapter.setQuantity(lineId, quantity);
@@ -183,7 +219,13 @@ export async function action({ request }: ActionFunctionArgs) {
   else throw new Response("Unknown preview action", { status: 400 });
 
   const headers = storefrontCacheHeaders({ routeId: "preview", personalized: true });
-  headers.append("Set-Cookie", await commitPreviewCommerceSession(adapter.snapshot()));
+  let cookie: string;
+  try { cookie = await commitPreviewCommerceSession(adapter.snapshot()); }
+  catch (error) {
+    if (!(error instanceof Error) || error.message !== "Preview cart exceeds cookie capacity") throw error;
+    throw new Response(error.message, { status: 422 });
+  }
+  headers.append("Set-Cookie", cookie);
   return json({ cart: adapter.cart() }, { headers });
 }
 

@@ -3,6 +3,18 @@ import { MALICIOUS_HTML_CASES } from "./__fixtures__/malicious";
 import { CompilerError, compileHtml } from "./html";
 
 describe("compileHtml", () => {
+  it("compiles poster-first recipe video asset bindings without accepting raw URLs", () => {
+    const source = `<video data-cd-video data-cd-poster-asset="hero-poster" muted autoplay playsinline loop preload="metadata"><source data-cd-asset="hero-webm" type="video/webm"><source data-cd-asset="hero-mp4" type="video/mp4"></video>`;
+    const result = compileHtml(source, { namespace: "home" });
+
+    expect(result.html).toContain('data-cd-poster-asset-key="hero-poster"');
+    expect(result.html).toContain('data-cd-video=""');
+    expect(result.html).toContain('data-cd-asset-key="hero-webm"');
+    expect(result.html).toContain('type="video/webm"');
+    expect(() => compileHtml(`<video src="https://example.com/hero.mp4" poster="https://example.com/poster.webp"></video>`, { namespace: "home" }))
+      .toThrow(CompilerError);
+  });
+
   it.each(MALICIOUS_HTML_CASES)("rejects %s", (_name, source) => {
     expect(() => compileHtml(source, { namespace: "route" })).toThrow(CompilerError);
   });
@@ -40,6 +52,11 @@ describe("compileHtml", () => {
     expect(result.html).not.toContain("data-cd-on=");
     expect(result.html).not.toContain("data-cd-action=");
     expect(result.html).not.toContain("data-cd-target=");
+  });
+
+  it("compiles navigation to optional storefront surfaces", () => {
+    const result = compileHtml(`<a data-cd-route="collections">Collections</a><a data-cd-route="story">Story</a>`, { namespace: "shell" });
+    expect(result.routeTargets.map(({ routeId }) => routeId)).toEqual(["collections", "story"]);
   });
 
   it("allows bounded standalone catalog-search inputs and stable control values", () => {

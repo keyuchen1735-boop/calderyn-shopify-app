@@ -13,6 +13,10 @@ import { getCatalog } from "~/lib/storefront/catalog.server";
 import { DEMO_SHOP_ID } from "~/lib/storefront/shop.server";
 import type { StoreProduct, StoreVariant } from "~/lib/storefront/catalog";
 import type { QuoteLine, PricedLine } from "~/lib/commerce/types";
+import {
+  canonicalizeStorefrontLinePersonalization,
+  type StorefrontLinePersonalization,
+} from "~/lib/storefront-runtime/trusted-slots";
 
 /**
  * Thrown by addCartLine when a variant can't be added because it no longer resolves in the catalog
@@ -27,6 +31,12 @@ export class VariantUnavailableError extends Error {
     super(`variant ${variantId} ${reason === "not_found" ? "not found" : "is not available"}`);
     this.name = "VariantUnavailableError";
     this.variantId = variantId;
+  }
+}
+export class SellingPlanUnavailableError extends Error {
+  constructor(readonly sellingPlanId: string) {
+    super(`selling plan ${sellingPlanId} is not eligible for this variant`);
+    this.name = "SellingPlanUnavailableError";
   }
 }
 
@@ -56,9 +66,11 @@ export interface CartLine {
   unitPriceCents: number;
   currency: string;
   titleSnapshot: string;
+  personalization: StorefrontLinePersonalization;
+  sellingPlan?: { id: string; name: string; cadence: string } | null;
 }
 
-const LINE_COLS = "id, cart_id, variant_id, quantity, unit_price_cents, currency, title_snapshot";
+const LINE_COLS = "id, cart_id, variant_id, quantity, unit_price_cents, currency, title_snapshot, personalization, selling_plan_id, selling_plan_name, selling_plan_cadence";
 
 export interface PricedCart {
   cartId: string;
@@ -137,6 +149,8 @@ export async function addCartLine(
   cartId: string,
   variantId: string,
   quantity: number,
+  personalization: StorefrontLinePersonalization = {},
+  sellingPlanId?: string,
 ): Promise<CartLine & { productId: string }> {
   if (!shopId) throw new Error("shopId is required");
   assertPersistableShop(shopId);
@@ -156,21 +170,72 @@ export async function addCartLine(
   if (!resolved.variant.available) {
     throw new VariantUnavailableError(variantId, "unavailable");
   }
+  const canonicalPersonalization = canonicalizeStorefrontLinePersonalization(personalization);
+  const sellingPlan = sellingPlanId
+    ? (resolved.variant.sellingPlans ?? []).find((plan) => plan.id === sellingPlanId)
+    : null;
+  if (sellingPlanId && !sellingPlan) throw new SellingPlanUnavailableError(sellingPlanId);
+  const adjustedPrice = sellingPlan?.priceAdjustment;
 
   const { data, error } = await getSupabase().rpc("cart_add_line_atomic", {
     p_shop_id: shopId,
     p_cart_id: cartId,
     p_variant_id: variantId,
     p_quantity: quantity,
-    p_unit_price_cents: resolved.variant.priceCents,
-    p_currency: resolved.variant.currency.toLowerCase(),
+    p_unit_price_cents: adjustedPrice?.valueCents ?? resolved.variant.priceCents,
+    p_currency: (adjustedPrice?.currency ?? resolved.variant.currency).toLowerCase(),
     p_title_snapshot: snapshotTitle(resolved.product, resolved.variant),
+    p_personalization: canonicalPersonalization,
+    p_selling_plan_id: sellingPlan?.id ?? null,
   });
   if (error) throw error;
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     throw new Error("cart_add_line_atomic returned no row");
   }
   return { ...mapLine(data as Record<string, unknown>), productId: resolved.product.id };
+}
+
+export async function addCartLines(
+  shopId: string,
+  cartId: string,
+  lines: readonly { variantId: string; quantity: number }[],
+): Promise<Array<CartLine & { productId: string }>> {
+  if (!shopId) throw new Error("shopId is required");
+  assertPersistableShop(shopId);
+  if (!cartId) throw new Error("cartId is required");
+  if (lines.length < 2 || lines.length > 12) throw new Error("bundle must contain 2 to 12 lines");
+  const selected = await Promise.all(lines.map(async ({ variantId, quantity }) => {
+    if (!variantId || variantId.length > 128 || !Number.isInteger(quantity) || quantity !== 1) {
+      throw new Error("bundle lines require a bounded variant ID and quantity 1");
+    }
+    const resolved = await resolveVariant(shopId, variantId);
+    if (!resolved) throw new VariantUnavailableError(variantId, "not_found");
+    if (!resolved.variant.available) throw new VariantUnavailableError(variantId, "unavailable");
+    return {
+      productId: resolved.product.id,
+      variant_id: variantId,
+      quantity,
+      unit_price_cents: resolved.variant.priceCents,
+      currency: resolved.variant.currency.toLowerCase(),
+      title_snapshot: snapshotTitle(resolved.product, resolved.variant),
+      personalization: {},
+      selling_plan_id: null,
+    };
+  }));
+  const snapshots = [...selected.reduce((byVariant, line) => {
+    const existing = byVariant.get(line.variant_id);
+    if (existing) existing.quantity += line.quantity;
+    else byVariant.set(line.variant_id, { ...line });
+    return byVariant;
+  }, new Map<string, (typeof selected)[number]>()).values()];
+  const { data, error } = await getSupabase().rpc("cart_add_lines_atomic", {
+    p_shop_id: shopId,
+    p_cart_id: cartId,
+    p_lines: snapshots.map(({ productId: _productId, ...snapshot }) => snapshot),
+  });
+  if (error) throw error;
+  if (!Array.isArray(data) || data.length !== snapshots.length) throw new Error("cart_add_lines_atomic returned invalid rows");
+  return data.map((row, index) => ({ ...mapLine(row as Record<string, unknown>), productId: snapshots[index]!.productId }));
 }
 
 /**
@@ -363,6 +428,7 @@ function mapCart(row: Record<string, unknown>): Cart {
 }
 
 function mapLine(row: Record<string, unknown>): CartLine {
+  const personalization = row.personalization;
   return {
     id: String(row.id),
     cartId: String(row.cart_id),
@@ -371,5 +437,13 @@ function mapLine(row: Record<string, unknown>): CartLine {
     unitPriceCents: Number(row.unit_price_cents),
     currency: String(row.currency),
     titleSnapshot: String(row.title_snapshot),
+    personalization: personalization && typeof personalization === "object" && !Array.isArray(personalization)
+      ? canonicalizeStorefrontLinePersonalization(personalization as StorefrontLinePersonalization)
+      : {},
+    sellingPlan: row.selling_plan_id == null || row.selling_plan_id === "" ? null : {
+      id: String(row.selling_plan_id),
+      name: String(row.selling_plan_name),
+      cadence: String(row.selling_plan_cadence),
+    },
   };
 }

@@ -21,7 +21,7 @@ describe("discontinueProduct", () => {
     expect(res.previousStatus).toBeNull(); // not read on the write; documented below
     const call = (admin.graphql as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(String(call[0])).toContain("productUpdate");
-    expect(call[1]).toMatchObject({ variables: { input: { id: PRODUCT_GID, status: "ARCHIVED" } } });
+    expect(call[1]).toMatchObject({ variables: { product: { id: PRODUCT_GID, status: "ARCHIVED" } } });
   });
 
   it("throws on userErrors (rule 12 — no silent success)", async () => {
@@ -45,7 +45,7 @@ describe("restoreProduct", () => {
     const res = await restoreProduct(admin, PRODUCT_GID, "ACTIVE");
     expect(res.productId).toBe(PRODUCT_GID);
     const call = (admin.graphql as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[1]).toMatchObject({ variables: { input: { id: PRODUCT_GID, status: "ACTIVE" } } });
+    expect(call[1]).toMatchObject({ variables: { product: { id: PRODUCT_GID, status: "ACTIVE" } } });
   });
 
   it("throws on userErrors", async () => {

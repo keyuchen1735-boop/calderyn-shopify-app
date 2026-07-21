@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { PdpBlockColumns } from "~/lib/storebuilder/pdp-layout";
 import type { Block, BlockDocument, RenderData } from "~/lib/storebuilder/types";
+import type * as DashboardHttpModule from "~/lib/dashboard/http.server";
 import { compileBundle } from "~/lib/storefront-compiler/compile";
 import { VALID_BUNDLE_SOURCE } from "~/lib/storefront-compiler/__fixtures__/valid-bundle";
 // vi.mock calls are hoisted above every import, so the mocks below still apply
@@ -12,7 +13,7 @@ import { action, loader } from "../dashboard.store.preview";
 // The route imports the storefront stylesheet as a URL and several server-only
 // data sources. Stub the URL import and the DB/session reads so the loader's
 // real doc-selection + render wiring runs in isolation.
-const { sessionMock, getCatalogMock, getPreviewCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock } = vi.hoisted(() => ({
+const { sessionMock, getCatalogMock, getPreviewCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock, commitPreviewCommerceSessionMock } = vi.hoisted(() => ({
   sessionMock: vi.fn(),
   getCatalogMock: vi.fn(),
   getPreviewCatalogMock: vi.fn(),
@@ -23,6 +24,7 @@ const { sessionMock, getCatalogMock, getPreviewCatalogMock, getSettingsMock, loa
   readPreviewCommerceSessionMock: vi.fn(),
   getRecipeMock: vi.fn(),
   createPreviewCommerceAdapterMock: vi.fn(),
+  commitPreviewCommerceSessionMock: vi.fn(),
 }));
 vi.mock("~/styles/storefront.css?url", () => ({ default: "/assets/storefront.css" }));
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: sessionMock }));
@@ -34,11 +36,11 @@ vi.mock("~/lib/storefront-runtime/preview-commerce.server", () => ({
   readPreviewBundleVersion: readPreviewBundleVersionMock,
   readPreviewCommerceSession: readPreviewCommerceSessionMock,
   createPreviewCommerceAdapter: createPreviewCommerceAdapterMock,
-  commitPreviewCommerceSession: vi.fn(),
+  commitPreviewCommerceSession: commitPreviewCommerceSessionMock,
 }));
 vi.mock("~/lib/storefront-recipes", () => ({ getStorefrontRecipe: getRecipeMock }));
 vi.mock("~/lib/dashboard/http.server", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("~/lib/dashboard/http.server")>()),
+  ...(await importOriginal<typeof DashboardHttpModule>()),
   requireSameOrigin: vi.fn(),
 }));
 
@@ -66,7 +68,7 @@ const catalog = {
 };
 
 beforeEach(() => {
-  for (const m of [sessionMock, getCatalogMock, getPreviewCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock]) m.mockReset();
+  for (const m of [sessionMock, getCatalogMock, getPreviewCatalogMock, getSettingsMock, loadDraftMock, getSupabaseMock, readPreviewBundleVersionMock, readPreviewCommerceSessionMock, getRecipeMock, createPreviewCommerceAdapterMock, commitPreviewCommerceSessionMock]) m.mockReset();
   sessionMock.mockResolvedValue({ shopId: SHOP });
   getCatalogMock.mockReturnValue(catalog);
   getPreviewCatalogMock.mockReturnValue(catalog);
@@ -81,6 +83,7 @@ beforeEach(() => {
     },
   });
   createPreviewCommerceAdapterMock.mockReturnValue({ checkout: () => ({ kind: "simulated", status: "ready" }) });
+  commitPreviewCommerceSessionMock.mockResolvedValue("preview-cookie");
 });
 
 async function loaderData(url: string) {
@@ -115,6 +118,29 @@ describe("dashboard.store.preview loader", () => {
     }
   });
 
+  it("renders selected Larder videos from immutable same-origin public paths", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    bundle.assets.entries = [
+      { key: "hero-poster", contentHash: "b".repeat(64), mediaType: "image/webp", byteSize: 42 },
+      { key: "hero-webm", contentHash: "c".repeat(64), mediaType: "video/webm", byteSize: 42 },
+      { key: "hero-mp4", contentHash: "a".repeat(64), mediaType: "video/mp4", byteSize: 42 },
+    ];
+    getRecipeMock.mockReturnValue({ bundle: { ...bundle, source: { kind: "recipe", templateId: "larder", templateVersion: 1 } } });
+    try {
+      const result = await loaderData("https://dashboard.example.com/dashboard/store/preview?template=larder&route=home");
+      expect(result.data.storefrontAssetUrls).toEqual({
+        "hero-poster": `https://dashboard.example.com/storefront-recipes/larder/${"b".repeat(64)}.webp`,
+        "hero-webm": `https://dashboard.example.com/storefront-recipes/larder/${"c".repeat(64)}.webm`,
+        "hero-mp4": `https://dashboard.example.com/storefront-recipes/larder/${"a".repeat(64)}.mp4`,
+      });
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
   it("keeps checkout simulation interactive for an ephemeral selected recipe", async () => {
     const previous = process.env.STOREFRONT_BUNDLE_READ;
     process.env.STOREFRONT_BUNDLE_READ = "1";
@@ -129,6 +155,134 @@ describe("dashboard.store.preview loader", () => {
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({ kind: "simulated", status: "ready" });
       expect(readPreviewBundleVersionMock).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
+  it("adds a complete bounded bundle to the preview cart after resolving every variant", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    const addBundle = vi.fn();
+    const snapshot = { shopId: SHOP, lines: [] };
+    const cart = { id: `preview:${SHOP}`, count: 3, lines: [], subtotal: { cents: 1000, currency: "USD" }, discounts: { cents: 0, currency: "USD" }, total: { cents: 1000, currency: "USD" } };
+    createPreviewCommerceAdapterMock.mockReturnValue({ addBundle, snapshot: () => snapshot, cart: () => cart });
+    getCatalogMock.mockReturnValue({
+      ...catalog,
+      getVariantById: vi.fn(async (_shopId: string, variantId: string) => ({
+        product: { title: variantId === "v1" ? "Lemon" : "Ginger" },
+        variant: { id: variantId, title: "Single", available: true, priceCents: variantId === "v1" ? 300 : 400, currency: "usd" },
+      })),
+    });
+    try {
+      const form = new FormData();
+      form.set("intent", "addBundle");
+      form.set("lines", JSON.stringify([
+        { variantId: "v1", quantity: 1 }, { variantId: "v1", quantity: 1 }, { variantId: "v2", quantity: 1 },
+      ]));
+      const response = await action({ request: new Request("https://app.example.com/dashboard/store/preview?template=commons-index", { method: "POST", body: form }) } as ActionFunctionArgs);
+
+      expect(response.status).toBe(200);
+      expect(addBundle).toHaveBeenCalledWith([
+        expect.objectContaining({ variantId: "v1", quantity: 1, unitPrice: { cents: 300, currency: "USD" } }),
+        expect.objectContaining({ variantId: "v1", quantity: 1, unitPrice: { cents: 300, currency: "USD" } }),
+        expect.objectContaining({ variantId: "v2", quantity: 1, unitPrice: { cents: 400, currency: "USD" } }),
+      ]);
+      expect(response.headers.get("Set-Cookie")).toContain("preview-cookie");
+      expect(await response.json()).toEqual({ cart });
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
+  it("does not mutate or persist the preview cart when any bundle variant is unavailable", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    const addBundle = vi.fn();
+    createPreviewCommerceAdapterMock.mockReturnValue({ addBundle, snapshot: vi.fn(), cart: vi.fn() });
+    getCatalogMock.mockReturnValue({
+      ...catalog,
+      getVariantById: vi.fn(async (_shopId: string, variantId: string) => variantId === "sold"
+        ? null
+        : { product: { title: "Lemon" }, variant: { id: variantId, title: "Single", available: true, priceCents: 300, currency: "usd" } }),
+    });
+    try {
+      const form = new FormData();
+      form.set("intent", "addBundle");
+      form.set("lines", JSON.stringify([{ variantId: "v1", quantity: 1 }, { variantId: "sold", quantity: 1 }]));
+      await expect(action({
+        request: new Request("https://app.example.com/dashboard/store/preview?template=commons-index", { method: "POST", body: form }),
+      } as ActionFunctionArgs)).rejects.toMatchObject({ status: 422 });
+      expect(addBundle).not.toHaveBeenCalled();
+      expect(commitPreviewCommerceSessionMock).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
+  it("rejects recipe-authored bundle quantities before catalog access", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    const addBundle = vi.fn();
+    createPreviewCommerceAdapterMock.mockReturnValue({ addBundle, snapshot: vi.fn(), cart: vi.fn() });
+    try {
+      const form = new FormData();
+      form.set("intent", "addBundle");
+      form.set("lines", JSON.stringify([{ variantId: "v1", quantity: 2 }, { variantId: "v2", quantity: 1 }]));
+      await expect(action({
+        request: new Request("https://app.example.com/dashboard/store/preview?template=commons-index", { method: "POST", body: form }),
+      } as ActionFunctionArgs)).rejects.toMatchObject({ status: 400 });
+      expect(getCatalogMock).not.toHaveBeenCalled();
+      expect(addBundle).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
+  it("rejects a bundle atomically when the signed preview cookie would exceed capacity", async () => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    const addBundle = vi.fn();
+    createPreviewCommerceAdapterMock.mockReturnValue({ addBundle, snapshot: () => ({ shopId: SHOP, lines: [] }), cart: vi.fn() });
+    commitPreviewCommerceSessionMock.mockRejectedValue(new Error("Preview cart exceeds cookie capacity"));
+    getCatalogMock.mockReturnValue({
+      ...catalog,
+      getVariantById: vi.fn(async (_shopId: string, variantId: string) => ({
+        product: { title: "Long product" },
+        variant: { id: variantId, title: "Single", available: true, priceCents: 300, currency: "usd" },
+      })),
+    });
+    try {
+      const form = new FormData();
+      form.set("intent", "addBundle");
+      form.set("lines", JSON.stringify([{ variantId: "v1", quantity: 1 }, { variantId: "v2", quantity: 1 }]));
+      await expect(action({
+        request: new Request("https://app.example.com/dashboard/store/preview?template=commons-index", { method: "POST", body: form }),
+      } as ActionFunctionArgs)).rejects.toMatchObject({ status: 422 });
+      expect(addBundle).toHaveBeenCalledOnce();
+    } finally {
+      if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
+      else process.env.STOREFRONT_BUNDLE_READ = previous;
+    }
+  });
+
+  it.each(["duplicate", "unknown"] as const)("rejects %s bundle form fields before catalog access", async (kind) => {
+    const previous = process.env.STOREFRONT_BUNDLE_READ;
+    process.env.STOREFRONT_BUNDLE_READ = "1";
+    try {
+      const form = new FormData();
+      form.set("intent", "addBundle");
+      form.set("lines", JSON.stringify([{ variantId: "v1", quantity: 1 }, { variantId: "v2", quantity: 1 }]));
+      if (kind === "duplicate") form.append("lines", "[]");
+      else form.set("price", "1");
+      await expect(action({
+        request: new Request("https://app.example.com/dashboard/store/preview?template=commons-index", { method: "POST", body: form }),
+      } as ActionFunctionArgs)).rejects.toMatchObject({ status: 400 });
+      expect(getCatalogMock).not.toHaveBeenCalled();
     } finally {
       if (previous === undefined) delete process.env.STOREFRONT_BUNDLE_READ;
       else process.env.STOREFRONT_BUNDLE_READ = previous;

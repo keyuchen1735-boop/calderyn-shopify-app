@@ -13,9 +13,7 @@ import {
   decodeProductPageCursor,
   encodeProductPageCursor,
   MAX_PUBLIC_PRODUCT_PAGE_SIZE,
-  MISSING_PRICE_ASC_SORT_VALUE,
-  MISSING_PRICE_DESC_SORT_VALUE,
-  selectStorefrontPriceVariant,
+  storefrontPriceSortValue,
 } from "./catalog";
 
 const COLLECTIONS: StoreCollection[] = [
@@ -74,26 +72,17 @@ const PRODUCTS: StoreProduct[] = [
   },
 ];
 
-function searchPrice(
-  product: StoreProduct,
-  sort: StorefrontCatalogSearchOptions["sort"],
-): number {
-  const variant = selectStorefrontPriceVariant(product);
-  if (variant && variant.hasPrice !== false) return variant.priceCents;
-  return sort === "price_desc" ? MISSING_PRICE_DESC_SORT_VALUE : MISSING_PRICE_ASC_SORT_VALUE;
-}
-
 function searchSortValue(
   product: StoreProduct,
   sort: StorefrontCatalogSearchOptions["sort"],
 ): string | number {
-  return sort === "price_asc" || sort === "price_desc" ? searchPrice(product, sort) : product.title;
+  return sort === "price_asc" || sort === "price_desc" ? storefrontPriceSortValue(product, sort) : product.title;
 }
 
 function compareSearchProducts(a: StoreProduct, b: StoreProduct, sort: StorefrontCatalogSearchOptions["sort"]): number {
   if (sort === "title_desc") return b.title.localeCompare(a.title) || a.id.localeCompare(b.id);
-  if (sort === "price_asc") return searchPrice(a, sort) - searchPrice(b, sort) || a.id.localeCompare(b.id);
-  if (sort === "price_desc") return searchPrice(b, sort) - searchPrice(a, sort) || a.id.localeCompare(b.id);
+  if (sort === "price_asc") return storefrontPriceSortValue(a, sort) - storefrontPriceSortValue(b, sort) || a.id.localeCompare(b.id);
+  if (sort === "price_desc") return storefrontPriceSortValue(b, sort) - storefrontPriceSortValue(a, sort) || a.id.localeCompare(b.id);
   return a.title.localeCompare(b.title) || a.id.localeCompare(b.id);
 }
 

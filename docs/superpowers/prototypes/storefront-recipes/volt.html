@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Volt storefront</title>
+  <style>:root{--ink:#0a0b0d;--panel:#15181d;--paper:#f2f3ef;--signal:#b7ff3c;--muted:#9ba2aa;--line:#333941;--space-system:24px}html,body{margin:0}@font-face{font-family:CD Space Grotesk;src:url(/storefront-fonts/space-grotesk-latin.woff2);font-style:normal;font-weight:300 700;font-display:swap}@font-face{font-family:CD IBM Plex Mono;src:url(/storefront-fonts/ibm-plex-mono-latin.woff2);font-style:normal;font-weight:400;font-display:swap}:where([data-cd-bundle-runtime]){--ink:#0a0b0d;--line:#333941;--muted:#9ba2aa;--panel:#15181d;--paper:#f2f3ef;--signal:#b7ff3c;--space-system:24px;--font-display:CD Space Grotesk,Arial, sans-serif;--font-body:CD IBM Plex Mono,ui-monospace, monospace;display:block;min-width:0;max-width:100%;overflow-x:clip;font-family:var(--font-body)}:where([data-cd-bundle-runtime]),:where([data-cd-bundle-runtime]) *,:where([data-cd-bundle-runtime]) *::before,:where([data-cd-bundle-runtime]) *::after{box-sizing:border-box}:where([data-cd-bundle-runtime]) :where(header,footer,main,section,article,aside,nav,div,figure){min-width:0;max-width:100%}:where([data-cd-bundle-runtime]) :where(img,picture,video,canvas,svg){max-width:100%}:where([data-cd-bundle-runtime]) img{display:block;height:auto}:where([data-cd-bundle-runtime]) figure{margin:0}:where([data-cd-bundle-runtime]) :where(button,input,select,textarea){max-width:100%;font:inherit}:where([data-cd-bundle-runtime]) :where(p,a,button){overflow-wrap:anywhere}:where([data-cd-bundle-shell])>header,:where([data-cd-bundle-shell])>footer{display:flex;align-items:center;justify-content:space-between;gap:1rem;min-height:4rem;padding:1rem}@media(max-width:720px){:where([data-cd-bundle-shell])>header,:where([data-cd-bundle-shell])>footer{align-items:flex-start;flex-wrap:wrap}}:where([data-cd-bundle-runtime]) :where(section:not([class])):has(>:where(div:not([class]))>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"])){display:grid;grid-template-columns:repeat(auto-fill,minmax(16rem,1fr));gap:1rem;align-items:start;padding:1rem}:where([data-cd-bundle-runtime]) :where(section:not([class]))>:where(div:not([class])):has(>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"])){min-width:0}:where([data-cd-bundle-runtime]) :where(section:not([class]))>:where([data-cd-trusted-slot="quickViewCommerce"][data-cd-host-size="panel"]:only-child){max-width:26rem;margin:0.35rem 1rem}
+        .volt-masthead{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:1.5rem;min-height:64px;padding:.75rem 1.25rem;background:var(--ink);color:var(--paper);border-bottom:1px solid var(--line)}
+        .volt-masthead nav,.volt-utilities{display:flex;gap:1.25rem}.volt-utilities{justify-content:flex-end}.volt-masthead a,.volt-footer a{color:inherit;text-decoration:none}.volt-masthead nav a{display:inline-flex;min-height:44px;align-items:center}.volt-wordmark{font-family:var(--font-display);font-size:1.25rem;font-weight:700;letter-spacing:.08em}.volt-footer{display:flex;justify-content:space-between;gap:2rem;padding:2rem;background:var(--ink);color:var(--paper)}
+        @media(max-width:720px){.volt-masthead{grid-template-columns:1fr auto}.volt-masthead nav{grid-column:1/-1;overflow:auto}.volt-utilities a:first-child{display:none}}
+
+  .volt-page{background:var(--paper);color:var(--ink);min-height:70dvh}
+  .volt-kicker{font-family:var(--font-body);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase}
+  .volt-display{font-family:var(--font-display);font-weight:500;letter-spacing:-.055em;line-height:.92}
+  .volt-button{display:inline-flex;min-height:44px;align-items:center;justify-content:center;border:1px solid var(--ink);background:var(--ink);color:var(--paper);padding:.8rem 1.1rem;text-decoration:none}
+  .volt-proof{padding:1rem 1.25rem;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-family:var(--font-body);font-size:.75rem;letter-spacing:.05em}
+  .volt-empty{padding:2rem;overflow-wrap:anywhere}
+  @media(max-width:720px){.volt-display{letter-spacing:-.04em}}
+
+        .volt-hero-fallback{position:relative;display:grid;min-height:min(820px,88dvh);align-items:end;overflow:hidden;padding:clamp(1.5rem,6vw,6rem);background:radial-gradient(circle at 72% 44%,rgba(183,255,60,.18),transparent 8%),radial-gradient(ellipse at 72% 48%,#4b515b 0,#20242a 18%,#0a0b0d 52%);color:var(--paper)}
+        .volt-hero-image{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.volt-hero-fallback:after{content:"";position:absolute;inset:9% 8% 9% 57%;border:1px solid rgba(242,243,239,.22);border-radius:48% 48% 42% 42%;box-shadow:0 0 70px rgba(183,255,60,.12)}.volt-hero-orbit{position:absolute;width:52vw;height:52vw;right:-9vw;top:4%;border:1px solid rgba(242,243,239,.12);border-radius:50%}.volt-hero-copy{position:relative;z-index:1;max-width:44rem}.volt-hero-copy h1{font-size:clamp(4rem,10vw,9rem);margin:.5rem 0}.volt-hero-copy p{max-width:38rem;font-size:1.05rem;line-height:1.6}.volt-channel{position:absolute;right:1.5rem;bottom:1.5rem;font-family:var(--font-body);font-size:.7rem;letter-spacing:.12em}
+        .volt-catalog,.volt-compare,.volt-planner-intro{padding:clamp(3rem,7vw,7rem) clamp(1rem,4vw,4rem)}.volt-catalog header,.volt-compare header,.volt-planner-intro header{max-width:64rem;margin-bottom:2rem}.volt-catalog h2,.volt-compare h2,.volt-planner-intro h2{font-size:clamp(3rem,7vw,7rem);margin:.5rem 0}.volt-product-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--line)}.volt-product-module{display:grid;gap:1rem;padding:1rem;background:var(--paper)}.volt-product-module img{width:100%;aspect-ratio:1;object-fit:cover;background:var(--panel)}.volt-product-module a{color:inherit;text-decoration:none}.volt-product-module h3{font-size:1.4rem}.volt-product-meta{display:flex;justify-content:space-between;gap:1rem;font-family:var(--font-body);font-size:.78rem}
+        .volt-compare{background:var(--ink);color:var(--paper)}.volt-compare-rail{display:grid;border-top:1px solid var(--line)}.volt-compare-row{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:1rem;align-items:center;min-height:70px;border-bottom:1px solid var(--line);font-family:var(--font-body)}.volt-compare-rail a{color:var(--signal)}
+        @media(max-width:720px){.volt-hero-fallback{min-height:76dvh}.volt-hero-fallback:after{inset:14% -20% 18% 46%}.volt-product-grid{grid-template-columns:1fr}.volt-compare-row{grid-template-columns:1fr 1fr}.volt-compare-row a{grid-column:1/-1;min-height:44px}}
+        @media(prefers-reduced-motion:reduce){.volt-hero-orbit{transform:none}.volt-hero-copy,.volt-catalog,.volt-compare,.volt-planner-intro{animation:none;transition:none;scroll-behavior:auto}}
+      </style>
+</head>
+<body>
+<div data-cd-bundle-runtime>
+<div data-cd-bundle-shell>
+
+        <header class="volt-masthead">
+          <a class="volt-wordmark" data-cd-route="home"><span data-cd-text="store.name"></span></a>
+          <nav aria-label="Main navigation">
+            <a data-cd-route="collections">Systems</a><a data-cd-route="collection">Catalog</a><a data-cd-route="story">Engineering</a>
+          </nav>
+          <div class="volt-utilities"><a data-cd-route="search">Search</a><a data-cd-route="cart">Cart <span data-cd-text="cart.count"></span></a></div>
+        </header>
+        <aside data-cd-slot="cartDrawer" data-cd-host-size="panel" data-cd-theme-tokens="ink paper signal"></aside>
+
+
+</div>
+
+        <main class="volt-page volt-home">
+          <section class="volt-hero-fallback" aria-label="Premium product silhouette in a dark studio">
+            <img class="volt-hero-image" data-cd-asset-key="hero" src="/storefront-recipes/volt/c7f489849039c52e57ea3a8ae8ac981cecd8efd0faeee36b0251eb0f5b7b6236.webp" alt="Premium product silhouette in a dark studio" width="1600" height="900">
+            <div class="volt-hero-orbit" aria-hidden="true"></div>
+            <div class="volt-hero-copy" data-cd-motion="reveal">
+              <span class="volt-kicker">Live catalog / product-by-product planning</span>
+              <h1 class="volt-display">Choose the pieces.<br>Build the system.</h1>
+              <p>Plan a setup from the products, prices, options, and availability in this store right now.</p>
+              <a class="volt-button" data-cd-route="collection">Explore the system</a>
+            </div>
+            <span class="volt-channel">CH 01 / HOME</span>
+          </section>
+          <aside class="volt-proof">Live pricing, availability, and options from this store's catalog.</aside>
+          <section class="volt-catalog" data-cd-motion="reveal">
+            <header><span class="volt-kicker">Live catalog modules</span><h2 class="volt-display">Choose the components.</h2></header>
+            <div class="volt-product-grid" data-cd-repeat="featured.products">
+              <article class="volt-product-module" data-cd-key="product.id">
+                <a data-cd-route="product" data-cd-param-handle="product.handle"><img data-cd-src="product.primaryImage" data-cd-alt="product.title" width="720" height="720"><h3 data-cd-text="product.title"></h3></a>
+                <p data-cd-text="product.description"></p><div class="volt-product-meta"><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span></div>
+              </article>
+            </div>
+            <p class="volt-empty" data-cd-empty-state>No products are available in this system yet.</p>
+          </section>
+          <section class="volt-compare" data-cd-motion="scroll-progress">
+            <header><span class="volt-kicker">Live catalog evidence</span><h2 class="volt-display">Compare live products.</h2><p>Compare current price and availability here; open a product for its merchant-supplied options and full details.</p></header>
+            <div class="volt-compare-rail" data-cd-repeat="featured.products"><article class="volt-compare-row" data-cd-key="product.id"><span data-cd-text="product.title"></span><b data-cd-money="product.price"></b><span data-cd-text="product.availability"></span><a data-cd-route="product" data-cd-param-handle="product.handle">View product details</a></article></div>
+          </section>
+          <section class="volt-planner-intro" data-cd-motion="pinned"><header><span class="volt-kicker">Ecosystem builder</span><h2 class="volt-display">Build a three-piece setup.</h2><p>Choose any three live products, including the same product more than once. The protected builder verifies current variants, prices, and availability before adding the complete setup.</p></header></section>
+        </main>
+        <section data-cd-slot="bundleBuilder" data-cd-bundle-slots="3" data-cd-host-size="block" data-cd-theme-tokens="ink paper signal"></section>
+
+<div data-cd-bundle-shell>
+<footer class="volt-footer"><span data-cd-text="store.name"></span><nav data-cd-policy-links></nav></footer>
+</div>
+</div>
+</body>
+</html>

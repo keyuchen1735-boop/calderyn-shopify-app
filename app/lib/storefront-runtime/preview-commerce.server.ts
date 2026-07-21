@@ -5,8 +5,9 @@ import type { StorefrontVersionRecord } from "./release-resolution.server";
 
 const COOKIE_NAME = "cd_storefront_preview";
 const MAX_AGE_SECONDS = 60 * 60 * 8;
-const MAX_LINES = 12;
-const MAX_QUANTITY = 99;
+const MAX_BUNDLE_LINES = 12;
+const MAX_QUANTITY = 999;
+const MAX_COOKIE_BYTES = 4096;
 
 export interface PreviewCommerceLine {
   lineId: string;
@@ -48,7 +49,7 @@ function isMoney(value: unknown): value is PublicMoney {
 
 function sanitizeLines(value: unknown): PreviewCommerceLine[] {
   if (!Array.isArray(value)) return [];
-  return value.slice(0, MAX_LINES).flatMap((candidate): PreviewCommerceLine[] => {
+  return value.flatMap((candidate): PreviewCommerceLine[] => {
     if (!candidate || typeof candidate !== "object") return [];
     const line = candidate as Partial<PreviewCommerceLine>;
     if (typeof line.lineId !== "string" || typeof line.variantId !== "string" ||
@@ -93,7 +94,11 @@ export async function readPreviewCommerceSession(request: Request, shopId: strin
 }
 
 export async function commitPreviewCommerceSession(snapshot: PreviewCommerceSnapshot): Promise<string> {
-  return previewCookie().serialize({ shopId: snapshot.shopId, lines: sanitizeLines(snapshot.lines) });
+  const serialized = await previewCookie().serialize({ shopId: snapshot.shopId, lines: sanitizeLines(snapshot.lines) });
+  if (new TextEncoder().encode(serialized).byteLength > MAX_COOKIE_BYTES) {
+    throw new Error("Preview cart exceeds cookie capacity");
+  }
+  return serialized;
 }
 
 export function createPreviewCommerceAdapter(initial: PreviewCommerceSnapshot) {
@@ -104,7 +109,28 @@ export function createPreviewCommerceAdapter(initial: PreviewCommerceSnapshot) {
       if (!valid) throw new Error("Invalid preview cart line");
       const existing = snapshot.lines.find((entry) => entry.variantId === valid.variantId);
       if (existing) existing.quantity = Math.min(MAX_QUANTITY, existing.quantity + valid.quantity);
-      else if (snapshot.lines.length < MAX_LINES) snapshot.lines.push(valid);
+      else snapshot.lines.push(valid);
+    },
+    addBundle(lines: readonly PreviewCommerceLine[]) {
+      if (lines.length < 2 || lines.length > MAX_BUNDLE_LINES) throw new Error("Invalid preview bundle");
+      const next = snapshot.lines.map((line) => ({ ...line, unitPrice: { ...line.unitPrice } }));
+      for (const line of lines) {
+        const valid = sanitizeLines([line])[0];
+        if (!valid || valid.quantity !== 1) throw new Error("Invalid preview bundle line");
+        const existing = next.find((entry) => entry.variantId === valid.variantId);
+        if (existing) {
+          if (existing.unitPrice.currency !== valid.unitPrice.currency || existing.quantity >= MAX_QUANTITY) {
+            throw new Error("Invalid preview bundle line");
+          }
+          existing.quantity += 1;
+        } else {
+          if (next[0] && next[0].unitPrice.currency !== valid.unitPrice.currency) {
+            throw new Error("Invalid preview bundle line");
+          }
+          next.push(valid);
+        }
+      }
+      snapshot.lines.splice(0, snapshot.lines.length, ...next);
     },
     setQuantity(lineId: string, quantity: number) {
       if (!Number.isInteger(quantity) || quantity < 0 || quantity > MAX_QUANTITY) throw new Error("Invalid preview quantity");

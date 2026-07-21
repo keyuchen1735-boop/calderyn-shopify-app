@@ -266,6 +266,10 @@ export async function createCheckout(
     quantity: l.quantity,
     unit_price_cents: l.unitPriceCents,
     title_snapshot: l.titleSnapshot,
+    personalization: l.personalization,
+    selling_plan_id: l.sellingPlan?.id ?? null,
+    selling_plan_name: l.sellingPlan?.name ?? null,
+    selling_plan_cadence: l.sellingPlan?.cadence ?? null,
     unit_cost_cents_snapshot: costByVariant.get(l.variantId) ?? null,
   }));
   const lineIns = await sb.from("order_line").insert(lineRows);

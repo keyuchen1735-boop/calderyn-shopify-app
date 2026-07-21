@@ -31,6 +31,88 @@ function flattenElements(nodes: readonly CompiledNode[]): CompiledElementNode[] 
 }
 
 describe("validation profile v1", () => {
+  it("accepts compiler-generated merchant fact links through persisted validation", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.product.html = `<main><section data-cd-repeat="product.facts"><a data-cd-key="fact.id" data-cd-href="fact.url">Open merchant fact</a></section></main>`;
+
+    const compiled = compileBundle(source);
+    expect(compiled.report).toMatchObject({ ok: true, diagnostics: [] });
+
+    compiled.bundle.routes.product.bindings = [];
+    expect(validateCompiledBundle(compiled.bundle).diagnostics.map(({ code }) => code)).toContain("tree.inert_control");
+  });
+
+  it("accepts compiler-generated video source types through persisted validation", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster" muted autoplay playsinline loop preload="metadata"><source data-cd-asset="hero-webm" type="video/webm"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
+    source.assets.entries = [
+      { key: "hero-poster", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 1 },
+      { key: "hero-webm", contentHash: "b".repeat(64), mediaType: "video/webm", byteSize: 1 },
+      { key: "hero-mp4", contentHash: "c".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+    ];
+
+    expect(compileBundle(source).report).toMatchObject({ ok: true, diagnostics: [] });
+  });
+
+  it("rejects persisted video media types outside the exact source allowlist context", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    const bundle = compileBundle(source).bundle;
+    const root = flattenElements(bundle.routes.home.tree)[0];
+    if (!root) throw new Error("home root fixture is missing");
+    root.attributes.type = "video/mp4";
+    bundle.routes.home.html = serializeCompiledTree(bundle.routes.home.tree);
+
+    expect(validateCompiledBundle(bundle).diagnostics.map(({ code }) => code)).toContain("tree.control_attribute");
+
+    const videoSource = structuredClone(VALID_BUNDLE_SOURCE);
+    videoSource.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster"><source data-cd-asset="hero-webm" type="video/webm"><source data-cd-asset="hero-mp4" type="video/mp4"></video></main>`;
+    videoSource.assets.entries = [
+      { key: "hero-poster", contentHash: "a".repeat(64), mediaType: "image/webp", byteSize: 1 },
+      { key: "hero-webm", contentHash: "b".repeat(64), mediaType: "video/webm", byteSize: 1 },
+      { key: "hero-mp4", contentHash: "c".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+    ];
+    const forgedVideo = compileBundle(videoSource).bundle;
+    const sourceElement = flattenElements(forgedVideo.routes.home.tree).find((node) => node.tag === "source");
+    if (!sourceElement) throw new Error("video source fixture is missing");
+    sourceElement.attributes.type = "video/ogg";
+    forgedVideo.routes.home.html = serializeCompiledTree(forgedVideo.routes.home.tree);
+    expect(validateCompiledBundle(forgedVideo).diagnostics.map(({ code }) => code)).toContain("tree.control_attribute");
+  });
+
+  it("rejects forged video-only attributes and boolean values", () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const root = flattenElements(bundle.routes.home.tree)[0]!;
+    root.attributes.autoplay = "false";
+    root.attributes.preload = "eager";
+    root.attributes["data-cd-video"] = "yes";
+    expect(validateCompiledBundle(bundle).diagnostics.map(({ code }) => code)).toContain("tree.control_attribute");
+  });
+
+  it("rejects poster and source manifest media type mismatches", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><video data-cd-video data-cd-poster-asset="hero-poster"><source data-cd-asset="hero-webm" type="video/webm"></video></main>`;
+    source.assets.entries = [
+      { key: "hero-poster", contentHash: "a".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+      { key: "hero-webm", contentHash: "b".repeat(64), mediaType: "video/mp4", byteSize: 1 },
+    ];
+    expect(compileBundle(source).report.diagnostics.map(({ code }) => code)).toContain("asset.media_mismatch");
+  });
+
+  it("rejects persisted declarative motion outside the source compiler allowlist", () => {
+    const bundle = compileBundle(VALID_BUNDLE_SOURCE).bundle;
+    const root = flattenElements(bundle.routes.home.tree)[0]!;
+    root.attributes["data-cd-motion"] = "spin";
+    expect(validateCompiledBundle(bundle).diagnostics.map(({ code }) => code)).toContain("tree.control_attribute");
+  });
+
+  it("validates optional route artifacts when present", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE) as typeof VALID_BUNDLE_SOURCE & { routes: typeof VALID_BUNDLE_SOURCE.routes & { story?: typeof VALID_BUNDLE_SOURCE.routes.home } };
+    source.routes.story = { ...source.routes.home, html: `<main>Story</main>` };
+    const bundle = compileBundle(source).bundle;
+    bundle.routes.story!.tree[0] = { kind: "element", id: "cd-story-bad", tag: "script", attributes: {}, children: [] };
+    expect(validateCompiledBundle(bundle).diagnostics.map((item) => item.code)).toContain("tree.tag");
+  });
+
   it("accepts compiled bounded search inputs and static machine values", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.routes.search.html = `<main><input type="search" name="q" placeholder="Search products" value="initial" data-cd-on="input" data-cd-action="search.update"><button value="submit" data-cd-on="click" data-cd-action="search.submit">Search</button></main>`;
@@ -86,6 +168,33 @@ describe("validation profile v1", () => {
     expect(result.bundle.routes.home.requiredData).not.toContainEqual({ kind: "currentProduct" });
     expect(result.report.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "slot.route_scope", path: expect.stringContaining("routes.home.trustedSlots") }),
+    ]));
+  });
+
+  it("rejects persisted personalization fields outside the closed slot vocabulary", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.product.html = `<main><h1 data-cd-text="product.title"></h1><div data-cd-slot="addToCart" data-cd-personalization="engraving giftNote"></div></main>`;
+    source.routes.product.css = "";
+    const compiled = compileBundle(source);
+    expect(compiled.report.ok).toBe(true);
+
+    const slot = compiled.bundle.routes.product.trustedSlots[0];
+    if (!slot) throw new Error("fixture personalization slot is missing");
+    slot.personalizationFields = ["price"] as never;
+    expect(validateCompiledBundle(compiled.bundle).diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "slot.personalization" }),
+    ]));
+  });
+
+  it("rejects a forged persisted bundle slot count and derives live catalog data", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE);
+    source.routes.home.html = `<main><section data-cd-slot="bundleBuilder" data-cd-bundle-slots="4"></section></main>`;
+    source.routes.home.css = "";
+    const compiled = compileBundle(source);
+    expect(compiled.bundle.routes.home.requiredData).toEqual([{ kind: "featuredProducts", limit: 12 }]);
+    compiled.bundle.routes.home.trustedSlots[0]!.slotCount = 99;
+    expect(validateCompiledBundle(compiled.bundle).diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "slot.bundle" }),
     ]));
   });
 

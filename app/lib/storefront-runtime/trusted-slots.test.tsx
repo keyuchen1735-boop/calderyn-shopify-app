@@ -3,9 +3,21 @@ import { describe, expect, it } from "vitest";
 import type { CheckoutLayoutManifest, TrustedSlotManifest } from "~/lib/storefront-bundle/types";
 import { CheckoutIslands } from "./checkout-islands";
 import { renderStorefrontRoute, type PublicPresentationData } from "./render.server";
-import { TrustedSlotHost } from "./trusted-slots";
+import { canonicalizeStorefrontLinePersonalization, TrustedSlotHost } from "./trusted-slots";
 
 describe("platform-owned commerce hosts", () => {
+  it("serializes personalization with exact canonical keys", () => {
+    expect(canonicalizeStorefrontLinePersonalization({
+      recipient: "Mina",
+      engraving: "Always",
+      giftNote: "For you",
+    })).toEqual({
+      engraving: "Always",
+      giftNote: "For you",
+      recipient: "Mina",
+    });
+  });
+
   it("marks compiler-authorized commerce slots for closed-shadow mounting", () => {
     const slot: TrustedSlotManifest = {
       id: "cd-product-slot-1",

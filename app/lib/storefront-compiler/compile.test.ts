@@ -3,6 +3,29 @@ import { canonicalizeCompiledBundle, compileBundle, hashCompiledBundle } from ".
 import { VALID_BUNDLE_SOURCE } from "./__fixtures__/valid-bundle";
 
 describe("compileBundle", () => {
+  it("compiles an optional collections index without changing required routes", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE) as typeof VALID_BUNDLE_SOURCE & { routes: typeof VALID_BUNDLE_SOURCE.routes & { collections?: typeof VALID_BUNDLE_SOURCE.routes.home } };
+    source.routes.collections = { ...source.routes.home, html: `<main><h1>All collections</h1></main>` };
+
+    const bundle = compileBundle(source).bundle;
+    expect(bundle.routes.collections?.html).toContain("All collections");
+    expect(bundle.routes.home).toBeDefined();
+  });
+
+  it("compiles an optional story surface", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE) as typeof VALID_BUNDLE_SOURCE & { routes: typeof VALID_BUNDLE_SOURCE.routes & { story?: typeof VALID_BUNDLE_SOURCE.routes.home } };
+    source.routes.story = { ...source.routes.home, html: `<main><h1>Our story</h1></main>` };
+    const result = compileBundle(source).bundle as ReturnType<typeof compileBundle>["bundle"] & { routes: { story?: { html: string } } };
+    expect(result.routes.story?.html).toContain("Our story");
+  });
+
+  it("compiles an optional not-found surface", () => {
+    const source = structuredClone(VALID_BUNDLE_SOURCE) as typeof VALID_BUNDLE_SOURCE & { routes: typeof VALID_BUNDLE_SOURCE.routes & { notFound?: typeof VALID_BUNDLE_SOURCE.routes.home } };
+    source.routes.notFound = { ...source.routes.home, html: `<main><h1>Page not found</h1></main>` };
+    const result = compileBundle(source).bundle as ReturnType<typeof compileBundle>["bundle"] & { routes: { notFound?: { html: string } } };
+    expect(result.routes.notFound?.html).toContain("Page not found");
+  });
+
   it("rejects shell policy links that would render before route content", () => {
     const source = structuredClone(VALID_BUNDLE_SOURCE);
     source.shell.html = `<header>Store header</header><nav data-cd-policy-links></nav>`;

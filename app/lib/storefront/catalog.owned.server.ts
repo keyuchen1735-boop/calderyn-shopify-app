@@ -12,6 +12,7 @@ import type {
   StorefrontCatalogSearchPage,
   StoreProduct,
   StoreVariant,
+  StoreSellingPlan,
   StoreCollection,
 } from "./catalog";
 import {
@@ -19,9 +20,10 @@ import {
   encodeProductPageCursor,
   MAX_STOREFRONT_CARD_DESCRIPTION_CODE_POINTS,
   MAX_PUBLIC_PRODUCT_PAGE_SIZE,
-  MISSING_PRICE_ASC_SORT_VALUE,
   MISSING_PRICE_DESC_SORT_VALUE,
+  storefrontPriceSortValue,
 } from "./catalog";
+import { deriveFactFacets, normalizeProductFacts, type ProductFact } from "./product-facts";
 
 type Supa = ReturnType<typeof getSupabase>;
 type Row = Record<string, unknown>;
@@ -81,6 +83,53 @@ function toVariant(v: Row, ledgerSellable?: number): StoreVariant {
   };
 }
 
+function factsFromRows(rows: readonly Row[]): Record<string, ProductFact[]> {
+  const inputsByProduct = new Map<string, Array<{ id: string; kind: string; value: unknown; unit: string | null }>>();
+  for (const row of rows) {
+    const value = row.url_value ?? row.text_value ?? (row.number_value == null ? null : Number(row.number_value));
+    pushInto(inputsByProduct, String(row.product_id), {
+      id: String(row.id), kind: String(row.kind), value, unit: row.unit as string | null,
+    });
+  }
+  const factsByProduct: Record<string, ProductFact[]> = {};
+  for (const [productId, inputs] of inputsByProduct) {
+    try {
+      factsByProduct[productId] = normalizeProductFacts(inputs);
+    } catch {
+      factsByProduct[productId] = [];
+    }
+  }
+  return factsByProduct;
+}
+
+async function sellingPlansByVariant(
+  sb: Supa,
+  shopId: string,
+  variantIds: string[],
+): Promise<Map<string, StoreSellingPlan[]>> {
+  const result = new Map<string, StoreSellingPlan[]>();
+  if (!variantIds.length) return result;
+  const eligibility = await pagedRows((from, to) => sb.from("variant_selling_plan")
+    .select("variant_id, selling_plan_id, price_cents, currency")
+    .eq("shop_id", shopId).in("variant_id", variantIds).order("variant_id").range(from, to));
+  const planIds = [...new Set(eligibility.map((row) => String(row.selling_plan_id)))];
+  if (!planIds.length) return result;
+  const plans = await pagedRows((from, to) => sb.from("selling_plan")
+    .select("id, name, cadence").eq("shop_id", shopId).in("id", planIds).order("id").range(from, to));
+  const planById = new Map(plans.map((row) => [String(row.id), row]));
+  for (const row of eligibility) {
+    const plan = planById.get(String(row.selling_plan_id));
+    if (!plan) continue;
+    pushInto(result, String(row.variant_id), {
+      id: String(plan.id), name: String(plan.name), cadence: String(plan.cadence),
+      priceAdjustment: row.price_cents == null ? null : {
+        type: "fixed_price", valueCents: Number(row.price_cents), currency: String(row.currency),
+      },
+    });
+  }
+  return result;
+}
+
 // Sellable stock per variant from the inventory ledger, summed across locations.
 // Reads the generated `available` column (on_hand - reserved - unavailable), the
 // SAME formula inventory_reserve() enforces at checkout, so the storefront can
@@ -132,7 +181,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
   const ids = products.map((p) => String(p.id));
   if (!ids.length) return [];
 
-  const [variants, media, pc, options] = await Promise.all([
+  const [variants, media, pc, options, factRows] = await Promise.all([
     pagedRows((from, to) => sb
         .from("variant_dim")
         .select("id, product_id, sku, title, retail_price_cents, compare_at_price_cents, currency, inventory_tracked, inventory_on_hand, position")
@@ -149,6 +198,12 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     pagedRows((from, to) => sb
         .from("product_option")
         .select("id, product_id, name, position, product_option_value(value, position)")
+        .in("product_id", ids)
+        .order("position").order("product_id").order("id").range(from, to)),
+    pagedRows((from, to) => sb
+        .from("product_fact")
+        .select("id, shop_id, product_id, kind, text_value, number_value, unit, url_value, position")
+        .eq("shop_id", shopId)
         .in("product_id", ids)
         .order("position").order("product_id").order("id").range(from, to)),
   ]);
@@ -179,15 +234,20 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     shopId,
     variants.map((v) => String(v.id)),
   );
+  const sellingPlansPromise = sellingPlansByVariant(sb, shopId, variants.map((v) => String(v.id)));
 
   const signed = await signMediaPaths(
     media.filter((m) => m.storage_path).map((m) => String(m.storage_path)),
   );
   const sellable = await sellablePromise;
+  const sellingPlans = await sellingPlansPromise;
 
   const variantsByProduct = new Map<string, StoreVariant[]>();
   for (const v of variants)
-    pushInto(variantsByProduct, String(v.product_id), toVariant(v, sellable.get(String(v.id))));
+    pushInto(variantsByProduct, String(v.product_id), {
+      ...toVariant(v, sellable.get(String(v.id))),
+      sellingPlans: sellingPlans.get(String(v.id)) ?? [],
+    });
 
   // Primary image leads, then by position. A promoted mirror image carries an
   // external_url (Shopify CDN, hotlinked) and is used directly; an owned/uploaded
@@ -219,6 +279,8 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
     pushInto(optionsByProduct, String(option.product_id), { name: String(option.name), values });
   }
 
+  const factsByProduct = factsFromRows(factRows);
+
   return products.map((p): StoreProduct => {
     const id = String(p.id);
     return {
@@ -232,6 +294,7 @@ async function assemble(sb: Supa, shopId: string, products: Row[]): Promise<Stor
       collections: handlesByProduct.get(id) ?? [],
       category: (p.category as string | null) ?? null,
       tags: (p.tags as string[] | null) ?? [],
+      facts: factsByProduct[id] ?? [],
     };
   });
 }
@@ -366,11 +429,8 @@ function parseSearchResponse(
     boundary = { sortValue: candidate.sort_value as string | number, productId: candidate.product_id };
   }
   const last = cards.at(-1)?.product;
-  const lastVariant = last?.variants[0];
   const expectedSortValue = priceSort
-    ? lastVariant && lastVariant.hasPrice !== false
-      ? lastVariant.priceCents
-      : opts.sort === "price_desc" ? MISSING_PRICE_DESC_SORT_VALUE : MISSING_PRICE_ASC_SORT_VALUE
+    ? last ? storefrontPriceSortValue(last, opts.sort as "price_asc" | "price_desc") : undefined
     : last?.title;
   if (row.has_next_page
     ? !last || !boundary || boundary.productId !== last.id || boundary.sortValue !== expectedSortValue
@@ -558,6 +618,7 @@ export const ownedCatalog: StorefrontCatalog = {
     const sellable = await sellableByVariant(sb, shopId, [variantId]);
     const productRow = productResult.data as Row;
     const variant = toVariant(variantRow, sellable.get(variantId));
+    variant.sellingPlans = (await sellingPlansByVariant(sb, shopId, [variantId])).get(variantId) ?? [];
     const product: StoreProduct = {
       id: String(productRow.id),
       handle: String(productRow.handle),
@@ -597,6 +658,25 @@ export const ownedCatalog: StorefrontCatalog = {
       description: (collection.description as string | null) ?? "",
       productCount: countResult.count ?? 0,
     };
+  },
+
+  async listProductFacts(shopId, productIds) {
+    const ids = [...new Set(productIds)].slice(0, MAX_PUBLIC_PRODUCT_PAGE_SIZE);
+    if (!ids.length) return {};
+    const rows = await pagedRows((from, to) => getSupabase().from("product_fact")
+      .select("id, product_id, kind, text_value, number_value, unit, url_value, position")
+      .eq("shop_id", shopId).in("product_id", ids).order("position").order("product_id").order("id").range(from, to));
+    return factsFromRows(rows);
+  },
+
+  async listProductFactFacets(shopId) {
+    const rows = await pagedRows((from, to) => getSupabase().from("product_fact")
+      .select("id, product_id, kind, text_value, number_value, unit, url_value, position, product_dim!inner(status)")
+      .eq("shop_id", shopId).eq("product_dim.status", "active")
+      .in("kind", ["material", "compatibility", "ingredient", "concern", "heat_level"])
+      .order("position").order("product_id").order("id").range(from, to));
+    const facts = factsFromRows(rows);
+    return deriveFactFacets(Object.entries(facts).map(([id, productFacts]) => ({ id, facts: productFacts })));
   },
 
   async listCollections(shopId) {

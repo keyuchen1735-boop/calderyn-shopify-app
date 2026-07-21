@@ -166,4 +166,15 @@ describe("approved storefront source parity", () => {
     expect(roomModes?.config.surfaces.home.source.css).toContain(".hotspot");
     expect(roomModes?.config.surfaces.home.source.css).toContain("animation:none!important");
   });
+
+  it("keeps Larder's approved prototype aligned to the real six-slot commerce builder", () => {
+    const source = readFileSync("docs/superpowers/prototypes/storefront-recipes/larder.html", "utf8");
+    const larder = STOREFRONT_RECIPES.find(({ config }) => config.templateId === "larder");
+    expect(larder?.bundle.routes.home.trustedSlots).toContainEqual(
+      expect.objectContaining({ kind: "bundleBuilder", slotCount: 6 }),
+    );
+    expect(source).toContain('data-cd-slot="bundleBuilder"');
+    expect(source).toContain('data-cd-bundle-slots="6"');
+    expect(source).not.toMatch(/class="(?:slot|board|controls|rhythm)"|Fill next place|Remove place/);
+  });
 });

@@ -1,9 +1,10 @@
-import type { DataRequirement, StorefrontBundleV1, StorefrontRouteId } from "~/lib/storefront-bundle/types";
+import type { CompiledStorefrontRouteId, DataRequirement, StorefrontBundleV1 } from "~/lib/storefront-bundle/types";
 import { resolveVerifiedStorefrontAssetUrls } from "~/lib/storefront-bundle/assets.server";
 import { getStoreTemplate } from "~/lib/storefront-bundle/registry";
 import { getSupabase } from "~/lib/supabase.server";
 import { isUuid } from "~/lib/ids";
 import { STOREFRONT_RECIPE_BY_ID } from "~/lib/storefront-recipes";
+import { storefrontRecipeMediaPath } from "~/lib/storefront-recipes/library/media";
 import { isolateCompiledShellCss } from "~/lib/storefront-compiler/css";
 import { isStorefrontBundleReadEnabled } from "./csp.server";
 import { resolveStorefrontVisualPlacement, type StorefrontVisualPlacement } from "./visual-layer.server";
@@ -49,10 +50,33 @@ export interface StorefrontReleaseReader {
   readReleaseHistory(shopId: string): Promise<StorefrontReleaseHistoryEntry[]>;
 }
 
+const RECIPE_MEDIA_EXTENSIONS = { "image/webp": "webp", "video/webm": "webm", "video/mp4": "mp4" } as const;
+
 function recipeDerivedStaticAssets(bundle: StorefrontBundleV1): {
   urls: Readonly<Record<string, string>>;
   ownedManifest: StorefrontBundleV1["assets"];
 } {
+  if (bundle.source.kind === "recipe" && bundle.source.templateId === "larder") {
+    const mediaEntries = bundle.assets.entries.filter((entry) => entry.mediaType in RECIPE_MEDIA_EXTENSIONS);
+    return {
+      urls: Object.fromEntries(mediaEntries.map((entry) => [
+        entry.key,
+        `/storefront-recipes/larder/${entry.contentHash}.${RECIPE_MEDIA_EXTENSIONS[entry.mediaType as keyof typeof RECIPE_MEDIA_EXTENSIONS]}`,
+      ])),
+      ownedManifest: { entries: [] },
+    };
+  }
+  if (bundle.source.kind === "recipe" && new Set(["volt", "atelier", "gilt", "larder", "ember", "roast", "fizz", "forge", "haven", "glow"]).has(bundle.source.templateId)) {
+    const templateId = bundle.source.templateId;
+    const mediaEntries = bundle.assets.entries.filter((entry) => entry.mediaType === "image/webp" || entry.mediaType === "video/webm" || entry.mediaType === "video/mp4");
+    return {
+      urls: Object.fromEntries(mediaEntries.map((entry) => [
+        entry.key,
+        `/storage/v1/object/public/${storefrontRecipeMediaPath(templateId, entry.contentHash, entry.mediaType as "image/webp" | "video/webm" | "video/mp4")}`,
+      ])),
+      ownedManifest: { entries: [] },
+    };
+  }
   if (bundle.source.kind !== "custom" || !bundle.source.derivedFromTemplateId || !bundle.source.derivedFromTemplateVersion) {
     return { urls: {}, ownedManifest: bundle.assets };
   }
@@ -71,14 +95,14 @@ function recipeDerivedStaticAssets(bundle: StorefrontBundleV1): {
   const staticEntries = new Set<string>();
   for (const entry of bundle.assets.entries) {
     const expected = registered.get(entry.key);
-    if (entry.mediaType === "image/webp" && expected &&
+    if (entry.mediaType in RECIPE_MEDIA_EXTENSIONS && expected &&
       expected.contentHash === entry.contentHash && expected.mediaType === entry.mediaType && expected.byteSize === entry.byteSize) {
       staticEntries.add(entry.key);
     }
   }
   const urls = Object.fromEntries([...staticEntries].map((key) => [
     key,
-    `/storefront-recipes/${templateId}/${registered.get(key)!.contentHash}.webp`,
+    `/storefront-recipes/${templateId}/${registered.get(key)!.contentHash}.${RECIPE_MEDIA_EXTENSIONS[registered.get(key)!.mediaType as keyof typeof RECIPE_MEDIA_EXTENSIONS]}`,
   ]));
   return {
     urls,
@@ -310,7 +334,7 @@ export interface Runtime1RouteData {
   runtime: 1;
   bundleId: string;
   artifactHash: string;
-  routeId: StorefrontRouteId;
+  routeId: CompiledStorefrontRouteId;
   bundle: StorefrontBundleV1;
   data: PublicPresentationData;
   visualLayerPlacement: StorefrontVisualPlacement | null;
@@ -322,9 +346,18 @@ export type StorefrontAssetUrlLoader = (input: {
   manifest: StorefrontBundleV1["assets"];
 }) => Promise<Readonly<Record<string, string>>>;
 
+function resolvedRouteId(bundle: StorefrontBundleV1, route: PublicRouteContext): CompiledStorefrontRouteId {
+  const requested = routeIdForPublicContext(route);
+  if (requested === "collections" || requested === "story" || requested === "notFound") {
+    return bundle.routes[requested] ? requested : "home";
+  }
+  return requested;
+}
+
 function routeRequirements(bundle: StorefrontBundleV1, route: PublicRouteContext): DataRequirement[] {
-  const routeId = routeIdForPublicContext(route);
+  const routeId = resolvedRouteId(bundle, route);
   const artifact = bundle.routes[routeId];
+  if (!artifact) throw new Error(`Missing compiled route ${routeId}`);
   const required: DataRequirement[] = [...bundle.shell.requiredData, ...artifact.requiredData];
   const force = (requirement: DataRequirement) => {
     if (!required.some((entry) => entry.kind === requirement.kind)) required.push(requirement);
@@ -378,7 +411,7 @@ export async function resolveRuntime1VersionRoute(input: {
     ? input.version.artifact.bundle
     : null;
   if (!bundle) return null;
-  const routeId = routeIdForPublicContext(input.route);
+  const routeId = resolvedRouteId(bundle, input.route);
   const derivedStaticAssets = recipeDerivedStaticAssets(bundle);
   const [data, storefrontAssetUrls] = await Promise.all([
     resolvePublicData({

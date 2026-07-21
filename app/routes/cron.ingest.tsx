@@ -11,6 +11,7 @@ import { transformPendingOwnedEvents } from "~/lib/ingest/owned/transform.server
 import { reconcileAttributedRevenue } from "~/lib/attribution/revenue.server";
 import { runShipCostResolution } from "~/lib/ship-cost/runner.server";
 import { isAuthorizedCron } from "~/lib/cron-auth.server";
+import { syncShopifyProductFacts } from "~/lib/ingest/product-facts.server";
 
 const MAX_BACKFILL_SHOPS = 5; // bounded per tick to stay under function timeout
 const MAX_DESTINATION_REPAIR_SHOPS = 5;
@@ -54,6 +55,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     backfillErrors: [] as string[],
     inventorySettingsSynced: [] as string[],
     inventorySettingsErrors: [] as string[],
+    productFactsSynced: [] as string[],
+    productFactErrors: [] as string[],
     destinationRepair: { shops: 0, scanned: 0, updated: 0, checked: 0 },
     destinationRepairErrors: [] as string[],
     transform: { processed: 0, facts: 0, dlq: 0 },
@@ -103,6 +106,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .select("shop_id, shops!inner(shop_domain)")
     .eq("kind", "shopify")
     .in("sync_status", ["ready", "live"]);
+  const { data: factIntegrations, error: factClaimError } = await sb.rpc(
+    "claim_product_fact_syncs",
+    { p_limit: MAX_BACKFILL_SHOPS },
+  );
+  if (factClaimError) {
+    summary.productFactErrors.push(`selection: ${stringifyError(factClaimError)}`);
+  }
+  for (const row of factIntegrations ?? []) {
+    const shopId = String(row.shop_id);
+    const domain = String(row.shop_domain ?? "");
+    if (!domain) continue;
+    try {
+      await syncShopifyProductFacts({ shopId, shopDomain: domain });
+      summary.productFactsSynced.push(domain);
+    } catch (err) {
+      summary.productFactErrors.push(`${domain}: ${stringifyError(err)}`);
+    }
+  }
+
   for (const row of (activeIntegrations ?? []).slice(0, MAX_BACKFILL_SHOPS)) {
     const shopId = String(row.shop_id);
     const domain = (row as unknown as { shops?: { shop_domain?: string } })
