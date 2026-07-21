@@ -16,7 +16,7 @@ const { getCatalog, getStoreSettings, loadDesignerAssets, applyAssetOverrides, g
 
 vi.mock("../storefront/catalog.server", () => ({ getCatalog }));
 vi.mock("../storefront/settings.server", () => ({ getStoreSettings, setComposerEnabled: vi.fn() }));
-vi.mock("./imagery.server", () => ({ loadDesignerAssets, generateDesignerAsset: vi.fn() }));
+vi.mock("./imagery.server", () => ({ loadDesignerAssets, generateDesignerAsset: vi.fn(), adoptDesignerAsset: vi.fn() }));
 vi.mock("~/lib/storegen/imagery/asset.server", () => ({ applyAssetOverrides, generateMissingListingImages }));
 
 const SHOP = "00000000-0000-0000-0000-000000000010";

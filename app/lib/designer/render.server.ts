@@ -5,7 +5,7 @@
 // in the browser.
 import type { DesignerStoreData } from "./types";
 import { DESIGNER_FONT_IDS } from "./direction.server";
-import { expandCouponWidget } from "./widgets";
+import { expandCouponWidget, gateFreeShippingThresholds } from "./widgets";
 
 const BLOCKED_TAGS = /<\/?(?:script|iframe|object|embed|base|form|link|meta)\b[^>]*>/gi;
 // Event handlers in every quote style, including unquoted (onclick=steal()).
@@ -158,10 +158,17 @@ export function renderDesignerBody(input: {
     // The model occasionally invents loop names ({{#related.products}}) despite
     // the prompt; unknown sentinels must vanish, never render as literal text.
     .replace(/\{\{[#/][^}]*\}\}/g, "");
+  // Honesty gates at expansion time (spec D5): a free-shipping threshold only
+  // renders when a supplied fact backs the number — otherwise the cart-meter
+  // attribute is stripped and the copy degrades to a number-free line. Same
+  // contract as the coupon widget below.
+  const gated = gateFreeShippingThresholds(filled, {
+    backedThresholds: input.data.backedFreeShippingThresholds,
+  });
   // Expand any declared conversion widget (coupon popup). In the body path
   // this is the live-storefront render, so behavior is wired by the caller
   // via the returned script; preview uses renderDesignerDocument below.
-  const widget = expandCouponWidget(filled, {
+  const widget = expandCouponWidget(gated, {
     preview: input.preview === true,
     redeemableCodes: input.data.redeemableCodes,
   });

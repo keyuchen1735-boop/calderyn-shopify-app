@@ -13,9 +13,10 @@ import type { StudioDesignModel } from "../storebuilder/studio-types";
 import { convertTemplateToDocuments, DESIGNER_ROUTES } from "./convert.server";
 import { CRAFT_RULES, EDIT_FEEDBACK_RULES, REVIEW_CRAFT_CHECKS } from "./doctrine";
 import { artDirectionFor, DESIGNER_FONT_IDS, scratchSeedFiles, type ArtDirection } from "./direction.server";
-import { generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
+import { adoptDesignerAsset, designerFirstBuildImageLimits, generateDesignerAsset, loadDesignerAssets } from "./imagery.server";
 import { applyAssetOverrides, generateMissingListingImages } from "~/lib/storegen/imagery/asset.server";
 import { claimsRepairInstruction, findUnhonorableClaims } from "./claims";
+import { donorTemplateArtPaths, findImageRegistryViolations, imageRepairInstruction } from "./image-registry.server";
 import { editContext, fileContext, summarizeChanges } from "./context";
 import { applyDesignerEdits, parseDesignerReply, type DesignerEdit } from "./edits";
 import { scrubDesignerCss, scrubDesignerHtml } from "./render.server";
@@ -53,7 +54,7 @@ Rules:
 - The SEARCH text must be copied character-for-character from the file so it can be found. Keep each block small and scoped; use several blocks for several spots. To replace an entire file, use a single block whose SEARCH is just *
 - Files you may edit: base.css (fonts, colors, shared layout) and, for the page being discussed, <route>.html and <route>.css.
 - Placeholders like {{store.name}}, {{product.title}}, {{product.price}}, {{product.image}}, {{product.url}} and the {{#products}}...{{/products}} loop bind live store data; {{asset.hero}} binds this store's generated hero photograph when one exists. Keep them working; never invent new placeholder names.
-- Never add scripts, iframes, forms, event handlers, or references to external URLs. Fonts come only from the @font-face files already in base.css. Images: template art under /storefront-recipes/ and the product placeholders.
+- Never add scripts, iframes, forms, event handlers, or references to external URLs. Fonts come only from the @font-face files already in base.css. Images: ONLY the placeholder bindings ({{product.image}}, {{store.logo}}, {{asset.<key>}} for assets named in this conversation) and template art paths already present in the current files. NEVER invent an image path or file name — nothing else exists on disk, so an invented path renders as a broken image on every view.
 - Conversion widgets are declared, not scripted. A coupon-capture popup is allowed ONLY when the merchant has given you a real discount code in this conversation or the build context — this platform has no discounts feature yet, so never invent a code or an offer (the runtime drops any popup whose code is not redeemable). With a real code, place exactly one marker on the home page (the runtime turns it into a real, dismissible popup and wires the behavior): <div data-designer-widget="coupon" data-code="THE-MERCHANT'S-CODE" data-headline="A welcome offer" data-sub="Join the list for early access and member pricing."></div>. Style it by editing base.css variables it inherits; never write its script. An announcement bar is ordinary styled markup you author at the very top of the shell (a thin full-width bar) — it needs no script. Give it a free-shipping-threshold line ONLY when the merchant supplied that exact threshold, and then also put data-designer-free-shipping="120" (the whole-dollar threshold) on the bar element so the store's cart drawer can show a progress meter toward it; otherwise the bar carries a true, number-free line (a brand promise or launch note).
 - Live behavior comes from data attributes the runtime wires (never write scripts): a header search field is an <input type="search" data-designer-search placeholder="Search"> (the runtime submits it to the search page on Enter); a header cart count is <span data-designer-cart-count>{{cart.count}}</span> (the runtime keeps it current). Add-to-cart buttons always carry the class designer-add-to-cart.
 - Design taste: one accent color per store, saturation under 80 percent, never pure black or pure white, no AI-purple gradients, no neon glows. The accent lives in base.css as --signal on :root — define it there, reference var(--signal) wherever the accent appears, and when the merchant changes the accent site-wide, update --signal in the same edit: the store's runtime chrome (coupon popup button, cart drawer meter and checkout button) colors itself from var(--signal) and must follow the swap. Text must stay readable against its background (4.5:1). Headlines short and confident. No dash characters in copy, no exclamation marks, no filler verbs (elevate, unleash, seamless).
@@ -150,6 +151,17 @@ async function saveDocuments(
     onlyFiles?: ReadonlySet<string>;
   },
 ): Promise<void> {
+  // Observability only (spec D4): a save must never throw on a bad image
+  // reference — that would brick mid-stream page saves and the resume path.
+  // The build/edit loops feed violations back to the model as repair
+  // instructions, and publishing refuses the truly broken ones.
+  const violations = findImageRegistryViolations({ files, templateId, firstBuild: false });
+  if (violations.length > 0) {
+    console.warn("[designer] saving documents with image-registry violations", {
+      shopId,
+      violations: violations.slice(0, 8).map((violation) => `${violation.file}: ${violation.path} (${violation.reason})`),
+    });
+  }
   const stamp = new Date().toISOString();
   const rows = [
     { shop_id: shopId, route: "base", html: "", css: scrubDesignerCss(files["base.css"] ?? ""), template_id: templateId, built: true, updated_at: stamp },
@@ -301,6 +313,9 @@ async function runEditTurn(input: {
   model?: StudioDesignModel;
   signal?: AbortSignal;
   maxTokens?: number;
+  /** First builds hold donor-template art to the replacement contract; edit
+   *  turns grandfather donor paths already present in saved documents. */
+  firstBuild?: boolean;
 }): Promise<DesignerReply & { files: Record<string, string> }> {
   const context = editContext(input.data, input.route, input.files);
 
@@ -313,14 +328,32 @@ async function runEditTurn(input: {
   // other file would rewrite pages it never read, so they are rejected.
   const allowedFiles = new Set(["base.css", `${input.route}.html`, `${input.route}.css`]);
 
+  // Deterministic image audit (spec D4): violations in the files this turn
+  // may edit feed the same retry loop as failed edits — the model repairs its
+  // own output instead of a save throwing mid-stream.
+  const auditImages = (files: Record<string, string>) =>
+    findImageRegistryViolations({
+      files,
+      templateId: input.templateId,
+      firstBuild: input.firstBuild === true,
+      availableAssetKeys: input.firstBuild ? new Set(Object.keys(input.data.assets ?? {})) : undefined,
+      storeLogoAvailable: input.firstBuild ? Boolean(input.data.logoUrl?.trim()) : undefined,
+      productImagesAvailable: input.firstBuild
+        ? input.data.products.length > 0 && input.data.products.every((product) => Boolean(product.imageUrl?.trim()))
+        : undefined,
+    })
+      .filter((violation) => allowedFiles.has(violation.file));
+
   let raw = await completeText({ model: input.model, system: SYSTEM_PROMPT, messages, signal: input.signal, maxTokens: input.maxTokens });
   let parsed = parseDesignerReply(raw);
   let result = applyDesignerEdits(input.files, parsed.edits, allowedFiles);
   let attempted = parsed.edits.length + (parsed.truncated ? 1 : 0);
+  let violations = auditImages(result.files);
 
-  // One retry covering both failure shapes: SEARCH text that missed, and a
-  // reply cut off mid-block by the output-token cap.
-  if (result.rejected.length > 0 || parsed.truncated) {
+  // One retry covering the failure shapes: SEARCH text that missed, a reply
+  // cut off mid-block by the output-token cap, and image references that
+  // break the registry contract (invented paths, surviving donor art).
+  if (result.rejected.length > 0 || parsed.truncated || violations.length > 0) {
     const failed = result.rejected
       .map((edit: DesignerEdit) => `FILE: ${edit.file}\n<<<<<<< SEARCH\n${edit.search}\n=======\n${edit.replace}\n>>>>>>> REPLACE`)
       .join("\n\n");
@@ -331,6 +364,7 @@ async function runEditTurn(input: {
       result.rejected.length > 0
         ? `These blocks did not apply because their SEARCH text is not present character-for-character in the current files (or they touch a file outside base.css and the page being discussed). Re-send ONLY these edits with SEARCH text copied exactly from the files above (or use * to replace a whole file):\n\n${failed}`
         : "",
+      imageRepairInstruction(violations),
     ].filter(Boolean).join("\n\n");
     const retryRaw = await completeText({
       model: input.model,
@@ -350,6 +384,14 @@ async function runEditTurn(input: {
     attempted += retryParsed.edits.length + (retryParsed.truncated ? 1 : 0);
     result = { files: retryResult.files, applied: result.applied + retryResult.applied, rejected: retryResult.rejected };
     if (!parsed.prose && retryParsed.prose) parsed = { ...parsed, prose: retryParsed.prose };
+    violations = auditImages(result.files);
+    if (violations.length > 0) {
+      // Save still proceeds (fail-soft); publish is the hard gate.
+      console.warn("[designer] image-registry violations survived the repair retry", {
+        route: input.route,
+        violations: violations.slice(0, 8).map((violation) => `${violation.file}: ${violation.path} (${violation.reason})`),
+      });
+    }
   }
 
   // Honest reporting (rule 12): never let success prose stand when nothing
@@ -397,11 +439,17 @@ export async function designerHasDocuments(shopId: string): Promise<boolean> {
 async function reviewPage(input: {
   files: Record<string, string>;
   route: DesignerRoute;
+  templateId: string;
+  /** First builds hold donor art to the replacement contract (spec D4). */
+  firstBuild: boolean;
   model?: StudioDesignModel;
   signal?: AbortSignal;
   /** Merchant-supplied text (brief, configured facts): a numeric offer whose
    *  number/code appears here was provided, not invented. */
   providedFacts?: string;
+  availableAssetKeys?: ReadonlySet<string>;
+  storeLogoAvailable?: boolean;
+  productImagesAvailable?: boolean;
 }): Promise<{ files: Record<string, string>; fixed: number }> {
   try {
     // Deterministic backstop first (spec D5): flag obviously unhonorable offer
@@ -411,7 +459,20 @@ async function reviewPage(input: {
     const claims = findUnhonorableClaims(input.files[`${input.route}.html`] ?? "", {
       providedFacts: input.providedFacts,
     });
-    const audit = claimsRepairInstruction(claims);
+    // Same for image references (spec D4): invented paths and surviving donor
+    // art on this page are concrete defects the review pass must repair.
+    const imagery = imageRepairInstruction(
+      findImageRegistryViolations({
+        files: input.files,
+        templateId: input.templateId,
+        firstBuild: input.firstBuild,
+        availableAssetKeys: input.availableAssetKeys,
+        storeLogoAvailable: input.storeLogoAvailable,
+        productImagesAvailable: input.productImagesAvailable,
+      })
+        .filter((violation) => violation.file === "base.css" || violation.file.startsWith(`${input.route}.`)),
+    );
+    const audit = [claimsRepairInstruction(claims), imagery].filter(Boolean).join("\n\n");
     const raw = await completeText({
       model: input.model,
       system: REVIEW_PROMPT,
@@ -441,7 +502,39 @@ export interface DesignerBuildEvent {
   reply: string;
 }
 
-function firstBuildInstruction(input: {
+/** Picks the best imagery the shop ALREADY has for a zero-quota hero: the
+ *  first product photo (merchant media, or a ready generated asset merged by
+ *  applyAssetOverrides — never failed rows, whose urls are empty), else the
+ *  store logo. Null means the shop genuinely has no usable imagery. */
+export function pickExistingHeroSource(data: DesignerStoreData): string | null {
+  const productImage = data.products.find((product) => product.imageUrl)?.imageUrl ?? null;
+  return productImage || data.logoUrl || null;
+}
+
+export function firstBuildRouteImageAudit(input: {
+  files: Record<string, string>;
+  route: DesignerRoute;
+  templateId: string;
+  availableAssetKeys: ReadonlySet<string>;
+  storeLogoAvailable?: boolean;
+  productImagesAvailable?: boolean;
+}) {
+  return findImageRegistryViolations({
+    files: input.files,
+    templateId: input.templateId,
+    firstBuild: true,
+    availableAssetKeys: input.availableAssetKeys,
+    storeLogoAvailable: input.storeLogoAvailable,
+    productImagesAvailable: input.productImagesAvailable,
+  }).filter(
+    (violation) =>
+      violation.file === "base.css" || violation.file.startsWith(`${input.route}.`),
+  );
+}
+
+// Exported for prompt-rule tests: the hero branch is contract (spec D4's
+// mandatory hero) — it must never be empty, whatever imagery the shop has.
+export function firstBuildInstruction(input: {
   brief: string;
   route: DesignerRoute;
   mode: DesignerBuildMode;
@@ -449,17 +542,31 @@ function firstBuildInstruction(input: {
   direction: ArtDirection;
   donePages: DesignerRoute[];
   heroAssetUrl?: string | null;
+  /** Whether any catalog product carries a usable photo ({{product.image}}). */
+  hasProductImagery?: boolean;
 }): string {
+  // Donor-art replacement contract (spec D4): a first build names the donor
+  // template's REAL art paths and requires each to be replaced or removed —
+  // never kept, never re-captioned with this store's alt text. Strict here
+  // (first builds only); the shared system prompt stays permissive so edit
+  // turns don't break already-saved donor art.
+  const donorArt = input.mode === "template" ? donorTemplateArtPaths(input.templateId) : [];
+  const donorRule = donorArt.length > 0
+    ? ` The template's own artwork (exactly these files: ${donorArt.join(", ")}) photographs the donor template's product category, not this merchant's: replace every reference to it with this store's real imagery ({{asset.hero}}, {{product.image}}) or remove the element entirely — never keep donor art on this store, and never re-caption it with this store's alt text.`
+    : "";
   const base = input.mode === "template"
-    ? `First build, page "${input.route}": this store was just attached to the "${input.templateId}" template. Rework this page so it belongs to THIS merchant: their copy, their accent, their category names. Keep template structure only where it genuinely serves the page — restructure anything that hurts scanning (stacked one-per-row product lists become grids, oversized imagery gets contained), and fully style anything the template left plain.`
+    ? `First build, page "${input.route}": this store was just attached to the "${input.templateId}" template. Rework this page so it belongs to THIS merchant: their copy, their accent, their category names, their imagery.${donorRule} Keep template structure only where it genuinely serves the page — restructure anything that hurts scanning (stacked one-per-row product lists become grids, oversized imagery gets contained), and fully style anything the template left plain.`
     : `First build, page "${input.route}": you are designing this store from scratch. Author the complete page (whole-file rewrites with * are expected) with committed art direction, not a wireframe.`;
   const direction = `Art direction for this store (starting point, adapt to the merchant's brief if they conflict): display font "${input.direction.displayFont}", body font "${input.direction.bodyFont}"; palette: ${input.direction.palette}; layout: ${input.direction.layout}; mood: ${input.direction.mood}. Add @font-face rules to base.css only for these self-hosted fonts (/storefront-fonts/<id>-latin.woff2), where <id> must be one of: ${DESIGNER_FONT_IDS.join(", ")}. No other font files exist.`;
   const continuity = input.donePages.length > 0
     ? `Pages already designed this build: ${input.donePages.join(", ")}. base.css already carries the design system from those pages — reuse it, do not fork new token names for the same concepts.`
     : "This is the first page of the build; establish the design system tokens in base.css here.";
+  // Mandatory hero (spec D4): this branch must NEVER be empty — every first
+  // build commits to a real hero (asset, product photography, or a deliberate
+  // typographic treatment), never gray placeholder art.
   const hero = input.heroAssetUrl
-    ? `A custom photograph was generated for this store: use the placeholder {{asset.hero}} as an image src (hero media, a section background image, or a large brand moment). It is a real photo matching the brief and art direction — prefer it over template art for the hero.`
-    : "";
+    ? `A real photograph is ready for this store: use the placeholder {{asset.hero}} as an image src (hero media, a section background image, or a large brand moment). It matches this store's brief and art direction — prefer it over template art for the hero.`
+    : `No adopted or generated hero exists for this store yet: author a deliberate typographic/color hero — committed display type, the store's palette, strong composition. No image element, no gray placeholder art.`;
   return `${input.brief}\n\n(${base}\n${direction}\n${continuity}\n${hero}\nEvery section must end launch-ready: no default browser styling, no placeholder copy, price and availability visible wherever a product shows.)`;
 }
 
@@ -482,11 +589,14 @@ export async function designerFirstBuild(input: {
   // computing what's missing so products that already have a generated photo
   // aren't paid for again. Fail-soft — then load store data so the pages are
   // designed against the real visuals.
+  // First builds carry a reserved image allowance on top of the shared daily
+  // cap (spec D4) — passed as a limits override, never a counting change.
+  const firstBuildLimits = designerFirstBuildImageLimits();
   let photosQuotaBlocked = false;
   try {
     const catalogProducts = await getCatalog().listProducts(input.shopId, { limit: 12 });
     const withExisting = await applyAssetOverrides(input.shopId, catalogProducts).catch(() => catalogProducts);
-    await generateMissingListingImages(input.shopId, withExisting, undefined, input.signal, 6);
+    await generateMissingListingImages(input.shopId, withExisting, undefined, input.signal, 6, firstBuildLimits, true);
   } catch (err) {
     console.error("[designer] product image generation skipped", err);
   }
@@ -523,21 +633,35 @@ export async function designerFirstBuild(input: {
   // merchant's intent in history rather than an empty conversation.
   await appendHistory(input.shopId, "user", input.message);
 
-  // One generated hero photograph per build (cheap image tier, quota-metered,
-  // fail-soft). Generated before the pages so every page can reference it;
-  // a resume reuses the hero the interrupted build already paid for.
+  // Mandatory hero (spec D4): one hero per build, resolved through a fallback
+  // chain that always terminates in a usable instruction. (1) Reuse before
+  // generate: imagery the shop already has (first product photo, else logo)
+  // is adopted as the hero at ZERO generation quota. (2) Else one generated
+  // hero photograph (cheap image tier, quota-metered, fail-soft). (3) Else
+  // the build instruction demands a deliberate typographic hero — never gray
+  // placeholder art. A resume reuses the hero the interrupted build already
+  // has; the hero lands before the pages so every page can reference it.
   let heroAssetUrl = data.assets?.hero ?? null;
+  if (!heroAssetUrl) {
+    const existing = pickExistingHeroSource(data);
+    if (existing) {
+      heroAssetUrl = await adoptDesignerAsset({ shopId: input.shopId, key: "hero", url: existing, signal: input.signal });
+    }
+  }
   if (!heroAssetUrl) {
     const hero = await generateDesignerAsset({
       shopId: input.shopId,
       key: "hero",
       prompt: `Photorealistic lifestyle/product photograph for an online store. Brief: ${input.message.slice(0, 500)}. Mood: ${direction.mood}. Palette leaning: ${direction.palette}. Editorial commercial photography, natural light, no text, no logos, no watermarks, no people's identifiable faces.`,
       signal: input.signal,
+      limits: firstBuildLimits,
+      retryOnRateLimit: true,
     });
     heroAssetUrl = hero.url;
     photosQuotaBlocked = photosQuotaBlocked || hero.quotaBlocked;
   }
   if (heroAssetUrl) data.assets = { ...(data.assets ?? {}), hero: heroAssetUrl };
+  const hasProductImagery = data.products.some((product) => product.imageUrl);
 
   const donePages: DesignerRoute[] = resuming
     ? DESIGNER_ROUTES.filter((route) => !existing.unbuilt.includes(route))
@@ -545,6 +669,7 @@ export async function designerFirstBuild(input: {
   const builtRoutes = new Set<string>(donePages);
   const remaining: DesignerRoute[] = [...routesToBuild];
   let rejected = 0;
+  let imageAuditBlocked = false;
   const total = donePages.length + remaining.length;
   while (remaining.length > 0) {
     // The platform hard-kills this function at maxDuration with no error
@@ -557,17 +682,48 @@ export async function designerFirstBuild(input: {
       files,
       templateId,
       route,
-      userMessage: firstBuildInstruction({ brief: input.message, route, mode, templateId, direction, donePages, heroAssetUrl }),
+      userMessage: firstBuildInstruction({ brief: input.message, route, mode, templateId, direction, donePages, heroAssetUrl, hasProductImagery }),
       history: [],
       data,
       model: input.model,
       signal: input.signal,
       maxTokens: FIRST_BUILD_MAX_TOKENS,
+      firstBuild: true,
     });
     files = turn.files;
     rejected += turn.rejectedEdits;
-    const review = await reviewPage({ files, route, model: input.model, signal: input.signal, providedFacts: input.message });
+    const availableAssetKeys = new Set(Object.keys(data.assets ?? {}));
+    const storeLogoAvailable = Boolean(data.logoUrl?.trim());
+    const productImagesAvailable = data.products.length > 0 && data.products.every(
+      (product) => Boolean(product.imageUrl?.trim()),
+    );
+    const review = await reviewPage({
+      files,
+      route,
+      templateId,
+      firstBuild: true,
+      model: input.model,
+      signal: input.signal,
+      providedFacts: input.message,
+      availableAssetKeys,
+      storeLogoAvailable,
+      productImagesAvailable,
+    });
     files = review.files;
+    const finalImageViolations = firstBuildRouteImageAudit({
+      files,
+      route,
+      templateId,
+      availableAssetKeys,
+      storeLogoAvailable,
+      productImagesAvailable,
+    });
+    if (finalImageViolations.length > 0) {
+      imageAuditBlocked = true;
+      remaining.unshift(route);
+      await saveDocuments(input.shopId, templateId, files, { builtRoutes });
+      break;
+    }
     donePages.push(route);
     builtRoutes.add(route);
     // Persist after every page so the preview shows finished pages
@@ -590,9 +746,11 @@ export async function designerFirstBuild(input: {
     ? " Today's photo-generation limit was reached, so some imagery uses placeholders — build again tomorrow to fill them in."
     : "";
   if (remaining.length > 0) {
-    const summary = `I've designed ${donePages.length} of ${total} pages so far — the ${remaining.join(", ")} page${remaining.length > 1 ? "s are" : " is"} still on the way. Send any message and I'll finish the rest.${quotaNote}`;
+    const summary = imageAuditBlocked
+      ? `I've designed ${donePages.length} of ${total} pages so far — the ${remaining[0]} page still needs an imagery repair before I can call it finished. Send any message and I'll resume there.${quotaNote}`
+      : `I've designed ${donePages.length} of ${total} pages so far — the ${remaining.join(", ")} page${remaining.length > 1 ? "s are" : " is"} still on the way. Send any message and I'll finish the rest.${quotaNote}`;
     await appendHistory(input.shopId, "assistant", summary);
-    return { reply: summary, changed: donePages.length > 0, rejectedEdits: rejected };
+    return { reply: summary, changed: donePages.length > 0 || imageAuditBlocked, rejectedEdits: rejected };
   }
 
   const summary = (mode === "scratch"

@@ -40,4 +40,13 @@ describe("designer SYSTEM_PROMPT honesty rules", () => {
     expect(SYSTEM_PROMPT).toContain("--signal");
     expect(SYSTEM_PROMPT).toContain("update --signal in the same edit");
   });
+
+  it("forbids invented image paths and pins the allowed image vocabulary (D4)", () => {
+    expect(SYSTEM_PROMPT).toContain("NEVER invent an image path or file name");
+    expect(SYSTEM_PROMPT).toContain("{{product.image}}, {{store.logo}}, {{asset.<key>}}");
+    // The old blanket license for template art is gone; only paths already in
+    // the current files stay legal (edit turns on existing stores).
+    expect(SYSTEM_PROMPT).not.toContain("template art under /storefront-recipes/ and the product placeholders");
+    expect(SYSTEM_PROMPT).toContain("template art paths already present in the current files");
+  });
 });

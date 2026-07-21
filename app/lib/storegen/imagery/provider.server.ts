@@ -3,6 +3,7 @@
 // generated listing image goes through ImageProvider, so blocks/editor/storefront never care
 // about the backend.
 import { generateGeminiImages } from "./gemini.server";
+import type { ImageGenLimits } from "~/lib/screener/image-gen-limit.server";
 
 export interface ListingImageRequest {
   shopId: string;
@@ -12,6 +13,9 @@ export interface ListingImageRequest {
   mode: "product_shot" | "lifestyle_scene";
   purpose?: "storefront_product" | "storefront_design";
   signal?: AbortSignal;
+  /** Per-reservation daily-cap override (designer first-build reserve). */
+  limits?: Partial<ImageGenLimits>;
+  retryOnRateLimit?: boolean;
 }
 export interface ImageProvider {
   name: string;
@@ -28,6 +32,8 @@ export function getImageProvider(): ImageProvider {
         prompt: `Create a clean ecommerce ${req.mode === "product_shot" ? "product photo" : "lifestyle image"} for ${req.productTitle}. ${req.productDescription}`,
         referenceImageUrl: req.sourceImageUrl,
         signal: req.signal,
+        limits: req.limits,
+        retryOnRateLimit: req.retryOnRateLimit,
       });
       return { url };
     },

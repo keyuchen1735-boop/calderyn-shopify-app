@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   rateLimit: vi.fn(),
   readPointers: vi.fn(),
   runCommand: vi.fn(),
+  getStoreSettings: vi.fn(),
 }));
 
 vi.mock("~/lib/supabase.server", () => ({
@@ -28,6 +29,7 @@ vi.mock("~/lib/dashboard/http.server", () => ({ rateLimit: mocks.rateLimit }));
 vi.mock("~/lib/storefront-bundle/build.server", () => ({
   readStorefrontReleasePointers: mocks.readPointers,
 }));
+vi.mock("~/lib/storefront/settings.server", () => ({ getStoreSettings: mocks.getStoreSettings }));
 vi.mock("~/lib/storefront-command/command.server", () => ({
   runStoreCommand: mocks.runCommand,
   StoreCommandError: class StoreCommandError extends Error {
@@ -64,6 +66,7 @@ beforeEach(() => {
   mocks.rateLimit.mockResolvedValue(true);
   mocks.readPointers.mockResolvedValue({ draftVersionId: null, publishedVersionId: null });
   mocks.runCommand.mockResolvedValue({ status: "installed", versionId: "version-1", undo: null });
+  mocks.getStoreSettings.mockResolvedValue({ composerEnabled: false });
 });
 
 describe("pickProduct Store command handoff", () => {
@@ -109,6 +112,27 @@ describe("pickProduct Store command handoff", () => {
       storeBuildSkipped: "storefront_command_unavailable",
     });
     expect(mocks.createProduct).toHaveBeenCalledOnce();
+  });
+
+  it("never routes a designer-enabled shop into the classic pipeline (D1 side door)", async () => {
+    mocks.getStoreSettings.mockResolvedValue({ composerEnabled: true });
+    await expect(pickProduct("shop-1", "source-1")).resolves.toEqual({
+      productId: "product-1",
+      storeRunId: null,
+      storeBuildSkipped: "designer_enabled",
+    });
+    expect(mocks.runCommand).not.toHaveBeenCalled();
+    // The pick itself always succeeds; only the classic auto-build is skipped.
+    expect(mocks.createProduct).toHaveBeenCalledOnce();
+  });
+
+  it("fails open to the classic build when the designer flag lookup hiccups", async () => {
+    mocks.getStoreSettings.mockRejectedValue(new Error("settings unavailable"));
+    await expect(pickProduct("shop-1", "source-1")).resolves.toEqual({
+      productId: "product-1",
+      storeRunId: "version-1",
+    });
+    expect(mocks.runCommand).toHaveBeenCalledOnce();
   });
 
   it("keeps the picked product and returns a safe skip when release pointers cannot be read", async () => {

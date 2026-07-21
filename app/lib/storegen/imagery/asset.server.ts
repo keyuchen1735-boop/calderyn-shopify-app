@@ -6,6 +6,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import type { StorefrontCatalog, StoreProduct } from "~/lib/storefront/catalog";
 import { persistExternalImage } from "~/lib/assets/persist.server";
 import { getImageProvider } from "./provider.server";
+import type { ImageGenLimits } from "~/lib/screener/image-gen-limit.server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SOURCE = "gemini";
@@ -42,7 +43,7 @@ const defaultAssetOverrideDependencies: StoreAssetOverrideDependencies = {
     .range(from, to),
 };
 
-export async function enhanceListing(shopId: string, product: StoreProduct, opts: { signal?: AbortSignal } = {}): Promise<EnhanceResult> {
+export async function enhanceListing(shopId: string, product: StoreProduct, opts: { signal?: AbortSignal; limits?: Partial<ImageGenLimits>; retryOnRateLimit?: boolean } = {}): Promise<EnhanceResult> {
   if (!UUID_RE.test(shopId)) throw new Error(`enhanceListing requires a real (uuid) shop_id, got ${shopId}`);
   const sb = getSupabase();
   let url: string | null = null;
@@ -53,6 +54,8 @@ export async function enhanceListing(shopId: string, product: StoreProduct, opts
       productTitle: product.title, productDescription: product.description,
       sourceImageUrl: product.images[0]?.url ?? null, mode: "product_shot",
       signal: opts.signal,
+      limits: opts.limits,
+      retryOnRateLimit: opts.retryOnRateLimit === true,
     });
     status = "ready";
     // Capture Gemini's inline image into owned storage before previewing it.
@@ -86,6 +89,10 @@ export async function generateMissingListingImages(
   enhance: typeof enhanceListing = enhanceListing,
   signal?: AbortSignal,
   limit = 3,
+  /** Per-reservation daily-cap override, threaded to the shared image meter
+   *  (the designer's first build passes its reserved allowance). */
+  limits?: Partial<ImageGenLimits>,
+  retryOnRateLimit = false,
 ): Promise<number> {
   if (products.length === 0 || limit <= 0) return 0;
   const missing = products
@@ -93,7 +100,9 @@ export async function generateMissingListingImages(
     // An explicit limit is the caller's budget decision; the constant is only
     // the default for callers that don't pass one.
     .slice(0, Math.max(0, limit));
-  const results = await Promise.all(missing.map((product) => enhance(shopId, product, { signal })));
+  const results = await Promise.all(missing.map((product) =>
+    enhance(shopId, product, { signal, limits, retryOnRateLimit }),
+  ));
   return results.filter((result) => result.status === "ready").length;
 }
 

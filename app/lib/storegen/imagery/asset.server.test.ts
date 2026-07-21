@@ -1,7 +1,7 @@
 // app/lib/storegen/imagery/asset.server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { StoreProduct } from "~/lib/storefront/catalog";
-import { enhanceListing, applyAssetOverrides } from "./asset.server";
+import { enhanceListing, applyAssetOverrides, generateMissingListingImages } from "./asset.server";
 
 const { fromMock, providerMock, persistMock } = vi.hoisted(() => ({ fromMock: vi.fn(), providerMock: vi.fn(), persistMock: vi.fn() }));
 vi.mock("~/lib/supabase.server", () => ({ getSupabase: () => ({ from: fromMock }) }));
@@ -87,6 +87,43 @@ describe("enhanceListing", () => {
     const out = await enhanceListing(realShop, product("1", null), { signal: controller.signal });
     expect(out.status).toBe("failed");
     expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps rate-limit retry disabled for callers that do not opt in", async () => {
+    providerMock.mockRejectedValue(new Error("throttled"));
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    fromMock.mockReturnValue({ upsert });
+
+    await enhanceListing(realShop, product("1", null));
+
+    expect(providerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ retryOnRateLimit: false }),
+    );
+  });
+});
+
+describe("generateMissingListingImages", () => {
+  it("opts the designer first-build listing chain into the shared in-slot retry", async () => {
+    const enhance = vi.fn().mockResolvedValue({ productId: "1", status: "ready", url: "/owned.jpg" });
+
+    await generateMissingListingImages(
+      realShop,
+      [product("1", null)],
+      enhance,
+      undefined,
+      1,
+      { perShopDaily: 13 },
+      true,
+    );
+
+    expect(enhance).toHaveBeenCalledWith(
+      realShop,
+      expect.objectContaining({ id: "1" }),
+      expect.objectContaining({
+        limits: { perShopDaily: 13 },
+        retryOnRateLimit: true,
+      }),
+    );
   });
 });
 

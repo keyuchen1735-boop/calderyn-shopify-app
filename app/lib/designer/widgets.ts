@@ -118,6 +118,41 @@ export function hasCouponWidget(html: string): boolean {
   return MARKER_RE.test(html);
 }
 
+// ── Free-shipping threshold gating (serve-time; spec D5's honesty contract,
+// the Phase 2 carry-over) ────────────────────────────────────────────────────
+// Same contract as the coupon widget: a free-shipping threshold is a promise,
+// so a declared data-designer-free-shipping meter and any "free shipping over
+// $N" line render ONLY when the number is backed by a supplied fact. No
+// shipping-settings source feeds this yet, so no caller supplies thresholds
+// and every fabricated $50/$75 claim degrades to plain "free shipping" at
+// serve time — existing publications included, without touching their stored
+// documents. When shipping settings become the source of truth, callers pass
+// the real thresholds and honest meters light up unchanged.
+
+const FREE_SHIPPING_METER_RE = /\s*\bdata-designer-free-shipping\s*=\s*"(\d{1,4})"/gi;
+// The copy shape the claims backstop flags, plus optional cents ("$50.00").
+const FREE_SHIPPING_COPY_RE =
+  /\b(free\s+shipping)\s+(?:on\s+)?(?:all\s+)?(?:orders?\s+)?(?:over|above|from)\s*\$?\s*(\d{1,4})(?:\.\d{1,2})?\b/gi;
+
+/** Strips unbacked free-shipping thresholds from a rendered page: the cart
+ *  meter attribute is removed (the drawer simply shows no meter) and the
+ *  threshold copy degrades to its number-free lead ("Free shipping"). A
+ *  threshold whose whole-dollar value appears in `backedThresholds` passes
+ *  through untouched. */
+export function gateFreeShippingThresholds(
+  html: string,
+  opts: { backedThresholds?: readonly number[] },
+): string {
+  const backed = new Set((opts.backedThresholds ?? []).map((value) => Math.round(value)));
+  return html
+    .replace(FREE_SHIPPING_METER_RE, (match, value: string) =>
+      backed.has(Number(value)) ? match : "",
+    )
+    .replace(FREE_SHIPPING_COPY_RE, (match, lead: string, value: string) =>
+      backed.has(Number(value)) ? match : lead,
+    );
+}
+
 // ── Cart drawer (live pages only) ────────────────────────────────────────────
 // Runtime chrome, not model-authored design: every published designer page
 // gets a slide-in cart with line items, subtotal, an optional free-shipping

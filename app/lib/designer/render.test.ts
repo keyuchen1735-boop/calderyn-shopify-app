@@ -218,3 +218,24 @@ describe("hardening: unknown placeholder sentinels", () => {
     expect(bodyHtml).toContain("<div>Shell</div>");
   });
 });
+
+describe("serve-time free-shipping threshold gating (spec D5 carry-over)", () => {
+  it("degrades an unbacked threshold on render: no meter attribute, number-free copy", () => {
+    const html = `<div class="bar" data-designer-free-shipping="50">Free shipping on orders over $50</div>`;
+    const { bodyHtml } = renderDesignerBody({ html, css: "", data });
+    expect(bodyHtml).not.toContain("data-designer-free-shipping");
+    expect(bodyHtml).not.toContain("$50");
+    expect(bodyHtml).toContain("Free shipping");
+  });
+
+  it("keeps a threshold backed by supplied shipping facts", () => {
+    const html = `<div data-designer-free-shipping="120">Free shipping over $120</div>`;
+    const { bodyHtml } = renderDesignerBody({
+      html,
+      css: "",
+      data: { ...data, backedFreeShippingThresholds: [120] },
+    });
+    expect(bodyHtml).toContain(`data-designer-free-shipping="120"`);
+    expect(bodyHtml).toContain("Free shipping over $120");
+  });
+});

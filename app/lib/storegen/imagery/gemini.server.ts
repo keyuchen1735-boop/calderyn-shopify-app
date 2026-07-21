@@ -4,6 +4,7 @@ import {
   markImageGenStarted,
   releaseImageGen,
   reserveImageGenSlots,
+  type ImageGenLimits,
   type ImageGenerationUsage,
 } from "~/lib/screener/image-gen-limit.server";
 
@@ -50,6 +51,9 @@ export interface GeminiImageMeter {
     count: number;
     generationId?: string;
     purpose: string;
+    /** Per-reservation cap override (e.g. the designer first-build reserve);
+     *  omitted = the env-derived daily limits. Counting is never affected. */
+    limits?: Partial<ImageGenLimits>;
   }): Promise<
     | { ok: true; eventIds: string[] }
     | { ok: false; scope: "shop" | "global"; limit: number }
@@ -70,12 +74,18 @@ export interface GeminiImageMeter {
 
 const defaultMeter: GeminiImageMeter = {
   async reserve(input) {
-    return reserveImageGenSlots(input.shopId, input.count, new Date(), {
-      generationId: input.generationId,
-      provider: "gemini",
-      model: GEMINI_IMAGE_MODEL,
-      purpose: input.purpose,
-    });
+    return reserveImageGenSlots(
+      input.shopId,
+      input.count,
+      new Date(),
+      {
+        generationId: input.generationId,
+        provider: "gemini",
+        model: GEMINI_IMAGE_MODEL,
+        purpose: input.purpose,
+      },
+      input.limits,
+    );
   },
   started: markImageGenStarted,
   complete: completeImageGen,
@@ -142,6 +152,11 @@ export async function generateGeminiImages(input: {
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
   meter?: GeminiImageMeter;
+  /** Per-reservation daily-cap override (designer first-build reserve). */
+  limits?: Partial<ImageGenLimits>;
+  /** One in-slot retry for provider throttling. Designer first builds opt in;
+   *  shared/classic callers keep their original single-attempt behavior. */
+  retryOnRateLimit?: boolean;
 }): Promise<string[]> {
   if (!geminiImageGenerationEnabled()) {
     throw new Error("Live Gemini image generation is disabled");
@@ -168,6 +183,7 @@ export async function generateGeminiImages(input: {
     count,
     generationId: input.generationId,
     purpose: input.purpose,
+    limits: input.limits,
   });
   if (!reservation.ok) {
     throw new ImageGenerationQuotaError(reservation.scope, reservation.limit);
@@ -178,24 +194,38 @@ export async function generateGeminiImages(input: {
     try {
       await meter.started(eventId);
       providerStarted = true;
-      const response = await (input.fetchImpl ?? fetch)(ENDPOINT, {
-        method: "POST",
-        headers: {
-          "x-goog-api-key": key,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: GEMINI_IMAGE_MODEL,
-          input: requestInput,
-          response_format: {
-            type: "image",
-            mime_type: "image/jpeg",
-            aspect_ratio: "1:1",
-            image_size: "1K",
+      const attempt = () =>
+        (input.fetchImpl ?? fetch)(ENDPOINT, {
+          method: "POST",
+          headers: {
+            "x-goog-api-key": key,
+            "Content-Type": "application/json",
           },
-        }),
-        signal,
-      });
+          body: JSON.stringify({
+            model: GEMINI_IMAGE_MODEL,
+            input: requestInput,
+            response_format: {
+              type: "image",
+              mime_type: "image/jpeg",
+              aspect_ratio: "1:1",
+              image_size: "1K",
+            },
+          }),
+          signal,
+        });
+      let response = await attempt();
+      // Bounded in-slot retry on provider throttle: exactly one retry, short
+      // jittered backoff, INSIDE the already-started (already-counted) event —
+      // zero extra ledger rows, and complete() below still fires exactly once
+      // with the final outcome. A 429 response carries no image cost, so the
+      // deliberate anti-retry-storm counting (failed attempts stay in the
+      // daily ceiling) is unaffected.
+      if (input.retryOnRateLimit === true && response.status === 429 && !signal.aborted) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 2_000 + Math.random() * 2_000),
+        );
+        if (!signal.aborted) response = await attempt();
+      }
       if (!response.ok)
         throw new Error(`Gemini image generation failed (${response.status})`);
       const payload = (await response.json()) as GeminiResponse;
