@@ -80,3 +80,12 @@ export function listingDraftModel(): string {
 export function radarDraftModel(): string {
   return process.env.RADAR_DRAFT_MODEL || DEFAULT_DIGEST_MODEL;
 }
+
+/** Model for Radar's weekly competitor discovery: a single web_search-equipped
+ *  call that must return strict JSON, so the digest-class model is the right
+ *  default (and the reason the tool type is the basic web_search_20250305 -
+ *  the newer 20260209 variant needs Opus/Sonnet 4.6+). Override with
+ *  RADAR_DISCOVERY_MODEL. */
+export function radarDiscoveryModel(): string {
+  return process.env.RADAR_DISCOVERY_MODEL || DEFAULT_DIGEST_MODEL;
+}

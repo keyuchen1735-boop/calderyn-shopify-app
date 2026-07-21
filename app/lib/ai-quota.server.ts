@@ -8,7 +8,7 @@
 // defense-in-depth; the Anthropic workspace spend limit is the hard backstop.
 import { rateLimit } from "./rate-limit.server";
 
-export type AiFeature = "designer" | "assistant" | "listing" | "radar" | "radar_apply";
+export type AiFeature = "designer" | "assistant" | "listing" | "radar" | "radar_apply" | "radar_discovery";
 
 type QuotaConfig = {
   cooldownMs: number;
@@ -35,6 +35,11 @@ const QUOTAS: Record<AiFeature, QuotaConfig> = {
   // dashboard, 429ing their morning Apply. No human-facing cooldown either -
   // a merchant applying several moves back-to-back is normal use, not abuse.
   radar_apply: { cooldownMs: 0, daily: { base: 10, trusted: 10 } },
+  // Weekly competitor auto-discovery (one web_search-equipped Claude call per
+  // shop per run). Cadence is weekly, so the daily cap of 2 is belt-and-braces
+  // against a misfiring/looping cron - and a SEPARATE bucket from `radar` so a
+  // discovery run can never eat the nightly drafter's 5-call polish budget.
+  radar_discovery: { cooldownMs: 0, daily: { base: 2, trusted: 2 } },
 };
 
 const DAY_MS = 86_400_000;
