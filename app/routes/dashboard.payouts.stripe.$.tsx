@@ -6,7 +6,7 @@
 
 import type { LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
-import { requireDashboardSession } from "~/lib/dashboard/session.server";
+import { requireVerifiedSession } from "~/lib/dashboard/session.server";
 import {
   getConnectedAccount,
   onboardingOrigin,
@@ -15,7 +15,9 @@ import {
 } from "~/lib/payments/connect.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const session = await requireDashboardSession(request);
+  // Top-level browser GET: a missing session must bounce through /login (which
+  // returns here via ?return_to=), never render the API guard's raw 401 JSON.
+  const session = await requireVerifiedSession(request);
   const leg = params["*"];
 
   if (leg === "return") {
@@ -28,7 +30,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         `[stripe-connect] return-leg status sync failed for shop ${session.shopId}: ${(err as Error).message}`,
       );
     }
-    return redirect("/dashboard?payouts=updated");
+    // Land on the Payments screen (where the payouts card lives), with the
+    // one-shot param the dashboard shell turns into a confirmation toast.
+    return redirect("/dashboard/payments?payouts=updated");
   }
   if (leg === "refresh") {
     // A refresh URL only exists inside a link minted AFTER the row was created,
@@ -36,7 +40,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // prefetch, scanner) — never CREATE an account from a GET; provisioning
     // belongs to the POST intent on dashboard.api.billing.
     const acct = await getConnectedAccount(session.shopId);
-    if (!acct) return redirect("/dashboard");
+    if (!acct) return redirect("/dashboard/payments");
     const { url } = await startOnboarding(session.shopId, onboardingOrigin(request));
     return redirect(url);
   }

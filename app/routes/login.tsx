@@ -24,11 +24,16 @@ export const meta: MetaFunction = () => [{ title: "Sign in — Calderyn" }];
 export const links: LinksFunction = () => [{ rel: "stylesheet", href: dashboard }];
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  // Already signed in? Straight to the dashboard.
-  const session = await getSessionFromRequest(request);
-  if (session) return redirect("/dashboard");
-
   const url = new URL(request.url);
+  // Already signed in? Straight to where they were headed — a post-OAuth
+  // connector bounce carries the destination (and its one-shot connect notice)
+  // in ?return_to=, and dropping it would strand the merchant on the bare
+  // dashboard with no confirmation.
+  const session = await getSessionFromRequest(request);
+  if (session) {
+    return redirect(safeDashboardReturnTo(url.searchParams.get("return_to")) ?? "/dashboard");
+  }
+
   return {
     error: url.searchParams.get("error"),
     notice: url.searchParams.get("notice"),

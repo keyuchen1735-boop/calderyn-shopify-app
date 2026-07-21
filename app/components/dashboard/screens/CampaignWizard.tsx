@@ -12,6 +12,11 @@ import {
 import { CDIcon } from "../icons";
 import { money } from "../format";
 import {
+  saveConnectSnapshot,
+  peekConnectSnapshot,
+  clearConnectSnapshot,
+} from "./campaign-wizard-snapshot";
+import {
   fetchFirstRunPreflight,
   generateFirstRunCreatives,
   buildFirstRunPlaceholderVariants,
@@ -279,6 +284,10 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
 }
 
 function initWizardState(prefill: WizardPrefill): WizardState {
+  // A connect round-trip snapshot outranks prefill: it only exists when THIS
+  // tab just left mid-wizard for a provider consent screen.
+  const snapshot = peekConnectSnapshot<WizardState>(STEP_ORDER);
+  if (snapshot) return snapshot;
   if (prefill?.state) {
     return {
       step: "review",
@@ -578,6 +587,9 @@ function PlatformStep({
     setConnecting(true);
     try {
       const { url } = await startIntegrationConnect("meta", window.location.pathname);
+      // Full-page departure: stash the wizard so the return trip resumes with
+      // the merchant's step/product/budget instead of a blank restart.
+      saveConnectSnapshot(state);
       window.location.href = url;
     } catch (err) {
       const message =
@@ -2600,6 +2612,12 @@ export function CampaignWizard({
   embedded?: boolean;
 }) {
   const [state, dispatch] = useReducer(wizardReducer, prefill, initWizardState);
+  // Consume the connect round-trip snapshot after mount (the initializer must
+  // stay pure, so it only peeks) — one restore per departure, never a stale
+  // resurrection on a later visit.
+  useEffect(() => {
+    clearConnectSnapshot();
+  }, []);
   const [creativeRegenerating, setCreativeRegenerating] = useState(false);
   const [generationConfirmationOpen, setGenerationConfirmationOpen] =
     useState(false);
