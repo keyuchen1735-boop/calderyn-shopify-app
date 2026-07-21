@@ -7,6 +7,7 @@ vi.mock("~/lib/dashboard/search-client", () => ({
   fetchSearchOverview: vi.fn().mockResolvedValue(null),
   updateSettings: vi.fn(),
   suggestDescription: vi.fn(),
+  disconnectGsc: vi.fn(),
 }));
 
 // eslint-disable-next-line import/first -- imports must follow vi.mock
@@ -24,7 +25,20 @@ import type { SeoSettings, SearchOverviewVM } from "~/lib/dashboard/search-clien
 
 const app = { toast: () => {}, navigate: () => {} } as unknown as DashboardCtx;
 const settings: SeoSettings = { allowSearchEngines: true, allowAiCrawlers: true, weatherMerchandising: true, orgName: null, orgDescription: null, googleSiteVerification: null };
-const overview: SearchOverviewVM = { settings, sitemapUrl: "https://demo.calderyncompany.com/sitemap.xml" };
+const disconnectedGoogle = {
+  connected: false,
+  siteUrl: null,
+  clicks: 0,
+  impressions: 0,
+  topQueries: [],
+  slipping: [],
+  lastCapturedDate: null,
+};
+const overview: SearchOverviewVM = {
+  settings,
+  sitemapUrl: "https://demo.calderyncompany.com/sitemap.xml",
+  google: disconnectedGoogle,
+};
 
 beforeEach(() => {
   clearScreenCache();
@@ -81,6 +95,34 @@ describe("Search screen (smoke)", () => {
     });
     const html = renderToStaticMarkup(<Search app={app} />);
     expect(html).toContain("Saved and live");
+  });
+
+  it("shows a Connect Google button when Search Console isn't connected", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, overview);
+    const html = renderToStaticMarkup(<Search app={app} />);
+    expect(html).toContain("Google results");
+    expect(html).toContain("Connect Google");
+  });
+
+  it("shows rankings and a Disconnect action once Google is connected", () => {
+    cacheScreenData(SCREEN_CACHE_KEYS.search, {
+      ...overview,
+      google: {
+        connected: true,
+        siteUrl: "https://demo.calderyncompany.com",
+        clicks: 12,
+        impressions: 340,
+        topQueries: [{ query: "hand poured candles", clicks: 5, position: 3.2 }],
+        slipping: [{ pageUrl: "/products/cedar", query: "cedar candle", position: 9, prevPosition: 4 }],
+        lastCapturedDate: "2026-07-18",
+      },
+    });
+    const html = renderToStaticMarkup(<Search app={app} />);
+    expect(html).toContain("hand poured candles");
+    expect(html).toContain("was #4, now #9");
+    expect(html).toContain("Google data through 2026-07-18");
+    expect(html).toContain("Disconnect");
+    expect(html).not.toContain("Connect Google");
   });
 
   it("seeds the optional store-description field from settings.orgDescription", () => {

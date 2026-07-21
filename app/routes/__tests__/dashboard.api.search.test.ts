@@ -6,6 +6,7 @@ import { loader, action } from "../dashboard.api.search";
 // Spies live in vi.hoisted so the vi.mock factories below can close over
 // already-initialized functions instead of a TDZ error.
 const {
+  SHOP,
   requireDashboardSessionMock,
   requireSameOriginMock,
   getSeoSettingsMock,
@@ -15,8 +16,16 @@ const {
   listProductsMock,
   buildStoreDescriptionMock,
   getShopStorefrontOriginMock,
+  disconnectGscMock,
+  gscMaybeSingleMock,
+  gscRpcMock,
 } = vi.hoisted(() => ({
-  requireDashboardSessionMock: vi.fn().mockResolvedValue({ shopId: "shop1", userId: "u1", shopDomain: null, sessionId: "s1" }),
+  // getGoogleBlock gates its Supabase reads on isUuid(shopId), so the default
+  // session shopId must look like a real Supabase primary key (not a plain
+  // string like "shop1") or every google test would pass for the wrong reason
+  // (the demo-shop short-circuit, not the code path it claims to exercise).
+  SHOP: "11111111-2222-3333-4444-555555555555",
+  requireDashboardSessionMock: vi.fn().mockResolvedValue({ shopId: "11111111-2222-3333-4444-555555555555", userId: "u1", shopDomain: null, sessionId: "s1" }),
   requireSameOriginMock: vi.fn(),
   getSeoSettingsMock: vi.fn().mockResolvedValue({ allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null, googleSiteVerification: null }),
   upsertSeoSettingsMock: vi.fn().mockResolvedValue({ allowSearchEngines: true, allowAiCrawlers: false, orgName: "Ember", orgDescription: null, googleSiteVerification: null }),
@@ -25,9 +34,30 @@ const {
   listProductsMock: vi.fn().mockResolvedValue([{ id: "p1", handle: "cedar", title: "Cedar" }]),
   buildStoreDescriptionMock: vi.fn().mockReturnValue("Ember sells Soy Candles. Candles."),
   getShopStorefrontOriginMock: vi.fn().mockResolvedValue("https://ember.calderyncompany.com"),
+  disconnectGscMock: vi.fn().mockResolvedValue(undefined),
+  // Default: not connected, no site url — most tests don't care about Google state.
+  gscMaybeSingleMock: vi.fn().mockResolvedValue({ data: { gsc_connected: false, gsc_site_url: null }, error: null }),
+  gscRpcMock: vi.fn().mockResolvedValue({
+    data: { clicks: 0, impressions: 0, topQueries: [], slipping: [], lastCapturedDate: null },
+    error: null,
+  }),
 }));
 
 vi.mock("~/lib/dashboard/session.server", () => ({ requireDashboardSession: requireDashboardSessionMock }));
+vi.mock("~/lib/seo/gsc.server", () => ({ disconnectGsc: disconnectGscMock }));
+// The Google card reads the raw gsc_connected/gsc_site_url columns directly (no
+// getSeoSettings coverage for them) and calls the rankings-summary RPC — both via
+// getSupabase(), stubbed here so no real Supabase client is ever constructed.
+vi.mock("~/lib/supabase.server", () => ({
+  getSupabase: () => ({
+    from: () => ({
+      select: () => ({
+        eq: () => ({ maybeSingle: gscMaybeSingleMock }),
+      }),
+    }),
+    rpc: gscRpcMock,
+  }),
+}));
 vi.mock("~/lib/dashboard/http.server", () => ({
   requireSameOrigin: requireSameOriginMock,
   dashboardJson: async (fn: () => Promise<unknown>) => new Response(JSON.stringify(await fn()), { status: 200 }),
@@ -62,7 +92,7 @@ describe("dashboard.api.search loader", () => {
   it("returns this shop's SEO settings plus its live sitemap URL", async () => {
     const res = (await loader({ request: req(undefined, "GET") } as never)) as Response;
     expect(res.status).toBe(200);
-    expect(getSeoSettingsMock).toHaveBeenCalledWith("shop1");
+    expect(getSeoSettingsMock).toHaveBeenCalledWith(SHOP);
     const body = await res.json();
     expect(body.settings).toEqual({ allowSearchEngines: true, allowAiCrawlers: true, orgName: null, orgDescription: null, googleSiteVerification: null });
     expect(body.sitemapUrl).toBe("https://ember.calderyncompany.com/sitemap.xml");
@@ -71,6 +101,65 @@ describe("dashboard.api.search loader", () => {
     getShopStorefrontOriginMock.mockResolvedValueOnce("");
     const body = await ((await loader({ request: req(undefined, "GET") } as never)) as Response).json();
     expect(body.sitemapUrl).toBeNull();
+  });
+
+  it("returns a disconnected google block when Search Console isn't connected", async () => {
+    const body = await ((await loader({ request: req(undefined, "GET") } as never)) as Response).json();
+    expect(body.google).toMatchObject({ connected: false, siteUrl: null, clicks: 0, impressions: 0 });
+    expect(gscRpcMock).not.toHaveBeenCalled();
+  });
+
+  it("includes the google block when connected", async () => {
+    gscMaybeSingleMock.mockResolvedValueOnce({
+      data: { gsc_connected: true, gsc_site_url: "https://ember.calderyncompany.com" },
+      error: null,
+    });
+    gscRpcMock.mockResolvedValueOnce({
+      data: { clicks: 12, impressions: 340, topQueries: [], slipping: [], lastCapturedDate: "2026-07-18" },
+      error: null,
+    });
+    const res = (await loader({ request: req(undefined, "GET") } as never)) as Response;
+    const body = await res.json();
+    expect(body.google).toMatchObject({
+      connected: true,
+      siteUrl: "https://ember.calderyncompany.com",
+      clicks: 12,
+      impressions: 340,
+      lastCapturedDate: "2026-07-18",
+    });
+    expect(gscRpcMock).toHaveBeenCalledWith("read_seo_rankings_summary", { p_shop: SHOP });
+  });
+
+  it("returns a disconnected google block for a demo shop without touching Supabase", async () => {
+    requireDashboardSessionMock.mockResolvedValueOnce({ shopId: "demo-shop", userId: "u1", shopDomain: null, sessionId: "s1" });
+    const res = (await loader({ request: req(undefined, "GET") } as never)) as Response;
+    const body = await res.json();
+    expect(body.google).toMatchObject({ connected: false, siteUrl: null, clicks: 0, impressions: 0 });
+    expect(gscMaybeSingleMock).not.toHaveBeenCalled();
+    expect(gscRpcMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a disconnected google block when the settings read rejects (never breaks the screen)", async () => {
+    gscMaybeSingleMock.mockRejectedValueOnce(new Error("connection reset"));
+    const res = (await loader({ request: req(undefined, "GET") } as never)) as Response;
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.google).toMatchObject({ connected: false, siteUrl: null, clicks: 0, impressions: 0 });
+    expect(gscRpcMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a zeroed google block when the RPC fails (never breaks the screen)", async () => {
+    gscMaybeSingleMock.mockResolvedValueOnce({
+      data: { gsc_connected: true, gsc_site_url: "https://ember.calderyncompany.com" },
+      error: null,
+    });
+    gscRpcMock.mockRejectedValueOnce(new Error("rankings summary unavailable"));
+    const res = (await loader({ request: req(undefined, "GET") } as never)) as Response;
+    const body = await res.json();
+    expect(body.google.connected).toBe(true);
+    expect(body.google.clicks).toBe(0);
+    expect(body.google.impressions).toBe(0);
+    expect(body.google.topQueries).toEqual([]);
   });
 });
 
@@ -86,32 +175,32 @@ describe("dashboard.api.search action", () => {
   it("updateSettings forwards only the provided flags", async () => {
     const res = (await action({ request: req({ action: "updateSettings", allowAiCrawlers: false }) } as never)) as Response;
     expect(res.status).toBe(200);
-    expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { allowAiCrawlers: false });
+    expect(upsertSeoSettingsMock).toHaveBeenCalledWith(SHOP, { allowAiCrawlers: false });
   });
   it("updateSettings forwards the search-engine flag independently", async () => {
     const res = (await action({ request: req({ action: "updateSettings", allowSearchEngines: false }) } as never)) as Response;
     expect(res.status).toBe(200);
-    expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { allowSearchEngines: false });
+    expect(upsertSeoSettingsMock).toHaveBeenCalledWith(SHOP, { allowSearchEngines: false });
   });
   it("updateSettings trims and forwards the Google verification token", async () => {
     const res = (await action({ request: req({ action: "updateSettings", googleSiteVerification: "  google-abc123  " }) } as never)) as Response;
     expect(res.status).toBe(200);
-    expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { googleSiteVerification: "google-abc123" });
+    expect(upsertSeoSettingsMock).toHaveBeenCalledWith(SHOP, { googleSiteVerification: "google-abc123" });
   });
   it("updateSettings extracts the bare token when the merchant pastes Google's whole meta tag", async () => {
     const tag = '<meta name="google-site-verification" content="dCDyNAElOSKCGAaLHqlljYb6ncB0dkDpiviSaYM5BZA" />';
     const res = (await action({ request: req({ action: "updateSettings", googleSiteVerification: tag }) } as never)) as Response;
     expect(res.status).toBe(200);
-    expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { googleSiteVerification: "dCDyNAElOSKCGAaLHqlljYb6ncB0dkDpiviSaYM5BZA" });
+    expect(upsertSeoSettingsMock).toHaveBeenCalledWith(SHOP, { googleSiteVerification: "dCDyNAElOSKCGAaLHqlljYb6ncB0dkDpiviSaYM5BZA" });
   });
   it("updateSettings extracts the token from a bare content=\"...\" attribute too", async () => {
     const res = (await action({ request: req({ action: "updateSettings", googleSiteVerification: 'content="abc-123_XYZ"' }) } as never)) as Response;
     expect(res.status).toBe(200);
-    expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { googleSiteVerification: "abc-123_XYZ" });
+    expect(upsertSeoSettingsMock).toHaveBeenCalledWith(SHOP, { googleSiteVerification: "abc-123_XYZ" });
   });
   it("updateSettings normalizes a blank verification token to null (clears the tag)", async () => {
     await action({ request: req({ action: "updateSettings", googleSiteVerification: "   " }) } as never);
-    expect(upsertSeoSettingsMock).toHaveBeenCalledWith("shop1", { googleSiteVerification: null });
+    expect(upsertSeoSettingsMock).toHaveBeenCalledWith(SHOP, { googleSiteVerification: null });
   });
   it("updateSettings 422s an over-long verification token without writing", async () => {
     const res = (await action({ request: req({ action: "updateSettings", googleSiteVerification: "x".repeat(201) }) } as never)) as Response;
@@ -136,6 +225,12 @@ describe("dashboard.api.search action", () => {
   it("422s an unknown action", async () => {
     const res = (await action({ request: req({ action: "nope" }) } as never)) as Response;
     expect(res.status).toBe(422);
+  });
+  it("disconnects on gsc_disconnect", async () => {
+    const res = (await action({ request: req({ action: "gsc_disconnect" }) } as never)) as Response;
+    expect(res.status).toBe(200);
+    expect(disconnectGscMock).toHaveBeenCalledWith(SHOP);
+    expect((await res.json()).ok).toBe(true);
   });
   it("suggestDescription composes from collection titles and returns the draft without saving", async () => {
     const res = (await action({ request: req({ action: "suggestDescription" }) } as never)) as Response;

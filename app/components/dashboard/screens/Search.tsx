@@ -8,7 +8,7 @@ import type { DashboardCtx } from "../context";
 import { Card, Btn, Toggle, Tooltip, Placeholder, TableSkeleton } from "../ui";
 import { CDIcon } from "../icons";
 import { cachedScreenData, cacheScreenData, SCREEN_CACHE_KEYS } from "~/lib/dashboard/screen-cache";
-import { fetchSearchOverview, updateSettings, suggestDescription, type SearchOverviewVM } from "~/lib/dashboard/search-client";
+import { fetchSearchOverview, updateSettings, suggestDescription, disconnectGsc, type SearchOverviewVM } from "~/lib/dashboard/search-client";
 
 // Store-description hard cap: mirrors the server's own bound (see
 // dashboard.api.search.tsx), so a save can never be rejected for length.
@@ -67,6 +67,7 @@ export default function Search({ app }: { app: DashboardCtx }) {
   const [verifyCode, setVerifyCode] = useState(() => data?.settings.googleSiteVerification ?? "");
   const [savingVerify, setSavingVerify] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [disconnectingGoogle, setDisconnectingGoogle] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -101,6 +102,44 @@ export default function Search({ app }: { app: DashboardCtx }) {
     loadSearchOverview(setData, setLoadError, () =>
       toast("Couldn't refresh your Search settings. Reload to see the latest.", "warn", "critical"),
     );
+  }
+
+  // One-shot post-connect notice: the Google OAuth callback lands the browser
+  // back here with ?search=google-connected|google-error. Toast it once, strip
+  // the marker so a reload/back-nav never re-announces it, and (on success)
+  // refresh so the newly-connected card doesn't wait for the next poll.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const notice = params.get("search");
+    if (notice !== "google-connected" && notice !== "google-error") return;
+    params.delete("search");
+    params.delete("reason");
+    const qs = params.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash,
+    );
+    if (notice === "google-connected") {
+      toast("Google connected. Results will start showing up here soon.", "check");
+      refresh();
+    } else {
+      toast("Couldn't connect Google. Try again from the button below.", "warn", "critical");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function onDisconnectGoogle() {
+    setDisconnectingGoogle(true);
+    try {
+      await disconnectGsc();
+      toast("Google disconnected.", "check");
+      refresh();
+    } catch {
+      toast("Could not disconnect", "warn", "critical");
+    } finally {
+      setDisconnectingGoogle(false);
+    }
   }
 
   async function onToggleSearch(next: boolean) {
@@ -445,6 +484,96 @@ export default function Search({ app }: { app: DashboardCtx }) {
               </div>
             </div>
           </div>
+        </Card>
+      </section>
+
+      <section className="cd-seo__section">
+        <div className="cd-seo__head-text">
+          <h2 className="cd-seo__h2">Google results</h2>
+          <p className="cd-seo__lede">See how your store shows up on Google and catch pages that slip.</p>
+        </div>
+        <Card pad={false}>
+          {data.google.connected ? (
+            <div className="cd-seo__set">
+              <div className="cd-seo__row">
+                <div className="cd-stat-grid cd-seo__google-stats">
+                  <div className="cd-stat">
+                    <span className="cd-stat-label">Clicks to your store</span>
+                    <span className="cd-stat-value tabular-nums">{data.google.clicks.toLocaleString()}</span>
+                  </div>
+                  <div className="cd-stat">
+                    <span className="cd-stat-label">Times shown on Google</span>
+                    <span className="cd-stat-value tabular-nums">{data.google.impressions.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+
+              {data.google.topQueries.length > 0 ? (
+                <div className="cd-seo__row cd-seo__row--col">
+                  <div className="cd-seo__info">
+                    <div className="cd-seo__label">What people search</div>
+                  </div>
+                  <ul className="cd-seo__querylist">
+                    {data.google.topQueries.slice(0, 5).map((q) => (
+                      <li key={q.query} className="cd-seo__queryrow">
+                        <span className="cd-seo__qname">{q.query}</span>
+                        <span className="cd-seo__qmeta">
+                          {q.clicks} clicks &middot; average spot on Google #{Math.round(q.position)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {data.google.slipping.length > 0 ? (
+                <div className="cd-seo__row cd-seo__row--col">
+                  <div className="cd-seo__info">
+                    <div className="cd-seo__label">Needs a look</div>
+                    <div className="cd-seo__hint">Pages losing ground on Google for these searches.</div>
+                  </div>
+                  <ul className="cd-seo__querylist">
+                    {data.google.slipping.slice(0, 5).map((s) => (
+                      <li key={`${s.pageUrl}:${s.query}`} className="cd-seo__queryrow">
+                        <span className="cd-seo__qname">{s.query}</span>
+                        <span className="cd-seo__qmeta cd-seo__qmeta--slip">
+                          was #{Math.round(s.prevPosition)}, now #{Math.round(s.position)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              <div className="cd-seo__row cd-seo__row--slim">
+                <span className="cd-seo__hint">
+                  {data.google.lastCapturedDate
+                    ? `Google data through ${data.google.lastCapturedDate}`
+                    : "Google data is still coming in. Check back soon."}
+                </span>
+                <button
+                  type="button"
+                  className="cd-seo__quiet-btn"
+                  onClick={onDisconnectGoogle}
+                  disabled={disconnectingGoogle}
+                >
+                  {disconnectingGoogle ? "Disconnecting..." : "Disconnect"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="cd-seo__row">
+              <div className="cd-seo__info">
+                <div className="cd-seo__label">Not connected</div>
+                <div className="cd-seo__hint">Connect your Google account to start tracking results.</div>
+              </div>
+              <div className="cd-seo__control">
+                <Btn kind="primary" small onClick={() => { window.location.href = "/dashboard/auth/gsc"; }}>
+                  Connect Google
+                </Btn>
+              </div>
+            </div>
+          )}
         </Card>
       </section>
     </div>

@@ -14,10 +14,25 @@ export interface SeoSettings {
   googleSiteVerification: string | null;
 }
 
+// Browser-safe mirror of the GoogleBlock shape built by the dashboard.api.search
+// loader (a .server module can't be imported into the client bundle) — keep it
+// in sync by hand, same convention as SeoSettings above.
+export interface SearchGoogleVM {
+  connected: boolean;
+  siteUrl: string | null;
+  // 28-day totals from Google Search Console.
+  clicks: number;
+  impressions: number;
+  topQueries: Array<{ query: string; clicks: number; position: number }>;
+  slipping: Array<{ pageUrl: string; query: string; position: number; prevPosition: number }>;
+  lastCapturedDate: string | null;
+}
+
 export interface SearchOverviewVM {
   settings: SeoSettings;
   // This shop's live sitemap URL, or null until it has a storefront slug.
   sitemapUrl: string | null;
+  google: SearchGoogleVM;
 }
 
 // The Preferences screen's own read: just this shop's SEO settings. The loader
@@ -32,3 +47,8 @@ export const updateSettings = (patch: Partial<SeoSettings>) =>
 // Returns the suggestion for the merchant to review and save; it is not persisted.
 export const suggestDescription = () =>
   apiSend<{ description: string }>("POST", "/dashboard/api/search", { action: "suggestDescription" });
+
+// Revoke Google's access and clear the connection. The storefront's sitemap and
+// verification tag are untouched — this only stops rankings data from flowing.
+export const disconnectGsc = () =>
+  apiSend<{ ok: boolean }>("POST", "/dashboard/api/search", { action: "gsc_disconnect" });
