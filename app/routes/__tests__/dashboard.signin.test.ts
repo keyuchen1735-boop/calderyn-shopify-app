@@ -110,9 +110,10 @@ describe("login page loader", () => {
     const req = new Request("https://app.calderyncompany.com/login", {
       headers: { Cookie: "__Host-dash_shop=acme.myshopify.com" },
     });
-    const data = (await loader({ request: req } as never)) as { error: string | null };
-    // Data (the form renders), NOT a redirect response.
-    expect(data).not.toBeInstanceOf(Response);
+    const res = (await loader({ request: req } as never)) as Response;
+    // Data (the form renders), NOT a redirect.
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { error: string | null };
     expect(data.error).toBeNull();
   });
 
@@ -129,7 +130,8 @@ describe("login page loader", () => {
     const req = new Request(
       "https://app.calderyncompany.com/login?error=invalid_credentials&email=a%40b.co&return_to=%2Fdashboard%2Fconnect%3Ft%3Dtok",
     );
-    const data = (await loader({ request: req } as never)) as {
+    const res = (await loader({ request: req } as never)) as Response;
+    const data = (await res.json()) as {
       error: string | null;
       email: string;
       returnTo: string | null;
@@ -142,7 +144,8 @@ describe("login page loader", () => {
   it("drops a hostile return_to instead of passing it to the form", async () => {
     const { loader } = await import("../login");
     const req = new Request("https://app.calderyncompany.com/login?return_to=https%3A%2F%2Fevil.com");
-    const data = (await loader({ request: req } as never)) as { returnTo: string | null };
+    const res = (await loader({ request: req } as never)) as Response;
+    const data = (await res.json()) as { returnTo: string | null };
     expect(data.returnTo).toBeNull();
   });
 });

@@ -33,6 +33,7 @@ import {
   shopHintCookieHeader,
   expireCookieHeader,
 } from "~/lib/dashboard/cookies.server";
+import { rememberOnSignIn } from "~/lib/auth/remembered-accounts.server";
 
 function readStateCookie(
   request: Request,
@@ -208,6 +209,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
   const headers = new Headers();
   headers.append("Set-Cookie", sessionCookieHeader(raw));
+  headers.append("Set-Cookie", rememberOnSignIn(request, raw));
   // Remember the shop so a bounce-back error page can offer a retry that
   // targets the right store (there is no store-domain form anymore).
   headers.append("Set-Cookie", shopHintCookieHeader(shop));
