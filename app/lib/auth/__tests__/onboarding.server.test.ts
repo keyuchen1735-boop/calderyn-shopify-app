@@ -120,15 +120,22 @@ describe("completeOnboarding", () => {
 
 describe("getOnboardingProgress", () => {
   it("returns the saved phone for the user, scoped by id", async () => {
-    maybeSingle.mockResolvedValueOnce({ data: { phone: "4155550123" }, error: null });
+    maybeSingle.mockResolvedValueOnce({ data: { phone: "4155550123", referral_source: "youtube" }, error: null });
     const p = await getOnboardingProgress("u1");
-    expect(p).toEqual({ phone: "4155550123" });
+    expect(p).toEqual({ phone: "4155550123", contactDone: true });
     expect(selectEq).toHaveBeenCalledWith("id", "u1");
   });
 
-  it("returns a null phone when the row is missing", async () => {
+  // Phone is skippable, so the referral answer alone means step 1 is done —
+  // otherwise a merchant who skipped the phone would be stuck on the contact step.
+  it("counts the contact step as done when only the referral was answered", async () => {
+    maybeSingle.mockResolvedValueOnce({ data: { phone: null, referral_source: "youtube" }, error: null });
+    expect(await getOnboardingProgress("u1")).toEqual({ phone: null, contactDone: true });
+  });
+
+  it("returns a null phone and an unfinished contact step when the row is missing", async () => {
     maybeSingle.mockResolvedValueOnce({ data: null, error: null });
-    expect(await getOnboardingProgress("u1")).toEqual({ phone: null });
+    expect(await getOnboardingProgress("u1")).toEqual({ phone: null, contactDone: false });
   });
 
   it("throws on a read error", async () => {
