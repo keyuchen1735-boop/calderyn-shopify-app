@@ -20,7 +20,7 @@ async function readSignals(shopId: string): Promise<JourneySignals> {
       if (error) throw error;
       return c ?? 0;
     });
-  const [products, stripeRow, published, origin, flatRates, carrier, testOrders, realOrders, guardrail, convos] =
+  const [products, stripeRow, published, origin, flatRates, carrier, testOrders, realOrders, guardrail, convos, release, designerPubs] =
     await Promise.all([
       count(sb.from("product_dim").select("id", { count: "exact", head: true }).eq("shop_id", shopId)),
       sb.from("stripe_connected_account").select("charges_enabled, payouts_enabled, details_submitted").eq("shop_id", shopId).maybeSingle(),
@@ -33,8 +33,14 @@ async function readSignals(shopId: string): Promise<JourneySignals> {
       count(sb.from("orders").select("id", { count: "exact", head: true }).eq("shop_id", shopId).neq("channel", "test").in("state", [...PROBE_SALE_STATES])),
       sb.from("guardrail_config").select("autopilot_enabled").eq("shop_id", shopId).maybeSingle(),
       count(sb.from("assistant_conversations").select("id", { count: "exact", head: true }).eq("shop_id", shopId)),
+      // The live publish paths write storefront_release (runtime-1) or
+      // designer_publications — page_document is the retired blocks pipeline,
+      // kept only so pre-cutover shops stay credited. Without these two reads,
+      // every new store's "Publish your storefront" milestone stays stuck.
+      sb.from("storefront_release").select("published_version_id").eq("shop_id", shopId).maybeSingle(),
+      count(sb.from("designer_publications").select("shop_id", { count: "exact", head: true }).eq("shop_id", shopId)),
     ]);
-  for (const r of [stripeRow, published, origin, guardrail]) {
+  for (const r of [stripeRow, published, origin, guardrail, release]) {
     if (r.error) throw r.error;
   }
   const stripeData = stripeRow.data as Pick<
@@ -42,13 +48,17 @@ async function readSignals(shopId: string): Promise<JourneySignals> {
     "charges_enabled" | "payouts_enabled" | "details_submitted"
   > | null;
   const publishedData = published.data as { published_json: unknown } | null;
+  const releaseData = release.data as { published_version_id: unknown } | null;
   const guardrailData = guardrail.data as { autopilot_enabled: boolean } | null;
   return {
     productCount: products,
     payoutsReady: stripeData ? isFullyEnabledAccount(stripeData) : false,
     originSet: origin.data != null,
     rateCount: flatRates + carrier,
-    storefrontPublished: publishedData?.published_json != null,
+    storefrontPublished:
+      publishedData?.published_json != null ||
+      releaseData?.published_version_id != null ||
+      designerPubs > 0,
     testOrderCount: testOrders,
     realOrderCount: realOrders,
     autopilotEnabled: Boolean(guardrailData?.autopilot_enabled),

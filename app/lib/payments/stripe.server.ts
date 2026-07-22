@@ -3,6 +3,7 @@ import { getSupabase } from "~/lib/supabase.server";
 import { transitionOrder } from "~/lib/order/order.server";
 import { emitPaidOrder } from "~/lib/order/emit.server";
 import { sendOrderConfirmation } from "~/lib/order/confirmation-email.server";
+import { sendMerchantNewOrderNotice } from "~/lib/order/merchant-notify.server";
 import { commitReservation, saleFallbackForOrder } from "~/lib/inventory/engine.server";
 import { isLegalTransition, isOrderState, type OrderState } from "~/lib/order/state";
 // Singleton lives in stripe-client.server so connect.server can use it without
@@ -467,6 +468,12 @@ export async function processStripeEvent(
           // never throws (a delivery failure is logged + swallowed inside it), so a flaky mailer
           // can never break payment processing or trigger a Stripe retry storm.
           await sendOrderConfirmation(shopId, orderRef);
+
+          // MERCHANT NEW-ORDER NOTICE — same at-most-once gate as the buyer email. Without it a
+          // paid order sits silently in the Orders tab until the merchant happens to look; this
+          // is the "you made a sale — here's what to do next" ping. Never throws (test-channel
+          // probes are skipped inside).
+          await sendMerchantNewOrderNotice(shopId, orderRef);
         } catch (err) {
           await handleDuplicateCaptureOrRethrow(err, shopId, orderRef, pi.id);
         }
@@ -606,4 +613,5 @@ async function recoverStrandedPaidOrder(shopId: string, orderRef: string): Promi
   if (!cur.data || String((cur.data as Record<string, unknown>).state) !== "checkout_pending") return;
   await transitionOrder(shopId, orderRef, "paid", "stripe:payment_intent.succeeded:recovery");
   await sendOrderConfirmation(shopId, orderRef);
+  await sendMerchantNewOrderNotice(shopId, orderRef);
 }
