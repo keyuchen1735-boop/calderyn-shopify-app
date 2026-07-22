@@ -53,16 +53,24 @@ describe("switch-account action", () => {
     expect(res.headers.get("Location")).toBe("/dashboard/connect?t=tok");
   });
 
-  it("falls back to the password form (email prefilled) when the session died", async () => {
+  it("falls back to the password form (email prefilled, entry kept) when the session is dead", async () => {
+    activateRememberedAccount.mockResolvedValue({ ok: false, email: "a@b.co", cookieHeader: null });
+    const { action } = await import("../dashboard.api.switch-account");
+    const res = (await action({ request: form({ sid: SID }) } as never)) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/login?email=a%40b.co");
+    expect(res.headers.getSetCookie()).toHaveLength(0);
+  });
+
+  it("prunes and reports session_expired when the entry vanished entirely", async () => {
     activateRememberedAccount.mockResolvedValue({
       ok: false,
-      email: "a@b.co",
+      email: null,
       cookieHeader: "__Host-calderyn_accounts=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax",
     });
     const { action } = await import("../dashboard.api.switch-account");
     const res = (await action({ request: form({ sid: SID }) } as never)) as Response;
-    expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/login?error=session_expired&email=a%40b.co");
+    expect(res.headers.get("Location")).toBe("/login?error=session_expired");
     expect(res.headers.getSetCookie().some((c) => c.includes("Max-Age=0"))).toBe(true);
   });
 
@@ -80,5 +88,16 @@ describe("switch-account action", () => {
     expect(res.headers.get("Location")).toBe("/login");
     expect(forgetRememberedAccount).toHaveBeenCalled();
     expect(activateRememberedAccount).not.toHaveBeenCalled();
+  });
+
+  it("remove from the signup chooser round-trips back to /signup, never elsewhere", async () => {
+    forgetRememberedAccount.mockResolvedValue(null);
+    const { action } = await import("../dashboard.api.switch-account");
+    const ok = (await action({ request: form({ sid: SID, intent: "remove", back: "/signup" }) } as never)) as Response;
+    expect(ok.headers.get("Location")).toBe("/signup");
+    const evil = (await action({
+      request: form({ sid: SID, intent: "remove", back: "https://evil.com" }),
+    } as never)) as Response;
+    expect(evil.headers.get("Location")).toBe("/login");
   });
 });

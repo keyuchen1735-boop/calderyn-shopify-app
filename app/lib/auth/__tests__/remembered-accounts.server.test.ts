@@ -97,7 +97,7 @@ describe("rememberOnSignIn", () => {
 });
 
 describe("resolveRememberedAccounts", () => {
-  it("resolves live sessions to accounts and reports no rewrite when unchanged", async () => {
+  it("resolves live sessions to one-click accounts, no rewrite when unchanged", async () => {
     const a = tok("a");
     setSupabaseResponse({
       data: [row({ raw: a, user_id: "u1", email: "a@b.co", display_name: "Peak & Pine", domain: "peak.example" })],
@@ -105,30 +105,45 @@ describe("resolveRememberedAccounts", () => {
     });
     const { accounts, cookieHeader } = await resolveRememberedAccounts(req(cookieOf([a])));
     expect(accounts).toEqual([
-      { sid: sidForToken(a), email: "a@b.co", storeName: "Peak & Pine", storeDomain: "peak.example" },
+      { sid: sidForToken(a), email: "a@b.co", storeName: "Peak & Pine", storeDomain: "peak.example", live: true },
     ]);
     expect(cookieHeader).toBeNull();
   });
 
-  it("prunes dead sessions and duplicate identities, rewriting the cookie", async () => {
-    const fresh = tok("a");
-    const stale = tok("b"); // same user as fresh — earlier sign-in
+  it("keeps signed-out sessions listed as live:false — Shopify-picker style", async () => {
     const revoked = tok("c");
     const expired = tok("d");
     setSupabaseResponse({
       data: [
-        row({ raw: fresh, user_id: "u1", email: "a@b.co", display_name: "Store A" }),
-        row({ raw: stale, user_id: "u1", email: "a@b.co", display_name: "Store A" }),
-        row({ raw: revoked, user_id: "u2", email: "c@d.co", revoked: true }),
-        row({ raw: expired, user_id: "u3", email: "e@f.co", expired: true }),
+        row({ raw: revoked, user_id: "u2", email: "c@d.co", display_name: "Store C", revoked: true }),
+        row({ raw: expired, user_id: "u3", email: "e@f.co", display_name: "Store E", expired: true }),
+      ],
+      error: null,
+    });
+    const { accounts, cookieHeader } = await resolveRememberedAccounts(req(cookieOf([revoked, expired])));
+    expect(accounts.map((a) => [a.sid, a.live])).toEqual([
+      [sidForToken(revoked), false],
+      [sidForToken(expired), false],
+    ]);
+    expect(cookieHeader).toBeNull();
+  });
+
+  it("dedupes per identity preferring a live token, prunes rowless tokens", async () => {
+    const deadNewest = tok("a"); // same user's just-signed-out token
+    const liveOlder = tok("b"); // same user, earlier sign-in, still live
+    const gone = tok("c"); // row deleted entirely
+    setSupabaseResponse({
+      data: [
+        row({ raw: deadNewest, user_id: "u1", email: "a@b.co", revoked: true }),
+        row({ raw: liveOlder, user_id: "u1", email: "a@b.co" }),
       ],
       error: null,
     });
     const { accounts, cookieHeader } = await resolveRememberedAccounts(
-      req(cookieOf([fresh, stale, revoked, expired])),
+      req(cookieOf([deadNewest, liveOlder, gone])),
     );
-    expect(accounts.map((a) => a.sid)).toEqual([sidForToken(fresh)]);
-    expect(cookieHeader).toContain(`${ACCOUNTS_COOKIE_NAME}=${fresh};`);
+    expect(accounts.map((a) => [a.sid, a.live])).toEqual([[sidForToken(liveOlder), true]]);
+    expect(cookieHeader).toContain(`${ACCOUNTS_COOKIE_NAME}=${liveOlder};`);
   });
 
   it("keeps distinct accounts and falls back to the shop domain as the name", async () => {
@@ -148,6 +163,7 @@ describe("resolveRememberedAccounts", () => {
       email: null,
       storeName: "acme.myshopify.com",
       storeDomain: "acme.myshopify.com",
+      live: true,
     });
   });
 });
@@ -160,12 +176,20 @@ describe("activateRememberedAccount", () => {
     expect(result).toEqual({ ok: true, raw: a, cookieHeader: null });
   });
 
-  it("returns the email + a prune header when the selection died", async () => {
+  it("returns the email without pruning when the selection is signed out", async () => {
     const a = tok("a");
     const b = tok("b");
     setSupabaseResponse({ data: [row({ raw: a, user_id: "u1", email: "a@b.co", revoked: true })], error: null });
     const result = await activateRememberedAccount(req(cookieOf([a, b])), sidForToken(a));
-    expect(result && !result.ok && result.email).toBe("a@b.co");
+    expect(result).toEqual({ ok: false, email: "a@b.co", cookieHeader: null });
+  });
+
+  it("prunes an entry whose session row vanished entirely", async () => {
+    const a = tok("a");
+    const b = tok("b");
+    setSupabaseResponse({ data: [], error: null });
+    const result = await activateRememberedAccount(req(cookieOf([a, b])), sidForToken(a));
+    expect(result && !result.ok && result.email).toBeNull();
     expect(result && !result.ok && result.cookieHeader).toContain(`${ACCOUNTS_COOKIE_NAME}=${b};`);
   });
 
@@ -193,9 +217,9 @@ describe("forgetRememberedAccount", () => {
 });
 
 describe("rememberOnSignOut", () => {
-  it("drops every token of the signed-out identity, keeping other accounts", async () => {
+  it("keeps the signed-out account listed but drops its older duplicate tokens", async () => {
     const active = tok("a");
-    const sameUserOlder = tok("b");
+    const sameUserOlder = tok("b"); // still-live earlier sign-in of the same user
     const other = tok("c");
     setSupabaseResponse({
       data: [
@@ -206,12 +230,14 @@ describe("rememberOnSignOut", () => {
       error: null,
     });
     const header = await rememberOnSignOut(req(cookieOf([active, sameUserOlder, other])), active);
-    expect(header).toContain(`${ACCOUNTS_COOKIE_NAME}=${other};`);
+    expect(header).toContain(`${ACCOUNTS_COOKIE_NAME}=${active}|${other};`);
   });
 
-  it("expires the cookie when the signed-out account was the only one", async () => {
+  it("keeps a sole signed-out account in the cookie (still listed, password required)", async () => {
     const active = tok("a");
+    setSupabaseResponse({ data: [row({ raw: active, user_id: "u1", email: "a@b.co", revoked: true })], error: null });
     const header = await rememberOnSignOut(req(cookieOf([active])), active);
-    expect(header).toContain("Max-Age=0");
+    expect(header).toContain(`${ACCOUNTS_COOKIE_NAME}=${active};`);
+    expect(header).not.toContain("Max-Age=0");
   });
 });
