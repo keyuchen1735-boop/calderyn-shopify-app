@@ -7,6 +7,11 @@ import { cacheScreenData, cachedScreenData, operatingPnlCacheKey } from "~/lib/d
 import { reduced } from "../hero/hero-motion";
 import { money, shortDate } from "../format";
 import { Card, Placeholder, Refetch, Segmented } from "../ui";
+import {
+  OrderSortHeader,
+  nextSortState,
+  useSortedRowsEntrance,
+} from "./OrderListFamily";
 
 const explanations: Record<string, (data: OperatingPnlData) => string> = {
   income: (d) => `${money(d.statement?.incomeCents ?? 0, d.currency)} of accrual income was recognized; keep growing sales without giving back margin.`,
@@ -77,6 +82,49 @@ function Metric({
 
 const PRODUCT_GRID = "minmax(230px,1.25fr) repeat(4,minmax(105px,.55fr)) 70px";
 
+/** The product table's default ordering is whatever the P&L query returned
+ *  (highest net revenue first). No column represents it, so it is the header
+ *  cycle's third-click destination. */
+const DEFAULT_PNL_SORT = { sort: "default", dir: "desc" } as const;
+
+type PnlProduct = OperatingPnlData["products"][number];
+
+function comparePnlProducts(
+  a: PnlProduct,
+  b: PnlProduct,
+  sort: string,
+  dir: "asc" | "desc",
+): number {
+  const mul = dir === "asc" ? 1 : -1;
+  // Title is the tiebreak on every column so equal-valued rows keep one stable
+  // order rather than whatever the previous sort left behind.
+  const byTitle = a.title.localeCompare(b.title);
+  switch (sort) {
+    case "product":
+      return mul * byTitle;
+    case "revenue":
+      return mul * (a.netRevenueCents - b.netRevenueCents) || byTitle;
+    case "cogs":
+      return mul * (a.cogsCents - b.cogsCents) || byTitle;
+    case "opex":
+      return (
+        mul * (a.allocatedOperatingExpensesCents - b.allocatedOperatingExpensesCents) || byTitle
+      );
+    case "profit":
+      return mul * (a.netOperatingProfitCents - b.netOperatingProfitCents) || byTitle;
+    case "margin": {
+      // Margin is null when there is no revenue to divide by. Those rows sink
+      // to the bottom in both directions — an unknown margin is not a 0% one.
+      if (a.netMarginPct == null && b.netMarginPct == null) return byTitle;
+      if (a.netMarginPct == null) return 1;
+      if (b.netMarginPct == null) return -1;
+      return mul * (a.netMarginPct - b.netMarginPct) || byTitle;
+    }
+    default:
+      return 0;
+  }
+}
+
 export default function OperatingPnl() {
   const [days, setDays] = useState<OperatingPnlDays>(30);
   const seed = cachedScreenData<OperatingPnlData>(operatingPnlCacheKey(30));
@@ -84,6 +132,9 @@ export default function OperatingPnl() {
   const [loading, setLoading] = useState(!seed);
   const [error, setError] = useState<string | null>(null);
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [sortState, setSortState] = useState<{ sort: string; dir: "asc" | "desc" }>(
+    DEFAULT_PNL_SORT,
+  );
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -140,7 +191,9 @@ export default function OperatingPnl() {
       if (reduced() || !data?.statement || !rootRef.current) return;
       const stats = rootRef.current.querySelectorAll<HTMLElement>(".cd-pnl-stat");
       const bars = rootRef.current.querySelectorAll<HTMLElement>(".cd-pnl-bar");
-      const rows = rootRef.current.querySelectorAll<HTMLElement>(".cd-trow");
+      // The product rows are no longer part of this timeline: they re-order on a
+      // header sort, which this block (keyed on the loaded data) would not catch.
+      // useSortedRowsEntrance below owns them for both first paint and re-sorts.
       const tl = gsap.timeline({ defaults: { ease: "power2.out" } });
       if (stats.length) {
         tl.from(stats, {
@@ -153,12 +206,6 @@ export default function OperatingPnl() {
           scaleY: 0, duration: 0.4, stagger: Math.min(0.012, 0.6 / bars.length),
           clearProps: "transform",
         }, "-=0.12");
-      }
-      if (rows.length) {
-        tl.from(rows, {
-          autoAlpha: 0, y: 6, duration: 0.25, stagger: 0.02,
-          clearProps: "opacity,visibility,transform",
-        }, "-=0.25");
       }
     },
     { dependencies: [data], scope: rootRef },
@@ -173,7 +220,30 @@ export default function OperatingPnl() {
   const statement = data?.statement;
   const grossProfit = (statement?.incomeCents ?? 0) - (statement?.cogsCents ?? 0);
   const chartMax = Math.max(...(statement?.daily.map((row) => Math.abs(row.netIncomeCents)) ?? [1]), 1);
+  // Order-independent so the revenue bars keep their scale across re-sorts.
   const productMax = Math.max(...(data?.products.map((row) => row.netRevenueCents) ?? [1]), 1);
+
+  const shownProducts = useMemo(() => {
+    const products = data?.products ?? [];
+    if (sortState.sort === "default") return products;
+    return [...products].sort((a, b) =>
+      comparePnlProducts(a, b, sortState.sort, sortState.dir),
+    );
+  }, [data, sortState]);
+
+  const productHeaderSort = {
+    sort: sortState.sort,
+    dir: sortState.dir,
+    onSort: (col: string) => setSortState((cur) => nextSortState(cur, col, DEFAULT_PNL_SORT)),
+  };
+
+  // Product rows rise on first paint and on every re-sort. Scoped to the table
+  // so it can never pick up a `.cd-trow` from elsewhere on the screen.
+  const productTableRef = useRef<HTMLDivElement>(null);
+  useSortedRowsEntrance(productTableRef, shownProducts.map((p) => p.id).join("|"), [
+    data,
+    sortState,
+  ]);
   const chartAxisDates = statement?.daily.filter((_, index, rows) =>
     index === 0 || index === Math.floor((rows.length - 1) / 2) || index === rows.length - 1,
   ) ?? [];
@@ -296,21 +366,21 @@ export default function OperatingPnl() {
               Calderyn orders + QuickBooks expenses by revenue share
             </span>
           </div>
-          <div className="cd-pnl-products cd-pnl-product-table"><div>
+          <div className="cd-pnl-products cd-pnl-product-table"><div ref={productTableRef}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: PRODUCT_GRID, padding: "8px 10px", borderBottom: "1px solid var(--hairline-strong)" }}>
-              <span>Product</span>
-              <span style={{ textAlign: "right" }}>Net revenue</span>
-              <span style={{ textAlign: "right" }}>COGS</span>
-              <span style={{ textAlign: "right" }}>OpEx + tax</span>
-              <span style={{ textAlign: "right" }}>Net P&amp;L</span>
-              <span style={{ textAlign: "right" }}>Margin</span>
+              <OrderSortHeader label="Product" col="product" {...productHeaderSort} />
+              <OrderSortHeader label="Net revenue" col="revenue" align="right" {...productHeaderSort} />
+              <OrderSortHeader label="COGS" col="cogs" align="right" {...productHeaderSort} />
+              <OrderSortHeader label="OpEx + tax" col="opex" align="right" {...productHeaderSort} />
+              <OrderSortHeader label="Net P&amp;L" col="profit" align="right" {...productHeaderSort} />
+              <OrderSortHeader label="Margin" col="margin" align="right" {...productHeaderSort} />
             </div>
-            {data.products.length === 0 && (
+            {shownProducts.length === 0 && (
               <div style={{ padding: "18px 10px", fontSize: 13, color: "var(--text-3)" }}>
                 No product sales in this window yet. Once orders come in, each product's revenue, cost and bottom-line profit shows up here.
               </div>
             )}
-            {data.products.map((product) => (
+            {shownProducts.map((product) => (
               <div key={product.id} className="cd-trow" style={{ gridTemplateColumns: PRODUCT_GRID, padding: "11px 10px" }}>
                 <div style={{ display: "grid", gridTemplateColumns: "38px minmax(0,1fr)", gap: 10, alignItems: "center" }}>
                   <div style={{ width: 38, height: 38, overflow: "hidden", borderRadius: 8, background: "var(--gray-bg)", display: "grid", placeItems: "center", color: "var(--green)", fontWeight: 800 }}>

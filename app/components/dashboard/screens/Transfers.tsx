@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Btn, Card, Pill, Placeholder, SectionTitle, TableSkeleton } from "../ui";
+import {
+  OrderSortHeader,
+  nextSortState,
+  useSortedRowsEntrance,
+} from "./OrderListFamily";
 import { timeAgo } from "../format";
 import { DashboardApiError, receiveTransfer } from "~/lib/dashboard/client";
 import {
@@ -17,6 +22,49 @@ import type { DashboardCtx } from "../context";
 // the destination and moves the row to the history card on the next load.
 
 const GRID = "1fr 1.4fr 0.7fr 1.4fr 1.1fr";
+
+/** Both transfer tables default to the server's newest-first order, which no
+ *  column represents — the header cycle returns to it on a third click. */
+const DEFAULT_TRANSFER_SORT = { sort: "default", dir: "desc" } as const;
+
+/** The label the SKU / variant column actually renders, so sorting matches what
+ *  the merchant reads rather than the underlying field precedence. */
+function variantLabel(row: ShopTransferVM): string {
+  return row.sku ?? row.variantTitle ?? row.variantId;
+}
+
+function compareTransfers(
+  a: ShopTransferVM,
+  b: ShopTransferVM,
+  sort: string,
+  dir: "asc" | "desc",
+): number {
+  const mul = dir === "asc" ? 1 : -1;
+  // ISO timestamps compare correctly as strings. Newest-first is the tiebreak on
+  // every column so equal-valued rows keep one stable order.
+  const byRecency = b.createdAt.localeCompare(a.createdAt);
+  switch (sort) {
+    case "transfer":
+      // The column shows the short id over its age, so it sorts by age — the
+      // part a merchant can actually reason about.
+      return mul * a.createdAt.localeCompare(b.createdAt);
+    case "sku":
+      return mul * variantLabel(a).localeCompare(variantLabel(b)) || byRecency;
+    case "qty":
+      return mul * (a.qty - b.qty) || byRecency;
+    case "route":
+      return (
+        mul * `${a.fromName} → ${a.toName}`.localeCompare(`${b.fromName} → ${b.toName}`) ||
+        byRecency
+      );
+    case "status":
+      // Each table holds a single state (in transit / received), so Status
+      // orders by when that state was reached.
+      return mul * (a.receivedAt ?? a.createdAt).localeCompare(b.receivedAt ?? b.createdAt);
+    default:
+      return 0;
+  }
+}
 
 function VariantCell({ row }: { row: ShopTransferVM }) {
   if (row.sku) {
@@ -58,6 +106,13 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
   const [creating, setCreating] = useState(false);
   // Bumped after a successful receive/create so the effect re-pulls the lists.
   const [reloadKey, setReloadKey] = useState(0);
+  // The two tables sort independently — they answer different questions.
+  const [pendingSort, setPendingSort] = useState<{ sort: string; dir: "asc" | "desc" }>(
+    DEFAULT_TRANSFER_SORT,
+  );
+  const [receivedSort, setReceivedSort] = useState<{ sort: string; dir: "asc" | "desc" }>(
+    DEFAULT_TRANSFER_SORT,
+  );
   const toast = app.toast;
 
   // Latest rows, readable inside the async load without re-running the effect.
@@ -120,6 +175,42 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
     }
   };
 
+  const shownPending = useMemo(() => {
+    const list = rows ?? [];
+    if (pendingSort.sort === "default") return list;
+    return [...list].sort((a, b) => compareTransfers(a, b, pendingSort.sort, pendingSort.dir));
+  }, [rows, pendingSort]);
+
+  const shownReceived = useMemo(() => {
+    const list = received ?? [];
+    if (receivedSort.sort === "default") return list;
+    return [...list].sort((a, b) => compareTransfers(a, b, receivedSort.sort, receivedSort.dir));
+  }, [received, receivedSort]);
+
+  const pendingHeaderSort = {
+    sort: pendingSort.sort,
+    dir: pendingSort.dir,
+    onSort: (col: string) =>
+      setPendingSort((cur) => nextSortState(cur, col, DEFAULT_TRANSFER_SORT)),
+  };
+  const receivedHeaderSort = {
+    sort: receivedSort.sort,
+    dir: receivedSort.dir,
+    onSort: (col: string) =>
+      setReceivedSort((cur) => nextSortState(cur, col, DEFAULT_TRANSFER_SORT)),
+  };
+
+  const pendingListRef = useRef<HTMLDivElement>(null);
+  useSortedRowsEntrance(pendingListRef, shownPending.map((r) => r.id).join("|"), [
+    rows,
+    pendingSort,
+  ]);
+  const receivedListRef = useRef<HTMLDivElement>(null);
+  useSortedRowsEntrance(receivedListRef, shownReceived.map((r) => r.id).join("|"), [
+    received,
+    receivedSort,
+  ]);
+
   return (
     <div className="cd-screen">
       <header className="cd-screen-head" data-screen-label="Products">
@@ -170,13 +261,14 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
           <div style={{ overflowX: "auto" }}>
             <div style={{ minWidth: 620 }}>
             <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
-              <span>Transfer</span>
-              <span>SKU / variant</span>
-              <span>Qty</span>
-              <span>Route</span>
-              <span>Status</span>
+              <OrderSortHeader label="Transfer" col="transfer" {...pendingHeaderSort} />
+              <OrderSortHeader label="SKU / variant" col="sku" {...pendingHeaderSort} />
+              <OrderSortHeader label="Qty" col="qty" {...pendingHeaderSort} />
+              <OrderSortHeader label="Route" col="route" {...pendingHeaderSort} />
+              <OrderSortHeader label="Status" col="status" {...pendingHeaderSort} />
             </div>
-            {rows.map((r) => (
+            <div ref={pendingListRef}>
+            {shownPending.map((r) => (
               <div key={r.id} className="cd-trow" style={{ gridTemplateColumns: GRID }}>
                 <div className="min-w-0">
                   <div className="cd-row-title tabular-nums truncate">
@@ -207,6 +299,7 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
               </div>
             ))}
             </div>
+            </div>
           </div>
         )}
       </Card>
@@ -228,13 +321,14 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
             <div style={{ overflowX: "auto" }}>
               <div style={{ minWidth: 620 }}>
               <div className="cd-tablehd" style={{ gridTemplateColumns: GRID }}>
-                <span>Transfer</span>
-                <span>SKU / variant</span>
-                <span>Qty</span>
-                <span>Route</span>
-                <span>Status</span>
+                <OrderSortHeader label="Transfer" col="transfer" {...receivedHeaderSort} />
+                <OrderSortHeader label="SKU / variant" col="sku" {...receivedHeaderSort} />
+                <OrderSortHeader label="Qty" col="qty" {...receivedHeaderSort} />
+                <OrderSortHeader label="Route" col="route" {...receivedHeaderSort} />
+                <OrderSortHeader label="Status" col="status" {...receivedHeaderSort} />
               </div>
-              {received.map((r) => (
+              <div ref={receivedListRef}>
+              {shownReceived.map((r) => (
                 <div key={r.id} className="cd-trow" style={{ gridTemplateColumns: GRID }}>
                   <div className="min-w-0">
                     <div className="cd-row-title tabular-nums truncate">
@@ -254,6 +348,7 @@ export default function Transfers({ app }: { app: DashboardCtx }) {
                   </div>
                 </div>
               ))}
+              </div>
               </div>
             </div>
           )}

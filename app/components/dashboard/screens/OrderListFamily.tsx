@@ -22,6 +22,11 @@ const ASC_FIRST_SORT_COLS = new Set([
   "location",
   "segment",
   "product",
+  "campaign",
+  "supplier",
+  "transfer",
+  "sku",
+  "kind",
 ]);
 
 /** State transition for a column-header click, shared by the unified list and the sub-lists so

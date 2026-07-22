@@ -40,7 +40,8 @@ import { CampaignWizard } from "./CampaignWizard";
 import { CAMPAIGN_DRAFT_PLATFORM_LABELS } from "~/lib/ads/campaign-draft-types";
 import type { Variant, CreativeInput } from "~/lib/screener/types";
 import { DEFAULT_SPEND_CENTS } from "~/lib/screener/types";
-import { sortActiveFirst } from "~/lib/campaign-sort";
+import { DEFAULT_CAMPAIGN_SORT, orderCampaigns } from "~/lib/campaign-sort";
+import { OrderSortHeader, nextSortState } from "./OrderListFamily";
 import type { DashboardCtx } from "../context";
 import type { CampaignVM } from "../view-models";
 import type { CampaignGradeRow, DailyRoasRow } from "~/lib/types";
@@ -1326,17 +1327,39 @@ function CampaignList({
     overrides[c.id] ? { ...c, ...overrides[c.id] } : c,
   );
 
-  // Active campaigns sort to the top; within each status group, highest 7d
-  // spend first. Paused rows still render (dimmed), just below the active ones.
-  const shown = sortActiveFirst(merged, (a, b) => b.spend_7d - a.spend_7d);
+  // Default: active campaigns sort to the top; within each status group,
+  // highest 7d spend first. Paused rows still render (dimmed), just below the
+  // active ones. A header click orders the whole table by that column instead.
+  const [campSort, setCampSort] = useState<{ sort: string; dir: "asc" | "desc" }>(
+    DEFAULT_CAMPAIGN_SORT,
+  );
+  const shown = orderCampaigns(merged, campSort);
   const shownOrder = shown.map((c) => c.id).join("|");
 
+  // A sort is a reorder, so it rides the same Flip transition the status
+  // toggles use — rows slide to their new positions instead of blinking.
+  const sortBy = (col: string) => {
+    const next = nextSortState(campSort, col, DEFAULT_CAMPAIGN_SORT);
+    const nextOrder = orderCampaigns(merged, next)
+      .map((campaign) => campaign.id)
+      .join("|");
+    if (
+      nextOrder !== shownOrder &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      const items = screenRef.current?.querySelectorAll(".cd-campaign-item");
+      if (items?.length) reorderStateRef.current = Flip.getState(items);
+    }
+    setCampSort(next);
+  };
+  const headerSort = { sort: campSort.sort, dir: campSort.dir, onSort: sortBy };
+
   const patchCampaign = (id: string, patch: Partial<CampaignVM>) => {
-    const nextOrder = sortActiveFirst(
+    const nextOrder = orderCampaigns(
       merged.map((campaign) =>
         campaign.id === id ? { ...campaign, ...patch } : campaign,
       ),
-      (a, b) => b.spend_7d - a.spend_7d,
+      campSort,
     )
       .map((campaign) => campaign.id)
       .join("|");
@@ -1539,13 +1562,13 @@ function CampaignList({
                 padding: "9px 16px",
               }}
             >
-              <span>Campaign</span>
+              <OrderSortHeader label="Campaign" col="campaign" {...headerSort} />
               {/* No per-campaign autopilot flag exists in the data, so this
                   column shows the real status instead of an Auto/Manual state. */}
-              <span>Status</span>
-              <span>Daily</span>
-              <span>ROAS</span>
-              <span className="text-right">Score</span>
+              <OrderSortHeader label="Status" col="status" {...headerSort} />
+              <OrderSortHeader label="Daily" col="daily" {...headerSort} />
+              <OrderSortHeader label="ROAS" col="roas" {...headerSort} />
+              <OrderSortHeader label="Score" col="score" align="right" {...headerSort} />
               <span />
               <span />
             </div>
