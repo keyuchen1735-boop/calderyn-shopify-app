@@ -24,6 +24,8 @@ vi.mock("~/lib/dashboard/session.server", () => ({
 const saveOnboardingContact = vi.fn();
 const completeOnboarding = vi.fn();
 const getOnboardingProgress = vi.fn();
+const listDiscoverFeed = vi.fn();
+const pickProduct = vi.fn();
 vi.mock("~/lib/auth/onboarding.server", () => ({
   saveOnboardingContact,
   completeOnboarding,
@@ -31,6 +33,10 @@ vi.mock("~/lib/auth/onboarding.server", () => ({
   normalizePhone: (r: string) => (r.replace(/\D/g, "").length >= 7 ? r.replace(/\D/g, "") : null),
   isReferralSource: (x: unknown) => x === "google_search" || x === "other",
   REFERRAL_SOURCES: ["google_search", "other"],
+}));
+vi.mock("~/lib/sourcing/discover.server", () => ({
+  listDiscoverFeed,
+  pickProduct,
 }));
 
 function firstParty(over: Record<string, unknown> = {}) {
@@ -60,6 +66,8 @@ beforeEach(() => {
   completeOnboarding.mockReset().mockResolvedValue(undefined);
   // Default: contact not yet saved (step 1). Step-2 tests override this.
   getOnboardingProgress.mockReset().mockResolvedValue({ phone: null, contactDone: false });
+  listDiscoverFeed.mockReset().mockResolvedValue([]);
+  pickProduct.mockReset().mockResolvedValue({ productId: "product-1", storeRunId: null });
 });
 
 describe("onboarding loader", () => {
@@ -111,6 +119,18 @@ describe("onboarding loader", () => {
       request: new Request("https://app.x/dashboard/onboarding?return_to=" + encodeURIComponent("https://evil.example/phish")),
     } as never);
     expect(data).toMatchObject({ returnTo: null });
+  });
+  it("finds dropshipping products matching what the merchant sells", async () => {
+    const products = [{ sourceProductId: "source-1", title: "Resistance Bands" }];
+    getSessionFromRequest.mockResolvedValue(firstParty());
+    getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
+    listDiscoverFeed.mockResolvedValue(products);
+    const { loader } = await import("../dashboard.onboarding");
+    const data = await loader({
+      request: new Request("https://app.x/dashboard/onboarding?step=products&selling=fitness"),
+    } as never);
+    expect(listDiscoverFeed).toHaveBeenCalledWith(8, "fitness");
+    expect(data).toMatchObject({ step: "products", selling: "fitness", products });
   });
 });
 
@@ -187,20 +207,20 @@ describe("onboarding action — contact step", () => {
 });
 
 describe("onboarding action — import step", () => {
-  it("skip: completes onboarding and redirects an unverified user to verify-needed", async () => {
+  it("skip: asks what the merchant sells before completing onboarding", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
     getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "skip" }, false) } as never)) as Response;
     expect(res.status).toBe(302);
-    expect(res.headers.get("Location")).toBe("/dashboard/verify-needed");
-    expect(completeOnboarding).toHaveBeenCalledWith("u1");
+    expect(res.headers.get("Location")).toBe("/dashboard/onboarding?step=products");
+    expect(completeOnboarding).not.toHaveBeenCalled();
   });
-  it("skip: completes onboarding and redirects a verified (Google) user to /dashboard", async () => {
+  it("finishes onboarding when a verified user skips product suggestions", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty({ emailVerified: true }));
     getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
     const { action } = await import("../dashboard.onboarding");
-    const res = (await action({ request: form({ intent: "skip" }, false) } as never)) as Response;
+    const res = (await action({ request: form({ intent: "finish_without_products" }, false) } as never)) as Response;
     expect(res.headers.get("Location")).toBe("/dashboard");
     expect(completeOnboarding).toHaveBeenCalledWith("u1");
   });
@@ -231,13 +251,52 @@ describe("onboarding action — import step", () => {
     expect(await res.json()).toMatchObject({ error: "contact_required" });
     expect(completeOnboarding).not.toHaveBeenCalled();
   });
-  it("skip: resumes a threaded return_to instead of the default target", async () => {
+  it("skip: carries a threaded return_to into product discovery", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty({ emailVerified: true }));
     getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "skip", return_to: "/dashboard/connect?t=abc" }, false) } as never)) as Response;
-    expect(res.headers.get("Location")).toBe("/dashboard/connect?t=abc");
+    expect(res.headers.get("Location")).toBe(
+      "/dashboard/onboarding?step=products&return_to=" + encodeURIComponent("/dashboard/connect?t=abc"),
+    );
+    expect(completeOnboarding).not.toHaveBeenCalled();
+  });
+  it("imports selected dropshipping products into inventory before completing onboarding", async () => {
+    getSessionFromRequest.mockResolvedValue(firstParty({ emailVerified: true }));
+    getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
+    const body = new URLSearchParams({ intent: "import_products" });
+    body.append("source_product_id", "source-1");
+    body.append("source_product_id", "source-2");
+    const request = new Request("https://app.x/dashboard/onboarding", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const { action } = await import("../dashboard.onboarding");
+    const res = (await action({ request } as never)) as Response;
+    expect(pickProduct.mock.calls).toEqual([
+      ["shop1", "source-1"],
+      ["shop1", "source-2"],
+    ]);
     expect(completeOnboarding).toHaveBeenCalledWith("u1");
+    expect(res.headers.get("Location")).toBe("/dashboard/products/inventory");
+  });
+  it("keeps a failed product import on discovery without completing onboarding", async () => {
+    getSessionFromRequest.mockResolvedValue(firstParty({ emailVerified: true }));
+    getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
+    pickProduct.mockRejectedValue(new Error("supplier unavailable"));
+    const { action } = await import("../dashboard.onboarding");
+    const res = (await action({
+      request: form({
+        intent: "import_products",
+        source_product_id: "source-1",
+        selling: "fitness",
+      }, false),
+    } as never)) as Response;
+    expect(res.headers.get("Location")).toBe(
+      "/dashboard/onboarding?error=product_import_failed&step=products&selling=fitness",
+    );
+    expect(completeOnboarding).not.toHaveBeenCalled();
   });
 });
 
@@ -308,12 +367,36 @@ describe("onboarding render", () => {
     expect(html).toContain('type="hidden" name="intent" value="connect"');
     expect(html).toContain('type="hidden" name="intent" value="skip"');
     expect(html).toContain("Connect Shopify");
-    expect(html).toContain("Skip for now");
+    expect(html).toContain("I don’t have a Shopify store");
   });
 
   it("threads a return_to into the step form as a hidden field so it survives submit", async () => {
     const html = await render({ step: "import", error: null, returnTo: "/dashboard/connect?t=abc" });
     expect(html).toContain('name="return_to"');
     expect(html).toContain("/dashboard/connect?t=abc");
+  });
+
+  it("products step asks what they sell and offers matching products for inventory", async () => {
+    const html = await render({
+      step: "products",
+      error: null,
+      returnTo: null,
+      selling: "fitness",
+      products: [
+        {
+          sourceProductId: "source-1",
+          title: "Resistance Bands",
+          imageUrl: null,
+          supplierName: "Fit Supply",
+          suggestedRetailCents: 2999,
+        },
+      ],
+    });
+    expect(html).toContain("What are you selling?");
+    expect(html).toContain('name="selling"');
+    expect(html).toContain("Resistance Bands");
+    expect(html).toContain('name="source_product_id" value="source-1"');
+    expect(html).toContain('value="import_products"');
+    expect(html).toContain("Add to inventory");
   });
 });
