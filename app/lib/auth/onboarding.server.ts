@@ -33,7 +33,8 @@ export function normalizePhone(raw: string): string | null {
 }
 
 export interface OnboardingContact {
-  phone: string;
+  /** null when the merchant skipped the phone field. */
+  phone: string | null;
   referralSource: ReferralSource;
   referralOther: string | null;
 }
@@ -67,15 +68,21 @@ export async function completeOnboarding(userId: string): Promise<void> {
   if (error) throw error;
 }
 
-/** Which onboarding step a user is on: phone present ⇒ contact done (show import). */
+/**
+ * Which onboarding step a user is on. Phone is optional (it can be skipped), so
+ * the step-1 marker is the referral answer, which is always required; phone alone
+ * still counts so users who answered before phone became skippable aren't sent back.
+ */
 export async function getOnboardingProgress(
   userId: string,
-): Promise<{ phone: string | null }> {
+): Promise<{ phone: string | null; contactDone: boolean }> {
   const { data, error } = await getSupabase()
     .from("users")
-    .select("phone")
+    .select("phone, referral_source")
     .eq("id", userId)
     .maybeSingle();
   if (error) throw error;
-  return { phone: (data?.phone as string | null) ?? null };
+  const phone = (data?.phone as string | null) ?? null;
+  const referral = (data?.referral_source as string | null) ?? null;
+  return { phone, contactDone: Boolean(phone || referral) };
 }

@@ -1,7 +1,7 @@
 // app/routes/dashboard.onboarding.tsx
 // Post-signup onboarding for first-party (email/Google) users, in two steps run
 // before the dashboard on every path:
-//   1. contact - required phone + "how did you hear about us"
+//   1. contact - optional phone (skippable) + required "how did you hear about us"
 //   2. import  - bring a Shopify store over, or explicitly skip
 // Only step 2 marks the user onboarded (onboarded_at), so the session gate in
 // session.server holds the user here until the import step is answered. A
@@ -57,8 +57,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return redirect(nextAfterOnboarding(session.emailVerified));
   }
   const url = new URL(request.url);
-  const { phone } = await getOnboardingProgress(session.userId);
-  const step: "contact" | "import" = phone ? "import" : "contact";
+  const { contactDone } = await getOnboardingProgress(session.userId);
+  const step: "contact" | "import" = contactDone ? "import" : "contact";
   return {
     step,
     error: url.searchParams.get("error"),
@@ -97,14 +97,14 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (intent === "connect" || intent === "skip") {
-    let phone: string | null;
+    let contactDone: boolean;
     try {
-      ({ phone } = await getOnboardingProgress(session.userId));
+      ({ contactDone } = await getOnboardingProgress(session.userId));
     } catch (err) {
       console.error("[onboarding] progress read failed", err);
       return fail(500, "save_failed");
     }
-    if (!phone) {
+    if (!contactDone) {
       return wantsJson(request) ? jsonError(400, "contact_required") : redirect(onboardingHref(returnTo));
     }
     try {
@@ -117,11 +117,14 @@ export async function action({ request }: ActionFunctionArgs) {
     return redirect(returnTo ?? nextAfterOnboarding(session.emailVerified));
   }
 
-  const phone = normalizePhone(String(fd.get("phone") ?? ""));
+  // Phone is optional: an empty field is a deliberate skip and saves null. A
+  // non-empty but unparseable number is still a validation error.
+  const phoneRaw = String(fd.get("phone") ?? "").trim();
+  const phone = phoneRaw ? normalizePhone(phoneRaw) : null;
   const referral = String(fd.get("referral_source") ?? "");
   const referralOther = String(fd.get("referral_source_other") ?? "").trim().slice(0, 120) || null;
 
-  if (!phone) return fail(422, "invalid_phone");
+  if (phoneRaw && !phone) return fail(422, "invalid_phone");
   if (!isReferralSource(referral)) return fail(422, "invalid_referral");
 
   try {
@@ -148,14 +151,13 @@ function ContactStep({ error, returnTo }: { error: string | null; returnTo: stri
         <input type="hidden" name="intent" value="contact" />
         {returnTo && <input type="hidden" name="return_to" value={returnTo} />}
         <label className="cd-auth-label" htmlFor="phone">
-          Phone
+          Phone <span className="cd-auth-hint">(optional)</span>
         </label>
         <input
           className="cd-auth-input"
           id="phone"
           name="phone"
           type="tel"
-          required
           autoComplete="tel"
           placeholder="+1 415 555 0123"
           autoFocus
@@ -194,6 +196,24 @@ function ContactStep({ error, returnTo }: { error: string | null; returnTo: stri
           />
         )}
         <AuthSubmit label="Continue" pendingLabel="Saving..." />
+        <div style={{ marginTop: 12, textAlign: "center" }}>
+          {/* type="button" so the click can clear the field first and never carries
+              the intent itself — the hidden input above is the only carrier. Without
+              JS it is inert; leaving the optional field blank does the same thing. */}
+          <button
+            className="cd-auth-linkbtn"
+            type="button"
+            onClick={(event) => {
+              const form = event.currentTarget.form;
+              if (!form) return;
+              const field = form.elements.namedItem("phone");
+              if (field instanceof HTMLInputElement) field.value = "";
+              form.requestSubmit();
+            }}
+          >
+            Skip phone for now
+          </button>
+        </div>
       </AuthForm>
     </>
   );

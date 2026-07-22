@@ -59,7 +59,7 @@ beforeEach(() => {
   saveOnboardingContact.mockReset().mockResolvedValue(undefined);
   completeOnboarding.mockReset().mockResolvedValue(undefined);
   // Default: contact not yet saved (step 1). Step-2 tests override this.
-  getOnboardingProgress.mockReset().mockResolvedValue({ phone: null });
+  getOnboardingProgress.mockReset().mockResolvedValue({ phone: null, contactDone: false });
 });
 
 describe("onboarding loader", () => {
@@ -84,14 +84,14 @@ describe("onboarding loader", () => {
   });
   it("shows the contact step for an un-onboarded user with no phone saved yet", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
-    getOnboardingProgress.mockResolvedValue({ phone: null });
+    getOnboardingProgress.mockResolvedValue({ phone: null, contactDone: false });
     const { loader } = await import("../dashboard.onboarding");
     const data = await loader({ request: new Request("https://app.x/dashboard/onboarding?error=invalid_phone") } as never);
     expect(data).toMatchObject({ step: "contact", error: "invalid_phone" });
   });
   it("shows the import step once contact (phone) is saved but onboarding is not complete", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
-    getOnboardingProgress.mockResolvedValue({ phone: "4155550123" });
+    getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
     const { loader } = await import("../dashboard.onboarding");
     const data = await loader({ request: new Request("https://app.x/dashboard/onboarding") } as never);
     expect(data).toMatchObject({ step: "import" });
@@ -121,6 +121,14 @@ describe("onboarding action — contact step", () => {
     const res = (await action({ request: form({ intent: "contact", phone: "123", referral_source: "google_search" }) } as never)) as Response;
     expect(res.status).toBe(422);
     expect(await res.json()).toMatchObject({ error: "invalid_phone" });
+  });
+  it("saves a null phone when the field is left blank (skip for now)", async () => {
+    getSessionFromRequest.mockResolvedValue(firstParty());
+    const { action } = await import("../dashboard.onboarding");
+    const res = (await action({ request: form({ intent: "contact", phone: "", referral_source: "google_search" }, false) } as never)) as Response;
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe("/dashboard/onboarding");
+    expect(saveOnboardingContact).toHaveBeenCalledWith("u1", expect.objectContaining({ phone: null, referralSource: "google_search" }));
   });
   it("422s an invalid referral", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
@@ -181,7 +189,7 @@ describe("onboarding action — contact step", () => {
 describe("onboarding action — import step", () => {
   it("skip: completes onboarding and redirects an unverified user to verify-needed", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
-    getOnboardingProgress.mockResolvedValue({ phone: "4155550123" });
+    getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "skip" }, false) } as never)) as Response;
     expect(res.status).toBe(302);
@@ -190,7 +198,7 @@ describe("onboarding action — import step", () => {
   });
   it("skip: completes onboarding and redirects a verified (Google) user to /dashboard", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty({ emailVerified: true }));
-    getOnboardingProgress.mockResolvedValue({ phone: "4155550123" });
+    getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "skip" }, false) } as never)) as Response;
     expect(res.headers.get("Location")).toBe("/dashboard");
@@ -198,7 +206,7 @@ describe("onboarding action — import step", () => {
   });
   it("connect: completes onboarding then hands off to the existing Shopify OAuth", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
-    getOnboardingProgress.mockResolvedValue({ phone: "4155550123" });
+    getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "connect" }, false) } as never)) as Response;
     expect(res.status).toBe(302);
@@ -207,7 +215,7 @@ describe("onboarding action — import step", () => {
   });
   it("refuses to complete the import step when contact was never saved (no half-filled profile)", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
-    getOnboardingProgress.mockResolvedValue({ phone: null });
+    getOnboardingProgress.mockResolvedValue({ phone: null, contactDone: false });
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "skip" }, false) } as never)) as Response;
     expect(res.status).toBe(302);
@@ -216,7 +224,7 @@ describe("onboarding action — import step", () => {
   });
   it("returns 400 contact_required to a JSON client that skips before saving contact", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty());
-    getOnboardingProgress.mockResolvedValue({ phone: null });
+    getOnboardingProgress.mockResolvedValue({ phone: null, contactDone: false });
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "skip" }, true) } as never)) as Response;
     expect(res.status).toBe(400);
@@ -225,7 +233,7 @@ describe("onboarding action — import step", () => {
   });
   it("skip: resumes a threaded return_to instead of the default target", async () => {
     getSessionFromRequest.mockResolvedValue(firstParty({ emailVerified: true }));
-    getOnboardingProgress.mockResolvedValue({ phone: "4155550123" });
+    getOnboardingProgress.mockResolvedValue({ phone: "4155550123", contactDone: true });
     const { action } = await import("../dashboard.onboarding");
     const res = (await action({ request: form({ intent: "skip", return_to: "/dashboard/connect?t=abc" }, false) } as never)) as Response;
     expect(res.headers.get("Location")).toBe("/dashboard/connect?t=abc");
@@ -284,6 +292,9 @@ describe("onboarding render", () => {
     expect(html).toContain('name="referral_source"');
     expect(html).toContain("hear about us");
     expect(html).toContain('value="contact"');
+    // Phone is skippable, so it must not be a required field.
+    expect(html).toContain("Skip phone for now");
+    expect(html).not.toMatch(/id="phone"[^>]*required/);
     // No return_to in flight ⇒ no hidden field.
     expect(html).not.toContain('name="return_to"');
   });
