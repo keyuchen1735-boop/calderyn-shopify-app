@@ -13,6 +13,23 @@ import {
   syncAccountStatus,
   onboardingOrigin,
 } from "~/lib/payments/connect.server";
+import { PayoutAccountError } from "~/lib/payments/errors";
+
+/**
+ * A Stripe-side refusal is upstream truth, not a bug in this handler: re-throw it
+ * as a CalderynError so the merchant reads what Stripe said instead of the generic
+ * `internal_error` dashboardJson gives an unrecognized throw.
+ */
+async function surfacingPayoutErrors<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof PayoutAccountError) {
+      throw new CalderynError({ status: 502, code: err.code, message: err.message });
+    }
+    throw err;
+  }
+}
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const session = await requireDashboardSession(request);
@@ -39,13 +56,17 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   if (body.intent === "start-onboarding") {
-    return dashboardJson(() => startOnboarding(session.shopId, onboardingOrigin(request)));
+    return dashboardJson(() =>
+      surfacingPayoutErrors(() => startOnboarding(session.shopId, onboardingOrigin(request))),
+    );
   }
   if (body.intent === "refresh-status") {
-    return dashboardJson(async () => {
-      await syncAccountStatus(session.shopId);
-      return billingStatus(session.shopId);
-    });
+    return dashboardJson(() =>
+      surfacingPayoutErrors(async () => {
+        await syncAccountStatus(session.shopId);
+        return billingStatus(session.shopId);
+      }),
+    );
   }
   if (body.intent === "login-link") {
     // Minted on demand only — a login link is single-use and almost always
