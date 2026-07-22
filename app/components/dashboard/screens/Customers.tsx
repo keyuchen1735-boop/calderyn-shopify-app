@@ -24,6 +24,7 @@ import {
   OrderSortHeader,
   downloadCsv,
   nextSortState,
+  useSortedRowsEntrance,
 } from "./OrderListFamily";
 import { WeatherSegments } from "../WeatherSegments";
 import { sensitivityForMode, weatherMode, type WeatherMode } from "~/lib/weather/types";
@@ -693,83 +694,20 @@ export default function Customers({ app }: { app: DashboardCtx }) {
   );
 
   // Staggered row rise on load, segment-view switches, re-sorts, and the return
-  // from a customer detail — scoped to this table so it can never pick up a
-  // `.cd-trow` from another screen. Search keystrokes are deliberately excluded:
-  // replaying the entrance on every character would make the list flicker while
-  // typing. revertOnUpdate + explicit end values keep back-to-back sort clicks
-  // clean (a from() started mid-tween would capture the half-faded state as its
-  // target), and the row signature skips replays that wouldn't move anything —
-  // the mount revalidation confirming the cached page, or a sort flip where
-  // every visible value ties.
+  // from a customer detail — each scoped to its own table so neither can pick up
+  // a `.cd-trow` from the other or from another screen. Search keystrokes are
+  // deliberately left out of both dependency lists: replaying the entrance on
+  // every character would make the list flicker while typing.
   const listRef = useRef<HTMLDivElement>(null);
-  const animatedRowsKey = useRef<string | null>(null);
-  useGSAP(
-    () => {
-      if (!listRef.current) {
-        // Detail view replaced the list DOM; forget the last entrance so the
-        // return to the directory animates again.
-        animatedRowsKey.current = null;
-        return;
-      }
-      if (reduced()) return;
-      const rows = listRef.current.querySelectorAll<HTMLElement>(".cd-trow");
-      if (!rows.length) {
-        animatedRowsKey.current = null;
-        return;
-      }
-      const key = visibleRows.map((c) => c.id).join("|");
-      if (animatedRowsKey.current === key) return;
-      animatedRowsKey.current = key;
-      gsap.fromTo(
-        rows,
-        { autoAlpha: 0, y: 6 },
-        {
-          autoAlpha: 1,
-          y: 0,
-          duration: 0.25,
-          stagger: 0.02,
-          ease: "power2.out",
-          clearProps: "opacity,visibility,transform",
-        },
-      );
-    },
-    { dependencies: [page, segFilter, custSort, buyerId], scope: listRef, revertOnUpdate: true },
-  );
+  useSortedRowsEntrance(listRef, visibleRows.map((c) => c.id).join("|"), [
+    page,
+    segFilter,
+    custSort,
+    buyerId,
+  ]);
 
-  // Same hardened entrance for the segments list, replayed on re-sorts only —
-  // search keystrokes stay excluded here too.
   const segListRef = useRef<HTMLDivElement>(null);
-  const animatedSegKey = useRef<string | null>(null);
-  useGSAP(
-    () => {
-      if (!segListRef.current) {
-        animatedSegKey.current = null;
-        return;
-      }
-      if (reduced()) return;
-      const rows = segListRef.current.querySelectorAll<HTMLElement>(".cd-trow");
-      if (!rows.length) {
-        animatedSegKey.current = null;
-        return;
-      }
-      const key = segMatches.map((s) => s.key).join("|");
-      if (animatedSegKey.current === key) return;
-      animatedSegKey.current = key;
-      gsap.fromTo(
-        rows,
-        { autoAlpha: 0, y: 6 },
-        {
-          autoAlpha: 1,
-          y: 0,
-          duration: 0.25,
-          stagger: 0.02,
-          ease: "power2.out",
-          clearProps: "opacity,visibility,transform",
-        },
-      );
-    },
-    { dependencies: [page, segSort], scope: segListRef, revertOnUpdate: true },
-  );
+  useSortedRowsEntrance(segListRef, segMatches.map((s) => s.key).join("|"), [page, segSort]);
 
   if (buyerId) {
     return <DetailView app={app} detail={detail} loading={detailLoading} />;
