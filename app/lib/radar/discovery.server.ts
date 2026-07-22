@@ -176,8 +176,15 @@ export async function discoverShopCompetitors(
 
   const seenHosts = new Set<string>();
   let suggested = 0;
+  // Bound by the slots REMAINING under the cap, not this run's inserts alone:
+  // the entry gate above only skips a shop already at DISCOVERY_MAX_SUGGESTIONS,
+  // so a shop with a few existing suggestions must not be topped up past the
+  // cap (4 existing + 5 new = 9 pending would violate the invariant the gate
+  // enforces). suggestedCount < DISCOVERY_MAX_SUGGESTIONS holds here, so at
+  // least one slot is always available.
+  const remainingSlots = DISCOVERY_MAX_SUGGESTIONS - suggestedCount;
   for (const s of raw) {
-    if (suggested >= DISCOVERY_MAX_SUGGESTIONS) break;
+    if (suggested >= remainingSlots) break;
     const normalized = normalizeOrigin(s.url, ownHost);
     if (!normalized || seenHosts.has(normalized.host)) continue;
     seenHosts.add(normalized.host);
