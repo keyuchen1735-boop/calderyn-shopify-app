@@ -6,7 +6,7 @@ import { fetchOperatingPnl, type OperatingPnlDays } from "~/lib/dashboard/operat
 import { cacheScreenData, cachedScreenData, operatingPnlCacheKey } from "~/lib/dashboard/screen-cache";
 import { reduced } from "../hero/hero-motion";
 import { money, shortDate } from "../format";
-import { Card, Placeholder, Segmented } from "../ui";
+import { Card, Placeholder, Refetch, Segmented } from "../ui";
 
 const explanations: Record<string, (data: OperatingPnlData) => string> = {
   income: (d) => `${money(d.statement?.incomeCents ?? 0, d.currency)} of accrual income was recognized; keep growing sales without giving back margin.`,
@@ -91,7 +91,9 @@ export default function OperatingPnl() {
     const key = operatingPnlCacheKey(days);
     const cached = cachedScreenData<OperatingPnlData>(key);
     if (cached) setData(cached);
-    setLoading(!cached);
+    // Always true while the re-query runs — the previous range stays on screen
+    // dimmed (see <Refetch> below) so the chip click visibly registered.
+    setLoading(true);
     setError(null);
     fetchOperatingPnl(days).then((result) => {
       cacheScreenData(key, result);
@@ -103,6 +105,31 @@ export default function OperatingPnl() {
     });
     return () => { alive = false; };
   }, [days]);
+
+  // After the first window lands, warm the rest one at a time so flipping the
+  // range switches instantly. Sequential on purpose — every window is a
+  // QuickBooks report pull, and firing five at once invites rate limiting.
+  const warmed = useRef(false);
+  useEffect(() => {
+    if (loading || !data?.connected || warmed.current) return;
+    warmed.current = true;
+    let alive = true;
+    (async () => {
+      for (const option of RANGE_OPTIONS) {
+        if (!alive) return;
+        const windowDays = Number(option.value) as OperatingPnlDays;
+        const key = operatingPnlCacheKey(windowDays);
+        if (cachedScreenData<OperatingPnlData>(key)) continue;
+        try {
+          const result = await fetchOperatingPnl(windowDays);
+          cacheScreenData(key, result);
+        } catch {
+          /* best-effort warmup — the on-demand fetch above still covers it */
+        }
+      }
+    })();
+    return () => { alive = false; };
+  }, [loading, data]);
 
   // One entrance choreography per fresh dataset (first load or range change):
   // stat cards rise, chart bars grow from their baseline, product rows stagger
@@ -168,9 +195,13 @@ export default function OperatingPnl() {
           <h1 className="cd-h1">Operating P&amp;L</h1>
           <span className="cd-caption" style={{ color: "var(--text-3)" }}>{rangeCaption}</span>
         </div>
-        <Segmented value={String(days)} options={RANGE_OPTIONS} onChange={(value) => setDays(Number(value) as OperatingPnlDays)} />
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {loading && <span className="cd-spinner" role="status" aria-label="Updating" />}
+          <Segmented value={String(days)} options={RANGE_OPTIONS} onChange={(value) => setDays(Number(value) as OperatingPnlDays)} />
+        </span>
       </header>
 
+      <Refetch active={loading} className="cd-refetch-wrap">
       {error && (
         <Card>
           <strong style={{ fontSize: 13, color: "var(--red)" }}>
@@ -305,6 +336,7 @@ export default function OperatingPnl() {
           </div></div>
         </Card>
       </div>
+      </Refetch>
       {tip && <Tooltip {...tip} />}
     </div>
   );

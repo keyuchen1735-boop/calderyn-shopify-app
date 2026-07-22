@@ -1,11 +1,11 @@
 import type Stripe from "stripe";
 import { getStripe } from "./stripe-client.server";
 import { getSupabase } from "~/lib/supabase.server";
-import { PaymentsNotReadyError } from "./errors";
+import { PaymentsNotReadyError, PayoutAccountError } from "./errors";
 
-// Re-exported so charge sites can import error + readiness from one module; the class
-// itself lives in the dependency-free errors module for lightweight instanceof catches.
-export { PaymentsNotReadyError };
+// Re-exported so charge sites can import error + readiness from one module; the classes
+// themselves live in the dependency-free errors module for lightweight instanceof catches.
+export { PaymentsNotReadyError, PayoutAccountError };
 
 /**
  * Stripe Connect (#11): per-shop Express connected account, destination-charge
@@ -225,32 +225,30 @@ export function onboardingOrigin(request: Request): string {
   return base.replace(/\/+$/, "");
 }
 
+/** Anything the Stripe SDK raised (all its error classes tag `type: "Stripe…"`). */
+function isStripeError(err: unknown): err is { type: string; message: string; raw?: { message?: string } } {
+  const type = (err as { type?: unknown } | null)?.type;
+  return typeof type === "string" && type.startsWith("Stripe");
+}
+
 /**
- * Create-or-reuse the Express account and mint a fresh hosted-onboarding link.
- * Idempotent on the account: one acct_ per shop (unique shop_id).
- * ponytail: two truly concurrent first clicks can orphan one test-mode Stripe
- * account (second insert loses on unique(shop_id)); harmless, not handled.
+ * Stripe's unambiguous "this acct_ is not mine" rejection. Means the stored id was
+ * minted under a DIFFERENT platform account (secret key rotated or switched between
+ * test/live platforms) or the account was deleted in Stripe. Such a row is dead
+ * weight: no link can be minted from it and no payout can ever route to it.
  */
-export async function startOnboarding(shopId: string, origin: string): Promise<{ url: string }> {
-  const acct = await getConnectedAccount(shopId);
-  let stripeAccountId = acct?.stripe_account_id ?? null;
-  if (!stripeAccountId) {
-    const created = await getStripe().accounts.create({
-      type: "express",
-      country: "US",
-      capabilities: { card_payments: { requested: true }, transfers: { requested: true } },
-      metadata: { shop_id: shopId },
-    });
-    const ins = await getSupabase().from("stripe_connected_account").insert({
-      shop_id: shopId,
-      stripe_account_id: created.id,
-      account_type: "express",
-      country: created.country ?? "US",
-      default_currency: created.default_currency ?? "usd",
-    });
-    if (ins.error) throw ins.error;
-    stripeAccountId = created.id;
-  }
+function isUnknownAccountError(err: unknown): boolean {
+  if (!isStripeError(err) || err.type !== "StripeInvalidRequestError") return false;
+  if ((err as { code?: string }).code === "account_invalid") return true;
+  return /not connected to your platform|does not exist|no such account/i.test(err.raw?.message ?? err.message ?? "");
+}
+
+/** Stripe failures reach the merchant as their own message; everything else keeps its type. */
+function asPayoutError(err: unknown, what: string): unknown {
+  return isStripeError(err) ? new PayoutAccountError(`${what}: ${err.raw?.message ?? err.message}`) : err;
+}
+
+async function mintOnboardingLink(stripeAccountId: string, origin: string): Promise<{ url: string }> {
   const link = await getStripe().accountLinks.create({
     account: stripeAccountId,
     type: "account_onboarding",
@@ -260,13 +258,119 @@ export async function startOnboarding(shopId: string, origin: string): Promise<{
   return { url: link.url };
 }
 
+/**
+ * Create the Express account and either insert the shop's row or, when `replacing`
+ * a dead id, overwrite it in place — shop_id is unique, so a second insert would
+ * fail. Every status flag resets: the new account has submitted nothing, and
+ * inheriting the old row's flags would tell the money seam it can route charges.
+ */
+async function provisionExpressAccount(shopId: string, replacing: string | null): Promise<string> {
+  const created = await getStripe().accounts.create({
+    type: "express",
+    country: "US",
+    capabilities: { card_payments: { requested: true }, transfers: { requested: true } },
+    metadata: { shop_id: shopId },
+  });
+  const table = getSupabase().from("stripe_connected_account");
+  const written = replacing
+    ? await table
+        .update({
+          stripe_account_id: created.id,
+          account_type: "express",
+          country: created.country ?? "US",
+          default_currency: created.default_currency ?? "usd",
+          charges_enabled: false,
+          payouts_enabled: false,
+          details_submitted: false,
+          onboarded_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("shop_id", shopId)
+    : await table.insert({
+        shop_id: shopId,
+        stripe_account_id: created.id,
+        account_type: "express",
+        country: created.country ?? "US",
+        default_currency: created.default_currency ?? "usd",
+      });
+  if (written.error) throw written.error;
+  return created.id;
+}
+
+/**
+ * Create-or-reuse the Express account and mint a fresh hosted-onboarding link.
+ * Idempotent on the account: one acct_ per shop (unique shop_id).
+ *
+ * Self-heal: the stored id is a cache of Stripe's state, not the truth. If Stripe
+ * says it doesn't own that account, a shop that never finished onboarding is
+ * re-provisioned onto a fresh account — otherwise the row bricks the CTA forever
+ * (every click 500s, with no merchant-reachable way out). A row that DID onboard
+ * is never replaced: that case means the platform key is wrong, and minting a new
+ * account would strand a real merchant's payouts behind an account nobody watches.
+ *
+ * ponytail: two truly concurrent first clicks can orphan one test-mode Stripe
+ * account (second insert loses on unique(shop_id)); harmless, not handled.
+ */
+export async function startOnboarding(shopId: string, origin: string): Promise<{ url: string }> {
+  const acct = await getConnectedAccount(shopId);
+  if (!acct) {
+    const created = await provisionExpressAccount(shopId, null);
+    try {
+      return await mintOnboardingLink(created, origin);
+    } catch (err) {
+      throw asPayoutError(err, "Stripe couldn't start payout setup");
+    }
+  }
+
+  try {
+    return await mintOnboardingLink(acct.stripe_account_id, origin);
+  } catch (err) {
+    if (!isUnknownAccountError(err)) throw asPayoutError(err, "Stripe couldn't start payout setup");
+
+    if (acct.onboarded_at || isFullyEnabledAccount(acct)) {
+      console.error(
+        `[stripe-connect] onboarded account ${acct.stripe_account_id} for shop ${shopId} is unknown to the current platform key — refusing to re-provision`,
+        err,
+      );
+      throw new PayoutAccountError(
+        "Your payout account can't be reached with the current Stripe setup. Contact support — starting over here would disconnect the account your payouts run through.",
+      );
+    }
+
+    console.warn(
+      `[stripe-connect] stored account ${acct.stripe_account_id} for shop ${shopId} is unknown to the platform and never onboarded — re-provisioning`,
+    );
+    const replacement = await provisionExpressAccount(shopId, acct.stripe_account_id);
+    try {
+      return await mintOnboardingLink(replacement, origin);
+    } catch (retryErr) {
+      throw asPayoutError(retryErr, "Stripe couldn't start payout setup");
+    }
+  }
+}
+
 /** Pull API truth into the row (return URL / Settings load / explicit refresh / self-heal). */
 export async function syncAccountStatus(
   shopId: string,
 ): Promise<{ chargesEnabled: boolean; payoutsEnabled: boolean; detailsSubmitted: boolean } | null> {
   const acct = await getConnectedAccount(shopId);
   if (!acct) return null;
-  const remote = await getStripe().accounts.retrieve(acct.stripe_account_id);
+  let remote: Stripe.Account;
+  try {
+    remote = await getStripe().accounts.retrieve(acct.stripe_account_id);
+  } catch (err) {
+    // Same orphaned-row cause startOnboarding self-heals from. Status sync must
+    // never provision, so it names the state and points at the CTA that can.
+    if (isUnknownAccountError(err)) {
+      console.warn(
+        `[stripe-connect] status sync for shop ${shopId} hit an account (${acct.stripe_account_id}) the platform doesn't recognize`,
+      );
+      throw new PayoutAccountError(
+        "Stripe no longer recognizes this payout account. Choose Resume onboarding to set payouts up again.",
+      );
+    }
+    throw asPayoutError(err, "Stripe couldn't read your payout status");
+  }
   const flags = {
     charges_enabled: Boolean(remote.charges_enabled),
     payouts_enabled: Boolean(remote.payouts_enabled),

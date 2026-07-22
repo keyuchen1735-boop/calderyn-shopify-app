@@ -47,6 +47,7 @@ import {
   expressLoginLink,
   paymentsReadiness,
   PaymentsNotReadyError,
+  PayoutAccountError,
   startOnboarding,
   syncAccountStatus,
   applyAccountUpdate,
@@ -68,6 +69,19 @@ const ROW = {
   default_currency: "usd",
   onboarded_at: "2026-07-01T00:00:00.000Z",
 };
+
+/** Stripe's rejection when an acct_ isn't owned by the platform key in use. */
+const stripeUnknownAccountError = () =>
+  Object.assign(
+    new Error("You requested an account link for an account that is not connected to your platform or does not exist."),
+    {
+      type: "StripeInvalidRequestError",
+      raw: {
+        message:
+          "You requested an account link for an account that is not connected to your platform or does not exist.",
+      },
+    },
+  );
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -318,6 +332,71 @@ describe("startOnboarding", () => {
     expect(h.insert).not.toHaveBeenCalled();
     expect(out).toEqual({ url: "https://connect.stripe.com/setup/y" });
   });
+
+  it("re-provisions when the stored acct_ is unknown to the platform and was never onboarded", async () => {
+    // The row points at an account this platform key doesn't own (key rotated /
+    // mode switched / account deleted in Stripe): the stored id can never mint a
+    // link again, so onboarding is bricked until the row is replaced.
+    h.maybeSingle.mockResolvedValue({
+      data: { ...ROW, charges_enabled: false, payouts_enabled: false, details_submitted: false, onboarded_at: null },
+      error: null,
+    });
+    h.accountLinksCreate
+      .mockRejectedValueOnce(stripeUnknownAccountError())
+      .mockResolvedValueOnce({ url: "https://connect.stripe.com/setup/fresh" });
+    h.accountsCreate.mockResolvedValue({ id: "acct_fresh", country: "US", default_currency: "usd" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const out = await startOnboarding("shop-1", "https://app.example.com");
+
+    expect(out).toEqual({ url: "https://connect.stripe.com/setup/fresh" });
+    expect(h.accountsCreate).toHaveBeenCalledTimes(1);
+    // The dead id is replaced in place (unique shop_id — an insert would fail),
+    // with every status flag reset so nothing inherits the old account's state.
+    expect(h.updateEq).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stripe_account_id: "acct_fresh",
+        charges_enabled: false,
+        payouts_enabled: false,
+        details_submitted: false,
+        onboarded_at: null,
+      }),
+    );
+    expect(h.insert).not.toHaveBeenCalled();
+    expect(h.accountLinksCreate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ account: "acct_fresh", type: "account_onboarding" }),
+    );
+    warn.mockRestore();
+  });
+
+  it("refuses to re-provision an ONBOARDED account the platform no longer recognizes", async () => {
+    // Money-adjacent: a fully-onboarded account going unknown means the platform
+    // key is misconfigured, not that the row is stale. Minting a replacement here
+    // would strand the merchant's real payout account.
+    h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
+    // Reset (not just clear): the re-provision case above queues `...Once`
+    // outcomes, and a leftover one would decide this test instead of the code.
+    h.accountLinksCreate.mockReset();
+    h.accountLinksCreate.mockRejectedValue(stripeUnknownAccountError());
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(startOnboarding("shop-1", "https://app.example.com")).rejects.toBeInstanceOf(PayoutAccountError);
+    expect(h.accountsCreate).not.toHaveBeenCalled();
+    expect(h.updateEq).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it("surfaces any other Stripe failure with its own message (never an opaque 500)", async () => {
+    h.maybeSingle.mockResolvedValue({ data: ROW, error: null });
+    h.accountLinksCreate.mockRejectedValue(
+      Object.assign(new Error("Stripe is temporarily unavailable"), { type: "StripeAPIError" }),
+    );
+
+    await expect(startOnboarding("shop-1", "https://app.example.com")).rejects.toThrow(
+      /Stripe is temporarily unavailable/,
+    );
+    expect(h.accountsCreate).not.toHaveBeenCalled();
+  });
 });
 
 describe("syncAccountStatus", () => {
@@ -340,6 +419,17 @@ describe("syncAccountStatus", () => {
     const payload = h.updateEq.mock.calls[0][0] as Record<string, unknown>;
     expect(payload).toMatchObject({ charges_enabled: true, payouts_enabled: true, details_submitted: true });
     expect(payload.onboarded_at).toEqual(expect.any(String));
+  });
+
+  it("reports an unknown-to-the-platform account as a payout error, and never writes flags", async () => {
+    // Same orphaned-row cause as startOnboarding's re-provision path. Status sync
+    // must NOT create accounts, so it explains the state instead of 500ing.
+    h.maybeSingle.mockResolvedValue({ data: { ...ROW, onboarded_at: null }, error: null });
+    h.accountsRetrieve.mockRejectedValue(stripeUnknownAccountError());
+
+    await expect(syncAccountStatus("shop-1")).rejects.toBeInstanceOf(PayoutAccountError);
+    expect(h.updateEq).not.toHaveBeenCalled();
+    expect(h.accountsCreate).not.toHaveBeenCalled();
   });
 
   it("does NOT overwrite an existing onboarded_at", async () => {

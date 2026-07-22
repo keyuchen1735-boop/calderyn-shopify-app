@@ -68,6 +68,52 @@ export function CountNum({
   );
 }
 
+/* ---------- Refetch: stale-while-refetching affordance ---------- */
+/* Wraps content that stays on screen while a filter/range/sort change re-queries
+   the server. The moment the query starts the old data dims, so the click
+   visibly registered; when the fresh payload lands the content settles back in
+   with a small rise. The dim is a signal, not a disabled state — everything
+   stays interactive. */
+export function Refetch({
+  active,
+  children,
+  className,
+}: {
+  active: boolean;
+  children: ReactNode;
+  className?: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const wasActive = useRef(false);
+  useGSAP(
+    () => {
+      const el = ref.current;
+      if (!el) return;
+      if (active) {
+        wasActive.current = true;
+        gsap.to(el, { opacity: 0.45, duration: 0.16, ease: "power1.out", overwrite: "auto" });
+      } else if (wasActive.current) {
+        wasActive.current = false;
+        if (reduced()) {
+          gsap.set(el, { opacity: 1 });
+          return;
+        }
+        gsap.fromTo(
+          el,
+          { opacity: 0.45, y: 6 },
+          { opacity: 1, y: 0, duration: 0.3, ease: "power2.out", overwrite: "auto", clearProps: "transform" },
+        );
+      }
+    },
+    { dependencies: [active] },
+  );
+  return (
+    <div ref={ref} className={className} aria-busy={active || undefined}>
+      {children}
+    </div>
+  );
+}
+
 /* ---------- Surfaces ---------- */
 
 /* Phone-width pan container for wide tables: at ≤767px it becomes a horizontal
