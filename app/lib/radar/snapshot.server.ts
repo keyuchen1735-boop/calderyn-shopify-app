@@ -37,11 +37,13 @@ export function normalizeText(html: string): string {
 }
 
 /** Matches a complete money token in either thousands/decimal convention:
- *  "$1,299.00" (US), "€1.299,00" (EU), "£999" (no decimal), "$29.99" (simple).
- *  The trailing (?!\d) is a tail guard: it refuses to stop mid-number, so an
- *  ambiguous run of digits with no separator (e.g. "$1234.56") fails to match
- *  entirely rather than silently truncating to "$123". */
-const PRICE_RE = /[$£€]\s?\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?(?!\d)/g;
+ *  "$1,299.00" (US), "€1.299,00" (EU), "£999" (no decimal), "$29.99" (simple),
+ *  and grouping-free four-plus-digit prices like "$1500" / "$1500.00" that a
+ *  theme may render without a thousands separator. The leading integer part is
+ *  \d+ (not \d{1,3}) so those larger comma-less prices are captured rather than
+ *  silently dropped; the trailing (?!\d) tail guard still forces the match to
+ *  consume the whole number instead of stopping mid-token. */
+const PRICE_RE = /[$£€]\s?\d+(?:[.,]\d{3})*(?:[.,]\d{2})?(?!\d)/g;
 /** Nearest-heading correlation window, in characters of source HTML. */
 const LABEL_PROXIMITY_CHARS = 500;
 

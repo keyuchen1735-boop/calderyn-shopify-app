@@ -131,6 +131,14 @@ describe("price extraction (locale formats)", () => {
     expect(facts.prices).not.toContain("€1.29");
     expect(facts.prices).toContain("€1.299,00");
   });
+  it("regression: captures a four-digit price with no thousands separator", () => {
+    const facts = extractFacts(`<html><body><h1>Shop</h1><span>$1500</span></body></html>`);
+    expect(facts.prices).toContain("$1500");
+  });
+  it("regression: captures a comma-less four-digit price with decimals", () => {
+    const facts = extractFacts(`<html><body><h1>Shop</h1><span>$2999.99</span></body></html>`);
+    expect(facts.prices).toContain("$2999.99");
+  });
 });
 
 describe("discoverPageUrls", () => {
