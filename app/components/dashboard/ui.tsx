@@ -4,6 +4,7 @@ import {
   useId,
   useRef,
   type CSSProperties,
+  type HTMLAttributes,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -90,13 +91,14 @@ export function Card({
   onClick,
   pad = true,
   hover = false,
+  ...rest
 }: {
   children: ReactNode;
   className?: string;
   onClick?: () => void;
   pad?: boolean;
   hover?: boolean;
-}) {
+} & HTMLAttributes<HTMLDivElement>) {
   const cls =
     "cd-card " + (pad ? "cd-pad " : "") + (hover || onClick ? "cd-card-hover " : "") + className;
   // When the card is a click target, make it keyboard-operable (WCAG AA):
@@ -104,6 +106,7 @@ export function Card({
   if (onClick) {
     return (
       <div
+        {...rest}
         role="button"
         tabIndex={0}
         onClick={onClick}
@@ -119,7 +122,7 @@ export function Card({
       </div>
     );
   }
-  return <div className={cls}>{children}</div>;
+  return <div {...rest} className={cls}>{children}</div>;
 }
 
 export function Reveal({
