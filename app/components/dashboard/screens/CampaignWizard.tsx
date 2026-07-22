@@ -36,7 +36,9 @@ import {
 } from "~/lib/dashboard/campaign-drafts-client";
 import { META_CTA_TYPES } from "~/lib/meta/cta-types";
 import {
+  CAMPAIGN_SALE_TYPES,
   MAX_CAMPAIGN_DRAFT_NAME_LENGTH,
+  MAX_CAMPAIGN_SALE_TYPE_LENGTH,
   type CampaignDraftPlatform,
   type CampaignDraftRow,
   type CampaignDraftState,
@@ -58,11 +60,18 @@ const BADGE_GOOD = {
   background: "color-mix(in oklch, var(--live) 13%, transparent)",
 } as const;
 
-const STEP_ORDER = ["platform", "product", "creative", "review"] as const;
+const STEP_ORDER = [
+  "platform",
+  "campaignType",
+  "product",
+  "creative",
+  "review",
+] as const;
 type WizardStep = (typeof STEP_ORDER)[number];
 
 const STEP_LABELS: Record<WizardStep, { label: string; detail: string }> = {
   platform: { label: "Platform", detail: "Choose where it runs" },
+  campaignType: { label: "Campaign type", detail: "Choose how it is grouped" },
   product: { label: "Product", detail: "Choose what to promote" },
   creative: { label: "Creative", detail: "Pick a winning direction" },
   review: { label: "Review", detail: "Preview and finish" },
@@ -149,6 +158,8 @@ interface WizardState {
   runId: string;
   platform: CampaignDraftPlatform;
   placement: CampaignPlacement;
+  campaignKind: CampaignDraftState["campaignKind"];
+  saleType: string | null;
   preflight: FirstRunPreflight | null;
   productId: string | null;
   productTitle: string | null;
@@ -170,6 +181,11 @@ type WizardAction =
       type: "placement";
       placement: CampaignPlacement;
       platform: CampaignDraftPlatform;
+    }
+  | {
+      type: "campaignType";
+      campaignKind: CampaignDraftState["campaignKind"];
+      saleType: string | null;
     }
   | { type: "preflight"; preflight: FirstRunPreflight }
   | { type: "product"; id: string; title: string; imageUrl: string | null }
@@ -218,6 +234,12 @@ function wizardReducer(state: WizardState, action: WizardAction): WizardState {
         preflight: keepMetaPreflight ? state.preflight : null,
       };
     }
+    case "campaignType":
+      return {
+        ...state,
+        campaignKind: action.campaignKind,
+        saleType: action.campaignKind === "sales" ? action.saleType : null,
+      };
     case "preflight":
       return { ...state, preflight: action.preflight };
     case "product":
@@ -295,6 +317,8 @@ function initWizardState(prefill: WizardPrefill): WizardState {
       runId: prefill.state.runId,
       platform: prefill.platform,
       placement: prefill.state.placement,
+      campaignKind: prefill.state.campaignKind,
+      saleType: prefill.state.saleType,
       preflight: null,
       productId: prefill.state.productId,
       productTitle: prefill.state.productTitle,
@@ -316,11 +340,15 @@ function initWizardState(prefill: WizardPrefill): WizardState {
     // so the connect button / readiness checks are never skipped: resuming a
     // draft is exactly when the account may still be unconnected.
     step:
-      prefill?.platform && prefill.platform !== "meta" ? "product" : "platform",
+      prefill?.platform && prefill.platform !== "meta"
+        ? "campaignType"
+        : "platform",
     draftId: prefill?.id ?? null,
     runId: crypto.randomUUID(),
     platform,
     placement: defaultPlacement(platform),
+    campaignKind: "regular",
+    saleType: null,
     preflight: null,
     productId: null,
     productTitle: null,
@@ -837,7 +865,153 @@ function PlatformStep({
   );
 }
 
-/* ---------- Step 2: product ---------- */
+/* ---------- Step 2: campaign type ---------- */
+
+function CampaignTypeStep({
+  state,
+  dispatch,
+}: {
+  state: WizardState;
+  dispatch: React.Dispatch<WizardAction>;
+}) {
+  const customSelected =
+    state.campaignKind === "sales" &&
+    state.saleType !== null &&
+    !CAMPAIGN_SALE_TYPES.includes(
+      state.saleType as (typeof CAMPAIGN_SALE_TYPES)[number],
+    );
+
+  return (
+    <div className="cd-cw-step-content flex flex-col" style={{ gap: 20 }}>
+      <div>
+        <h2 className="cd-h2">What kind of campaign is this?</h2>
+        <span className="cd-caption">
+          Metrics use the 7, 30, or 90-day reporting window you select.
+        </span>
+      </div>
+      <div
+        className="cd-cw-platform-grid"
+        style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}
+        role="radiogroup"
+        aria-label="Campaign type"
+        onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          const radios = event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]');
+          const focusedIndex = Array.from(radios).indexOf(event.target as HTMLElement);
+          const nextIndex = event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? radios.length - 1
+              : event.key === "ArrowLeft" || event.key === "ArrowUp"
+                ? (focusedIndex - 1 + radios.length) % radios.length
+                : (focusedIndex + 1) % radios.length;
+          const next = nextIndex === 0 ? "regular" : "sales";
+          radios[nextIndex]?.focus();
+          dispatch({
+            type: "campaignType",
+            campaignKind: next,
+            saleType: next === "sales" && state.campaignKind === "sales" ? state.saleType : null,
+          });
+        }}
+      >
+        <div
+          role="radio"
+          aria-checked={state.campaignKind === "regular"}
+          tabIndex={state.campaignKind === "regular" ? 0 : -1}
+          onClick={() =>
+            dispatch({
+              type: "campaignType",
+              campaignKind: "regular",
+              saleType: null,
+            })
+          }
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              dispatch({ type: "campaignType", campaignKind: "regular", saleType: null });
+            }
+          }}
+          className={`cd-card cd-pad cd-card-hover cd-cw-choice ${state.campaignKind === "regular" ? "cd-tile-selected" : ""}`}
+        >
+          <div className="cd-h3">Regular</div>
+          <small className="cd-cw-choice-detail">
+            Always-on advertising outside a named sale
+          </small>
+        </div>
+        <div
+          role="radio"
+          aria-checked={state.campaignKind === "sales"}
+          tabIndex={state.campaignKind === "sales" ? 0 : -1}
+          onClick={() =>
+            dispatch({
+              type: "campaignType",
+              campaignKind: "sales",
+              saleType: state.campaignKind === "sales" ? state.saleType : null,
+            })
+          }
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              dispatch({
+                type: "campaignType",
+                campaignKind: "sales",
+                saleType: state.campaignKind === "sales" ? state.saleType : null,
+              });
+            }
+          }}
+          className={`cd-card cd-pad cd-card-hover cd-cw-choice ${state.campaignKind === "sales" ? "cd-tile-selected" : ""}`}
+        >
+          <div className="cd-h3">Sales</div>
+          <small className="cd-cw-choice-detail">
+            A named sale or seasonal promotion
+          </small>
+        </div>
+      </div>
+      {state.campaignKind === "sales" && (
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          <span className="cd-caption">Choose the sale type</span>
+          <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
+            {CAMPAIGN_SALE_TYPES.map((saleType) => (
+              <Btn
+                key={saleType}
+                small
+                kind={state.saleType === saleType ? "primary" : undefined}
+                onClick={() =>
+                  dispatch({
+                    type: "campaignType",
+                    campaignKind: "sales",
+                    saleType,
+                  })
+                }
+              >
+                {saleType}
+              </Btn>
+            ))}
+          </div>
+          <label className="cd-field">
+            <span>Custom sale type</span>
+            <input
+              className="cd-input"
+              maxLength={MAX_CAMPAIGN_SALE_TYPE_LENGTH}
+              placeholder="e.g. Summer clearance"
+              value={customSelected ? state.saleType ?? "" : ""}
+              onChange={(event) =>
+                dispatch({
+                  type: "campaignType",
+                  campaignKind: "sales",
+                  saleType: event.target.value,
+                })
+              }
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Step 3: product ---------- */
 
 function ProductStep({
   state,
@@ -1028,7 +1202,7 @@ function ProductStep({
   );
 }
 
-/* ---------- Step 3: creative ---------- */
+/* ---------- Step 4: creative ---------- */
 
 function CreativeGenerationConfirmationDialog({
   productTitle,
@@ -1387,6 +1561,8 @@ function CreativeStep({
     generateFirstRunCreatives(productId, state.runId, attempt, {
       placement: state.placement,
       budgetCents: state.budgetCents,
+      campaignKind: state.campaignKind,
+      saleType: state.saleType,
       selectedCreativeIndex: selectedIdx,
       draftId: state.draftId,
     })
@@ -1679,7 +1855,7 @@ function CreativeStep({
   );
 }
 
-/* ---------- Step 4: review ---------- */
+/* ---------- Step 5: review ---------- */
 
 function SummaryRow({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -2099,6 +2275,8 @@ function ReviewStep({
         runId: state.runId,
         productId: state.productId,
         budgetCents: state.budgetCents,
+        campaignKind: state.campaignKind,
+        saleType: state.saleType,
         placement:
           state.placement === "facebook" || state.placement === "instagram"
             ? state.placement
@@ -2191,6 +2369,9 @@ function ReviewStep({
     }
     const draftState: CampaignDraftState = {
       version: 1,
+      campaignKind: state.campaignKind,
+      saleType:
+        state.campaignKind === "sales" ? state.saleType?.trim() || null : null,
       runId: state.runId,
       placement: state.placement,
       productId: state.productId,
@@ -2427,6 +2608,14 @@ function ReviewStep({
             </div>
           )}
           <div className="cd-cw-launch-summary">
+            <SummaryRow
+              label="Campaign type"
+              value={
+                state.campaignKind === "sales"
+                  ? state.saleType?.trim() || "Sales campaign"
+                  : "Regular campaign"
+              }
+            />
             <SummaryRow
               label="Placement"
               value={placementLabel(state.placement)}
@@ -2753,13 +2942,18 @@ export function CampaignWizard({
   const continueDisabled =
     state.step === "platform"
       ? !platformReady
-      : state.step === "product"
+      : state.step === "campaignType"
+        ? state.campaignKind === "sales" &&
+          (!state.saleType?.trim() ||
+            state.saleType.trim().length > MAX_CAMPAIGN_SALE_TYPE_LENGTH)
+        : state.step === "product"
         ? state.productId == null
         : state.step === "creative"
           ? !creativeReady || creativeRegenerating
           : true;
   const continueLabel: Record<WizardStep, string> = {
-    platform: "Continue to product",
+    platform: "Continue to campaign type",
+    campaignType: "Continue to product",
     product: "Continue to creative",
     creative: "Customize & preview",
     review: "Review campaign",
@@ -2798,6 +2992,9 @@ export function CampaignWizard({
               dispatch={dispatch}
               app={app}
             />
+          )}
+          {state.step === "campaignType" && (
+            <CampaignTypeStep state={state} dispatch={dispatch} />
           )}
           {state.step === "creative" && (
             <CreativeStep

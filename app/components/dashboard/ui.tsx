@@ -527,14 +527,20 @@ export function Segmented({
   value,
   onChange,
   small,
+  ariaLabel,
 }: {
   options: SegOption[];
   value: string;
   onChange: (next: string) => void;
   small?: boolean;
+  ariaLabel?: string;
 }) {
   return (
-    <div className={"cd-seg " + (small ? "cd-seg-sm" : "")}>
+    <div
+      className={"cd-seg " + (small ? "cd-seg-sm" : "")}
+      role={ariaLabel ? "group" : undefined}
+      aria-label={ariaLabel}
+    >
       {options.map((o) => {
         const v = typeof o === "string" ? o : o.value;
         const label = typeof o === "string" ? o : o.label;
@@ -543,6 +549,7 @@ export function Segmented({
             key={v}
             className="cd-seg-btn"
             data-active={v === value ? "1" : "0"}
+            aria-pressed={v === value}
             onClick={() => onChange(v)}
           >
             {label}

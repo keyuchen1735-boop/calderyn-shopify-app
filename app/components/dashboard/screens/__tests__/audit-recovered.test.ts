@@ -55,6 +55,7 @@ function makeApp(audit: AuditVM[]): DashboardCtx {
   setNightMode: () => {},
     alerts: [],
     campaigns: [],
+    campaignReport: { window: 30, campaigns: [], status: "ready", targetWindow: null, error: null, requestId: null },
     audit,
     guardrails: null,
     integrations: [],

@@ -1,4 +1,5 @@
 import { isUuid } from "~/lib/ids";
+import type { CampaignKind } from "~/lib/types";
 
 // DTO shapes + input validation shared by the campaign-draft read/write model
 // (campaign-draft.server.ts) and the dashboard client/screen. Plain types and
@@ -18,6 +19,36 @@ export const CAMPAIGN_DRAFT_PLATFORM_LABELS: Record<
 };
 
 export const MAX_CAMPAIGN_DRAFT_NAME_LENGTH = 120;
+export const MAX_CAMPAIGN_SALE_TYPE_LENGTH = 80;
+export const CAMPAIGN_SALE_TYPES = [
+  "Black Friday",
+  "Cyber Monday",
+  "Holiday",
+  "Seasonal",
+  "General Sale",
+] as const;
+
+export interface CampaignClassificationInput {
+  campaignKind: CampaignKind;
+  saleType: string | null;
+}
+
+export function parseCampaignClassification(
+  campaignKind: unknown,
+  saleType: unknown,
+): CampaignClassificationInput | null {
+  if (campaignKind === undefined || campaignKind === "regular") {
+    return { campaignKind: "regular", saleType: null };
+  }
+  if (campaignKind !== "sales" || typeof saleType !== "string") return null;
+  const normalizedSaleType = saleType.trim();
+  if (
+    !normalizedSaleType ||
+    normalizedSaleType.length > MAX_CAMPAIGN_SALE_TYPE_LENGTH
+  )
+    return null;
+  return { campaignKind: "sales", saleType: normalizedSaleType };
+}
 
 export const CAMPAIGN_DRAFT_PLACEMENTS = [
   "facebook",
@@ -46,9 +77,11 @@ export interface CampaignDraftCreativeVariant {
   score: number | null;
 }
 
-/** Versioned, browser-safe state needed to resume the four-step campaign flow. */
+/** Versioned, browser-safe state needed to resume the five-step campaign flow. */
 export interface CampaignDraftState {
   version: 1;
+  campaignKind: CampaignKind;
+  saleType: string | null;
   runId: string;
   placement: CampaignDraftPlacement;
   productId: string;
@@ -102,6 +135,12 @@ export function parseCampaignDraftState(
   if (typeof raw !== "object" || raw === null) return null;
   const value = raw as Record<string, unknown>;
   if (value.version !== 1) return null;
+
+  const classification = parseCampaignClassification(
+    value.campaignKind,
+    value.saleType,
+  );
+  if (!classification) return null;
 
   const runId = text(value.runId, 36);
   const productId = text(value.productId, 36);
@@ -189,6 +228,7 @@ export function parseCampaignDraftState(
 
   return {
     version: 1,
+    ...classification,
     runId,
     placement,
     productId,

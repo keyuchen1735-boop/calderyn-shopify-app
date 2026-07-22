@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { CalderynError } from "../../calderyn.server";
 import { loader as campaignsLoader } from "../../../routes/dashboard.api.campaigns._index";
 import { loader as campaignLoader } from "../../../routes/dashboard.api.campaigns.$id";
 
 const requireDashboardSession = vi.fn();
-const campaignsList = vi.fn();
-const campaignsGet = vi.fn();
+const campaignsPerformance = vi.fn();
 const campaignGrades = vi.fn();
 
 vi.mock("../session.server", async (importOriginal) => ({
@@ -19,8 +17,7 @@ vi.mock("../../calderyn.server", async (importOriginal) => {
     ...orig,
     calderynClient: () => ({
       campaigns: {
-        list: (...a: unknown[]) => campaignsList(...a),
-        get: (...a: unknown[]) => campaignsGet(...a),
+        performance: (...a: unknown[]) => campaignsPerformance(...a),
       },
       analytics: {
         campaignGrades: (...a: unknown[]) => campaignGrades(...a),
@@ -53,48 +50,74 @@ describe("GET /dashboard/api/campaigns", () => {
     ).rejects.toMatchObject({ status: 401 });
   });
 
-  it("returns the shop's campaigns as JSON", async () => {
-    campaignsList.mockResolvedValueOnce([{ id: "c1", name: "Spring" }]);
+  it("uses the requested metric window and preserves nullable profit", async () => {
+    campaignsPerformance.mockResolvedValueOnce([{
+      id: "c1", name: "BFCM", platform: "Meta", status: "active",
+      daily_budget_cents: 5000, campaign_kind: "sales", sale_type: "Black Friday",
+      classification_source: "detected", orders: 12, revenue_cents: 48000,
+      spend_cents: 12000, profit_cents: null, true_roas: 4,
+      cost_complete: false, cost_sources: ["quickbooks"],
+    }]);
+    const res = (await campaignsLoader({
+      request: new Request("https://calderyncompany.com/dashboard/api/campaigns?window=30"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(campaignsPerformance).toHaveBeenCalledWith(30);
+    expect((await res.json()).campaigns[0]).toMatchObject({
+      id: "c1",
+      profit_cents: null,
+    });
+  });
+
+  it("defaults an omitted metric window to 30 days", async () => {
+    campaignsPerformance.mockResolvedValueOnce([]);
     const res = (await campaignsLoader({
       request: new Request("https://calderyncompany.com/dashboard/api/campaigns"),
       params: {},
       context: {},
     })) as Response;
     expect(res.status).toBe(200);
-    expect(res.headers.get("Cache-Control")).toBe("no-store");
-    expect(await res.json()).toEqual({
-      campaigns: [
-        {
-          id: "c1",
-          name: "Spring",
-          calderynScore: {
-            value: null,
-            band: "nodata",
-            performance: null,
-            creative: null,
-            confidence: "low",
-            weakDimensions: [],
-            tips: [],
-            adsCovered: 0,
-            adsTotal: 0,
-          },
-        },
-      ],
-    });
+    expect(campaignsPerformance).toHaveBeenCalledWith(30);
+  });
+
+  it("rejects unsupported metric windows before loading campaigns", async () => {
+    const res = (await campaignsLoader({
+      request: new Request("https://calderyncompany.com/dashboard/api/campaigns?window=14"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_window" });
+    expect(campaignsPerformance).not.toHaveBeenCalled();
+  });
+
+  it("rejects numeric lookalikes outside the exact window values", async () => {
+    const res = (await campaignsLoader({
+      request: new Request("https://calderyncompany.com/dashboard/api/campaigns?window=30.0"),
+      params: {},
+      context: {},
+    })) as Response;
+    expect(res.status).toBe(400);
+    expect(campaignsPerformance).not.toHaveBeenCalled();
   });
 });
 
 describe("GET /dashboard/api/campaigns/:id", () => {
-  it("maps CalderynError to its status and code", async () => {
-    campaignsGet.mockRejectedValueOnce(
-      new CalderynError({ code: "CAMPAIGN_NOT_FOUND", status: 404, message: "nope" }),
-    );
+  it("returns 404 when the selected-window result does not contain the campaign", async () => {
+    campaignsPerformance.mockResolvedValueOnce([]);
     const res = (await campaignLoader({
       request: new Request("https://calderyncompany.com/dashboard/api/campaigns/c9"),
       params: { id: "c9" },
       context: {},
     })) as Response;
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: "CAMPAIGN_NOT_FOUND", message: "nope" });
+    expect(await res.json()).toEqual({
+      error: "CAMPAIGN_NOT_FOUND",
+      message: "Campaign c9 not found",
+    });
+    expect(campaignsPerformance).toHaveBeenCalledWith(30);
   });
 });

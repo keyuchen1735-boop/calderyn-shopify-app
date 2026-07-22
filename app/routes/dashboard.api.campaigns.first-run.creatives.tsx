@@ -1,5 +1,5 @@
 // app/routes/dashboard.api.campaigns.first-run.creatives.tsx
-// First-campaign wizard, step 3: generate up to three complete ad directions
+// First-campaign wizard, step 4: generate up to three complete ad directions
 // from a catalog product. Copy and visual providers share one scored brief. The
 // product's signed primary image is the visual model's reference, and generated
 // outputs are quota-reserved and persisted before being returned to the browser.
@@ -50,6 +50,7 @@ import {
 } from "~/lib/ads/campaign-generation-draft.server";
 import {
   CAMPAIGN_DRAFT_PLACEMENTS,
+  parseCampaignClassification,
   type CampaignDraftPlacement,
 } from "~/lib/ads/campaign-draft-types";
 
@@ -112,6 +113,10 @@ export async function action({ request }: ActionFunctionArgs) {
       : Number(body.selectedCreativeIndex);
   const preferredDraftId =
     typeof body.draftId === "string" ? body.draftId.trim() : null;
+  const classification = parseCampaignClassification(
+    body.campaignKind,
+    body.saleType,
+  );
   if (!isUuid(productId))
     return jsonError(422, "invalid_product_id", "productId must be a uuid");
   if (!isUuid(runId))
@@ -137,6 +142,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (preferredDraftId && !isUuid(preferredDraftId)) {
     return jsonError(422, "invalid_draft_id");
   }
+  if (!classification) return jsonError(422, "invalid_classification");
 
   return dashboardJson(async () => {
     // getShopStorefrontOrigin only needs shopId — no reason to wait on
@@ -178,6 +184,7 @@ export async function action({ request }: ActionFunctionArgs) {
         productId,
         productTitle: product.title,
         budgetCents,
+        ...classification,
         selectedCreativeIndex,
         attempt,
         response: normalized,

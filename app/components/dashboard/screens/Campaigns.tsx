@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import { Flip } from "gsap/Flip";
@@ -10,6 +11,7 @@ import {
   Placeholder,
   CountMoney,
   Tooltip,
+  Segmented,
   TableSkeleton,
   PlatformMark,
   Sparkline,
@@ -28,6 +30,7 @@ import {
   fetchCampaignCreatives,
   fetchCampaignSeries,
   regenerateCampaign,
+  updateCampaignClassification,
   type CampaignCreativesDTO,
   type RegenerateDTO,
 } from "~/lib/dashboard/client";
@@ -37,13 +40,21 @@ import {
   type CampaignDraftRow,
 } from "~/lib/dashboard/campaign-drafts-client";
 import { CampaignWizard } from "./CampaignWizard";
-import { CAMPAIGN_DRAFT_PLATFORM_LABELS } from "~/lib/ads/campaign-draft-types";
+import { useModalChrome } from "../use-modal-chrome";
+import { CAMPAIGN_DRAFT_PLATFORM_LABELS, MAX_CAMPAIGN_SALE_TYPE_LENGTH } from "~/lib/ads/campaign-draft-types";
 import type { Variant, CreativeInput } from "~/lib/screener/types";
 import { DEFAULT_SPEND_CENTS } from "~/lib/screener/types";
 import { sortActiveFirst } from "~/lib/campaign-sort";
 import type { DashboardCtx } from "../context";
 import type { CampaignVM } from "../view-models";
-import type { CampaignGradeRow, DailyRoasRow } from "~/lib/types";
+import type { CampaignGradeRow, CampaignKind, CampaignWindow, DailyRoasRow } from "~/lib/types";
+import {
+  filterCampaigns,
+  campaignCostSourceLabels,
+  missingCampaignCostLabels,
+  summarizeCampaigns,
+  type CampaignFilter,
+} from "./campaign-list-state";
 
 gsap.registerPlugin(useGSAP, Flip);
 
@@ -60,7 +71,7 @@ const PENDING_SCORE: CampaignCalderynScore = {
 };
 
 /** Shared column template for the campaigns table (header + rows). */
-const CAMP_GRID = "minmax(0,1fr) 72px 96px 68px 54px 104px 22px";
+const CAMP_GRID = "minmax(180px,1fr) 72px 76px 112px 80px 92px 54px 104px 22px";
 
 const BADGE_ACTIVE = {
   color: "var(--live)",
@@ -70,18 +81,6 @@ const BADGE_NEUTRAL = {
   color: "var(--text-2)",
   background: "var(--gray-bg)",
 } as const;
-
-function campaignPerDay(c: CampaignVM): {
-  cents: number | null;
-  label: "budget" | "7d avg";
-} {
-  if (c.daily_budget_cents > 0)
-    return { cents: c.daily_budget_cents, label: "budget" };
-  return {
-    cents: c.spend_7d > 0 ? Math.round(c.spend_7d / 7) : null,
-    label: "7d avg",
-  };
-}
 
 /** Band-tinted styles for the numeric score chip (mirrors ScorePill tones). */
 const BAND_CHIP: Record<
@@ -320,6 +319,152 @@ function RowQuickActions({
   );
 }
 
+function ClassificationEditor({
+  app,
+  c,
+  onChanged,
+}: {
+  app: DashboardCtx;
+  c: CampaignVM;
+  onChanged: (patch: Partial<CampaignVM>) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [kind, setKind] = useState<CampaignKind>(c.campaign_kind);
+  const [saleType, setSaleType] = useState(c.sale_type ?? "General Sale");
+  const [busy, setBusy] = useState(false);
+  const narrow = useNarrowViewport(760);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const closeEditor = () => {
+    setEditing(false);
+    triggerRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  };
+  const modalChrome = useModalChrome<HTMLDivElement>({
+    enabled: editing && narrow,
+    escape: "capture",
+    onClose: closeEditor,
+  });
+
+  useEffect(() => {
+    setKind(c.campaign_kind);
+    setSaleType(c.sale_type ?? "General Sale");
+  }, [c.campaign_kind, c.sale_type]);
+
+  const save = async () => {
+    if (busy || (kind === "sales" && !saleType.trim())) return;
+    setBusy(true);
+    try {
+      const saved = await updateCampaignClassification(
+        c.id,
+        kind === "regular"
+          ? { campaignKind: "regular" }
+          : { campaignKind: "sales", saleType: saleType.trim() },
+      );
+      onChanged({
+        campaign_kind: saved.campaign_kind,
+        sale_type: saved.sale_type,
+        classification_source: saved.classification_source,
+      });
+      closeEditor();
+      app.toast("Campaign type updated.", "check", "success");
+    } catch (err) {
+      app.toast(
+        err instanceof DashboardApiError ? err.message : "Could not update campaign type.",
+        "x",
+        "critical",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const editor = (
+    <div
+      className="cd-campaign-classification-editor"
+      role={narrow ? "dialog" : undefined}
+      aria-modal={narrow ? true : undefined}
+      aria-label={narrow ? "Edit campaign type" : undefined}
+      data-mobile={narrow ? "1" : "0"}
+      ref={narrow ? modalChrome.ref : undefined}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        modalChrome.onKeyDown(event);
+        event.stopPropagation();
+      }}
+    >
+      <select
+        className="cd-input"
+        aria-label="Campaign type"
+        autoFocus={narrow}
+        value={kind}
+        disabled={busy}
+        onChange={(event) => setKind(event.target.value as CampaignKind)}
+      >
+        <option value="regular">Regular</option>
+        <option value="sales">Sales</option>
+      </select>
+      {kind === "sales" && (
+        <input
+          className="cd-input"
+          aria-label="Sale type"
+          maxLength={MAX_CAMPAIGN_SALE_TYPE_LENGTH}
+          value={saleType}
+          disabled={busy}
+          onChange={(event) => setSaleType(event.target.value)}
+        />
+      )}
+      <Btn
+        small
+        kind="primary"
+        disabled={busy || (kind === "sales" && !saleType.trim())}
+        onClick={() => void save()}
+      >
+        Save
+      </Btn>
+      {narrow && (
+        <Btn
+          small
+          icon="x"
+          className="cd-btn-icon"
+          ariaLabel="Close campaign type editor"
+          disabled={busy}
+          onClick={closeEditor}
+        >
+          {""}
+        </Btn>
+      )}
+    </div>
+  );
+  const portalRoot = triggerRef.current?.closest<HTMLElement>(".cd-root");
+
+  return (
+    <div
+      ref={triggerRef}
+      className="cd-campaign-classification"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      {c.campaign_kind === "sales" && (
+        <span className="cd-campaign-sale-badge">{c.sale_type ?? "Sales"}</span>
+      )}
+      <Tooltip content="Edit campaign type" escapeClipping>
+        <Btn
+          small
+          icon="pencil"
+          className="cd-btn-icon cd-campaign-classification-toggle"
+          ariaLabel="Edit campaign type"
+          onClick={() => setEditing((open) => !open)}
+        >
+          {""}
+        </Btn>
+      </Tooltip>
+      {editing &&
+        (narrow && portalRoot
+          ? createPortal(editor, portalRoot)
+          : editor)}
+    </div>
+  );
+}
+
 function CampaignRow({
   app,
   c,
@@ -333,10 +478,16 @@ function CampaignRow({
   onEditBudget: () => void;
   onChanged: (patch: Partial<CampaignVM>) => void;
 }) {
-  const hasPerformanceData = c.spend_7d > 0;
-  const losing = hasPerformanceData && c.roas_7d < c.breakeven_roas;
+  const hasPerformanceData = c.spend_cents > 0;
+  const losing = hasPerformanceData && c.true_roas != null && c.true_roas < c.breakeven_roas;
   const paused = c.status === "paused";
-  const perDay = campaignPerDay(c);
+  const missingCosts = missingCampaignCostLabels(c.cost_sources);
+  const knownCosts = campaignCostSourceLabels(c.cost_sources);
+  const costLineage = [
+    knownCosts.length ? `Cost sources: ${knownCosts.join(", ")}` : null,
+    missingCosts.length ? `Missing cost data: ${missingCosts.join(", ")}` : null,
+  ].filter(Boolean).join(". ");
+  const profitLabel = c.profit_cents == null ? "—" : money(c.profit_cents);
   return (
     // A div with button semantics rather than a real <button>: the row nests
     // the per-row action buttons (pause/resume, edit budget, duplicate),
@@ -363,7 +514,10 @@ function CampaignRow({
         <PlatformMark platform={c.platform} size={22} />
         <div className="min-w-0">
           <div className="cd-row-title truncate">{c.name}</div>
-          <div className="cd-caption">{c.platform}</div>
+          <div className="cd-caption flex items-center" style={{ gap: 5 }}>
+            <span>{c.platform}</span>
+            <ClassificationEditor app={app} c={c} onChanged={onChanged} />
+          </div>
         </div>
       </div>
       <div>
@@ -375,26 +529,27 @@ function CampaignRow({
         </span>
       </div>
       <div className="tabular-nums">
-        {perDay.cents == null ? (
-          "—"
+        {c.orders.toLocaleString()}
+      </div>
+      <div className="tabular-nums">
+        {costLineage ? (
+          <Tooltip content={`Profit ${profitLabel}. ${costLineage}`} escapeClipping>
+            <div>{profitLabel}</div>
+          </Tooltip>
         ) : (
-          <>
-            <div>{money(perDay.cents)}</div>
-            <div className="cd-caption">{perDay.label}</div>
-          </>
+          <div>{profitLabel}</div>
+        )}
+        {missingCosts.length > 0 && (
+          <Tooltip content={`Missing cost data: ${missingCosts.join(", ")}`}>
+            <div className="cd-caption">Missing {missingCosts.join(" + ")}</div>
+          </Tooltip>
         )}
       </div>
-      <div
-        className="cd-row-num tabular-nums"
-        style={{
-          color: !hasPerformanceData
-            ? "var(--text-3)"
-            : losing
-              ? "var(--text-2)"
-              : "var(--live)",
-        }}
-      >
-        {c.roas_7d.toFixed(1)}×
+      <div className="cd-row-num tabular-nums">
+        {c.true_roas == null ? "—" : `${c.true_roas.toFixed(2)}×`}
+      </div>
+      <div className="tabular-nums">
+        <CountMoney cents={c.spend_cents} />
       </div>
       <div className="text-right">
         <ScoreChip score={c.calderynScore ?? PENDING_SCORE} />
@@ -464,6 +619,12 @@ function DraftRow({
       >
         —
       </div>
+      <div className="tabular-nums" style={{ color: "var(--text-3)" }}>
+        —
+      </div>
+      <div className="tabular-nums" style={{ color: "var(--text-3)" }}>
+        —
+      </div>
       <div className="text-right">
         <span className="cd-score" style={BAND_CHIP.nodata}>
           —
@@ -512,11 +673,16 @@ function CampaignDetail({
   // The live status can drift from app.campaigns until the next refresh lands,
   // so hold the optimistic status locally and prefer it for rendering.
   const [status, setStatus] = useState(c.status);
+  const [classification, setClassification] = useState<Partial<CampaignVM>>({});
   const [busy, setBusy] = useState(false);
   const [pushing, setPushing] = useState(false);
   useEffect(() => {
     setStatus(c.status);
   }, [c.status]);
+  useEffect(() => {
+    setClassification({});
+  }, [c.id, c.campaign_kind, c.sale_type, c.classification_source]);
+  const classifiedCampaign = { ...c, ...classification };
 
   const [creativeData, setCreativeData] = useState<CampaignCreativesDTO | null>(
     null,
@@ -1033,6 +1199,11 @@ function CampaignDetail({
           <span className="cd-badge" style={BADGE_NEUTRAL}>
             {c.platform}
           </span>
+          <ClassificationEditor
+            app={app}
+            c={classifiedCampaign}
+            onChanged={setClassification}
+          />
           <span
             className="cd-badge"
             style={paused ? BADGE_NEUTRAL : BADGE_ACTIVE}
@@ -1224,10 +1395,22 @@ function CampaignList({
   app,
   joined,
   setDraftPrefill,
+  campaignWindow,
+  onCampaignWindowChange,
+  pendingWindow,
+  windowError,
+  onRetryWindow,
+  reportStatus,
 }: {
   app: DashboardCtx;
   joined: CampaignVM[];
   setDraftPrefill: (draft: CampaignDraftRow | null) => void;
+  campaignWindow: CampaignWindow;
+  onCampaignWindowChange: (window: CampaignWindow) => void;
+  pendingWindow: CampaignWindow | null;
+  windowError: string | null;
+  onRetryWindow: () => void;
+  reportStatus: DashboardCtx["campaignReport"]["status"];
 }) {
   const screenRef = useRef<HTMLDivElement>(null);
   // Owned campaign drafts render alongside synced campaigns. Fetched on mount,
@@ -1290,6 +1473,7 @@ function CampaignList({
   >({});
   const reorderStateRef = useRef<ReturnType<typeof Flip.getState> | null>(null);
   const [budgetFor, setBudgetFor] = useState<CampaignVM | null>(null);
+  const [filter, setFilter] = useState<CampaignFilter>("all");
   // Reconcile patches once a new campaigns array arrives: executeAction
   // updates the ad_campaign_dim mirror BEFORE responding, so the action's own
   // refresh() reflects the patch and it can be cleared. But a live poll
@@ -1325,10 +1509,18 @@ function CampaignList({
   const merged = joined.map((c) =>
     overrides[c.id] ? { ...c, ...overrides[c.id] } : c,
   );
+  const summary = summarizeCampaigns(merged);
+  const missingCosts = Array.from(new Set(merged.flatMap((campaign) =>
+    missingCampaignCostLabels(campaign.cost_sources),
+  )));
+  const knownCosts = Array.from(new Set(merged.flatMap((campaign) =>
+    campaignCostSourceLabels(campaign.cost_sources),
+  )));
 
   // Active campaigns sort to the top; within each status group, highest 7d
   // spend first. Paused rows still render (dimmed), just below the active ones.
-  const shown = sortActiveFirst(merged, (a, b) => b.spend_7d - a.spend_7d);
+  const shown = sortActiveFirst(filterCampaigns(merged, filter), (a, b) => b.spend_cents - a.spend_cents);
+  const visibleDrafts = filter === "all" ? drafts : [];
   const shownOrder = shown.map((c) => c.id).join("|");
 
   const patchCampaign = (id: string, patch: Partial<CampaignVM>) => {
@@ -1336,7 +1528,7 @@ function CampaignList({
       merged.map((campaign) =>
         campaign.id === id ? { ...campaign, ...patch } : campaign,
       ),
-      (a, b) => b.spend_7d - a.spend_7d,
+      (a, b) => b.spend_cents - a.spend_cents,
     )
       .map((campaign) => campaign.id)
       .join("|");
@@ -1354,27 +1546,17 @@ function CampaignList({
     }));
   };
 
-  const loading = app.loading && joined.length === 0;
+  const loading = reportStatus === "loading" && joined.length === 0;
 
-  // Restrained, plain-language readout of the whole account: which platforms are
-  // connected, how many campaigns are live, the combined daily spend, and how
-  // many are spending without earning their keep. Derived from real fields only.
-  const active = shown.filter((c) => c.status !== "paused");
-  // Only live campaigns spend, so paused budgets stay out of the $/day figure.
-  const perDayCents = active.reduce(
-    (sum, c) => sum + Math.max(0, c.daily_budget_cents),
-    0,
-  );
-  const platforms = Array.from(new Set(shown.map((c) => c.platform)));
   // Membership changes animate. Routine analytics polling does not replay
   // the collection entrance and look like a page refresh.
-  const collectionSignature = `${loading}`;
+  const collectionSignature = `${loading}:${filter}`;
 
   useGSAP(
     () => {
       if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
       const elements = gsap.utils.toArray<HTMLElement>(
-        screenRef.current?.querySelectorAll(".cd-campaign-summary") ?? [],
+        screenRef.current?.querySelectorAll(".cd-campaign-metric-card") ?? [],
       );
       if (elements.length === 0) return;
       gsap.fromTo(
@@ -1472,31 +1654,83 @@ function CampaignList({
           New campaign
         </Btn>
       </ScreenHeader>
-      {(shown.length > 0 || drafts.length > 0) && (
-        <div
-          className="cd-campaign-summary"
-          aria-label="Campaign account summary"
-        >
-          <div className="flex items-center" style={{ gap: 5 }}>
-            {platforms.map((p) => (
-              <PlatformMark key={p} platform={p} size={19} />
-            ))}
+      {merged.length > 0 && (
+        <>
+          <div className="cd-campaign-metrics" aria-label="Campaign account metrics">
+            <Card className="cd-campaign-metric-card">
+              <span>Attributed orders</span>
+              <strong>{summary.orders.toLocaleString()}</strong>
+            </Card>
+            <Card className="cd-campaign-metric-card">
+              <span>Attributed revenue</span>
+              <strong><CountMoney cents={summary.revenueCents} /></strong>
+            </Card>
+            <Card className="cd-campaign-metric-card">
+              <span>Profit</span>
+              {knownCosts.length || missingCosts.length ? (
+                <Tooltip content={[
+                  `Profit ${summary.profitCents == null ? "—" : money(summary.profitCents)}`,
+                  knownCosts.length ? `Cost sources: ${knownCosts.join(", ")}` : null,
+                  missingCosts.length ? `Missing cost data: ${missingCosts.join(", ")}` : null,
+                ].filter(Boolean).join(". ")}>
+                  <strong>{summary.profitCents == null ? "—" : <CountMoney cents={summary.profitCents} />}</strong>
+                </Tooltip>
+              ) : (
+                <strong>{summary.profitCents == null ? "—" : <CountMoney cents={summary.profitCents} />}</strong>
+              )}
+              {missingCosts.length > 0 && (
+                <Tooltip content={`Missing cost data: ${missingCosts.join(", ")}`}>
+                  <small>Missing {missingCosts.join(" + ")}</small>
+                </Tooltip>
+              )}
+            </Card>
+            <Card className="cd-campaign-metric-card">
+              <span>True ROAS</span>
+              <strong>{summary.trueRoas == null ? "—" : `${summary.trueRoas.toFixed(2)}×`}</strong>
+            </Card>
           </div>
-          <span>
-            <b style={{ color: "var(--text-1)", fontWeight: 600 }}>
-              {active.length}
-            </b>{" "}
-            live {active.length === 1 ? "campaign" : "campaigns"}
-          </span>
-          <span className="tabular-nums">
-            <b style={{ color: "var(--text-1)", fontWeight: 600 }}>
-              {money(perDayCents)}
-            </b>
-            /day budget
-          </span>
-        </div>
+          <div className="cd-campaign-filters">
+            <Segmented
+              small
+              ariaLabel="Campaign filters"
+              value={filter}
+              options={[
+                { value: "all", label: "All" },
+                { value: "sales", label: "Sales" },
+                { value: "regular", label: "Regular" },
+              ]}
+              onChange={(next) => setFilter(next as CampaignFilter)}
+            />
+            <div className="cd-campaign-window">
+              <span>Window</span>
+              <Segmented
+                small
+                ariaLabel="Reporting window"
+                value={String(campaignWindow)}
+                options={["7", "30", "90"]}
+                onChange={(next) => onCampaignWindowChange(Number(next) as CampaignWindow)}
+              />
+            </div>
+            {pendingWindow && (
+              <span className="cd-caption" aria-live="polite">
+                Loading {pendingWindow}-day metrics…
+              </span>
+            )}
+          </div>
+          {windowError && (
+            <div className="cd-caption" role="alert">
+              Campaign metrics could not be updated. <button type="button" onClick={onRetryWindow}>Retry</button>
+            </div>
+          )}
+        </>
       )}
-      {loading || (shown.length === 0 && drafts.length === 0) ? (
+      {reportStatus === "error" && merged.length === 0 ? (
+        <Card>
+          <div role="alert">
+            {windowError ?? "Campaign metrics unavailable."} <button type="button" onClick={onRetryWindow}>Retry</button>
+          </div>
+        </Card>
+      ) : loading || (merged.length === 0 && drafts.length === 0) ? (
         <div
           className="cd-card cd-campaign-table"
           style={{ overflow: "hidden" }}
@@ -1530,7 +1764,7 @@ function CampaignList({
         </div>
       ) : (
         <div className="cd-card cd-campaign-table">
-          <Pan min={560}>
+          <Pan min={900}>
             <div
               className="cd-tablehd"
               style={{
@@ -1543,8 +1777,10 @@ function CampaignList({
               {/* No per-campaign autopilot flag exists in the data, so this
                   column shows the real status instead of an Auto/Manual state. */}
               <span>Status</span>
-              <span>Daily</span>
-              <span>ROAS</span>
+              <span>Attributed orders</span>
+              <span>Profit</span>
+              <span>True ROAS</span>
+              <span>Spend</span>
               <span className="text-right">Score</span>
               <span />
               <span />
@@ -1559,7 +1795,10 @@ function CampaignList({
                 onChanged={(patch) => patchCampaign(c.id, patch)}
               />
             ))}
-            {drafts.map((d) => (
+            {shown.length === 0 && visibleDrafts.length === 0 && (
+              <div className="cd-pad cd-caption">No campaigns in this view.</div>
+            )}
+            {visibleDrafts.map((d) => (
               <DraftRow
                 key={d.id}
                 d={d}
@@ -1595,6 +1834,8 @@ function CampaignList({
 
 /* ---------- Screen ---------- */
 export default function Campaigns({ app }: { app: DashboardCtx }) {
+  const { window: campaignWindow, targetWindow, status: reportStatus, error: windowError } = app.campaignReport;
+  const pendingWindow = reportStatus === "loading" ? targetWindow : null;
   // Real grades + break-even come from fetchAnalytics(); join by campaign_id.
   // While this is in flight the campaigns render with whatever grade they carry.
   const [grades, setGrades] = useState<CampaignGradeRow[]>([]);
@@ -1628,7 +1869,7 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   const gradeFor = (id: string) => grades.find((g) => g.campaign_id === id);
   const joined: CampaignVM[] = useMemo(
     () =>
-      app.campaigns.map((c) => {
+      app.campaignReport.campaigns.map((c) => {
         const g = grades.find((row) => row.campaign_id === c.id);
         if (!g) return c;
         // Resolve via the shared grader so a no-revenue grade row shows "no data"
@@ -1639,8 +1880,13 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
           breakeven_roas: g.break_even_roas,
         };
       }),
-    [app.campaigns, grades],
+    [app.campaignReport.campaigns, grades],
   );
+
+  const changeCampaignWindow = (next: CampaignWindow) => {
+    if (pendingWindow || (reportStatus === "ready" && next === campaignWindow)) return;
+    void app.setCampaignWindow?.(next);
+  };
 
   if (app.nav.param === "new") {
     return (
@@ -1672,6 +1918,18 @@ export default function Campaigns({ app }: { app: DashboardCtx }) {
   }
 
   return (
-    <CampaignList app={app} joined={joined} setDraftPrefill={setDraftPrefill} />
+    <CampaignList
+      app={app}
+      joined={joined}
+      setDraftPrefill={setDraftPrefill}
+      campaignWindow={campaignWindow}
+      onCampaignWindowChange={(next) => void changeCampaignWindow(next)}
+      pendingWindow={pendingWindow}
+      windowError={windowError}
+      reportStatus={reportStatus}
+      onRetryWindow={() => {
+        void app.setCampaignWindow?.(targetWindow ?? campaignWindow);
+      }}
+    />
   );
 }

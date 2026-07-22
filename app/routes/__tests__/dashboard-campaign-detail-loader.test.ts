@@ -10,8 +10,8 @@ import type { AdScorecard } from "~/lib/screener/campaign-ads.server";
 import type { ScoreCard, MetricScore } from "~/lib/screener/types";
 import type { CampaignGradeRow } from "~/lib/types";
 
-const { getSpy, gradesSpy, loadCreativesSpy } = vi.hoisted(() => ({
-  getSpy: vi.fn(),
+const { performanceSpy, gradesSpy, loadCreativesSpy } = vi.hoisted(() => ({
+  performanceSpy: vi.fn(),
   gradesSpy: vi.fn(),
   loadCreativesSpy: vi.fn(),
 }));
@@ -26,13 +26,18 @@ vi.mock("~/lib/dashboard/session.server", () => ({
 
 vi.mock("~/lib/calderyn.server", () => ({
   calderynClient: () => ({
-    campaigns: { get: (...a: unknown[]) => getSpy(...a) },
+    campaigns: { performance: (...a: unknown[]) => performanceSpy(...a) },
     analytics: { campaignGrades: (...a: unknown[]) => gradesSpy(...a) },
   }),
   // dashboardJson (via http.server) imports CalderynError; provide a real class.
   CalderynError: class CalderynError extends Error {
-    status = 500;
-    code = "error";
+    status: number;
+    code: string;
+    constructor(opts: { status: number; code: string; message: string }) {
+      super(opts.message);
+      this.status = opts.status;
+      this.code = opts.code;
+    }
   },
 }));
 
@@ -65,11 +70,22 @@ function loadDetail(id: string) {
 }
 
 beforeEach(() => {
-  getSpy.mockReset();
-  getSpy.mockResolvedValue({ id: "c1", name: "C", platform: "Meta", status: "active" });
+  performanceSpy.mockReset();
+  performanceSpy.mockResolvedValue([{
+    id: "c1", name: "C", platform: "Meta", status: "active",
+    daily_budget_cents: 5000, campaign_kind: "sales", sale_type: "Black Friday",
+    classification_source: "merchant", orders: 12, revenue_cents: 48000,
+    spend_cents: 12000, profit_cents: null, true_roas: null,
+    cost_complete: false, cost_sources: ["quickbooks"],
+    roas_7d: 0, contribution_margin: 0, spend_7d: 12000,
+  }]);
   gradesSpy.mockReset();
   gradesSpy.mockResolvedValue([grade()]);
   loadCreativesSpy.mockReset();
+  loadCreativesSpy.mockResolvedValue({
+    creatives: [], scorecards: [], assumedSpendCents: DEFAULT_SPEND_CENTS,
+    metaConnected: true, creativesError: null,
+  });
 });
 
 describe("dashboard campaign detail loader — full-blend score", () => {
@@ -90,6 +106,11 @@ describe("dashboard campaign detail loader — full-blend score", () => {
     const res = await loadDetail("c1");
     const body = (await res.json()) as {
       campaign: {
+        campaign_kind: string;
+        sale_type: string | null;
+        classification_source: string;
+        profit_cents: number | null;
+        true_roas: number | null;
         calderynScore: {
           performance: number | null;
           creative: number | null;
@@ -101,6 +122,15 @@ describe("dashboard campaign detail loader — full-blend score", () => {
         };
       };
     };
+
+    expect(performanceSpy).toHaveBeenCalledWith(30);
+    expect(body.campaign).toMatchObject({
+      campaign_kind: "sales",
+      sale_type: "Black Friday",
+      classification_source: "merchant",
+      profit_cents: null,
+      true_roas: null,
+    });
 
     // Cache-only load: NO assumedSpendCents-from-Claude; the creatives loader is
     // called with session.shopId (UUID) for both the shop identity args so first-party

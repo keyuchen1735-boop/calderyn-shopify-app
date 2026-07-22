@@ -10,6 +10,8 @@ import type {
   OverviewVM,
   QueueProposalVM,
 } from "./view-models";
+import type { CampaignWindow } from "../../lib/types";
+import type { CampaignReportState } from "./campaign-report-state";
 
 export type Screen =
   | "dashboard"
@@ -124,6 +126,8 @@ export interface DashboardCtx {
   // --- data (view-models, fetched on mount) ---
   alerts: AlertVM[];
   campaigns: CampaignVM[];
+  /** Authoritative reporting window, rows, and request lifecycle. */
+  campaignReport: CampaignReportState;
   audit: AuditVM[];
   guardrails: GuardrailVM | null;
   integrations: IntegrationVM[];
@@ -198,6 +202,8 @@ export interface DashboardCtx {
 
   // --- data lifecycle ---
   refresh: () => void;
+  /** Fetch and commit Campaigns for a reporting window. */
+  setCampaignWindow?: (window: CampaignWindow) => Promise<void>;
   /** Re-pull only the Live Engine bundle (autopilot/trace/predictions) — much
    *  lighter than refresh(), used for the Live Engine's gentle live poll and to
    *  reconcile a single feature-autonomy toggle without refetching everything. */

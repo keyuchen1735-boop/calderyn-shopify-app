@@ -18,8 +18,10 @@ import type {
 import type {
   Alert,
   AuditEntry,
-  Campaign,
   CampaignGradeRow,
+  CampaignKind,
+  CampaignPerformance,
+  CampaignWindow,
   DailyRoasRow,
   GuardrailConfig,
   Integration,
@@ -126,7 +128,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiSend<T>(
-  method: "POST" | "PUT" | "DELETE",
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -290,7 +292,7 @@ export function adaptAlert(a: Alert, campaigns: CampaignVM[]): AlertVM {
 }
 
 export function adaptCampaign(
-  c: Campaign,
+  c: CampaignPerformance,
   grades: CampaignGradeRow[],
 ): CampaignVM {
   const g = grades.find((row) => row.campaign_id === c.id);
@@ -308,6 +310,16 @@ export function adaptCampaign(
     platform: c.platform,
     status: c.status,
     daily_budget_cents: c.daily_budget_cents,
+    campaign_kind: c.campaign_kind,
+    sale_type: c.sale_type,
+    classification_source: c.classification_source,
+    orders: c.orders,
+    revenue_cents: c.revenue_cents,
+    spend_cents: c.spend_cents,
+    profit_cents: c.profit_cents,
+    true_roas: c.true_roas,
+    cost_complete: c.cost_complete,
+    cost_sources: c.cost_sources,
     spend_7d: c.spend_7d,
     // Coerce non-finite live values to 0 so the screen's `.toFixed(1)` calls
     // can't throw on a null/undefined ROAS or margin from a partial API row.
@@ -468,19 +480,42 @@ export async function fetchAlert(
 }
 
 export async function fetchCampaigns(
+  window: CampaignWindow = 30,
   grades: CampaignGradeRow[] = [],
 ): Promise<CampaignVM[]> {
-  const data = await apiGet<{ campaigns: Campaign[] }>(
-    "/dashboard/api/campaigns",
+  const data = await apiGet<{ campaigns: CampaignPerformance[] }>(
+    `/dashboard/api/campaigns?window=${window}`,
   );
   return data.campaigns.map((c) => adaptCampaign(c, grades));
+}
+
+export type CampaignClassificationInput =
+  | { campaignKind: "regular" }
+  | { campaignKind: "sales"; saleType: string };
+
+export interface CampaignClassification {
+  campaign_kind: CampaignKind;
+  sale_type: string | null;
+  classification_source: "merchant";
+}
+
+export async function updateCampaignClassification(
+  id: string,
+  input: CampaignClassificationInput,
+): Promise<CampaignClassification> {
+  const data = await apiSend<{ campaign: CampaignClassification }>(
+    "PATCH",
+    `/dashboard/api/campaigns/${encodeURIComponent(id)}`,
+    input,
+  );
+  return data.campaign;
 }
 
 export async function fetchCampaign(
   id: string,
   grades: CampaignGradeRow[] = [],
 ): Promise<CampaignVM> {
-  const data = await apiGet<{ campaign: Campaign }>(
+  const data = await apiGet<{ campaign: CampaignPerformance }>(
     `/dashboard/api/campaigns/${encodeURIComponent(id)}`,
   );
   return adaptCampaign(data.campaign, grades);
@@ -598,9 +633,15 @@ export async function generateFirstRunCreatives(
     budgetCents: number;
     selectedCreativeIndex: number;
     draftId: string | null;
+    campaignKind: CampaignKind;
+    saleType: string | null;
   },
 ): Promise<FirstRunCreativeResponse> {
-  const requestKey = `${runId}:${productId}:${attempt}`;
+  const classificationKey =
+    context.campaignKind === "sales"
+      ? `sales:${context.saleType?.trim() ?? ""}`
+      : "regular";
+  const requestKey = `${runId}:${productId}:${attempt}:${classificationKey}`;
   const pending = firstRunCreativeRequests.get(requestKey);
   if (pending) return pending;
 
@@ -631,6 +672,8 @@ export interface FirstRunCreateInput {
   runId: string;
   productId: string;
   budgetCents: number;
+  campaignKind: CampaignKind;
+  saleType: string | null;
   placement?: "facebook" | "instagram";
   creative: {
     headline: string;
@@ -656,6 +699,8 @@ export async function createFirstCampaignRun(
     runId: input.runId,
     productId: input.productId,
     budgetCents: input.budgetCents,
+    campaignKind: input.campaignKind,
+    saleType: input.saleType,
     placement: input.placement,
     creative: input.creative,
   });

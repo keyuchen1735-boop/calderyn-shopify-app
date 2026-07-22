@@ -14,6 +14,8 @@ vi.mock("../../supabase.server", () => ({
 
 const state: CampaignDraftState = {
   version: 1,
+  campaignKind: "regular",
+  saleType: null,
   runId: "11111111-1111-4111-8111-111111111111",
   placement: "instagram",
   productId: "22222222-2222-4222-8222-222222222222",

@@ -4,6 +4,8 @@
   AuditEntry,
   Calibration,
   Campaign,
+  CampaignPerformance,
+  CampaignWindow,
   CampaignGradeRow,
   CostSource,
   DailyRoasRow,
@@ -230,6 +232,29 @@ function rowToCampaign(r: Record<string, unknown>): Campaign {
     roas_7d: Number(r.roas_7d ?? 0),
     contribution_margin: Number(r.contribution_margin ?? 0),
     spend_7d: Number(r.spend_7d_cents ?? 0),
+  };
+}
+
+function rowToCampaignPerformance(
+  r: Record<string, unknown>,
+  legacy?: Record<string, unknown>,
+): CampaignPerformance {
+  const trueRoas = r.true_roas == null ? null : Number(r.true_roas);
+  const spendCents = Number(r.spend_cents ?? 0);
+  return {
+    ...rowToCampaign({ ...r, ...legacy }),
+    campaign_kind: r.campaign_kind === "sales" ? "sales" : "regular",
+    sale_type: (r.sale_type as string | null) ?? null,
+    classification_source: r.classification_source === "merchant" ? "merchant" : "detected",
+    orders: Number(r.orders ?? 0),
+    revenue_cents: Number(r.revenue_cents ?? 0),
+    spend_cents: spendCents,
+    profit_cents: r.profit_cents == null ? null : Number(r.profit_cents),
+    true_roas: trueRoas,
+    cost_complete: Boolean(r.cost_complete ?? true),
+    cost_sources: Array.isArray(r.cost_sources)
+      ? r.cost_sources.filter((source): source is string => typeof source === "string")
+      : [],
   };
 }
 
@@ -907,6 +932,28 @@ export function calderynClient(shop: string) {
           return (data ?? []).map(rowToCampaign);
         } catch (err) {
           rethrow("campaigns.list", err);
+        }
+      },
+      async performance(window: CampaignWindow, _signal?: AbortSignal): Promise<CampaignPerformance[]> {
+        try {
+          const shopId = await shopIdP;
+          const [performance, legacy] = await Promise.all([
+            supabase.rpc("campaign_performance", {
+              p_window_days: window,
+              p_shop_id: shopId,
+            }),
+            supabase.from("v_campaigns_flat").select("*").eq("shop_id", shopId),
+          ]);
+          if (performance.error) throw performance.error;
+          if (legacy.error) throw legacy.error;
+          const legacyById = new Map(
+            (legacy.data ?? []).map((row: Record<string, unknown>) => [String(row.id), row]),
+          );
+          return (performance.data ?? []).map((row: Record<string, unknown>) =>
+            rowToCampaignPerformance(row, legacyById.get(String(row.id))),
+          );
+        } catch (err) {
+          rethrow("campaigns.performance", err);
         }
       },
       async get(id: string, _signal?: AbortSignal): Promise<Campaign> {

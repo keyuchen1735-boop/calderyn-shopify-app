@@ -24,6 +24,7 @@ import type {
   GuardrailVM,
   OverviewVM,
 } from "./view-models";
+import type { CampaignWindow } from "~/lib/types";
 
 const POLL_MS = 15_000;
 
@@ -41,13 +42,13 @@ export interface LivePollFetchers {
     campaigns?: CampaignVM[],
   ) => Promise<AlertVM[]>;
   fetchAudit: () => Promise<AuditVM[]>;
-  fetchCampaigns: () => Promise<CampaignVM[]>;
+  fetchCampaigns: (window?: CampaignWindow) => Promise<CampaignVM[]>;
   fetchGuardrails: () => Promise<GuardrailVM>;
 }
 
 export interface LivePollCallbacks {
   onOverview?: (overview: OverviewVM) => void;
-  onCampaigns?: (campaigns: CampaignVM[]) => void;
+  onCampaigns?: (campaigns: CampaignVM[], window: CampaignWindow) => void;
   onGuardrails?: (guardrails: GuardrailVM) => void;
   onNewAudit?: (entry: AuditVM) => void;
   onNewAlerts?: (alert: AlertVM) => void;
@@ -64,11 +65,12 @@ export async function pollLiveTick(
   state: LivePollState,
   fetchers: LivePollFetchers,
   cb: LivePollCallbacks,
+  campaignWindow: CampaignWindow = 30,
 ): Promise<void> {
   try {
     // Everything fetches in parallel; only alerts wait on campaigns, so they
     // can derive campaign_id from the freshest campaign list.
-    const campaignsP = fetchers.fetchCampaigns();
+    const campaignsP = fetchers.fetchCampaigns(campaignWindow);
     const [overview, audit, campaigns, alerts, guardrails] = await Promise.all([
       fetchers.fetchOverview(),
       fetchers.fetchAudit(),
@@ -78,7 +80,7 @@ export async function pollLiveTick(
     ]);
 
     cb.onOverview?.(overview);
-    cb.onCampaigns?.(campaigns);
+    cb.onCampaigns?.(campaigns, campaignWindow);
     cb.onGuardrails?.(guardrails);
 
     if (state.seenAudit === null) {
@@ -111,9 +113,10 @@ export async function pollLiveTick(
 
 export interface UseLiveFeedOptions extends LivePollCallbacks {
   liveOn: boolean;
+  campaignWindow?: CampaignWindow;
 }
 
-export function useLiveFeed({ liveOn, ...callbacks }: UseLiveFeedOptions): void {
+export function useLiveFeed({ liveOn, campaignWindow = 30, ...callbacks }: UseLiveFeedOptions): void {
   // Keep the latest callbacks in a ref so the polling effect depends only on
   // `liveOn` and never tears down/re-creates intervals mid-flight.
   const cbRef = useRef<LivePollCallbacks>(callbacks);
@@ -133,18 +136,18 @@ export function useLiveFeed({ liveOn, ...callbacks }: UseLiveFeedOptions): void 
     };
     const guarded: LivePollCallbacks = {
       onOverview: (o) => alive && cbRef.current.onOverview?.(o),
-      onCampaigns: (c) => alive && cbRef.current.onCampaigns?.(c),
+      onCampaigns: (c, window) => alive && cbRef.current.onCampaigns?.(c, window),
       onGuardrails: (g) => alive && cbRef.current.onGuardrails?.(g),
       onNewAudit: (e) => alive && cbRef.current.onNewAudit?.(e),
       onNewAlerts: (a) => alive && cbRef.current.onNewAlerts?.(a),
     };
 
-    const tick = () => void pollLiveTick(state, fetchers, guarded);
+    const tick = () => void pollLiveTick(state, fetchers, guarded, campaignWindow);
     tick();
     const id = setInterval(tick, POLL_MS);
     return () => {
       alive = false;
       clearInterval(id);
     };
-  }, [liveOn]);
+  }, [liveOn, campaignWindow]);
 }

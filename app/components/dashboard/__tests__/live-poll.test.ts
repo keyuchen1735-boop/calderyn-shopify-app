@@ -27,6 +27,16 @@ const CAMPAIGN: CampaignVM = {
   platform: "Meta",
   status: "active",
   daily_budget_cents: 50_000,
+  campaign_kind: "regular",
+  sale_type: null,
+  classification_source: "detected",
+  orders: 0,
+  revenue_cents: 300_000,
+  spend_cents: 100_000,
+  profit_cents: null,
+  true_roas: 3,
+  cost_complete: false,
+  cost_sources: [],
   spend_7d: 100_000,
   roas_7d: 3,
   breakeven_roas: 1.7,
@@ -213,6 +223,21 @@ describe("pollLiveTick — extension actions reflect on the dashboard", () => {
 
     expect(alertCalls).toHaveLength(1);
     expect(alertCalls[0].map((c) => c.id)).toEqual(["c1"]);
+  });
+
+  it("polls campaign metrics for the selected reporting window", async () => {
+    const state: LivePollState = { seenAudit: null, seenAlerts: null };
+    const { fetchers } = makeFetchers({ audit: [], alerts: [] });
+    const windows: unknown[] = [];
+    fetchers.fetchCampaigns = async (window?: unknown) => {
+      windows.push(window);
+      return [CAMPAIGN];
+    };
+    const { callbacks } = collect();
+
+    await pollLiveTick(state, fetchers, callbacks, 90);
+
+    expect(windows).toEqual([90]);
   });
 
   it("swallows a transient fetch failure and leaves the state untouched", async () => {
